@@ -225,3 +225,23 @@ def test_add_recording_cleans_up_on_failure(tmp_path, monkeypatch):
     recordings_dir = archive.root / "recordings"
     if recordings_dir.exists():
         assert len(list(recordings_dir.glob("*/*/*"))) == 0
+
+
+def test_renditions_skips_corrupt_files_when_problems_given(tmp_path):
+    archive = Archive(tmp_path / "archive")
+    rec = add(archive, media(tmp_path), renditions=[notes()])
+    folder = archive.path_for(rec.id)
+    
+    # Add a corrupt rendition file
+    corrupt_path = folder / "renditions" / "corrupt.json"
+    corrupt_path.write_text("{", encoding="utf-8")
+    
+    # Collect problems
+    problems = []
+    renditions = archive.renditions(rec.id, problems)
+    
+    # Should have one good rendition and one problem
+    assert len(renditions) == 1
+    assert len(problems) == 1
+    assert problems[0].path == corrupt_path
+    assert len(problems[0].message) > 0

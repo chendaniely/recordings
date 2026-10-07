@@ -11,7 +11,7 @@ from datetime import datetime
 
 from markdown_it import MarkdownIt
 
-from recordings.archive import Archive
+from recordings.archive import Archive, Problem
 from recordings.ids import ID_RE
 from recordings.models import Recording, Rendition, is_private, is_untagged
 
@@ -100,7 +100,8 @@ def recording_view(archive: Archive, rid: str) -> dict | None:
         rec = archive.load(rid)
     except (KeyError, ValueError):  # unknown id, impossible date in the id, or a broken file
         return None
-    outputs = archive.renditions(rid)
+    problems: list[Problem] = []
+    outputs = archive.renditions(rid, problems)
     transcripts = [
         {"rendition": path, "label": _label(r), "engine": r.engine, "model": r.model,
          "created_at": r.created_at.isoformat(), "turns": _turns(r, rec.speakers)}
@@ -145,4 +146,5 @@ def recording_view(archive: Archive, rid: str) -> dict | None:
              "model": r.model, "created_at": r.created_at.isoformat()}
             for path, r in outputs
         ],
+        "problems": [{"path": str(p.path), "message": p.message} for p in problems],
     }

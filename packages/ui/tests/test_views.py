@@ -81,3 +81,27 @@ def test_model_written_html_is_escaped(tmp_path):
                               payload={"markdown": "<img src=x onerror=alert(1)>"})])
     html = recording_view(archive, rec.id)["notes"][0]["outputs"][0]["html"]
     assert "<img" not in html
+
+
+def test_recording_view_with_corrupt_rendition_shows_problems(demo_archive, demo_ids):
+    archive = Archive(demo_archive)
+    # Add a corrupt rendition file to a demo recording
+    folder = archive.path_for(demo_ids["jfk-rice"])
+    corrupt_path = folder / "renditions" / "corrupt.json"
+    corrupt_path.write_text("{junk", encoding="utf-8")
+    
+    view = recording_view(archive, demo_ids["jfk-rice"])
+    assert view is not None
+    assert len(view["problems"]) == 1
+    assert view["problems"][0]["path"].endswith("corrupt.json")
+    # Good renditions should still be there
+    assert len(view["transcripts"]) > 0
+
+
+def test_recording_view_with_corrupt_recording_json_is_none(demo_archive, demo_ids):
+    archive = Archive(demo_archive)
+    folder = archive.path_for(demo_ids["jfk-rice"])
+    (folder / "recording.json").write_text("{", encoding="utf-8")
+    
+    view = recording_view(archive, demo_ids["jfk-rice"])
+    assert view is None

@@ -153,12 +153,18 @@ class Archive:
     def media_path(self, rid: str) -> Path:
         return self.path_for(rid) / self.load(rid).media.file
 
-    def renditions(self, rid: str) -> list[tuple[str, Rendition]]:
+    def renditions(self, rid: str, problems: list[Problem] | None = None) -> list[tuple[str, Rendition]]:
         folder = self.path_for(rid)
         out = []
         for path in sorted((folder / "renditions").glob("*.json")):
-            rendition = Rendition.model_validate_json(path.read_text(encoding="utf-8"))
-            out.append((path.relative_to(folder).as_posix(), rendition))
+            try:
+                rendition = Rendition.model_validate_json(path.read_text(encoding="utf-8"))
+                out.append((path.relative_to(folder).as_posix(), rendition))
+            except (ValidationError, UnicodeDecodeError, OSError) as exc:
+                if problems is not None:
+                    problems.append(Problem(path=path, message=str(exc).splitlines()[0]))
+                else:
+                    raise
         return sorted(out, key=lambda item: (item[1].created_at, item[0]))
 
     def read_my_notes(self, rid: str) -> str | None:
