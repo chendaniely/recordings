@@ -172,8 +172,19 @@ recordings/                      (repo root, uv workspace, MIT)
 
 ## 5. Configuration and secrets
 
-- **Machine config** is `~/.config/recordings/config.toml` on the host, mounted read-only
-  into both containers. It is never in the repo. It holds:
+- **There are three places, and only templates are committed** (Dan, 2026-10-08):
+
+  | What | File | Committed |
+  |---|---|---|
+  | App settings | `config.toml` at the repo root, or `RECORDINGS_CONFIG` | git-ignored. The template is `config.example.toml`. |
+  | Docker host settings: host archive path, config path, bind IP and port, UID/GID | `docker/deploy.env`, passed with `--env-file` | git-ignored. The template is `docker/deploy.example.env`. |
+  | Secrets | Environment `NAME`, or `NAME_FILE` (Docker secrets under `/run/secrets`) | never |
+
+  The templates avoid `.env*` names so Claude can read them, because Claude's rules forbid
+  reading `.env` files. An environment variable beats `config.toml`. Demo mode reads none
+  of the three.
+- **Machine config** (`config.toml`) is mounted read-only into both containers at
+  `/config/config.toml`. It holds:
   - the archive path
   - which host writes
   - the Spark base URL
@@ -184,10 +195,20 @@ recordings/                      (repo root, uv workspace, MIT)
   - the Plaud schedule
   - the watched folder path
   - the app base URL (used for links back into the app)
-- **Secrets are passed by reference only**, as environment variables or Docker secrets:
-  - the Spark key
-  - `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`; lasts a year)
-  - the Plaud token
+- **Secrets are passed by reference only**, as environment variables or Docker secrets.
+  In Docker they are secret files, so they never show in `docker inspect`:
+  - `RECORDINGS_PLAUD_TOKEN`, the Plaud token (stage 2)
+  - `RECORDINGS_SPARK_API_KEY`, this app's llama-swap key (stage 4)
+  - `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, lasting a year (stage 4)
+- **Docker host settings** (`docker/deploy.env`):
+  - `RECORDINGS_ARCHIVE_HOST`
+  - `RECORDINGS_CONFIG_HOST`
+  - `RECORDINGS_BIND` (the homelab server's Tailscale IP)
+  - `RECORDINGS_PORT`
+  - `RECORDINGS_UID` / `RECORDINGS_GID` (matching the NAS share's owner, so the container
+    can write from stage 2)
+
+  Later stages add the index volume, the watched folder path and the secrets folder.
 
   No secret appears in the image, the repo, the archive, logs or `--json` output. CI runs
   gitleaks.
