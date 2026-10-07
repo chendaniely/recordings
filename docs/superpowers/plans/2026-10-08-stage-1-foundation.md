@@ -3468,7 +3468,7 @@ and `reactive_output` against it. Only `shiny_app.py` touches shinyreact in this
 - Test: `packages/ui/tests/test_settings.py`, `test_app.py`, `test_shiny_server.py`
 
 **Interfaces:**
-- Consumes: `Archive`, `parse_id` (Tasks 2 and 4); `load_config`, `ConfigError` (Task 9);
+- Consumes: `Archive`, `ID_RE` (Tasks 2 and 4); `load_config`, `ConfigError` (Task 9);
   `library_view`, `recording_view` (Task 10).
 - Produces:
   - `Settings(archive: Path, demo: bool)`
