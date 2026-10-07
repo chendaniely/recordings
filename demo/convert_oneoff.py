@@ -9,6 +9,7 @@ diarization speaker it overlaps most and the words whose midpoint falls inside i
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 from recordings.models import Segment, TranscriptPayload, Word
@@ -25,12 +26,15 @@ def speaker_for(start: float, end: float, turns: list[dict]) -> str | None:
     return best
 
 
-def convert(data: dict) -> TranscriptPayload:
+def convert(data: dict, duration_s: float) -> TranscriptPayload:
     words = [w for w in data["words"] if w.get("start") is not None and w.get("end") is not None]
     segments = []
     for seg in data["segments"]:
         text = (seg.get("text") or "").strip()
         if not text:
+            continue
+        # Whisper can hallucinate text past the end of a trimmed clip.
+        if seg["start"] >= duration_s:
             continue
         inside = [w for w in words if seg["start"] <= (w["start"] + w["end"]) / 2 < seg["end"]]
         segments.append(Segment(
@@ -47,8 +51,12 @@ def convert(data: dict) -> TranscriptPayload:
 def main() -> int:
     out = HERE / "canned" / "transcripts"
     out.mkdir(parents=True, exist_ok=True)
+    entries = tomllib.loads((HERE / "sources.toml").read_text())["recording"]
+    durations = {e["slug"]: e["duration_ms"] / 1000 for e in entries}
     for path in sorted((HERE / ".cache" / "oneoff").glob("*.json")):
-        payload = convert(json.loads(path.read_text(encoding="utf-8")))
+        if path.stem not in durations:
+            raise SystemExit(f"{path.name}: slug {path.stem!r} is not in demo/sources.toml")
+        payload = convert(json.loads(path.read_text(encoding="utf-8")), durations[path.stem])
         (out / path.name).write_text(
             payload.model_dump_json(exclude_none=True, indent=2) + "\n", encoding="utf-8")
         print(f"wrote {out / path.name}: {len(payload.segments)} segments")
