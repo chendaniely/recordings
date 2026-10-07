@@ -180,7 +180,8 @@ def test_doctor_with_both_secret_env_and_file(tmp_path):
     assert "sentinel-do-not-print-8c1f" not in json.dumps(report)
 
 
-def test_cli_doctor_json_with_unreadable_secret(tmp_path, monkeypatch):
+@pytest.mark.skipif(os.getuid() == 0, reason="root can read files with no permissions")
+def test_cli_doctor_json_with_unreadable_secret(tmp_path, monkeypatch, capsys):
     archive = tmp_path / "archive"
     archive.mkdir()
     f = tmp_path / "secret"
@@ -192,10 +193,14 @@ def test_cli_doctor_json_with_unreadable_secret(tmp_path, monkeypatch):
     try:
         result = main(["doctor", "--json"])
         assert result == 78
+        out, err = capsys.readouterr()
+        assert "sentinel-do-not-print-8c1f" not in out
+        assert "sentinel-do-not-print-8c1f" not in err
     finally:
         f.chmod(0o644)
 
 
+@pytest.mark.skipif(os.getuid() == 0, reason="root can read files with no permissions")
 def test_cli_doctor_plain_with_unreadable_secret(tmp_path, monkeypatch, capsys):
     archive = tmp_path / "archive"
     archive.mkdir()
