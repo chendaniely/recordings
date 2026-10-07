@@ -2,18 +2,10 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { applyTheme, loadChoice, resolveTheme, saveChoice, type ThemeChoice } from "@/lib/theme";
-
-function storage(): Storage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
+import { applyTheme, browserStorage, loadChoice, resolveTheme, saveChoice, type ThemeChoice } from "@/lib/theme";
 
 export function ThemeSwitch() {
-  const [choice, setChoice] = useState<ThemeChoice>(() => loadChoice(storage()));
+  const [choice, setChoice] = useState<ThemeChoice>(() => loadChoice(browserStorage()));
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -34,7 +26,7 @@ export function ThemeSwitch() {
       onValueChange={(v) => {
         if (!v) return; // Radix sends "" when the active item is clicked again
         setChoice(v as ThemeChoice);
-        saveChoice(storage(), v as ThemeChoice);
+        saveChoice(browserStorage(), v as ThemeChoice);
       }}
     >
       <ToggleGroupItem value="light" aria-label="Light" data-testid="theme-light"><Sun /></ToggleGroupItem>

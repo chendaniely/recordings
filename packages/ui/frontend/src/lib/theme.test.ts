@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { applyTheme, loadChoice, resolveTheme, saveChoice } from "./theme";
+import { applyTheme, browserStorage, loadChoice, resolveTheme, saveChoice } from "./theme";
 
 describe("theme", () => {
   it("follows the OS only in system mode", () => {
@@ -34,5 +34,17 @@ describe("theme", () => {
     applyTheme(root, "light");
     expect(root.classList.contains("light")).toBe(true);
     expect(root.classList.contains("dark")).toBe(false);
+  });
+
+  it("browserStorage is localStorage, or null where the browser forbids it", () => {
+    expect(browserStorage()).toBe(window.localStorage);
+    const spy = vi.spyOn(window, "localStorage", "get").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      expect(browserStorage()).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

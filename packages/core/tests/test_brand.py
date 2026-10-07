@@ -38,3 +38,21 @@ def test_text_colours_meet_wcag_aa_in_both_modes():
 def test_orange_is_never_a_light_mode_text_colour():
     # why: 3.2:1 on white, so markers and outlines only
     assert contrast(brand_css().tokens(REPO, "light")["brand-orange"], "#FFFFFF") < 4.5
+
+
+def _mix(fg, share, bg):
+    a = [int(fg[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(bg[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(share * x + (1 - share) * y):02X}" for x, y in zip(a, b))
+
+
+def test_note_type_chips_meet_wcag_aa_in_both_modes():
+    # app.css: .chip.nt is --brand-success text on --success-tint (16% of it) over a list row,
+    # which is --card, --background on hover, or --sel (12% --primary over --card) when selected
+    module = brand_css()
+    for mode in ("light", "dark"):
+        t = module.tokens(REPO, mode)
+        selected = _mix(t["primary"], 0.12, t["card"])
+        for row in (t["card"], t["background"], selected):
+            chip = _mix(t["brand-success"], 0.16, row)
+            assert contrast(t["brand-success"], chip) >= 4.5, f"{mode}: note-type chip on {row}"

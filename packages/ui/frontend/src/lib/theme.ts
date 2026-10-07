@@ -31,3 +31,12 @@ export function applyTheme(root: HTMLElement, resolved: Resolved): void {
   root.classList.toggle("dark", resolved === "dark");
   root.classList.toggle("light", resolved === "light");
 }
+
+/** localStorage, or null where the browser forbids it (private windows, blocked site data). */
+export function browserStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
