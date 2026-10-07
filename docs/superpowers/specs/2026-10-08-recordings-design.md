@@ -55,7 +55,7 @@ The repo holds two Python packages:
 |---|---|
 | `../audio-router` (public on GitHub, **no LICENSE**) | Plaud HTTP client, transcript parsing, YouTube source, the `audio-router/rendition@1` output format, and its hardened habits: archive first, dry run by default, guard tests that must fail without their fix. Its archive is documented by `docs/ARCHIVE.md`. |
 | `audio-router-pixeltable/examples/shiny/app_recordings.py` | A read-only Shiny prototype of the Plaud-style layout, with click-a-timestamp-to-seek. It handles both transcript shapes (vendor JSON segments and merged text). |
-| `../transcript_prompts/` (a folder, not a git repo) | 23 recording types, each a file with YAML frontmatter (detection signals) and a `## Prompt` body containing `{{TRANSCRIPT}}`, plus `classify/detect-meeting-type.md`. This becomes the note-type library. |
+| `../transcript_prompts/` (a folder, not a git repo) | 23 recording types, each a file with YAML frontmatter (detection signals) and a `## Prompt` body containing `{{TRANSCRIPT}}`, plus `classify/detect-meeting-type.md`. Moves into this repo's `prompts/` as the note-type library (§7.3). |
 | `class-notes` skill (`class_notes.py`) | The `run_claude` / `run_local` backend pair. `run_claude` is the Claude call to reuse (§8.4). `run_local`'s docstring is the specification for the Spark backend. |
 | `../local-ai` (DGX Spark) | llama-swap (keys required) serving `gemma-4-26b-a4b` (resident), `qwen3-embedding-0.6b` (resident), `whisper-large-v3-turbo` (resident, whisper.cpp at `/v1/audio/transcriptions`) and `qwen3.6-35b-a3b` (on demand). Everything binds to 127.0.0.1. Phase 3 plans a pyannote diarization wrapper and keys for "the audio pipeline". |
 | Plaud and HeyPocket web apps | The interaction reference: list, player, transcript, and several note templates per recording. |
@@ -96,10 +96,17 @@ The repo holds two Python packages:
   rebuilds them.
 - **Model backends sit behind one interface:** Spark (HTTP, OpenAI-style), Claude (the
   `claude` CLI) and Canned (demo and tests). §8.4 has the details.
-- **One machine writes.** Only the configured host writes the archive, as with
-  `audio-router`'s host claim. Elsewhere the core runs **read-only** against a mounted
-  archive, or sends changes through the API with `recordings --remote <url> …`. *(New in
-  this spec, so flagged for review.)*
+- **The homelab server does all the work and is the only writer** (Dan, 2026-10-08).
+  - **On the homelab server:** the app, the worker, Plaud sync, ffmpeg, and every call to the Spark
+    and Claude. The Claude token exists only there.
+  - **Why one writer:** if two machines changed the same `recording.json` over the network
+    share at once, a change could be lost. `audio-router`'s host claim existed for the same
+    reason. The core refuses to write on any machine other than the one named in config.
+  - **The Mac is a client.** Dan uses the UI in a browser over Tailscale. Anything the Mac
+    or an agent on it wants done goes to the app, through the JSON API or
+    `recordings --remote <url> …`, and **runs on the homelab server**.
+  - **Reading is fine from anywhere** the archive is mounted, for example a Pixeltable
+    notebook on the Mac. Writing never is.
 - **Dependencies on `local-ai` Phase 3:**
   - The Spark is reachable from the homelab machine over Tailscale, with this app's own
     key.
@@ -126,6 +133,7 @@ recordings/                      (repo root, uv workspace, MIT)
         .nvmrc                   22
         package.json, package-lock.json
   format/                        FORMAT.md, AGENTS.md, folder READMEs, JSON Schemas (§6.7)
+  prompts/                       note-type library + Dan's course prompts (§7.3)
   demo/archive/                  the demo archive, in the real format (§17)
   _brand.yml                     palette and fonts (§12.6)
   docker/                        Dockerfile (multi-stage), compose.yml, compose.demo.yml
@@ -153,8 +161,8 @@ recordings/                      (repo root, uv workspace, MIT)
 **Docker:**
 - A multi-stage build: Node 22 builds the frontend, then a Python 3.14 slim runtime runs it
   with ffmpeg and the `claude` CLI.
-- Images are built for both amd64 and arm64, because the homelab machine is still
-  undecided.
+- Images are built for amd64, for the homelab server (Intel), and for arm64, so they run on the Mac
+  for local testing and demo mode.
 - It runs as a non-root user.
 
 **Local machine (checked 2026-10-08):**
@@ -170,7 +178,8 @@ recordings/                      (repo root, uv workspace, MIT)
   - which host writes
   - the Spark base URL
   - named model entries (such as `spark:default` and `claude:opus`)
-  - prompt sources
+  - the writer host (the homelab server; §3)
+  - extra prompt folders beyond `prompts/`
   - auto-private title patterns
   - the Plaud schedule
   - the watched folder path
@@ -334,25 +343,32 @@ Pixeltable can all load them directly.
 ```yaml
 school/course-101:
   vocabulary: [Codespaces, Quarto, tidyverse]   # sent to Whisper as its prompt
-  notes: [course-notes]                           # note types added
+  notes: [lecture]                              # note types added (from prompts/)
   models: [spark:default, claude:opus]          # model names come from config
-private:
-  private: true
-journal:
-  private: true
 ```
 
 - **Rules combine** across all of a recording's tags.
 - **Model and prompt names refer to config entries**, so `tags.yaml` contains no paths or
   secrets.
+- **Privacy isn't a rule in this file.** It comes from the tag's name (§7.4).
 
 ### 7.3 Note types
 
 - **Each note type is a prompt file**, in `transcript_prompts` format: frontmatter with
-  detection signals, plus a `## Prompt` body containing `{{TRANSCRIPT}}`. Config lists the
-  prompt sources: folders (Dan's `transcript_prompts`) and single files (a course's
-  `prompt-notes.md`, made available to the host). A prompt can opt out of auto-pick with
-  `auto: false`.
+  detection signals, plus a `## Prompt` body containing `{{TRANSCRIPT}}`. A prompt can opt
+  out of auto-pick with `auto: false`.
+- **The library is `prompts/` in this repo.** It holds the 23 types moved in from
+  `../transcript_prompts` (a folder with no git history, and generic, so safe to make
+  public), plus Dan's own course prompts. Config may list extra folders on the homelab server.
+- **Course prompts that students edit stay in their course repo.** They are used on
+  request, not automatically:
+  1. From the Mac: `recordings --remote notes <id> --prompt-file <course repo>/prompt-notes.md --model claude:opus`.
+  2. The CLI sends the prompt text with the request.
+  3. The homelab server runs the model and saves the notes. The output records the prompt's origin
+     (the file name and repo) and its hash, so it can be regenerated when students change
+     the prompt.
+
+  The course-repo skill (out of scope) wraps this command.
 - **Each note type appears as a tag**, `notes/<type>`. A recording can have any number.
   - **One output per pair:** each note type × model pair produces its own notes output.
   - **How note types get added:**
@@ -368,8 +384,11 @@ journal:
 ### 7.4 Privacy (tag-based)
 
 - **Everything comes in.** There is no import refusal and no held status.
-- **The rule:** a recording is **private** if any of its tags has `private: true` in
-  `tags.yaml`. It is calculated from metadata every time, so there are no marker files.
+- **The rule:** a recording is **private** if its `recording.json` has the tag `private`
+  or any tag under `private/` (for example `private/journal` or `private/personal`).
+  - **`recording.json` is the single source of truth.** Privacy needs no other file, no
+    marker files and no lists to keep up to date (Dan, 2026-10-08).
+  - **The UI's Private section is the `private/` folder.**
 - **Private recordings only ever use Spark backends:**
   - Claude is skipped even if another tag's rules name a Claude model, and the Details tab
     says "Claude skipped: private".
@@ -381,11 +400,11 @@ journal:
 - **Automatic private tags:**
   - Plaud recordings matching the title patterns in config are tagged `private`.
   - Recordings `audio-router` held come in tagged `private`.
-- **Claude Code sessions** follow the same rule. `AGENTS.md` says not to read private
-  recordings' transcripts or notes. Dan's privacy hook may enforce this by reading
-  `recording.json` and `tags.yaml` when a file is opened. **Whether the hook does this
-  check is for Dan to confirm.** Dan permits Claude to read the recording folders and
-  catalog otherwise.
+- **Claude Code sessions** follow the same rule, and `AGENTS.md` states it once: "If a
+  recording's `recording.json` has a `private` or `private/…` tag, don't read its
+  transcript or notes." `AGENTS.md` never lists private recordings, because the metadata
+  file is the only source. There is no hook change. Otherwise, Dan permits Claude to read
+  the recording folders and catalog.
 
 ### 7.5 The tag gate
 
@@ -590,7 +609,7 @@ later" until its build stage (§20):
 - **Outside edits are previewed before anything runs.** If an outside edit would start
   jobs, they wait for approval, for example "37 notes, 2 Claude". Edits made in the UI
   apply immediately. *(Dan asked for UI actions to apply immediately. This preview is kept
-  for outside edits only. Flagged for confirmation.)*
+  for outside edits only, as Dan confirmed on 2026-10-08.)*
 - **Bulk tag changes** are also available through the CLI and API, with a dry run.
 
 ## 12. Interface
@@ -894,8 +913,8 @@ Each stage leaves a working, demonstrable app.
    - the Add page's Plaud panel
 
    All of Dan's real recordings arrive in the Library here, read-only until stage 3.
-   **Choose the homelab machine before this stage**, because real NAS paths and the Plaud
-   token come in here.
+   This stage is the first deployment on the homelab server, with the archive on the NAS mounted
+   there, SQLite on its local disk, and the Plaud token as a secret.
 3. **Tagging:**
    - editing `tags.yaml` and `recording.json`
    - drag, `T`, the grid and the tree, with Undo
@@ -919,12 +938,19 @@ Each stage leaves a working, demonstrable app.
 **Later, separately:** suggested tags, the vault listener, the course-repo skill and the
 Pixeltable notebook.
 
-## 21. Open items for review
+## 21. Decisions from the spec review (2026-10-08)
 
-1. **The privacy hook check** (§7.4): should Dan's hook block Claude Code from private
-   recordings by reading `recording.json` and `tags.yaml`, or is `AGENTS.md` enough?
-2. **The outside-edit preview** (§11): keep it for outside edits only, or drop it too?
-3. **One machine writes** (§3): read-only elsewhere, with `--remote` for writes.
-4. **How a course prompt reaches the host** (§7.3): a copy kept in the prompt library, or a
-   checkout on the NAS.
-5. **The homelab machine** (§20, needed by stage 2, Plaud).
+1. **Privacy** (§7.4): a tag is private if it is `private` or under `private/`, so
+   `recording.json` alone decides. `AGENTS.md` states the rule and never lists recordings.
+   There is no hook change.
+2. **The outside-edit preview** (§11): kept for outside edits. UI actions apply
+   immediately.
+3. **One writer** (§3): the homelab server does all the work and is the only machine that writes.
+   The Mac is a client (the browser, the API, `--remote`), and reading from elsewhere is
+   fine.
+4. **Course prompts** (§7.3): student-editable prompts stay in their course repo and are
+   sent from the Mac with `--prompt-file`. Dan's own prompt collection and the
+   `transcript_prompts` types live in `prompts/` in this repo. *(The move of
+   `transcript_prompts` and the `private/` naming were proposed and taken as accepted. Dan
+   to object if not.)*
+5. **The homelab machine** (§20): the homelab server.
