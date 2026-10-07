@@ -19,19 +19,23 @@
 1. **Format docs live in the core package**, as package data at
    `packages/core/src/recordings/format/`, instead of a top-level `format/`. That way the
    installed package, including inside Docker, can write them into an archive (§6.7).
-2. **Two brand files.** brand.yml has no light/dark syntax. I checked
-   posit-dev.github.io/brand-yml on 2026-10-08. So `_brand.yml` holds the light theme and
-   `_brand-dark.yml` the dark theme, and `scripts/brand_css.py` turns both into
-   `theme.css`.
+2. **One `_brand.yml` holds both modes.** Any colour can be `{light: …, dark: …}`, as
+   Quarto's brand docs describe; Posit's brand-yml skill dates it to Quarto 1.8. I first
+   wrongly planned two files, from a summary of a stale page. `scripts/brand_css.py`
+   turns the file into shadcn/ui's CSS variables for `:root` and `.dark`.
 3. **The app reads hooks from `window.shinyreact`,** as the `shinyreact-build-app` skill
    prescribes for apps. The npm package `@posit-dev/shinyreact` (0.1.1) is installed only
    for its TypeScript types, through `import type`. React is never bundled.
 4. **Build tools follow shinyreact's own examples** (Vite 5.4, `@vitejs/plugin-react` 4.7,
    TypeScript 5.9, Vitest 3.2), not the newest majors, so we use exactly what the Shiny
    team tests. They move when shinyreact's examples move.
-5. **Plain CSS plus Radix primitives,** not Tailwind and shadcn. The skill says to use
-   established libraries for components (Radix handles keyboard and accessibility), and
-   plain CSS on the brand variables keeps the theme in one generated file.
+5. **Components come from shadcn/ui + Tailwind v4** (Dan, 2026-10-08). The
+   `shinyreact-build-app` skill calls it "the default" (SKILL.md line 126), and its
+   examples 03 and 04 use it. The shinyreact website docs don't name a library.
+   - **Radix base:** it is initialised with `--base radix`. shadcn made Base UI its
+     default on 2026-07-02 but says Radix is "still fully supported", and Radix matches
+     shinyreact's shadcn examples.
+   - **Our CSS:** our own layout CSS stays in `app.css` and uses shadcn's tokens.
 6. **No SQLite in stage 1.** The archive is scanned directly. The index arrives with
    tagging and jobs (stages 3 and 4).
 7. **Demo transcripts are real Whisper output.** `audio-router`'s one-off transcriber
@@ -57,9 +61,16 @@
   `0.1.1` (npm, types only).
   - **React stays external,** mapped to `window.shinyreact.React` / `.ReactDOM`.
     **Never bundle `react`/`react-dom`.**
-- **Before writing or changing any shinyreact code,** load `/shinyreact-build-app` (after
-  `make skills`) or read https://posit-dev.github.io/shinyreact/. Never write its API from
-  memory.
+- **Check the docs before writing code** against any of these. Never write them from
+  memory:
+  - **shinyreact:** `/shinyreact-build-app` (after `make skills`), or
+    https://posit-dev.github.io/shinyreact/
+  - **brand.yml:** https://posit-dev.github.io/brand-yml/, plus
+    https://quarto.org/docs/authoring/brand.html for light/dark
+  - **shadcn/ui:** the shadcn skill (`npx skills add shadcn/ui`), or https://ui.shadcn.com/docs
+  - **Tailwind v4:** https://tailwindcss.com/docs
+- **Dark mode is the `dark` class on `<html>`** (shadcn's convention). Choosing light sets
+  `light`.
 - **Recording ID:** `YYYYMMDDTHHMMSS±HHMM_<8 hex>`, ISO 8601 basic local time with offset,
   plus the first 8 hex characters of the media SHA-256. The folder is
   `recordings/YYYY/MM/<id>/`.
@@ -104,8 +115,8 @@
 recordings/
   pyproject.toml  uv.lock  .python-version  .gitignore  LICENSE  README.md  CLAUDE.md  Makefile
   config.example.toml                        committed template; config.toml is git-ignored
-  _brand.yml  _brand-dark.yml
-  scripts/brand_css.py                       _brand*.yml → packages/ui/frontend/src/theme.css
+  _brand.yml                                 light + dark colours in one file ({light, dark})
+  scripts/brand_css.py                       _brand.yml → packages/ui/frontend/src/theme.css (shadcn tokens)
   demo/
     sources.toml                             the 4 public-domain clips: URL, sha256, trim, metadata
     fetch.py                                 download → verify sha256 → trim/encode into demo/.cache/media
@@ -134,7 +145,9 @@ recordings/
       www/ui.js  www/ui.css                  BUILD OUTPUT (git-ignored)
     frontend/
       .nvmrc  package.json  package-lock.json  vite.config.js  tsconfig.json  scripts/check-node.mjs
-      src/ui.tsx  App.tsx  sr.ts  types.ts  theme.css  app.css
+      components.json                        shadcn config (written by the shadcn CLI)
+      src/ui.tsx  App.tsx  sr.ts  types.ts  index.css  theme.css  app.css
+      src/lib/utils.ts  src/components/ui/tabs.tsx  toggle-group.tsx  toggle.tsx   (shadcn CLI)
       src/lib/theme.ts  theme.test.ts  transcript.ts  transcript.test.ts
       src/components/TopBar.tsx  ThemeSwitch.tsx  Sidebar.tsx  RecordingList.tsx  RecordingPane.tsx
                       Player.tsx  TranscriptTab.tsx  NotesTab.tsx  PlaudTab.tsx  MyNotesTab.tsx  DetailsTab.tsx
@@ -220,6 +233,9 @@ packages/ui/src/recordings_ui/www/ui.css
 demo/.cache/
 # Skill symlinks into .venv, recreated by `make skills`.
 .claude/skills/shinyreact-*
+# shadcn's skill, installed by `make skills` (npx skills add shadcn/ui)
+.claude/skills/shadcn/
+.agents/
 .superpowers/
 test-results/
 .playwright-mcp/
@@ -293,16 +309,18 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
 - **`make test`** runs pytest and Vitest. **`make e2e`** runs the Playwright tests against
   demo mode.
 
-## shinyreact: check the docs, never write it from memory
+## Check the docs, never write from memory
 
-shinyreact is pre-release and changes quickly. Before writing or changing any shinyreact
-code:
+These change quickly. Before writing or changing code that uses any of them, check the
+current skill or docs. Say in the commit or PR what you checked. If the docs don't cover
+it, say so instead of guessing; that gap is worth reporting upstream.
 
-1. `make skills` (once per `uv sync`), then load `/shinyreact-build-app`.
-2. For anything the skill doesn't cover, read https://posit-dev.github.io/shinyreact/.
-3. Say in the commit or PR what you checked.
-4. If the docs don't cover it, say so instead of guessing. That gap is worth reporting to
-   the Shiny team.
+| Library | Skill (`make skills` installs both) | Docs |
+|---|---|---|
+| shinyreact | `/shinyreact-build-app` | https://posit-dev.github.io/shinyreact/ |
+| shadcn/ui | the shadcn skill | https://ui.shadcn.com/docs |
+| brand.yml | Posit's `brand-yml` skill, if installed | https://posit-dev.github.io/brand-yml/, plus https://quarto.org/docs/authoring/brand.html for `{light, dark}` colours |
+| Tailwind v4 | none | https://tailwindcss.com/docs |
 
 The rules the code depends on:
 - **React stays external,** mapped to `window.shinyreact.React`. Two React copies make
@@ -338,7 +356,7 @@ exactly. To upgrade:
 # Each recipe line runs in its own shell, so nvm is loaded per line when it exists.
 # In CI (no nvm) setup-node already provides Node 22.
 FRONTEND := packages/ui/frontend
-NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --silent; fi;
+NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --silent "$$(cat $(CURDIR)/$(FRONTEND)/.nvmrc)"; fi;
 
 .PHONY: setup skills build test test-py test-js e2e demo demo-archive schemas brand docker
 
@@ -349,6 +367,7 @@ setup:
 
 skills:
 	uvx library-skills --claude
+	$(NVM) npx skills add shadcn/ui
 
 build:
 	cd $(FRONTEND) && $(NVM) npm run build
@@ -2783,7 +2802,7 @@ default. **Demo mode reads none of these** (spec §17).
 [archive]
 # The archive folder. In Docker the container sees it at /archive, and docker/compose.yml sets
 # RECORDINGS_ARCHIVE=/archive, which overrides this value.
-path = "/mnt/nas/recordings"
+path = "/srv/recordings/archive"
 # The only machine allowed to write the archive (stage 2): that machine's hostname.
 writer_host = "my-homelab"
 # Time zone for recordings whose source doesn't say.
@@ -2794,7 +2813,7 @@ default_timezone = "America/Vancouver"
 base_url = "http://my-homelab:8000"
 
 [index]
-# SQLite index and job queue (stage 3). Keep it on the Docker host's own disk, not the NAS.
+# SQLite index and job queue (stage 3), on the same local disk as the archive.
 path = "/data/index.sqlite"
 
 [plaud]                                 # stage 2
@@ -2860,7 +2879,7 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_the_template_parses_and_loads():
     tomllib.loads(TEMPLATE.read_text(encoding="utf-8"))
     cfg = load_config({"RECORDINGS_CONFIG": str(TEMPLATE)})
-    assert cfg.archive_path == Path("/mnt/nas/recordings")
+    assert cfg.archive_path == Path("/srv/recordings/archive")
     assert cfg.data["models"]["claude:opus"]["backend"] == "claude"
 
 
@@ -3779,15 +3798,22 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 12: Frontend scaffold, theme and fonts
+### Task 12: Frontend scaffold (shadcn/ui + Tailwind), brand theme and fonts
 
-Before writing any frontend code, load `/shinyreact-build-app`: Step 1 covers the Vite tier
-and its `external`/`globals` config, and Step 4 the hooks. Also read
-https://posit-dev.github.io/shinyreact/articles/tsx-and-build-tools.html.
+**Check the docs before writing anything in this task** (CLAUDE.md, "check the docs"):
+- **shinyreact:** load `/shinyreact-build-app`. Step 1 covers the Vite tier and its
+  `external`/`globals` config, and Step 4 the hooks.
+- **shadcn:** run `npx skills add shadcn/ui` and load the shadcn skill. Read
+  https://ui.shadcn.com/docs/installation/vite and https://ui.shadcn.com/docs/theming.
+- **brand.yml:** read https://posit-dev.github.io/brand-yml/ and the light/dark section of
+  https://quarto.org/docs/authoring/brand.html.
+
+Record what you checked in the commit message.
 
 **Files:**
-- Create: `_brand.yml`, `_brand-dark.yml`, `scripts/brand_css.py`, `packages/core/tests/test_brand.py`
-- Create: `packages/ui/frontend/.nvmrc`, `package.json`, `vite.config.js`, `tsconfig.json`, `scripts/check-node.mjs`
+- Create: `_brand.yml`, `scripts/brand_css.py`, `packages/core/tests/test_brand.py`
+- Create: `packages/ui/frontend/.nvmrc`, `package.json`, `vite.config.js`, `tsconfig.json`, `scripts/check-node.mjs`, `src/index.css`
+- Create, by the shadcn CLI: `packages/ui/frontend/components.json`, `src/lib/utils.ts`, `src/components/ui/tabs.tsx`, `src/components/ui/toggle-group.tsx`, `src/components/ui/toggle.tsx`
 - Create: `packages/ui/frontend/src/ui.tsx`, `App.tsx`, `sr.ts`, `types.ts`, `theme.css` (generated), `app.css`
 - Create: `packages/ui/frontend/src/lib/theme.ts`, `lib/theme.test.ts`
 - Create: `packages/ui/frontend/src/components/TopBar.tsx`, `ThemeSwitch.tsx`
@@ -3797,28 +3823,36 @@ https://posit-dev.github.io/shinyreact/articles/tsx-and-build-tools.html.
 - Consumes: the Shiny contract from Task 11; the JSON shapes from Task 10.
 - Produces:
   - **Hooks:** `sr.ts` exports `useShinyInput`, `useShinyOutputValue`,
-    `useShinyOutputStatus` and `useShinyInitialized`, typed from
-    `@posit-dev/shinyreact` and read from `window.shinyreact`.
+    `useShinyOutputStatus` and `useShinyInitialized`, typed from `@posit-dev/shinyreact`
+    and read from `window.shinyreact`.
   - **Types:** `types.ts` exports `LibraryView`, `LibraryRow`, `RecordingView`,
-    `TranscriptView`, `Turn`, `Word` and `NotesGroup`.
+    `TranscriptView`, `Turn`, `Word`, `NotesGroup`, `NotesOutput`, `TagRef` and `Filter`.
   - **Theme helpers:** `lib/theme.ts` exports `ThemeChoice`,
     `resolveTheme(choice, prefersDark)`, `loadChoice(storage)`, `saveChoice(storage, choice)`
-    and `applyTheme(root, resolved)`.
-  - **CSS custom properties:** `--bg --surface --side --border --text --muted --blue
-    --on-blue --orange --chip --success --danger`.
+    and `applyTheme(root, resolved)`. Applying a theme sets the class `dark` or `light` on
+    `<html>`, as shadcn's dark-mode convention expects.
+  - **shadcn components:** `@/components/ui/tabs` (`Tabs`, `TabsList`, `TabsTrigger`,
+    `TabsContent`) and `@/components/ui/toggle-group` (`ToggleGroup`, `ToggleGroupItem`),
+    built on Radix.
+  - **CSS custom properties:** shadcn's tokens (`--background --foreground --card --muted
+    --muted-foreground --primary --primary-foreground --accent --border --ring --sidebar
+    --destructive` and so on), plus `--brand-orange` and `--brand-success`, all generated
+    from `_brand.yml`.
 
-- [ ] **Step 1: Write the brand files**
+- [ ] **Step 1: Write `_brand.yml`**
 
-`_brand.yml` (light; standard brand.yml keys):
+There is one file, with light and dark together: any colour can be `{light: …, dark: …}`.
+Quarto's brand docs describe this, and Posit's brand-yml skill dates it to Quarto 1.8.
 ```yaml
-# recordings' light theme. NYC blue is the working colour, NYC orange a small accent, with warm
-# neutrals from chendaniely.github.io/_brand.yml. Dark mode is in _brand-dark.yml, because
-# brand.yml has no light/dark syntax in one file (checked 2026-10-08).
+# recordings' theme. NYC blue is the working colour and NYC orange a small accent, on warm
+# neutrals from chendaniely.github.io/_brand.yml. Every colour that differs between modes
+# is {light, dark}. scripts/brand_css.py turns this into shadcn/ui's CSS variables.
 meta:
   name: recordings
 color:
   palette:
     nyc-blue: "#236192"
+    nyc-blue-light: "#6CA6D9"   # #236192 is only 2.8:1 on the dark base
     nyc-orange: "#F26522"
     warm-white: "#F8F6F2"
     paper: "#FFFDFA"
@@ -3829,51 +3863,26 @@ color:
     near-black: "#1C1A17"
     green-text: "#4E7A2E"
     burgundy: "#9A4665"
-  foreground: near-black
-  background: warm-white
-  primary: nyc-blue
-  secondary: warm-gray
-  tertiary: linen
-  success: green-text
-  warning: nyc-orange
-  danger: burgundy
-  light: paper
-  dark: near-black
-typography:
-  base:
-    family: Atkinson Hyperlegible
-  monospace:
-    family: Atkinson Hyperlegible Mono
-```
-
-`_brand-dark.yml`:
-```yaml
-# recordings' dark theme. Same roles as _brand.yml. NYC blue is lightened to #6CA6D9 because
-# #236192 measures only 2.8:1 on the dark base.
-meta:
-  name: recordings (dark)
-color:
-  palette:
-    nyc-blue-light: "#6CA6D9"
-    nyc-orange: "#F26522"
     dark-base: "#171512"
     dark-surface: "#232019"
     dark-side: "#1C1A16"
     dark-hairline: "#2E2B26"
     stone: "#B8AEA2"
-    warm-white: "#F8F6F2"
     green-light: "#9CC27A"
     rose: "#D27A9A"
-  foreground: warm-white
-  background: dark-base
-  primary: nyc-blue-light
-  secondary: stone
-  tertiary: dark-side
-  success: green-light
+  foreground: { light: near-black, dark: warm-white }
+  background: { light: warm-white, dark: dark-base }
+  primary: { light: nyc-blue, dark: nyc-blue-light }
+  secondary: { light: warm-gray, dark: stone }
+  tertiary: { light: linen, dark: dark-side }
+  success: { light: green-text, dark: green-light }
   warning: nyc-orange
-  danger: rose
-  light: dark-surface
-  dark: warm-white
+  danger: { light: burgundy, dark: rose }
+  light: { light: paper, dark: dark-surface }
+  dark: { light: near-black, dark: warm-white }
+typography:
+  base: Atkinson Hyperlegible
+  monospace: Atkinson Hyperlegible Mono
 ```
 
 - [ ] **Step 2: Write the failing brand tests**
@@ -3894,9 +3903,8 @@ def brand_css():
 
 
 def test_theme_css_is_up_to_date():
-    module = brand_css()
     committed = (REPO / "packages/ui/frontend/src/theme.css").read_text(encoding="utf-8")
-    assert committed == module.render(REPO), "theme.css is stale: run `make brand`"
+    assert committed == brand_css().render(REPO), "theme.css is stale: run `make brand`"
 
 
 def contrast(a: str, b: str) -> float:
@@ -3912,14 +3920,15 @@ def test_text_colours_meet_wcag_aa_in_both_modes():
     module = brand_css()
     for mode in ("light", "dark"):
         t = module.tokens(REPO, mode)
-        for fg in ("text", "muted", "blue"):
-            for bg in ("bg", "surface", "side"):
+        for fg in ("foreground", "muted-foreground", "primary"):
+            for bg in ("background", "card", "muted", "sidebar"):
                 assert contrast(t[fg], t[bg]) >= 4.5, f"{mode}: {fg} on {bg}"
-        assert contrast(t["on-blue"], t["blue"]) >= 4.5, f"{mode}: button text"
+        assert contrast(t["primary-foreground"], t["primary"]) >= 4.5, f"{mode}: button text"
 
 
 def test_orange_is_never_a_light_mode_text_colour():
-    assert contrast("#F26522", "#FFFFFF") < 4.5  # why: 3.2:1, so markers and outlines only
+    # why: 3.2:1 on white, so markers and outlines only
+    assert contrast(brand_css().tokens(REPO, "light")["brand-orange"], "#FFFFFF") < 4.5
 ```
 
 - [ ] **Step 3: Write `scripts/brand_css.py` and generate**
@@ -3929,9 +3938,12 @@ def test_orange_is_never_a_light_mode_text_colour():
 # requires-python = ">=3.14"
 # dependencies = ["pyyaml==6.0.3"]
 # ///
-"""Generate packages/ui/frontend/src/theme.css from _brand.yml (light) and _brand-dark.yml.
+"""Generate packages/ui/frontend/src/theme.css (shadcn/ui CSS variables) from _brand.yml.
 
     uv run scripts/brand_css.py
+
+_brand.yml uses brand.yml's {light, dark} colour objects; this reads them directly, so the
+R/Python brand_yml packages (which don't read that form) are not involved.
 """
 
 from __future__ import annotations
@@ -3943,32 +3955,52 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 OUT = REPO / "packages" / "ui" / "frontend" / "src" / "theme.css"
-FILES = {"light": "_brand.yml", "dark": "_brand-dark.yml"}
-# app token → brand.yml theme key, or "palette:<name>" for a palette colour
-ROLES = {
-    "light": {"border": "palette:hairline", "orange": "palette:nyc-orange", "chip": "palette:sand"},
-    "dark": {"border": "palette:dark-hairline", "orange": "palette:nyc-orange", "chip": "palette:dark-hairline"},
+
+# Roles brand.yml has no theme key for: a palette name per mode.
+EXTRA = {
+    "chip": {"light": "sand", "dark": "dark-hairline"},
+    "hairline": {"light": "hairline", "dark": "dark-hairline"},
 }
-COMMON = {
-    "bg": "background", "surface": "light", "side": "tertiary", "text": "foreground",
-    "muted": "secondary", "blue": "primary", "on-blue": "background",
-    "success": "success", "danger": "danger",
+# shadcn token -> brand.yml theme key, or extra:<role>
+TOKENS = {
+    "background": "background", "foreground": "foreground",
+    "card": "light", "card-foreground": "foreground",
+    "popover": "light", "popover-foreground": "foreground",
+    "primary": "primary", "primary-foreground": "background",
+    "secondary": "extra:chip", "secondary-foreground": "foreground",
+    "muted": "tertiary", "muted-foreground": "secondary",
+    "accent": "extra:chip", "accent-foreground": "foreground",
+    "destructive": "danger",
+    "border": "extra:hairline", "input": "extra:hairline", "ring": "primary",
+    "sidebar": "tertiary", "sidebar-foreground": "foreground",
+    "sidebar-primary": "primary", "sidebar-primary-foreground": "background",
+    "sidebar-accent": "extra:chip", "sidebar-accent-foreground": "foreground",
+    "sidebar-border": "extra:hairline", "sidebar-ring": "primary",
+    "brand-orange": "warning", "brand-success": "success",
 }
+
+
+def _resolve(palette: dict, value, mode: str) -> str:
+    if isinstance(value, dict):
+        value = value[mode]
+    seen = set()
+    while value in palette and value not in seen:  # palette entries may alias each other
+        seen.add(value)
+        value = palette[value]
+    return value
 
 
 def tokens(repo: Path, mode: str) -> dict[str, str]:
-    color = yaml.safe_load((repo / FILES[mode]).read_text(encoding="utf-8"))["color"]
-    palette = color["palette"]
-
-    def resolve(ref: str) -> str:
-        value = palette[ref.removeprefix("palette:")] if ref.startswith("palette:") else color[ref]
-        return palette.get(value, value)
-
-    return {name: resolve(ref) for name, ref in {**COMMON, **ROLES[mode]}.items()}
+    color = yaml.safe_load((repo / "_brand.yml").read_text(encoding="utf-8"))["color"]
+    out = {}
+    for name, ref in TOKENS.items():
+        value = EXTRA[ref.removeprefix("extra:")][mode] if ref.startswith("extra:") else color[ref]
+        out[name] = _resolve(color["palette"], value, mode)
+    return out
 
 
-def _block(selector: str, values: dict[str, str], indent: str = "") -> str:
-    lines = [f"{indent}{selector} {{", f"{indent}  color-scheme: {'dark' if 'dark' in selector else 'light'};"]
+def _block(selector: str, values: dict[str, str], scheme: str, indent: str = "") -> str:
+    lines = [f"{indent}{selector} {{", f"{indent}  color-scheme: {scheme};", f"{indent}  --radius: 0.5rem;"]
     lines += [f"{indent}  --{k}: {v};" for k, v in values.items()]
     return "\n".join(lines + [f"{indent}}}"])
 
@@ -3976,23 +4008,24 @@ def _block(selector: str, values: dict[str, str], indent: str = "") -> str:
 def render(repo: Path) -> str:
     light, dark = tokens(repo, "light"), tokens(repo, "dark")
     return "\n".join([
-        "/* Generated by scripts/brand_css.py from _brand.yml and _brand-dark.yml. Do not edit. */",
-        _block(":root", light),
-        _block(':root[data-theme="dark"]', dark),
-        "/* Before the app sets data-theme, follow the OS. */",
+        "/* Generated by scripts/brand_css.py from _brand.yml. Do not edit. */",
+        _block(":root", light, "light"),
+        _block(".dark", dark, "dark"),
+        "/* Before the app picks a mode (class light/dark on <html>), follow the OS. */",
         "@media (prefers-color-scheme: dark) {",
-        _block(":root:not([data-theme])", dark, indent="  "),
+        _block(":root:not(.light):not(.dark)", dark, "dark", indent="  "),
         "}",
         "",
     ])
 
 
 if __name__ == "__main__":
+    OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(render(REPO), encoding="utf-8")
     print(f"wrote {OUT}", file=sys.stderr)
 ```
 
-Run: `mkdir -p packages/ui/frontend/src && make brand && uv run pytest packages/core/tests/test_brand.py -v`
+Run: `make brand && uv run pytest packages/core/tests/test_brand.py -v`
 Expected: `wrote …/theme.css`, then 3 passed.
 
 - [ ] **Step 4: Copy the self-hosted fonts**
@@ -4025,9 +4058,11 @@ if (major !== 22) {
 }
 ```
 
-`packages/ui/frontend/package.json`. The versions match shinyreact's own examples and
-`pkg-js`, and React is a devDependency only (for types and the JSX transform). It is never
-bundled:
+`packages/ui/frontend/package.json`. Vite, plugin-react, TypeScript and Vitest match
+shinyreact's own examples and `pkg-js`. Tailwind 4.3.3 and `@tailwindcss/vite` 4.3.3
+support Vite 5 (their peer range is `^5.2.0 || …`). React is a devDependency only, for
+types and the JSX transform, and is never bundled. The shadcn CLI adds its own runtime
+dependencies in Step 6.
 ```json
 {
   "name": "recordings-ui-frontend",
@@ -4042,19 +4077,17 @@ bundled:
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@radix-ui/react-tabs": "1.1.22",
-    "@radix-ui/react-toggle-group": "1.1.20",
-    "lucide-react": "1.52.0"
-  },
   "devDependencies": {
     "@posit-dev/shinyreact": "0.1.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "22.20.5",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "4.7.0",
     "jsdom": "26.1.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vite": "5.4.21",
     "vitest": "3.2.7"
@@ -4062,22 +4095,24 @@ bundled:
 }
 ```
 
-`packages/ui/frontend/vite.config.js`. This is the Vite tier from the shinyreact-build-app
-skill, with our output folder:
+`packages/ui/frontend/vite.config.js` is shinyreact's Vite tier (as in its example 04) plus
+the Tailwind plugin, as shadcn's Vite install page shows:
 ```js
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // React/ReactDOM are externalized and read from window.shinyreact at runtime, so this bundle
-// shares the React instance that owns the shinyreact hooks. Two copies = hooks silently empty.
+// (shadcn's components included) shares the React instance that owns the shinyreact hooks.
+// Two copies = hooks silently empty.
 export default defineConfig({
   define: { "process.env.NODE_ENV": JSON.stringify("production") },
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
   build: {
     // Next to shiny_app.py, where ReactApp discovers www/ui.js and www/ui.css.
@@ -4106,7 +4141,8 @@ export default defineConfig({
 });
 ```
 
-`packages/ui/frontend/tsconfig.json`:
+`packages/ui/frontend/tsconfig.json`. This uses a single config with the `@/*` alias that
+shadcn's CLI looks for:
 ```json
 {
   "compilerOptions": {
@@ -4120,16 +4156,58 @@ export default defineConfig({
     "skipLibCheck": true,
     "esModuleInterop": true,
     "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src"]
 }
 ```
 
+`packages/ui/frontend/src/index.css` (the file shadcn's CLI writes its theme scaffold
+into):
+```css
+@import "tailwindcss";
+```
+
 Run: `cd packages/ui/frontend && nvm use && npm install && cd -`
 Expected: `package-lock.json` is created, and the preinstall check passes on Node 22.
 
-- [ ] **Step 6: Write the failing theme test**
+- [ ] **Step 6: Initialise shadcn and add the components**
+
+The CLI version is pinned so a re-run gives the same result. `--base radix` is
+deliberate: shadcn made Base UI the default on 2026-07-02, but says Radix is "still fully
+supported", and Radix matches shinyreact's shadcn examples and the props this plan uses
+(`type="single"`, `data-state`).
+
+```bash
+cd packages/ui/frontend
+npx shadcn@4.21.4 init --template vite --base radix --css-variables --no-rtl --no-monorepo
+npx shadcn@4.21.4 add tabs toggle-group
+npx shadcn@4.21.4 info --json
+cd -
+```
+If `init` asks for a preset or base colour, take the default. `theme.css` overrides every
+colour token after it.
+
+Expected:
+- **`info` reports** Tailwind v4, base `radix`, CSS variables `true` and the aliases
+  `@/components` and `@/lib/utils`.
+- **New files:**
+  - `components.json`
+  - `src/lib/utils.ts` (exports `cn`)
+  - `src/components/ui/tabs.tsx`, `toggle-group.tsx` and `toggle.tsx`
+- **`src/index.css`** gains shadcn's scaffold: `@import "tailwindcss";`, its theme import,
+  `@custom-variant dark (&:is(.dark *));`, `@theme inline { … }`, default `:root`/`.dark`
+  tokens and a `@layer base`.
+- **`package.json`** gains shadcn's runtime dependencies (`radix-ui`,
+  `class-variance-authority`, `clsx`, `tailwind-merge`, `lucide-react` and its CSS
+  packages).
+
+Check with `npm ls react`. It must list `react` only as this project's devDependency and as
+peers. If any package depends on a second `react` copy, stop and fix that first: the
+`external`/`globals` config keeps React out of the bundle, but a mismatched peer would
+still show up here.
+
+- [ ] **Step 7: Write the failing theme test**
 
 `packages/ui/frontend/src/lib/theme.test.ts`:
 ```ts
@@ -4161,9 +4239,14 @@ describe("theme", () => {
     expect(() => saveChoice(broken, "light")).not.toThrow();
   });
 
-  it("sets data-theme on the root element", () => {
-    applyTheme(document.documentElement, "dark");
-    expect(document.documentElement.dataset.theme).toBe("dark");
+  it("sets exactly one of the classes dark/light on <html>", () => {
+    const root = document.documentElement;
+    applyTheme(root, "dark");
+    expect(root.classList.contains("dark")).toBe(true);
+    expect(root.classList.contains("light")).toBe(false);
+    applyTheme(root, "light");
+    expect(root.classList.contains("light")).toBe(true);
+    expect(root.classList.contains("dark")).toBe(false);
   });
 });
 ```
@@ -4171,7 +4254,7 @@ describe("theme", () => {
 Run: `cd packages/ui/frontend && npm test`
 Expected: FAIL with `Failed to resolve import "./theme"`.
 
-- [ ] **Step 7: Implement the hooks, types, theme and shell**
+- [ ] **Step 8: Implement the hooks, types, theme and shell**
 
 `packages/ui/frontend/src/lib/theme.ts`:
 ```ts
@@ -4202,8 +4285,11 @@ export function saveChoice(storage: Storage | null, choice: ThemeChoice): void {
   }
 }
 
+/** shadcn's convention: the `dark` class on <html>. `light` is set too, so theme.css can tell
+ * "the user chose light" from "nothing chosen yet, follow the OS". */
 export function applyTheme(root: HTMLElement, resolved: Resolved): void {
-  root.dataset.theme = resolved;
+  root.classList.toggle("dark", resolved === "dark");
+  root.classList.toggle("light", resolved === "light");
 }
 ```
 
@@ -4266,12 +4352,13 @@ export interface RecordingView {
 export type Filter = { kind: "all" } | { kind: "untagged" } | { kind: "tag"; tag: string };
 ```
 
-`packages/ui/frontend/src/components/ThemeSwitch.tsx`:
+`packages/ui/frontend/src/components/ThemeSwitch.tsx` (shadcn's ToggleGroup, built on
+Radix):
 ```tsx
-import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { applyTheme, loadChoice, resolveTheme, saveChoice, type ThemeChoice } from "@/lib/theme";
 
 function storage(): Storage | null {
@@ -4294,9 +4381,11 @@ export function ThemeSwitch() {
   }, [choice]);
 
   return (
-    <ToggleGroup.Root
-      className="mode"
+    <ToggleGroup
       type="single"
+      size="sm"
+      variant="outline"
+      className="ml-auto"
       value={choice}
       aria-label="Colour theme"
       onValueChange={(v) => {
@@ -4305,10 +4394,10 @@ export function ThemeSwitch() {
         saveChoice(storage(), v as ThemeChoice);
       }}
     >
-      <ToggleGroup.Item value="light" aria-label="Light" data-testid="theme-light"><Sun size={14} /></ToggleGroup.Item>
-      <ToggleGroup.Item value="system" aria-label="System" data-testid="theme-system"><Monitor size={14} /></ToggleGroup.Item>
-      <ToggleGroup.Item value="dark" aria-label="Dark" data-testid="theme-dark"><Moon size={14} /></ToggleGroup.Item>
-    </ToggleGroup.Root>
+      <ToggleGroupItem value="light" aria-label="Light" data-testid="theme-light"><Sun /></ToggleGroupItem>
+      <ToggleGroupItem value="system" aria-label="System" data-testid="theme-system"><Monitor /></ToggleGroupItem>
+      <ToggleGroupItem value="dark" aria-label="Dark" data-testid="theme-dark"><Moon /></ToggleGroupItem>
+    </ToggleGroup>
   );
 }
 ```
@@ -4349,9 +4438,11 @@ export default function App() {
 }
 ```
 
-`packages/ui/frontend/src/ui.tsx`. This is the entry point from the skill. The page has no
-mount container, so the app creates its own:
+`packages/ui/frontend/src/ui.tsx` is the entry point from the skill. The page has no mount
+container, so the app creates its own. The CSS order matters: shadcn's scaffold comes
+first, then our brand tokens override its defaults, then our layout.
 ```tsx
+import "@/index.css";
 import "@/theme.css";
 import "@/app.css";
 
@@ -4362,7 +4453,9 @@ const { ReactDOM } = (window as unknown as { shinyreact: { ReactDOM: typeof impo
 ReactDOM.createRoot(document.body.appendChild(document.createElement("div"))).render(<App />);
 ```
 
-`packages/ui/frontend/src/app.css` (layout and components; colours only from `theme.css`):
+`packages/ui/frontend/src/app.css` holds the layout and our own components. Colours come
+only from shadcn's tokens and the two `--brand-*` tokens. Tailwind's preflight resets
+lists and headings, so notes Markdown gets its typography back here:
 ```css
 @font-face { font-family: "Atkinson Hyperlegible"; src: url("/fonts/AtkinsonHyperlegible-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
 @font-face { font-family: "Atkinson Hyperlegible"; src: url("/fonts/AtkinsonHyperlegible-Italic.woff2") format("woff2"); font-weight: 400; font-style: italic; font-display: swap; }
@@ -4371,79 +4464,84 @@ ReactDOM.createRoot(document.body.appendChild(document.createElement("div"))).re
 @font-face { font-family: "Atkinson Hyperlegible Mono"; src: url("/fonts/AtkinsonHyperlegibleMono-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "Atkinson Hyperlegible Mono"; src: url("/fonts/AtkinsonHyperlegibleMono-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
 
-:root { --sel: color-mix(in srgb, var(--blue) 12%, transparent); --orange-tint: color-mix(in srgb, var(--orange) 12%, transparent); --mark: color-mix(in srgb, var(--orange) 32%, transparent); --success-tint: color-mix(in srgb, var(--success) 16%, transparent); }
-* { box-sizing: border-box; }
+:root {
+  --sel: color-mix(in srgb, var(--primary) 12%, transparent);
+  --orange-tint: color-mix(in srgb, var(--brand-orange) 12%, transparent);
+  --mark: color-mix(in srgb, var(--brand-orange) 32%, transparent);
+  --success-tint: color-mix(in srgb, var(--brand-success) 16%, transparent);
+}
 html, body { margin: 0; height: 100%; }
-body { background: var(--bg); color: var(--text); font-family: "Atkinson Hyperlegible", system-ui, sans-serif; font-size: 14px; line-height: 1.45; }
+body { background: var(--background); color: var(--foreground); font-family: "Atkinson Hyperlegible", system-ui, sans-serif; font-size: 14px; line-height: 1.45; }
 .mono, code { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; }
-.muted { color: var(--muted); }
-button { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.muted { color: var(--muted-foreground); }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
-.topbar { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.topbar { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
 .logo { font-weight: 700; display: flex; align-items: center; gap: 6px; }
-.logo i { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); box-shadow: 4px 0 0 0 var(--blue); margin-right: 4px; }
-.nav { color: var(--muted); padding-bottom: 2px; border-bottom: 2px solid transparent; }
-.nav.on { color: var(--text); border-bottom-color: var(--orange); font-weight: 700; }
-.mode { margin-left: auto; display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
-.mode button { border: 0; background: transparent; padding: 4px 9px; color: var(--muted); cursor: pointer; display: flex; }
-.mode button[data-state="on"] { background: var(--sel); color: var(--blue); }
+.logo i { width: 10px; height: 10px; border-radius: 50%; background: var(--brand-orange); box-shadow: 4px 0 0 0 var(--primary); margin-right: 4px; }
+.nav { color: var(--muted-foreground); padding-bottom: 2px; border-bottom: 2px solid transparent; }
+.nav.on { color: var(--foreground); border-bottom-color: var(--brand-orange); font-weight: 700; }
 
 .panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px 340px 1fr; }
-.sidebar { background: var(--side); border-right: 1px solid var(--border); padding: 10px 8px; overflow: auto; }
-.grp { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 8px 4px; }
-.si { display: flex; justify-content: space-between; width: 100%; text-align: left; border: 0; background: transparent; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
-.si .n { color: var(--muted); font-variant-numeric: tabular-nums; }
-.si.on { background: var(--sel); color: var(--blue); font-weight: 700; }
-.si.on .n { color: var(--blue); }
-.problems { margin: 8px; padding: 8px; border-radius: 8px; border: 1px solid var(--danger); color: var(--danger); font-size: 12.5px; }
+.sidebar { background: var(--sidebar); border-right: 1px solid var(--border); padding: 10px 8px; overflow: auto; }
+.grp { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin: 14px 8px 4px; }
+.si { display: flex; justify-content: space-between; width: 100%; text-align: left; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+.si .n { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.si.on { background: var(--sel); color: var(--primary); font-weight: 700; }
+.si.on .n { color: var(--primary); }
+.problems { margin: 8px; padding: 8px; border-radius: 8px; border: 1px solid var(--destructive); color: var(--destructive); font-size: 12.5px; }
 
-.list { border-right: 1px solid var(--border); overflow: auto; background: var(--surface); }
-.list-head { padding: 9px 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
-.row { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border); background: transparent; padding: 10px 12px; cursor: pointer; }
-.row:hover { background: var(--bg); }
-.row.on { background: var(--sel); box-shadow: inset 3px 0 0 var(--blue); }
+.list { border-right: 1px solid var(--border); overflow: auto; background: var(--card); }
+.list-head { padding: 9px 12px; color: var(--muted-foreground); border-bottom: 1px solid var(--border); }
+.row { display: block; width: 100%; text-align: left; border-bottom: 1px solid var(--border); padding: 10px 12px; cursor: pointer; }
+.row:hover { background: var(--background); }
+.row.on { background: var(--sel); box-shadow: inset 3px 0 0 var(--primary); }
 .row .t { font-weight: 700; display: flex; justify-content: space-between; gap: 8px; }
-.row .m { color: var(--muted); font-size: 12px; margin: 2px 0 5px; }
-.chip { display: inline-block; font-size: 11px; padding: 0 8px; border-radius: 999px; background: var(--chip); margin: 0 4px 4px 0; }
-.chip.auto { background: transparent; border: 1px dashed var(--border); color: var(--muted); }
-.chip.nt { background: var(--success-tint); color: var(--success); font-weight: 700; }
-.lock { color: var(--muted); }
+.row .m { color: var(--muted-foreground); font-size: 12px; margin: 2px 0 5px; }
+.chip { display: inline-block; font-size: 11px; padding: 0 8px; border-radius: 999px; background: var(--accent); margin: 0 4px 4px 0; }
+.chip.auto { background: transparent; border: 1px dashed var(--border); color: var(--muted-foreground); }
+.chip.nt { background: var(--success-tint); color: var(--brand-success); font-weight: 700; }
+.lock { color: var(--muted-foreground); display: inline; }
 
-.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
-.empty { margin: auto; color: var(--muted); }
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--card); }
+.empty { margin: auto; color: var(--muted-foreground); }
 .head { padding: 14px 18px 6px; }
-.head h1 { margin: 0 0 4px; font-size: 19px; }
-.head .meta { color: var(--muted); font-size: 12.5px; }
+.head h1 { margin: 0 0 4px; font-size: 19px; font-weight: 700; }
+.head .meta { color: var(--muted-foreground); font-size: 12.5px; }
 .player { margin: 6px 18px 0; }
-.player audio, .player video { width: 100%; max-height: 38vh; background: var(--bg); border-radius: 8px; }
-.tabs-list { display: flex; gap: 2px; padding: 8px 18px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.tabs-list button { border: 0; background: transparent; padding: 7px 11px; color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer; }
-.tabs-list button[data-state="active"] { color: var(--text); border-bottom-color: var(--blue); font-weight: 700; }
+.player audio, .player video { width: 100%; max-height: 38vh; background: var(--background); border-radius: 8px; }
+.tabs-list { margin: 8px 18px 0; }
 .tab { flex: 1; min-height: 0; overflow: auto; padding: 12px 18px 24px; }
-.tools { display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 12.5px; margin-bottom: 10px; flex-wrap: wrap; }
+.tools { display: flex; gap: 10px; align-items: center; color: var(--muted-foreground); font-size: 12.5px; margin-bottom: 10px; flex-wrap: wrap; }
 .tools .r { margin-left: auto; display: flex; gap: 6px; align-items: center; }
-select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
+select { font: inherit; color: var(--foreground); background: var(--card); border: 1px solid var(--input); border-radius: 6px; padding: 2px 6px; }
 
-.turn { display: grid; grid-template-columns: 56px 1fr; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: pointer; width: 100%; text-align: left; border: 0; background: transparent; }
-.turn:hover { background: var(--bg); }
-.turn .ts { color: var(--blue); font-variant-numeric: tabular-nums; }
+.turn { display: grid; grid-template-columns: 56px 1fr; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: pointer; width: 100%; text-align: left; }
+.turn:hover { background: var(--background); }
+.turn .ts { color: var(--primary); font-variant-numeric: tabular-nums; }
 .turn .sp { font-weight: 700; font-size: 12.5px; margin-bottom: 2px; }
-.turn.now { background: var(--orange-tint); box-shadow: inset 3px 0 0 var(--orange); }
+.turn.now { background: var(--orange-tint); box-shadow: inset 3px 0 0 var(--brand-orange); }
 .turn.now mark { background: var(--mark); color: inherit; border-radius: 3px; }
 
 .notes-split { display: grid; grid-template-columns: 200px 1fr; gap: 14px; }
 .notes-list { border-right: 1px solid var(--border); padding-right: 8px; }
 .nl-h { font-weight: 700; padding: 6px 6px 2px; }
-.nl-i { display: flex; justify-content: space-between; width: 100%; border: 0; background: transparent; padding: 4px 6px 4px 14px; border-radius: 6px; cursor: pointer; color: var(--muted); text-align: left; }
-.nl-i.on { background: var(--sel); color: var(--blue); font-weight: 700; }
+.nl-i { display: flex; justify-content: space-between; width: 100%; padding: 4px 6px 4px 14px; border-radius: 6px; cursor: pointer; color: var(--muted-foreground); text-align: left; }
+.nl-i.on { background: var(--sel); color: var(--primary); font-weight: 700; }
 .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .compare > section { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
-.foot { color: var(--muted); font-size: 11.5px; margin-top: 12px; }
-.md h1 { font-size: 17px; } .md h2 { font-size: 15px; } .md a { color: var(--blue); }
+.foot { color: var(--muted-foreground); font-size: 11.5px; margin-top: 12px; }
+.md h1 { font-size: 17px; font-weight: 700; margin: 10px 0 6px; }
+.md h2 { font-size: 15px; font-weight: 700; margin: 12px 0 4px; }
+.md h3 { font-size: 14px; font-weight: 700; margin: 10px 0 4px; }
+.md p { margin: 6px 0; }
+.md ul { list-style: disc; padding-left: 1.4em; margin: 6px 0; }
+.md ol { list-style: decimal; padding-left: 1.4em; margin: 6px 0; }
+.md a { color: var(--primary); text-decoration: underline; }
 table.details { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 table.details td, table.details th { text-align: left; border-bottom: 1px solid var(--border); padding: 5px 8px; }
+h3 { font-weight: 700; margin: 12px 0 6px; }
 
 @media (max-width: 760px) {
   .panes { grid-template-columns: 1fr; grid-auto-rows: auto; overflow: auto; }
@@ -4452,21 +4550,28 @@ table.details td, table.details th { text-align: left; border-bottom: 1px solid 
 }
 ```
 
-- [ ] **Step 8: Run the checks, then build**
+- [ ] **Step 9: Run the checks, then build**
 
 Run: `make test-js && make build && ls packages/ui/src/recordings_ui/www`
-Expected: the typecheck is clean, Vitest shows 4 passed, and `www/` lists `ui.js`,
-`ui.css` and `fonts/`. Then run `uv run pytest packages/ui/tests/test_app.py -v`: all
-pass, and `test_the_page_and_the_fonts_are_served` now runs and passes.
+Expected:
+- the typecheck is clean, and Vitest shows 4 passed
+- `www/` lists `ui.js`, `ui.css` and `fonts/`
+- `grep -c "createElement(\"div\"" packages/ui/src/recordings_ui/www/ui.js` prints at least
+  1
+- `grep -c "react.production" packages/ui/src/recordings_ui/www/ui.js` prints **0**, which
+  proves no React was bundled
 
-- [ ] **Step 9: Commit**
+Then run `uv run pytest packages/ui/tests/test_app.py -v`. Everything passes, and
+`test_the_page_and_the_fonts_are_served` now runs and passes.
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add _brand.yml _brand-dark.yml scripts packages/core/tests/test_brand.py packages/ui/frontend packages/ui/src/recordings_ui/www/fonts
-git commit -m "feat(ui): React client scaffold with warm light/dark themes and self-hosted fonts
+git add _brand.yml scripts packages/core/tests/test_brand.py packages/ui/frontend packages/ui/src/recordings_ui/www/fonts
+git commit -m "feat(ui): React client on shadcn/ui + Tailwind with the brand theme and self-hosted fonts
 
-Vite tier and window.shinyreact hooks as prescribed by the shinyreact-build-app skill;
-toolchain versions match shinyreact's own examples.
+Checked: shinyreact-build-app skill (Vite tier, externals, hooks); shadcn skill and
+ui.shadcn.com Vite install + theming; brand-yml docs and Quarto's light/dark brand syntax.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -4475,7 +4580,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 13: Library UI: sidebar, list, player and synchronized transcript
 
-Load `/shinyreact-build-app` again for this task's hooks: `useShinyInput` for
+Load `/shinyreact-build-app` again for this task's hooks, and the shadcn skill for `Tabs`: `useShinyInput` for
 `selected_id`, and the `useShinyOutputStatus` loading-versus-recalculating pattern.
 
 **Files:**
@@ -4747,9 +4852,10 @@ export function TranscriptTab({ transcripts, chosen, time, onSeek }: Props) {
 
 `packages/ui/frontend/src/components/RecordingPane.tsx`:
 ```tsx
-import * as Tabs from "@radix-ui/react-tabs";
 import { Lock } from "lucide-react";
 import { useRef, useState } from "react";
+
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { useShinyOutputStatus, useShinyOutputValue } from "../sr";
 import type { RecordingView } from "../types";
@@ -4777,14 +4883,14 @@ export function RecordingPane({ selectedId }: { selectedId: string | null }) {
         <div>{rec.tags.map((t) => <span key={t.tag} className={`chip${t.by === "auto" ? " auto" : ""}`}>{t.tag}</span>)}</div>
       </div>
       <Player url={rec.media_url} kind={rec.kind} mediaRef={mediaRef} onTime={setTime} />
-      <Tabs.Root defaultValue="transcript" style={{ display: "contents" }}>
-        <Tabs.List className="tabs-list" aria-label="Recording">
-          <Tabs.Trigger value="transcript" data-testid="tab-transcript">Transcript</Tabs.Trigger>
-        </Tabs.List>
-        <Tabs.Content value="transcript" className="tab">
+      <Tabs defaultValue="transcript" className="flex min-h-0 flex-1 flex-col">
+        <TabsList className="tabs-list" aria-label="Recording">
+          <TabsTrigger value="transcript" data-testid="tab-transcript">Transcript</TabsTrigger>
+        </TabsList>
+        <TabsContent value="transcript" className="tab">
           <TranscriptTab transcripts={rec.transcripts} chosen={rec.chosen_transcript} time={time} onSeek={seek} />
-        </Tabs.Content>
-      </Tabs.Root>
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }
@@ -4981,22 +5087,22 @@ import { MyNotesTab } from "./MyNotesTab";
 import { NotesTab } from "./NotesTab";
 import { PlaudTab } from "./PlaudTab";
 ```
-Replace the `<Tabs.List>…</Tabs.List>` element with:
+Replace the `<TabsList>…</TabsList>` element with:
 ```tsx
-        <Tabs.List className="tabs-list" aria-label="Recording">
-          <Tabs.Trigger value="transcript" data-testid="tab-transcript">Transcript</Tabs.Trigger>
-          <Tabs.Trigger value="notes" data-testid="tab-notes">Notes ({rec.notes.reduce((n, g) => n + g.outputs.length, 0)})</Tabs.Trigger>
-          <Tabs.Trigger value="plaud" data-testid="tab-plaud">Plaud</Tabs.Trigger>
-          <Tabs.Trigger value="my-notes" data-testid="tab-my-notes">My notes</Tabs.Trigger>
-          <Tabs.Trigger value="details" data-testid="tab-details">Details</Tabs.Trigger>
-        </Tabs.List>
+        <TabsList className="tabs-list" aria-label="Recording">
+          <TabsTrigger value="transcript" data-testid="tab-transcript">Transcript</TabsTrigger>
+          <TabsTrigger value="notes" data-testid="tab-notes">Notes ({rec.notes.reduce((n, g) => n + g.outputs.length, 0)})</TabsTrigger>
+          <TabsTrigger value="plaud" data-testid="tab-plaud">Plaud</TabsTrigger>
+          <TabsTrigger value="my-notes" data-testid="tab-my-notes">My notes</TabsTrigger>
+          <TabsTrigger value="details" data-testid="tab-details">Details</TabsTrigger>
+        </TabsList>
 ```
-After the transcript `<Tabs.Content>`, add:
+After the transcript `<TabsContent>`, add:
 ```tsx
-        <Tabs.Content value="notes" className="tab"><NotesTab groups={rec.notes} /></Tabs.Content>
-        <Tabs.Content value="plaud" className="tab"><PlaudTab notes={rec.plaud_notes} /></Tabs.Content>
-        <Tabs.Content value="my-notes" className="tab"><MyNotesTab html={rec.my_notes_html} /></Tabs.Content>
-        <Tabs.Content value="details" className="tab"><DetailsTab rec={rec} /></Tabs.Content>
+        <TabsContent value="notes" className="tab"><NotesTab groups={rec.notes} /></TabsContent>
+        <TabsContent value="plaud" className="tab"><PlaudTab notes={rec.plaud_notes} /></TabsContent>
+        <TabsContent value="my-notes" className="tab"><MyNotesTab html={rec.my_notes_html} /></TabsContent>
+        <TabsContent value="details" className="tab"><DetailsTab rec={rec} /></TabsContent>
 ```
 
 - [ ] **Step 3: Typecheck, test, build and check by hand**
@@ -5129,10 +5235,10 @@ def test_notes_compare_side_by_side(page: Page, server_url):
 def test_dark_mode_sticks_across_reloads(page: Page, server_url):
     open_library(page, server_url)
     page.get_by_test_id("theme-dark").click()
-    expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+    expect(page.locator("html")).to_have_class(re.compile(r"\bdark\b"))
     page.reload()
     expect(page.get_by_test_id("recording-row")).to_have_count(4)
-    expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+    expect(page.locator("html")).to_have_class(re.compile(r"\bdark\b"))
 ```
 
 - [ ] **Step 2: Run them**
@@ -5251,16 +5357,16 @@ services:
 #   make deploy
 # Relative paths are relative to docker/, where compose.yml lives.
 
-# The archive folder on this machine (the NAS mount on the homelab server). Mounted at /archive.
-RECORDINGS_ARCHIVE_HOST=/mnt/nas/recordings
+# The archive folder on this machine: the homelab server's own disk (spec §3). Mounted at /archive.
+RECORDINGS_ARCHIVE_HOST=/srv/recordings/archive
 # Your config.toml (copied from config.example.toml). Mounted read-only.
 RECORDINGS_CONFIG_HOST=../config.toml
 # Where to publish the app. Use this machine's Tailscale IP so only the tailnet reaches it;
 # 127.0.0.1 keeps it local while testing.
 RECORDINGS_BIND=127.0.0.1
 RECORDINGS_PORT=8000
-# The user the container runs as. Match the owner of the archive share, so that stage 2
-# (the first stage that writes) can write to it. `id -u` and `id -g` on the homelab server.
+# The user the container runs as: the owner of /srv/recordings, so that stage 2 (the first
+# stage that writes) can write to it. `id -u` and `id -g` on the homelab server.
 RECORDINGS_UID=1000
 RECORDINGS_GID=1000
 ```

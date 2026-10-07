@@ -80,9 +80,12 @@ The repo holds two Python packages:
             │            │  calls                                     │ calls                    │
             │            └──────────▶  recordings (core library)  ◀───┘                          │
             │                              │                │                                    │
-            │                    SQLite index + queue   archive (NAS)  ◀── source of truth       │
-            │                    (host-local volume)    recordings/ catalog/ tags.yaml …         │
-            └──────────────────────────────┬──────────────────────────────────────────────────────┘
+            │                    SQLite index + queue   archive (local disk) ◀── source of truth │
+            │                    (local disk)           recordings/ catalog/ tags.yaml …         │
+            │                                                 │ hourly restic (one-way, versioned)│
+            └──────────────────────────────┬──────────────────┼───────────────────────────────────┘
+                                           │                  ▼
+                                           │        NAS (Synology): backups + read-only mirror
                                            │ HTTPS over Tailscale              `claude -p` (CLI in image)
                                            ▼                                          ▼
                                 DGX Spark: whisper · llama-swap · pyannote      Claude (Max plan)
@@ -90,23 +93,29 @@ The repo holds two Python packages:
 
 - **One image, two containers.** `web` runs `recordings-ui` and `worker` runs
   `recordings worker`. Long jobs never slow down the UI.
-- **The archive is the source of truth.** It lives on the NAS and is written first.
-  The SQLite index and job queue live on the Docker host's local disk (SQLite file locking
-  is unreliable over network shares). They are fully derived, and `recordings reindex`
-  rebuilds them.
+- **The archive is the source of truth.** It lives on the **homelab server's own disk** (decided
+  2026-10-08), at `/srv/recordings/archive`, and is written first.
+  - **Why not the NAS:** writing over an NFS or SMB mount works for one writer, but a
+    dropped connection can leave stray temp files, file-change notifications don't cross
+    the share, user IDs must match, and the app stops whenever the NAS does.
+  - **The homelab server's disk** has room for thousands of hours of audio.
+  - **The NAS gets one-way, versioned backups** (§15.1), never live writes.
+- **The SQLite index and job queue** sit on the same local disk. They are fully derived,
+  and `recordings reindex` rebuilds them.
 - **Model backends sit behind one interface:** Spark (HTTP, OpenAI-style), Claude (the
   `claude` CLI) and Canned (demo and tests). §8.4 has the details.
 - **The homelab server does all the work and is the only writer** (Dan, 2026-10-08).
   - **On the homelab server:** the app, the worker, Plaud sync, ffmpeg, and every call to the Spark
     and Claude. The Claude token exists only there.
-  - **Why one writer:** if two machines changed the same `recording.json` over the network
-    share at once, a change could be lost. `audio-router`'s host claim existed for the same
-    reason. The core refuses to write on any machine other than the one named in config.
+  - **Why one writer:** if two machines changed the same `recording.json` at once, through
+    a share or a two-way sync like Synology Drive, a change could be lost or a conflict copy
+    made. `audio-router`'s host claim existed for the same reason. The core refuses to
+    write on any machine other than the one named in config.
   - **The Mac is a client.** Dan uses the UI in a browser over Tailscale. Anything the Mac
     or an agent on it wants done goes to the app, through the JSON API or
     `recordings --remote <url> …`, and **runs on the homelab server**.
-  - **Reading is fine from anywhere** the archive is mounted, for example a Pixeltable
-    notebook on the Mac. Writing never is.
+  - **Reading from the Mac** uses the read-only mirror on the NAS (§15.1), for example
+    from a Pixeltable notebook. Nothing but the homelab server ever writes.
 - **Dependencies on `local-ai` Phase 3:**
   - The Spark is reachable from the homelab machine over Tailscale, with this app's own
     key.
@@ -200,15 +209,17 @@ recordings/                      (repo root, uv workspace, MIT)
   - `RECORDINGS_PLAUD_TOKEN`, the Plaud token (stage 2)
   - `RECORDINGS_SPARK_API_KEY`, this app's llama-swap key (stage 4)
   - `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, lasting a year (stage 4)
+  - `RESTIC_PASSWORD`, the backup repository key (stage 2). Keep a copy in your password
+    manager, because without it the backups can't be read.
 - **Docker host settings** (`docker/deploy.env`):
-  - `RECORDINGS_ARCHIVE_HOST`
+  - `RECORDINGS_ARCHIVE_HOST` (`/srv/recordings/archive` on the homelab server)
   - `RECORDINGS_CONFIG_HOST`
   - `RECORDINGS_BIND` (the homelab server's Tailscale IP)
   - `RECORDINGS_PORT`
-  - `RECORDINGS_UID` / `RECORDINGS_GID` (matching the NAS share's owner, so the container
-    can write from stage 2)
+  - `RECORDINGS_UID` / `RECORDINGS_GID` (the owner of `/srv/recordings`)
 
-  Later stages add the index volume, the watched folder path and the secrets folder.
+  Later stages add the index volume, the watched folder path, the secrets folder and the
+  backup target.
 
   No secret appears in the image, the repo, the archive, logs or `--json` output. CI runs
   gitleaks.
@@ -728,6 +739,10 @@ later" until its build stage (§20):
 - failed jobs, with reasons and Retry
 - Spark and Claude reachability
 - the date the Claude token expires, with a warning 30 days before
+- **Backups** (§15.1): when the last backup finished, and the last restore test. Needs
+  attention if the last backup is more than 2 hours old.
+- **Disk space** on the homelab server: a warning below 20% free. Below 5% free, new imports stop,
+  with the reason shown.
 - **Waiting for approval** (batch processing of the outside-edit previews, §11):
   - **An orange badge in the top bar**, visible on every page, shows "N waiting · M jobs".
     Clicking it opens this panel.
@@ -767,9 +782,14 @@ later" until its build stage (§20):
   - dark-mode blue 6.3:1
   - muted text at least 4.5:1 in both modes
 - **Font:** Atkinson Hyperlegible and Atkinson Hyperlegible Mono, **self-hosted**.
-- **`_brand.yml`** in the repo is the single source for these values. The build turns it
-  into CSS variables for both modes. brand.yml's dark-mode support gets checked against its
-  current docs during planning.
+- **One `_brand.yml`** in the repo is the single source for these values, light and dark
+  together. Any colour can be `{light: …, dark: …}`, the syntax Quarto's brand docs
+  describe and that Posit's brand-yml skill dates to Quarto 1.8. I checked this on
+  2026-10-08, after first wrongly saying it needed two files.
+  - The build turns it into shadcn/ui's CSS variables (`--background`, `--primary` and so
+    on) for `:root` and `.dark`.
+  - The R and Python `brand_yml` packages don't read the light/dark form, but the app
+    doesn't use them.
 - **Phone width:** every page works on a phone. The list and recording stack, so you can
   play and read on the phone.
 
@@ -808,16 +828,32 @@ come from that frame.
     2. Re-link the skills.
     3. Check the Node pin.
     4. Run all tests.
-- **Docs in context:** run `uvx library-skills --claude` (as `make skills`, after
-  `uv sync`). It links shinyreact's skills (`shinyreact-build-app` with its references,
-  and `shinyreact-convert-app`) from the installed version into `.claude/skills`. Git
-  ignores the links.
-- **The project rule in `CLAUDE.md`:**
-  - Before writing or changing shinyreact code, load `/shinyreact-build-app`.
-  - For anything the skill doesn't cover, check https://posit-dev.github.io/shinyreact/.
-  - Note what was checked.
-  - If the docs don't cover it, say so and never guess. Such gaps are worth reporting to
-    the Shiny team.
+- **Components: shadcn/ui and Tailwind v4,** chosen 2026-10-08.
+  - **Why:** the `shinyreact-build-app` skill calls this "the default" (SKILL.md line 126),
+    and its examples 03 and 04 use it. The shinyreact website docs don't recommend any
+    component library.
+  - **How it works:** shadcn copies component source into
+    `packages/ui/frontend/src/components/ui/`. It is set up with **`--base radix`**: shadcn
+    switched its default to Base UI on 2026-07-02 and says Radix is "still fully
+    supported", and Radix matches shinyreact's shadcn examples.
+  - **React stays external,** from `window.shinyreact`, so shadcn's components share the
+    hooks' React.
+- **Docs in context.** `make skills` installs:
+  - **shinyreact's skills,** via `uvx library-skills --claude` after `uv sync`. It links
+    `shinyreact-build-app` with its references and `shinyreact-convert-app` from the
+    installed version into `.claude/skills`, and git ignores the links.
+  - **shadcn's official skill,** via `npx skills add shadcn/ui`. It reads
+    `components.json` and runs `shadcn info`.
+- **The project rule in `CLAUDE.md`:** check the current docs or skill before writing
+  code against any of these. Never write them from memory.
+  - **shinyreact:** load `/shinyreact-build-app`, then https://posit-dev.github.io/shinyreact/.
+  - **brand.yml:** https://posit-dev.github.io/brand-yml/, plus
+    https://quarto.org/docs/authoring/brand.html for light/dark.
+  - **shadcn/ui:** the shadcn skill, then https://ui.shadcn.com/docs.
+  - **Tailwind v4:** https://tailwindcss.com/docs.
+
+  Note what was checked. If the docs don't cover it, say so and never guess. Such gaps
+  are worth reporting upstream.
 - **A head start:** `shinyreact-convert-app` can port `app_recordings.py` as the UI's
   starting point.
 - **Assumption, checked again:** shinyreact was pre-release as of 2026-09-13 (Python 0.1.0).
@@ -837,13 +873,46 @@ come from that frame.
 - **Invalid edits:** shown, never overwritten (§11).
 - **Visibility:** every failure appears in **Needs attention** with Retry.
 
-## 15. Security
+## 15. Security and backups
 
 - **Access:** reachable only over Tailscale, published on a port. There is no app login in
   version 1.
 - **Before the app goes beyond Tailscale:** when the reverse proxy arrives, the proxy
   handles login and the app only accepts requests from the proxy. This is a requirement.
 - **Containers:** both run as non-root users. Secrets follow §5.
+
+### 15.1 Backups to the NAS (from stage 2, the first stage that writes)
+
+- **A backup, not a sync.** A two-way sync, like today's Synology Drive folder, faithfully
+  copies a bad write or a deletion to the NAS. Versioned backups keep history, so mistakes
+  can be rolled back.
+- **The tool is restic,** encrypted and deduplicated. It runs on the homelab server as a `backup`
+  service in the same Docker Compose project and writes only to its own repository on
+  the NAS.
+  - **Transport:** SFTP to the NAS is preferred. An NFS mount is the fallback; the
+    homelab server can mount a NAS share over NFS. Either way, restic writes
+    only its own repository, with its own locking, and the app never writes to the NAS.
+- **What is backed up:**
+  - the archive
+  - `config.toml`
+  - `docker/deploy.env`
+  - a consistent copy of the SQLite index, taken with SQLite's own backup command first
+  - **not** the secrets folder: those live in your password manager
+- **When, and for how long:** hourly. Keep 24 hourly, 14 daily, 8 weekly and 12 monthly
+  snapshots.
+- **Checks:**
+  - a weekly `restic check`
+  - a monthly automatic restore of the newest snapshot into a scratch folder, which must
+    pass `recordings validate`, because a backup that has never been restored isn't proven
+  - the results appear on the Status page (§12.5)
+- **A read-only mirror for the Mac:** an hourly one-way `rsync` of the archive to a share
+  on the NAS. The Mac and Pixeltable read that, either mounted read-only or synced down
+  one-way with Synology Drive on the Mac. **The homelab server itself doesn't run Synology Drive.**
+- **Capacity:** The NAS's free space is checked before backups start. The
+  backup repository grows with the archive, and deduplication plus the retention limits
+  keep it close to the archive's size.
+- **Later:** Synology's own snapshots of the backup share, plus Hyper Backup to an
+  off-site target, complete a 3-2-1 setup.
 
 ## 16. Testing
 
@@ -959,8 +1028,11 @@ Each stage leaves a working, demonstrable app.
    - the Add page's Plaud panel
 
    All of Dan's real recordings arrive in the Library here, read-only until stage 3.
-   This stage is the first deployment on the homelab server, with the archive on the NAS mounted
-   there, SQLite on its local disk, and the Plaud token as a secret.
+   This stage is the first deployment on the homelab server:
+   - the archive and SQLite on its local disk, at `/srv/recordings`
+   - the Plaud token as a secret
+   - **backups to the NAS** (§15.1) and the disk-space guard (§12.5), because this is
+     the first stage that writes
 3. **Tagging:**
    - editing `tags.yaml` and `recording.json`
    - drag, `T`, the grid and the tree, with Undo
@@ -999,4 +1071,12 @@ Pixeltable notebook.
    `transcript_prompts` types live in `prompts/` in this repo. *(The move of
    `transcript_prompts` and the `private/` naming were proposed and taken as accepted. Dan
    to object if not.)*
-5. **The homelab machine** (§20): the homelab server.
+5. **The homelab machine** (§20): the homelab server (Ubuntu, x86_64).
+6. **The archive lives on the homelab server's own disk** (§3). the NAS gets hourly versioned
+   restic backups plus a read-only mirror for the Mac (§15.1). The homelab server doesn't run
+   Synology Drive.
+7. **Components** (§13): shadcn/ui and Tailwind v4, set up with `--base radix`. They are
+   shinyreact's skill default, as opposed to its website docs.
+8. **One `_brand.yml`** with `{light, dark}` colours (§12.6).
+9. **Docs before code** (§13): the shinyreact, brand.yml, shadcn and Tailwind docs and
+   skills are consulted before writing against them.
