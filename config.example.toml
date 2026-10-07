@@ -1,0 +1,49 @@
+# recordings configuration: the committed TEMPLATE. Copy it and edit the copy:
+#   cp config.example.toml config.toml        (config.toml is git-ignored)
+# Never put secrets here; they come from the environment (bottom of this file).
+# A section marked (stage N) is read from that build stage on, and ignored before it.
+
+[archive]
+# The archive folder. In Docker the container sees it at /archive, and docker/compose.yml sets
+# RECORDINGS_ARCHIVE=/archive, which overrides this value.
+path = "/srv/recordings/archive"
+# The only machine allowed to write the archive (stage 2): that machine's hostname.
+writer_host = "my-homelab"
+# Time zone for recordings whose source doesn't say.
+default_timezone = "America/Vancouver"
+
+[server]
+# How you reach the app; used to build stable /r/<id> links (stage 3).
+base_url = "http://my-homelab:8000"
+
+[index]
+# SQLite index and job queue (stage 3), on the same local disk as the archive.
+path = "/data/index.sqlite"
+
+[plaud]                                 # stage 2
+schedule_minutes = 20                   # scheduled sync interval; 0 turns it off
+auto_import = true                      # import missing recordings (safe: nothing runs until tagged)
+recheck_days = 14                       # keep re-checking recent recordings for Plaud's late notes
+auto_private_patterns = ["^private"]    # titles matching these are tagged `private`
+
+[spark]                                 # stage 4
+base_url = "https://spark.your-tailnet.ts.net"   # llama-swap, reached over Tailscale
+whisper_model = "whisper-large-v3-turbo"
+pick_model = "gemma-4-26b-a4b"                   # small model that auto-picks note types
+
+[models]                                # stage 4: the names tags.yaml refers to
+"spark:default" = { backend = "spark", model = "qwen3.6-35b-a3b" }
+"claude:opus" = { backend = "claude", model = "opus" }
+
+[prompts]                               # stage 4
+extra_dirs = []                         # prompt folders beyond the repo's prompts/
+
+[watched_folder]                        # stage 5
+path = "/watch"
+
+# ---- Secrets: environment only, never in this file --------------------------------------
+# Each may instead be given as NAME_FILE=<path to a file holding it>; Docker secrets arrive
+# that way, under /run/secrets/. `recordings doctor` says which are set, never their values.
+#   RECORDINGS_PLAUD_TOKEN      Plaud API token                              (stage 2)
+#   RECORDINGS_SPARK_API_KEY    this app's llama-swap key (`spark keys create`)   (stage 4)
+#   CLAUDE_CODE_OAUTH_TOKEN     Claude subscription token (`claude setup-token`)  (stage 4)

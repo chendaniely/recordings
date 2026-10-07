@@ -18,3 +18,7 @@ demo/.cache/
 test-results/
 .playwright-mcp/
 .DS_Store
+# Real settings and deploy values; the committed templates are *.example.*
+/config.toml
+docker/deploy.env
+secrets/

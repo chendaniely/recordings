@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
-from recordings import __version__, schemas, selfdoc
+from recordings import __version__, config, schemas, selfdoc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("validate", help="check every recording.json and rendition")
     p.add_argument("archive", type=Path)
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("doctor", help="check config.toml, the archive and secrets (presence only)")
     p.add_argument("--json", action="store_true")
     return parser
 
@@ -62,10 +66,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 1 if problems else 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    report = config.doctor(os.environ)
+    _emit(report, args.json)
+    return 78 if report["problems"] else 0  # 78 = EX_CONFIG, as audio-router's doctor uses
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    commands = {"schemas": cmd_schemas, "docs": cmd_docs, "validate": cmd_validate}
+    commands = {"schemas": cmd_schemas, "docs": cmd_docs, "validate": cmd_validate, "doctor": cmd_doctor}
     if args.command in commands:
         return commands[args.command](args)
     parser.print_help(sys.stdout)
