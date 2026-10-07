@@ -43,4 +43,6 @@ renditions/<name>-<utc-stamp>.json
   save writes a temporary file and renames it into place.
 - **A recording is private** if `recording.json` has a tag `private` or any tag under
   `private/`. A private recording's content never goes to a cloud model, including agents.
-- **Stamps** are ISO 8601 basic UTC, for example `20261008T143512Z`.
+- **Stamps** are ISO 8601 basic UTC, for example `20261008T143512Z`. When two outputs would
+  get the same name, the later one gets a `-2`, `-3`, … suffix before `.json`, and nothing
+  is ever overwritten.

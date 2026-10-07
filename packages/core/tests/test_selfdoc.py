@@ -71,3 +71,36 @@ def test_validate_reports_bad_files_with_their_path(tmp_path):
     problems = validate(archive.root)
     assert len(problems) == 1
     assert problems[0]["path"].endswith("recording.json")
+
+
+def test_writer_names_files_in_the_documented_shape(tmp_path):
+    archive, rec = build_one(tmp_path)
+    folder = archive.path_for(rec.id)
+    # The fixture's exact inputs produce deterministic filenames
+    expected = {
+        f"{rec.id}.mp3",
+        "my-notes.md",
+        "recording.json",
+        "renditions/transcript-canned-large-v3-turbo@a4aaeec-20261008T120000Z.json",
+        "renditions/notes-lecture-canned-m@demo-20261008T120000Z.json",
+        "source/plaud-20261008T120000Z.json",
+    }
+    actual = {p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()}
+    assert actual == expected, f"writer produced {actual}"
+
+
+def test_layout_patterns_reject_bogus_paths():
+    patterns = layout_patterns()
+    bogus = [
+        "renditions/x.txt",
+        "renditions/notes.json",  # no stamp
+        "foo.json",
+        "source/x.json",
+        "notes/<id>.md",
+        "recording.yaml",
+        "<id>.mp3/extra",
+    ]
+    for path in bogus:
+        assert not any(p.fullmatch(path) for p in patterns), (
+            f"pattern incorrectly accepted {path!r}"
+        )
