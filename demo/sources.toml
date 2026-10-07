@@ -1,0 +1,90 @@
+# Public-domain recordings from Wikimedia Commons, trimmed and re-encoded for demo mode
+# (spec §17). `recorded_at` is local wall time in `timezone`; zoneinfo supplies the offset.
+
+[[recording]]
+slug = "jfk-rice"
+title = "JFK at Rice University: We choose to go to the Moon (opening)"
+url = "https://upload.wikimedia.org/wikipedia/commons/5/50/Jfk_rice_university_we_choose_to_go_to_the_moon.ogg"
+page = "https://commons.wikimedia.org/wiki/File:Jfk_rice_university_we_choose_to_go_to_the_moon.ogg"
+sha256 = "7486fba805c20bde4d43750bd9c34aee86ab7acfd3854a1d0f3d64f62ae68b27"
+license = "Public domain (John F. Kennedy Presidential Library & Museum)"
+kind = "audio"
+ext = "mp3"
+start = 0
+duration = 90
+duration_ms = 90009
+speakers = 1
+recorded_at = "1962-09-12T10:00:00"
+timezone = "America/Chicago"
+time_source = "published"
+source_kind = "url"
+source_ref = "https://commons.wikimedia.org/wiki/File:Jfk_rice_university_we_choose_to_go_to_the_moon.ogg"
+tags = [{ tag = "talks", by = "you" }, { tag = "notes/conference-talk", by = "auto" }]
+notes = [
+  { note_type = "conference-talk", model = "qwen3.6-35b-a3b" },
+  { note_type = "conference-talk", model = "claude-opus-5-5" },
+]
+
+[[recording]]
+slug = "apollo13-problem"
+title = "Apollo 13: Houston, we've had a problem"
+url = "https://upload.wikimedia.org/wikipedia/commons/1/12/Apollo13-wehaveaproblem_edit_1.ogg"
+page = "https://commons.wikimedia.org/wiki/File:Apollo13-wehaveaproblem_edit_1.ogg"
+sha256 = "0177b4a26bc7efa792beced4d82375669a8080be3412fcb3996b9b4c84ce55b9"
+license = "Public domain (NASA)"
+kind = "audio"
+ext = "mp3"
+start = 0
+duration = 0            # 0 = whole file
+duration_ms = 16550
+speakers = 2
+recorded_at = "1970-04-13T21:07:56"
+timezone = "America/Chicago"
+time_source = "published"
+source_kind = "plaud"   # shows the Plaud tab; the payload is written for the demo
+source_ref = "demo-apollo13"
+tags = []               # the untagged demo recording
+notes = []
+plaud = true
+
+[[recording]]
+slug = "apollo11-first-steps"
+title = "Apollo 11: first steps on the Moon"
+url = "https://upload.wikimedia.org/wikipedia/commons/a/a6/Apollo_11_Landing_-_first_steps_on_the_moon.ogv"
+page = "https://commons.wikimedia.org/wiki/File:Apollo_11_Landing_-_first_steps_on_the_moon.ogv"
+sha256 = "92712e9fddf6c30a6df8828ab1c30ee91d90a7503feb0198f8c9ab15320682cd"
+license = "Public domain (NASA)"
+kind = "video"
+ext = "mp4"
+start = 0
+duration = 0
+duration_ms = 61518
+speakers = 2
+recorded_at = "1969-07-20T21:56:15"
+timezone = "America/Chicago"
+time_source = "published"
+source_kind = "url"
+source_ref = "https://commons.wikimedia.org/wiki/File:Apollo_11_Landing_-_first_steps_on_the_moon.ogv"
+tags = [{ tag = "space/apollo", by = "you" }, { tag = "notes/general-fallback", by = "auto" }]
+notes = [{ note_type = "general-fallback", model = "qwen3.6-35b-a3b" }]
+
+[[recording]]
+slug = "fdr-fireside-1"
+title = "Fireside Chat 1: On the Banking Crisis (opening)"
+url = "https://upload.wikimedia.org/wikipedia/commons/9/9b/Fireside_Chat_1_On_the_Banking_Crisis_%28March_12%2C_1933%29_Franklin_Delano_Roosevelt.ogg"
+page = "https://commons.wikimedia.org/wiki/File:Fireside_Chat_1_On_the_Banking_Crisis_(March_12,_1933)_Franklin_Delano_Roosevelt.ogg"
+sha256 = "6e4eaa46910ca6b72c8cbc35415d785d5ffe0f6964ad3f5eaadff9453e9ebefc"
+license = "Public domain (Franklin D. Roosevelt Presidential Library)"
+kind = "audio"
+ext = "mp3"
+start = 0
+duration = 60
+duration_ms = 60000
+speakers = 1
+recorded_at = "1933-03-12T22:00:00"
+timezone = "America/New_York"
+time_source = "published"
+source_kind = "url"
+source_ref = "https://commons.wikimedia.org/wiki/File:Fireside_Chat_1_On_the_Banking_Crisis_(March_12,_1933)_Franklin_Delano_Roosevelt.ogg"
+tags = [{ tag = "private", by = "you" }]   # the private demo recording: Spark only
+notes = [{ note_type = "general-fallback", model = "qwen3.6-35b-a3b" }]

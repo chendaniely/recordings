@@ -1,0 +1,407 @@
+{
+  "language": "en",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 11.64,
+      "speaker": "SPEAKER_01",
+      "text": "I'm at the foot of the ladder. The LAM footbeds are only depressed in the surface about one or two inches.",
+      "words": [
+        {
+          "word": "I'm",
+          "start": 0.0,
+          "end": 0.9
+        },
+        {
+          "word": "at",
+          "start": 0.9,
+          "end": 1.5
+        },
+        {
+          "word": "the",
+          "start": 1.5,
+          "end": 1.66
+        },
+        {
+          "word": "foot",
+          "start": 1.66,
+          "end": 1.86
+        },
+        {
+          "word": "of",
+          "start": 1.86,
+          "end": 1.98
+        },
+        {
+          "word": "the",
+          "start": 1.98,
+          "end": 2.12
+        },
+        {
+          "word": "ladder.",
+          "start": 2.12,
+          "end": 2.44
+        },
+        {
+          "word": "The",
+          "start": 2.8,
+          "end": 3.32
+        },
+        {
+          "word": "LAM",
+          "start": 3.32,
+          "end": 3.58
+        },
+        {
+          "word": "footbeds",
+          "start": 3.58,
+          "end": 4.32
+        },
+        {
+          "word": "are",
+          "start": 4.32,
+          "end": 4.48
+        },
+        {
+          "word": "only",
+          "start": 4.48,
+          "end": 4.9
+        },
+        {
+          "word": "depressed",
+          "start": 4.9,
+          "end": 8.02
+        },
+        {
+          "word": "in",
+          "start": 8.02,
+          "end": 8.26
+        },
+        {
+          "word": "the",
+          "start": 8.26,
+          "end": 8.34
+        },
+        {
+          "word": "surface",
+          "start": 8.34,
+          "end": 8.7
+        },
+        {
+          "word": "about",
+          "start": 8.7,
+          "end": 9.12
+        },
+        {
+          "word": "one",
+          "start": 9.12,
+          "end": 10.82
+        },
+        {
+          "word": "or",
+          "start": 10.82,
+          "end": 11.0
+        },
+        {
+          "word": "two",
+          "start": 11.0,
+          "end": 11.22
+        },
+        {
+          "word": "inches.",
+          "start": 11.22,
+          "end": 11.64
+        }
+      ]
+    },
+    {
+      "start": 12.04,
+      "end": 19.78,
+      "speaker": "SPEAKER_01",
+      "text": "Although the surface appears to be very, very fine grained as you get close to it.",
+      "words": [
+        {
+          "word": "Although",
+          "start": 12.04,
+          "end": 12.64
+        },
+        {
+          "word": "the",
+          "start": 12.64,
+          "end": 12.94
+        },
+        {
+          "word": "surface",
+          "start": 12.94,
+          "end": 13.38
+        },
+        {
+          "word": "appears",
+          "start": 13.38,
+          "end": 13.78
+        },
+        {
+          "word": "to",
+          "start": 13.78,
+          "end": 14.02
+        },
+        {
+          "word": "be",
+          "start": 14.02,
+          "end": 14.32
+        },
+        {
+          "word": "very,",
+          "start": 14.32,
+          "end": 17.02
+        },
+        {
+          "word": "very",
+          "start": 17.02,
+          "end": 17.86
+        },
+        {
+          "word": "fine",
+          "start": 17.86,
+          "end": 18.28
+        },
+        {
+          "word": "grained",
+          "start": 18.28,
+          "end": 18.7
+        },
+        {
+          "word": "as",
+          "start": 18.7,
+          "end": 18.92
+        },
+        {
+          "word": "you",
+          "start": 18.92,
+          "end": 19.0
+        },
+        {
+          "word": "get",
+          "start": 19.0,
+          "end": 19.16
+        },
+        {
+          "word": "close",
+          "start": 19.16,
+          "end": 19.44
+        },
+        {
+          "word": "to",
+          "start": 19.44,
+          "end": 19.62
+        },
+        {
+          "word": "it.",
+          "start": 19.62,
+          "end": 19.78
+        }
+      ]
+    },
+    {
+      "start": 19.92,
+      "end": 24.52,
+      "speaker": "SPEAKER_01",
+      "text": "It's almost like a powder. Ground mass is very fine.",
+      "words": [
+        {
+          "word": "It's",
+          "start": 19.92,
+          "end": 20.18
+        },
+        {
+          "word": "almost",
+          "start": 20.18,
+          "end": 20.5
+        },
+        {
+          "word": "like",
+          "start": 20.5,
+          "end": 20.78
+        },
+        {
+          "word": "a",
+          "start": 20.78,
+          "end": 20.92
+        },
+        {
+          "word": "powder.",
+          "start": 20.92,
+          "end": 21.34
+        },
+        {
+          "word": "Ground",
+          "start": 22.18,
+          "end": 22.78
+        },
+        {
+          "word": "mass",
+          "start": 22.78,
+          "end": 23.04
+        },
+        {
+          "word": "is",
+          "start": 23.04,
+          "end": 24.02
+        },
+        {
+          "word": "very",
+          "start": 24.02,
+          "end": 24.24
+        },
+        {
+          "word": "fine.",
+          "start": 24.24,
+          "end": 24.52
+        }
+      ]
+    },
+    {
+      "start": 36.44,
+      "end": 38.26,
+      "speaker": "SPEAKER_00",
+      "text": "I'm going to step off the LAM now.",
+      "words": [
+        {
+          "word": "I'm",
+          "start": 36.44,
+          "end": 37.04
+        },
+        {
+          "word": "going",
+          "start": 37.04,
+          "end": 37.14
+        },
+        {
+          "word": "to",
+          "start": 37.14,
+          "end": 37.2
+        },
+        {
+          "word": "step",
+          "start": 37.2,
+          "end": 37.44
+        },
+        {
+          "word": "off",
+          "start": 37.44,
+          "end": 37.62
+        },
+        {
+          "word": "the",
+          "start": 37.62,
+          "end": 37.8
+        },
+        {
+          "word": "LAM",
+          "start": 37.8,
+          "end": 37.98
+        },
+        {
+          "word": "now.",
+          "start": 37.98,
+          "end": 38.26
+        }
+      ]
+    },
+    {
+      "start": 47.62,
+      "end": 55.28,
+      "speaker": "SPEAKER_00",
+      "text": "That's one small step for man. One giant leap for mankind.",
+      "words": [
+        {
+          "word": "That's",
+          "start": 47.62,
+          "end": 48.22
+        },
+        {
+          "word": "one",
+          "start": 48.22,
+          "end": 48.52
+        },
+        {
+          "word": "small",
+          "start": 48.52,
+          "end": 49.02
+        },
+        {
+          "word": "step",
+          "start": 49.02,
+          "end": 49.46
+        },
+        {
+          "word": "for",
+          "start": 49.46,
+          "end": 49.74
+        },
+        {
+          "word": "man.",
+          "start": 49.74,
+          "end": 50.1
+        },
+        {
+          "word": "One",
+          "start": 52.72,
+          "end": 53.32
+        },
+        {
+          "word": "giant",
+          "start": 53.32,
+          "end": 54.38
+        },
+        {
+          "word": "leap",
+          "start": 54.38,
+          "end": 54.68
+        },
+        {
+          "word": "for",
+          "start": 54.68,
+          "end": 54.94
+        },
+        {
+          "word": "mankind.",
+          "start": 54.94,
+          "end": 55.28
+        }
+      ]
+    },
+    {
+      "start": 60.0,
+      "end": 61.26,
+      "text": "One giant leap for mankind.",
+      "words": [
+        {
+          "word": "One",
+          "start": 60.0,
+          "end": 60.34
+        },
+        {
+          "word": "giant",
+          "start": 60.34,
+          "end": 60.8
+        },
+        {
+          "word": "leap",
+          "start": 60.8,
+          "end": 60.82
+        },
+        {
+          "word": "for",
+          "start": 60.82,
+          "end": 60.84
+        },
+        {
+          "word": "mankind.",
+          "start": 60.84,
+          "end": 61.26
+        }
+      ]
+    }
+  ]
+}

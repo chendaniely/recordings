@@ -1,0 +1,801 @@
+{
+  "language": "en",
+  "segments": [
+    {
+      "start": 3.46,
+      "end": 7.34,
+      "speaker": "SPEAKER_00",
+      "text": "Ladies and gentlemen, the President of the United States.",
+      "words": [
+        {
+          "word": "Ladies",
+          "start": 3.46,
+          "end": 4.14
+        },
+        {
+          "word": "and",
+          "start": 4.14,
+          "end": 4.36
+        },
+        {
+          "word": "gentlemen,",
+          "start": 4.36,
+          "end": 4.7
+        },
+        {
+          "word": "the",
+          "start": 5.18,
+          "end": 5.78
+        },
+        {
+          "word": "President",
+          "start": 5.78,
+          "end": 6.14
+        },
+        {
+          "word": "of",
+          "start": 6.14,
+          "end": 6.48
+        },
+        {
+          "word": "the",
+          "start": 6.48,
+          "end": 6.62
+        },
+        {
+          "word": "United",
+          "start": 6.62,
+          "end": 6.88
+        },
+        {
+          "word": "States.",
+          "start": 6.88,
+          "end": 7.34
+        }
+      ]
+    },
+    {
+      "start": 10.3,
+      "end": 16.92,
+      "speaker": "SPEAKER_00",
+      "text": "My friends, I want to talk for a few minutes with the people of the United States about banking.",
+      "words": [
+        {
+          "word": "My",
+          "start": 10.3,
+          "end": 10.98
+        },
+        {
+          "word": "friends,",
+          "start": 10.98,
+          "end": 11.38
+        },
+        {
+          "word": "I",
+          "start": 11.78,
+          "end": 12.72
+        },
+        {
+          "word": "want",
+          "start": 12.72,
+          "end": 12.96
+        },
+        {
+          "word": "to",
+          "start": 12.96,
+          "end": 13.06
+        },
+        {
+          "word": "talk",
+          "start": 13.06,
+          "end": 13.4
+        },
+        {
+          "word": "for",
+          "start": 13.4,
+          "end": 13.64
+        },
+        {
+          "word": "a",
+          "start": 13.64,
+          "end": 13.76
+        },
+        {
+          "word": "few",
+          "start": 13.76,
+          "end": 13.94
+        },
+        {
+          "word": "minutes",
+          "start": 13.94,
+          "end": 14.28
+        },
+        {
+          "word": "with",
+          "start": 14.28,
+          "end": 14.54
+        },
+        {
+          "word": "the",
+          "start": 14.54,
+          "end": 14.68
+        },
+        {
+          "word": "people",
+          "start": 14.68,
+          "end": 14.98
+        },
+        {
+          "word": "of",
+          "start": 14.98,
+          "end": 15.12
+        },
+        {
+          "word": "the",
+          "start": 15.12,
+          "end": 15.22
+        },
+        {
+          "word": "United",
+          "start": 15.22,
+          "end": 15.52
+        },
+        {
+          "word": "States",
+          "start": 15.52,
+          "end": 15.98
+        },
+        {
+          "word": "about",
+          "start": 15.98,
+          "end": 16.36
+        },
+        {
+          "word": "banking.",
+          "start": 16.36,
+          "end": 16.92
+        }
+      ]
+    },
+    {
+      "start": 17.5,
+      "end": 21.94,
+      "speaker": "SPEAKER_00",
+      "text": "To talk with the comparatively few who understand the mechanics of banking,",
+      "words": [
+        {
+          "word": "To",
+          "start": 17.5,
+          "end": 17.88
+        },
+        {
+          "word": "talk",
+          "start": 17.88,
+          "end": 18.18
+        },
+        {
+          "word": "with",
+          "start": 18.18,
+          "end": 18.36
+        },
+        {
+          "word": "the",
+          "start": 18.36,
+          "end": 18.48
+        },
+        {
+          "word": "comparatively",
+          "start": 18.48,
+          "end": 19.16
+        },
+        {
+          "word": "few",
+          "start": 19.16,
+          "end": 19.56
+        },
+        {
+          "word": "who",
+          "start": 19.56,
+          "end": 19.84
+        },
+        {
+          "word": "understand",
+          "start": 19.84,
+          "end": 20.42
+        },
+        {
+          "word": "the",
+          "start": 20.42,
+          "end": 20.82
+        },
+        {
+          "word": "mechanics",
+          "start": 20.82,
+          "end": 21.32
+        },
+        {
+          "word": "of",
+          "start": 21.32,
+          "end": 21.56
+        },
+        {
+          "word": "banking,",
+          "start": 21.56,
+          "end": 21.94
+        }
+      ]
+    },
+    {
+      "start": 22.28,
+      "end": 26.18,
+      "speaker": "SPEAKER_00",
+      "text": "but more particularly with the overwhelming majority of you",
+      "words": [
+        {
+          "word": "but",
+          "start": 22.28,
+          "end": 22.74
+        },
+        {
+          "word": "more",
+          "start": 22.74,
+          "end": 23.04
+        },
+        {
+          "word": "particularly",
+          "start": 23.04,
+          "end": 23.8
+        },
+        {
+          "word": "with",
+          "start": 23.8,
+          "end": 24.24
+        },
+        {
+          "word": "the",
+          "start": 24.24,
+          "end": 24.36
+        },
+        {
+          "word": "overwhelming",
+          "start": 24.36,
+          "end": 24.96
+        },
+        {
+          "word": "majority",
+          "start": 24.96,
+          "end": 25.56
+        },
+        {
+          "word": "of",
+          "start": 25.56,
+          "end": 25.98
+        },
+        {
+          "word": "you",
+          "start": 25.98,
+          "end": 26.18
+        }
+      ]
+    },
+    {
+      "start": 26.18,
+      "end": 30.2,
+      "speaker": "SPEAKER_00",
+      "text": "who use banks for the making of deposits and the drawing of checks.",
+      "words": [
+        {
+          "word": "who",
+          "start": 26.18,
+          "end": 26.84
+        },
+        {
+          "word": "use",
+          "start": 26.84,
+          "end": 27.3
+        },
+        {
+          "word": "banks",
+          "start": 27.3,
+          "end": 27.7
+        },
+        {
+          "word": "for",
+          "start": 27.7,
+          "end": 27.94
+        },
+        {
+          "word": "the",
+          "start": 27.94,
+          "end": 28.08
+        },
+        {
+          "word": "making",
+          "start": 28.08,
+          "end": 28.32
+        },
+        {
+          "word": "of",
+          "start": 28.32,
+          "end": 28.5
+        },
+        {
+          "word": "deposits",
+          "start": 28.5,
+          "end": 29.0
+        },
+        {
+          "word": "and",
+          "start": 29.0,
+          "end": 29.28
+        },
+        {
+          "word": "the",
+          "start": 29.28,
+          "end": 29.4
+        },
+        {
+          "word": "drawing",
+          "start": 29.4,
+          "end": 29.72
+        },
+        {
+          "word": "of",
+          "start": 29.72,
+          "end": 29.94
+        },
+        {
+          "word": "checks.",
+          "start": 29.94,
+          "end": 30.2
+        }
+      ]
+    },
+    {
+      "start": 30.76,
+      "end": 34.22,
+      "speaker": "SPEAKER_00",
+      "text": "I want to tell you what has been done in the last few days",
+      "words": [
+        {
+          "word": "I",
+          "start": 30.76,
+          "end": 31.28
+        },
+        {
+          "word": "want",
+          "start": 31.28,
+          "end": 31.52
+        },
+        {
+          "word": "to",
+          "start": 31.52,
+          "end": 31.64
+        },
+        {
+          "word": "tell",
+          "start": 31.64,
+          "end": 31.9
+        },
+        {
+          "word": "you",
+          "start": 31.9,
+          "end": 32.08
+        },
+        {
+          "word": "what",
+          "start": 32.08,
+          "end": 32.32
+        },
+        {
+          "word": "has",
+          "start": 32.32,
+          "end": 32.48
+        },
+        {
+          "word": "been",
+          "start": 32.48,
+          "end": 32.66
+        },
+        {
+          "word": "done",
+          "start": 32.66,
+          "end": 32.9
+        },
+        {
+          "word": "in",
+          "start": 32.9,
+          "end": 33.04
+        },
+        {
+          "word": "the",
+          "start": 33.04,
+          "end": 33.12
+        },
+        {
+          "word": "last",
+          "start": 33.12,
+          "end": 33.38
+        },
+        {
+          "word": "few",
+          "start": 33.38,
+          "end": 33.68
+        },
+        {
+          "word": "days",
+          "start": 33.68,
+          "end": 34.22
+        }
+      ]
+    },
+    {
+      "start": 34.22,
+      "end": 38.62,
+      "speaker": "SPEAKER_00",
+      "text": "and why it was done and what the next steps are going to be.",
+      "words": [
+        {
+          "word": "and",
+          "start": 34.22,
+          "end": 35.12
+        },
+        {
+          "word": "why",
+          "start": 35.12,
+          "end": 35.46
+        },
+        {
+          "word": "it",
+          "start": 35.46,
+          "end": 35.64
+        },
+        {
+          "word": "was",
+          "start": 35.64,
+          "end": 35.84
+        },
+        {
+          "word": "done",
+          "start": 35.84,
+          "end": 36.24
+        },
+        {
+          "word": "and",
+          "start": 36.24,
+          "end": 36.88
+        },
+        {
+          "word": "what",
+          "start": 36.88,
+          "end": 37.08
+        },
+        {
+          "word": "the",
+          "start": 37.08,
+          "end": 37.22
+        },
+        {
+          "word": "next",
+          "start": 37.22,
+          "end": 37.46
+        },
+        {
+          "word": "steps",
+          "start": 37.46,
+          "end": 37.88
+        },
+        {
+          "word": "are",
+          "start": 37.88,
+          "end": 38.06
+        },
+        {
+          "word": "going",
+          "start": 38.06,
+          "end": 38.26
+        },
+        {
+          "word": "to",
+          "start": 38.26,
+          "end": 38.42
+        },
+        {
+          "word": "be.",
+          "start": 38.42,
+          "end": 38.62
+        }
+      ]
+    },
+    {
+      "start": 39.3,
+      "end": 44.14,
+      "speaker": "SPEAKER_00",
+      "text": "I recognize that the many proclamations from state capitals and from Washington,",
+      "words": [
+        {
+          "word": "I",
+          "start": 39.3,
+          "end": 39.82
+        },
+        {
+          "word": "recognize",
+          "start": 39.82,
+          "end": 40.3
+        },
+        {
+          "word": "that",
+          "start": 40.3,
+          "end": 40.78
+        },
+        {
+          "word": "the",
+          "start": 40.78,
+          "end": 40.92
+        },
+        {
+          "word": "many",
+          "start": 40.92,
+          "end": 41.14
+        },
+        {
+          "word": "proclamations",
+          "start": 41.14,
+          "end": 41.92
+        },
+        {
+          "word": "from",
+          "start": 41.92,
+          "end": 42.28
+        },
+        {
+          "word": "state",
+          "start": 42.28,
+          "end": 42.66
+        },
+        {
+          "word": "capitals",
+          "start": 42.66,
+          "end": 43.2
+        },
+        {
+          "word": "and",
+          "start": 43.2,
+          "end": 43.44
+        },
+        {
+          "word": "from",
+          "start": 43.44,
+          "end": 43.64
+        },
+        {
+          "word": "Washington,",
+          "start": 43.64,
+          "end": 44.14
+        }
+      ]
+    },
+    {
+      "start": 44.48,
+      "end": 47.98,
+      "speaker": "SPEAKER_00",
+      "text": "the legislation, the Treasury regulations and so forth,",
+      "words": [
+        {
+          "word": "the",
+          "start": 44.48,
+          "end": 44.94
+        },
+        {
+          "word": "legislation,",
+          "start": 44.94,
+          "end": 45.66
+        },
+        {
+          "word": "the",
+          "start": 46.0,
+          "end": 46.1
+        },
+        {
+          "word": "Treasury",
+          "start": 46.1,
+          "end": 46.44
+        },
+        {
+          "word": "regulations",
+          "start": 46.44,
+          "end": 47.12
+        },
+        {
+          "word": "and",
+          "start": 47.12,
+          "end": 47.36
+        },
+        {
+          "word": "so",
+          "start": 47.36,
+          "end": 47.58
+        },
+        {
+          "word": "forth,",
+          "start": 47.58,
+          "end": 47.98
+        }
+      ]
+    },
+    {
+      "start": 48.7,
+      "end": 51.72,
+      "speaker": "SPEAKER_00",
+      "text": "couched for the most part in banking and legal terms,",
+      "words": [
+        {
+          "word": "couched",
+          "start": 48.7,
+          "end": 49.22
+        },
+        {
+          "word": "for",
+          "start": 49.22,
+          "end": 49.32
+        },
+        {
+          "word": "the",
+          "start": 49.32,
+          "end": 49.4
+        },
+        {
+          "word": "most",
+          "start": 49.4,
+          "end": 49.66
+        },
+        {
+          "word": "part",
+          "start": 49.66,
+          "end": 50.04
+        },
+        {
+          "word": "in",
+          "start": 50.04,
+          "end": 50.26
+        },
+        {
+          "word": "banking",
+          "start": 50.26,
+          "end": 50.66
+        },
+        {
+          "word": "and",
+          "start": 50.66,
+          "end": 50.88
+        },
+        {
+          "word": "legal",
+          "start": 50.88,
+          "end": 51.2
+        },
+        {
+          "word": "terms,",
+          "start": 51.2,
+          "end": 51.72
+        }
+      ]
+    },
+    {
+      "start": 52.08,
+      "end": 55.6,
+      "speaker": "SPEAKER_00",
+      "text": "ought to be explained for the benefit of the average citizen.",
+      "words": [
+        {
+          "word": "ought",
+          "start": 52.08,
+          "end": 52.54
+        },
+        {
+          "word": "to",
+          "start": 52.54,
+          "end": 52.72
+        },
+        {
+          "word": "be",
+          "start": 52.72,
+          "end": 52.86
+        },
+        {
+          "word": "explained",
+          "start": 52.86,
+          "end": 53.48
+        },
+        {
+          "word": "for",
+          "start": 53.48,
+          "end": 53.96
+        },
+        {
+          "word": "the",
+          "start": 53.96,
+          "end": 54.12
+        },
+        {
+          "word": "benefit",
+          "start": 54.12,
+          "end": 54.46
+        },
+        {
+          "word": "of",
+          "start": 54.46,
+          "end": 54.66
+        },
+        {
+          "word": "the",
+          "start": 54.66,
+          "end": 54.76
+        },
+        {
+          "word": "average",
+          "start": 54.76,
+          "end": 55.12
+        },
+        {
+          "word": "citizen.",
+          "start": 55.12,
+          "end": 55.6
+        }
+      ]
+    },
+    {
+      "start": 56.18,
+      "end": 59.98,
+      "speaker": "SPEAKER_00",
+      "text": "I owe this in particular because of the fortitude...",
+      "words": [
+        {
+          "word": "I",
+          "start": 56.18,
+          "end": 56.78
+        },
+        {
+          "word": "owe",
+          "start": 56.78,
+          "end": 56.96
+        },
+        {
+          "word": "this",
+          "start": 56.96,
+          "end": 57.2
+        },
+        {
+          "word": "in",
+          "start": 57.2,
+          "end": 57.38
+        },
+        {
+          "word": "particular",
+          "start": 57.38,
+          "end": 57.9
+        },
+        {
+          "word": "because",
+          "start": 57.9,
+          "end": 58.9
+        },
+        {
+          "word": "of",
+          "start": 58.9,
+          "end": 59.22
+        },
+        {
+          "word": "the",
+          "start": 59.22,
+          "end": 59.34
+        },
+        {
+          "word": "fortitude...",
+          "start": 59.34,
+          "end": 59.98
+        }
+      ]
+    }
+  ]
+}
