@@ -1,0 +1,227 @@
+<style>
+  .app { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg-secondary); font-size: 13px; }
+  .panes { display: grid; grid-template-columns: 210px 1fr; min-height: 420px; }
+  .rail { border-right: 1px solid var(--border); padding: 12px 10px; background: var(--bg-primary); }
+  .grp { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-tertiary); margin: 14px 6px 4px; }
+  .it { display: flex; justify-content: space-between; padding: 5px 8px; border-radius: 6px; color: var(--text-primary); border: 1.5px solid transparent; transition: background .1s; }
+  .it .n { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .it.on { background: var(--selected-bg); color: var(--accent); font-weight: 600; }
+  .ind1 { padding-left: 22px !important; }
+  .it.drop { border-style: dashed; border-color: transparent; }
+  body.dragging .it.drop { border-color: var(--border); }
+  .it.drop.over { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .it.drop.over .n { color: #fff; }
+  .it.newtag { color: var(--accent); }
+  .list { min-width: 0; }
+  .lhdr { padding: 9px 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
+  .lhdr .hint { margin-left: auto; font-size: 11.5px; color: var(--text-tertiary); }
+  .row { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: start; padding: 9px 12px; border-bottom: 1px solid var(--border); cursor: grab; background: var(--bg-secondary); }
+  .row:hover { background: var(--bg-primary); }
+  .row.sel { background: var(--selected-bg); }
+  .row.ghost { opacity: .4; }
+  .row input { margin-top: 3px; }
+  .row .t { font-weight: 600; }
+  .row .m { color: var(--text-secondary); font-size: 11px; margin: 2px 0 4px; }
+  .grip { color: var(--text-tertiary); font-size: 14px; user-select: none; }
+  .chip { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-primary); margin: 0 3px 3px 0; }
+  .chip.new { animation: pop .5s ease; background: rgba(0,113,227,.18); }
+  .chip.nt { background: rgba(52,199,89,.15); }
+  @keyframes pop { 0% { transform: scale(.6); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(120px); background: var(--text-primary); color: var(--bg-secondary); padding: 9px 14px; border-radius: 10px; font-size: 13px; display: flex; gap: 14px; align-items: center; transition: transform .25s; z-index: 50; }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast a { color: #4da3ff; cursor: pointer; font-weight: 600; }
+  .dragbadge { position: fixed; top: -100px; left: -100px; background: var(--accent); color: #fff; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+
+  .explain { border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; background: var(--bg-primary); margin: 6px 0 16px; }
+  .explain ol { margin: 6px 0 0 18px; padding: 0; } .explain li { margin: 4px 0; line-height: 1.45; }
+  .mini { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); font-size: 12px; overflow: hidden; margin-top: 8px; text-align: left; }
+  .mtabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .mtab { padding: 5px 9px; color: var(--text-secondary); border-bottom: 2px solid transparent; }
+  .mtab.on { color: var(--text-primary); border-bottom-color: var(--accent); font-weight: 600; }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warning); margin-left: 4px; vertical-align: middle; }
+  .mbody { padding: 10px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .seg span { padding: 2px 8px; font-size: 11px; } .seg span.on { background: var(--accent); color: #fff; }
+  .lines div { height: 7px; border-radius: 4px; background: var(--bg-tertiary); margin: 6px 0; }
+  .ver { color: var(--text-tertiary); font-size: 11px; margin-top: 8px; }
+  .nsplit { display: grid; grid-template-columns: 170px 1fr; min-height: 190px; }
+  .nlist { border-right: 1px solid var(--border); padding: 6px; background: var(--bg-primary); }
+  .nl-h { font-weight: 600; padding: 5px 6px 2px; display: flex; justify-content: space-between; }
+  .nl-i { padding: 3px 6px 3px 16px; border-radius: 6px; color: var(--text-secondary); display: flex; justify-content: space-between; gap: 4px; }
+  .nl-i.on { background: var(--selected-bg); color: var(--accent); font-weight: 600; }
+  .nl-i.old { font-size: 11px; color: var(--text-tertiary); }
+  .nl-add { color: var(--accent); padding: 6px; }
+  .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cmp > div { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+  .cmp .h { font-size: 11px; color: var(--text-secondary); margin-bottom: 2px; }
+</style>
+
+<h2>Tagging by drag and drop, and multiple sets of notes</h2>
+<p class="subtitle">Part 1 actually works. Drag a recording onto a tag. Tick several rows first to drag them all at once.</p>
+
+<div class="app">
+  <div class="panes">
+    <div class="rail" id="rail">
+      <div class="it on"><span>All recordings</span><span class="n">63</span></div>
+      <div class="it"><span>Untagged</span><span class="n" id="untagged-n">12</span></div>
+      <div class="it"><span>Needs attention</span><span class="n">3</span></div>
+      <div class="grp">Tags · drop here</div>
+      <div class="it"><span>▾ school</span><span class="n">14</span></div>
+      <div class="it drop ind1" data-tag="school/course-101"><span>course-101</span><span class="n">5</span></div>
+      <div class="it drop ind1" data-tag="school/course-200"><span>course-200</span><span class="n">9</span></div>
+      <div class="it drop" data-tag="work"><span>work</span><span class="n">8</span></div>
+      <div class="it drop" data-tag="conf"><span>conf</span><span class="n">4</span></div>
+      <div class="it drop" data-tag="journal"><span>journal</span><span class="n">6</span></div>
+      <div class="it drop" data-tag="talks"><span>talks</span><span class="n">7</span></div>
+      <div class="it drop newtag" data-tag="__new"><span>+ New tag…</span><span></span></div>
+      <div class="grp">Note types · drop here too</div>
+      <div class="it drop" data-tag="notes/action-items"><span>action-items</span><span class="n">11</span></div>
+      <div class="it drop" data-tag="notes/glossary"><span>glossary</span><span class="n">2</span></div>
+    </div>
+    <div class="list">
+      <div class="lhdr"><b>Untagged</b> · 12 recordings <span class="hint">Drag rows onto a tag, or tick rows and press <b>T</b> to pick a tag from the keyboard</span></div>
+      <div id="rows"></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"><span id="toast-msg"></span><a id="undo">Undo</a></div>
+<div class="dragbadge" id="dragbadge"></div>
+
+<h2 style="margin-top:34px">Several sets of notes on one recording</h2>
+<div class="explain">
+  <b>What happens with several prompts and models</b>
+  <ol>
+    <li>Every pairing of <b>note type and model</b> produces its own set of notes. Three note types (Lecture, Course notes, Action items) run on two models (Spark, Claude) gives six sets of notes, all kept.</li>
+    <li><b>Regenerating never overwrites.</b> The new version appears on top, and earlier ones move to <i>History</i>, so you can always see what the old prompt produced.</li>
+    <li><b>Stale</b> (orange dot) means the notes were written with an older version of the prompt or model than the one you have now. They stay readable until you regenerate.</li>
+    <li>A note type you've added but not generated yet shows a <b>Generate</b> button in place of the notes.</li>
+  </ol>
+</div>
+<p class="subtitle">Two ways to lay that out. Click the one you prefer.</p>
+
+<div class="options">
+  <div class="option" data-choice="tabs" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>A tab per note type</h3>
+      <p>Each note type gets its own tab next to Transcript, with a model switch and a History menu inside. Quickest with two to four note types. With many, the extra tabs go into a "More" menu.</p>
+      <div class="mini">
+        <div class="mtabs"><span class="mtab">Transcript</span><span class="mtab on">Lecture</span><span class="mtab">Course notes<span class="dot"></span></span><span class="mtab">Action items</span><span class="mtab">Plaud</span><span class="mtab">More ▾</span></div>
+        <div class="mbody">
+          <span class="seg"><span>Spark</span><span class="on">Claude</span><span>Compare</span></span>
+          <span style="float:right;color:var(--text-secondary)">History ▾</span>
+          <div class="lines"><div style="width:70%"></div><div style="width:92%"></div><div style="width:85%"></div><div style="width:60%"></div></div>
+          <div class="ver">Lecture · claude-opus-5-5 · prompt lecture@a41c09e · current</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="notes-panel" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>One Notes tab with a list (closest to Plaud)</h3>
+      <p>A single Notes tab beside Transcript. A list down the left shows every set of notes, grouped by note type, with models and older versions nested inside. Fits any number of note types and shows everything at a glance.</p>
+      <div class="mini">
+        <div class="mtabs"><span class="mtab">Transcript</span><span class="mtab on">Notes · 6</span><span class="mtab">Plaud</span><span class="mtab">My notes</span></div>
+        <div class="nsplit">
+          <div class="nlist">
+            <div class="nl-h"><span>Lecture</span></div>
+            <div class="nl-i on"><span>Claude · Opus</span><span>16:12</span></div>
+            <div class="nl-i"><span>Spark · qwen</span><span>14:55</span></div>
+            <div class="nl-h"><span>Course notes <span class="dot"></span></span></div>
+            <div class="nl-i"><span>Claude · Opus</span><span>stale</span></div>
+            <div class="nl-i old"><span>⟲ 2 older</span></div>
+            <div class="nl-h"><span>Action items</span></div>
+            <div class="nl-i"><span>Spark · qwen</span><span>14:58</span></div>
+            <div class="nl-add">+ Add note type</div>
+          </div>
+          <div class="mbody">
+            <span style="color:var(--text-secondary)">Lecture · Claude · Opus</span>
+            <span style="float:right;color:var(--accent)">Compare with… ▾</span>
+            <div class="lines"><div style="width:70%"></div><div style="width:92%"></div><div style="width:85%"></div><div style="width:60%"></div><div style="width:78%"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:14px">Both can compare <b>any two</b> sets of notes side by side, such as Spark against Claude, or the current version against an older one:</p>
+<div class="mini" style="max-width:640px">
+  <div class="mbody cmp">
+    <div><div class="h">Lecture · Spark · qwen3.6 · 14:55</div><div class="lines"><div style="width:80%"></div><div style="width:65%"></div><div style="width:90%"></div></div></div>
+    <div><div class="h">Lecture · Claude · Opus · 16:12</div><div class="lines"><div style="width:72%"></div><div style="width:95%"></div><div style="width:60%"></div></div></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var data = [
+    { id: 'a', t: 'Voice memo: app ideas', m: 'Today 08:12 · 4 min · upload', tags: [] },
+    { id: 'b', t: 'Team weekly sync', m: 'Mon Oct 5 · 10:30 · 42 min · Plaud', tags: [] },
+    { id: 'c', t: 'Talk: Reactive UIs beyond the DOM', m: 'Sat Oct 3 · 31 min · URL · video', tags: [] },
+    { id: 'd', t: 'Conference planning call', m: 'Thu Oct 1 · 16:00 · 50 min · Plaud', tags: [] },
+    { id: 'e', t: 'Office hours (Tuesday)', m: 'Tue Sep 29 · 15:00 · 1 h 05 min · Plaud', tags: [] },
+    { id: 'f', t: 'Walk: thesis thoughts', m: 'Sun Sep 27 · 18 min · watched folder', tags: [] }
+  ];
+  var rows = document.getElementById('rows'), last = null, untagged = 12, newCount = 0;
+  function render() {
+    rows.innerHTML = '';
+    data.forEach(function (r) {
+      var el = document.createElement('div');
+      el.className = 'row' + (r.sel ? ' sel' : '');
+      el.draggable = true; el.dataset.id = r.id;
+      el.innerHTML = '<input type="checkbox"' + (r.sel ? ' checked' : '') + '><div><div class="t">' + r.t + '</div><div class="m">' + r.m + '</div>' +
+        r.tags.map(function (t) { return '<span class="chip' + (t.indexOf('notes/') === 0 ? ' nt' : '') + (t === r.fresh ? ' new' : '') + '">' + t + '</span>'; }).join('') +
+        '</div><span class="grip">⋮⋮</span>';
+      el.querySelector('input').addEventListener('click', function (e) { e.stopPropagation(); r.sel = this.checked; render(); });
+      el.addEventListener('dragstart', function (e) {
+        var ids = r.sel ? data.filter(function (x) { return x.sel; }).map(function (x) { return x.id; }) : [r.id];
+        e.dataTransfer.setData('text/plain', ids.join(','));
+        var b = document.getElementById('dragbadge'); b.textContent = ids.length === 1 ? r.t : ids.length + ' recordings';
+        e.dataTransfer.setDragImage(b, 10, 10);
+        document.body.classList.add('dragging');
+        ids.forEach(function (id) { var x = rows.querySelector('[data-id="' + id + '"]'); if (x) x.classList.add('ghost'); });
+      });
+      el.addEventListener('dragend', function () { document.body.classList.remove('dragging'); render(); });
+      rows.appendChild(el);
+    });
+  }
+  document.querySelectorAll('.it.drop').forEach(function (t) {
+    t.addEventListener('dragover', function (e) { e.preventDefault(); t.classList.add('over'); });
+    t.addEventListener('dragleave', function () { t.classList.remove('over'); });
+    t.addEventListener('drop', function (e) {
+      e.preventDefault(); t.classList.remove('over');
+      var tag = t.dataset.tag;
+      if (tag === '__new') { newCount++; tag = 'new-tag-' + newCount; }
+      var ids = e.dataTransfer.getData('text/plain').split(',');
+      var changed = [];
+      data.forEach(function (r) {
+        if (ids.indexOf(r.id) >= 0 && r.tags.indexOf(tag) < 0) {
+          var wasUntagged = r.tags.filter(function (x) { return x.indexOf('notes/') !== 0; }).length === 0;
+          r.tags.push(tag); r.fresh = tag; r.sel = false; changed.push(r);
+          if (wasUntagged && tag.indexOf('notes/') !== 0) untagged--;
+        }
+      });
+      document.getElementById('untagged-n').textContent = untagged;
+      var n = t.querySelector('.n'); if (n && n.textContent) n.textContent = (+n.textContent + changed.length);
+      last = { tag: tag, rows: changed, el: n };
+      document.getElementById('toast-msg').textContent = changed.length === 1 ? 'Tagged "' + changed[0].t + '" with ' + tag : 'Tagged ' + changed.length + ' recordings with ' + tag;
+      var toast = document.getElementById('toast'); toast.classList.add('show');
+      clearTimeout(window.__tt); window.__tt = setTimeout(function () { toast.classList.remove('show'); }, 4000);
+      render();
+    });
+  });
+  document.getElementById('undo').addEventListener('click', function () {
+    if (!last) return;
+    last.rows.forEach(function (r) {
+      r.tags = r.tags.filter(function (x) { return x !== last.tag; });
+      if (r.tags.filter(function (x) { return x.indexOf('notes/') !== 0; }).length === 0 && last.tag.indexOf('notes/') !== 0) untagged++;
+    });
+    if (last.el && last.el.textContent) last.el.textContent = (+last.el.textContent - last.rows.length);
+    document.getElementById('untagged-n').textContent = untagged;
+    document.getElementById('toast').classList.remove('show'); last = null; render();
+  });
+  render();
+})();
+</script>

@@ -1,0 +1,119 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Atkinson+Hyperlegible+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+  @media (max-width: 900px) { .pair { grid-template-columns: 1fr; } }
+  .cap { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-secondary); margin-bottom: 4px; }
+  .pv { font-family: "Atkinson Hyperlegible", system-ui, sans-serif; font-size: 12.5px; line-height: 1.45; background: var(--p-bg); color: var(--p-text); border: 1px solid var(--p-border); border-radius: 10px; overflow: hidden; }
+  .pv .nav { display: flex; align-items: center; gap: 14px; padding: 8px 12px; background: var(--p-surface); border-bottom: 1px solid var(--p-border); }
+  .pv .logo { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .pv .logo i { width: 10px; height: 10px; border-radius: 50%; background: var(--p-orange); box-shadow: 4px 0 0 0 var(--p-blue); margin-right: 4px; }
+  .pv .nv { color: var(--p-muted); padding-bottom: 2px; border-bottom: 2px solid transparent; }
+  .pv .nv.on { color: var(--p-text); border-bottom-color: var(--p-orange); font-weight: 700; }
+  .pv .mode { margin-left: auto; display: inline-flex; border: 1px solid var(--p-border); border-radius: 6px; overflow: hidden; font-size: 11px; }
+  .pv .mode span { padding: 1px 7px; color: var(--p-muted); } .pv .mode span.on { background: var(--p-sel); color: var(--p-blue); font-weight: 700; }
+  .pv .body { display: grid; grid-template-columns: 112px 1fr; }
+  .pv .side { background: var(--p-side); border-right: 1px solid var(--p-border); padding: 8px 6px; }
+  .pv .si { display: flex; justify-content: space-between; padding: 3px 6px; border-radius: 5px; margin-bottom: 1px; border: 1.5px solid transparent; }
+  .pv .si .n { color: var(--p-muted); }
+  .pv .si.on { background: var(--p-sel); color: var(--p-blue); font-weight: 700; }
+  .pv .si.over { border: 1.5px dashed var(--p-orange); background: var(--p-orange-tint); }
+  .pv .main { padding: 8px 10px; background: var(--p-surface); min-width: 0; }
+  .pv .row { padding: 5px 8px; border-radius: 6px; margin-bottom: 4px; display: flex; justify-content: space-between; gap: 6px; }
+  .pv .row.sel { background: var(--p-sel); box-shadow: inset 3px 0 0 var(--p-blue); }
+  .pv .row b { font-weight: 700; }
+  .pv .stale { color: var(--p-text); white-space: nowrap; } .pv .stale::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--p-orange); margin-right: 4px; }
+  .pv .fail { color: var(--p-danger); white-space: nowrap; font-weight: 700; }
+  .pv .chip { display: inline-block; font-size: 10.5px; padding: 0 7px; border-radius: 999px; background: var(--p-chip); margin-right: 3px; }
+  .pv .chip.nt { background: var(--p-success-tint); color: var(--p-success); font-weight: 700; }
+  .pv .player { display: flex; align-items: center; gap: 8px; margin: 8px 0 6px; padding: 6px 8px; border: 1px solid var(--p-border); border-radius: 8px; background: var(--p-bg); }
+  .pv .play { width: 22px; height: 22px; border-radius: 50%; background: var(--p-blue); color: var(--p-on-blue); display: flex; align-items: center; justify-content: center; font-size: 9px; }
+  .pv .bar { flex: 1; height: 5px; border-radius: 999px; background: var(--p-chip); position: relative; }
+  .pv .bar i { position: absolute; inset: 0 62% 0 0; background: var(--p-blue); border-radius: 999px; }
+  .pv .bar b { position: absolute; left: 38%; top: -4px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--p-orange); border: 2px solid var(--p-surface); }
+  .pv .tm { color: var(--p-muted); font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-size: 11px; }
+  .pv .turn { display: grid; grid-template-columns: 38px 1fr; gap: 6px; padding: 4px 6px; border-radius: 6px; }
+  .pv .turn .ts { color: var(--p-link); font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-size: 11px; }
+  .pv .turn.now { background: var(--p-orange-tint); box-shadow: inset 3px 0 0 var(--p-orange); }
+  .pv .turn.now mark { background: var(--p-orange-mark); color: inherit; border-radius: 3px; padding: 0 2px; }
+  .pv .btns { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+  .pv .btn { border: 1px solid var(--p-border); border-radius: 6px; padding: 2px 9px; background: var(--p-surface); color: var(--p-text); }
+  .pv .btn.pri { background: var(--p-blue); border-color: var(--p-blue); color: var(--p-on-blue); font-weight: 700; }
+  .pv a { color: var(--p-link); text-decoration: underline; }
+  .swatches { display: flex; gap: 14px; flex-wrap: wrap; margin: 6px 0 2px; font-size: 12px; color: var(--text-secondary); }
+  .swatches span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatches i { width: 18px; height: 18px; border-radius: 5px; border: 1px solid var(--border); display: inline-block; }
+  .rules { border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; background: var(--bg-secondary); margin-top: 18px; font-size: 13px; }
+  .rules li { margin: 4px 0; line-height: 1.45; }
+</style>
+
+<h2>Light, dark, and a touch of NYC</h2>
+<p class="subtitle">NYC flag colours from your <code>_brand.yml</code>, in the roles your site gives them. <b>Blue</b> is the working colour: selection, links, the play button, primary buttons. <b>Orange</b> is a small accent: the active page, the line playing now, the playhead, drop targets and the "stale" dot. The font is Atkinson Hyperlegible, also from your brand file. The only question here is the neutral background colours. Click A or B.</p>
+<div class="swatches">
+  <span><i style="background:#236192"></i>NYC blue #236192 (lightened to #6CA6D9 in dark mode so it stays readable)</span>
+  <span><i style="background:#F26522"></i>NYC orange #F26522</span>
+  <span><i style="background:#72994E"></i>note types (your success green)</span>
+  <span><i style="background:#9A4665"></i>failed (your burgundy)</span>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="cool" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content" style="width:100%">
+      <h3>Today's cool neutrals + NYC accents</h3>
+      <p>The greys and whites from the mockups you liked, with NYC blue and orange in place of the generic blue.</p>
+      <div class="pair"><div><div class="cap">Light</div><div class="pv" data-theme="a-light"></div></div><div><div class="cap">Dark</div><div class="pv" data-theme="a-dark"></div></div></div>
+    </div>
+  </div>
+  <div class="option" data-choice="warm" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content" style="width:100%">
+      <h3>Your site's warm neutrals + NYC accents</h3>
+      <p>Warm white, sand and charcoal from <code>_brand.yml</code>, so this app looks like a sibling of chendaniely.github.io. The brand file's own note is that warm neutrals make the orange look intentional rather than loud.</p>
+      <div class="pair"><div><div class="cap">Light</div><div class="pv" data-theme="b-light"></div></div><div><div class="cap">Dark</div><div class="pv" data-theme="b-dark"></div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="rules">
+  <b>How it works in both versions</b>
+  <ul>
+    <li><b>Light / Dark / System</b> switch in the top bar (shown top right). It follows your OS setting until you choose otherwise, and each browser remembers your choice.</li>
+    <li><b>Orange never carries text in light mode.</b> On white it only reaches 3.2:1, which is fine for markers and outlines but too faint for words. Blue text measures 6.6:1 on white and 6.3:1 in dark mode, both comfortably above the 4.5:1 that normal text needs.</li>
+    <li>The app gets its own <code>_brand.yml</code> as the single source for these colours, and the build turns it into CSS variables for both modes. Before building that, I'll check brand.yml's current dark-mode support in its docs.</li>
+    <li>Fonts are self-hosted, as on your site, so the app never contacts Google Fonts. (This mockup does load them from Google Fonts, purely for the preview.)</li>
+  </ul>
+</div>
+
+<script>
+(function () {
+  var T = {
+    'a-light': { bg: '#f5f5f7', surface: '#ffffff', side: '#f5f5f7', border: '#d1d1d6', text: '#1d1d1f', muted: '#6e6e73', blue: '#236192', link: '#236192', 'on-blue': '#ffffff', sel: 'rgba(35,97,146,.10)', orange: '#F26522', 'orange-tint': 'rgba(242,101,34,.08)', 'orange-mark': 'rgba(242,101,34,.28)', chip: '#e8e8ed', success: '#4E7A2E', 'success-tint': 'rgba(114,153,78,.16)', danger: '#9A4665' },
+    'a-dark':  { bg: '#1d1d1f', surface: '#2d2d2f', side: '#232325', border: '#424245', text: '#f5f5f7', muted: '#a1a1a6', blue: '#6CA6D9', link: '#6CA6D9', 'on-blue': '#1d1d1f', sel: 'rgba(108,166,217,.16)', orange: '#F26522', 'orange-tint': 'rgba(242,101,34,.12)', 'orange-mark': 'rgba(242,101,34,.38)', chip: '#3d3d3f', success: '#9CC27A', 'success-tint': 'rgba(114,153,78,.22)', danger: '#D27A9A' },
+    'b-light': { bg: '#F8F6F2', surface: '#FFFDFA', side: '#EFE8DF', border: '#E0D6CB', text: '#1C1A17', muted: '#6B6258', blue: '#236192', link: '#236192', 'on-blue': '#F8F6F2', sel: 'rgba(35,97,146,.10)', orange: '#F26522', 'orange-tint': 'rgba(242,101,34,.08)', 'orange-mark': 'rgba(242,101,34,.28)', chip: '#E8DDD2', success: '#4E7A2E', 'success-tint': 'rgba(114,153,78,.16)', danger: '#9A4665' },
+    'b-dark':  { bg: '#171512', surface: '#232019', side: '#1C1A16', border: '#2E2B26', text: '#F8F6F2', muted: '#B8AEA2', blue: '#6CA6D9', link: '#6CA6D9', 'on-blue': '#171512', sel: 'rgba(108,166,217,.15)', orange: '#F26522', 'orange-tint': 'rgba(242,101,34,.12)', 'orange-mark': 'rgba(242,101,34,.38)', chip: '#2E2B26', success: '#9CC27A', 'success-tint': 'rgba(114,153,78,.20)', danger: '#D27A9A' }
+  };
+  var html =
+    '<div class="nav"><span class="logo"><i></i>Recordings</span><span class="nv on">Library</span><span class="nv">Tags</span><span class="nv">Add</span><span class="nv">Status</span>' +
+    '<span class="mode"><span>☀</span><span class="on">System</span><span>☾</span></span></div>' +
+    '<div class="body"><div class="side">' +
+      '<div class="si on"><span>All</span><span class="n">63</span></div>' +
+      '<div class="si"><span>Untagged</span><span class="n">12</span></div>' +
+      '<div class="si"><span>school</span><span class="n">14</span></div>' +
+      '<div class="si over"><span>work</span><span class="n">8</span></div>' +
+      '<div class="si"><span>talks</span><span class="n">7</span></div>' +
+    '</div><div class="main">' +
+      '<div class="row sel"><span><b>COURSE 101: Week 4</b><br><span class="chip">school/course-101</span><span class="chip nt">lecture</span></span><span class="stale">stale</span></div>' +
+      '<div class="row"><span><b>Conference planning call</b></span><span class="fail">✕ failed</span></div>' +
+      '<div class="player"><span class="play">▶</span><span class="tm">26:14</span><span class="bar"><i></i><b></b></span><span class="tm">1:58:03</span></div>' +
+      '<div class="turn"><span class="ts">25:48</span><span>Mine says port 8000 but there\'s no globe icon.</span></div>' +
+      '<div class="turn now"><span class="ts">26:02</span><span>That\'s because it\'s private. <mark>Right-click the row</mark>, then Port Visibility.</span></div>' +
+      '<div class="btns"><span class="btn pri">Generate with Claude</span><span class="btn">Regenerate</span><a>Copy link</a></div>' +
+    '</div></div>';
+  document.querySelectorAll('.pv[data-theme]').forEach(function (el) {
+    var v = T[el.dataset.theme];
+    Object.keys(v).forEach(function (k) { el.style.setProperty('--p-' + k, v[k]); });
+    el.innerHTML = html;
+  });
+})();
+</script>

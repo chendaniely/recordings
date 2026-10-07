@@ -1,0 +1,362 @@
+<style>
+  .app { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg-secondary); font-size: 13px; }
+  .panes { display: grid; grid-template-columns: 210px 1fr; min-height: 380px; }
+  .rail { border-right: 1px solid var(--border); padding: 12px 10px; background: var(--bg-primary); }
+  .grp { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-tertiary); margin: 14px 6px 4px; }
+  .it { display: flex; justify-content: space-between; padding: 5px 8px; border-radius: 6px; color: var(--text-primary); border: 1.5px solid transparent; }
+  .it .n { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .it.on { background: var(--selected-bg); color: var(--accent); font-weight: 600; }
+  .it.fold { color: var(--text-secondary); }
+  body.dragging .it.drop { border-style: dashed; border-color: var(--border); }
+  .it.drop.over { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .it.drop.over .n { color: #fff; }
+  .it.newtag { color: var(--accent); }
+  .lhdr { padding: 9px 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .lhdr .hint { margin-left: auto; font-size: 11.5px; color: var(--text-tertiary); }
+  kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 11px; background: var(--bg-secondary); color: var(--text-primary); }
+  .row { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: start; padding: 9px 12px; border-bottom: 1px solid var(--border); cursor: grab; background: var(--bg-secondary); user-select: none; }
+  .row:hover { background: var(--bg-primary); }
+  .row.sel { background: var(--selected-bg); }
+  .row.ghost { opacity: .4; }
+  .row input { margin-top: 3px; }
+  .row .t { font-weight: 600; }
+  .row .m { color: var(--text-secondary); font-size: 11px; margin: 2px 0 4px; }
+  .grip { color: var(--text-tertiary); font-size: 14px; user-select: none; }
+  .chip { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-primary); margin: 0 3px 3px 0; }
+  .chip.nt { background: rgba(52,199,89,.15); }
+  .chip.new { animation: pop .5s ease; background: rgba(0,113,227,.2); }
+  @keyframes pop { 0% { transform: scale(.6); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+  .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(140px); background: var(--text-primary); color: var(--bg-secondary); padding: 9px 14px; border-radius: 10px; font-size: 13px; display: flex; gap: 14px; align-items: center; transition: transform .25s; z-index: 60; }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast a { color: #4da3ff; cursor: pointer; font-weight: 600; }
+  .dragbadge { position: fixed; top: -100px; left: -100px; background: var(--accent); color: #fff; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  /* picker */
+  .mbg { position: fixed; inset: 0; background: rgba(0,0,0,.28); display: none; align-items: flex-start; justify-content: center; padding-top: 14vh; z-index: 70; }
+  .mbg.show { display: flex; }
+  .modal { width: 420px; max-width: calc(100vw - 32px); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.25); overflow: hidden; }
+  .mh { padding: 12px 14px 4px; font-weight: 600; }
+  .mh .sub { font-weight: 400; color: var(--text-secondary); font-size: 12px; }
+  .applied { padding: 2px 14px; min-height: 4px; }
+  .modal input { width: calc(100% - 28px); margin: 8px 14px; padding: 8px 10px; font-size: 14px; border: 1.5px solid var(--accent); border-radius: 8px; background: var(--bg-secondary); color: var(--text-primary); outline: none; box-sizing: border-box; width: calc(100% - 28px); }
+  .opt { padding: 7px 14px; display: flex; justify-content: space-between; cursor: pointer; }
+  .opt .p { color: var(--text-tertiary); font-size: 11.5px; }
+  .opt.hi { background: var(--selected-bg); color: var(--accent); }
+  .opt.create { color: var(--accent); }
+  .mf { padding: 8px 14px; border-top: 1px solid var(--border); color: var(--text-tertiary); font-size: 11.5px; }
+  /* tags page */
+  .tp-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg-primary); flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .seg span { padding: 3px 12px; font-size: 12px; cursor: pointer; } .seg span.on { background: var(--accent); color: #fff; }
+  .tp-head label { color: var(--text-secondary); display: flex; gap: 5px; align-items: center; }
+  .tp-head .link { color: var(--accent); cursor: pointer; font-size: 12px; }
+  .gridwrap { overflow-x: auto; }
+  table.g { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  table.g th, table.g td { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: center; }
+  table.g th { position: sticky; top: 0; background: var(--bg-secondary); font-weight: 600; vertical-align: bottom; cursor: pointer; }
+  table.g th .f { display: block; font-size: 10px; color: var(--text-tertiary); font-weight: 400; }
+  table.g th.nt { background: rgba(52,199,89,.08); }
+  table.g th:hover { color: var(--accent); }
+  table.g td.rec { text-align: left; min-width: 260px; }
+  table.g td.rec .t { font-weight: 600; }
+  table.g td.rec .s { color: var(--text-secondary); font-size: 11.5px; }
+  table.g tr.done td { opacity: .55; }
+  table.g tr.sel td { background: var(--selected-bg); }
+  table.g td.nt { background: rgba(52,199,89,.05); }
+  table.g td.hit { cursor: pointer; padding: 10px 12px; }
+  table.g td.hit:hover { background: var(--selected-bg); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .tree { display: grid; grid-template-columns: 260px 1fr; min-height: 300px; }
+  .tlist { border-right: 1px solid var(--border); padding: 10px; }
+  .tn { display: flex; justify-content: space-between; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+  .tn:hover { background: var(--bg-primary); }
+  .tn.on { background: var(--selected-bg); color: var(--accent); font-weight: 600; }
+  .tn .n { color: var(--text-tertiary); }
+  .rules { padding: 14px 18px; }
+  .rules h3 { margin: 0 0 2px; }
+  .rules .acts { display: flex; gap: 8px; margin: 8px 0 14px; }
+  .btn { border: 1px solid var(--border); border-radius: 7px; padding: 3px 10px; background: var(--bg-secondary); color: var(--text-primary); font-size: 12px; }
+  .field { margin: 10px 0; }
+  .field .lab { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-tertiary); margin-bottom: 4px; }
+  .yaml { font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; white-space: pre; margin-top: 12px; }
+</style>
+
+<h2>Tagging, version 3</h2>
+<p class="subtitle">All of this works. <b>Select rows</b> the way you would in Finder: click for one row, <kbd>⌘</kbd>/<kbd>Ctrl</kbd>-click to add or remove a row, <kbd>Shift</kbd>-click for a range. The checkboxes still work too. <b>Drag</b> the selection onto a tag. <b>Tick rows and press <kbd>T</kbd></b> to type a tag; Enter adds it and the box stays open so you can add more. Dropping onto <b>+ New tag…</b> opens the same box for typing a new name, and <code>/</code> makes folders (for example <code>school/course-101/labs</code>). Everything applies immediately, with Undo.</p>
+
+<div class="app">
+  <div class="panes">
+    <div class="rail" id="rail"></div>
+    <div>
+      <div class="lhdr"><b>Library · Untagged</b><span class="hint">drag onto a tag · or tick rows and press <kbd>T</kbd></span></div>
+      <div id="rows"></div>
+    </div>
+  </div>
+</div>
+
+<h2 style="margin-top:34px">The Tags page</h2>
+<p class="subtitle">It uses the same data, so tags you add above show up here. Click a checkbox to add or remove a tag. Click a column header to add that tag to every ticked row. <kbd>T</kbd> works here too.</p>
+<div class="app">
+  <div class="tp-head">
+    <span class="seg"><span id="v-grid" class="on">Grid</span><span id="v-tree">Tree</span></span>
+    <label><input type="checkbox" id="only-untagged" checked> Untagged only</label>
+    <span class="link" id="refresh">↻ refresh list</span>
+    <span style="margin-left:auto;color:var(--text-tertiary);font-size:11.5px">Rows you tag stay in place until you refresh, so nothing jumps under your cursor. Columns: all tags ▾</span>
+  </div>
+  <div id="gridview" class="gridwrap"></div>
+  <div id="treeview" class="tree" style="display:none"></div>
+</div>
+
+<div class="mbg" id="picker">
+  <div class="modal">
+    <div class="mh"><span id="pk-title">Tag recordings</span> <span class="sub" id="pk-sub"></span></div>
+    <div class="applied" id="pk-applied"></div>
+    <input id="pk-in" autocomplete="off" placeholder="Type a tag… use / for folders">
+    <div id="pk-list"></div>
+    <div class="mf">↑ ↓ choose · <b>Enter</b> add (box stays open) · <b>Esc</b> done</div>
+  </div>
+</div>
+<div class="toast" id="toast"><span id="toast-msg"></span><a id="undo">Undo</a></div>
+<div class="dragbadge" id="dragbadge"></div>
+
+<script>
+(function () {
+  var base = { 'school/course-101': 5, 'school/course-200': 9, 'work': 8, 'conf': 4, 'journal': 6, 'talks': 7, 'notes/action-items': 11, 'notes/glossary': 2, 'notes/lecture': 16 };
+  var tags = Object.keys(base);
+  var data = [
+    { id: 'a', t: 'Voice memo: app ideas', m: 'Today 08:12 · 4 min · upload', s: 'Ideas for a recordings app: drag-to-tag, side-by-side notes…', tags: [] },
+    { id: 'b', t: 'Team weekly sync', m: 'Mon Oct 5 · 10:30 · 42 min · Plaud', s: 'Status updates; two action items…', tags: [] },
+    { id: 'c', t: 'Talk: Reactive UIs beyond the DOM', m: 'Sat Oct 3 · 31 min · URL · video', s: 'Conference talk on reactive programming models for UIs…', tags: [] },
+    { id: 'd', t: 'Conference planning call', m: 'Thu Oct 1 · 16:00 · 50 min · Plaud', s: 'Schedule and reviewer assignments…', tags: [] },
+    { id: 'e', t: 'Office hours (Tuesday)', m: 'Tue Sep 29 · 15:00 · 1 h 05 min · Plaud', s: 'Students stuck on joins and the Codespaces port issue…', tags: [] },
+    { id: 'f', t: 'Walk: thesis thoughts', m: 'Sun Sep 27 · 18 min · watched folder', s: 'Thinking out loud about the chapter 3 structure…', tags: [] }
+  ];
+  var last = null, fresh = {}, gridIds = null, view = 'grid', treeSel = 'school/course-101';
+  var isNotes = function (t) { return t.indexOf('notes/') === 0; };
+  var userTags = function (r) { return r.tags.filter(function (t) { return !isNotes(t); }); };
+  var count = function (t) { return (base[t] || 0) + data.filter(function (r) { return r.tags.indexOf(t) >= 0; }).length; };
+  var untagged = function () { return 6 + data.filter(function (r) { return userTags(r).length === 0; }).length; };
+  var selIds = function () { return data.filter(function (r) { return r.sel; }).map(function (r) { return r.id; }); };
+  var esc = function (s) { return s.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+
+  // File-manager selection: click = just this row, Cmd/Ctrl-click = toggle, Shift-click = range.
+  var anchor = null;
+  function clickSelect(r, e) {
+    var i = data.indexOf(r);
+    if (e.shiftKey && anchor !== null) {
+      var lo = Math.min(anchor, i), hi = Math.max(anchor, i);
+      data.forEach(function (x, j) { if (j >= lo && j <= hi) x.sel = true; else if (!(e.metaKey || e.ctrlKey)) x.sel = false; });
+    } else if (e.metaKey || e.ctrlKey) {
+      r.sel = !r.sel; anchor = i;
+    } else {
+      data.forEach(function (x) { x.sel = x === r; }); anchor = i;
+    }
+    if (e.shiftKey) { var s = window.getSelection && window.getSelection(); if (s) s.removeAllRanges(); }
+    renderAll();
+  }
+
+  function sortedTags() { return tags.slice().sort(function (a, b) { return (isNotes(a) - isNotes(b)) || a.localeCompare(b); }); }
+
+  function toast(msg) {
+    document.getElementById('toast-msg').textContent = msg;
+    var el = document.getElementById('toast'); el.classList.add('show');
+    clearTimeout(window.__tt); window.__tt = setTimeout(function () { el.classList.remove('show'); }, 4500);
+  }
+  function ensureTag(tag) { if (tags.indexOf(tag) < 0) { tags.push(tag); base[tag] = 0; } }
+  function apply(ids, tag) {
+    ensureTag(tag);
+    var changed = data.filter(function (r) { return ids.indexOf(r.id) >= 0 && r.tags.indexOf(tag) < 0; });
+    changed.forEach(function (r) { r.tags.push(tag); fresh[r.id] = tag; });
+    last = { op: 'add', tag: tag, ids: changed.map(function (r) { return r.id; }) };
+    if (changed.length) toast(changed.length === 1 ? 'Tagged “' + changed[0].t + '” with ' + tag : 'Tagged ' + changed.length + ' recordings with ' + tag);
+    renderAll();
+    return changed.length;
+  }
+  function remove(ids, tag) {
+    var changed = data.filter(function (r) { return ids.indexOf(r.id) >= 0 && r.tags.indexOf(tag) >= 0; });
+    changed.forEach(function (r) { r.tags = r.tags.filter(function (t) { return t !== tag; }); });
+    last = { op: 'remove', tag: tag, ids: changed.map(function (r) { return r.id; }) };
+    if (changed.length) toast('Removed ' + tag + ' from “' + changed[0].t + '”');
+    renderAll();
+  }
+  document.getElementById('undo').addEventListener('click', function () {
+    if (!last) return;
+    var l = last; last = null;
+    data.forEach(function (r) {
+      if (l.ids.indexOf(r.id) < 0) return;
+      if (l.op === 'add') r.tags = r.tags.filter(function (t) { return t !== l.tag; });
+      else if (r.tags.indexOf(l.tag) < 0) r.tags.push(l.tag);
+    });
+    document.getElementById('toast').classList.remove('show');
+    renderAll();
+  });
+
+  /* ---------- rail ---------- */
+  function renderRail() {
+    var h = '<div class="it on"><span>All recordings</span><span class="n">63</span></div>' +
+      '<div class="it"><span>Untagged</span><span class="n">' + untagged() + '</span></div>' +
+      '<div class="it"><span>Needs attention</span><span class="n">3</span></div><div class="grp">Tags · drop here</div>';
+    var seen = {};
+    sortedTags().filter(function (t) { return !isNotes(t); }).forEach(function (t) {
+      var parts = t.split('/');
+      for (var i = 1; i < parts.length; i++) {
+        var folder = parts.slice(0, i).join('/');
+        if (!seen[folder] && tags.indexOf(folder) < 0) { seen[folder] = 1; h += '<div class="it fold" style="padding-left:' + (8 + 14 * (i - 1)) + 'px"><span>▾ ' + esc(parts[i - 1]) + '</span><span></span></div>'; }
+      }
+      h += '<div class="it drop" data-tag="' + esc(t) + '" style="padding-left:' + (8 + 14 * (parts.length - 1)) + 'px"><span>' + esc(parts[parts.length - 1]) + '</span><span class="n">' + count(t) + '</span></div>';
+    });
+    h += '<div class="it drop newtag" data-tag="__new"><span>+ New tag…</span><span></span></div><div class="grp">Note types · drop here too</div>';
+    sortedTags().filter(isNotes).forEach(function (t) {
+      h += '<div class="it drop" data-tag="' + esc(t) + '"><span>' + esc(t.slice(6)) + '</span><span class="n">' + count(t) + '</span></div>';
+    });
+    var rail = document.getElementById('rail'); rail.innerHTML = h;
+    rail.querySelectorAll('.it.drop').forEach(function (el) {
+      el.addEventListener('dragover', function (e) { e.preventDefault(); el.classList.add('over'); });
+      el.addEventListener('dragleave', function () { el.classList.remove('over'); });
+      el.addEventListener('drop', function (e) {
+        e.preventDefault(); el.classList.remove('over'); document.body.classList.remove('dragging');
+        var ids = e.dataTransfer.getData('text/plain').split(',');
+        if (el.dataset.tag === '__new') openPicker(ids, true); else apply(ids, el.dataset.tag);
+      });
+    });
+  }
+
+  /* ---------- library list ---------- */
+  function renderRows() {
+    var rows = document.getElementById('rows'); rows.innerHTML = '';
+    data.forEach(function (r) {
+      var el = document.createElement('div');
+      el.className = 'row' + (r.sel ? ' sel' : ''); el.draggable = true; el.dataset.id = r.id;
+      el.innerHTML = '<input type="checkbox"' + (r.sel ? ' checked' : '') + '><div><div class="t">' + esc(r.t) + '</div><div class="m">' + esc(r.m) + '</div>' +
+        r.tags.map(function (t) { return '<span class="chip' + (isNotes(t) ? ' nt' : '') + (fresh[r.id] === t ? ' new' : '') + '">' + esc(t) + '</span>'; }).join('') +
+        '</div><span class="grip">⋮⋮</span>';
+      el.querySelector('input').addEventListener('click', function (e) { e.stopPropagation(); r.sel = this.checked; anchor = data.indexOf(r); renderAll(); });
+      el.addEventListener('click', function (e) { clickSelect(r, e); });
+      el.addEventListener('dragstart', function (e) {
+        var ids = r.sel ? selIds() : [r.id];
+        e.dataTransfer.setData('text/plain', ids.join(','));
+        var b = document.getElementById('dragbadge'); b.textContent = ids.length === 1 ? r.t : ids.length + ' recordings';
+        e.dataTransfer.setDragImage(b, 10, 10);
+        document.body.classList.add('dragging');
+        setTimeout(function () { ids.forEach(function (id) { var x = rows.querySelector('[data-id="' + id + '"]'); if (x) x.classList.add('ghost'); }); }, 0);
+      });
+      el.addEventListener('dragend', function () { document.body.classList.remove('dragging'); renderRows(); });
+      rows.appendChild(el);
+    });
+  }
+
+  /* ---------- grid ---------- */
+  function renderGrid() {
+    if (gridIds === null) gridIds = data.map(function (r) { return r.id; });
+    var only = document.getElementById('only-untagged').checked;
+    var visible = data.filter(function (r) { return !only || gridIds.indexOf(r.id) >= 0; });
+    var cols = sortedTags();
+    var h = '<table class="g"><thead><tr><th></th><th style="text-align:left">Recording</th>' + cols.map(function (t) {
+      var p = t.split('/'), nt = isNotes(t);
+      return '<th class="' + (nt ? 'nt' : '') + '" data-col="' + esc(t) + '" title="Add ' + esc(t) + ' to all ticked rows"><span class="f">' + (p.length > 1 ? esc(p.slice(0, -1).join('/')) : '&nbsp;') + '</span>' + esc(p[p.length - 1]) + '</th>';
+    }).join('') + '</tr></thead><tbody>';
+    visible.forEach(function (r) {
+      var done = only && userTags(r).length > 0;
+      h += '<tr class="' + (r.sel ? 'sel ' : '') + (done ? 'done' : '') + '"><td><input type="checkbox" data-sel="' + r.id + '"' + (r.sel ? ' checked' : '') + '></td>' +
+        '<td class="rec" data-rec="' + r.id + '" style="cursor:pointer;user-select:none"><div class="t">' + esc(r.t) + '</div><div class="s">' + esc(r.s) + '</div></td>' +
+        cols.map(function (t) { return '<td class="' + (isNotes(t) ? 'nt' : '') + '"><input type="checkbox" data-r="' + r.id + '" data-t="' + esc(t) + '"' + (r.tags.indexOf(t) >= 0 ? ' checked' : '') + '></td>'; }).join('') + '</tr>';
+    });
+    h += '</tbody></table>';
+    var g = document.getElementById('gridview'); g.innerHTML = h;
+    g.querySelectorAll('input[data-t]').forEach(function (c) {
+      c.addEventListener('change', function () { if (c.checked) apply([c.dataset.r], c.dataset.t); else remove([c.dataset.r], c.dataset.t); });
+      // The whole cell is the hit target, not just the 13px box.
+      c.parentNode.classList.add('hit');
+      c.parentNode.addEventListener('click', function (e) { if (e.target === c) return; c.checked = !c.checked; c.dispatchEvent(new Event('change')); });
+    });
+    g.querySelectorAll('input[data-sel]').forEach(function (c) {
+      c.addEventListener('change', function () { data.forEach(function (r) { if (r.id === c.dataset.sel) r.sel = c.checked; }); renderAll(); });
+    });
+    g.querySelectorAll('td[data-rec]').forEach(function (td) {
+      td.addEventListener('click', function (e) { clickSelect(data.filter(function (r) { return r.id === td.dataset.rec; })[0], e); });
+    });
+    g.querySelectorAll('th[data-col]').forEach(function (th) {
+      th.addEventListener('click', function () { var ids = selIds(); if (!ids.length) { toast('Tick some rows first, then click a column header'); return; } apply(ids, th.dataset.col); });
+    });
+  }
+
+  /* ---------- tree ---------- */
+  function renderTree() {
+    var h = '<div class="tlist">';
+    var seen = {};
+    sortedTags().forEach(function (t) {
+      var parts = t.split('/');
+      for (var i = 1; i < parts.length; i++) {
+        var folder = parts.slice(0, i).join('/');
+        if (!seen[folder] && tags.indexOf(folder) < 0) { seen[folder] = 1; h += '<div class="tn" style="padding-left:' + (8 + 16 * (i - 1)) + 'px;color:var(--text-secondary)"><span>▾ 📁 ' + esc(parts[i - 1]) + '</span><span></span></div>'; }
+      }
+      h += '<div class="tn' + (t === treeSel ? ' on' : '') + '" data-t="' + esc(t) + '" style="padding-left:' + (8 + 16 * (parts.length - 1)) + 'px"><span>🏷 ' + esc(parts[parts.length - 1]) + '</span><span class="n">' + count(t) + '</span></div>';
+    });
+    h += '</div><div class="rules">';
+    var isCourse =treeSel === 'school/course-101';
+    h += '<h3>' + esc(treeSel) + '</h3><div style="color:var(--text-secondary)">' + count(treeSel) + ' recordings</div>' +
+      '<div class="acts"><span class="btn">Rename</span><span class="btn">Move to folder…</span><span class="btn">Delete</span><span class="btn">Show recordings</span></div>';
+    if (isCourse) {
+      h += '<div class="field"><div class="lab">Vocabulary (sent to Whisper)</div><span class="chip">Codespaces</span><span class="chip">Quarto</span><span class="chip">tidyverse</span><span class="chip">+ add</span></div>' +
+        '<div class="field"><div class="lab">Note types added</div><span class="chip nt">course-notes</span><span class="chip">+ add</span></div>' +
+        '<div class="field"><div class="lab">Models</div><span class="chip">spark:default</span><span class="chip">claude:opus</span><span class="chip">+ add</span></div>' +
+        '<div class="yaml">school/course-101:\n  vocabulary: [Codespaces, Quarto, tidyverse]\n  notes: [course-notes]\n  models: [spark:default, claude:opus]</div>';
+    } else {
+      h += '<p style="color:var(--text-secondary)">No rules. This tag is only a label.</p><span class="btn">+ Add rules (vocabulary, note types, models)</span>';
+    }
+    h += '</div>';
+    var tv = document.getElementById('treeview'); tv.innerHTML = h;
+    tv.querySelectorAll('.tn[data-t]').forEach(function (el) { el.addEventListener('click', function () { treeSel = el.dataset.t; renderTree(); }); });
+  }
+
+  function renderAll() { renderRail(); renderRows(); renderGrid(); renderTree(); }
+
+  document.getElementById('v-grid').addEventListener('click', function () { view = 'grid'; this.classList.add('on'); document.getElementById('v-tree').classList.remove('on'); document.getElementById('gridview').style.display = ''; document.getElementById('treeview').style.display = 'none'; });
+  document.getElementById('v-tree').addEventListener('click', function () { view = 'tree'; this.classList.add('on'); document.getElementById('v-grid').classList.remove('on'); document.getElementById('gridview').style.display = 'none'; document.getElementById('treeview').style.display = 'grid'; });
+  document.getElementById('only-untagged').addEventListener('change', renderGrid);
+  document.getElementById('refresh').addEventListener('click', function () { gridIds = data.filter(function (r) { return userTags(r).length === 0; }).map(function (r) { return r.id; }); renderGrid(); });
+
+  /* ---------- picker ---------- */
+  var pk = { ids: [], hi: 0, opts: [], added: [] };
+  var bg = document.getElementById('picker'), inp = document.getElementById('pk-in');
+  function openPicker(ids, creating) {
+    if (!ids.length) { toast('Tick one or more recordings first, then press T'); return; }
+    pk.ids = ids; pk.hi = 0; pk.added = [];
+    document.getElementById('pk-title').textContent = creating ? 'New tag' : 'Tag';
+    document.getElementById('pk-sub').textContent = ids.length === 1 ? '“' + data.filter(function (r) { return r.id === ids[0]; })[0].t + '”' : ids.length + ' recordings';
+    inp.value = ''; inp.placeholder = creating ? 'Name the new tag, e.g. school/course-101/labs' : 'Type a tag… use / for folders';
+    renderPicker(); bg.classList.add('show'); setTimeout(function () { inp.focus(); }, 0);
+  }
+  function closePicker() { bg.classList.remove('show'); }
+  function renderPicker() {
+    var q = inp.value.trim().toLowerCase();
+    var matches = sortedTags().filter(function (t) { return t.toLowerCase().indexOf(q) >= 0; }).slice(0, 6);
+    pk.opts = matches.map(function (t) { return { tag: t }; });
+    // Existing tags first, so Enter on a partial name picks the match; Create comes last.
+    if (q && tags.indexOf(q) < 0) pk.opts.push({ tag: q, create: true });
+    if (pk.hi >= pk.opts.length) pk.hi = Math.max(0, pk.opts.length - 1);
+    document.getElementById('pk-applied').innerHTML = pk.added.length ? '<span style="color:var(--text-tertiary);font-size:11.5px">Added: </span>' + pk.added.map(function (t) { return '<span class="chip new">✓ ' + esc(t) + '</span>'; }).join('') : '';
+    document.getElementById('pk-list').innerHTML = pk.opts.map(function (o, i) {
+      return '<div class="opt' + (i === pk.hi ? ' hi' : '') + (o.create ? ' create' : '') + '" data-i="' + i + '"><span>' + (o.create ? '+ Create “' + esc(o.tag) + '”' : esc(o.tag)) + '</span><span class="p">' + (o.create ? (o.tag.indexOf('/') > 0 ? 'in folder ' + esc(o.tag.split('/').slice(0, -1).join('/')) : 'new tag') : count(o.tag) + ' recordings') + '</span></div>';
+    }).join('') || '<div class="opt" style="color:var(--text-tertiary)">Start typing…</div>';
+    document.querySelectorAll('#pk-list .opt[data-i]').forEach(function (el) { el.addEventListener('mousedown', function (e) { e.preventDefault(); pk.hi = +el.dataset.i; choose(); }); });
+  }
+  function choose() {
+    var o = pk.opts[pk.hi]; if (!o) return;
+    apply(pk.ids, o.tag); pk.added.push(o.tag); inp.value = ''; pk.hi = 0; renderPicker(); inp.focus();
+  }
+  inp.addEventListener('input', function () { pk.hi = 0; renderPicker(); });
+  inp.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); pk.hi = Math.min(pk.hi + 1, pk.opts.length - 1); renderPicker(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); pk.hi = Math.max(pk.hi - 1, 0); renderPicker(); }
+    else if (e.key === 'Enter') { e.preventDefault(); choose(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closePicker(); }
+  });
+  bg.addEventListener('mousedown', function (e) { if (e.target === bg) closePicker(); });
+  document.addEventListener('keydown', function (e) {
+    var tag = (e.target.tagName || '').toLowerCase();
+    if (bg.classList.contains('show') || tag === 'input' && e.target.type === 'text' || tag === 'textarea') return;
+    if ((e.key === 't' || e.key === 'T') && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); openPicker(selIds(), false); }
+  });
+
+  renderAll();
+})();
+</script>

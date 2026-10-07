@@ -1,0 +1,224 @@
+<style>
+  .app { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg-secondary); font-size: 13px; }
+  .topnav { display: flex; align-items: center; gap: 18px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
+  .topnav .brand2 { font-weight: 700; }
+  .topnav a { color: var(--text-secondary); text-decoration: none; padding: 4px 2px; }
+  .topnav a.on { color: var(--text-primary); border-bottom: 2px solid var(--accent); }
+  .topnav .search { margin-left: auto; width: 260px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-tertiary); }
+  .panes { display: grid; grid-template-columns: 200px 300px 1fr; min-height: 640px; }
+  .rail { border-right: 1px solid var(--border); padding: 12px 10px; background: var(--bg-primary); }
+  .rail .grp { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-tertiary); margin: 14px 6px 4px; }
+  .rail .it { display: flex; justify-content: space-between; padding: 5px 8px; border-radius: 6px; color: var(--text-primary); cursor: pointer; }
+  .rail .it:hover { background: var(--bg-tertiary); }
+  .rail .it.on { background: var(--selected-bg); color: var(--accent); font-weight: 600; }
+  .rail .it .n { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .rail .ind1 { padding-left: 22px; }
+  .rail .warn .n { color: var(--warning); font-weight: 700; }
+  .list { border-right: 1px solid var(--border); overflow: hidden; }
+  .list .hdr { padding: 10px 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .row { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .row:hover { background: var(--bg-primary); }
+  .row.on { background: var(--selected-bg); border-left: 3px solid var(--accent); padding-left: 9px; }
+  .row .t { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+  .row .m { color: var(--text-secondary); font-size: 11px; margin: 2px 0 5px; }
+  .chip { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-primary); margin: 0 3px 3px 0; }
+  .chip.auto { background: transparent; border: 1px dashed var(--border); color: var(--text-secondary); }
+  .chip.nt { background: rgba(52,199,89,.15); }
+  .st { font-size: 11px; white-space: nowrap; }
+  .st.proc { color: var(--accent); } .st.stale { color: var(--warning); } .st.fail { color: var(--error); } .st.held { color: var(--text-tertiary); }
+  .detail { display: flex; flex-direction: column; min-width: 0; }
+  .dhead { padding: 14px 18px 8px; }
+  .dhead h3 { margin: 0 0 4px; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+  .dhead h3 .pen { font-size: 12px; color: var(--text-tertiary); font-weight: 400; }
+  .dhead .meta { color: var(--text-secondary); font-size: 12px; }
+  .dhead .tags { margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+  .addtag { font-size: 11px; border: 1px dashed var(--accent); color: var(--accent); border-radius: 999px; padding: 1px 8px; }
+  .hold { margin-left: auto; font-size: 11px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+  .tog { width: 28px; height: 16px; border-radius: 999px; background: var(--bg-tertiary); position: relative; display: inline-block; }
+  .tog::after { content: ""; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-secondary); }
+  .tog.on { background: var(--accent); } .tog.on::after { left: 14px; }
+  .player { margin: 6px 18px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; display: flex; align-items: center; gap: 12px; background: var(--bg-primary); position: sticky; top: 0; }
+  .play { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
+  .bar { flex: 1; height: 6px; background: var(--bg-tertiary); border-radius: 999px; position: relative; }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 22%; background: var(--accent); border-radius: 999px; }
+  .bar .knob { position: absolute; left: 22%; top: -4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: var(--bg-secondary); border: 2px solid var(--accent); }
+  .time, .spd { font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+  .spd { border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+  .tabs { display: flex; gap: 2px; padding: 10px 18px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .tab { padding: 7px 11px; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab.on { color: var(--text-primary); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warning); margin-left: 5px; vertical-align: middle; }
+  .tab.add { color: var(--accent); }
+  .pane { padding: 12px 18px 18px; overflow: auto; }
+  .tools { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-size: 12px; margin-bottom: 10px; }
+  .sel { border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; color: var(--text-primary); }
+  .tools .r { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .turn { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+  .turn:hover { background: var(--bg-primary); }
+  .turn .ts { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 1px; }
+  .turn .sp { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+  .turn .sp .ren { font-weight: 400; color: var(--text-tertiary); font-size: 11px; margin-left: 6px; }
+  .turn.now { background: var(--selected-bg); box-shadow: inset 3px 0 0 var(--accent); }
+  .turn.now .w { background: rgba(255,159,10,.35); border-radius: 3px; }
+  .turn.past { opacity: .75; }
+  .notes h4 { margin: 14px 0 6px; font-size: 14px; }
+  .notes p, .notes li { line-height: 1.5; }
+  .stalebar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(255,159,10,.12); color: var(--text-primary); font-size: 12px; margin-bottom: 10px; }
+  .btn { border: 1px solid var(--border); border-radius: 7px; padding: 3px 10px; background: var(--bg-secondary); color: var(--text-primary); font-size: 12px; white-space: nowrap; }
+  .btn.pri { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .seg span { padding: 3px 10px; font-size: 12px; } .seg span.on { background: var(--accent); color: #fff; }
+  .note-ann { margin-top: 18px; }
+  .ann { display: grid; grid-template-columns: 22px 1fr; gap: 8px; margin: 6px 0; color: var(--text-secondary); font-size: 12.5px; }
+  .ann b { color: var(--text-primary); }
+  .ann .k { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+  .pin { display: inline-flex; width: 17px; height: 17px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 10px; align-items: center; justify-content: center; font-weight: 700; vertical-align: middle; margin-left: 4px; }
+  #tab-notes { display: none; }
+</style>
+
+<h2>Library: the home page</h2>
+<p class="subtitle">Demo data, not your recordings. Click the <b>Transcript</b> and <b>Lecture</b> tabs to see both views. Numbered pins match the notes underneath.</p>
+
+<div class="app">
+  <div class="topnav">
+    <span class="brand2">Recordings</span>
+    <a class="on">Library</a><a>Tags</a><a>Add</a><a>Status</a>
+    <span class="search">Search titles, transcripts, notes…</span>
+  </div>
+  <div class="panes">
+    <!-- rail -->
+    <div class="rail">
+      <div class="it on"><span>All recordings</span><span class="n">63</span></div>
+      <div class="it"><span>Untagged</span><span class="n">12</span></div>
+      <div class="it warn"><span>Needs attention</span><span class="n">3</span></div>
+      <div class="grp">Tags <span class="pin">1</span></div>
+      <div class="it"><span>▾ school</span><span class="n">14</span></div>
+      <div class="it ind1"><span>course-101</span><span class="n">5</span></div>
+      <div class="it ind1"><span>course-200</span><span class="n">9</span></div>
+      <div class="it"><span>▸ work</span><span class="n">8</span></div>
+      <div class="it"><span>▸ conf</span><span class="n">4</span></div>
+      <div class="it"><span>journal</span><span class="n">6</span></div>
+      <div class="it"><span>talks</span><span class="n">7</span></div>
+      <div class="grp">Note types</div>
+      <div class="it"><span>lecture</span><span class="n">16</span></div>
+      <div class="it"><span>course-notes</span><span class="n">5</span></div>
+      <div class="it"><span>action-items</span><span class="n">11</span></div>
+      <div class="it"><span>conference-talk</span><span class="n">7</span></div>
+      <div class="it"><span>voice-memo</span><span class="n">9</span></div>
+    </div>
+
+    <!-- list -->
+    <div class="list">
+      <div class="hdr"><span>63 recordings · newest first</span><span>▾</span></div>
+      <div class="row">
+        <div class="t"><span>Voice memo: app ideas</span><span class="st proc">● transcribing</span></div>
+        <div class="m">Today 08:12 · 4 min · upload</div>
+        <span class="chip auto">notes/voice-memo · auto</span>
+      </div>
+      <div class="row on">
+        <div class="t"><span>COURSE 101: Week 4</span><span class="st stale">◐ stale</span></div>
+        <div class="m">Tue Oct 6 · 14:00 · 1 h 58 min · Plaud</div>
+        <span class="chip">school/course-101</span><span class="chip nt">notes/lecture</span><span class="chip nt">notes/course-notes</span>
+      </div>
+      <div class="row">
+        <div class="t"><span>Team weekly sync</span><span class="st"></span></div>
+        <div class="m">Mon Oct 5 · 10:30 · 42 min · Plaud</div>
+        <span class="chip">work</span><span class="chip nt">notes/action-items</span>
+      </div>
+      <div class="row">
+        <div class="t"><span>Talk: Reactive UIs beyond the DOM</span><span class="st"></span></div>
+        <div class="m">Sat Oct 3 · 31 min · URL (YouTube) · video</div>
+        <span class="chip">talks</span><span class="chip auto">notes/conference-talk · auto</span>
+      </div>
+      <div class="row">
+        <div class="t"><span>(held)</span><span class="st held">🔒 held</span></div>
+        <div class="m">Fri Oct 2 · 55 min · Plaud</div>
+      </div>
+      <div class="row">
+        <div class="t"><span>Conference planning call</span><span class="st fail">✕ failed</span></div>
+        <div class="m">Thu Oct 1 · 16:00 · 50 min · Plaud</div>
+        <span class="chip">conf</span>
+      </div>
+      <div class="row">
+        <div class="t"><span>COURSE 200: Lecture 9</span><span class="st"></span></div>
+        <div class="m">Wed Sep 30 · 09:00 · 1 h 20 min · watched folder</div>
+        <span class="chip">school/course-200</span><span class="chip nt">notes/lecture</span>
+      </div>
+    </div>
+
+    <!-- detail -->
+    <div class="detail">
+      <div class="dhead">
+        <h3>COURSE 101: Week 4 <span class="pen">✎ edit</span></h3>
+        <div class="meta">Tue 2026-10-06 14:00 −07:00 · 1 h 58 min · Plaud · <span style="font-family:ui-monospace,monospace">20261006T140003-0700_3fa91c2e</span></div>
+        <div class="tags">
+          <span class="chip">school/course-101</span><span class="chip nt">notes/lecture</span><span class="chip nt">notes/course-notes</span>
+          <span class="addtag">+ tag</span>
+          <span class="hold">Hold <span class="tog"></span></span>
+        </div>
+      </div>
+
+      <div class="player">
+        <span class="play">▶</span>
+        <span class="time">26:14</span>
+        <div class="bar"><div class="fill"></div><div class="knob"></div></div>
+        <span class="time">1:58:03</span>
+        <span class="spd">1.25×</span>
+        <span class="pin">2</span>
+      </div>
+
+      <div class="tabs">
+        <span class="tab on" id="t-tr" onclick="document.getElementById('tab-tr').style.display='block';document.getElementById('tab-notes').style.display='none';this.classList.add('on');document.getElementById('t-lec').classList.remove('on')">Transcript</span>
+        <span class="tab" id="t-lec" onclick="document.getElementById('tab-tr').style.display='none';document.getElementById('tab-notes').style.display='block';this.classList.add('on');document.getElementById('t-tr').classList.remove('on')">Lecture</span>
+        <span class="tab">Course notes<span class="dot" title="stale"></span></span>
+        <span class="tab">Plaud</span>
+        <span class="tab">My notes</span>
+        <span class="tab">Details</span>
+        <span class="tab add">+ note type</span>
+      </div>
+
+      <!-- transcript tab -->
+      <div class="pane" id="tab-tr">
+        <div class="tools">
+          <span>Transcript</span>
+          <span class="sel">Whisper large-v3-turbo · Spark ▾</span>
+          <span class="r">Follow audio <span class="tog on"></span> <span class="pin">3</span></span>
+        </div>
+        <div class="turn past"><div class="ts">25:31</div><div><div class="sp">Instructor <span class="ren">✎</span></div>So before we render anything, open the Ports tab at the bottom of the window.</div></div>
+        <div class="turn past"><div class="ts">25:48</div><div><div class="sp">Student 1 <span class="ren">✎ name speaker</span></div>Mine says port 8000 but there's no globe icon next to it.</div></div>
+        <div class="turn now"><div class="ts">26:02</div><div><div class="sp">Instructor <span class="ren">✎</span></div>Right, that's because it's still private. <span class="w">Right-click the row</span>, go to Port Visibility, and choose Public. Only do this with the practice data, never anything private.</div></div>
+        <div class="turn"><div class="ts">26:40</div><div><div class="sp">Student 2 <span class="ren">✎ name speaker</span></div>And then Preview in Editor?</div></div>
+        <div class="turn"><div class="ts">26:47</div><div><div class="sp">Instructor <span class="ren">✎</span></div>Yes, then click Continue, and pick the .html file from the list.</div></div>
+        <div class="turn"><div class="ts">27:15</div><div><div class="sp">Instructor <span class="ren">✎</span></div>If port 8000 isn't there at all, open a new terminal with the plus button, not R…</div></div>
+      </div>
+
+      <!-- notes tab -->
+      <div class="pane notes" id="tab-notes">
+        <div class="tools">
+          <span class="seg"><span>Spark · qwen3.6</span><span class="on">Claude · Opus</span><span>Compare side by side</span></span>
+          <span class="pin">4</span>
+          <span class="r"><span class="btn">Regenerate</span><span class="btn pri">Generate with Claude</span></span>
+        </div>
+        <h4># COURSE 101 Week 4: Viewing rendered reports in Codespaces</h4>
+        <h4>TL;DR</h4>
+        <p>Reports render to port 8000. Make the port public, preview in the editor, and restart the server from a new terminal if the port is missing.</p>
+        <h4>Key points</h4>
+        <ul>
+          <li>Port 8000 ("Rendered reports") starts each time VS Code connects.</li>
+          <li>Public visibility exposes workspace files: practice data only.</li>
+          <li>"Address already in use" means the server is already running.</li>
+        </ul>
+        <h4>Questions asked</h4>
+        <ul><li>Why is there no globe icon on port 8000? (It is private until changed.)</li></ul>
+        <p style="color:var(--text-tertiary);font-size:11px;margin-top:14px">notes/lecture · claude-opus-5-5 · prompt lecture@a41c09e · 2026-10-06 16:12 UTC</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="note-ann">
+  <div class="ann"><span class="k">1</span><span><b>Sidebar:</b> All, Untagged and Needs attention at the top, then the tag tree with counts, then note types. Clicking any item filters the list.</span></div>
+  <div class="ann"><span class="k">2</span><span><b>Player stays visible</b> while you scroll the transcript. For a video, this becomes the video itself.</span></div>
+  <div class="ann"><span class="k">3</span><span><b>Synced transcript:</b> the current line is highlighted as the audio plays, and the view scrolls with it. Turn off <i>Follow audio</i> to scroll freely. Clicking any line jumps the audio there. Clicking a speaker label names that speaker.</span></div>
+  <div class="ann"><span class="k">4</span><span><b>Note tabs:</b> one per note type. The orange dot means stale. Switch between models, or compare them side by side. Small print at the bottom shows exactly which model and prompt version wrote it.</span></div>
+</div>
