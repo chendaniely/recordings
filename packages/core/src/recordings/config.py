@@ -82,9 +82,17 @@ def secret(name: str, environ: Mapping[str, str]) -> str | None:
         raise ConfigError(f"set {spec.env} or {spec.env}_FILE, not both")
     if file_var:
         path = Path(file_var)
-        if not path.is_file():
+        if not path.exists():
             raise ConfigError(f"{spec.env}_FILE points at {path}, which does not exist")
-        return path.read_text(encoding="utf-8").strip() or None
+        if not path.is_file():
+            raise ConfigError(f"{spec.env}_FILE points at {path}, which is not a file")
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            raise ConfigError(f"{spec.env}_FILE at {path} could not be read") from None
+        if not content:
+            raise ConfigError(f"{spec.env}_FILE at {path} is empty")
+        return content
     return direct or None
 
 
