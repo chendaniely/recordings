@@ -1,0 +1,37 @@
+# uv workspace: the core library/CLI and the UI app (spec §4). The root is not a package.
+[project]
+name = "recordings-workspace"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = ["recordings", "recordings-ui"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/core", "packages/ui"]
+
+[tool.uv.sources]
+recordings = { workspace = true }
+recordings-ui = { workspace = true }
+
+# A dependency group, not an extra, so a plain `uv sync` can never silently remove pytest
+# (the audio-router lesson).
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-playwright==0.9.0",
+    "httpx==0.28.1",
+    "jsonschema==4.26.0",
+    "pyyaml==6.0.3",
+    "ruff==0.16.10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/core/tests", "packages/ui/tests"]
+# importlib mode: both packages have a tests/ folder with same-named files.
+addopts = "--import-mode=importlib -m 'not e2e'"
+markers = ["e2e: browser tests against a running demo server (need the built frontend)"]
+
+[tool.ruff]
+line-length = 100

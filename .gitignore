@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+node_modules/
+# Vite build output: rebuilt by `make build`; never edit it (shinyreact-build-app skill).
+packages/ui/src/recordings_ui/www/ui.js
+packages/ui/src/recordings_ui/www/ui.css
+# Downloaded originals and encoded clips for rebuilding the demo archive.
+demo/.cache/
+# Skill symlinks into .venv, recreated by `make skills`.
+.claude/skills/shinyreact-*
+# shadcn's skill, installed by `make skills` (npx skills add shadcn/ui)
+.claude/skills/shadcn/
+.agents/
+.superpowers/
+test-results/
+.playwright-mcp/
+.DS_Store
