@@ -1,0 +1,18 @@
+{
+  "schema": "recordings/rendition@1",
+  "kind": "notes",
+  "note_type": "conference-talk",
+  "engine": "canned",
+  "model": "qwen3.6-35b-a3b",
+  "version": "qwen3.6-35b-a3b@demo",
+  "created_at": "2026-10-08T12:00:01Z",
+  "inputs": {
+    "audio_sha256": "229ce3eac974b667cafbdcaeebe5e8b18c678bee34975e897a9ee022adbeddcb"
+  },
+  "meta": {
+    "demo": true
+  },
+  "payload": {
+    "markdown": "# JFK at Rice University (opening)\n\n## TL;DR\nThe opening of President Kennedy's September 1962 address at Rice University: thanks to his\nhosts, then a framing of the moment as an age of change and challenge.\n\n## Key points\n- Opens by greeting the university's leaders, officials and the audience.\n- Describes the present as an hour of change and challenge, and a decade of hope and fear.\n- Sets up the argument that knowledge and the unknown grow together.\n\n## Questions asked\n_None noted._\n"
+  }
+}

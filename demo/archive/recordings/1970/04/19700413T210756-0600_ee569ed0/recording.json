@@ -1,0 +1,27 @@
+{
+  "$schema": "../../../../schemas/recording.schema.json",
+  "format": "recordings-archive@1",
+  "id": "19700413T210756-0600_ee569ed0",
+  "title": "Apollo 13: Houston, we've had a problem",
+  "recorded_at": "1970-04-13T21:07:56-06:00",
+  "timezone": "America/Chicago",
+  "time_source": "published",
+  "media": {
+    "file": "19700413T210756-0600_ee569ed0.mp3",
+    "sha256": "ee569ed0e8c44a5a2deaac3b84c5e88e5a3c9ec65ed881ebf8b19dfa43d1bd7d",
+    "kind": "audio",
+    "duration_ms": 16550
+  },
+  "sources": [
+    {
+      "kind": "plaud",
+      "ref": "demo-apollo13",
+      "added_at": "2026-10-08T12:00:00Z",
+      "raw": "source/plaud-20261008T120000Z.json"
+    }
+  ],
+  "tags": [],
+  "excluded_note_types": [],
+  "speakers": {},
+  "chosen": {}
+}

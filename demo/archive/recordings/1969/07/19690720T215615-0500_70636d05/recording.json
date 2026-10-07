@@ -1,0 +1,35 @@
+{
+  "$schema": "../../../../schemas/recording.schema.json",
+  "format": "recordings-archive@1",
+  "id": "19690720T215615-0500_70636d05",
+  "title": "Apollo 11: first steps on the Moon",
+  "recorded_at": "1969-07-20T21:56:15-05:00",
+  "timezone": "America/Chicago",
+  "time_source": "published",
+  "media": {
+    "file": "19690720T215615-0500_70636d05.mp4",
+    "sha256": "70636d050d20fa394c719bd65b208bbbd1ec04a586b2a90a5fae5fc9afe26c69",
+    "kind": "video",
+    "duration_ms": 61518
+  },
+  "sources": [
+    {
+      "kind": "url",
+      "ref": "https://commons.wikimedia.org/wiki/File:Apollo_11_Landing_-_first_steps_on_the_moon.ogv",
+      "added_at": "2026-10-08T12:00:00Z"
+    }
+  ],
+  "tags": [
+    {
+      "tag": "space/apollo",
+      "by": "you"
+    },
+    {
+      "tag": "notes/general-fallback",
+      "by": "auto"
+    }
+  ],
+  "excluded_note_types": [],
+  "speakers": {},
+  "chosen": {}
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "../../../../schemas/recording.schema.json",
+  "format": "recordings-archive@1",
+  "id": "19330312T220000-0500_4c589e0a",
+  "title": "Fireside Chat 1: On the Banking Crisis (opening)",
+  "recorded_at": "1933-03-12T22:00:00-05:00",
+  "timezone": "America/New_York",
+  "time_source": "published",
+  "media": {
+    "file": "19330312T220000-0500_4c589e0a.mp3",
+    "sha256": "4c589e0a7269f0f325fc37f35f6e993ecc724491ea3408118b063070417cd965",
+    "kind": "audio",
+    "duration_ms": 60000
+  },
+  "sources": [
+    {
+      "kind": "url",
+      "ref": "https://commons.wikimedia.org/wiki/File:Fireside_Chat_1_On_the_Banking_Crisis_(March_12,_1933)_Franklin_Delano_Roosevelt.ogg",
+      "added_at": "2026-10-08T12:00:00Z"
+    }
+  ],
+  "tags": [
+    {
+      "tag": "private",
+      "by": "you"
+    }
+  ],
+  "excluded_note_types": [],
+  "speakers": {},
+  "chosen": {}
+}

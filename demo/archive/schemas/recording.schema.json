@@ -1,0 +1,230 @@
+{
+  "$defs": {
+    "Chosen": {
+      "additionalProperties": false,
+      "properties": {
+        "transcript": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transcript"
+        }
+      },
+      "title": "Chosen",
+      "type": "object"
+    },
+    "MediaInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "audio_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audio File"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "audio",
+            "video"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "sha256",
+        "kind"
+      ],
+      "title": "MediaInfo",
+      "type": "object"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "added_at": {
+          "format": "date-time",
+          "title": "Added At",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "raw": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref",
+        "added_at"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    },
+    "TagRef": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "default": "you",
+          "enum": [
+            "you",
+            "auto"
+          ],
+          "title": "By",
+          "type": "string"
+        },
+        "tag": {
+          "title": "Tag",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tag"
+      ],
+      "title": "TagRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "$Schema"
+    },
+    "chosen": {
+      "$ref": "#/$defs/Chosen"
+    },
+    "excluded_note_types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Excluded Note Types",
+      "type": "array"
+    },
+    "format": {
+      "const": "recordings-archive@1",
+      "default": "recordings-archive@1",
+      "title": "Format",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "media": {
+      "$ref": "#/$defs/MediaInfo"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "speakers": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Speakers",
+      "type": "object"
+    },
+    "tags": {
+      "items": {
+        "$ref": "#/$defs/TagRef"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "time_source": {
+      "enum": [
+        "plaud",
+        "metadata",
+        "published",
+        "mtime",
+        "ingest"
+      ],
+      "title": "Time Source",
+      "type": "string"
+    },
+    "timezone": {
+      "title": "Timezone",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "recorded_at",
+    "timezone",
+    "time_source",
+    "media"
+  ],
+  "title": "Recording",
+  "type": "object"
+}

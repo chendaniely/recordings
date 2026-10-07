@@ -1,0 +1,18 @@
+{
+  "schema": "recordings/rendition@1",
+  "kind": "notes",
+  "note_type": "general-fallback",
+  "engine": "canned",
+  "model": "qwen3.6-35b-a3b",
+  "version": "qwen3.6-35b-a3b@demo",
+  "created_at": "2026-10-08T12:03:01Z",
+  "inputs": {
+    "audio_sha256": "4c589e0a7269f0f325fc37f35f6e993ecc724491ea3408118b063070417cd965"
+  },
+  "meta": {
+    "demo": true
+  },
+  "payload": {
+    "markdown": "# Fireside Chat 1 (opening)\n\n## TL;DR\nRoosevelt opens his first fireside chat by saying he will talk about banking, addressing the\nmany people who use banks rather than only the few who understand their mechanics.\n\n## Key points\n- Addresses the public directly, as \"my friends\".\n- Promises to explain what has been done in the last few days, why, and what the next steps\n  will be.\n\n## Action items\n_None noted._\n"
+  }
+}

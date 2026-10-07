@@ -1,0 +1,85 @@
+{
+  "additionalProperties": false,
+  "description": "One output file in renditions/ (extends audio-router/rendition@1, spec §6.5).",
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "engine": {
+      "title": "Engine",
+      "type": "string"
+    },
+    "inputs": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Inputs",
+      "type": "object"
+    },
+    "kind": {
+      "enum": [
+        "transcript",
+        "speakers",
+        "pick",
+        "notes"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "meta": {
+      "additionalProperties": true,
+      "title": "Meta",
+      "type": "object"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "note_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Note Type"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "schema": {
+      "const": "recordings/rendition@1",
+      "default": "recordings/rendition@1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "engine",
+    "version",
+    "created_at",
+    "payload"
+  ],
+  "title": "Rendition",
+  "type": "object"
+}

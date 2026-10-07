@@ -1,0 +1,1030 @@
+{
+  "schema": "recordings/rendition@1",
+  "kind": "transcript",
+  "engine": "canned",
+  "model": "mlx-community/whisper-large-v3-turbo",
+  "version": "large-v3-turbo@a4aaeec",
+  "created_at": "2026-10-08T12:00:00Z",
+  "inputs": {
+    "audio_sha256": "229ce3eac974b667cafbdcaeebe5e8b18c678bee34975e897a9ee022adbeddcb"
+  },
+  "meta": {
+    "demo": true
+  },
+  "payload": {
+    "language": "en",
+    "segments": [
+      {
+        "start": 1.78,
+        "end": 11.46,
+        "speaker": "SPEAKER_00",
+        "text": "President Pitzer, Mr. Vice President, Governor, Congressman Thomas, Senator Wiley and Congressman",
+        "words": [
+          {
+            "word": "President",
+            "start": 1.78,
+            "end": 2.5
+          },
+          {
+            "word": "Pitzer,",
+            "start": 2.5,
+            "end": 2.84
+          },
+          {
+            "word": "Mr.",
+            "start": 3.96,
+            "end": 4.16
+          },
+          {
+            "word": "Vice",
+            "start": 4.42,
+            "end": 4.42
+          },
+          {
+            "word": "President,",
+            "start": 4.42,
+            "end": 4.76
+          },
+          {
+            "word": "Governor,",
+            "start": 5.9,
+            "end": 6.24
+          },
+          {
+            "word": "Congressman",
+            "start": 7.72,
+            "end": 8.52
+          },
+          {
+            "word": "Thomas,",
+            "start": 8.52,
+            "end": 8.96
+          },
+          {
+            "word": "Senator",
+            "start": 9.64,
+            "end": 10.44
+          },
+          {
+            "word": "Wiley",
+            "start": 10.44,
+            "end": 10.88
+          },
+          {
+            "word": "and",
+            "start": 10.88,
+            "end": 11.04
+          },
+          {
+            "word": "Congressman",
+            "start": 11.04,
+            "end": 11.46
+          }
+        ]
+      },
+      {
+        "start": 11.46,
+        "end": 20.42,
+        "speaker": "SPEAKER_00",
+        "text": "Miller, Mr. Webb, Mr. Bell, scientists, distinguished guests, ladies and gentlemen, I appreciate",
+        "words": [
+          {
+            "word": "Miller,",
+            "start": 11.46,
+            "end": 11.76
+          },
+          {
+            "word": "Mr.",
+            "start": 12.84,
+            "end": 13.0
+          },
+          {
+            "word": "Webb,",
+            "start": 13.12,
+            "end": 13.36
+          },
+          {
+            "word": "Mr.",
+            "start": 14.12,
+            "end": 14.32
+          },
+          {
+            "word": "Bell,",
+            "start": 14.34,
+            "end": 14.66
+          },
+          {
+            "word": "scientists,",
+            "start": 15.92,
+            "end": 16.44
+          },
+          {
+            "word": "distinguished",
+            "start": 17.28,
+            "end": 17.64
+          },
+          {
+            "word": "guests,",
+            "start": 17.64,
+            "end": 18.08
+          },
+          {
+            "word": "ladies",
+            "start": 18.14,
+            "end": 18.42
+          },
+          {
+            "word": "and",
+            "start": 18.42,
+            "end": 18.6
+          },
+          {
+            "word": "gentlemen,",
+            "start": 18.6,
+            "end": 18.84
+          },
+          {
+            "word": "I",
+            "start": 19.2,
+            "end": 20.0
+          },
+          {
+            "word": "appreciate",
+            "start": 20.0,
+            "end": 20.42
+          }
+        ]
+      },
+      {
+        "start": 20.42,
+        "end": 27.22,
+        "speaker": "SPEAKER_00",
+        "text": "your President having made me an honorary visiting professor, and I will assure you that",
+        "words": [
+          {
+            "word": "your",
+            "start": 20.42,
+            "end": 21.24
+          },
+          {
+            "word": "President",
+            "start": 21.24,
+            "end": 21.62
+          },
+          {
+            "word": "having",
+            "start": 21.62,
+            "end": 22.82
+          },
+          {
+            "word": "made",
+            "start": 22.82,
+            "end": 23.08
+          },
+          {
+            "word": "me",
+            "start": 23.08,
+            "end": 23.3
+          },
+          {
+            "word": "an",
+            "start": 23.3,
+            "end": 23.44
+          },
+          {
+            "word": "honorary",
+            "start": 23.44,
+            "end": 23.72
+          },
+          {
+            "word": "visiting",
+            "start": 23.72,
+            "end": 24.18
+          },
+          {
+            "word": "professor,",
+            "start": 24.18,
+            "end": 24.7
+          },
+          {
+            "word": "and",
+            "start": 24.7,
+            "end": 25.5
+          },
+          {
+            "word": "I",
+            "start": 25.5,
+            "end": 25.64
+          },
+          {
+            "word": "will",
+            "start": 25.64,
+            "end": 25.82
+          },
+          {
+            "word": "assure",
+            "start": 25.82,
+            "end": 26.12
+          },
+          {
+            "word": "you",
+            "start": 26.12,
+            "end": 26.42
+          },
+          {
+            "word": "that",
+            "start": 26.42,
+            "end": 27.22
+          }
+        ]
+      },
+      {
+        "start": 27.22,
+        "end": 33.0,
+        "speaker": "SPEAKER_00",
+        "text": "my first lecture will be very brief. I am delighted to be here, and I am particularly delighted",
+        "words": [
+          {
+            "word": "my",
+            "start": 27.22,
+            "end": 27.4
+          },
+          {
+            "word": "first",
+            "start": 27.4,
+            "end": 27.7
+          },
+          {
+            "word": "lecture",
+            "start": 27.7,
+            "end": 28.0
+          },
+          {
+            "word": "will",
+            "start": 28.0,
+            "end": 28.22
+          },
+          {
+            "word": "be",
+            "start": 28.22,
+            "end": 28.42
+          },
+          {
+            "word": "very",
+            "start": 28.42,
+            "end": 28.78
+          },
+          {
+            "word": "brief.",
+            "start": 28.78,
+            "end": 29.1
+          },
+          {
+            "word": "I",
+            "start": 29.54,
+            "end": 30.14
+          },
+          {
+            "word": "am",
+            "start": 30.14,
+            "end": 30.32
+          },
+          {
+            "word": "delighted",
+            "start": 30.32,
+            "end": 30.6
+          },
+          {
+            "word": "to",
+            "start": 30.6,
+            "end": 30.76
+          },
+          {
+            "word": "be",
+            "start": 30.76,
+            "end": 30.9
+          },
+          {
+            "word": "here,",
+            "start": 30.9,
+            "end": 31.16
+          },
+          {
+            "word": "and",
+            "start": 31.36,
+            "end": 32.06
+          },
+          {
+            "word": "I",
+            "start": 32.06,
+            "end": 32.16
+          },
+          {
+            "word": "am",
+            "start": 32.16,
+            "end": 32.24
+          },
+          {
+            "word": "particularly",
+            "start": 32.24,
+            "end": 32.6
+          },
+          {
+            "word": "delighted",
+            "start": 32.6,
+            "end": 33.0
+          }
+        ]
+      },
+      {
+        "start": 33.0,
+        "end": 41.44,
+        "speaker": "SPEAKER_00",
+        "text": "to be here on this occasion. We meet at a college noted for knowledge, in a city noted for progress,",
+        "words": [
+          {
+            "word": "to",
+            "start": 33.0,
+            "end": 33.16
+          },
+          {
+            "word": "be",
+            "start": 33.16,
+            "end": 33.3
+          },
+          {
+            "word": "here",
+            "start": 33.3,
+            "end": 33.52
+          },
+          {
+            "word": "on",
+            "start": 33.52,
+            "end": 33.66
+          },
+          {
+            "word": "this",
+            "start": 33.66,
+            "end": 33.82
+          },
+          {
+            "word": "occasion.",
+            "start": 33.82,
+            "end": 34.18
+          },
+          {
+            "word": "We",
+            "start": 34.94,
+            "end": 35.54
+          },
+          {
+            "word": "meet",
+            "start": 35.54,
+            "end": 35.88
+          },
+          {
+            "word": "at",
+            "start": 35.88,
+            "end": 36.04
+          },
+          {
+            "word": "a",
+            "start": 36.04,
+            "end": 36.16
+          },
+          {
+            "word": "college",
+            "start": 36.16,
+            "end": 36.62
+          },
+          {
+            "word": "noted",
+            "start": 36.62,
+            "end": 38.24
+          },
+          {
+            "word": "for",
+            "start": 38.24,
+            "end": 38.48
+          },
+          {
+            "word": "knowledge,",
+            "start": 38.48,
+            "end": 38.88
+          },
+          {
+            "word": "in",
+            "start": 39.36,
+            "end": 40.12
+          },
+          {
+            "word": "a",
+            "start": 40.12,
+            "end": 40.24
+          },
+          {
+            "word": "city",
+            "start": 40.24,
+            "end": 40.52
+          },
+          {
+            "word": "noted",
+            "start": 40.52,
+            "end": 40.8
+          },
+          {
+            "word": "for",
+            "start": 40.8,
+            "end": 41.0
+          },
+          {
+            "word": "progress,",
+            "start": 41.0,
+            "end": 41.44
+          }
+        ]
+      },
+      {
+        "start": 41.98,
+        "end": 49.04,
+        "speaker": "SPEAKER_00",
+        "text": "in a state noted for strength, and we stand in need of all three. For we meet in an hour",
+        "words": [
+          {
+            "word": "in",
+            "start": 41.98,
+            "end": 42.56
+          },
+          {
+            "word": "a",
+            "start": 42.56,
+            "end": 42.68
+          },
+          {
+            "word": "state",
+            "start": 42.68,
+            "end": 42.94
+          },
+          {
+            "word": "noted",
+            "start": 42.94,
+            "end": 43.22
+          },
+          {
+            "word": "for",
+            "start": 43.22,
+            "end": 43.42
+          },
+          {
+            "word": "strength,",
+            "start": 43.42,
+            "end": 43.78
+          },
+          {
+            "word": "and",
+            "start": 44.02,
+            "end": 44.8
+          },
+          {
+            "word": "we",
+            "start": 44.8,
+            "end": 45.0
+          },
+          {
+            "word": "stand",
+            "start": 45.0,
+            "end": 45.4
+          },
+          {
+            "word": "in",
+            "start": 45.4,
+            "end": 45.6
+          },
+          {
+            "word": "need",
+            "start": 45.6,
+            "end": 45.78
+          },
+          {
+            "word": "of",
+            "start": 45.78,
+            "end": 45.92
+          },
+          {
+            "word": "all",
+            "start": 45.92,
+            "end": 46.12
+          },
+          {
+            "word": "three.",
+            "start": 46.12,
+            "end": 46.44
+          },
+          {
+            "word": "For",
+            "start": 47.38,
+            "end": 47.98
+          },
+          {
+            "word": "we",
+            "start": 47.98,
+            "end": 48.16
+          },
+          {
+            "word": "meet",
+            "start": 48.16,
+            "end": 48.5
+          },
+          {
+            "word": "in",
+            "start": 48.5,
+            "end": 48.64
+          },
+          {
+            "word": "an",
+            "start": 48.64,
+            "end": 48.76
+          },
+          {
+            "word": "hour",
+            "start": 48.76,
+            "end": 49.04
+          }
+        ]
+      },
+      {
+        "start": 49.04,
+        "end": 56.92,
+        "speaker": "SPEAKER_00",
+        "text": "of change and challenge, in a decade of hope and fear, in an age of both knowledge and ignorance.",
+        "words": [
+          {
+            "word": "of",
+            "start": 49.04,
+            "end": 49.26
+          },
+          {
+            "word": "change",
+            "start": 49.26,
+            "end": 49.7
+          },
+          {
+            "word": "and",
+            "start": 49.7,
+            "end": 50.18
+          },
+          {
+            "word": "challenge,",
+            "start": 50.18,
+            "end": 50.62
+          },
+          {
+            "word": "in",
+            "start": 51.04,
+            "end": 51.94
+          },
+          {
+            "word": "a",
+            "start": 51.94,
+            "end": 52.06
+          },
+          {
+            "word": "decade",
+            "start": 52.06,
+            "end": 52.38
+          },
+          {
+            "word": "of",
+            "start": 52.38,
+            "end": 52.7
+          },
+          {
+            "word": "hope",
+            "start": 52.7,
+            "end": 53.0
+          },
+          {
+            "word": "and",
+            "start": 53.0,
+            "end": 53.3
+          },
+          {
+            "word": "fear,",
+            "start": 53.3,
+            "end": 53.64
+          },
+          {
+            "word": "in",
+            "start": 53.96,
+            "end": 54.74
+          },
+          {
+            "word": "an",
+            "start": 54.74,
+            "end": 54.84
+          },
+          {
+            "word": "age",
+            "start": 54.84,
+            "end": 55.16
+          },
+          {
+            "word": "of",
+            "start": 55.16,
+            "end": 55.3
+          },
+          {
+            "word": "both",
+            "start": 55.3,
+            "end": 55.52
+          },
+          {
+            "word": "knowledge",
+            "start": 55.52,
+            "end": 55.96
+          },
+          {
+            "word": "and",
+            "start": 55.96,
+            "end": 56.54
+          },
+          {
+            "word": "ignorance.",
+            "start": 56.54,
+            "end": 56.92
+          }
+        ]
+      },
+      {
+        "start": 57.22,
+        "end": 64.4,
+        "speaker": "SPEAKER_00",
+        "text": "The greater our knowledge increases, the greater our ignorance unfolds. Despite the striking",
+        "words": [
+          {
+            "word": "The",
+            "start": 57.22,
+            "end": 58.08
+          },
+          {
+            "word": "greater",
+            "start": 58.08,
+            "end": 58.36
+          },
+          {
+            "word": "our",
+            "start": 58.36,
+            "end": 58.64
+          },
+          {
+            "word": "knowledge",
+            "start": 58.64,
+            "end": 59.0
+          },
+          {
+            "word": "increases,",
+            "start": 59.0,
+            "end": 59.56
+          },
+          {
+            "word": "the",
+            "start": 59.94,
+            "end": 60.62
+          },
+          {
+            "word": "greater",
+            "start": 60.62,
+            "end": 60.86
+          },
+          {
+            "word": "our",
+            "start": 60.86,
+            "end": 61.18
+          },
+          {
+            "word": "ignorance",
+            "start": 61.18,
+            "end": 61.56
+          },
+          {
+            "word": "unfolds.",
+            "start": 61.56,
+            "end": 62.5
+          },
+          {
+            "word": "Despite",
+            "start": 63.1,
+            "end": 63.82
+          },
+          {
+            "word": "the",
+            "start": 63.82,
+            "end": 64.06
+          },
+          {
+            "word": "striking",
+            "start": 64.06,
+            "end": 64.4
+          }
+        ]
+      },
+      {
+        "start": 64.4,
+        "end": 71.56,
+        "speaker": "SPEAKER_00",
+        "text": "fact that most of the scientists that the world has ever known are alive and working today,",
+        "words": [
+          {
+            "word": "fact",
+            "start": 64.4,
+            "end": 64.86
+          },
+          {
+            "word": "that",
+            "start": 64.86,
+            "end": 66.0
+          },
+          {
+            "word": "most",
+            "start": 66.0,
+            "end": 66.32
+          },
+          {
+            "word": "of",
+            "start": 66.32,
+            "end": 66.5
+          },
+          {
+            "word": "the",
+            "start": 66.5,
+            "end": 66.62
+          },
+          {
+            "word": "scientists",
+            "start": 66.62,
+            "end": 67.1
+          },
+          {
+            "word": "that",
+            "start": 67.1,
+            "end": 67.4
+          },
+          {
+            "word": "the",
+            "start": 67.4,
+            "end": 67.52
+          },
+          {
+            "word": "world",
+            "start": 67.52,
+            "end": 67.88
+          },
+          {
+            "word": "has",
+            "start": 67.88,
+            "end": 68.12
+          },
+          {
+            "word": "ever",
+            "start": 68.12,
+            "end": 68.32
+          },
+          {
+            "word": "known",
+            "start": 68.32,
+            "end": 68.66
+          },
+          {
+            "word": "are",
+            "start": 68.66,
+            "end": 69.56
+          },
+          {
+            "word": "alive",
+            "start": 69.56,
+            "end": 70.08
+          },
+          {
+            "word": "and",
+            "start": 70.08,
+            "end": 70.86
+          },
+          {
+            "word": "working",
+            "start": 70.86,
+            "end": 71.18
+          },
+          {
+            "word": "today,",
+            "start": 71.18,
+            "end": 71.56
+          }
+        ]
+      },
+      {
+        "start": 72.66,
+        "end": 80.66,
+        "speaker": "SPEAKER_00",
+        "text": "despite the fact that this nation's own scientific manpower is doubling every 12 years in a rate",
+        "words": [
+          {
+            "word": "despite",
+            "start": 72.62,
+            "end": 72.98
+          },
+          {
+            "word": "the",
+            "start": 72.98,
+            "end": 73.28
+          },
+          {
+            "word": "fact",
+            "start": 73.28,
+            "end": 73.58
+          },
+          {
+            "word": "that",
+            "start": 73.58,
+            "end": 73.8
+          },
+          {
+            "word": "this",
+            "start": 73.8,
+            "end": 74.08
+          },
+          {
+            "word": "nation's",
+            "start": 74.08,
+            "end": 74.72
+          },
+          {
+            "word": "own",
+            "start": 74.72,
+            "end": 75.12
+          },
+          {
+            "word": "scientific",
+            "start": 75.12,
+            "end": 75.86
+          },
+          {
+            "word": "manpower",
+            "start": 75.86,
+            "end": 76.56
+          },
+          {
+            "word": "is",
+            "start": 76.56,
+            "end": 77.58
+          },
+          {
+            "word": "doubling",
+            "start": 77.58,
+            "end": 77.96
+          },
+          {
+            "word": "every",
+            "start": 77.96,
+            "end": 78.38
+          },
+          {
+            "word": "12",
+            "start": 78.38,
+            "end": 78.68
+          },
+          {
+            "word": "years",
+            "start": 78.68,
+            "end": 79.22
+          },
+          {
+            "word": "in",
+            "start": 79.22,
+            "end": 80.28
+          },
+          {
+            "word": "a",
+            "start": 80.28,
+            "end": 80.42
+          },
+          {
+            "word": "rate",
+            "start": 80.42,
+            "end": 80.66
+          }
+        ]
+      },
+      {
+        "start": 80.66,
+        "end": 87.38,
+        "speaker": "SPEAKER_00",
+        "text": "more than three times more than three times as our population as a whole. Despite that,",
+        "words": [
+          {
+            "word": "more",
+            "start": 80.66,
+            "end": 82.28
+          },
+          {
+            "word": "than",
+            "start": 82.28,
+            "end": 82.5
+          },
+          {
+            "word": "three",
+            "start": 82.5,
+            "end": 82.74
+          },
+          {
+            "word": "times",
+            "start": 82.74,
+            "end": 83.14
+          },
+          {
+            "word": "more",
+            "start": 83.14,
+            "end": 83.4
+          },
+          {
+            "word": "than",
+            "start": 83.4,
+            "end": 83.4
+          },
+          {
+            "word": "three",
+            "start": 83.4,
+            "end": 83.4
+          },
+          {
+            "word": "times",
+            "start": 83.4,
+            "end": 83.4
+          },
+          {
+            "word": "as",
+            "start": 83.4,
+            "end": 83.4
+          },
+          {
+            "word": "our",
+            "start": 83.4,
+            "end": 84.32
+          },
+          {
+            "word": "population",
+            "start": 84.32,
+            "end": 84.96
+          },
+          {
+            "word": "as",
+            "start": 84.96,
+            "end": 85.2
+          },
+          {
+            "word": "a",
+            "start": 85.2,
+            "end": 85.28
+          },
+          {
+            "word": "whole.",
+            "start": 85.28,
+            "end": 85.52
+          },
+          {
+            "word": "Despite",
+            "start": 85.98,
+            "end": 86.88
+          },
+          {
+            "word": "that,",
+            "start": 86.88,
+            "end": 87.38
+          }
+        ]
+      },
+      {
+        "start": 88.06,
+        "end": 89.98,
+        "speaker": "SPEAKER_00",
+        "text": "the vast stretches...",
+        "words": [
+          {
+            "word": "the",
+            "start": 88.06,
+            "end": 88.72
+          },
+          {
+            "word": "vast",
+            "start": 88.72,
+            "end": 89.28
+          },
+          {
+            "word": "stretches...",
+            "start": 89.28,
+            "end": 89.98
+          }
+        ]
+      }
+    ]
+  }
+}

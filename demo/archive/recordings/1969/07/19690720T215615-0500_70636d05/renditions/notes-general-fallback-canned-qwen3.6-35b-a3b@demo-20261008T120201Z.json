@@ -1,0 +1,18 @@
+{
+  "schema": "recordings/rendition@1",
+  "kind": "notes",
+  "note_type": "general-fallback",
+  "engine": "canned",
+  "model": "qwen3.6-35b-a3b",
+  "version": "qwen3.6-35b-a3b@demo",
+  "created_at": "2026-10-08T12:02:01Z",
+  "inputs": {
+    "audio_sha256": "70636d050d20fa394c719bd65b208bbbd1ec04a586b2a90a5fae5fc9afe26c69"
+  },
+  "meta": {
+    "demo": true
+  },
+  "payload": {
+    "markdown": "# Apollo 11: first steps\n\n## TL;DR\nNeil Armstrong describes the lunar surface from the foot of the lunar module's ladder, then\nsteps off onto the Moon.\n\n## Key points\n- Armstrong describes the surface as he reaches the foot of the ladder.\n- He speaks the \"one small step\" line as he steps off.\n\n## Action items\n_None noted._\n"
+  }
+}
