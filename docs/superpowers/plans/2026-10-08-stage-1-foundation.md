@@ -109,6 +109,22 @@
 5. **Non-ASCII titles and text** (`会議メモ 🎙`) must survive a write and read in UTF-8,
    with the file name unaffected. Tested in Task 4.
 
+## Execution checkpoints (Dan, 2026-10-08)
+
+After each task passes its review, and before the next task starts, run a **forward and
+reverse review**:
+
+- **Reverse:** compare what is now built against the spec, this plan and the earlier
+  tasks. Fixes and rulings made during review count: they can change behaviour that
+  earlier tasks or the spec assumed. The question is whether we implemented the right
+  thing.
+- **Forward:** read the remaining tasks against the code as it actually stands, including
+  names, signatures, behaviour and rulings. Amend any task that no longer fits before it
+  runs.
+
+Plan amendments are committed as they happen (`docs(plan): …`), so the plan in git always
+matches what is being built. Each checkpoint's findings are kept in the execution ledger.
+
 ## File map (created in stage 1)
 
 ```
