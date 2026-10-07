@@ -54,6 +54,39 @@ def write_text_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def _publish_bytes_exclusive(data: bytes, target_path: Path) -> Path:
+    """Publish bytes exclusively (write-once). Raises FileExistsError if target exists.
+
+    On collision, retries with next -N suffix. Always cleans up temp file.
+    """
+    path = _unique(target_path)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_bytes(data)
+        os.link(tmp, path)
+        return path
+    except FileExistsError:
+        # Collision: retry with next suffix
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return _publish_bytes_exclusive(data, target_path)
+    except BaseException:
+        # Cleanup temp file on any other error
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    finally:
+        # Ensure temp is removed
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def _slug(value: str) -> str:
     return _UNSAFE.sub("_", value).strip("_") or "x"
 
@@ -161,30 +194,36 @@ class Archive:
         if final.exists():
             raise FileExistsError(f"{final} exists but holds different media")
         tmp = self.root / ".tmp" / uuid.uuid4().hex
-        (tmp / "source").mkdir(parents=True)
-        (tmp / "renditions").mkdir()
-        media_name = f"{rid}{media.suffix.lower()}"
-        shutil.copy2(media, tmp / media_name)
-        rec = Recording(
-            schema_ref=SCHEMA_REF,
-            id=rid,
-            title=title,
-            recorded_at=recorded_at,
-            timezone=timezone_name,
-            time_source=time_source,
-            media=MediaInfo(file=media_name, sha256=sha, kind=kind, duration_ms=duration_ms),
-            sources=[self._write_raw(tmp, source)],
-            tags=list(tags),
-        )
-        for rendition in renditions:
-            self._write_rendition_into(tmp, rendition)
-        if my_notes is not None:
-            write_text_atomic(tmp / "my-notes.md", my_notes)
-        write_text_atomic(tmp / "recording.json", dump_json(rec))
-        final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(tmp, final)
-        self._drop_empty_tmp()
-        return rec
+        try:
+            (tmp / "source").mkdir(parents=True)
+            (tmp / "renditions").mkdir()
+            media_name = f"{rid}{media.suffix.lower()}"
+            shutil.copy2(media, tmp / media_name)
+            rec = Recording(
+                schema_ref=SCHEMA_REF,
+                id=rid,
+                title=title,
+                recorded_at=recorded_at,
+                timezone=timezone_name,
+                time_source=time_source,
+                media=MediaInfo(file=media_name, sha256=sha, kind=kind, duration_ms=duration_ms),
+                sources=[self._write_raw(tmp, source)],
+                tags=list(tags),
+            )
+            for rendition in renditions:
+                self._write_rendition_into(tmp, rendition)
+            if my_notes is not None:
+                write_text_atomic(tmp / "my-notes.md", my_notes)
+            write_text_atomic(tmp / "recording.json", dump_json(rec))
+            final.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, final)
+            self._drop_empty_tmp()
+            return rec
+        except BaseException:
+            # Clean up failed assembly
+            shutil.rmtree(tmp, ignore_errors=True)
+            self._drop_empty_tmp()
+            raise
 
     def write_rendition(self, rid: str, rendition: Rendition) -> str:
         folder = self.path_for(rid)
@@ -196,8 +235,8 @@ class Archive:
     def _write_raw(self, folder: Path, source: RawSource) -> SourceRef:
         raw = None
         if source.payload is not None:
-            path = _unique(folder / "source" / f"{_slug(source.kind)}-{utc_stamp(source.added_at)}.json")
-            path.write_bytes(source.payload)
+            target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(source.added_at)}.json"
+            path = _publish_bytes_exclusive(source.payload, target)
             raw = path.relative_to(folder).as_posix()
         return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at, raw=raw)
 
@@ -206,10 +245,10 @@ class Archive:
         name = "-".join(
             [_slug(kind), _slug(rendition.engine), _slug(rendition.version), utc_stamp(rendition.created_at)]
         )
-        path = _unique(folder / "renditions" / f"{name}.json")
-        path.parent.mkdir(exist_ok=True)
-        # write-once: a fresh temp file, then a rename onto a name nobody holds yet
-        write_text_atomic(path, dump_json(rendition))
+        target = folder / "renditions" / f"{name}.json"
+        target.parent.mkdir(exist_ok=True)
+        # write-once: publish exclusively to prevent overwrites on collision
+        path = _publish_bytes_exclusive(dump_json(rendition).encode("utf-8"), target)
         return path.relative_to(folder).as_posix()
 
     def _merge_source(self, rec: Recording, source: RawSource) -> Recording:
