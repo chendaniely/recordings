@@ -3161,7 +3161,8 @@ RecordingView = {
   notes: [{note_type, outputs: [{rendition, model, engine, created_at, html}]}],  # newest first
   plaud_notes: [{rendition, created_at, html}],
   my_notes_html: str | null,
-  renditions: [{rendition, kind, note_type, engine, model, created_at}]
+  renditions: [{rendition, kind, note_type, engine, model, created_at}],
+  problems: [{path, message}]               # output files that could not be read (checkpoint fix)
 }
 ```
 
@@ -4373,6 +4374,7 @@ export interface RecordingView {
   notes: NotesGroup[]; plaud_notes: { rendition: string; created_at: string; html: string }[];
   my_notes_html: string | null;
   renditions: { rendition: string; kind: string; note_type: string | null; engine: string; model: string | null; created_at: string }[];
+  problems: { path: string; message: string }[]; // output files that could not be read (shown in Details)
 }
 
 export type Filter = { kind: "all" } | { kind: "untagged" } | { kind: "tag"; tag: string };
@@ -5092,6 +5094,12 @@ import type { RecordingView } from "../types";
 export function DetailsTab({ rec }: { rec: RecordingView }) {
   return (
     <>
+      {rec.problems.length > 0 && (
+        <div className="problems" role="status" data-testid="recording-problems">
+          {rec.problems.length} output file{rec.problems.length > 1 ? "s" : ""} couldn't be read:
+          <ul>{rec.problems.map((p) => <li key={p.path} className="mono">{p.path}: {p.message}</li>)}</ul>
+        </div>
+      )}
       <h3>Sources</h3>
       <table className="details"><thead><tr><th>Kind</th><th>Reference</th><th>Added</th></tr></thead>
         <tbody>{rec.sources.map((s) => <tr key={s.kind + s.ref}><td>{s.kind}</td><td className="mono">{s.ref}</td><td>{s.added_at}</td></tr>)}</tbody></table>
