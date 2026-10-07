@@ -3241,6 +3241,7 @@ def test_unknown_or_malformed_id_is_none(demo_archive):
     archive = Archive(demo_archive)
     assert recording_view(archive, "20200101T000000+0000_00000000") is None
     assert recording_view(archive, "../../etc/passwd") is None
+    assert recording_view(archive, "20261399T256199+0000_deadbeef") is None  # regex-valid, impossible date
 
 
 def test_a_recording_with_no_outputs_has_empty_tabs(tmp_path):
@@ -3382,7 +3383,7 @@ def recording_view(archive: Archive, rid: str) -> dict | None:
         return None
     try:
         rec = archive.load(rid)
-    except KeyError:
+    except (KeyError, ValueError):  # unknown id, impossible date in the id, or a broken file
         return None
     outputs = archive.renditions(rid)
     transcripts = [
@@ -3552,7 +3553,8 @@ def test_a_range_past_the_end_is_416_not_500(client, demo_ids):
     assert r.status_code == 416
 
 
-@pytest.mark.parametrize("bad", ["20200101T000000+0000_00000000", "not-an-id"])
+@pytest.mark.parametrize(
+    "bad", ["20200101T000000+0000_00000000", "not-an-id", "20261399T256199+0000_deadbeef"])
 def test_unknown_or_malformed_media_is_404(client, bad):
     assert client.get(f"/media/{bad}").status_code == 404
 
@@ -3756,7 +3758,7 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(status_code=404)
         try:
             path = archive.media_path(recording_id)
-        except KeyError:
+        except (KeyError, ValueError):  # unknown id, impossible date in the id, or a broken file
             raise HTTPException(status_code=404) from None
         # FileResponse answers Range with 206, and an unsatisfiable range with 416 (Starlette docs).
         return FileResponse(path, content_disposition_type="inline")
