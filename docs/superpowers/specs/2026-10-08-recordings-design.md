@@ -775,7 +775,9 @@ later" until its build stage (§20):
   playhead, drop targets and the stale dot. **Orange never carries text in light mode** (it
   is 3.2:1 on white).
 - **Other colours:**
-  - success `#72994E` (note-type chips; text `#4E7A2E` in light mode, `#9CC27A` in dark)
+  - success `#72994E` (note-type chips; text `#3D6123` in light mode, `#9CC27A` in dark).
+    The light text was `#4E7A2E` until 2026-10-08. It reached only 3.5:1 on the chip's own
+    tint, so it was darkened.
   - danger `#9A4665` (`#D27A9A` in dark)
 - **Measured contrast:**
   - blue on white 6.6:1

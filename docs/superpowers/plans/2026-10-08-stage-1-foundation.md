@@ -3896,7 +3896,7 @@ color:
     hairline: "#E0D6CB"
     warm-gray: "#6B6258"
     near-black: "#1C1A17"
-    green-text: "#4E7A2E"
+    green-text: "#3D6123"
     burgundy: "#9A4665"
     dark-base: "#171512"
     dark-surface: "#232019"
