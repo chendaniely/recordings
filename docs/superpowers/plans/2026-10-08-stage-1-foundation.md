@@ -4061,7 +4061,7 @@ if __name__ == "__main__":
 ```
 
 Run: `make brand && uv run pytest packages/core/tests/test_brand.py -v`
-Expected: `wrote …/theme.css`, then 3 passed.
+Expected: `wrote …/theme.css`, then 4 passed.
 
 - [ ] **Step 4: Copy the self-hosted fonts**
 
@@ -4614,7 +4614,7 @@ h3 { font-weight: 700; margin: 12px 0 6px; }
 
 Run: `make test-js && make build && ls packages/ui/src/recordings_ui/www`
 Expected:
-- the typecheck is clean, and Vitest shows 4 passed
+- the typecheck is clean, and Vitest shows 5 passed
 - `www/` lists `ui.js`, `ui.css` and `fonts/`
 - `grep -c "createElement(\"div\"" packages/ui/src/recordings_ui/www/ui.js` prints at least
   1
@@ -4769,7 +4769,7 @@ export function filterRows(rows: LibraryRow[], filter: Filter): LibraryRow[] {
 ```
 
 Run: `npm test`
-Expected: all pass, 4 from `theme` and 5 from `transcript`.
+Expected: all pass, 5 from `theme` and 5 from `transcript` (10 in all).
 
 - [ ] **Step 3: Write the components**
 
@@ -4931,11 +4931,15 @@ export function RecordingPane({ selectedId }: { selectedId: string | null }) {
   const rec = useShinyOutputValue<RecordingView | null>("recording");
   const status = useShinyOutputStatus("recording");
   const mediaRef = useRef<HTMLMediaElement | null>(null);
-  const [time, setTime] = useState(0);
+  const [pos, setPos] = useState<{ id: string | null; t: number }>({ id: null, t: 0 });
 
   if (!selectedId) return <section className="pane"><p className="empty">Choose a recording.</p></section>;
   if (!rec || rec.id !== selectedId) return <section className="pane"><p className="empty">Loading…</p></section>;
 
+  // Playback time belongs to one recording: a newly chosen one starts at 0, never at the last
+  // one's position (which would highlight and scroll to the wrong line).
+  const time = pos.id === rec.id ? pos.t : 0;
+  const setTime = (t: number) => setPos({ id: rec.id, t });
   const seek = (t: number) => {
     if (mediaRef.current) mediaRef.current.currentTime = t;
     setTime(t);
@@ -5282,6 +5286,20 @@ def test_clicking_a_line_seeks_the_audio(page: Page, server_url):
     expect(turn).to_have_class(re.compile(r"\bnow\b"))
 
 
+def test_a_newly_chosen_recording_starts_from_the_beginning(page: Page, server_url):
+    # why: playback time belongs to one recording. JFK's third line starts at 20.4 s; carried
+    # over to Apollo 11 (lines at 0, 12.0, 19.9 …) it would mark the third line, not the first.
+    open_library(page, server_url)
+    page.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    page.wait_for_function("document.querySelector('[data-testid=media]')?.readyState >= 1")
+    page.get_by_test_id("turn").nth(2).click()
+    expect(page.get_by_test_id("turn").nth(2)).to_have_class(re.compile(r"\bnow\b"))
+    page.get_by_test_id("recording-row").filter(has_text="Apollo 11").click()
+    expect(page.locator("video[data-testid=media]")).to_have_count(1)
+    expect(page.get_by_test_id("turn").first).to_have_class(re.compile(r"\bnow\b"))
+    expect(page.locator("[data-testid=turn].now")).to_have_count(1)
+
+
 def test_private_recording_shows_the_lock(page: Page, server_url):
     open_library(page, server_url)
     page.get_by_test_id("recording-row").filter(has_text="Fireside").click()
@@ -5315,7 +5333,7 @@ def test_dark_mode_sticks_across_reloads(page: Page, server_url):
 - [ ] **Step 2: Run them**
 
 Run: `make e2e`
-Expected: 6 passed. A failure here is a real bug in Tasks 11–14. Fix it there, not in the
+Expected: 7 passed. A failure here is a real bug in Tasks 11–14. Fix it there, not in the
 test.
 
 - [ ] **Step 3: Commit**
