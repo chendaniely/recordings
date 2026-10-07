@@ -27,6 +27,8 @@ The repo holds two Python packages:
 
 ### What success looks like
 
+- Every Plaud recording reaches the archive, and **Sync** shows at a glance what's missing
+  from the Plaud account.
 - Every recording is in one place, listed newest first, with playback, a synchronized
   transcript and any number of note sets.
 - Tagging is fast: drag and drop, a keyboard tag picker, and a grid of checkboxes. Untagged
@@ -464,15 +466,45 @@ later.
 
 ## 9. Getting recordings in
 
-- **Plaud sync:** runs on a schedule, plus "Sync now". It reuses `audio-router`'s Plaud
-  client, copied in (§19).
-  - It keeps the full payload, including Dan's own in-app notes, as `source/`.
-  - It treats Plaud IDs as opaque, and accepts the `of_` form.
-- **Browser upload:** drag and drop several audio or video files. The upload streams to
-  disk through a FastAPI route, not Shiny.
+### 9.1 Plaud (the main source, built first)
+
+Plaud is how Dan records today, so getting every Plaud recording into the archive comes
+before any other source. It reuses `audio-router`'s Plaud client, copied in (§19).
+
+- **Sync compares the account with the archive.** The **Sync** button lists every recording
+  on the Plaud account and matches each one to the archive by its Plaud ID (either form)
+  and by content hash, so recordings that arrived through the `audio-router` import are not
+  shown as missing. It reports:
+  - **Missing:** on Plaud, not in the archive. **Import all missing** or **Import
+    selected**.
+  - **Updated on Plaud:** the title changed, or Plaud's transcript or AI notes arrived
+    after the recording first came in, or Dan added in-app notes later. A new
+    `source/plaud-<stamp>.json` snapshot is saved, and nothing is overwritten. Recent
+    recordings are checked again for a while, the way `audio-router`'s hot window does.
+  - **Only in the archive:** gone from Plaud. Shown, never deleted.
+- **The compare is a dry run**, and importing is a separate click. The CLI has the same
+  split: `recordings plaud sync --dry-run` and `recordings plaud sync`.
+- **The scheduled sync** runs the same comparison and imports missing recordings
+  automatically, so Plaud recordings arrive without a click. It can be switched off in
+  config. Auto-import is safe because nothing is processed until a recording is tagged
+  (§7.5).
+- **What's kept:** the full payload, including Dan's own in-app notes, goes into
+  `source/`. Plaud IDs are opaque strings, and the `of_` form is accepted.
+
+### 9.2 Import your own audio (a placeholder until a later stage)
+
+These sources share one place in the UI, **Import your own audio**. It is shown as "coming
+later" until its build stage (§20):
+
+- **Browser upload:** drag and drop several audio or video files, for example a Zoom
+  recording made when Plaud wasn't running. The upload streams to disk through a FastAPI
+  route, not Shiny.
+- **URL:** yt-dlp downloads YouTube videos and conference talks. `time_source` is
+  `published`.
 - **Watched folder:** files dropped into a NAS folder are ingested. Failures go to its
   `failed/` folder with the reason.
-- **URL:** yt-dlp downloads talks and videos. `time_source` is `published`.
+
+### 9.3 The `audio-router` import
 - **`recordings import-audio-router`:**
   - It runs as a dry run first. It reports counts, private recordings, and anything it
     can't place.
@@ -594,7 +626,13 @@ later.
 
 ### 12.4 Add
 
-Upload, paste a URL, the watched folder's status, and Plaud sync status with "Sync now".
+- **Plaud panel (first):**
+  - the time of the last sync and the next scheduled sync
+  - **Sync**, which shows counts for Missing, Updated on Plaud, Only in archive and Up to
+    date (§9.1)
+  - the Missing list with checkboxes, plus **Import all missing** and **Import selected**
+- **Import your own audio:** upload, paste a URL and the watched folder (§9.2). Shown as a
+  "coming later" placeholder until its stage.
 
 ### 12.5 Status
 
@@ -782,9 +820,9 @@ come from that frame.
   - The newest vault transcript note is from Sep 14.
   - (Diagnosed by another Claude session on 2026-10-08. It made no API calls, and whether
     `files/{bare hex}` still works is untested.)
-  - The transition below assumes `audio-router` gets a **small separate fix**: accept
-    `(?:of_)?[0-9a-f]{32}`, keep the bare hex as the internal ID, and send the original
-    form back to the API.
+  - **Dan's decision (2026-10-08): no stopgap.** `audio-router` is left failing while
+    `recordings` is built. Every Plaud recording is safe on the account, which is paid
+    for the year. `recordings`' Plaud sync (§9.1) fills the gap when it arrives.
 - **Copying code:**
   - **What:** the Plaud client, transcript parsing, the YouTube source and the output
     format, copied into `packages/core` with their tests.
@@ -794,9 +832,10 @@ come from that frame.
   1. `import-audio-router --dry-run`, then the real import.
   2. Dan tags the imported recordings in the grid.
   3. Spark processing runs as tags land.
-- **Running side by side:** both fetch from Plaud independently, which is harmless because
-  the API is read-only. `audio-router` keeps feeding Obsidian until the vault listener
-  exists, and then its launchd jobs are turned off.
+- **Obsidian waits.** Nothing new reaches the vaults until `recordings` and the separate
+  vault listener exist. That is deliberate: deciding which recordings reach which vault is
+  part of why this app exists. Once the listener runs, `audio-router`'s launchd jobs are
+  switched off.
 - **Elsewhere:** fix the `local-ai` Phase 3 note (§2).
 
 ## 20. Build order
@@ -811,15 +850,20 @@ Each stage leaves a working, demonstrable app.
    - a read-only Library: list, player, synced transcript, the Notes tab (layout B), Plaud
      tab
    - the warm light and dark themes
-2. **Tagging:**
+2. **Plaud:**
+   - the `audio-router` import
+   - Plaud sync with its compare (Missing, Updated, Only in archive) and the scheduled run
+   - the Add page's Plaud panel
+
+   All of Dan's real recordings arrive in the Library here, read-only until stage 3.
+   **Choose the homelab machine before this stage**, because real NAS paths and the Plaud
+   token come in here.
+3. **Tagging:**
    - editing `tags.yaml` and `recording.json`
    - drag, `T`, the grid and the tree, with Undo
    - the Private section and privacy calculation
    - outside-edit detection and `reindex`
    - the catalog, change log, JSON API and CLI
-3. **Getting recordings in:** the `audio-router` import, browser upload and the watched
-   folder. **Choose the homelab machine before this stage**, because real NAS paths come in
-   here.
 4. **Processing:**
    - the queue and worker, with the tag gate and privacy re-check
    - Spark Whisper
@@ -829,7 +873,9 @@ Each stage leaves a working, demonstrable app.
 
    This needs the Spark reachable over Tailscale (`local-ai` Phase 3). Until then it is
    built against Canned.
-5. **More sources:** Plaud sync, URL ingest and video.
+5. **Import your own audio:** browser upload (Zoom recordings and other files), URL import
+   with yt-dlp (YouTube, talks), the watched folder, and video handling. This replaces the
+   placeholder from stage 2.
 6. **Speakers:** pyannote on the Spark (Phase 3), and naming speakers.
 
 **Later, separately:** suggested tags, the vault listener, the course-repo skill and the
@@ -843,6 +889,4 @@ Pixeltable notebook.
 3. **One machine writes** (§3): read-only elsewhere, with `--remote` for writes.
 4. **How a course prompt reaches the host** (§7.3): a copy kept in the prompt library, or a
    checkout on the NAS.
-5. **The homelab machine** (§20, needed by stage 3).
-6. **The `audio-router` `of_` fix** (§19): a separate small change in that repo, needing
-   its own approval.
+5. **The homelab machine** (§20, needed by stage 2, Plaud).
