@@ -610,6 +610,16 @@ later" until its build stage (§20):
   jobs, they wait for approval, for example "37 notes, 2 Claude". Edits made in the UI
   apply immediately. *(Dan asked for UI actions to apply immediately. This preview is kept
   for outside edits only, as Dan confirmed on 2026-10-08.)*
+  - **Batches:** held jobs are grouped into **batches**, one per rescan or `reindex` that
+    found changes. Each batch records:
+    - what changed, for example "Tags added: school/course-101 on 40 recordings"
+    - when and how the change was detected
+    - the jobs it would start, by kind and backend
+  - **Approving them** is done in bulk from the Status page (§12.5), or with
+    `recordings pending list | run | run --no-claude | dismiss` (each with `--json` and
+    batch IDs).
+  - **Dismiss** runs nothing and keeps the edits. Those recordings show their missing
+    outputs with a **Process** button.
 - **Bulk tag changes** are also available through the CLI and API, with a dry run.
 
 ## 12. Interface
@@ -697,7 +707,21 @@ later" until its build stage (§20):
 - failed jobs, with reasons and Retry
 - Spark and Claude reachability
 - the date the Claude token expires, with a warning 30 days before
-- outside edits waiting for approval
+- **Waiting for approval** (batch processing of the outside-edit previews, §11):
+  - **An orange badge in the top bar**, visible on every page, shows "N waiting · M jobs".
+    Clicking it opens this panel.
+  - **Each batch is a card** showing what changed, when it was detected, and chips for the
+    jobs it would start. Claude jobs are blue so they stand out. Private recordings show
+    "🔒 Claude skipped: private" and never list Claude jobs.
+  - **Selecting:** tick whole batches, or **All**. Expand a batch to untick single
+    recordings.
+  - **A sticky action bar** shows "N batches · M jobs, K with Claude", with three buttons:
+    - **Run**
+    - **Run without Claude**: Spark jobs only. The Claude notes can still be generated
+      later.
+    - **Dismiss**
+  - **Undo:** each action shows an Undo toast. Undoing a Run cancels jobs that haven't
+    started yet.
 - "Reprocess archive"
 
 ### 12.6 Look and feel
@@ -737,6 +761,7 @@ The brainstorming mockups are in
 - `tagging-v3.html` (working drag, the `T` picker, the new-tag picker, Finder-style
   selection, the grid with whole-cell clicks, and the tree)
 - `theme.html` (the light and dark colour options)
+- `approvals.html` (approving outside-edit batches in bulk, in the chosen warm palette)
 
 They are fragments written for the brainstorming companion's frame, so their CSS variables
 come from that frame.

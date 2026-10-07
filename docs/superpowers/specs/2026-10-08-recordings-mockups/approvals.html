@@ -1,0 +1,146 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Atkinson+Hyperlegible+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  .w { --bg:#F8F6F2; --surface:#FFFDFA; --side:#EFE8DF; --border:#E0D6CB; --text:#1C1A17; --muted:#6B6258; --blue:#236192; --onblue:#F8F6F2; --sel:rgba(35,97,146,.10); --orange:#F26522; --otint:rgba(242,101,34,.10); --chip:#E8DDD2; --succ:#4E7A2E; --stint:rgba(114,153,78,.16); --danger:#9A4665;
+       font-family:"Atkinson Hyperlegible",system-ui,sans-serif; font-size:13px; line-height:1.45; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .nav { display:flex; align-items:center; gap:16px; padding:9px 14px; background:var(--surface); border-bottom:1px solid var(--border); }
+  .logo { font-weight:700; display:flex; align-items:center; gap:6px; } .logo i { width:10px; height:10px; border-radius:50%; background:var(--orange); box-shadow:4px 0 0 0 var(--blue); margin-right:4px; }
+  .nv { color:var(--muted); padding-bottom:2px; border-bottom:2px solid transparent; } .nv.on { color:var(--text); border-bottom-color:var(--orange); font-weight:700; }
+  .badge { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; border:1.5px solid var(--orange); background:var(--otint); font-weight:700; cursor:pointer; }
+  .badge .d { width:7px; height:7px; border-radius:50%; background:var(--orange); }
+  .badge.zero { border-color:var(--border); background:transparent; color:var(--muted); font-weight:400; } .badge.zero .d { background:var(--succ); }
+  .page { padding:16px 18px 20px; }
+  h3.t { margin:0 0 2px; font-size:17px; } .sub { color:var(--muted); margin-bottom:12px; }
+  .bar { position:sticky; top:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:9px 12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; margin-bottom:12px; z-index:2; }
+  .bar .sum { color:var(--muted); margin-right:auto; } .bar .sum b { color:var(--text); }
+  .btn { border:1px solid var(--border); border-radius:7px; padding:4px 11px; background:var(--surface); color:var(--text); cursor:pointer; font:inherit; }
+  .btn:disabled { opacity:.45; cursor:default; }
+  .btn.pri { background:var(--blue); border-color:var(--blue); color:var(--onblue); font-weight:700; }
+  .btn.ghost { color:var(--danger); }
+  .batch { background:var(--surface); border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden; }
+  .batch.sel { box-shadow:inset 3px 0 0 var(--blue); background:linear-gradient(var(--sel),var(--sel)),var(--surface); }
+  .bh { display:grid; grid-template-columns:26px 1fr auto; gap:10px; align-items:start; padding:11px 12px; cursor:pointer; }
+  .bh input { margin-top:3px; width:16px; height:16px; }
+  .what { font-weight:700; } .when { color:var(--muted); font-size:12px; margin-top:1px; }
+  .jobs { margin-top:6px; display:flex; flex-wrap:wrap; gap:5px; }
+  .j { font-size:11.5px; padding:1px 8px; border-radius:999px; background:var(--chip); }
+  .j.claude { background:rgba(35,97,146,.12); color:var(--blue); font-weight:700; }
+  .j.skip { background:transparent; border:1px dashed var(--border); color:var(--muted); }
+  .bact { display:flex; gap:6px; align-items:center; }
+  .exp { color:var(--blue); font-size:12px; cursor:pointer; white-space:nowrap; }
+  .recs { display:none; border-top:1px solid var(--border); padding:4px 12px 8px 48px; }
+  .batch.open .recs { display:block; }
+  .rr { display:grid; grid-template-columns:22px 1fr auto; gap:8px; padding:5px 0; border-bottom:1px dashed var(--border); align-items:center; }
+  .rr:last-child { border-bottom:0; } .rr .m { color:var(--muted); font-size:11.5px; }
+  .rr .lock { color:var(--muted); font-size:11.5px; }
+  .done { padding:22px; text-align:center; color:var(--muted); border:1px dashed var(--border); border-radius:10px; display:none; }
+  .toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%) translateY(140px); background:var(--text); color:var(--bg); padding:9px 14px; border-radius:10px; display:flex; gap:14px; transition:transform .25s; z-index:50; font-family:"Atkinson Hyperlegible",system-ui,sans-serif; }
+  .toast.show { transform:translateX(-50%) translateY(0); } .toast a { color:#7DB3E0; font-weight:700; cursor:pointer; }
+  .notes { margin-top:18px; font-size:13px; } .notes li { margin:5px 0; line-height:1.45; }
+</style>
+
+<h2>Approving held jobs in bulk</h2>
+<p class="subtitle">This screen works. When files are edited outside the app, the jobs those edits would start wait here. The orange badge in the top bar counts them from any page. Tick batches, or expand a batch and tick individual recordings, then <b>Run</b>, <b>Run without Claude</b> or <b>Dismiss</b>.</p>
+
+<div class="w">
+  <div class="nav">
+    <span class="logo"><i></i>Recordings</span><span class="nv">Library</span><span class="nv">Tags</span><span class="nv">Add</span><span class="nv on">Status</span>
+    <span class="badge" id="badge"><span class="d"></span><span id="badge-n"></span></span>
+  </div>
+  <div class="page">
+    <h3 class="t">Waiting for approval</h3>
+    <div class="sub">Jobs from edits made outside the app. Nothing below runs until you say so. The edits themselves are already saved.</div>
+    <div class="bar">
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="all"> All</label>
+      <span class="sum" id="sum"></span>
+      <button class="btn pri" id="run">Run</button>
+      <button class="btn" id="runspark">Run without Claude</button>
+      <button class="btn ghost" id="dismiss">Dismiss</button>
+    </div>
+    <div id="list"></div>
+    <div class="done" id="done">Nothing waiting. Outside edits that would start jobs will show up here.</div>
+  </div>
+</div>
+<div class="toast" id="toast"><span id="tmsg"></span><a id="undo">Undo</a></div>
+
+<div class="notes">
+  <b>How it behaves</b>
+  <ul>
+    <li><b>Batches</b> group the changes found by one rescan or <code>reindex</code>, such as "you asked Claude to tag 40 recordings". Each shows what changed and the jobs it would start, with Claude jobs in blue so they stand out.</li>
+    <li><b>Run without Claude</b> runs only the Spark jobs. The Claude notes are left out, and you can still generate them later from the recording.</li>
+    <li><b>Dismiss</b> runs nothing and keeps the edits. The recordings show their missing outputs with a Process button, so nothing is lost.</li>
+    <li>Private recordings never list Claude jobs. They show as "Claude skipped: private".</li>
+    <li>The same is available from the command line: <code>recordings pending list | run | run --no-claude | dismiss</code>, with <code>--json</code>.</li>
+  </ul>
+</div>
+
+<script>
+(function () {
+  var batches = [
+    { id: 'b1', what: 'Tags added: school/course-101 on 40 recordings', when: 'Detected 12:42 by rescan · recording.json edited outside the app (likely an agent)',
+      recs: Array.from({ length: 40 }, function (_, i) { return { id: 'r' + i, t: 'COURSE 101: Week ' + (i % 12 + 1) + (i >= 12 ? ' (part ' + (Math.floor(i / 12) + 1) + ')' : ''), priv: false }; }),
+      jobs: function (n) { return [['transcribe', n, 'Spark'], ['notes: lecture', n, 'Spark'], ['notes: lecture', n, 'Claude · Opus']]; } },
+    { id: 'b2', what: 'Tags added: private/journal, talks on 3 recordings', when: 'Detected 12:40 by rescan · recording.json edited by hand',
+      recs: [{ id: 'p1', t: 'Walk: thesis thoughts', priv: true }, { id: 'p2', t: 'Voice memo: app ideas', priv: true }, { id: 'p3', t: 'Talk: Reactive UIs beyond the DOM', priv: false }],
+      jobs: function (n, b) { var pr = b.recs.filter(function (r) { return r.on && r.priv; }).length; return [['transcribe', n, 'Spark'], ['notes: auto-picked', n, 'Spark'], ['notes: talk', n - pr, 'Claude · Opus'], ['Claude skipped: private', pr, 'skip']]; } },
+    { id: 'b3', what: 'tags.yaml: vocabulary changed for school/course-200', when: 'Detected 12:31 by reindex · 9 recordings tagged school/course-200',
+      recs: Array.from({ length: 9 }, function (_, i) { return { id: 'd' + i, t: 'COURSE 200: Lecture ' + (i + 1), priv: false }; }),
+      jobs: function (n) { return [['re-transcribe', n, 'Spark']]; } }
+  ];
+  batches.forEach(function (b) { b.recs.forEach(function (r) { r.on = true; }); });
+  var sel = {}, open = { b1: false }, last = null;
+  function count(b) { return b.recs.filter(function (r) { return r.on; }).length; }
+  function jobList(b) { return b.jobs(count(b), b).filter(function (j) { return j[1] > 0; }); }
+  function totalJobs(b) { return jobList(b).filter(function (j) { return j[2] !== 'skip'; }).reduce(function (a, j) { return a + j[1]; }, 0); }
+  function claudeJobs(b) { return jobList(b).filter(function (j) { return /Claude ·/.test(j[2]); }).reduce(function (a, j) { return a + j[1]; }, 0); }
+  function render() {
+    var list = document.getElementById('list'); list.innerHTML = '';
+    batches.forEach(function (b) {
+      var el = document.createElement('div');
+      el.className = 'batch' + (sel[b.id] ? ' sel' : '') + (open[b.id] ? ' open' : '');
+      el.innerHTML = '<div class="bh"><input type="checkbox"' + (sel[b.id] ? ' checked' : '') + '><div><div class="what">' + b.what + '</div><div class="when">' + b.when + '</div><div class="jobs">' +
+        jobList(b).map(function (j) { var c = j[2] === 'skip' ? 'skip' : (/Claude/.test(j[2]) ? 'claude' : ''); return '<span class="j ' + c + '">' + (j[2] === 'skip' ? '🔒 ' + j[0] + ' · ' + j[1] : j[1] + ' × ' + j[0] + ' · ' + j[2]) + '</span>'; }).join('') +
+        '</div></div><div class="bact"><span class="exp">' + (open[b.id] ? '▾ hide' : '▸ ' + count(b) + ' of ' + b.recs.length + ' recordings') + '</span></div></div>' +
+        '<div class="recs">' + b.recs.map(function (r) { return '<div class="rr"><input type="checkbox" data-r="' + r.id + '"' + (r.on ? ' checked' : '') + '><span>' + r.t + '</span><span class="lock">' + (r.priv ? '🔒 private: Spark only' : '') + '</span></div>'; }).join('') + '</div>';
+      el.querySelector('.bh').addEventListener('click', function (e) {
+        if (e.target.classList.contains('exp')) { open[b.id] = !open[b.id]; render(); return; }
+        sel[b.id] = !sel[b.id]; render();
+      });
+      el.querySelectorAll('.rr input').forEach(function (c) {
+        c.addEventListener('click', function (e) { e.stopPropagation(); b.recs.forEach(function (r) { if (r.id === c.dataset.r) r.on = c.checked; }); if (count(b)) sel[b.id] = true; render(); });
+      });
+      el.querySelectorAll('.rr').forEach(function (row) { row.addEventListener('click', function (e) { if (e.target.tagName !== 'INPUT') row.querySelector('input').click(); }); });
+      list.appendChild(el);
+    });
+    var chosen = batches.filter(function (b) { return sel[b.id]; });
+    var nj = chosen.reduce(function (a, b) { return a + totalJobs(b); }, 0), nc = chosen.reduce(function (a, b) { return a + claudeJobs(b); }, 0);
+    document.getElementById('sum').innerHTML = chosen.length ? '<b>' + chosen.length + '</b> batch' + (chosen.length > 1 ? 'es' : '') + ' selected · <b>' + nj + '</b> jobs' + (nc ? ', <b>' + nc + '</b> with Claude' : '') : batches.length + ' batches waiting · tick some to act on them';
+    ['run', 'runspark', 'dismiss'].forEach(function (id) { document.getElementById(id).disabled = !chosen.length; });
+    document.getElementById('runspark').disabled = !chosen.length || !nc;
+    document.getElementById('all').checked = batches.length > 0 && chosen.length === batches.length;
+    var waiting = batches.reduce(function (a, b) { return a + totalJobs(b); }, 0);
+    var badge = document.getElementById('badge');
+    badge.className = 'badge' + (batches.length ? '' : ' zero');
+    document.getElementById('badge-n').textContent = batches.length ? batches.length + ' waiting · ' + waiting + ' jobs' : 'Nothing waiting';
+    document.getElementById('done').style.display = batches.length ? 'none' : 'block';
+  }
+  function act(kind) {
+    var chosen = batches.filter(function (b) { return sel[b.id]; });
+    if (!chosen.length) return;
+    var nj = chosen.reduce(function (a, b) { return a + totalJobs(b) - (kind === 'spark' ? claudeJobs(b) : 0); }, 0);
+    last = { removed: chosen, at: batches.slice() };
+    batches = batches.filter(function (b) { return !sel[b.id]; }); sel = {};
+    var msg = kind === 'dismiss' ? 'Dismissed ' + chosen.length + ' batch' + (chosen.length > 1 ? 'es' : '') + '. Edits kept, no jobs run.' : 'Queued ' + nj + ' jobs' + (kind === 'spark' ? ' (Spark only)' : '') + '. See them in the job queue.';
+    document.getElementById('tmsg').textContent = msg;
+    var t = document.getElementById('toast'); t.classList.add('show'); clearTimeout(window.__t); window.__t = setTimeout(function () { t.classList.remove('show'); }, 4500);
+    render();
+  }
+  document.getElementById('run').addEventListener('click', function () { act('run'); });
+  document.getElementById('runspark').addEventListener('click', function () { act('spark'); });
+  document.getElementById('dismiss').addEventListener('click', function () { act('dismiss'); });
+  document.getElementById('undo').addEventListener('click', function () { if (!last) return; batches = last.at; last = null; document.getElementById('toast').classList.remove('show'); render(); });
+  document.getElementById('all').addEventListener('change', function () { var on = this.checked; batches.forEach(function (b) { sel[b.id] = on; }); render(); });
+  document.getElementById('badge').addEventListener('click', function () { document.getElementById('list').scrollIntoView({ behavior: 'smooth' }); });
+  render();
+})();
+</script>
