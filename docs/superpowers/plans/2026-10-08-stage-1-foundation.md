@@ -67,7 +67,7 @@
     https://posit-dev.github.io/shinyreact/
   - **brand.yml:** https://posit-dev.github.io/brand-yml/, plus
     https://quarto.org/docs/authoring/brand.html for light/dark
-  - **shadcn/ui:** the shadcn skill (`npx skills add shadcn/ui`), or https://ui.shadcn.com/docs
+  - **shadcn/ui:** the shadcn skill (after `make skills`; never a bare `npx skills add shadcn/ui`), or https://ui.shadcn.com/docs
   - **Tailwind v4:** https://tailwindcss.com/docs
 - **Dark mode is the `dark` class on `<html>`** (shadcn's convention). Choosing light sets
   `light`.
@@ -213,7 +213,7 @@ recordings-ui = { workspace = true }
 dev = [
     "pytest==9.1.1",
     "pytest-playwright==0.9.0",
-    "httpx==0.28.1",
+    "httpx2==2.13.1",
     "jsonschema==4.26.0",
     "pyyaml==6.0.3",
     "ruff==0.16.10",
@@ -3828,9 +3828,16 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 12: Frontend scaffold (shadcn/ui + Tailwind), brand theme and fonts
 
 **Check the docs before writing anything in this task** (CLAUDE.md, "check the docs"):
+- **Install the two skills first, from the repo root,** with commands that never prompt
+  (`uvx library-skills --claude` alone opens a picker and exits 1 without a terminal; a bare
+  `npx skills add shadcn/ui` installs a second skill and writes paths `.gitignore` misses):
+  `uvx library-skills install --claude --yes --skill shinyreact-build-app --skill shinyreact-convert-app`
+  and `npx skills add shadcn/ui --skill shadcn --agent claude-code --yes`. Step 5 puts the
+  same two commands in `make skills`. If the Skill tool doesn't list them in this session,
+  read `.claude/skills/shinyreact-build-app/SKILL.md` and `.claude/skills/shadcn/SKILL.md`.
 - **shinyreact:** load `/shinyreact-build-app`. Step 1 covers the Vite tier and its
   `external`/`globals` config, and Step 4 the hooks.
-- **shadcn:** run `npx skills add shadcn/ui` and load the shadcn skill. Read
+- **shadcn:** load the shadcn skill. Read
   https://ui.shadcn.com/docs/installation/vite and https://ui.shadcn.com/docs/theming.
 - **brand.yml:** read https://posit-dev.github.io/brand-yml/ and the light/dark section of
   https://quarto.org/docs/authoring/brand.html.
@@ -3840,11 +3847,12 @@ Record what you checked in the commit message.
 **Files:**
 - Create: `_brand.yml`, `scripts/brand_css.py`, `packages/core/tests/test_brand.py`
 - Create: `packages/ui/frontend/.nvmrc`, `package.json`, `vite.config.js`, `tsconfig.json`, `scripts/check-node.mjs`, `src/index.css`
-- Create, by the shadcn CLI: `packages/ui/frontend/components.json`, `src/lib/utils.ts`, `src/components/ui/tabs.tsx`, `src/components/ui/toggle-group.tsx`, `src/components/ui/toggle.tsx`
+- Create, by the shadcn CLI: `packages/ui/frontend/components.json`, `src/lib/utils.ts`, `src/components/ui/button.tsx` (from the preset; unused), `src/components/ui/tabs.tsx`, `src/components/ui/toggle-group.tsx`, `src/components/ui/toggle.tsx`
 - Create: `packages/ui/frontend/src/ui.tsx`, `App.tsx`, `sr.ts`, `types.ts`, `theme.css` (generated), `app.css`
 - Create: `packages/ui/frontend/src/lib/theme.ts`, `lib/theme.test.ts`
 - Create: `packages/ui/frontend/src/components/TopBar.tsx`, `ThemeSwitch.tsx`
 - Create: `packages/ui/src/recordings_ui/www/fonts/` (copied woff2 + OFL)
+- Modify: `Makefile` (`skills` runs without prompts), `.gitignore` (`/skills-lock.json`)
 
 **Interfaces:**
 - Consumes: the Shiny contract from Task 11; the JSON shapes from Task 10.
@@ -4198,6 +4206,19 @@ into):
 Run: `cd packages/ui/frontend && nvm use && npm install && cd -`
 Expected: `package-lock.json` is created, and the preinstall check passes on Node 22.
 
+Make `make skills` run without prompts. Plain `uvx library-skills --claude` opens a picker
+and exits 1 without a terminal, which also breaks `make setup`. In the `Makefile`, replace
+the `skills` target with:
+```make
+skills:
+	uvx library-skills install --claude --yes --skill shinyreact-build-app --skill shinyreact-convert-app
+	$(NVM) npx skills add shadcn/ui --skill shadcn --agent claude-code --yes
+```
+In `.gitignore`, add `/skills-lock.json` on the line after `.claude/skills/shadcn/`.
+`npx skills add` writes that file at the repo root.
+Run: `make skills && git status --short .claude .agents skills-lock.json`
+Expected: `make skills` exits 0, and `git status` prints nothing.
+
 - [ ] **Step 6: Initialise shadcn and add the components**
 
 The CLI version is pinned so a re-run gives the same result. `--base radix` is
@@ -4207,27 +4228,38 @@ supported", and Radix matches shinyreact's shadcn examples and the props this pl
 
 ```bash
 cd packages/ui/frontend
-npx shadcn@4.21.4 init --template vite --base radix --css-variables --no-rtl --no-monorepo
+npx shadcn@4.21.4 init --template vite --base radix --preset nova --css-variables --no-rtl --no-monorepo
 npx shadcn@4.21.4 add tabs toggle-group
 npx shadcn@4.21.4 info --json
 cd -
 ```
-If `init` asks for a preset or base colour, take the default. `theme.css` overrides every
-colour token after it.
+`--preset nova` is the preset prompt's default. Without it, `init` stops at "Which preset
+would you like to use?", and with no terminal it exits 0 having written nothing. With
+4.21.4, `--template vite` initialises this existing project in place ("Verifying
+framework. Found Vite."); it doesn't scaffold a new one (Ruling R2). `theme.css`
+overrides every colour token after it.
+
+Nova also brings the Geist font, which Vite's library mode would inline into `ui.css`
+(about 100 kB). Our fonts are Atkinson (Global Constraints). So in `src/index.css`, delete
+`@import "@fontsource-variable/geist";`, and change `--font-sans: 'Geist Variable', sans-serif;`
+to `--font-sans: "Atkinson Hyperlegible", system-ui, sans-serif;`. Then run
+`npm uninstall @fontsource-variable/geist`.
 
 Expected:
-- **`info` reports** Tailwind v4, base `radix`, CSS variables `true` and the aliases
-  `@/components` and `@/lib/utils`.
+- **`info --json` reports** `"tailwindVersion": "v4"`, `"base": "radix"`, `"style": "radix-nova"`
+  and the aliases `@/components` and `@/lib/utils`. `components.json` has
+  `"cssVariables": true`.
 - **New files:**
   - `components.json`
-  - `src/lib/utils.ts` (exports `cn`)
+  - `src/lib/utils.ts` (re-exports `cn` from the `cn` package)
+  - `src/components/ui/button.tsx` (from the preset; keep it, it is unused)
   - `src/components/ui/tabs.tsx`, `toggle-group.tsx` and `toggle.tsx`
 - **`src/index.css`** gains shadcn's scaffold: `@import "tailwindcss";`, its theme import,
   `@custom-variant dark (&:is(.dark *));`, `@theme inline { … }`, default `:root`/`.dark`
   tokens and a `@layer base`.
 - **`package.json`** gains shadcn's runtime dependencies (`radix-ui`,
-  `class-variance-authority`, `clsx`, `tailwind-merge`, `lucide-react` and its CSS
-  packages).
+  `class-variance-authority`, `cn`, `lucide-react`, `shadcn` and `tw-animate-css`).
+  `@fontsource-variable/geist` also arrives, and is removed above.
 
 Check with `npm ls react`. It must list `react` only as this project's devDependency and as
 peers. If any package depends on a second `react` copy, stop and fix that first: the
@@ -4588,6 +4620,11 @@ Expected:
   1
 - `grep -c "react.production" packages/ui/src/recordings_ui/www/ui.js` prints **0**, which
   proves no React was bundled
+- `ui.css` is tens of kB, not hundreds. A larger file means a font was inlined as base64.
+- the build logs one "didn't resolve at build time, it will remain unchanged" warning per
+  `/fonts/…woff2` URL in `app.css`. **That is intended:** ReactApp serves `www/fonts/` at
+  `/fonts/`. Don't silence it by moving the fonts into `public/` or importing them, because
+  library mode would then inline all six into `ui.css`.
 
 Then run `uv run pytest packages/ui/tests/test_app.py -v`. Everything passes, and
 `test_the_page_and_the_fonts_are_served` now runs and passes.
@@ -4595,7 +4632,7 @@ Then run `uv run pytest packages/ui/tests/test_app.py -v`. Everything passes, an
 - [ ] **Step 10: Commit**
 
 ```bash
-git add _brand.yml scripts packages/core/tests/test_brand.py packages/ui/frontend packages/ui/src/recordings_ui/www/fonts
+git add _brand.yml scripts Makefile .gitignore packages/core/tests/test_brand.py packages/ui/frontend packages/ui/src/recordings_ui/www/fonts
 git commit -m "feat(ui): React client on shadcn/ui + Tailwind with the brand theme and self-hosted fonts
 
 Checked: shinyreact-build-app skill (Vite tier, externals, hooks); shadcn skill and
