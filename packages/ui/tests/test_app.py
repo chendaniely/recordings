@@ -1,8 +1,10 @@
+import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from recordings_ui import runtime
 from recordings_ui.app import create_app
 from recordings_ui.settings import Settings
 
@@ -13,6 +15,7 @@ WWW = Path(__file__).resolve().parents[1] / "src" / "recordings_ui" / "www"
 def client(demo_archive):
     with TestClient(create_app(Settings(archive=demo_archive, demo=True))) as c:
         yield c
+    runtime.configure(None)
 
 
 def test_healthz(client):
@@ -51,3 +54,27 @@ def test_the_page_and_the_fonts_are_served(client):
     assert page.status_code == 200 and "ui.js" in page.text
     font = client.get("/fonts/AtkinsonHyperlegible-Regular.woff2")
     assert font.status_code == 200
+
+
+def _recording_json(archive, rid):
+    from recordings.archive import Archive
+
+    return Archive(archive).path_for(rid) / "recording.json"
+
+
+def test_media_file_escaping_the_recording_folder_is_404(client, demo_archive, demo_ids):
+    rid = demo_ids["jfk-rice"]
+    rj = _recording_json(demo_archive, rid)
+    data = json.loads(rj.read_text(encoding="utf-8"))
+    data["media"]["file"] = "../../../../README.md"
+    rj.write_text(json.dumps(data), encoding="utf-8")
+    # It exists, so only the containment check can refuse it.
+    assert (rj.parent / data["media"]["file"]).resolve().is_file()
+    assert client.get(f"/media/{rid}").status_code == 404
+
+
+def test_missing_media_file_is_404(client, demo_archive, demo_ids):
+    rid = demo_ids["jfk-rice"]
+    rj = _recording_json(demo_archive, rid)
+    (rj.parent / json.loads(rj.read_text(encoding="utf-8"))["media"]["file"]).unlink()
+    assert client.get(f"/media/{rid}").status_code == 404

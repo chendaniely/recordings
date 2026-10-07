@@ -31,6 +31,12 @@ def create_app(settings: Settings) -> FastAPI:
             path = archive.media_path(recording_id)
         except (KeyError, ValueError):  # unknown id, impossible date in the id, or a broken file
             raise HTTPException(status_code=404) from None
+        # recording.json is hand-editable: media.file must stay inside the recording's folder,
+        # and must exist (FileResponse would 500 on a missing file).
+        if not path.resolve().is_relative_to(archive.path_for(recording_id).resolve()):
+            raise HTTPException(status_code=404)
+        if not path.is_file():
+            raise HTTPException(status_code=404)
         # FileResponse answers Range with 206, and an unsatisfiable range with 416 (Starlette docs).
         return FileResponse(path, content_disposition_type="inline")
 
