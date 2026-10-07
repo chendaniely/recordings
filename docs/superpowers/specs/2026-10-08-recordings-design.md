@@ -116,6 +116,11 @@ recordings/                      (repo root, uv workspace, MIT)
   .python-version                3.14
   packages/
     core/                        → distribution `recordings`, CLI `recordings`
+      src/recordings/
+        archive/  tags/  jobs/  backends/  ingest.py
+        sources/                 one module per input type (§9.0)
+          base.py  plaud.py  audio_router.py      (stage 2)
+          upload.py  url.py  watched_folder.py    (stage 5)
     ui/                          → distribution `recordings-ui`
       frontend/                  React + TypeScript (Vite), node_modules/ (git-ignored)
         .nvmrc                   22
@@ -465,6 +470,39 @@ later.
   same result every time and makes no network calls. Used by demo mode and tests.
 
 ## 9. Getting recordings in
+
+### 9.0 One module per source
+
+Each input type is its own module in the core, `recordings.sources.<name>`, built
+separately and in any order. Each source only produces recordings. The shared ingest code
+does the rest, the same way for every source:
+- checking the content hash and merging duplicates
+- naming (§6.2)
+- assembling the recording in a temporary folder
+- writing `recording.json`
+- writing outputs the source supplies, such as Plaud's own transcript
+
+```python
+class Source(Protocol):
+    name: str                                   # "plaud", "upload", "url", …
+    def candidates(self) -> Iterable[Candidate]:
+        """Everything the source currently holds. Account-style sources (Plaud) list it;
+        one-shot sources (upload, URL) return nothing."""
+    def fetch(self, ref: str, workdir: Path) -> Fetched:
+        """Media + raw payload + recorded_at/time_source + title + any outputs the source
+        already has (e.g. Plaud's transcript and notes)."""
+```
+
+- **Shared compare:** the compare in §9.1 (Missing, Updated, Only in archive) works for any
+  source that can list `candidates()`. If a Zoom cloud module is built later, it gets the
+  Sync screen for free.
+- **Registration:** a source is a module plus one entry in `sources/__init__.py`. Its
+  config section and secrets are its own.
+- **In the UI:** each source has its own panel on the Add page, based on what it can do
+  (list and compare, or one-shot).
+- **Build order:** `plaud` and `audio_router` (the import) come first, in stage 2. `upload`
+  (local files, including Zoom recordings), `url` (yt-dlp: YouTube and talks) and
+  `watched_folder` follow in stage 5. A `zoom` cloud module is possible later.
 
 ### 9.1 Plaud (the main source, built first)
 
