@@ -5612,6 +5612,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - the job queue
   - the SQLite index and search
   - the single-writer host check
-  - `config.toml`
+  - the config sections marked stage 2 or later (Plaud, index, Spark, models, prompts,
+    watched folder). `config.toml` itself exists from Task 9, and stage 1 reads its
+    `[archive]` path.
 
   Those arrive in stages 2–4, each with its own plan.
