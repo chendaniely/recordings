@@ -1,0 +1,39 @@
+# recordings' theme. NYC blue is the working colour and NYC orange a small accent, on warm
+# neutrals from chendaniely.github.io/_brand.yml. Every colour that differs between modes
+# is {light, dark}. scripts/brand_css.py turns this into shadcn/ui's CSS variables.
+meta:
+  name: recordings
+color:
+  palette:
+    nyc-blue: "#236192"
+    nyc-blue-light: "#6CA6D9"   # #236192 is only 2.8:1 on the dark base
+    nyc-orange: "#F26522"
+    warm-white: "#F8F6F2"
+    paper: "#FFFDFA"
+    linen: "#EFE8DF"
+    sand: "#E8DDD2"
+    hairline: "#E0D6CB"
+    warm-gray: "#6B6258"
+    near-black: "#1C1A17"
+    green-text: "#4E7A2E"
+    burgundy: "#9A4665"
+    dark-base: "#171512"
+    dark-surface: "#232019"
+    dark-side: "#1C1A16"
+    dark-hairline: "#2E2B26"
+    stone: "#B8AEA2"
+    green-light: "#9CC27A"
+    rose: "#D27A9A"
+  foreground: { light: near-black, dark: warm-white }
+  background: { light: warm-white, dark: dark-base }
+  primary: { light: nyc-blue, dark: nyc-blue-light }
+  secondary: { light: warm-gray, dark: stone }
+  tertiary: { light: linen, dark: dark-side }
+  success: { light: green-text, dark: green-light }
+  warning: nyc-orange
+  danger: { light: burgundy, dark: rose }
+  light: { light: paper, dark: dark-surface }
+  dark: { light: near-black, dark: warm-white }
+typography:
+  base: Atkinson Hyperlegible
+  monospace: Atkinson Hyperlegible Mono

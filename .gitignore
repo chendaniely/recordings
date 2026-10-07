@@ -13,6 +13,7 @@ demo/.cache/
 .claude/skills/shinyreact-*
 # shadcn's skill, installed by `make skills` (npx skills add shadcn/ui)
 .claude/skills/shadcn/
+/skills-lock.json
 .agents/
 .superpowers/
 test-results/

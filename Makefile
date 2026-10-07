@@ -11,8 +11,8 @@ setup:
 	$(MAKE) skills
 
 skills:
-	uvx library-skills --claude
-	$(NVM) npx skills add shadcn/ui
+	uvx library-skills install --claude --yes --skill shinyreact-build-app --skill shinyreact-convert-app
+	$(NVM) npx skills add shadcn/ui --skill shadcn --agent claude-code --yes
 
 build:
 	cd $(FRONTEND) && $(NVM) npm run build
