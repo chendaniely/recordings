@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
-from recordings import __version__, schemas
+from recordings import __version__, schemas, selfdoc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,6 +20,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("schemas", help="regenerate or check the committed JSON Schemas")
     p.add_argument("--write", action="store_true", help="rewrite the package's schema files")
     p.add_argument("--check", action="store_true", help="exit 1 if they are stale")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("docs", help="write README/AGENTS/FORMAT and schemas into an archive")
+    p.add_argument("archive", type=Path)
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("validate", help="check every recording.json and rendition")
+    p.add_argument("archive", type=Path)
     p.add_argument("--json", action="store_true")
     return parser
 
@@ -42,10 +51,22 @@ def cmd_schemas(args: argparse.Namespace) -> int:
     return 1 if (args.check and out_of_date) else 0
 
 
+def cmd_docs(args: argparse.Namespace) -> int:
+    _emit({"written": selfdoc.write_docs(args.archive)}, args.json)
+    return 0
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    problems = selfdoc.validate(args.archive)
+    _emit({"problems": problems}, args.json)
+    return 1 if problems else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "schemas":
-        return cmd_schemas(args)
+    commands = {"schemas": cmd_schemas, "docs": cmd_docs, "validate": cmd_validate}
+    if args.command in commands:
+        return commands[args.command](args)
     parser.print_help(sys.stdout)
     return 0
