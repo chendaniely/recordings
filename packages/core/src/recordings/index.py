@@ -5,11 +5,12 @@ writer needs at scale: which recording holds these bytes, and which holds this s
 `rebuild` refuses to empty an index that holds recordings (§6.7): an archive that suddenly lists
 none is far more likely unmounted than empty. It rebuilds inside one transaction on the live file,
 so a failed rebuild leaves the old index as it was and nothing beside it, and readers see the old
-index until the new one commits. A file SQLite can't read at all is thrown away first.
+index until the new one commits. A file SQLite can't read at all is renamed aside and rebuilt.
 """
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
@@ -89,12 +90,18 @@ class Index:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
             self._check_ours(db)
-            # Check empty inside the lock, before dropping tables
+            # Check empty inside the lock, before dropping tables (not via count(), which swallows
+            # lock errors). The old code read held = self.count() outside the transaction, so a
+            # locked file returned 0 and the guard was bypassed. This read on the same connection
+            # is protected by BEGIN IMMEDIATE.
             held = 0
             try:
                 held = int(db.execute("SELECT count(*) FROM recordings").fetchone()[0])
-            except (sqlite3.OperationalError, TypeError):
-                # recordings table doesn't exist yet, or other error; treat as 0
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc):
+                    raise
+                held = 0
+            except TypeError:
                 held = 0
             if not recordings and held and not allow_empty:
                 raise IndexRefused(
@@ -125,27 +132,42 @@ class Index:
         if not self.path.exists():
             return
         size = self.path.stat().st_size
-        # Empty files can be replaced
         if size == 0:
             return
         # Check for SQLite header
         try:
-            content = self.path.read_bytes()
-            header = content[:16]
+            with self.path.open("rb") as f:
+                header = f.read(16)
         except OSError:
-            return  # Can't read; let rebuild's _db() handle it
+            raise IndexRefused(f"{self.path} is not an index (cannot read file). "
+                             "Check [index] path.")
         if header != b"SQLite format 3\x00":
-            # Not a SQLite file at all
             raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
                              "Check [index] path.")
         # It's a SQLite file; check if it's readable
         if not self._readable():
-            # Corrupted SQLite; rename aside with timestamp
+            # Corrupted SQLite; rename aside with collision-safe timestamp
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            for suffix in ("", "-journal", "-wal", "-shm"):
-                old_path = Path(f"{self.path}{suffix}")
+            # Find a collision-free suffix number for all siblings
+            suffix_num = ""
+            while True:
+                base_suffix = f".unreadable-{stamp}{suffix_num}"
+                # Check all siblings before committing to the rename
+                free = True
+                for sibling_suffix in ("", "-journal", "-wal", "-shm"):
+                    old_path = Path(f"{self.path}{sibling_suffix}")
+                    if old_path.exists() and os.path.lexists(f"{old_path}{base_suffix}"):
+                        free = False
+                        break
+                if free:
+                    break
+                # Increment and try again
+                suffix_num = f"-{int(suffix_num[1:] if suffix_num else 1) + 1}"
+            # Now rename all siblings with the same base suffix
+            for sibling_suffix in ("", "-journal", "-wal", "-shm"):
+                old_path = Path(f"{self.path}{sibling_suffix}")
                 if old_path.exists():
-                    new_path = old_path.with_name(f"{old_path.name}.unreadable-{stamp}")
+                    new_path = old_path.with_name(f"{old_path.name}{base_suffix}")
                     old_path.rename(new_path)
 
     def _check_ours(self, db: sqlite3.Connection) -> None:
