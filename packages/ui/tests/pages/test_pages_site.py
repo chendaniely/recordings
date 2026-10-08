@@ -22,6 +22,9 @@ REPO = Path(__file__).resolve().parents[4]
 SITE = REPO / "_site"
 PREFIX = "/recordings/"  # https://chendaniely.github.io/recordings/
 BOOT_TIMEOUT = 60_000  # the first visit downloads about 16 MB and starts Python in the browser
+# Every wait after a click that runs Python in the browser: Pyodide renders slower than the server,
+# and slower still on a CI runner, than Playwright's default 5 s allows.
+RENDER_TIMEOUT = 30_000
 
 
 def _rangeserver():
@@ -52,12 +55,10 @@ class Watch:
         self.errors: list[str] = []
         self.outside: list[str] = []
         self.seen = 0
-        self.media_statuses: set[int] = set()
         page.on("console", lambda m: m.type == "error" and self.errors.append(m.text))
         page.on("pageerror", lambda e: self.errors.append(f"uncaught: {e}"))
         # The context sees the page, its iframe, the workers and the service worker.
         page.context.on("request", self._request)
-        page.context.on("response", self._response)
 
     def _request(self, request) -> None:
         url = urlsplit(request.url)
@@ -66,10 +67,6 @@ class Watch:
         self.seen += 1
         if url.netloc != self.site.netloc or not url.path.startswith(PREFIX):
             self.outside.append(request.url)
-
-    def _response(self, response) -> None:
-        if urlsplit(response.url).path.startswith(f"{PREFIX}media/"):
-            self.media_statuses.add(response.status)
 
     def assert_clean(self) -> None:
         assert self.seen > 0
@@ -103,22 +100,23 @@ def test_jfk_plays_from_the_static_host_and_a_line_seeks(page: Page, site_url, w
     app, frame = open_demo(page, site_url)
     app.get_by_test_id("recording-row").filter(has_text="JFK").click()
     turns = app.get_by_test_id("turn")
-    expect(turns.first).to_be_visible()
+    expect(turns.first).to_be_visible(timeout=RENDER_TIMEOUT)
     assert turns.count() > 3
     frame.wait_for_function(
-        "document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=30_000)
+        "document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=RENDER_TIMEOUT)
     # Pages serves the file itself, under the site's media/ folder, with its extension.
     src = frame.evaluate("document.querySelector('[data-testid=media]').currentSrc")
     assert src == f"{site_url}media/{demo_ids['jfk-rice']}.mp3"
     turn = turns.nth(2)
     start = float(turn.get_attribute("data-start"))
     turn.click()
-    # Seeking needs Range support (206); without it currentTime snaps back to 0.
-    assert 206 in watch.media_statuses
+    # Only currentTime is checked, not a ranged response to the seek. The first request
+    # (Range: bytes=0-, answered 206) buffers all 90 s of this MP3, so Chromium seeks within its
+    # buffer and fetches nothing new. tests/test_rangeserver.py covers the server's 206s.
     frame.wait_for_function(
         "s => Math.abs(document.querySelector('[data-testid=media]').currentTime - s) < 0.5",
-        arg=start, timeout=10_000)
-    expect(turn).to_have_class(re.compile(r"\bnow\b"))
+        arg=start, timeout=RENDER_TIMEOUT)
+    expect(turn).to_have_class(re.compile(r"\bnow\b"), timeout=RENDER_TIMEOUT)
     watch.assert_clean()
 
 
@@ -126,9 +124,10 @@ def test_notes_show_two_outputs_and_compare_side_by_side(page: Page, site_url, w
     app, _ = open_demo(page, site_url)
     app.get_by_test_id("recording-row").filter(has_text="JFK").click()
     app.get_by_test_id("tab-notes").click()
-    expect(app.get_by_test_id("notes-output")).to_have_count(2)
+    expect(app.get_by_test_id("notes-output")).to_have_count(2, timeout=RENDER_TIMEOUT)
     app.get_by_test_id("compare-select").select_option(index=1)
-    expect(app.get_by_test_id("compare-view").locator("section")).to_have_count(2)
+    expect(app.get_by_test_id("compare-view").locator("section")).to_have_count(
+        2, timeout=RENDER_TIMEOUT)
     watch.assert_clean()
 
 
@@ -136,8 +135,8 @@ def test_the_dark_theme_toggle_works(page: Page, site_url, watch):
     app, _ = open_demo(page, site_url)
     html = app.locator("html")
     app.get_by_test_id("theme-dark").click()
-    expect(html).to_have_class(re.compile(r"\bdark\b"))
+    expect(html).to_have_class(re.compile(r"\bdark\b"), timeout=RENDER_TIMEOUT)
     app.get_by_test_id("theme-light").click()
-    expect(html).to_have_class(re.compile(r"\blight\b"))
-    expect(html).not_to_have_class(re.compile(r"\bdark\b"))
+    expect(html).to_have_class(re.compile(r"\blight\b"), timeout=RENDER_TIMEOUT)
+    expect(html).not_to_have_class(re.compile(r"\bdark\b"), timeout=RENDER_TIMEOUT)
     watch.assert_clean()
