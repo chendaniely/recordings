@@ -9,18 +9,16 @@ packages/ui/src/recordings_ui/www/ui.js
 packages/ui/src/recordings_ui/www/ui.css
 # Downloaded originals and encoded clips for rebuilding the demo archive.
 demo/.cache/
-# Skill symlinks into .venv, recreated by `make skills`.
-.claude/skills/shinyreact-*
-# shadcn's skill, installed by `make skills` (npx skills add shadcn/ui)
-.claude/skills/shadcn/
-/skills-lock.json
+# Agent tooling is local: skills are recreated by `make skills`, and settings stay per machine.
+.claude/
+**/skills-lock.json
 .agents/
 .superpowers/
 test-results/
 .playwright-mcp/
 .DS_Store
 # Real settings and deploy values; the committed templates are *.example.*
-/config.toml
+**/config.toml
 docker/deploy.env
 secrets/
 # Environment files can hold secrets: never commit one.
