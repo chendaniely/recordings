@@ -1685,8 +1685,9 @@ In `packages/core/tests/test_archive.py`:
    `test_write_raw_race_preserves_existing_payload` and
    `test_write_text_atomic_leaves_no_temp_file_when_the_replace_fails`. `test_files.py` now covers
    all three behaviours, against `files` itself.
-2. In `test_add_recording_cleans_up_on_failure`, **replace** the copy-failure setup (from
-   `original_copy2 = shutil.copy2` through the `monkeypatch.setattr(...)` line) with:
+2. In `test_add_recording_cleans_up_on_failure`, **replace** the copy-failure setup (from the
+   comment `# Monkeypatch shutil.copy2 to fail` and `original_copy2 = shutil.copy2` through the
+   `monkeypatch.setattr(...)` line) with:
    ```python
        def failing_copy(*args, **kwargs):
            raise OSError("Simulated copy failure")
@@ -16594,7 +16595,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - **the restore test passes after the import:** `backup restore-test` runs after the
     `post-import` snapshot and validates the restored copy (`validate --deep`), and only then is
     `import/` deleted
-  - **the mirror is proven:** `recordings mirror` reports `ok: true` (step 2.6), and after the
+  - **the mirror is proven:** `recordings mirror` prints `ok: True` (step 2.6), and after the
     import Status shows a good mirror run, so the NAS's copy holds the imported archive
   - **`doctor` is clean in both roles:** `doctor --role web` in `web` and `doctor --role backup`
     in `backup` report no problems. Both warn only that retention is off here, which is right:
