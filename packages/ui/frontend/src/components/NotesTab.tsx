@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { flattenNotes, noteSelection } from "../lib/notes";
 import type { NotesGroup, NotesOutput } from "../types";
 
 const label = (o: NotesOutput) => `${o.model ?? o.engine} · ${o.engine}`;
@@ -14,16 +15,15 @@ function Output({ group, output }: { group: string; output: NotesOutput }) {
   );
 }
 
-/** Layout B (spec §12.1): one list of every notes output, grouped by note type, newest first. */
+/** Layout B (spec §12.1): one list of every notes output, grouped by note type. */
 export function NotesTab({ groups }: { groups: NotesGroup[] }) {
-  const all = useMemo(() => groups.flatMap((g) => g.outputs.map((o) => ({ group: g.note_type, o }))), [groups]);
+  const all = useMemo(() => flattenNotes(groups), [groups]);
   const [picked, setPicked] = useState<string | null>(all[0]?.o.rendition ?? null);
   const [other, setOther] = useState<string>("");
   useEffect(() => { setPicked(all[0]?.o.rendition ?? null); setOther(""); }, [all]);
+  const { main, second } = noteSelection(all, picked, other);
 
-  if (!all.length) return <p className="muted">No notes yet. Notes are written once the recording has a tag.</p>;
-  const main = all.find((x) => x.o.rendition === picked) ?? all[0];
-  const second = all.find((x) => x.o.rendition === other);
+  if (!all.length || !main) return <p className="muted">No notes yet. Notes are written once the recording has a tag.</p>;
   return (
     <div className="notes-split">
       <div className="notes-list">
@@ -42,7 +42,7 @@ export function NotesTab({ groups }: { groups: NotesGroup[] }) {
         <div className="tools">
           <span>{main.group} · {label(main.o)}</span>
           <label className="r">Compare with
-            <select data-testid="compare-select" value={other} onChange={(e) => setOther(e.target.value)}>
+            <select data-testid="compare-select" value={second ? other : ""} onChange={(e) => setOther(e.target.value)}>
               <option value="">nothing</option>
               {all.filter((x) => x.o.rendition !== main.o.rendition).map((x) => <option key={x.o.rendition} value={x.o.rendition}>{x.group} · {label(x.o)}</option>)}
             </select>
