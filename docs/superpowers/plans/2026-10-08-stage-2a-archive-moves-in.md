@@ -1540,6 +1540,25 @@ def test_publish_exclusive_survives_a_race_for_the_name(tmp_path, monkeypatch):
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
 
 
+def test_a_dangling_symlink_is_a_taken_name(tmp_path):
+    # why: Path.exists() follows the link, so a dangling one read as free and the link retried forever.
+    link = tmp_path / "x.json"
+    link.symlink_to(tmp_path / "nowhere")
+    published = files.publish_exclusive(b"ours", link)
+    assert published.name == "x-2.json" and published.read_bytes() == b"ours"
+    assert link.is_symlink() and not (tmp_path / "nowhere").exists()
+
+
+def test_publish_exclusive_gives_up_instead_of_looping(tmp_path, monkeypatch):
+    taken = tmp_path / "x.json"
+    taken.write_bytes(b"theirs")
+    monkeypatch.setattr(files, "unique_path", lambda path: taken)
+    with pytest.raises(FileExistsError, match="x.json"):
+        files.publish_exclusive(b"ours", taken)
+    assert taken.read_bytes() == b"theirs"
+    assert [p.name for p in tmp_path.iterdir()] == ["x.json"]
+
+
 def test_copy_file_synced_copies_bytes_and_mtime(tmp_path):
     src = tmp_path / "a.mp3"
     src.write_bytes(b"ID3 audio")
@@ -1578,6 +1597,7 @@ import uuid
 from pathlib import Path
 
 _CHUNK = 1 << 20
+_PUBLISH_TRIES = 100  # a name taken this often is not a race
 
 
 def fsync_dir(path: Path) -> None:
@@ -1617,10 +1637,11 @@ def write_text_atomic(path: Path, text: str) -> None:
 
 
 def unique_path(path: Path) -> Path:
-    if not path.exists():
+    # lexists, not exists: a dangling symlink is a taken name, though exists() calls it free.
+    if not os.path.lexists(path):
         return path
     n = 2
-    while (candidate := path.with_name(f"{path.stem}-{n}{path.suffix}")).exists():
+    while os.path.lexists(candidate := path.with_name(f"{path.stem}-{n}{path.suffix}")):
         n += 1
     return candidate
 
@@ -1639,13 +1660,14 @@ def create_exclusive(path: Path, data: bytes) -> None:
 
 def publish_exclusive(data: bytes, target: Path) -> Path:
     """Write-once: publish at `target`, or at `target-2`, `-3` … when the name is taken."""
-    while True:
+    for _ in range(_PUBLISH_TRIES):
         path = unique_path(target)
         try:
             create_exclusive(path, data)
         except FileExistsError:
             continue  # another writer took the name between the check and the link
         return path
+    raise FileExistsError(f"no free name for {target} after {_PUBLISH_TRIES} tries")
 
 
 def copy_file_synced(src: Path, dst: Path) -> None:
@@ -1705,7 +1727,7 @@ In `packages/core/tests/test_archive.py`:
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_files.py packages/core/tests/test_archive.py -v`
-Expected: all pass (6 in `test_files.py`).
+Expected: all pass (8 in `test_files.py`).
 
 - [ ] **Step 5: Write the failing tests for the sentinel, state and `init`**
 

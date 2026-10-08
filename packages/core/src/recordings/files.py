@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 _CHUNK = 1 << 20
+_PUBLISH_TRIES = 100  # a name taken this often is not a race
 
 
 def fsync_dir(path: Path) -> None:
@@ -54,10 +55,11 @@ def write_text_atomic(path: Path, text: str) -> None:
 
 
 def unique_path(path: Path) -> Path:
-    if not path.exists():
+    # lexists, not exists: a dangling symlink is a taken name, though exists() calls it free.
+    if not os.path.lexists(path):
         return path
     n = 2
-    while (candidate := path.with_name(f"{path.stem}-{n}{path.suffix}")).exists():
+    while os.path.lexists(candidate := path.with_name(f"{path.stem}-{n}{path.suffix}")):
         n += 1
     return candidate
 
@@ -76,13 +78,14 @@ def create_exclusive(path: Path, data: bytes) -> None:
 
 def publish_exclusive(data: bytes, target: Path) -> Path:
     """Write-once: publish at `target`, or at `target-2`, `-3` … when the name is taken."""
-    while True:
+    for _ in range(_PUBLISH_TRIES):
         path = unique_path(target)
         try:
             create_exclusive(path, data)
         except FileExistsError:
             continue  # another writer took the name between the check and the link
         return path
+    raise FileExistsError(f"no free name for {target} after {_PUBLISH_TRIES} tries")
 
 
 def copy_file_synced(src: Path, dst: Path) -> None:
