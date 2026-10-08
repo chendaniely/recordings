@@ -4460,8 +4460,8 @@ Three orderings matter here:
       `_write_recording`, `_write_rendition_locked`, `_publish_raw`, `_index`, `_catch_up_index`.
   - **Test fixtures** in core `conftest.py`: `make_writer(name="archive", writer_id="test") -> Writer`, `writer`, `make_incoming(content=None, *, name="clip.MP3", **over) -> Incoming`. `new_archive` stays.
 
-**Done when:** the full suite passes, with 23 more passed than after Task 5a: `test_writer.py`'s
-30, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
+**Done when:** the full suite passes, with 26 more passed than after Task 5a: `test_writer.py`'s
+33, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing writer tests**
 
@@ -4652,6 +4652,16 @@ def test_a_writer_never_empties_the_index_when_it_starts(writer, make_incoming, 
     with pytest.raises(NotTheWriter, match="refusing to empty"):
         Writer(writer.root, writer.state, writer.index, writer_id="test")
     assert writer.index.count() == 1
+
+
+def test_a_writer_never_takes_state_db_for_its_index(writer):
+    # why: state.db's meta holds the archive's UUID too. Taken for the index, it answered every
+    # lookup with nothing, and a refused rebuild's hint said to delete it.
+    with pytest.raises(NotTheWriter, match="not an index") as caught:
+        Writer(writer.root, writer.state, Index(writer.state.db_path), writer_id="test")
+    assert "delete" not in str(caught.value)
+    assert list(writer.state.path.glob("state.db*.unreadable-*")) == []
+    assert writer.state.meta("writer_id") == "test"
 
 
 def test_the_same_bytes_again_merge_and_keep_the_second_copys_outputs_tags_and_notes(
@@ -4848,7 +4858,11 @@ def test_mutate_refuses_an_invalid_file_and_flags_it(writer, make_incoming):
     writer.add(make_incoming(recorded_at=NEXT_DAY))
     path = writer.archive.path_for(rec.id) / "recording.json"
     path.write_text("{", encoding="utf-8")
-    writer.reindex()  # accepts nothing for this file: it can't be parsed
+    report = writer.reindex()  # accepts nothing for this file: it can't be parsed
+    # §11: the rebuild drops a file it can't read, so the report must name it, twice over.
+    rel = path.relative_to(writer.root).as_posix()
+    assert report.recordings == 1 and report.invalid == (rel,)
+    assert [p["path"] for p in report.problems] == [str(path)]
     assert [f["kind"] for f in writer.state.flags()] == ["invalid"]
     with pytest.raises(InvalidFile) as refused:
         writer.mutate(rec.id, AddTags((TagRef(tag="talks"),)))
@@ -4919,6 +4933,15 @@ def test_an_index_left_behind_by_a_crash_never_causes_a_duplicate(writer, make_i
     again = writer.add(make_incoming(b"bytes", sources=(RawSource(kind="upload", ref="u",
                                                                   added_at=T0),)))
     assert again.recording.id == first.id and not again.created
+
+
+def test_an_index_that_cannot_answer_is_rebuilt_before_an_add_believes_it(writer, make_incoming):
+    # why: a gone or unreadable index says "none" to every lookup, and the folder check only
+    # catches the same recorded_at: the same bytes under another one became a second recording.
+    first = writer.add(make_incoming(b"same bytes")).recording
+    writer.index.path.unlink()
+    again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    assert not again.created and again.recording.id == first.id
 
 
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(
@@ -5347,6 +5370,12 @@ class Writer:
                     f" A writer can't start with --allow-empty: if the archive really is empty, "
                     f"delete {index.path} (it is derived) and start again.")
                 raise NotTheWriter(f"{exc}{hint}") from None
+            except (sqlite3.DatabaseError, OSError) as exc:  # a mode, an owner, a full disk
+                code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
+                raise NotTheWriter(
+                    f"rebuilding the index at {index.path} failed ({code}). Check that the archive "
+                    "and the index's folder are mounted and belong to this user; the index is "
+                    "derived, so an empty folder for it will do.") from None
 
     @classmethod
     def open(cls, cfg: Config, *, docs: bool = True) -> Writer:
@@ -5492,6 +5521,11 @@ class Writer:
         existing = self.index.find_by_sha256(sha)
         if existing is not None and not (self.root / self._rel(existing)).is_file():
             # The index names a folder that is gone (removed by hand): rebuild, then ask again.
+            self.rebuild_index()
+            existing = self.index.find_by_sha256(sha)
+        if existing is None and self.index.archive_uuid() != self.identity.uuid:
+            # An index that can't answer (gone, unreadable, not this archive's) says "none" to
+            # everything: rebuild it before believing that no recording holds these bytes.
             self.rebuild_index()
             existing = self.index.find_by_sha256(sha)
         if existing is None and (self.root / self._rel(rid)).is_file():
@@ -5695,7 +5729,7 @@ class Writer:
 - [ ] **Step 5: Run the writer tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_writer.py packages/core/tests/test_locks.py -v`
-Expected: 36 passed.
+Expected: 38 passed.
 
 - [ ] **Step 6: Retire the `test_archive.py` tests that `test_writer.py` now covers**
 
@@ -5716,7 +5750,7 @@ Leave the file's helpers and imports as they are: Task 5c replaces the whole fil
 - [ ] **Step 7: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 24 more than after Task 5a. Record the count in the ledger.
+Expected: every test passes, 26 more than after Task 5a. Record the count in the ledger.
 
 - [ ] **Step 8: Commit**
 
@@ -5728,8 +5762,9 @@ mutate bumps rev, never backwards, and refuses a file edited outside the app (it
 against the merge base) or one that doesn't validate. add assembles under .tmp/ and merges
 identical bytes, keeping the second copy's outputs, tags and notes. A private tag lands before
 any content, a re-run reuses a snapshot it already published, and a busy index never fails a
-write that landed. Stage 1's Archive writers stay until Task 5c. Checked: docs.python.org
-sqlite3.
+write that landed. An index that can't answer is rebuilt before add believes it holds nothing,
+and a Writer never takes state.db for its index. Stage 1's Archive writers stay until Task 5c.
+Checked: docs.python.org sqlite3.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -5761,7 +5796,7 @@ no `state.db`.
   - `Config` (Task 2)
 - Produces:
   - **CLI:**
-    - `recordings reindex [--allow-empty] [--json]`: exit 0, 1 when a file doesn't validate, 78 when this process isn't the writer.
+    - `recordings reindex [--allow-empty] [--json]`: exit 0, 1 when a file doesn't validate or the rebuild left a recording out (`invalid` or `problems` is non-empty), 78 when this process isn't the writer.
     - `recordings docs [ARCHIVE] [--json]` now opens the `Writer`. `ARCHIVE` is optional, and must be `[archive] path`. It exits 78 when this process isn't the writer.
     - the helper `_writer(as_json: bool, *, docs: bool = True) -> Writer | int`
   - **`recordings_ui.settings.Settings`** gains `config: Config | None = None`.
@@ -5769,7 +5804,7 @@ no `state.db`.
   - **Test fixture** in ui `conftest.py`: `writer`, in folders of its own (`written-archive`, `written-state`, `written-index/`), so a test can take `demo_archive` as well.
 - **Removed:** `Archive.add_recording`, `Archive.write_rendition`, `Archive.find_by_sha256`, and the private writing helpers in `archive.py` (`_write_raw`, `_write_rendition_into`, `_merge_source`, `_drop_empty_tmp`, `_slug`, `_UNSAFE`).
 
-**Done when:** the full suite passes, with 3 more passed than after Task 5b (two in
+**Done when:** the full suite passes, with 4 more passed than after Task 5b (three in
 `test_cli.py`, one in `test_app.py`), and the demo is rebuilt. Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing tests**
@@ -5825,6 +5860,20 @@ In `packages/core/tests/test_cli.py`:
        out = json.loads(capsys.readouterr().out)
        assert out["recordings"] == 1 and out["invalid"] == []
        assert out["adopted"] == [f"recordings/2026/10/{rec.id}/recording.json"]
+
+
+   def test_reindex_exits_1_and_names_a_recording_the_rebuild_left_out(
+           writer, make_incoming, tmp_path, monkeypatch, capsys):
+       # why: §11. Index.rebuild drops a recording it can't list; reindex must say so, not exit 0.
+       rec = writer.add(make_incoming(sources=())).recording
+       folder = writer.archive.path_for(rec.id)
+       shutil.copytree(folder, folder.parent / "20261031T090000-0700_deadbeef")  # a copied folder
+       _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+       assert main(["reindex", "--json"]) == 1
+       out = json.loads(capsys.readouterr().out)
+       assert out["recordings"] == 1 and out["invalid"] == []
+       (problem,) = out["problems"]
+       assert "does not match its folder" in problem["message"]
    ```
 
 In `packages/core/tests/test_init.py`, **replace** `test_docs_refuses_a_folder_without_a_sentinel`
@@ -5877,10 +5926,11 @@ def test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write(tmp_p
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `uv run pytest packages/core/tests/test_cli.py packages/core/tests/test_init.py packages/ui/tests/test_app.py -v`
-Expected: 5 failures:
+Expected: 6 failures:
 - `test_docs_then_validate_on_a_new_archive` and `test_docs_refuses_a_folder_without_a_sentinel`: `SystemExit: 2` (argparse: "the following arguments are required: archive")
 - `test_docs_are_never_written_into_the_macs_mirror`: `assert 0 == 78`, because the sentinel check alone lets `docs` write into the mirror
 - `test_reindex_accepts_an_outside_edit`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
+- `test_reindex_exits_1_and_names_a_recording_the_rebuild_left_out`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
 - `test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write`: `TypeError: Settings.__init__() got an unexpected keyword argument 'config'`
 
 - [ ] **Step 3: Add `recordings reindex`, and write the docs through the `Writer`**
@@ -5933,7 +5983,9 @@ In `packages/core/src/recordings/cli.py`:
        except (IndexRefused, WriterError, LockTimeout) as exc:
            return _fail(str(exc), args.json, 1)
        _emit(report.to_dict(), args.json)
-       return 1 if report.invalid else 0
+       # A recording the rebuild left out (not valid, or its id doesn't match its folder) is
+       # dropped from the index: exit 1 so a script notices (§11).
+       return 1 if report.invalid or report.problems else 0
    ```
 5. **Replace** `cmd_docs` with:
    ```python
@@ -6480,7 +6532,7 @@ Run:
 uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 uv run pytest
 ```
-Expected: `built 4 recordings into demo/archive`, then every test passes, 3 more than after Task
+Expected: `built 4 recordings into demo/archive`, then every test passes, 4 more than after Task
 5b. The demo's `recording.json` files now carry `"rev": 1`, and its `AGENTS.md` and `FORMAT.md`
 change. Record the count in the ledger.
 
