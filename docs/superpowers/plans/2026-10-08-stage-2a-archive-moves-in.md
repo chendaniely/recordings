@@ -2948,9 +2948,11 @@ def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path):
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `uv run pytest packages/core/tests/test_models.py packages/core/tests/test_archive.py packages/core/tests/test_selfdoc.py packages/ui/tests/test_views.py -v`
-Expected: FAIL with `ImportError: cannot import name 'UNKNOWN_PERSON'` (`test_models.py`); the
-other new tests fail on the missing fields and checks. Stage 1's messages carry the input
-(`input_value='会議メモ / Q&A'`), which `test_a_validation_error_never_echoes_the_input` refuses.
+Expected: FAIL with `ImportError: cannot import name 'UNKNOWN_PERSON'` (`test_models.py`). Pytest
+stops at that collection error and runs nothing else; add `--continue-on-collection-errors` to see
+the new tests in the other three files fail on the missing fields and checks. Stage 1's messages
+carry the input (`input_value='会議メモ / Q&A'`), which
+`test_a_validation_error_never_echoes_the_input` refuses.
 
 - [ ] **Step 3: Write the new models**
 
@@ -3344,7 +3346,8 @@ uv run recordings schemas --write
 uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 uv run pytest
 ```
-Expected: `written: [...]`, `built 4 recordings into demo/archive`, then every test passes. The
+Expected: `written: [...]`, `built 4 recordings into demo/archive`, then every test passes:
+317 passed, 11 deselected (292 after Task 2, plus this task's 25 new tests). Record the count in the ledger. The
 demo's Plaud source entry now has `sha256`. Its `speakers` stay `{}`, and the schemas and docs in
 `demo/archive/` change.
 
@@ -4010,9 +4013,9 @@ Three orderings matter here:
 
 **Interfaces:**
 - Consumes:
-  - `State`, `StateError`, `RESTORE_HINT` (Task 2)
+  - `State`, `StateError`, `unreadable` (Task 2)
   - `Index`, `IndexRefused` (Task 4)
-  - `read_sentinel`, `SentinelError`, `SENTINEL` (Task 2); `adopt_archive`, `init_archive` (Task 2)
+  - `read_sentinel`, `SentinelError`, `SENTINEL`, `MIRROR`, `is_mirror` (Task 2); `adopt_archive`, `init_archive` (Task 2)
   - from `recordings.files`: `copy_file_synced`, `publish_exclusive`, `write_bytes_atomic`, `write_text_atomic` and `fsync_dir` (Task 2)
   - `canonical_ref` (Task 4)
   - the models, `TitleBy` and `is_private_tag` included (Task 3)
@@ -4137,7 +4140,7 @@ from recordings.config import load_config
 from recordings.index import Index, IndexRefused
 from recordings.init import adopt_archive
 from recordings.models import Rendition, TagRef, is_private
-from recordings.sentinel import SENTINEL
+from recordings.sentinel import MIRROR, SENTINEL
 from recordings.state import State
 from recordings.writer import (
     AddTags,
@@ -4184,6 +4187,14 @@ def test_a_writer_needs_the_sentinel_the_same_archive_and_the_same_writer(make_w
         Writer(writer.root, other.state, writer.index, writer_id="test")
     (writer.root / SENTINEL).unlink()
     with pytest.raises(NotTheWriter, match="mounted"):
+        Writer(writer.root, writer.state, writer.index, writer_id="test")
+
+
+def test_a_writer_refuses_the_nas_mirror(writer):
+    # why: §3. The mirror's copy carries archive.json; once `init --adopt` has run beside it, the
+    # UUID and writer_id checks all pass. The mirror job marks its copy (Task 12).
+    (writer.root / MIRROR).write_text("a copy\n", encoding="utf-8")
+    with pytest.raises(NotTheWriter, match="mirror"):
         Writer(writer.root, writer.state, writer.index, writer_id="test")
 
 
@@ -4761,8 +4772,8 @@ from recordings.models import (
 )
 from recordings.refs import canonical_ref
 from recordings.selfdoc import write_docs
-from recordings.sentinel import SentinelError, read_sentinel
-from recordings.state import RESTORE_HINT, State, StateError
+from recordings.sentinel import MIRROR, SentinelError, is_mirror, read_sentinel
+from recordings.state import State, StateError, unreadable
 
 INDEX_LOCK = "index"
 DOCS_LOCK = "docs"
@@ -4898,11 +4909,15 @@ class Writer:
             self.identity = read_sentinel(self.root)
         except SentinelError as exc:
             raise NotTheWriter(str(exc)) from None
+        if is_mirror(self.root):  # §3: the mirror's copy carries archive.json, but is never written
+            raise NotTheWriter(f"{self.root} holds {MIRROR}: it is the NAS mirror's copy, not the "
+                               "archive. Only the archive's writer writes (spec §3).")
         try:
             archive_uuid, recorded = state.meta("archive_uuid"), state.meta("writer_id")
-        except (StateError, sqlite3.DatabaseError) as exc:
-            raise NotTheWriter(f"{state.db_path} can't be read ({type(exc).__name__}). If it is "
-                               f"damaged, {RESTORE_HINT}") from None
+        except StateError as exc:
+            raise NotTheWriter(str(exc)) from None
+        except sqlite3.DatabaseError as exc:
+            raise NotTheWriter(unreadable(state.db_path, exc)) from None
         if archive_uuid != self.identity.uuid:
             raise NotTheWriter(
                 f"{state.db_path} belongs to another archive: the archive's UUID changed. "
@@ -5273,7 +5288,7 @@ class Writer:
 - [ ] **Step 5: Run the writer tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_writer.py packages/core/tests/test_locks.py -v`
-Expected: 35 passed.
+Expected: 36 passed.
 
 - [ ] **Step 6: Retire the `test_archive.py` tests that `test_writer.py` now covers**
 
@@ -5294,7 +5309,7 @@ Leave the file's helpers and imports as they are: Task 5c replaces the whole fil
 - [ ] **Step 7: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 23 more than after Task 5a. Record the count in the ledger.
+Expected: every test passes, 24 more than after Task 5a. Record the count in the ledger.
 
 - [ ] **Step 8: Commit**
 
@@ -12521,7 +12536,7 @@ On top of the sentinel check, the target must be empty or already this archive's
 - Test: `packages/core/tests/test_mirror.py`
 
 **Interfaces:**
-- Consumes: `read_sentinel` and `SENTINEL` (Task 2), `Nas` and `nas_from_config` (Task 11), and `ops.Context`, `JOBS`, `FAILURES`, `run_job`, `sigterm_forwarded`, and the CLI's `_ops_context`, `_debug_logging` and `_job_result` (Task 11).
+- Consumes: `read_sentinel`, `SENTINEL` and `MIRROR` (Task 2), `Nas` and `nas_from_config` (Task 11), and `ops.Context`, `JOBS`, `FAILURES`, `run_job`, `sigterm_forwarded`, and the CLI's `_ops_context`, `_debug_logging` and `_job_result` (Task 11).
 - Produces:
   - **`recordings.mirror`:**
     - errors: `class MirrorError(RuntimeError)`, with `.returncode: int | None` (a failed rsync raises it, with rsync's exit status), and its subclass `MirrorRefused`
@@ -12549,7 +12564,7 @@ from recordings import mirror
 from recordings.config import ConfigError, load_config
 from recordings.mirror import MirrorError, MirrorRefused, is_remote, rsync_command, run_mirror
 from recordings.ops import Context, run_job
-from recordings.sentinel import SENTINEL
+from recordings.sentinel import MIRROR, SENTINEL
 
 OTHER_UUID = "00000000-0000-4000-8000-000000000000"
 
@@ -12585,6 +12600,9 @@ class FakeRsync:
         if cmd[-2].endswith("/" + SENTINEL):
             shutil.copy(self.target / SENTINEL, cmd[-1])
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[-2].endswith("/" + MIRROR):  # the mark, which goes on before anything else
+            shutil.copy(cmd[-2], self.target / MIRROR)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
         self.mirrored.append(cmd)
         return subprocess.CompletedProcess(cmd, self.returncode, "", self.stderr)
 
@@ -12595,7 +12613,7 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
     cmd = rsync_command(mc)
     for flag in ("-a", "--delete", "--delete-delay", "--delay-updates", "--max-delete=50",
                  "--exclude=/.tmp/", "--exclude=.*.tmp", "--exclude=.~tmp~/",
-                 "--exclude=/#recycle/", "--exclude=@eaDir/"):
+                 "--exclude=/#recycle/", "--exclude=@eaDir/", f"--exclude=/{MIRROR}"):
         assert flag in cmd, flag
     assert "--no-perms" not in cmd
     assert cmd[-2:] == [f"{writer.root}/", "recordings-mirror@nas:/volume1/recordings-mirror/"]
@@ -12656,6 +12674,20 @@ def test_the_mirror_runs_only_into_an_empty_target_or_its_own_mirror(tmp_path, w
     assert len(fake.mirrored) == 2
 
 
+def test_the_mirror_marks_its_copy_first_and_the_mark_alone_is_still_empty(tmp_path, writer):
+    # why: §3. The copy carries archive.json, so without a mark `recordings init --adopt` on the
+    # Mac would make a second writer that every check accepts. A first run cut short leaves only
+    # the mark, which must not lock the mirror out.
+    target = tmp_path / "mirror"
+    target.mkdir()
+    fake = FakeRsync(target)
+    mc = mirror_config(tmp_path, writer, str(target))
+    assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
+    assert (target / MIRROR).is_file() and not (writer.root / MIRROR).exists()
+    assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
+    assert len(fake.mirrored) == 2
+
+
 def test_a_failed_rsync_is_an_error(tmp_path, writer):
     target = tmp_path / "mirror"
     target.mkdir()
@@ -12702,6 +12734,7 @@ def test_a_real_local_mirror(tmp_path, writer, make_incoming):
     assert run_mirror(mc, expected_uuid=writer.identity.uuid) == "mirrored"  # into its own mirror
     assert not (target / "stale-file").exists()
     assert not list(target.rglob(".~tmp~"))
+    assert (target / MIRROR).is_file() and not (writer.root / MIRROR).exists()  # --delete kept it
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -12729,6 +12762,9 @@ share on the NAS, through the mirror's own NAS account ([nas] ssh, with its key)
 - It refuses a target that is neither empty nor this archive's mirror (an `archive.json` with the
   same UUID). So a wrong path, or a mirror made before a rollback to a fresh `init` (a new UUID),
   is never emptied, and Synology Drive never deletes it on the Mac.
+- It puts `MIRROR.md` on the target before anything else, and `--delete` never removes it, so
+  the copy says it is one: `recordings init --adopt` and every Writer refuse a folder holding it
+  (§3), and it tells a person or an agent reading the copy to change nothing there.
 - `[mirror] no_perms = true` adds `--no-perms`, for a share with Windows ACLs where rsync's chmod
   fails (the runbook's spike).
 
@@ -12747,7 +12783,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from recordings.config import Config, ConfigError
-from recordings.sentinel import SENTINEL, SentinelError, read_sentinel
+from recordings.sentinel import MIRROR, SENTINEL, SentinelError, read_sentinel
 from recordings.ssh import Nas, nas_from_config
 
 MAX_DELETE = 50
@@ -12815,7 +12851,8 @@ def _folder(mc: MirrorConfig) -> str:
 def rsync_command(mc: MirrorConfig) -> list[str]:
     cmd = [mc.rsync, "-a", "--delete", "--delete-delay", "--delay-updates",
            f"--max-delete={mc.max_delete}", "--exclude=/.tmp/", "--exclude=.*.tmp",
-           "--exclude=.~tmp~/", "--exclude=/#recycle/", "--exclude=@eaDir/"]
+           "--exclude=.~tmp~/", "--exclude=/#recycle/", "--exclude=@eaDir/",
+           f"--exclude=/{MIRROR}"]  # the mark: never copied over, never deleted by --delete
     if mc.no_perms:
         cmd.append("--no-perms")
     return [*cmd, *_ssh(mc), f"{mc.archive}/", mc.target]
@@ -12831,7 +12868,7 @@ def _target_names(mc: MirrorConfig, runner) -> list[str]:
     names = []
     for line in proc.stdout.splitlines():
         match = _LISTED.match(line)
-        if match and match["name"] != "." and match["name"] not in DSM_FOLDERS:
+        if match and match["name"] not in (".", MIRROR, *DSM_FOLDERS):
             names.append(match["name"])
     return names
 
@@ -12857,6 +12894,26 @@ def _check_target(mc: MirrorConfig, expected_uuid: str, runner) -> None:
                             "differs). If that archive is gone for good, empty the target first")
 
 
+MIRROR_TEXT = """# A read-only copy of the archive
+
+The homelab server copies its archive here every hour (spec §15.1). Read it freely, but change
+nothing: the next run overwrites or deletes every change. `recordings init --adopt` and every
+writer refuse a folder that holds this file. To change anything, use the app.
+"""
+
+
+def _mark(mc: MirrorConfig, runner) -> None:
+    """MIRROR.md goes on first, so the copy says it is one before its archive.json arrives."""
+    with tempfile.TemporaryDirectory(prefix="recordings-mirror-") as tmp:
+        mark = Path(tmp) / MIRROR
+        mark.write_text(MIRROR_TEXT, encoding="utf-8")
+        proc = runner([mc.rsync, *_ssh(mc), str(mark), _folder(mc)], capture_output=True,
+                      text=True, timeout=600)
+    if proc.returncode != 0:
+        raise MirrorError(f"the target's {MIRROR} could not be written (rsync exit "
+                          f"{proc.returncode})", returncode=proc.returncode)
+
+
 def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run) -> str:
     try:
         identity = read_sentinel(mc.archive)
@@ -12865,6 +12922,7 @@ def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run) -
     if identity.uuid != expected_uuid:
         raise MirrorRefused("refusing to mirror: the archive's UUID changed since `recordings init`")
     _check_target(mc, expected_uuid, runner)
+    _mark(mc, runner)
     proc = runner(rsync_command(mc), capture_output=True, text=True, timeout=6 * 3600)
     if proc.returncode == 25:
         raise MirrorError(f"rsync stopped after {mc.max_delete} deletions ([mirror] max_delete). "
@@ -13863,6 +13921,10 @@ def test_the_state_and_the_index_have_mounts_of_their_own():
     web = {v["target"]: v for v in doc["services"]["web"]["volumes"]}
     assert web["/state"]["type"] == "bind" and web["/index"]["type"] == "volume"
     assert "index" in doc["volumes"]
+    # why: Status opens state.db mode=ro in `web` while `backup` writes it in WAL mode. A reader
+    # needs state.db-wal and state.db-shm, which exist only while a writer has the database open,
+    # so otherwise it must be able to create them: this mount stays writable (Task 15).
+    assert not web["/state"].get("read_only"), "web's /state must stay writable for WAL readers"
     assert doc["services"]["web"]["environment"]["RECORDINGS_STATE"] == "/state"
     assert doc["services"]["web"]["environment"]["RECORDINGS_INDEX"] == "/index/index.db"
 
@@ -14778,6 +14840,20 @@ def test_a_read_only_state_never_creates_or_writes(writer, tmp_path):
     assert state.meta("archive_uuid") == writer.state.meta("archive_uuid")
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
         state.set_meta("x", "y")
+
+
+def test_a_read_only_state_reads_what_a_live_writer_just_committed(writer):
+    # why: the backup service keeps writing state.db (WAL) while the web service reads it. A
+    # committed change in the -wal file, not yet checkpointed, must be visible to the reader.
+    from recordings.state import State
+
+    live = writer.state._connect("rw")  # holds the database open, so the WAL files exist
+    try:
+        live.execute("INSERT INTO meta (key, value) VALUES ('probe', 'wal')")
+        live.commit()
+        assert State.read_only(writer.state.path).meta("probe") == "wal"
+    finally:
+        live.close()
 ```
 
 `packages/ui/tests/test_status.py`:
@@ -15026,7 +15102,13 @@ In `packages/core/src/recordings/state.py`:
        @classmethod
        def read_only(cls, path: Path) -> State | None:
            """For readers (Status, doctor). It never creates, migrates or writes anything, and
-           returns None when there is no state.db to read."""
+           returns None when there is no state.db to read.
+
+           state.db is in WAL mode, so a reader needs the -wal and -shm files: it finds them
+           while a writer has the database open, and otherwise creates them, so the folder must
+           be writable by the reader (Task 14 mounts /state read-write in `web`). In a read-only
+           folder with no writer connected it fails with "attempt to write a readonly database".
+           Never use immutable=1: it ignores the WAL and reads stale data."""
            state = cls(path)
            if not state.db_path.is_file():
                return None
@@ -15161,8 +15243,9 @@ def status_view(archive_root: Path, settings: StatusSettings | None, *,
                               stop=stop, jobs=settings.jobs)
     except sqlite3.DatabaseError:
         return {"configured": True, "jobs": [], "flags": 0,
-                "attention": ["state.db can't be read: restore it from the backup (runbook: "
-                              "Restoring for real)."],
+                "attention": ["state.db can't be read: it is damaged (restore it from the backup, "
+                              "runbook: Restoring for real), or this service can't write to the "
+                              "state folder, which SQLite's WAL files need."],
                 "disk": disk_view(disk_status(archive_root, expected_uuid=None, warn=warn,
                                               stop=stop))}
 ```
@@ -15661,7 +15744,7 @@ def test_state_from_another_writer_is_a_problem(tmp_path):
 def test_a_damaged_state_db_is_a_problem_with_the_way_back(tmp_path):
     environ = server(tmp_path)
     (tmp_path / "state" / "state.db").write_bytes(b"not a database, " * 64)
-    assert any("restore it from the backup" in p for p in doctor(environ)["problems"])
+    assert any("restore state.db from the backup" in p for p in doctor(environ)["problems"])
 
 
 def test_a_broken_config_still_reports_the_secrets(tmp_path):
@@ -15938,7 +16021,7 @@ from recordings.config import SECRETS, Config, ConfigError, load_config, secret,
 from recordings.index import Index
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.ssh import nas_free_bytes
-from recordings.state import State
+from recordings.state import State, unreadable
 
 TOOLS = ("restic", "rsync", "ssh", "ffprobe", "ffmpeg")
 ROLES = ("web", "backup", "all")
@@ -16069,9 +16152,8 @@ def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[s
     state = State.read_only(cfg.state_path)
     try:
         found_uuid, found_writer = state.meta("archive_uuid"), state.meta("writer_id")
-    except sqlite3.DatabaseError:
-        problems.append("state.db can't be read: restore it from the backup (runbook: Restoring "
-                        "for real), or move it aside and run `recordings init --adopt`")
+    except sqlite3.DatabaseError as exc:  # the restore advice only for real damage
+        problems.append(unreadable(state.db_path, exc))
         return
     info["matches"] = found_uuid == archive_uuid and found_writer == cfg.writer_id
     if not info["matches"]:
@@ -16769,6 +16851,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   text.
 - **The Library onto `index.db`,** before 2b's deploy, only if step 4's first load took 2 s or
   more (decision 6). Otherwise it stays in 3a.
+- **The first `MIGRATIONS` entry** (Task 2's council). Before 2b ships one, give a failing
+  migration its own `StateError` ("this release's migration N failed: deploy the previous
+  release"), because `unreadable` calls its `SQLITE_ERROR` "If it is damaged…". Also run the
+  migrations before `SCHEMA`, whose `CREATE INDEX` on a new column would fail on an old table
+  first.
+- **Seed `last_checked` on a freshly adopted `state.db`** (Task 2's council), so a restored
+  or recreated one doesn't start with no history.
+- **The runbook's restore step 6 wording.** In 2a the state folder holds only `state.db*`,
+  `locks/` and `backup/`, so the advice is to move the whole folder aside. Once `state/` holds
+  the Plaud token store and `voice.db`, it becomes "move `state.db` with its `-wal` and `-shm`
+  together, and leave the rest".
 - **Considered, not built:** `validate` could flag a `source/` file that no `recording.json`
   references. `_publish_raw` now reuses a file with identical bytes, so a killed merge no longer
   leaves one behind.
