@@ -1241,7 +1241,8 @@ be found by fetching again and comparing.
     and its part's hash (`inputs.part_sha256`), and its `version` includes the normaliser
     version (§6.5). Reconcile skips a part that already has an output. The import (§9.3)
     and the sync share the normaliser and reconcile, so they give identical Plaud outputs.
-  - **Fields Plaud owns:** only `title`, and only while `title_by` is `plaud`. A Plaud title
+  - **Fields Plaud owns:** only `title`, and only while `title_by` is `plaud` or absent (a file
+    written before `title_by` existed has none, and follows Plaud). A Plaud title
     change re-runs the auto-private patterns (§7.4), which may add `private` and never
     remove it.
 - **Normalising before hashing** (the normaliser is versioned):
