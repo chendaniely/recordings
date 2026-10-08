@@ -221,7 +221,7 @@ recordings/                      (repo root, uv workspace, MIT)
   `/config/config.toml`. It holds:
   - the archive path
   - `[state] path`, the state folder (`/srv/recordings/state`; §6.8)
-  - the writer host (the homelab server; §3)
+  - the writer ID, `[archive] writer_id` (the homelab server; §3, §6.7)
   - the default time zone, for sources that give none (§6.2)
   - the Spark base URL
   - named model entries (such as `spark:default` and `claude:opus`), each with its own
@@ -233,7 +233,7 @@ recordings/                      (repo root, uv workspace, MIT)
   - `[plaud] consent_list`, the path to Dan's consent list (§9.1)
   - `[speakers]`: `auto_threshold` and `suggest_threshold` (§7.6)
   - `[calendar] terms`, the term presets in the date control (§12.6a)
-  - the ntfy settings: the server and the dead-man's switch URL (§14)
+  - the ntfy server (§14)
   - the watched folder path
   - the app base URL (used for links back into the app)
 - **Secrets are passed by reference only**, as environment variables or Docker secrets.
@@ -247,6 +247,8 @@ recordings/                      (repo root, uv workspace, MIT)
     manager, because without it the backups can't be read.
   - the NAS SSH key and its `known_hosts`, for restic and the mirror (stage 2a; §15.1)
   - the ntfy topic (stage 2a; §14)
+  - the dead-man's switch ping URL, which carries its own token (stage 2a; §14)
+  - the rest-server password, if that transport wins (stage 2a; §15.1)
   - the local-scope API token for the full view, held only on local machines (stage 3a;
     §10)
 - **Docker host settings** (`docker/deploy.env`):
@@ -256,8 +258,10 @@ recordings/                      (repo root, uv workspace, MIT)
   - `RECORDINGS_PORT`
   - `RECORDINGS_UID` / `RECORDINGS_GID` (the owner of `/srv/recordings`)
 
-  Stage 2a adds the state folder, the index volume, the secrets folder and the backup
-  target. Stage 5 adds the watched folder path.
+  Stage 2a adds the state, restore-test and secrets folders and deploy.env's own path
+  (`RECORDINGS_STATE_HOST`, `RECORDINGS_RESTORE_HOST`, `RECORDINGS_SECRETS_HOST`,
+  `RECORDINGS_DEPLOY_ENV_HOST`). The backup target is `[backup] repository` in
+  `config.toml`. Stage 5 adds the watched folder path.
 
   No secret appears in the image, the repo, the archive, logs or `--json` output. CI runs
   gitleaks.
@@ -347,7 +351,8 @@ strings. Matching against `audio-router`'s archive accepts either form, and the 
 compares them in one canonical form (§9.1.1).
 
 **`rev`** is changed only by `mutate` (§6.4). **`title_by`** says who set the title
-(`plaud` or `you`), and **`plaud.title_seen`** is the Plaud title last seen or dismissed.
+(`you`, or the source kind that supplied it: `plaud`, `recorder`, `pocket`; stage 5 adds
+`upload` and `url`), and **`plaud.title_seen`** is the Plaud title last seen or dismissed.
 **`plaud.acknowledged_up_to`** is the newest snapshot whose removals Dan has reviewed
 (§6.8).
 
@@ -361,8 +366,10 @@ compares them in one canonical form (§9.1.1).
   - Each save writes a temporary file, fsyncs it, renames it into place, then fsyncs the
     directory.
   - **Every write is an operation, not a whole document.** The core's `mutate(file, op)`
-    runs under that file's lock. **Every editable file has a lock and a monotonic `rev`:**
-    each `recording.json`, `tags.yaml` and both people files. The locks are `flock` locks,
+    runs under that file's lock. **Every editable file has a lock; the structured ones also
+    have a monotonic `rev`:** each `recording.json`, `tags.yaml` and both people files.
+    `my-notes.md` is free Markdown with no `rev`: the core only appends to it, under its
+    recording's lock. The locks are `flock` locks,
     released if the process crashes (§6.8). Their files live in `/srv/recordings/state`,
     outside the archive, so backups and the mirror never copy them.
   - **Only `mutate` changes `rev`.** Outside editors leave it alone, and `AGENTS.md` says so.
@@ -1224,8 +1231,9 @@ be found by fetching again and comparing.
     fetch of that recording, so the snapshot stays reconcile's only input and can't revert
     the title.
   - **Reconcile** is a pure function. In: every complete snapshot in fetch order, the
-    "acknowledged up to" marker (§6.8), the people files and `recording.json`. Out: the
-    Plaud outputs and the fields Plaud owns. Taking every snapshot is what lets removals
+    "acknowledged up to" marker (§6.8) and `recording.json`. Out: the Plaud outputs and the
+    fields Plaud owns. Linking Plaud names to people is derived in the index from the Plaud
+    outputs and the people files (§7.6, stage 3b), never by reconcile. Taking every snapshot is what lets removals
     wait for review. Snapshots are ordered by fetch time, never by file name, because
     `x-2.json` sorts before `x.json`. It runs on every check and on `reindex`, so an update
     interrupted after the snapshot is finished next time.
@@ -1384,7 +1392,11 @@ later" until its build stage (§20):
   |---|---|
   | Plaud, Google Recorder and Pocket recordings | one recording each, with a source reference that keeps `audio-router`'s source and ID |
   | rows with no audio | reported by the dry run and not imported. A Plaud one arrives later through the sync. |
-  | the `media/private/` tier | imported, tagged `private` |
+  | the `media/private/` tier | imported, tagged `private`. Its files are matched by SHA-256 (a 64-hex ID is the audio's hash), and a Recorder export's `.txt` comes too |
+  | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels move under `private/` (`therapy` → `private/therapy`). A privacy label or a non-empty `access` makes the recording private. |
+  | Plaud rows with audio but no snapshot and no time | deferred to 2b's sync, which matches them by Plaud ID; if Plaud no longer has them, 2b imports them timed by the file's mtime |
+  | an ID on the consent list (§9.1) | not imported, and reported only as a count |
+  | turns or segments with no time, and speaker names Dan typed | kept: untimed segments as reconcile keeps them, typed names verbatim in `source/` |
   | several raw snapshots for one recording | all kept, in `source/` |
   | `words`, `turns`, `merged` and `summary` renditions | outputs, keeping their engine names |
   | `audio-router`'s Plaud renditions | **not copied.** Reconcile rebuilds them from the snapshots, so they can't be duplicated (§9.1.1). |
@@ -1941,12 +1953,16 @@ come from that frame.
   Nothing appears half-written (§6.4).
 - **Invalid edits:** shown, never overwritten (§11).
 - **Visibility:** every failure appears in **Needs attention** with Retry.
-- **Alerts** (Dan, 2026-10-08) are push notifications through ntfy: self-hosted, or ntfy.sh
-  with a private topic. The topic is a secret (§5).
+- **Alerts** (Dan, 2026-10-08; services chosen 2026-10-09) are push notifications through
+  ntfy.sh with a private topic, so they arrive even when the homelab server is down. The
+  topic and the dead-man's ping URL are secrets (§5). Bodies are fixed templates (the job,
+  its exit code and counts, then "see Status"), never error text, titles or paths.
   - **They fire on:** a Plaud 401, a circuit-breaker trip, a disk warning, a failed backup
     or restore test, and a failed `--full`.
-  - **A dead-man's switch:** each good sync and each good backup pings it, and a missed
-    window raises an alert, so a stopped worker or backup is noticed too.
+  - **A dead-man's switch** on Healthchecks.io: each good sync and each good backup pings
+    it, and a missed window raises an alert, so a stopped worker or backup is noticed too.
+    The grace is at least 3 hours, because long jobs (the restore test, the first mirror)
+    run in the same loop.
   - **Status keeps the pull view** (§12.5).
 
 ## 15. Security and backups
@@ -1966,7 +1982,9 @@ come from that frame.
   because Import is a write (imports and syncs; later tags, people, merges, *Recognise*,
   *Forget*):
   - checks `Origin` or `Sec-Fetch-Site`
-  - requires exactly `Content-Type: application/json`
+  - requires a body type a foreign page can't send without a CORS preflight: exactly
+    `application/json`, or `application/octet-stream` on stage 5's upload route only,
+    which also needs a custom header and `Sec-Fetch-Site: same-origin`
 
   A tailnet ACL limits the app's port to Dan's devices.
 - **Slugs never reach logs** (added 2026-10-08). `/people/<slug>` paths would land in
@@ -1982,10 +2000,19 @@ come from that frame.
 - **The tool is restic,** encrypted and deduplicated. It runs on the homelab server as a `backup`
   service in the same Docker Compose project and writes only to its own repository on
   the NAS.
-  - **Transport:** restic over SFTP, or rest-server with `--append-only`; a spike decides
-    (§19). The NAS SSH key and its `known_hosts` are secrets (§5). An NFS mount is the
-    fallback; the homelab server can mount a NAS share over NFS. Either way, restic writes
-    only its own repository, with its own locking, and the app never writes to the NAS.
+  - **Transport: rest-server with `--append-only`** (Dan, 2026-10-09). The NAS's volume is
+    ext4, which has no Btrfs snapshots, so nothing on the NAS could undo a compromised
+    server deleting backups over SFTP. With append-only, the server can only add.
+    rest-server runs on the NAS, in Container Manager or as its static binary started at
+    boot, over TLS (restic's `--cacert`, set by `[backup] cacert`) or over the tailnet. Its
+    password is a secret (§5). The spike (§19) confirms it runs. **SFTP is the fallback**
+    only if rest-server can't run, and it accepts that risk. Either way, restic writes only
+    its own repository, with its own locking, and the app never writes to the NAS.
+  - **Retention runs on the NAS.** The server can't delete, so a weekly DSM scheduled task
+    runs restic directly on the repository's local path (`forget --prune`, with the keep
+    rules below plus the `pre-import` and `post-import` tags), with its own root-only copy
+    of the password. On the server, `[backup] prune = false`, and `doctor` says retention
+    must run on the NAS. `restic unlock` still works in append-only mode.
 - **What is backed up:**
   - the archive
   - `config.toml`
@@ -2009,12 +2036,18 @@ come from that frame.
   - **It refuses to run** when the archive's sentinel is missing or its UUID has changed
     (§6.7), so an unmounted archive can't wipe the mirror through `--delete`.
   - **The mirror holds private recordings too.** On the Mac, keeping external agents out of
-    them is policy (§7.4).
-- **Capacity:** The NAS's free space is checked before backups start. The
-  backup repository grows with the archive, and deduplication plus the retention limits
-  keep it close to the archive's size.
-- **Later:** Synology's own snapshots of the backup share, plus Hyper Backup to an
-  off-site target, complete a 3-2-1 setup.
+    them is policy (§7.4). The mirror share is readable only by Dan.
+  - **Its own account:** a separate non-admin NAS account whose SSH key is restricted to the
+    server's address and whose share permissions reach only the mirror share. A compromised
+    server could wipe the mirror, which is derived, but not the append-only backups.
+    `--max-delete` bounds an accident, and the target must be empty or carry the same
+    archive UUID.
+- **Capacity:** The NAS's free space is checked before backups start, over ssh `df`, or
+  sftp's `df` for an SFTP-only account; otherwise it is unknown, and Status and `doctor`
+  say so. The backup repository grows with the archive, and deduplication plus the
+  retention limits keep it close to the archive's size.
+- **Later:** Hyper Backup of the backup share to an off-site target completes a 3-2-1
+  setup. (Synology's snapshots need Btrfs; this NAS is ext4.)
 
 ## 16. Testing
 
@@ -2140,14 +2173,13 @@ come from that frame.
     copied files under MIT.
   - **Before going public:** check the copied code and its test data for anything personal.
 - **Order of the first real run** (added 2026-10-08):
-  1. **Spikes:**
-     - **the token** (§9.1)
-     - **the ID form:** does the hex in `of_<hex>` equal `audio-router`'s bare ID, and are
-       the audio bytes identical? The spike prints counts only.
+  1. **Spikes** (none of them calls Plaud):
      - **server facts:** its own mount, filesystem, free space and UID, and whether Docker
        starts before Tailscale
-     - **NAS transport:** restic over SFTP, or rest-server with `--append-only`, with the
-       SSH key and `known_hosts` as secrets (§5)
+     - **NAS transport:** rest-server with `--append-only` running on the NAS, reached over
+       TLS or the tailnet (SFTP only as the fallback), and whether the mirror's account can
+       run rsync and sftp `df` into its share, with its SSH key and `known_hosts` as
+       secrets (§5)
   2. **Deploy 2a** against an empty, initialised archive, and prove backup and restore.
   3. **Bring the source over:** rsync the `audio-router` archive to
      `/srv/recordings/import/` with a SHA manifest, read-only. Never copy from the NAS's
@@ -2155,7 +2187,12 @@ come from that frame.
      accounted for.
   4. **Import:** take a `pre-import` snapshot, import, validate, then take a `post-import`
      snapshot.
-  5. **Deploy 2b** with `schedule_minutes = 0`.
+  5. **Spikes for 2b, then deploy it** with `schedule_minutes = 0`:
+     - **the token** (§9.1)
+     - **the ID form:** does the hex in `of_<hex>` equal `audio-router`'s bare ID, and are
+       the audio bytes identical? The spike prints counts only.
+
+     Both call Plaud, and 2b is the first stage allowed to.
   6. **`sync --dry-run`:** "matched" should equal the Plaud rows `audio-router` holds, and
      "missing" should be about the newer recordings plus the held titles. Stop if not.
   7. **Finish:** rebaseline, import the missing recordings, then turn the schedule on.
@@ -2197,8 +2234,9 @@ Each stage leaves a working, demonstrable app.
    - the `speakers` field's new shape (§7.6), set now while the real archive is still empty,
      and Plaud's segment fields: `speaker` holds `original_speaker`, then `speaker_name`
      and `embedding_key` (snake_case in our schema; Plaud's field is `embeddingKey`)
-   - `state.db` (§6.8), plus the derived index, with `[index]` moved here: stage 1 globs
-     every folder on each load
+   - `state.db` (§6.8), plus the derived index, with `[index]` moved here. In 2a it serves
+     the writers and the import. The Library moves onto it, with search, in 3a, and the
+     Pages demo never opens SQLite.
    - the normaliser and reconcile, as pure functions, so the import and the sync give
      identical Plaud outputs (§9.1.1)
    - a re-runnable `import-audio-router`, with its mapping table (§9.3)
@@ -2247,7 +2285,9 @@ Each stage leaves a working, demonstrable app.
    - editing `tags.yaml` and `recording.json`
    - drag, `T`, the grid and the tree, with Undo
    - the Private section and privacy calculation
-   - outside-edit detection and `reindex`
+   - outside-edit detection in the UI (`reindex` itself lands in 2a, because a refusing
+     `mutate` needs it)
+   - the Library on `index.db`, with search, and the review queue (§12.1)
    - the catalog, change log, JSON API (with the external view; §10) and CLI
    - the `<div>`-inside-`<button>` fix in `TranscriptTab` and `RecordingList` (§12.6a)
 
@@ -2429,7 +2469,7 @@ answers to its questions, 2026-10-08.
 26. **State has three homes** (§6.8): archive files hold decisions, `state.db` holds
     operational state and is backed up, and `index.db` is derived.
 27. **Only `mutate` changes `rev`,** and it refuses a stale file (§6.4). Every editable file
-    has a lock and a `rev`.
+    has a lock, and the structured ones a `rev`; `my-notes.md` is only appended to.
 28. **An archive is never set up implicitly** (§6.7). `recordings init` writes a sentinel,
     and every writer, the sync and the mirror refuse without it.
 29. **Every outside reader goes through one external view** (§10), and the catalog is
@@ -2451,3 +2491,13 @@ answers to its questions, 2026-10-08.
     - Insights' tag chips combine as *any of*.
     - The heatmap has six steps.
     - Confirmation dialogs are kept only for Forget and for making a private person public.
+35. **From the stage-2a plan's council review** (2026-10-09):
+    - Backups go to rest-server `--append-only`, with retention on the NAS, because the NAS
+      is ext4 (§15.1).
+    - Alerts use Healthchecks.io for the dead-man's switch and ntfy.sh for pushes, both off
+      the server. Their bodies are fixed templates (job, exit code, counts), never error
+      text (§14).
+    - The import carries `audio-router`'s tags, puts privacy labels under `private/`, defers
+      the snapshot-less Plaud rows to 2b, and skips consent-listed IDs (§9.3).
+    - A private tag is always applied before any content is written (§7.4).
+    - The token and ID-form spikes belong to 2b, the first stage that calls Plaud (§19).
