@@ -1354,7 +1354,8 @@ through 1a, then:
 
 6. **`state.db` lost, and its backup copy unusable.** Move the whole damaged `state/` aside,
    never `state.db` alone (its `-wal` file holds the latest commits). In 2a the folder holds only
-   `state.db*`, `locks/` and `backup/`. Then recreate `state.db` from the archive's sentinel. Each
+   `state.db*`, `locks/`, `backup/` and restic's cache (`cache/restic`), which rebuilds itself.
+   Then recreate `state.db` from the archive's sentinel. Each
    file's merge base is adopted on its next write.
    ```bash
    rc down
@@ -15599,7 +15600,7 @@ else `all`. Two checks read config.toml alone, so every role reports them, as th
 - Consumes:
   - from stage 1, extended by Tasks 11 and 13: `SECRETS` and `secret`
   - from Task 11: `secret_path`, `SecretSpec.file_only` and `.optional`, `ssh.nas_free_bytes` (ssh `df`, then sftp's `df`; None when neither answers), and `backup.from_config`, whose `BackupConfig` has `cacert: Path | None` (the optional `[backup] cacert`), `prune`, `rest_username`, `restore_scratch`, `nas` and `nas_repo_path`
-  - from Task 2: `read_sentinel`, `init_archive`
+  - from Task 2: `read_sentinel`, `init_archive`, `state.unreadable`
   - from Task 9: the `[plaud] consent_list` setting, which the import itself reads, failing closed
   - from Task 15: `State.read_only`
   - from Task 4: `Index`
@@ -16857,12 +16858,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   release"), because `unreadable` calls its `SQLITE_ERROR` "If it is damaged…". Also run the
   migrations before `SCHEMA`, whose `CREATE INDEX` on a new column would fail on an old table
   first.
-- **Seed `last_checked` on a freshly adopted `state.db`** (Task 2's council), so a restored
-  or recreated one doesn't start with no history.
-- **The runbook's restore step 6 wording.** In 2a the state folder holds only `state.db*`,
-  `locks/` and `backup/`, so the advice is to move the whole folder aside. Once `state/` holds
-  the Plaud token store and `voice.db`, it becomes "move `state.db` with its `-wal` and `-shm`
-  together, and leave the rest".
+- **Seed `last_checked` on a freshly adopted `state.db`** (Task 2's council) from each
+  recording's newest snapshot (spec §6.8), so a recreated one doesn't start with no history. A
+  restored copy keeps its own.
+- **The move-aside wording.** In 2a the state folder holds only `state.db*`, `locks/`,
+  `backup/` and restic's cache, so the advice is to move the whole folder aside. Once `state/`
+  holds the Plaud token store and `voice.db`, it becomes "move `state.db` with its `-wal` and
+  `-shm` together, and leave the rest", in four places together: the runbook's restore step 6,
+  `RESTORE_HINT`, the adopt refusal (`init.py`) and `State.create`'s stray-log message.
 - **Considered, not built:** `validate` could flag a `source/` file that no `recording.json`
   references. `_publish_raw` now reuses a file with identical bytes, so a killed merge no longer
   leaves one behind.

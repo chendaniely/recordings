@@ -779,7 +779,8 @@ through 1a, then:
 
 6. **`state.db` lost, and its backup copy unusable.** Move the whole damaged `state/` aside,
    never `state.db` alone (its `-wal` file holds the latest commits). In 2a the folder holds only
-   `state.db*`, `locks/` and `backup/`. Then recreate `state.db` from the archive's sentinel. Each
+   `state.db*`, `locks/`, `backup/` and restic's cache (`cache/restic`), which rebuilds itself.
+   Then recreate `state.db` from the archive's sentinel. Each
    file's merge base is adopted on its next write.
    ```bash
    rc down
