@@ -5035,6 +5035,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 14: Notes (layout B), Plaud, My notes and Details tabs
 
 **Files:**
+- Create: `packages/ui/frontend/src/lib/notes.ts`, `lib/notes.test.ts`
 - Create: `packages/ui/frontend/src/components/NotesTab.tsx`, `PlaudTab.tsx`, `MyNotesTab.tsx`, `DetailsTab.tsx`
 - Modify: `packages/ui/frontend/src/components/RecordingPane.tsx` (adds four tabs)
 
@@ -5045,10 +5046,75 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the tabs**
 
+The selection logic lives in `lib/notes.ts`, so it can be tested without a DOM.
+Write its test first; it fails until `notes.ts` exists.
+
+`packages/ui/frontend/src/lib/notes.test.ts`:
+```ts
+import { describe, expect, it } from "vitest";
+
+import type { NotesGroup, NotesOutput } from "../types";
+import { flattenNotes, noteSelection } from "./notes";
+
+const out = (rendition: string): NotesOutput => ({ rendition, model: rendition, engine: "canned", created_at: "2026-10-08T12:00:00+00:00", html: "" });
+const groups: NotesGroup[] = [
+  { note_type: "conference-talk", outputs: [out("a"), out("b")] },
+  { note_type: "meeting", outputs: [out("c")] },
+];
+
+describe("flattenNotes", () => {
+  it("keeps list order and remembers each output's note type", () => {
+    expect(flattenNotes(groups).map((x) => [x.group, x.o.rendition])).toEqual([
+      ["conference-talk", "a"], ["conference-talk", "b"], ["meeting", "c"],
+    ]);
+    expect(flattenNotes([])).toEqual([]);
+  });
+});
+
+describe("noteSelection", () => {
+  const all = flattenNotes(groups);
+  it("shows the picked output, or the first when nothing valid is picked", () => {
+    expect(noteSelection(all, "b", "").main?.o.rendition).toBe("b");
+    expect(noteSelection(all, "gone", "").main?.o.rendition).toBe("a");
+    expect(noteSelection(all, null, "").main?.o.rendition).toBe("a");
+    expect(noteSelection([], null, "").main).toBeUndefined();
+  });
+  it("compares with another output", () => {
+    expect(noteSelection(all, "a", "c").second?.o.rendition).toBe("c");
+  });
+  it("never compares an output with itself", () => {
+    // pick a, compare b, then click b in the list: the comparison must drop, not show b twice
+    expect(noteSelection(all, "b", "b").second).toBeUndefined();
+    expect(noteSelection(all, "a", "gone").second).toBeUndefined();
+  });
+});
+```
+
+`packages/ui/frontend/src/lib/notes.ts`:
+```ts
+import type { NotesGroup, NotesOutput } from "../types";
+
+export type NotesEntry = { group: string; o: NotesOutput };
+
+/** Every notes output in list order: grouped by note type, each group as the server sends it. */
+export function flattenNotes(groups: NotesGroup[]): NotesEntry[] {
+  return groups.flatMap((g) => g.outputs.map((o) => ({ group: g.note_type, o })));
+}
+
+/** The output shown and the one compared with it. A comparison with the shown output itself is
+ * dropped, so the "Compare with" select and the view can never disagree. */
+export function noteSelection(all: NotesEntry[], picked: string | null, other: string): { main?: NotesEntry; second?: NotesEntry } {
+  const main = all.find((x) => x.o.rendition === picked) ?? all[0];
+  const second = other && other !== main?.o.rendition ? all.find((x) => x.o.rendition === other) : undefined;
+  return { main, second };
+}
+```
+
 `packages/ui/frontend/src/components/NotesTab.tsx`:
 ```tsx
 import { useEffect, useMemo, useState } from "react";
 
+import { flattenNotes, noteSelection } from "../lib/notes";
 import type { NotesGroup, NotesOutput } from "../types";
 
 const label = (o: NotesOutput) => `${o.model ?? o.engine} · ${o.engine}`;
@@ -5063,16 +5129,15 @@ function Output({ group, output }: { group: string; output: NotesOutput }) {
   );
 }
 
-/** Layout B (spec §12.1): one list of every notes output, grouped by note type, newest first. */
+/** Layout B (spec §12.1): one list of every notes output, grouped by note type. */
 export function NotesTab({ groups }: { groups: NotesGroup[] }) {
-  const all = useMemo(() => groups.flatMap((g) => g.outputs.map((o) => ({ group: g.note_type, o }))), [groups]);
+  const all = useMemo(() => flattenNotes(groups), [groups]);
   const [picked, setPicked] = useState<string | null>(all[0]?.o.rendition ?? null);
   const [other, setOther] = useState<string>("");
   useEffect(() => { setPicked(all[0]?.o.rendition ?? null); setOther(""); }, [all]);
+  const { main, second } = noteSelection(all, picked, other);
 
-  if (!all.length) return <p className="muted">No notes yet. Notes are written once the recording has a tag.</p>;
-  const main = all.find((x) => x.o.rendition === picked) ?? all[0];
-  const second = all.find((x) => x.o.rendition === other);
+  if (!all.length || !main) return <p className="muted">No notes yet. Notes are written once the recording has a tag.</p>;
   return (
     <div className="notes-split">
       <div className="notes-list">
@@ -5091,7 +5156,7 @@ export function NotesTab({ groups }: { groups: NotesGroup[] }) {
         <div className="tools">
           <span>{main.group} · {label(main.o)}</span>
           <label className="r">Compare with
-            <select data-testid="compare-select" value={other} onChange={(e) => setOther(e.target.value)}>
+            <select data-testid="compare-select" value={second ? other : ""} onChange={(e) => setOther(e.target.value)}>
               <option value="">nothing</option>
               {all.filter((x) => x.o.rendition !== main.o.rendition).map((x) => <option key={x.o.rendition} value={x.o.rendition}>{x.group} · {label(x.o)}</option>)}
             </select>
