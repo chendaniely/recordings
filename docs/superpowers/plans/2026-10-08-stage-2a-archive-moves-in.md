@@ -174,6 +174,7 @@ Nothing in it calls Plaud.
     - Every label in the catalog's `tags` column becomes a tag.
     - The privacy labels become private tags. Task 8 recognises every protected marker in `audio-router`'s `sources/local_.py` at 64612df, and trims the tags to one per meaning (Dan, 2026-10-09: "counselling and counseling are the same", and "therapy and counseling are also all the same"): `private`, `personal` and `voiceprints` → `private`; `therapy`, `counselling` and `counseling` → `private/therapy`; `journal`, `medical` and `students` → `private/<label>`.
     - A row is `new-private` when its source is `private`, its `access` is non-empty, or any of its tags is a privacy label.
+    - **This list is a floor, not the definition of privacy** (Dan, 2026-10-09). `private` is a gate, not a topic: it means only models on Dan's own hardware may process the recording, and external agents such as Claude Code may not read it. Other recordings are private too (some lectures, for example) without carrying any of these labels. They arrive untagged, which external agents already treat as private (§7.4), and Dan adds `private` when he tags them in stage 3.
     - The private tag is in `Incoming.tags` when the recording is created, so it is never published untagged (Global Constraints: privacy comes first).
 
 ## Global Constraints
