@@ -90,19 +90,17 @@ class Index:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
             self._check_ours(db)
-            # Check empty inside the lock, before dropping tables (not via count(), which swallows
-            # lock errors). The old code read held = self.count() outside the transaction, so a
-            # locked file returned 0 and the guard was bypassed. This read on the same connection
-            # is protected by BEGIN IMMEDIATE.
+            # Check empty inside the lock, before dropping tables. The old code read the count
+            # outside the transaction, where a locked index read as 0. This read on the same
+            # connection is protected by BEGIN IMMEDIATE.
             held = 0
             try:
                 held = int(db.execute("SELECT count(*) FROM recordings").fetchone()[0])
             except sqlite3.OperationalError as exc:
                 if "no such table" not in str(exc):
                     raise
-                held = 0
             except TypeError:
-                held = 0
+                pass
             if not recordings and held and not allow_empty:
                 raise IndexRefused(
                     f"{archive.root} lists no recordings but the index holds {held}: refusing to "

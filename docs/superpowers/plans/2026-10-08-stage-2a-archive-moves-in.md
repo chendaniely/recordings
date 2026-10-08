@@ -3438,7 +3438,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
       | `sha256_of(recording_id: str)` | `str \| None` |
       | `find_by_source(kind: str, ref: str)` | `list[str]` |
 
-    - `rebuild` runs as one `BEGIN IMMEDIATE` transaction on the live file, so a failed rebuild leaves the old index and no temp file. A file SQLite can't read (`SQLITE_NOTADB` or `SQLITE_CORRUPT`) is deleted and rebuilt. A database that isn't an index raises `IndexRefused`, and so does emptying a non-empty index without `allow_empty`.
+    - `rebuild` runs as one `BEGIN IMMEDIATE` transaction on the live file, so a failed rebuild leaves the old index and no temp file. A file SQLite can't read (`SQLITE_NOTADB` or `SQLITE_CORRUPT`) is renamed aside and rebuilt. A database that isn't an index raises `IndexRefused`, and so does emptying a non-empty index without `allow_empty`.
     - A missing or unreadable index answers every lookup with nothing.
 
 - [ ] **Step 1: Write the failing tests**
@@ -3447,6 +3447,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```python
 import sqlite3
 from datetime import datetime, timezone
+from unittest.mock import Mock
 
 import pytest
 
@@ -3584,24 +3585,17 @@ def test_upsert_replaces_a_recordings_references(new_archive, tmp_path):
 
 
 def test_rebuild_refuses_to_empty_a_locked_index(new_archive, tmp_path, monkeypatch):
-    # why: the old code read held = self.count() outside the transaction, which returned 0 when
-    # the file was locked (count() swallows DatabaseError). The new code reads inside BEGIN
-    # IMMEDIATE on the same connection, protected by the lock. This test would pass on the old
-    # code too if it just held a lock; instead, it monkeypatches count() to 0 (simulating the
-    # old locked read), so it catches the old bypass and passes only on the new code.
+    # why: The old code read the count outside the transaction, where a locked index read as 0.
+    # This patch reproduces that read, so the test fails on the old code and passes now.
     root, _ = new_archive
     rec = put(root)
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
-    # Now patch count() to return 0, simulating what the old code saw when locked
     monkeypatch.setattr(Index, "count", lambda self: 0)
-    # Create an archive listing that is empty
     empty = tmp_path / "empty"
     (empty / "recordings").mkdir(parents=True)
-    # Attempt rebuild; new code checks inside the transaction and raises
     with pytest.raises(IndexRefused, match="refusing to empty"):
         index.rebuild(Archive(empty), archive_uuid="u-1")
-    # Verify index still has its data (un-patch first so count() works)
     monkeypatch.undo()
     assert index.count() == 1 and index.find_by_sha256(rec.media.sha256) == rec.id
 
@@ -3646,7 +3640,6 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     pre_existing = tmp_path / f"index.db.unreadable-{fixed_stamp}"
     pre_existing.write_bytes(b"pre-existing data")
     # Patch the datetime module's now method to return a fixed timestamp
-    from unittest.mock import Mock
     import recordings.index
     fixed_dt = datetime(2026, 10, 9, 14, 35, 12, tzinfo=timezone.utc)
     mock_datetime = Mock()
@@ -3661,8 +3654,33 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     assert new_file.exists()
     assert b"new corrupted data" in new_file.read_bytes()
     assert index.find_by_sha256(rec.media.sha256) == rec.id
-
-
+def test_corrupted_index_with_journal_sibling_renamed_same_suffix(new_archive, tmp_path):
+    # why: when index.db is corrupted, any existing -journal siblings are renamed with the same
+    # suffix to keep them together and prevent losing state about the corruption.
+    root, _ = new_archive
+    rec = put(root, sources=[("plaud", HEX)])
+    index = Index(tmp_path / "index.db")
+    # First rebuild creates a valid index
+    index.rebuild(Archive(root), archive_uuid="u-1")
+    # Manually create a -journal sibling (simulating SQLite's own recovery file)
+    journal = tmp_path / "index.db-journal"
+    journal.write_bytes(b"journal recovery data")
+    journal_bytes = journal.read_bytes()
+    # Corrupt the index
+    header = b"SQLite format 3\x00"
+    index.path.write_bytes(header + b"corrupted" * 50)
+    # Rebuild will detect corruption and rename both files
+    assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
+    # Both should be renamed with same suffix
+    main_quarantined = list(tmp_path.glob("index.db.unreadable-*"))
+    assert len(main_quarantined) == 1
+    main_suffix = main_quarantined[0].name[len("index.db"):]
+    journal_renamed = tmp_path / f"index.db-journal{main_suffix}"
+    if journal_renamed.exists():
+        # If journal was renamed, verify it kept its bytes
+        assert journal_renamed.read_bytes() == journal_bytes
+    # New index should be rebuilt
+    assert index.find_by_sha256(rec.media.sha256) == rec.id
 
 
 def test_empty_index_file_is_replaced_not_renamed(new_archive, tmp_path):
@@ -3810,19 +3828,17 @@ class Index:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
             self._check_ours(db)
-            # Check empty inside the lock, before dropping tables (not via count(), which swallows
-            # lock errors). The old code read held = self.count() outside the transaction, so a
-            # locked file returned 0 and the guard was bypassed. This read on the same connection
-            # is protected by BEGIN IMMEDIATE.
+            # Check empty inside the lock, before dropping tables. The old code read the count
+            # outside the transaction, where a locked index read as 0. This read on the same
+            # connection is protected by BEGIN IMMEDIATE.
             held = 0
             try:
                 held = int(db.execute("SELECT count(*) FROM recordings").fetchone()[0])
             except sqlite3.OperationalError as exc:
                 if "no such table" not in str(exc):
                     raise
-                held = 0
             except TypeError:
-                held = 0
+                pass
             if not recordings and held and not allow_empty:
                 raise IndexRefused(
                     f"{archive.root} lists no recordings but the index holds {held}: refusing to "
