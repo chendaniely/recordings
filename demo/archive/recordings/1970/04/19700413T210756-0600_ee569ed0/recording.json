@@ -17,7 +17,8 @@
       "kind": "plaud",
       "ref": "demo-apollo13",
       "added_at": "2026-10-08T12:00:00Z",
-      "raw": "source/plaud-20261008T120000Z.json"
+      "raw": "source/plaud-20261008T120000Z.json",
+      "sha256": "2a136d5095ed5d518d14c0e5dce924a6b39719f35286c4747bcb35e40686a33e"
     }
   ],
   "tags": [],

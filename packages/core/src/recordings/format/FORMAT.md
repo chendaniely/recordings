@@ -38,10 +38,48 @@ renditions/<name>-<utc-stamp>.json
   where `<kind>` is `notes-<note type>` for notes. The schema is
   `schemas/rendition.schema.json`.
 
+## recording.json
+
+The schema is `schemas/recording.schema.json`. Keys added in stage 2a are optional, so older
+files read unchanged.
+
+- `rev`: the file's revision. It goes up by one with every change the app makes, and **only
+  `mutate`** changes it. Edit the file by hand and leave `rev` alone: the app notices an outside
+  edit by its content, not by `rev`. A file without `rev` is at revision 0.
+- `title_by`: who set `title`: `you`, or the source kind that supplied it (`plaud`, `recorder` or
+  `pocket`). Plaud's sync replaces the title only while `title_by` is `plaud` or absent; for any
+  other value it shows Plaud's new title as a difference instead.
+- `plaud.title_seen`: the Plaud title last seen or dismissed. `plaud.acknowledged_up_to`: the
+  newest `source/` snapshot whose removals have been reviewed. Until then, a Plaud note that
+  vanished, or names that reverted to "Speaker N", are held, not applied.
+- `sources`: one entry per raw payload in `source/`, with the source's own `ref`, `added_at`,
+  `fetched_at` (when the source returned it) and the file's `sha256`. Snapshots are ordered by
+  `fetched_at`, then by their place in this list, never by file name.
+- `speakers`: decisions only, never inferences. `source` is the output the labels belong to.
+  `labels` maps a label to `{"person": "<slug>", "by": "you"}`, optionally with
+  `plaud_name_seen`, or to `{"not": ["<slug>", …]}`. `spans` are `{start, end, person, by}` in
+  media seconds. The reserved person `unknown` means "not anyone known" and overrides every
+  inferred name for that time. Slugs match `^[a-z0-9]+(-[a-z0-9]+)*$`.
+
+## Transcript segments
+
+Each segment has `start` and `end` (seconds), `text`, optional `words`, and `speaker`: the
+generic diarization label (for Plaud, its `original_speaker`). A Plaud transcript also carries
+`speaker_name`, the name given in Plaud when it differs from the label, and `embedding_key`,
+Plaud's `embeddingKey`.
+
+Plaud's own transcript and notes are outputs with engine `plaud`, rebuilt from `source/`. Each
+records its snapshot in `inputs.source` and its part's hash in `inputs.part_sha256`, and its
+`version` (`plaud@<n>`) names the normaliser that produced it.
+
 ## Rules
 
-- **Only three files are edited:** `recording.json`, `my-notes.md` and `tags.yaml`. Each
-  save writes a temporary file and renames it into place.
+- **The editable files:** `recording.json`, `my-notes.md` and `tags.yaml`, and from stage 3b
+  `people.yaml` and `people.private.yaml`. Each save writes a temporary file, fsyncs it, and
+  renames it into place. The app changes the structured ones (`recording.json`, and later
+  `tags.yaml` and the people files) only through `mutate`, under that file's lock. It only
+  appends to `my-notes.md`, under the recording's lock: `my-notes.md` is free Markdown with no
+  `rev`.
 - **Work in progress:** writers assemble a new recording in `.tmp/` at the archive root and
   write temporary files named `.*.tmp`; readers and mirrors should ignore both.
 - **The sentinel.** `archive.json` holds the archive's `format` and UUID, and is written once,

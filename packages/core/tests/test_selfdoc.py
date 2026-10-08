@@ -173,3 +173,51 @@ def test_validate_reports_an_unreadable_rendition(tmp_path):
     broken.mkdir()  # reading it raises an OSError (IsADirectoryError), whoever runs the test
     (problem,) = validate(archive.root)
     assert problem["path"] == str(broken)
+
+
+def test_validate_reports_a_missing_media_file_and_a_missing_source_file(tmp_path):
+    # why: stage-1 carry-over. A recording whose media is gone must not validate clean.
+    archive, rec = build_one(tmp_path)
+    folder = archive.path_for(rec.id)
+    (folder / rec.media.file).unlink()
+    (folder / rec.sources[0].raw).unlink()
+    messages = sorted(p["message"] for p in validate(archive.root))
+    assert messages == [f"media.file {rec.media.file!r} is missing",
+                        f"source file {rec.sources[0].raw} is missing"]
+
+
+def test_validate_reports_a_span_past_the_end_of_the_media(tmp_path):
+    import json
+
+    archive, rec = build_one(tmp_path)
+    path = archive.path_for(rec.id) / "recording.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["media"]["duration_ms"] = 10_000
+    data["speakers"] = {"spans": [{"start": 8.0, "end": 12.0, "person": "ada", "by": "you"}]}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (problem,) = validate(archive.root)
+    assert "runs past the media's end" in problem["message"]
+
+
+def test_validate_checks_renditions_even_when_recording_json_is_broken(tmp_path):
+    # why: stage-1 carry-over. A broken recording.json used to hide its folder's bad outputs.
+    archive, rec = build_one(tmp_path)
+    folder = archive.path_for(rec.id)
+    (folder / "recording.json").write_text("{", encoding="utf-8")
+    (folder / "renditions" / "broken.json").write_text("{", encoding="utf-8")
+    paths = sorted(p["path"] for p in validate(archive.root))
+    assert paths == sorted([str(folder / "recording.json"), str(folder / "renditions" / "broken.json")])
+
+
+def test_the_docs_describe_rev_speakers_and_the_plaud_fields():
+    from importlib import resources
+
+    def read(doc):
+        return " ".join((resources.files("recordings") / "format" / doc)
+                        .read_text(encoding="utf-8").split())
+    fmt = read("FORMAT.md")
+    for needle in ("`rev`", "only `mutate`", "`unknown`", "`speaker_name`", "`embedding_key`",
+                   "`fetched_at`", "`title_by`", "`recorder`", "acknowledged_up_to",
+                   "only appends to `my-notes.md`"):
+        assert needle in fmt, needle
+    assert "Never change `rev`" in read("AGENTS.md")

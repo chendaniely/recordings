@@ -200,3 +200,20 @@ def test_a_capitalised_private_tag_is_private_everywhere(tmp_path):
     assert {t["tag"]: t["private"] for t in view["tags"]} == {"Private/Health": True}
     assert view["recordings"][0]["private"] is True
     assert recording_view(archive, rec.id)["private"] is True
+
+
+def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path):
+    media = tmp_path / "x.mp3"
+    media.write_bytes(b"ID3")
+    archive = Archive(tmp_path / "archive")
+    t = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    rec = archive.add_recording(
+        media=media, recorded_at=t, timezone_name="UTC", time_source="plaud", title="x",
+        kind="audio", source=RawSource(kind="plaud", ref="x", added_at=t),
+        renditions=[Rendition(kind="transcript", engine="plaud", model="plaud", version="plaud@1",
+                              created_at=t, payload={"segments": [
+                                  {"start": 0, "end": 1, "speaker": "Speaker 1",
+                                   "speaker_name": "Ada", "text": "Hello."},
+                                  {"start": 1, "end": 2, "speaker": "Speaker 2", "text": "Hi."}]})])
+    turns = recording_view(archive, rec.id)["transcripts"][0]["turns"]
+    assert [t["speaker"] for t in turns] == ["Ada", "Speaker 2"]

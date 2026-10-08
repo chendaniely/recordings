@@ -59,6 +59,13 @@ class RawSource:
     ref: str
     added_at: datetime
     payload: bytes | None = None  # written verbatim as source/<kind>-<stamp>.json
+    fetched_at: datetime | None = None  # when the source returned it; names the file
+
+    def __post_init__(self) -> None:
+        for name in ("added_at", "fetched_at"):
+            value = getattr(self, name)
+            if value is not None and value.utcoffset() is None:
+                raise ValueError(f"RawSource.{name} must be timezone-aware")
 
 
 @dataclass(frozen=True)
@@ -209,12 +216,15 @@ class Archive:
 
     # ---- helpers -------------------------------------------------------------------
     def _write_raw(self, folder: Path, source: RawSource) -> SourceRef:
-        raw = None
+        raw = sha = None
         if source.payload is not None:
-            target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(source.added_at)}.json"
+            when = source.fetched_at or source.added_at
+            target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(when)}.json"
             path = publish_exclusive(source.payload, target)
             raw = path.relative_to(folder).as_posix()
-        return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at, raw=raw)
+            sha = hashlib.sha256(source.payload).hexdigest()
+        return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at,
+                         fetched_at=source.fetched_at, raw=raw, sha256=sha)
 
     def _write_rendition_into(self, folder: Path, rendition: Rendition) -> str:
         kind = f"notes-{rendition.note_type}" if rendition.kind == "notes" else rendition.kind

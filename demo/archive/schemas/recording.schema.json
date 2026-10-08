@@ -34,6 +34,19 @@
           "default": null,
           "title": "Audio File"
         },
+        "channels": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Channels"
+        },
         "duration_ms": {
           "anyOf": [
             {
@@ -59,6 +72,19 @@
           "title": "Kind",
           "type": "string"
         },
+        "sample_rate": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Rate"
+        },
         "sha256": {
           "pattern": "^[0-9a-f]{64}$",
           "title": "Sha256",
@@ -73,6 +99,38 @@
       "title": "MediaInfo",
       "type": "object"
     },
+    "PlaudState": {
+      "additionalProperties": false,
+      "description": "What Plaud last said, as far as Dan has seen it (§6.3, §6.8).",
+      "properties": {
+        "acknowledged_up_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Acknowledged Up To"
+        },
+        "title_seen": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title Seen"
+        }
+      },
+      "title": "PlaudState",
+      "type": "object"
+    },
     "SourceRef": {
       "additionalProperties": false,
       "properties": {
@@ -80,6 +138,19 @@
           "format": "date-time",
           "title": "Added At",
           "type": "string"
+        },
+        "fetched_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fetched At"
         },
         "kind": {
           "title": "Kind",
@@ -100,6 +171,19 @@
         "ref": {
           "title": "Ref",
           "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
         }
       },
       "required": [
@@ -108,6 +192,128 @@
         "added_at"
       ],
       "title": "SourceRef",
+      "type": "object"
+    },
+    "SpeakerLabel": {
+      "additionalProperties": false,
+      "description": "Your decision about one diarization label (§7.6). Inferences never live in the file.",
+      "properties": {
+        "by": {
+          "anyOf": [
+            {
+              "const": "you",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "By"
+        },
+        "not": {
+          "items": {
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "title": "Not",
+          "type": "array"
+        },
+        "person": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Person"
+        },
+        "plaud_name_seen": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plaud Name Seen"
+        }
+      },
+      "title": "SpeakerLabel",
+      "type": "object"
+    },
+    "SpeakerSpan": {
+      "additionalProperties": false,
+      "description": "A stretch of media time, in seconds, that is someone else, or `unknown` (§7.6).",
+      "properties": {
+        "by": {
+          "const": "you",
+          "default": "you",
+          "title": "By",
+          "type": "string"
+        },
+        "end": {
+          "minimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "person": {
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Person",
+          "type": "string"
+        },
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "person"
+      ],
+      "title": "SpeakerSpan",
+      "type": "object"
+    },
+    "Speakers": {
+      "additionalProperties": false,
+      "description": "Speaker decisions (§7.6). `source` names the diarization the labels belong to.",
+      "properties": {
+        "labels": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SpeakerLabel"
+          },
+          "title": "Labels",
+          "type": "object"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "spans": {
+          "items": {
+            "$ref": "#/$defs/SpeakerSpan"
+          },
+          "title": "Spans",
+          "type": "array"
+        }
+      },
+      "title": "Speakers",
       "type": "object"
     },
     "TagRef": {
@@ -172,10 +378,34 @@
     "media": {
       "$ref": "#/$defs/MediaInfo"
     },
+    "plaud": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlaudState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "recorded_at": {
       "format": "date-time",
       "title": "Recorded At",
       "type": "string"
+    },
+    "rev": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rev"
     },
     "sources": {
       "items": {
@@ -185,11 +415,7 @@
       "type": "array"
     },
     "speakers": {
-      "additionalProperties": {
-        "type": "string"
-      },
-      "title": "Speakers",
-      "type": "object"
+      "$ref": "#/$defs/Speakers"
     },
     "tags": {
       "items": {
@@ -216,6 +442,24 @@
     "title": {
       "title": "Title",
       "type": "string"
+    },
+    "title_by": {
+      "anyOf": [
+        {
+          "enum": [
+            "you",
+            "plaud",
+            "recorder",
+            "pocket"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title By"
     }
   },
   "required": [

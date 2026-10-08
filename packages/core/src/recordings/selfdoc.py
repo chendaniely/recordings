@@ -79,9 +79,36 @@ def validate(root: Path) -> list[dict]:
     recordings = list(archive.iter_recordings())
     problems += [{"path": str(p.path), "message": p.message} for p in archive.problems]
     for rec in recordings:
-        for path in sorted((archive.path_for(rec.id) / "renditions").glob("*.json")):
+        problems += _recording_problems(archive, rec)
+    # Every folder's outputs, a broken recording.json's included.
+    for folder in archive.recording_dirs():
+        for path in sorted((folder / "renditions").glob("*.json")):
             try:
                 Rendition.model_validate_json(path.read_text(encoding="utf-8"))
             except (ValidationError, UnicodeDecodeError, OSError) as exc:
                 problems.append({"path": str(path), "message": str(exc).splitlines()[0]})
+    return problems
+
+
+def _recording_problems(archive: Archive, rec) -> list[dict]:
+    folder = archive.path_for(rec.id)
+    here = str(folder / "recording.json")
+    problems = []
+    media = folder / rec.media.file
+    try:
+        present = media.resolve().is_relative_to(folder.resolve()) and media.is_file()
+    except (OSError, ValueError):
+        present = False
+    if not present:
+        problems.append({"path": here, "message": f"media.file {rec.media.file!r} is missing"})
+    for source in rec.sources:
+        if source.raw and not (folder / source.raw).is_file():
+            problems.append({"path": here, "message": f"source file {source.raw} is missing"})
+    if rec.media.duration_ms is not None:
+        end = rec.media.duration_ms / 1000
+        for span in rec.speakers.spans:
+            if span.end > end:
+                problems.append({"path": here, "message":
+                                 f"speakers span {span.start}-{span.end} s runs past the "
+                                 f"media's end ({end} s)"})
     return problems

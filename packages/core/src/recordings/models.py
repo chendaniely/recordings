@@ -1,8 +1,12 @@
-"""The archive's data model (spec §6.3, §6.5). JSON Schemas are generated from these."""
+"""The archive's data model (spec §6.3, §6.5, §7.6). JSON Schemas are generated from these.
+
+Every key added in stage 2a is optional, so files written before it read unchanged, inside
+`recordings-archive@1` (§22, decision 12).
+"""
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -12,28 +16,52 @@ FORMAT = "recordings-archive@1"
 RENDITION_SCHEMA = "recordings/rendition@1"
 # recording.json sits at recordings/YYYY/MM/<id>/, four levels below the archive root.
 SCHEMA_REF = "../../../../schemas/recording.schema.json"
+SHA256_PATTERN = r"^[0-9a-f]{64}$"
+# A person's slug (§7.6): lowercase ASCII words joined by single hyphens.
+PERSON_SLUG = r"^[a-z0-9]+(-[a-z0-9]+)*$"
+# The reserved person (§7.6): "not anyone known". A span set to it overrides every inferred name
+# for that time, which is how "Not Alex" works for one line or a range. No real person has it.
+UNKNOWN_PERSON = "unknown"
 
 TimeSource = Literal["plaud", "metadata", "published", "mtime", "ingest"]
+# Who set a recording's title (§6.3): you, or the source kind that supplied it. Stage 5 adds
+# "upload" and "url".
+TitleBy = Literal["you", "plaud", "recorder", "pocket"]
+PersonSlug = Annotated[str, Field(pattern=PERSON_SLUG)]
+
+
+def _empty(value: object) -> bool:
+    # For exclude_if. The Pages demo's pydantic 2.10.5 ignores exclude_if, so the browser only
+    # reads models and never serialises them (decision 7).
+    return not value
 
 
 class _Model(BaseModel):
     # forbid: a typo in a hand-edited file is an error, not a silently ignored key (§11).
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    # hide_input_in_errors: a validation error names the field, never its value, so a title or
+    # transcript text can't leak into a report, a log or an alert.
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, hide_input_in_errors=True)
 
 
 class MediaInfo(_Model):
     file: str
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sha256: str = Field(pattern=SHA256_PATTERN)
     kind: Literal["audio", "video"]
-    duration_ms: int | None = Field(default=None, ge=0)
+    duration_ms: int | None = Field(default=None, ge=0)  # of the decoded media, not the source's
+    sample_rate: int | None = Field(default=None, gt=0)  # captured at ingest (§9.1.1)
+    channels: int | None = Field(default=None, gt=0)
     audio_file: str | None = None  # extracted audio track, video only
 
 
 class SourceRef(_Model):
-    kind: str  # "plaud", "url", "upload", "watched_folder", "audio_router"
+    kind: str  # "plaud", "recorder", "pocket", "audio_router", "url", "upload", "watched_folder"
     ref: str  # opaque, exactly as the source returned it (Plaud now sends "of_…")
     added_at: AwareDatetime
+    # When the source returned this payload. Snapshots are ordered by it, then by their place in
+    # `sources`, never by file name (§9.1.1). Absent means added_at.
+    fetched_at: AwareDatetime | None = None
     raw: str | None = None  # e.g. "source/plaud-20261008T143000Z.json"
+    sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)  # of the raw file's bytes
 
 
 class TagRef(_Model):
@@ -53,11 +81,59 @@ class Chosen(_Model):
     transcript: str | None = None
 
 
+class PlaudState(_Model):
+    """What Plaud last said, as far as Dan has seen it (§6.3, §6.8)."""
+
+    title_seen: str | None = None  # the Plaud title last seen or dismissed
+    acknowledged_up_to: str | None = None  # the newest snapshot whose removals Dan has reviewed
+
+
+class SpeakerLabel(_Model):
+    """Your decision about one diarization label (§7.6). Inferences never live in the file."""
+
+    person: PersonSlug | None = None
+    by: Literal["you"] | None = None
+    plaud_name_seen: str | None = None  # the Plaud name you overrode, so a change can show
+    not_: list[PersonSlug] = Field(default_factory=list, alias="not", exclude_if=_empty)
+
+    @model_validator(mode="after")
+    def _person_needs_by(self) -> SpeakerLabel:
+        if (self.person is None) != (self.by is None):
+            raise ValueError('a label\'s person and by go together: {"person": "…", "by": "you"}')
+        return self
+
+
+class SpeakerSpan(_Model):
+    """A stretch of media time, in seconds, that is someone else, or `unknown` (§7.6)."""
+
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+    person: PersonSlug
+    by: Literal["you"] = "you"
+
+    @model_validator(mode="after")
+    def _ends_after_it_starts(self) -> SpeakerSpan:
+        if self.end <= self.start:
+            raise ValueError(f"a span must end after it starts ({self.start} to {self.end})")
+        return self
+
+
+class Speakers(_Model):
+    """Speaker decisions (§7.6). `source` names the diarization the labels belong to."""
+
+    source: str | None = None
+    labels: dict[str, SpeakerLabel] = Field(default_factory=dict, exclude_if=_empty)
+    spans: list[SpeakerSpan] = Field(default_factory=list, exclude_if=_empty)
+
+
 class Recording(_Model):
     schema_ref: str | None = Field(default=None, alias="$schema")
     format: Literal["recordings-archive@1"] = FORMAT
     id: str = Field(pattern=ID_PATTERN)  # in the JSON Schema too, for editors and agents
+    rev: int | None = Field(default=None, ge=0)  # changed only by mutate (§6.4); absent means 0
     title: str
+    title_by: TitleBy | None = None  # absent: not recorded; Plaud's sync treats it as "plaud"
+    plaud: PlaudState | None = None
     recorded_at: AwareDatetime
     timezone: str
     time_source: TimeSource
@@ -65,7 +141,7 @@ class Recording(_Model):
     sources: list[SourceRef] = Field(default_factory=list)
     tags: list[TagRef] = Field(default_factory=list)
     excluded_note_types: list[str] = Field(default_factory=list)
-    speakers: dict[str, str] = Field(default_factory=dict)
+    speakers: Speakers = Field(default_factory=Speakers)
     chosen: Chosen = Field(default_factory=Chosen)
 
     @field_validator("id", mode="before")
@@ -105,7 +181,9 @@ class Word(_Model):
 class Segment(_Model):
     start: float = Field(ge=0)
     end: float = Field(ge=0)
-    speaker: str | None = None
+    speaker: str | None = None  # the generic diarization label: Plaud's original_speaker (§9.1.1)
+    speaker_name: str | None = None  # the name given in Plaud, when it differs from the label
+    embedding_key: str | None = None  # Plaud's embeddingKey, snake_case in this schema
     text: str
     words: list[Word] = Field(default_factory=list)
 

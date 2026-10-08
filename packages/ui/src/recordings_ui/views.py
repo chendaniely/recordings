@@ -76,14 +76,16 @@ def library_view(archive: Archive) -> dict:
     }
 
 
-def _turns(r: Rendition, speakers: dict[str, str]) -> list[dict]:
+def _turns(r: Rendition) -> list[dict]:
     out = []
     for seg in r.payload.get("segments", []):
-        speaker = seg.get("speaker")
+        # Until people arrive (stage 3b), a turn shows the name Plaud gave its speaker, if any,
+        # and otherwise the diarization label.
+        speaker = seg.get("speaker_name") or seg.get("speaker")
         out.append({
             "start": seg["start"],
             "end": seg["end"],
-            "speaker": speakers.get(speaker, speaker) if speaker else None,
+            "speaker": speaker or None,
             "text": seg["text"],
             "words": [{"word": w["word"], "start": w["start"], "end": w["end"]}
                       for w in seg.get("words", [])],
@@ -122,7 +124,7 @@ def recording_view(archive: Archive, rid: str, *, media_base: str | None = None)
     outputs = archive.renditions(rid, problems)
     transcripts = [
         {"rendition": path, "label": _label(r), "engine": r.engine, "model": r.model,
-         "created_at": r.created_at.isoformat(), "turns": _turns(r, rec.speakers)}
+         "created_at": r.created_at.isoformat(), "turns": _turns(r)}
         for path, r in outputs if r.kind == "transcript"
     ]
     names = [t["rendition"] for t in transcripts]

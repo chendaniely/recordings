@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 from datetime import datetime, timezone
@@ -208,3 +209,22 @@ def test_a_copied_recording_folder_is_reported_and_the_original_kept(tmp_path):
     (problem,) = archive.problems
     assert problem.path == copy / "recording.json"
     assert problem.message == f"id {rec.id!r} does not match its folder"
+
+
+def test_a_raw_source_needs_aware_times():
+    # why: stage-1 carry-over. A naive time would be read as UTC somewhere and as local elsewhere.
+    with pytest.raises(ValueError, match="timezone-aware"):
+        RawSource(kind="plaud", ref="x", added_at=datetime(2026, 10, 8, 12, 0))
+    with pytest.raises(ValueError, match="timezone-aware"):
+        RawSource(kind="plaud", ref="x", added_at=T0, fetched_at=datetime(2026, 8, 1))
+
+
+def test_a_raw_source_records_its_hash_and_fetch_time(tmp_path):
+    archive = Archive(tmp_path / "archive")
+    fetched = datetime(2026, 8, 1, 9, 0, tzinfo=timezone.utc)
+    rec = add(archive, media(tmp_path), source=RawSource(
+        kind="plaud", ref="of_" + "a" * 32, added_at=T0, fetched_at=fetched, payload=b'{"id": 1}'))
+    (ref,) = rec.sources
+    assert ref.raw == "source/plaud-20260801T090000Z.json"  # named by when it was fetched
+    assert ref.fetched_at == fetched
+    assert ref.sha256 == hashlib.sha256(b'{"id": 1}').hexdigest()

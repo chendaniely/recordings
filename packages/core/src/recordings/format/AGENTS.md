@@ -13,8 +13,9 @@
    untagged recording as private too,** until the owner tags it. When unsure, treat yourself
    as external. The metadata file is the only source of truth for this, so there is no list
    to consult.
-3. **Only edit `recording.json`, `my-notes.md` and `tags.yaml`.** Never edit media,
-   `source/` or `renditions/`. They are write-once.
+3. **Only edit `recording.json`, `my-notes.md` and `tags.yaml`** (and, from stage 3b, the people
+   files). Never edit media, `source/` or `renditions/`: they are write-once. **Never change
+   `rev`:** only the app's `mutate` changes it.
 4. **Never edit, create or delete `archive.json`.** It is the archive's sentinel (see `FORMAT.md`).
 5. **Check edits** against `schemas/` (`recordings validate <archive>`).
 6. **After a bulk edit, run `recordings reindex`** (available from stage 3). Jobs that the
