@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from recordings.ids import ID_RE
+from recordings.ids import ID_PATTERN, ID_RE
 
 FORMAT = "recordings-archive@1"
 RENDITION_SCHEMA = "recordings/rendition@1"
@@ -56,7 +56,7 @@ class Chosen(_Model):
 class Recording(_Model):
     schema_ref: str | None = Field(default=None, alias="$schema")
     format: Literal["recordings-archive@1"] = FORMAT
-    id: str
+    id: str = Field(pattern=ID_PATTERN)  # in the JSON Schema too, for editors and agents
     title: str
     recorded_at: AwareDatetime
     timezone: str
@@ -68,10 +68,11 @@ class Recording(_Model):
     speakers: dict[str, str] = Field(default_factory=dict)
     chosen: Chosen = Field(default_factory=Chosen)
 
-    @field_validator("id")
+    @field_validator("id", mode="before")
     @classmethod
-    def _id_shape(cls, value: str) -> str:
-        if not ID_RE.fullmatch(value):
+    def _id_shape(cls, value: object) -> object:
+        # Before the pattern check, so a bad id is reported as what it is meant to be.
+        if not isinstance(value, str) or not ID_RE.fullmatch(value):
             raise ValueError(f"not a recording id: {value!r}")
         return value
 

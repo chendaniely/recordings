@@ -136,3 +136,30 @@ def test_validate_reports_a_copied_folder_and_a_mismatched_id(tmp_path, capsys):
     assert main(["validate", str(archive.root), "--json"]) == 1
     out = json.loads(capsys.readouterr().out)["problems"]
     assert sorted(p["path"] for p in out) == expected
+
+
+def test_validate_reports_a_missing_archive(tmp_path):
+    missing = tmp_path / "nope"
+    assert validate(missing) == [{"path": str(missing), "message": "does not exist"}]
+
+
+def test_validate_reports_a_folder_that_is_not_an_archive(tmp_path):
+    (tmp_path / "notes.txt").write_text("hi", encoding="utf-8")
+    for path in (tmp_path, tmp_path / "notes.txt"):
+        (problem,) = validate(path)
+        assert problem["path"] == str(path)
+        assert "no recordings/ folder" in problem["message"]
+
+
+def test_cli_validate_fails_on_a_wrong_path(tmp_path, capsys):
+    from recordings.cli import main
+
+    assert main(["validate", str(tmp_path / "nope"), "--json"]) == 1
+
+
+def test_validate_reports_an_unreadable_rendition(tmp_path):
+    archive, rec = build_one(tmp_path)
+    broken = archive.path_for(rec.id) / "renditions" / "broken.json"
+    broken.mkdir()  # reading it raises an OSError (IsADirectoryError), whoever runs the test
+    (problem,) = validate(archive.root)
+    assert problem["path"] == str(broken)

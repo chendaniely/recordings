@@ -61,7 +61,14 @@ def layout_patterns() -> list[re.Pattern]:
 
 
 def validate(root: Path) -> list[dict]:
-    archive = Archive(Path(root))
+    root = Path(root)
+    # Checking the wrong folder must not look like a clean archive.
+    if not root.exists():
+        return [{"path": str(root), "message": "does not exist"}]
+    if not (root / "recordings").is_dir():
+        return [{"path": str(root),
+                 "message": "is not a recordings archive: it has no recordings/ folder"}]
+    archive = Archive(root)
     problems = []
     recordings = list(archive.iter_recordings())
     problems += [{"path": str(p.path), "message": p.message} for p in archive.problems]
@@ -69,6 +76,6 @@ def validate(root: Path) -> list[dict]:
         for path in sorted((archive.path_for(rec.id) / "renditions").glob("*.json")):
             try:
                 Rendition.model_validate_json(path.read_text(encoding="utf-8"))
-            except (ValidationError, UnicodeDecodeError) as exc:
+            except (ValidationError, UnicodeDecodeError, OSError) as exc:
                 problems.append({"path": str(path), "message": str(exc).splitlines()[0]})
     return problems

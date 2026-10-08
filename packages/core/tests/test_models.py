@@ -140,3 +140,27 @@ def test_committed_schemas_match_the_models():
 
 def test_cli_schemas_check_passes_when_current():
     assert main(["schemas", "--check"]) == 0
+
+
+def test_ids_with_non_ascii_digits_are_rejected():
+    with pytest.raises(ValidationError):
+        recording(id="٢٠٢٦١٠٠٦T١٤٠٠٠٣-0700_3fa91c2e")
+
+
+def _committed_schema(name: str) -> dict:
+    return json.loads(
+        (resources.files("recordings") / "format" / "schemas" / name).read_text(encoding="utf-8"))
+
+
+def test_the_committed_schema_checks_the_id_shape():
+    import jsonschema
+
+    schema = _committed_schema("recording.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema)
+    good = json.loads(dump_json(recording()))
+    assert list(validator.iter_errors(good)) == []
+    for bad in ["2026-10-06_3fa91c2e", "x20261006T140003-0700_3fa91c2e",
+                "20261006T140003-0700_3fa91c2ef", "٢٠٢٦١٠٠٦T١٤٠٠٠٣-0700_3fa91c2e"]:
+        errors = list(validator.iter_errors({**good, "id": bad}))
+        assert [e.json_path for e in errors] == ["$.id"], bad

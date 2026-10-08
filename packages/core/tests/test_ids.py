@@ -63,3 +63,12 @@ def test_relative_dir_uses_the_local_date_in_the_id():
     t = datetime(2025, 12, 31, 23, 30, tzinfo=ZoneInfo("America/Vancouver"))
     rid = make_id(t, SHA)
     assert str(relative_dir(rid)) == f"recordings/2025/12/{rid}"
+
+
+def test_ids_use_ascii_digits_only():
+    from recordings.ids import ID_RE
+
+    arabic_indic = "٢٠٢٦١٠٠٦T١٤٠٠٠٣-0700_3fa91c2e"  # \d would match these
+    assert ID_RE.fullmatch(arabic_indic) is None
+    with pytest.raises(ValueError):
+        parse_id(arabic_indic)

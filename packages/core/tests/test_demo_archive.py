@@ -59,3 +59,30 @@ def test_rebuilding_from_the_archives_own_media_is_byte_identical(tmp_path):
     assert rebuilt.keys() == committed.keys()
     for rel in committed:
         assert rebuilt[rel] == committed[rel], f"{rel} differs: run `make demo-archive`"
+
+
+def test_every_demo_file_matches_the_committed_json_schemas():
+    """What an editor or an agent checking edits against schemas/ would see: no errors."""
+    import jsonschema
+
+    root = DEMO / "archive"
+    schemas = {}
+    for name in ("recording.schema.json", "rendition.schema.json"):
+        schema = json.loads((root / "schemas" / name).read_text(encoding="utf-8"))
+        cls = jsonschema.validators.validator_for(schema, default=jsonschema.Draft202012Validator)
+        cls.check_schema(schema)
+        schemas[name] = cls(schema, format_checker=cls.FORMAT_CHECKER)
+    checked, errors = 0, []
+    for path in sorted(root.glob("recordings/*/*/*/recording.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        # Each recording.json names its own schema; follow it, so the reference is checked too.
+        ref = (path.parent / data["$schema"]).resolve()
+        assert ref == (root / "schemas" / "recording.schema.json").resolve(), path
+        errors += [(path, e.message) for e in schemas["recording.schema.json"].iter_errors(data)]
+        checked += 1
+    for path in sorted(root.glob("recordings/*/*/*/renditions/*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        errors += [(path, e.message) for e in schemas["rendition.schema.json"].iter_errors(data)]
+        checked += 1
+    assert checked == 4 + 10
+    assert errors == []

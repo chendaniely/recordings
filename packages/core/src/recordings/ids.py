@@ -12,7 +12,13 @@ import re
 from datetime import datetime
 from pathlib import PurePosixPath
 
-ID_RE = re.compile(r"(?P<stamp>\d{8}T\d{6}[+-]\d{4})_(?P<short>[0-9a-f]{8})")
+# [0-9], not \d: \d also matches other scripts' digits, such as ٢٠٢٦.
+_STAMP = r"[0-9]{8}T[0-9]{6}[+-][0-9]{4}"
+_SHORT = r"[0-9a-f]{8}"
+ID_RE = re.compile(rf"(?P<stamp>{_STAMP})_(?P<short>{_SHORT})")
+# The same pattern, anchored and without Python's (?P<name>) groups, so that a JSON Schema
+# validator (ECMA-262 regular expressions, in editors too) reads it the same way.
+ID_PATTERN = rf"^{_STAMP}_{_SHORT}$"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 

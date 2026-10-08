@@ -282,3 +282,19 @@ def test_a_copied_recording_folder_is_reported_and_the_original_kept(tmp_path):
     (problem,) = archive.problems
     assert problem.path == copy / "recording.json"
     assert problem.message == f"id {rec.id!r} does not match its folder"
+
+
+def test_write_text_atomic_leaves_no_temp_file_when_the_replace_fails(tmp_path, monkeypatch):
+    from recordings import archive as archive_module
+
+    target = tmp_path / "recording.json"
+    target.write_text("old\n", encoding="utf-8")
+
+    def failing_replace(src, dst):
+        raise OSError("Simulated replace failure")
+
+    monkeypatch.setattr(archive_module.os, "replace", failing_replace)
+    with pytest.raises(OSError, match="Simulated replace failure"):
+        archive_module.write_text_atomic(target, "new\n")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["recording.json"]
+    assert target.read_text(encoding="utf-8") == "old\n"

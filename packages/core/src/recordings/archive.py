@@ -7,6 +7,7 @@ renamed into place, so a reader never sees half a recording.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
@@ -50,8 +51,14 @@ def utc_stamp(t: datetime) -> str:
 
 def write_text_atomic(path: Path, text: str) -> None:
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        # A failed write or replace leaves the old file as it was, and no temp file behind.
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        raise
 
 
 def _publish_bytes_exclusive(data: bytes, target_path: Path) -> Path:

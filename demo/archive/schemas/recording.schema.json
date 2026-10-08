@@ -165,6 +165,7 @@
       "type": "string"
     },
     "id": {
+      "pattern": "^[0-9]{8}T[0-9]{6}[+-][0-9]{4}_[0-9a-f]{8}$",
       "title": "Id",
       "type": "string"
     },
