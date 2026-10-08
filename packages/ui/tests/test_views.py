@@ -83,6 +83,13 @@ def test_model_written_html_is_escaped(tmp_path):
     assert "<img" not in html
 
 
+def test_markdown_images_are_not_rendered():
+    # An image in notes would make the browser fetch it: no external requests, ever.
+    html = render_markdown("before ![x](https://example.com/x.png) after")
+    assert "<img" not in html
+    assert "before" in html and "after" in html
+
+
 def test_recording_view_with_corrupt_rendition_shows_problems(demo_archive, demo_ids):
     archive = Archive(demo_archive)
     # Add a corrupt rendition file to a demo recording

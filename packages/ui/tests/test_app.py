@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,9 @@ def test_media_is_served_with_ranges(client, demo_ids):
     assert part.status_code == 206
     assert part.headers["content-range"] == f"bytes 0-99/{len(full.content)}"
     assert len(part.content) == 100
+    # The browser must not second-guess the type: media is never run as a page.
+    assert full.headers["x-content-type-options"] == "nosniff"
+    assert part.headers["x-content-type-options"] == "nosniff"
 
 
 def test_a_range_past_the_end_is_416_not_500(client, demo_ids):
@@ -80,3 +84,34 @@ def test_missing_media_file_is_404(client, demo_archive, demo_ids):
     rj = _recording_json(demo_archive, rid)
     (rj.parent / json.loads(rj.read_text(encoding="utf-8"))["media"]["file"]).unlink()
     assert client.get(f"/media/{rid}").status_code == 404
+
+
+def _set_media_file(archive, rid, name):
+    rj = _recording_json(archive, rid)
+    data = json.loads(rj.read_text(encoding="utf-8"))
+    data["media"]["file"] = name
+    rj.write_text(json.dumps(data), encoding="utf-8")
+    return rj.parent
+
+
+@pytest.mark.parametrize("name", ["page.html", "image.svg", "notes.txt", "noextension"])
+def test_media_file_that_is_not_audio_or_video_is_404(client, demo_archive, demo_ids, name):
+    # A hand-edited media.file must never make the app serve a page from its own origin.
+    folder = _set_media_file(demo_archive, demo_ids["jfk-rice"], name)
+    (folder / name).write_text("<script>alert(1)</script>", encoding="utf-8")
+    assert client.get(f"/media/{demo_ids['jfk-rice']}").status_code == 404
+
+
+def test_media_file_with_a_nul_byte_is_404(client, demo_archive, demo_ids):
+    _set_media_file(demo_archive, demo_ids["jfk-rice"], "a\x00b.mp3")
+    assert client.get(f"/media/{demo_ids['jfk-rice']}").status_code == 404
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root can read files with no permissions")
+def test_unreadable_recording_json_is_404(client, demo_archive, demo_ids):
+    rj = _recording_json(demo_archive, demo_ids["jfk-rice"])
+    rj.chmod(0o000)
+    try:
+        assert client.get(f"/media/{demo_ids['jfk-rice']}").status_code == 404
+    finally:
+        rj.chmod(0o644)

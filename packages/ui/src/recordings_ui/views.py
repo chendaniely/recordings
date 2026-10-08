@@ -16,7 +16,8 @@ from recordings.ids import ID_RE
 from recordings.models import Recording, Rendition, is_private, is_private_tag, is_untagged
 
 # html=False: any HTML in model-written notes is escaped, never rendered (review focus #4).
-_md = MarkdownIt("commonmark", {"html": False}).enable("table")
+# No images: an image would make the browser fetch it, and the app makes no external requests.
+_md = MarkdownIt("commonmark", {"html": False}).enable("table").disable("image")
 
 
 def render_markdown(text: str) -> str:
