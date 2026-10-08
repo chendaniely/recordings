@@ -27,7 +27,7 @@ export function Sidebar({ library, filter, onFilter }: Props) {
       <div className="grp">Tags</div>
       {open.map((t) => item({ kind: "tag", tag: t.tag }, t.tag, t.count, "filter-tag"))}
       {hidden.length > 0 && <div className="grp">Private</div>}
-      {hidden.map((t) => item({ kind: "tag", tag: t.tag }, <><Lock size={12} /> {t.tag}</>, t.count, "filter-tag"))}
+      {hidden.map((t) => item({ kind: "tag", tag: t.tag }, <><Lock size={12} className="lock" aria-hidden /> {t.tag}</>, t.count, "filter-tag"))}
       {library.note_types.length > 0 && <div className="grp">Note types</div>}
       {library.note_types.map((n) => item({ kind: "tag", tag: `notes/${n.note_type}` }, n.note_type, n.count, "filter-tag"))}
     </nav>

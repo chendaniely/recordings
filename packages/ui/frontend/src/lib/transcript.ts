@@ -23,7 +23,7 @@ export function activeWord(turn: Turn, t: number): number {
 }
 
 export function formatClock(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
+  const s = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const ss = String(s % 60).padStart(2, "0");

@@ -11,22 +11,24 @@ import { TranscriptTab } from "./TranscriptTab";
 export function RecordingPane({ selectedId }: { selectedId: string | null }) {
   const rec = useShinyOutputValue<RecordingView | null>("recording");
   const status = useShinyOutputStatus("recording");
-  const mediaRef = useRef<HTMLMediaElement | null>(null);
-  const [pos, setPos] = useState<{ id: string | null; t: number }>({ id: null, t: 0 });
 
   if (!selectedId) return <section className="pane"><p className="empty">Choose a recording.</p></section>;
   if (!rec || rec.id !== selectedId) return <section className="pane"><p className="empty">Loading…</p></section>;
+  // Keyed by id, so every recording mounts fresh: its playback time starts at 0 and can never
+  // be another recording's position (which would highlight and scroll to the wrong line).
+  return <RecordingDetail key={rec.id} rec={rec} dimmed={status === "recalculating"} />;
+}
 
-  // Playback time belongs to one recording: a newly chosen one starts at 0, never at the last
-  // one's position (which would highlight and scroll to the wrong line).
-  const time = pos.id === rec.id ? pos.t : 0;
-  const setTime = (t: number) => setPos({ id: rec.id, t });
+function RecordingDetail({ rec, dimmed }: { rec: RecordingView; dimmed: boolean }) {
+  const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const [time, setTime] = useState(0);
+
   const seek = (t: number) => {
     if (mediaRef.current) mediaRef.current.currentTime = t;
     setTime(t);
   };
   return (
-    <section className="pane" style={{ opacity: status === "recalculating" ? 0.6 : 1 }} key={rec.id}>
+    <section className="pane" style={{ opacity: dimmed ? 0.6 : 1 }}>
       <div className="head">
         <h1>{rec.title} {rec.private && <Lock size={15} className="lock" data-testid="lock" aria-label="Private: Spark only" />}</h1>
         <div className="meta">{[rec.when, rec.duration, rec.sources.map((s) => s.kind).join(", ")].filter(Boolean).join(" · ")} · <span className="mono">{rec.id}</span></div>
