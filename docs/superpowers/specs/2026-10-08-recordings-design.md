@@ -624,6 +624,15 @@ people:
   Events and logs carry recording IDs and counts, never person slugs, because slugs are
   names.
 
+**Voice work is local only, for every recording** (Dan, 2026-10-08). Diarization, voice
+fingerprints, profiles and matching run only on backends marked `local = true` (§8.4): today,
+pyannote on the Spark. That holds for non-private recordings too.
+- **External backends only ever receive text,** such as a transcript sent for notes, and only
+  for non-private recordings. Claude can't diarize audio anyway.
+- **An external audio service** (an OpenAI Whisper API key, if Dan ever adds one) would be
+  limited to transcribing non-private recordings. Its speaker labels would be ignored, and
+  its audio would never be fingerprinted from it.
+
 **Voice (stage 6, pyannote on the Spark):**
 - **The diarization wrapper** (`local-ai` Phase 3) must return:
   - exclusive (non-overlapping) diarization
@@ -768,7 +777,8 @@ Each step is a queued job. Each job writes one output.
 2. **Prepare:** for video, ffmpeg extracts the audio track.
 3. **Transcribe:** Spark Whisper (`/v1/audio/transcriptions`, `verbose_json` with word
    times), with the tag vocabulary as `prompt`.
-4. **Speakers:** Spark pyannote, merged into the transcript. Skipped until `local-ai`
+4. **Speakers:** Spark pyannote (local backends only, for every recording; §7.6), merged
+   into the transcript. Skipped until `local-ai`
    Phase 3.
 5. **Pick:** note-type auto-pick (§7.3).
 6. **Notes:** one per note type × allowed model.
@@ -1753,3 +1763,9 @@ reliability.
     no dual reader is needed.
 13. **Insights page** (§12.6b): computed in Python with Shiny, and drawn in React. The demo
     shows a generated, labelled sample year.
+14. **Speaker and voice work is local only, for every recording,** private or not.
+    - Diarization, fingerprints, profiles and matching run only on `local = true` backends
+      (the Spark).
+    - External backends get text only, and only for non-private recordings.
+    - An external audio service, if one is ever added, could transcribe non-private
+      recordings. Its speaker output is never used.
