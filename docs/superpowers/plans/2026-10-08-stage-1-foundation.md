@@ -4705,6 +4705,8 @@ describe("formatClock", () => {
     expect(formatClock(0)).toBe("0:00");
     expect(formatClock(65.4)).toBe("1:05");
     expect(formatClock(3725)).toBe("1:02:05");
+    expect(formatClock(Number.NaN)).toBe("0:00");
+    expect(formatClock(-5)).toBe("0:00");
   });
 });
 
@@ -4754,7 +4756,7 @@ export function activeWord(turn: Turn, t: number): number {
 }
 
 export function formatClock(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
+  const s = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const ss = String(s % 60).padStart(2, "0");
@@ -4804,7 +4806,7 @@ export function Sidebar({ library, filter, onFilter }: Props) {
       <div className="grp">Tags</div>
       {open.map((t) => item({ kind: "tag", tag: t.tag }, t.tag, t.count, "filter-tag"))}
       {hidden.length > 0 && <div className="grp">Private</div>}
-      {hidden.map((t) => item({ kind: "tag", tag: t.tag }, <><Lock size={12} /> {t.tag}</>, t.count, "filter-tag"))}
+      {hidden.map((t) => item({ kind: "tag", tag: t.tag }, <><Lock size={12} className="lock" aria-hidden /> {t.tag}</>, t.count, "filter-tag"))}
       {library.note_types.length > 0 && <div className="grp">Note types</div>}
       {library.note_types.map((n) => item({ kind: "tag", tag: `notes/${n.note_type}` }, n.note_type, n.count, "filter-tag"))}
     </nav>
@@ -4930,22 +4932,24 @@ import { TranscriptTab } from "./TranscriptTab";
 export function RecordingPane({ selectedId }: { selectedId: string | null }) {
   const rec = useShinyOutputValue<RecordingView | null>("recording");
   const status = useShinyOutputStatus("recording");
-  const mediaRef = useRef<HTMLMediaElement | null>(null);
-  const [pos, setPos] = useState<{ id: string | null; t: number }>({ id: null, t: 0 });
 
   if (!selectedId) return <section className="pane"><p className="empty">Choose a recording.</p></section>;
   if (!rec || rec.id !== selectedId) return <section className="pane"><p className="empty">Loading…</p></section>;
+  // Keyed by id, so every recording mounts fresh: its playback time starts at 0 and can never
+  // be another recording's position (which would highlight and scroll to the wrong line).
+  return <RecordingDetail key={rec.id} rec={rec} dimmed={status === "recalculating"} />;
+}
 
-  // Playback time belongs to one recording: a newly chosen one starts at 0, never at the last
-  // one's position (which would highlight and scroll to the wrong line).
-  const time = pos.id === rec.id ? pos.t : 0;
-  const setTime = (t: number) => setPos({ id: rec.id, t });
+function RecordingDetail({ rec, dimmed }: { rec: RecordingView; dimmed: boolean }) {
+  const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const [time, setTime] = useState(0);
+
   const seek = (t: number) => {
     if (mediaRef.current) mediaRef.current.currentTime = t;
     setTime(t);
   };
   return (
-    <section className="pane" style={{ opacity: status === "recalculating" ? 0.6 : 1 }} key={rec.id}>
+    <section className="pane" style={{ opacity: dimmed ? 0.6 : 1 }}>
       <div className="head">
         <h1>{rec.title} {rec.private && <Lock size={15} className="lock" data-testid="lock" aria-label="Private: Spark only" />}</h1>
         <div className="meta">{[rec.when, rec.duration, rec.sources.map((s) => s.kind).join(", ")].filter(Boolean).join(" · ")} · <span className="mono">{rec.id}</span></div>
@@ -5287,8 +5291,9 @@ def test_clicking_a_line_seeks_the_audio(page: Page, server_url):
 
 
 def test_a_newly_chosen_recording_starts_from_the_beginning(page: Page, server_url):
-    # why: playback time belongs to one recording. JFK's third line starts at 20.4 s; carried
-    # over to Apollo 11 (lines at 0, 12.0, 19.9 …) it would mark the third line, not the first.
+    # why: playback time belongs to one mounted recording. JFK's third line starts at 20.4 s;
+    # carried over to Apollo 11 (lines at 0, 12.0, 19.9 …) it would mark the third line, not the
+    # first. Back on JFK (first line at 1.8 s) the fresh audio sits at 0, so no line is current.
     open_library(page, server_url)
     page.get_by_test_id("recording-row").filter(has_text="JFK").click()
     page.wait_for_function("document.querySelector('[data-testid=media]')?.readyState >= 1")
@@ -5298,6 +5303,9 @@ def test_a_newly_chosen_recording_starts_from_the_beginning(page: Page, server_u
     expect(page.locator("video[data-testid=media]")).to_have_count(1)
     expect(page.get_by_test_id("turn").first).to_have_class(re.compile(r"\bnow\b"))
     expect(page.locator("[data-testid=turn].now")).to_have_count(1)
+    page.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    expect(page.locator("audio[data-testid=media]")).to_have_count(1)
+    expect(page.locator("[data-testid=turn].now")).to_have_count(0)
 
 
 def test_private_recording_shows_the_lock(page: Page, server_url):
