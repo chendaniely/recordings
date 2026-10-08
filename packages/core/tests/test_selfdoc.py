@@ -217,7 +217,7 @@ def test_the_docs_describe_rev_speakers_and_the_plaud_fields():
                         .read_text(encoding="utf-8").split())
     fmt = read("FORMAT.md")
     for needle in ("`rev`", "only `mutate`", "`unknown`", "`speaker_name`", "`embedding_key`",
-                   "`fetched_at`", "`title_by`", "`recorder`", "acknowledged_up_to",
+                   "`fetched_at`", "`title_by`", "`recorder`", "acknowledged_up_to", "stage 3a",
                    "only appends to `my-notes.md`"):
         assert needle in fmt, needle
     assert "Never change `rev`" in read("AGENTS.md")

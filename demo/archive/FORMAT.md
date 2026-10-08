@@ -47,11 +47,13 @@ files read unchanged.
   `mutate`** changes it. Edit the file by hand and leave `rev` alone: the app notices an outside
   edit by its content, not by `rev`. A file without `rev` is at revision 0.
 - `title_by`: who set `title`: `you`, or the source kind that supplied it (`plaud`, `recorder` or
-  `pocket`). Plaud's sync replaces the title only while `title_by` is `plaud` or absent; for any
-  other value it shows Plaud's new title as a difference instead.
+  `pocket`). When Plaud's title changes, the title is replaced only while `title_by` is `plaud` or
+  absent; for any other value Plaud's new title is reported as a difference instead (showing and
+  dismissing it is stage 3a).
 - `plaud.title_seen`: the Plaud title last seen or dismissed. `plaud.acknowledged_up_to`: the
   newest `source/` snapshot whose removals have been reviewed. Until then, a Plaud note that
-  vanished, or names that reverted to "Speaker N", are held, not applied.
+  vanished, or names that reverted to "Speaker N", are held, not applied. The review that moves the marker is stage 3a, so until then they stay
+  held.
 - `sources`: one entry per raw payload in `source/`, with the source's own `ref`, `added_at`,
   `fetched_at` (when the source returned it) and the file's `sha256`. Snapshots are ordered by
   `fetched_at`, then by their place in this list, never by file name.

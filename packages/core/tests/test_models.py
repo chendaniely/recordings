@@ -12,6 +12,7 @@ from recordings.models import (
     Recording,
     Rendition,
     TagRef,
+    Word,
     dump_json,
     is_private,
     is_private_tag,
@@ -257,3 +258,29 @@ def test_speakers_default_is_empty():
 def test_a_span_is_yours_by_default():
     span = SpeakerSpan(start=1, end=2, person="ada")
     assert span.by == "you"
+
+
+def test_non_finite_numbers_are_refused_so_a_written_file_always_reads_back():
+    for bad in (float("inf"), float("nan")):
+        with pytest.raises(ValidationError):
+            Word(word="x", start=0, end=bad)
+        with pytest.raises(ValidationError):
+            SpeakerSpan(start=0, end=bad, person="alex")
+
+
+def test_two_spans_with_the_same_times_are_refused_but_overlaps_are_fine():
+    def span(a, b):
+        return {"start": a, "end": b, "person": "alex"}
+
+    assert len(Speakers(spans=[span(0, 9), span(3, 5)]).spans) == 2
+    with pytest.raises(ValidationError, match="same start and end"):
+        Speakers(spans=[span(1, 2), span(1, 2)])
+
+
+def test_validation_errors_never_quote_a_tag_or_an_id():
+    with pytest.raises(ValidationError) as tag_err:
+        TagRef(tag="a//Marital counselling ")
+    assert "counselling" not in str(tag_err.value)
+    with pytest.raises(ValidationError) as id_err:
+        recording(id="Secret title")
+    assert "Secret" not in str(id_err.value)

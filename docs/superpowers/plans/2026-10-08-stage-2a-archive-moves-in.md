@@ -2753,7 +2753,7 @@ browser reads models and never serialises them; keep it that way (decision 7).
   - **New constants** in `recordings.models`: `SHA256_PATTERN`, `PERSON_SLUG`, `UNKNOWN_PERSON = "unknown"`, and the types `PersonSlug` and `TitleBy = Literal["you", "plaud", "recorder", "pocket"]`.
   - **New models:** `PlaudState(title_seen: str | None, acknowledged_up_to: str | None)`, `SpeakerLabel(person, by, plaud_name_seen, not_)` (alias `not`), `SpeakerSpan(start, end, person, by)` and `Speakers(source, labels, spans)`.
   - **`Recording`** gains `rev: int | None`, `title_by: Literal["you", "plaud", "recorder", "pocket"] | None` (spelled `TitleBy | None`) and `plaud: PlaudState | None`. Its `speakers` becomes a `Speakers`. `title_by` is `you`, or the source kind that supplied the title (§6.3). Task 5b's `Incoming.title_by` uses the same `TitleBy | None`.
-  - **Every model** (`_Model`'s config) gains `hide_input_in_errors=True`: a `ValidationError`'s text never carries the input, such as a title or transcript text.
+  - **Every model** (`_Model`'s config) gains `hide_input_in_errors=True`: a `ValidationError`'s text never carries the input, such as a title or transcript text. Its two custom messages (`TagRef`, `_id_shape`) quote nothing. It also gains `allow_inf_nan=False`, so no float in a file is inf or NaN (JSON would write null and the file would not read back). `Speakers` refuses two spans with the same `(start, end)`.
   - **`SourceRef`** gains `fetched_at: AwareDatetime | None` and `sha256: str | None`.
   - **`MediaInfo`** gains `sample_rate: int | None` and `channels: int | None`.
   - **`Segment`** gains `speaker_name: str | None` and `embedding_key: str | None`.
@@ -2762,7 +2762,7 @@ browser reads models and never serialises them; keep it that way (decision 7).
 - [ ] **Step 1: Write the failing tests**
 
 Add to `packages/core/tests/test_models.py` (after the existing imports, add
-`from recordings.models import UNKNOWN_PERSON, Segment, SourceRef, Speakers, SpeakerSpan`):
+`from recordings.models import UNKNOWN_PERSON, Segment, SourceRef, Speakers, SpeakerSpan`, and add `Word` to the existing `from recordings.models import (...)` block):
 ```python
 def test_empty_speakers_still_serialise_as_an_empty_object():
     # why: §22 decision 12. Every existing file has "speakers": {}, and must keep it on a rewrite.
@@ -2825,6 +2825,32 @@ def test_a_validation_error_never_echoes_the_input():
                   created_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
                   payload={"segments": [{"start": 0, "text": "Ada said something private."}]})
     assert "something private" not in str(caught.value)
+
+
+def test_non_finite_numbers_are_refused_so_a_written_file_always_reads_back():
+    for bad in (float("inf"), float("nan")):
+        with pytest.raises(ValidationError):
+            Word(word="x", start=0, end=bad)
+        with pytest.raises(ValidationError):
+            SpeakerSpan(start=0, end=bad, person="alex")
+
+
+def test_two_spans_with_the_same_times_are_refused_but_overlaps_are_fine():
+    def span(a, b):
+        return {"start": a, "end": b, "person": "alex"}
+
+    assert len(Speakers(spans=[span(0, 9), span(3, 5)]).spans) == 2
+    with pytest.raises(ValidationError, match="same start and end"):
+        Speakers(spans=[span(1, 2), span(1, 2)])
+
+
+def test_validation_errors_never_quote_a_tag_or_an_id():
+    with pytest.raises(ValidationError) as tag_err:
+        TagRef(tag="a//Marital counselling ")
+    assert "counselling" not in str(tag_err.value)
+    with pytest.raises(ValidationError) as id_err:
+        recording(id="Secret title")
+    assert "Secret" not in str(id_err.value)
 
 
 def test_plaud_segment_fields_and_snapshot_fields():
@@ -2922,7 +2948,7 @@ def test_the_docs_describe_rev_speakers_and_the_plaud_fields():
                         .read_text(encoding="utf-8").split())
     fmt = read("FORMAT.md")
     for needle in ("`rev`", "only `mutate`", "`unknown`", "`speaker_name`", "`embedding_key`",
-                   "`fetched_at`", "`title_by`", "`recorder`", "acknowledged_up_to",
+                   "`fetched_at`", "`title_by`", "`recorder`", "acknowledged_up_to", "stage 3a",
                    "only appends to `my-notes.md`"):
         assert needle in fmt, needle
     assert "Never change `rev`" in read("AGENTS.md")
@@ -3002,7 +3028,11 @@ class _Model(BaseModel):
     # forbid: a typo in a hand-edited file is an error, not a silently ignored key (§11).
     # hide_input_in_errors: a validation error names the field, never its value, so a title or
     # transcript text can't leak into a report, a log or an alert.
-    model_config = ConfigDict(extra="forbid", populate_by_name=True, hide_input_in_errors=True)
+    # allow_inf_nan=False: JSON cannot carry inf, pydantic would write it as null, and the file
+    # would then fail to read back.
+    model_config = ConfigDict(
+        extra="forbid", populate_by_name=True, hide_input_in_errors=True, allow_inf_nan=False
+    )
 
 
 class MediaInfo(_Model):
@@ -3035,7 +3065,7 @@ class TagRef(_Model):
     def _folders_are_clean(cls, value: str) -> str:
         parts = value.split("/")
         if any(not p or p != p.strip() for p in parts):
-            raise ValueError(f"tag {value!r} has an empty or space-padded part")
+            raise ValueError("a tag has an empty or space-padded folder part")
         return value
 
 
@@ -3087,6 +3117,15 @@ class Speakers(_Model):
     labels: dict[str, SpeakerLabel] = Field(default_factory=dict, exclude_if=_empty)
     spans: list[SpeakerSpan] = Field(default_factory=list, exclude_if=_empty)
 
+    @model_validator(mode="after")
+    def _spans_are_identified_by_their_times(self) -> Speakers:
+        # §7.6: a span is identified by its (start, end), so two with the same times are
+        # ambiguous. Overlaps are allowed: a narrower span overrides a wider one.
+        seen = [(s.start, s.end) for s in self.spans]
+        if len(seen) != len(set(seen)):
+            raise ValueError("two speaker spans have the same start and end")
+        return self
+
 
 class Recording(_Model):
     schema_ref: str | None = Field(default=None, alias="$schema")
@@ -3111,7 +3150,7 @@ class Recording(_Model):
     def _id_shape(cls, value: object) -> object:
         # Before the pattern check, so a bad id is reported as what it is meant to be.
         if not isinstance(value, str) or not ID_RE.fullmatch(value):
-            raise ValueError(f"not a recording id: {value!r}")
+            raise ValueError("not a recording id")
         return value
 
 
@@ -3298,11 +3337,13 @@ files read unchanged.
   `mutate`** changes it. Edit the file by hand and leave `rev` alone: the app notices an outside
   edit by its content, not by `rev`. A file without `rev` is at revision 0.
 - `title_by`: who set `title`: `you`, or the source kind that supplied it (`plaud`, `recorder` or
-  `pocket`). Plaud's sync replaces the title only while `title_by` is `plaud` or absent; for any
-  other value it shows Plaud's new title as a difference instead.
+  `pocket`). When Plaud's title changes, the title is replaced only while `title_by` is `plaud` or
+  absent; for any other value Plaud's new title is reported as a difference instead (showing and
+  dismissing it is stage 3a).
 - `plaud.title_seen`: the Plaud title last seen or dismissed. `plaud.acknowledged_up_to`: the
   newest `source/` snapshot whose removals have been reviewed. Until then, a Plaud note that
-  vanished, or names that reverted to "Speaker N", are held, not applied.
+  vanished, or names that reverted to "Speaker N", are held, not applied. The review that moves the marker is stage 3a, so until then they stay
+  held.
 - `sources`: one entry per raw payload in `source/`, with the source's own `ref`, `added_at`,
   `fetched_at` (when the source returned it) and the file's `sha256`. Snapshots are ordered by
   `fetched_at`, then by their place in this list, never by file name.
@@ -3349,7 +3390,7 @@ uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --f
 uv run pytest
 ```
 Expected: `written: [...]`, `built 4 recordings into demo/archive`, then every test passes:
-317 passed, 11 deselected (292 after Task 2, plus this task's 25 new tests). Record the count in the ledger. The
+320 passed, 11 deselected (292 after Task 2, plus this task's 28 new tests). Record the count in the ledger. The
 demo's Plaud source entry now has `sha256`. Its `speakers` stay `{}`, and the schemas and docs in
 `demo/archive/` change.
 

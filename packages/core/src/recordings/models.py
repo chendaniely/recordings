@@ -40,7 +40,11 @@ class _Model(BaseModel):
     # forbid: a typo in a hand-edited file is an error, not a silently ignored key (§11).
     # hide_input_in_errors: a validation error names the field, never its value, so a title or
     # transcript text can't leak into a report, a log or an alert.
-    model_config = ConfigDict(extra="forbid", populate_by_name=True, hide_input_in_errors=True)
+    # allow_inf_nan=False: JSON cannot carry inf, pydantic would write it as null, and the file
+    # would then fail to read back.
+    model_config = ConfigDict(
+        extra="forbid", populate_by_name=True, hide_input_in_errors=True, allow_inf_nan=False
+    )
 
 
 class MediaInfo(_Model):
@@ -73,7 +77,7 @@ class TagRef(_Model):
     def _folders_are_clean(cls, value: str) -> str:
         parts = value.split("/")
         if any(not p or p != p.strip() for p in parts):
-            raise ValueError(f"tag {value!r} has an empty or space-padded part")
+            raise ValueError("a tag has an empty or space-padded folder part")
         return value
 
 
@@ -125,6 +129,15 @@ class Speakers(_Model):
     labels: dict[str, SpeakerLabel] = Field(default_factory=dict, exclude_if=_empty)
     spans: list[SpeakerSpan] = Field(default_factory=list, exclude_if=_empty)
 
+    @model_validator(mode="after")
+    def _spans_are_identified_by_their_times(self) -> Speakers:
+        # §7.6: a span is identified by its (start, end), so two with the same times are
+        # ambiguous. Overlaps are allowed: a narrower span overrides a wider one.
+        seen = [(s.start, s.end) for s in self.spans]
+        if len(seen) != len(set(seen)):
+            raise ValueError("two speaker spans have the same start and end")
+        return self
+
 
 class Recording(_Model):
     schema_ref: str | None = Field(default=None, alias="$schema")
@@ -149,7 +162,7 @@ class Recording(_Model):
     def _id_shape(cls, value: object) -> object:
         # Before the pattern check, so a bad id is reported as what it is meant to be.
         if not isinstance(value, str) or not ID_RE.fullmatch(value):
-            raise ValueError(f"not a recording id: {value!r}")
+            raise ValueError("not a recording id")
         return value
 
 
