@@ -13,8 +13,13 @@ writer_host = "my-homelab"
 default_timezone = "America/Vancouver"
 
 [server]
-# How you reach the app; used to build stable /r/<id> links (stage 3).
+# How you reach the app. Its host name is allowed (below); stage 3 also builds stable /r/<id>
+# links from it.
 base_url = "http://my-homelab:8000"
+# Every name you reach the app by, besides localhost and base_url's host. The app answers only
+# to these names and refuses others, which protects it from websites open in your own browser.
+# RECORDINGS_ALLOWED_HOSTS adds more, comma-separated.
+allowed_hosts = ["my-homelab", "my-homelab.your-tailnet.ts.net", "100.64.0.1"]
 
 [index]
 # SQLite index and job queue (stage 3), on the same local disk as the archive.

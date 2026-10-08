@@ -45,10 +45,21 @@ class Config:
     default_timezone: str
     base_url: str | None
     data: dict[str, Any] = field(default_factory=dict)  # every section, for later stages
+    # Names the app answers to besides localhost and base_url's host (recordings_ui.hosts).
+    allowed_hosts: tuple[str, ...] = ()
 
 
 def config_path(environ: Mapping[str, str]) -> Path:
     return Path(environ.get("RECORDINGS_CONFIG") or DEFAULT_PATH)
+
+
+def _allowed_hosts(server: dict[str, Any]) -> tuple[str, ...]:
+    value = server.get("allowed_hosts", [])
+    if not isinstance(value, list) or not all(isinstance(h, str) and h.strip() for h in value):
+        raise ConfigError(
+            "[server] allowed_hosts must be a list of host names, "
+            'for example ["my-homelab", "100.64.0.1"]')
+    return tuple(h.strip() for h in value)
 
 
 def load_config(environ: Mapping[str, str]) -> Config:
@@ -64,13 +75,15 @@ def load_config(environ: Mapping[str, str]) -> Config:
     archive = data.get("archive", {})
     # The environment wins, so one config.toml works on the host and inside Docker.
     archive_path = environ.get("RECORDINGS_ARCHIVE") or archive.get("path")
+    server = data.get("server", {})
     return Config(
         path=path if path.is_file() else None,
         archive_path=Path(archive_path).expanduser() if archive_path else None,
         writer_host=archive.get("writer_host"),
         default_timezone=archive.get("default_timezone", "America/Vancouver"),
-        base_url=data.get("server", {}).get("base_url"),
+        base_url=server.get("base_url"),
         data=data,
+        allowed_hosts=_allowed_hosts(server),
     )
 
 

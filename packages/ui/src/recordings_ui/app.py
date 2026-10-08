@@ -8,10 +8,11 @@ from fastapi.responses import FileResponse
 from recordings.archive import Archive
 from recordings.ids import ID_RE
 from recordings_ui import runtime
+from recordings_ui.hosts import HostGuard
 from recordings_ui.settings import Settings
 
 
-def create_app(settings: Settings) -> FastAPI:
+def create_app(settings: Settings) -> HostGuard:
     archive = Archive(settings.archive)
     runtime.configure(archive)
     from recordings_ui.shiny_app import app as shiny_app  # after configure()
@@ -41,4 +42,5 @@ def create_app(settings: Settings) -> FastAPI:
         return FileResponse(path, content_disposition_type="inline")
 
     api.mount("/", shiny_app)  # last, so the routes above win
-    return api
+    # Around everything, the Shiny app and its websocket included (recordings_ui.hosts).
+    return HostGuard(api, settings.allowed_hosts)

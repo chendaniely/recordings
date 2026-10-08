@@ -240,3 +240,29 @@ def test_cli_doctor_exits_78_when_the_archive_is_missing(tmp_path, monkeypatch, 
     monkeypatch.delenv("RECORDINGS_CONFIG", raising=False)
     assert main(["doctor", "--json"]) == 78
     assert "no archive path" in json.loads(capsys.readouterr().out)["problems"][0]
+
+
+def test_allowed_hosts_default_to_none_listed(tmp_path):
+    assert load_config({"RECORDINGS_CONFIG": str(write(tmp_path, ""))}).allowed_hosts == ()
+
+
+def test_allowed_hosts_are_read_from_server(tmp_path):
+    cfg = load_config({"RECORDINGS_CONFIG": str(write(
+        tmp_path, '[server]\nallowed_hosts = ["my-homelab", " 100.64.0.1 "]\n'))})
+    assert cfg.allowed_hosts == ("my-homelab", "100.64.0.1")
+
+
+def test_the_template_documents_allowed_hosts():
+    cfg = load_config({"RECORDINGS_CONFIG": str(TEMPLATE)})
+    assert cfg.allowed_hosts == ("my-homelab", "my-homelab.your-tailnet.ts.net", "100.64.0.1")
+
+
+@pytest.mark.parametrize("value", ['"my-homelab"', "[1]", '[""]', '["  "]', '[["a"]]', "true"])
+def test_allowed_hosts_must_be_a_list_of_names(tmp_path, value):
+    with pytest.raises(ConfigError, match="allowed_hosts"):
+        load_config({"RECORDINGS_CONFIG": str(write(tmp_path, f"[server]\nallowed_hosts = {value}\n"))})
+
+
+def test_doctor_reports_a_bad_allowed_hosts(tmp_path):
+    report = doctor({"RECORDINGS_CONFIG": str(write(tmp_path, "[server]\nallowed_hosts = 5\n"))})
+    assert any("allowed_hosts" in p for p in report["problems"])

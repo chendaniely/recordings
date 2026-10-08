@@ -13,7 +13,9 @@ WWW = Path(__file__).resolve().parents[1] / "src" / "recordings_ui" / "www"
 
 @pytest.fixture
 def client(demo_archive):
-    with TestClient(create_app(Settings(archive=demo_archive, demo=True))) as c:
+    # localhost, not TestClient's default "testserver": the app answers only to its own names.
+    app = create_app(Settings(archive=demo_archive, demo=True))
+    with TestClient(app, base_url="http://localhost") as c:
         yield c
     runtime.configure(None)
 
