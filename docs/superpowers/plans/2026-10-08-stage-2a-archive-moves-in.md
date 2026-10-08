@@ -3438,13 +3438,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
       | `sha256_of(recording_id: str)` | `str \| None` |
       | `find_by_source(kind: str, ref: str)` | `list[str]` |
 
-    - `rebuild` runs as one `BEGIN IMMEDIATE` transaction on the live file, so a failed rebuild leaves the old index and no temp file. A file SQLite can't read (`SQLITE_NOTADB` or `SQLITE_CORRUPT`) is renamed aside, with its `-wal`, `-shm` and `-journal` siblings under the same suffix, and rebuilt; the readability probe opens it `mode=ro&immutable=1` so SQLite can't touch those siblings. A database that isn't an index raises `IndexRefused`, and so does emptying a non-empty index without `allow_empty`.
+    - `rebuild` runs as one `BEGIN IMMEDIATE` transaction on the live file, so a failed rebuild leaves the old index and no temp file. A file SQLite can't read (`SQLITE_NOTADB` or `SQLITE_CORRUPT`) is renamed aside, with its `-wal`, `-shm` and `-journal` siblings under the same suffix, and rebuilt; the readability probe opens it `mode=ro&immutable=1` so SQLite can't touch those siblings. That probe skips locking and can misread a file another process is writing, so the file is quarantined only if it and its `-journal` and `-wal` kept the same inode, size and mtime throughout the probe; otherwise the rebuild goes on to `BEGIN IMMEDIATE`, where a database that isn't an index is refused. A database that isn't an index raises `IndexRefused`, and so does emptying a non-empty index without `allow_empty`.
     - A missing or unreadable index answers every lookup with nothing.
 
 - [ ] **Step 1: Write the failing tests**
 
 `packages/core/tests/test_index.py`:
 ```python
+import os
 import sqlite3
 from datetime import datetime, timezone
 from unittest.mock import Mock
@@ -3568,6 +3569,27 @@ def test_rebuild_never_replaces_a_database_that_is_not_an_index(new_archive, tmp
     put(root)
     with pytest.raises(IndexRefused, match="not an index"):
         Index(state / "state.db").rebuild(Archive(root), archive_uuid="u-1")
+    assert State.open(state).meta("writer_id") == "test"
+
+
+def test_a_database_written_during_the_probe_is_refused_not_quarantined(new_archive, monkeypatch):
+    # why: the immutable probe can misread a file that changes under it, and state.db's writers
+    # don't take the index lock. A mistyped [index] path must still be refused, never renamed.
+    root, state = new_archive
+    put(root)
+    db = state / "state.db"
+    original = db.read_bytes()
+
+    def written_meanwhile(self):  # another process writes while the probe reads it torn
+        st = os.stat(self.path)
+        os.utime(self.path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        return False
+
+    monkeypatch.setattr(Index, "_readable", written_meanwhile)
+    with pytest.raises(IndexRefused, match="not an index"):
+        Index(db).rebuild(Archive(root), archive_uuid="u-1")
+    assert db.read_bytes() == original
+    assert list(state.glob("state.db*.unreadable-*")) == []
     assert State.open(state).meta("writer_id") == "test"
 
 
@@ -3852,7 +3874,8 @@ class Index:
     def _readable(self) -> bool:
         """False only when SQLite can't read the file at all; a busy file is still an error."""
         # Read-only and immutable: SQLite then ignores the -wal and -journal and never replays,
-        # checkpoints or deletes them. Those siblings are the evidence the quarantine keeps.
+        # checkpoints or deletes them. Those siblings are the evidence the quarantine keeps. It
+        # also skips locking, so a file written meanwhile can read as corrupt: see _stamp.
         uri = f"{self.path.resolve().as_uri()}?mode=ro&immutable=1"
         try:
             with closing(sqlite3.connect(uri, uri=True)) as conn:
@@ -3861,6 +3884,19 @@ class Index:
             if exc.sqlite_errorname in _UNREADABLE:
                 return False
             raise
+
+    def _stamp(self) -> tuple:
+        """Inode, size and mtime of the file and the siblings a writer changes, None if absent.
+        Readers write the -shm too, so it is left out."""
+        stamps = []
+        for suffix in ("", "-journal", "-wal"):
+            try:
+                st = os.stat(f"{self.path}{suffix}")
+            except FileNotFoundError:
+                stamps.append(None)
+            else:
+                stamps.append((st.st_ino, st.st_size, st.st_mtime_ns))
+        return tuple(stamps)
 
     def _handle_unreadable_file(self) -> None:
         """Check file type and handle corruption. Never deletes."""
@@ -3879,8 +3915,10 @@ class Index:
         if header != b"SQLite format 3\x00":
             raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
                              "Check [index] path.")
-        # It's a SQLite file; check if it's readable
-        if not self._readable():
+        # It's a SQLite file; check if it's readable. A file written during the probe proves
+        # nothing, so it goes on to BEGIN IMMEDIATE, where a database that isn't ours is refused.
+        before = self._stamp()
+        if not self._readable() and self._stamp() == before:
             # Corrupted SQLite; rename aside with collision-safe timestamp
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             # Find a collision-free suffix number for all siblings

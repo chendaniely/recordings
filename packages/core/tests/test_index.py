@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from datetime import datetime, timezone
 from unittest.mock import Mock
@@ -121,6 +122,27 @@ def test_rebuild_never_replaces_a_database_that_is_not_an_index(new_archive, tmp
     put(root)
     with pytest.raises(IndexRefused, match="not an index"):
         Index(state / "state.db").rebuild(Archive(root), archive_uuid="u-1")
+    assert State.open(state).meta("writer_id") == "test"
+
+
+def test_a_database_written_during_the_probe_is_refused_not_quarantined(new_archive, monkeypatch):
+    # why: the immutable probe can misread a file that changes under it, and state.db's writers
+    # don't take the index lock. A mistyped [index] path must still be refused, never renamed.
+    root, state = new_archive
+    put(root)
+    db = state / "state.db"
+    original = db.read_bytes()
+
+    def written_meanwhile(self):  # another process writes while the probe reads it torn
+        st = os.stat(self.path)
+        os.utime(self.path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        return False
+
+    monkeypatch.setattr(Index, "_readable", written_meanwhile)
+    with pytest.raises(IndexRefused, match="not an index"):
+        Index(db).rebuild(Archive(root), archive_uuid="u-1")
+    assert db.read_bytes() == original
+    assert list(state.glob("state.db*.unreadable-*")) == []
     assert State.open(state).meta("writer_id") == "test"
 
 

@@ -118,7 +118,8 @@ class Index:
     def _readable(self) -> bool:
         """False only when SQLite can't read the file at all; a busy file is still an error."""
         # Read-only and immutable: SQLite then ignores the -wal and -journal and never replays,
-        # checkpoints or deletes them. Those siblings are the evidence the quarantine keeps.
+        # checkpoints or deletes them. Those siblings are the evidence the quarantine keeps. It
+        # also skips locking, so a file written meanwhile can read as corrupt: see _stamp.
         uri = f"{self.path.resolve().as_uri()}?mode=ro&immutable=1"
         try:
             with closing(sqlite3.connect(uri, uri=True)) as conn:
@@ -127,6 +128,19 @@ class Index:
             if exc.sqlite_errorname in _UNREADABLE:
                 return False
             raise
+
+    def _stamp(self) -> tuple:
+        """Inode, size and mtime of the file and the siblings a writer changes, None if absent.
+        Readers write the -shm too, so it is left out."""
+        stamps = []
+        for suffix in ("", "-journal", "-wal"):
+            try:
+                st = os.stat(f"{self.path}{suffix}")
+            except FileNotFoundError:
+                stamps.append(None)
+            else:
+                stamps.append((st.st_ino, st.st_size, st.st_mtime_ns))
+        return tuple(stamps)
 
     def _handle_unreadable_file(self) -> None:
         """Check file type and handle corruption. Never deletes."""
@@ -145,8 +159,10 @@ class Index:
         if header != b"SQLite format 3\x00":
             raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
                              "Check [index] path.")
-        # It's a SQLite file; check if it's readable
-        if not self._readable():
+        # It's a SQLite file; check if it's readable. A file written during the probe proves
+        # nothing, so it goes on to BEGIN IMMEDIATE, where a database that isn't ours is refused.
+        before = self._stamp()
+        if not self._readable() and self._stamp() == before:
             # Corrupted SQLite; rename aside with collision-safe timestamp
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             # Find a collision-free suffix number for all siblings
