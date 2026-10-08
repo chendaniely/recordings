@@ -41,8 +41,10 @@ renditions/<name>-<utc-stamp>.json
 
 - **Only three files are edited:** `recording.json`, `my-notes.md` and `tags.yaml`. Each
   save writes a temporary file and renames it into place.
-- **A recording is private** if `recording.json` has a tag `private` or any tag under
-  `private/`. A private recording's content never goes to a cloud model, including agents.
+- **A recording is private** when any tag in its `recording.json` has `private` as its first
+  folder, in any capitalisation: `private`, `private/journal`, `Private/health` and so on,
+  but not `privateer` or `notes/private`. Treat every private recording as Spark-only, and
+  never send its transcript or notes to a cloud model, agents included.
 - **Stamps** are ISO 8601 basic UTC, for example `20261008T143512Z`. When two outputs would
   get the same name, the later one gets a `-2`, `-3`, … suffix before `.json`, and nothing
   is ever overwritten.

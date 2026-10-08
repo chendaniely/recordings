@@ -51,6 +51,15 @@ def test_agents_md_states_the_privacy_rule():
     assert "`private` or `private/…` tag" in text
 
 
+def test_the_docs_say_privacy_ignores_capitalisation_and_means_spark_only():
+    from importlib import resources
+    for doc in ("AGENTS.md", "FORMAT.md"):
+        text = (resources.files("recordings") / "format" / doc).read_text(encoding="utf-8")
+        assert "in any capitalisation" in text, doc
+        assert "`Private/health`" in text, doc
+        assert "Spark-only" in text, doc
+
+
 def test_every_file_the_writer_produces_is_documented(tmp_path):
     archive, rec = build_one(tmp_path)
     patterns = layout_patterns()

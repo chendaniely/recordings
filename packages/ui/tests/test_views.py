@@ -126,3 +126,20 @@ def test_library_reports_a_copied_folder_and_a_mistyped_id(demo_archive, demo_id
     assert sorted(p["path"] for p in view["problems"]) == sorted(
         [str(copy / "recording.json"), str(apollo)])
     assert all("does not match its folder" in p["message"] for p in view["problems"])
+
+
+def test_a_capitalised_private_tag_is_private_everywhere(tmp_path):
+    from recordings.models import TagRef
+
+    media = tmp_path / "x.mp3"
+    media.write_bytes(b"ID3")
+    archive = Archive(tmp_path / "archive")
+    t = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    rec = archive.add_recording(
+        media=media, recorded_at=t, timezone_name="UTC", time_source="ingest", title="x",
+        kind="audio", source=RawSource(kind="upload", ref="x", added_at=t),
+        tags=[TagRef(tag="Private/Health"), TagRef(tag="notes/private")])
+    view = library_view(archive)
+    assert {t["tag"]: t["private"] for t in view["tags"]} == {"Private/Health": True}
+    assert view["recordings"][0]["private"] is True
+    assert recording_view(archive, rec.id)["private"] is True

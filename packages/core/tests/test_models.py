@@ -13,6 +13,7 @@ from recordings.models import (
     TagRef,
     dump_json,
     is_private,
+    is_private_tag,
     is_untagged,
 )
 
@@ -71,10 +72,22 @@ def test_tag_names_have_no_empty_or_padded_parts(bad):
         ([{"tag": "private/journal"}], True),
         ([{"tag": "privateer"}], False),  # a prefix of the word is not the folder
         ([{"tag": "talks"}, {"tag": "private/personal"}], True),
+        ([{"tag": "talks"}, {"tag": "Private/Health"}], True),
+        ([{"tag": "notes/private"}], False),
     ],
 )
 def test_is_private(tags, private):
     assert is_private(recording(tags=tags)) is private
+
+
+@pytest.mark.parametrize("tag", ["private", "Private", "PRIVATE/journal", "private/health"])
+def test_a_tag_whose_first_folder_is_private_in_any_case_is_private(tag):
+    assert is_private_tag(tag) is True
+
+
+@pytest.mark.parametrize("tag", ["privateer", "notes/private", "public", "Privateer/x"])
+def test_other_tags_are_not_private(tag):
+    assert is_private_tag(tag) is False
 
 
 def test_is_untagged_means_no_tags_at_all():

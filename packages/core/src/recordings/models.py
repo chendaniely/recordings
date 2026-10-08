@@ -76,9 +76,18 @@ class Recording(_Model):
         return value
 
 
+def is_private_tag(tag: str) -> bool:
+    """Spec §7.4: the tag's first folder is `private`, in any capitalisation.
+
+    The one place the rule lives. `Private/health` is private; `privateer` and
+    `notes/private` are not.
+    """
+    return tag.split("/", 1)[0].casefold() == "private"
+
+
 def is_private(rec: Recording) -> bool:
-    """Spec §7.4: private iff a tag is `private` or sits under `private/`."""
-    return any(t.tag == "private" or t.tag.startswith("private/") for t in rec.tags)
+    """Spec §7.4: a recording is private iff any of its tags is private."""
+    return any(is_private_tag(t.tag) for t in rec.tags)
 
 
 def is_untagged(rec: Recording) -> bool:

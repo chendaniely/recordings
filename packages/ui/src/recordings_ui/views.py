@@ -13,7 +13,7 @@ from markdown_it import MarkdownIt
 
 from recordings.archive import Archive, Problem
 from recordings.ids import ID_RE
-from recordings.models import Recording, Rendition, is_private, is_untagged
+from recordings.models import Recording, Rendition, is_private, is_private_tag, is_untagged
 
 # html=False: any HTML in model-written notes is escaped, never rendered (review focus #4).
 _md = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -63,7 +63,7 @@ def library_view(archive: Archive) -> dict:
         "recordings": [_row(r) for r in recordings],
         "counts": {"all": len(recordings), "untagged": sum(is_untagged(r) for r in recordings)},
         "tags": [
-            {"tag": tag, "count": n, "private": tag == "private" or tag.startswith("private/")}
+            {"tag": tag, "count": n, "private": is_private_tag(tag)}
             for tag, n in sorted(counts.items()) if not tag.startswith("notes/")
         ],
         "note_types": [
