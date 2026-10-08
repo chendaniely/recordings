@@ -53,6 +53,29 @@ def test_holding_a_key_again_only_counts(tmp_path):
         pass
 
 
+def test_lock_acquisition_follows_lock_order_regardless_of_argument_order(tmp_path, monkeypatch):
+    # why: within one process, hold() builds wanted = set(keys), whose iteration order
+    # doesn't depend on argument order. So (A, B) and (B, A) acquire in the same order
+    # even without the sort. Across processes, hash seeds differ, so deadlock-freedom
+    # depends entirely on the sort. This test catches removal of sorted(..., key=lock_order).
+    locks = Locks(tmp_path)
+    acquired = []
+
+    original_acquire = locks._acquire
+
+    def spy_acquire(key: str) -> int:
+        acquired.append(key)
+        return original_acquire(key)
+
+    monkeypatch.setattr(locks, "_acquire", spy_acquire)
+
+    keys = (B, "index", A, "tags.yaml", "people.yaml")
+    with locks.hold(*keys):
+        pass
+
+    assert acquired == sorted(keys, key=lock_order)
+
+
 def test_a_lock_is_released_when_its_process_dies(tmp_path):
     # why: §6.8. flock is released by the kernel, so a crash never leaves a stale lock.
     script = ("import sys,time; from pathlib import Path; from recordings.locks import Locks\n"

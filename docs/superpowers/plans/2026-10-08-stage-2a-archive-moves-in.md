@@ -4171,7 +4171,7 @@ included) move onto the `Writer` in 5c.
   - `lock_order(key: str) -> tuple[int, int, str]`
   - `class Locks(folder: Path, *, timeout: float = 30.0)`, with `hold(*keys)`, a context manager
 
-**Done when:** the full suite passes, with 5 more passed than after Task 4. Record the count in
+**Done when:** the full suite passes, with 6 more passed than after Task 4. Record the count in
 the execution ledger.
 
 - [ ] **Step 1: Write the failing lock tests**
@@ -4231,6 +4231,29 @@ def test_holding_a_key_again_only_counts(tmp_path):
             pass
     with probe.hold(A):  # released after the outer exit
         pass
+
+
+def test_lock_acquisition_follows_lock_order_regardless_of_argument_order(tmp_path, monkeypatch):
+    # why: within one process, hold() builds wanted = set(keys), whose iteration order
+    # doesn't depend on argument order. So (A, B) and (B, A) acquire in the same order
+    # even without the sort. Across processes, hash seeds differ, so deadlock-freedom
+    # depends entirely on the sort. This test catches removal of sorted(..., key=lock_order).
+    locks = Locks(tmp_path)
+    acquired = []
+
+    original_acquire = locks._acquire
+
+    def spy_acquire(key: str) -> int:
+        acquired.append(key)
+        return original_acquire(key)
+
+    monkeypatch.setattr(locks, "_acquire", spy_acquire)
+    
+    keys = (B, "index", A, "tags.yaml", "people.yaml")
+    with locks.hold(*keys):
+        pass
+    
+    assert acquired == sorted(keys, key=lock_order)
 
 
 def test_a_lock_is_released_when_its_process_dies(tmp_path):
@@ -4372,12 +4395,12 @@ class Locks:
 - [ ] **Step 4: Run the lock tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_locks.py -v`
-Expected: 5 passed.
+Expected: 6 passed.
 
 - [ ] **Step 5: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 5 more than after Task 4. Record the count in the ledger.
+Expected: every test passes, 6 more than after Task 4. Record the count in the ledger.
 
 - [ ] **Step 6: Commit**
 
