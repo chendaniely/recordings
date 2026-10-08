@@ -38,13 +38,16 @@ def _section(heading: str) -> str:
 
 
 def test_the_runbook_covers_steps_one_to_four_and_a_real_restore():
-    text = _text()
+    # why: whole lines, not substrings, so a heading quoted in prose or indented in a block
+    # can't stand in for a real one.
+    lines = set(_text().splitlines())
     for heading in ("## 1. Spikes", "### 1a. Server facts", "### 1b. NAS transport",
                     "### 1c. Before stage 2b (not needed for 2a)",
                     "## 2. Deploy 2a against an empty, initialised archive",
                     "## 3. Bring the source over", "## 4. Import", "## Restoring for real",
                     "## Checklist"):
-        assert heading in text, heading
+        assert heading in lines, heading
+    assert "| Fact | Answer |" in lines, "the Checklist table"
 
 
 def test_the_runbook_holds_no_addresses_keys_or_tailnet_names():
@@ -62,6 +65,8 @@ def test_no_secret_is_ever_typed_on_a_command_line():
     for line in _code_lines():
         assert not re.search(r"\b(printf|echo)\b[^|]*>\s*\S*secrets/", line), line
         assert "RESTIC_PASSWORD=" not in line, line
+        # RESTIC_REST_PASSWORD is fine when it is read from the file, never as a literal.
+        assert not re.search(r'\bRESTIC_REST_PASSWORD=(?!"?\$)', line), line
         assert not re.search(r"\bcreate_user\s+\S+\s+\S", line), line  # user AND password
         assert not re.search(r"\bhtpasswd\b.*\s-[A-Za-z]*b", line), line  # -b: password as an argument
         assert not re.search(r"rest:https?://[^/\s]*:[^/\s]*@", line), line  # user:pass@ in a URL
@@ -133,7 +138,7 @@ def test_the_imported_data_is_restore_tested_before_the_import_copy_goes():
 
 def test_restoring_for_real_puts_every_piece_back():
     code = "\n".join(_code_lines(_section("## Restoring for real")))
-    for needed in ("restore latest --host", "--tag recordings", "--include",
+    for needed in ('restore "$SNAP"', "--tag recordings", "--include",
                    "recordings reindex", "recordings init --adopt",
                    "/archive", "config.toml", "deploy.env", "state.db"):
         assert needed in code, needed

@@ -5,7 +5,9 @@ Steps 1–4 of the spec's "order of the first real run" (§19), and how to resto
 command that needs one reads it from a file, and secret files are written with an editor, never
 typed on a command line, where shell history would keep them.
 
-Set these in the shell you use on the homelab server. They are examples; use your own values.
+Set these in the shell you use on the homelab server, and paste the block again at the start of
+every new session there (a new ssh login, a tmux window, after a reboot): `rc` and the variables
+exist only in the shell that defined them. They are examples; use your own values.
 The blocks work in bash and in zsh: lists of options are kept in arrays, which both shells split
 the same way.
 
@@ -16,6 +18,8 @@ export NAS_HOST=nas                             # the NAS's DNS or tailnet name:
 export NAS_MIRROR_USER=recordings-mirror        # the NAS account the mirror uses (1b.8)
 export NAS_MIRROR=/volume1/recordings-mirror    # the mirror's shared folder, as rsync over ssh sees it
 export NAS_MIRROR_SFTP=/recordings-mirror       # the same folder, as SFTP sees it
+export REPO_DIR="$RECORDINGS_HOME/repo"         # this repo's checkout on the server (the boot unit expects it here)
+rc() { docker compose --env-file "$REPO_DIR/docker/deploy.env" -f "$REPO_DIR/docker/compose.yml" "$@"; }
 ```
 
 `NAS_HOST` must resolve inside a container, where only DNS works: a name from `~/.ssh/config`
@@ -138,8 +142,8 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    need to read the backups. Paste each into its file with an editor.
    ```bash
    cd "$RECORDINGS_HOME/secrets"
-   install -m 600 /dev/null restic_password && ${EDITOR:-nano} restic_password
-   install -m 600 /dev/null rest_password && ${EDITOR:-nano} rest_password
+   install -m 600 /dev/null restic_password && ${EDITOR:-vi} restic_password
+   install -m 600 /dev/null rest_password && ${EDITOR:-vi} rest_password
    cd -
    ```
    `restic_password` encrypts the repository: without it the backups can't be read.
@@ -172,7 +176,7 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
      Then, on the server, paste the printed certificate into `nas_cacert`. It isn't secret, but it
      lives with the secret files, so the backup service gets it as one:
      ```bash
-     install -m 600 /dev/null "$RECORDINGS_HOME/secrets/nas_cacert" && ${EDITOR:-nano} "$RECORDINGS_HOME/secrets/nas_cacert"
+     install -m 600 /dev/null "$RECORDINGS_HOME/secrets/nas_cacert" && ${EDITOR:-vi} "$RECORDINGS_HOME/secrets/nas_cacert"
      ```
      The repository is then `rest:https://<NAS_HOST>:8000/recordings/`, with
      `[backup] cacert = "/run/secrets/nas_cacert"`.
@@ -188,6 +192,21 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    repositories in `/volume1/backups/rest` and run as root, like the retention task (1b.7), so
    each can read what the other writes. Over the tailnet, leave out the three `--tls` options.
 
+   **The login file comes first, for either way:** rest-server refuses to start with
+   `--private-repos` and no `.htpasswd`, so a container started without it would restart in a
+   loop. DSM has no `htpasswd`, so make the login line on the homelab server, with rest-server's
+   own image. It asks for the password (paste `rest_password`) and prints a bcrypt hash, never the
+   password:
+   ```bash
+   docker run --rm -it --entrypoint htpasswd restic/rest-server:0.14.0@sha256:d2aff06f47eb38637dff580c3e6bce4af98f386c396a25d32eb6727ec96214a5 -nB recordings
+   ```
+   On the NAS, paste the printed `recordings:$2y$…` line into the password file with an editor:
+   ```bash
+   # on the NAS
+   sudo vi /volume1/backups/rest/.htpasswd
+   sudo chmod 600 /volume1/backups/rest/.htpasswd
+   ```
+
    **In Container Manager:**
    ```bash
    # on the NAS
@@ -195,9 +214,9 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
      -v /volume1/backups/rest:/data -v /volume1/backups/tls:/tls:ro \
      -e OPTIONS="--append-only --private-repos --tls --tls-cert /tls/public_key --tls-key /tls/private_key" \
      restic/rest-server:0.14.0@sha256:d2aff06f47eb38637dff580c3e6bce4af98f386c396a25d32eb6727ec96214a5
-   sudo docker exec -it rest-server create_user recordings
+   sudo docker logs --tail 5 rest-server
    ```
-   `create_user` asks for the password twice: paste `rest_password` from your password manager.
+   Expected: the log shows rest-server listening, not an error about `.htpasswd`.
 
    **Or as the static binary, started at boot by Task Scheduler:**
    ```bash
@@ -216,25 +235,14 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    The sums are from rest-server v0.14.0's `SHA256SUMS`, checked 2026-10-09. For another
    machine type, take its line from there.
 
-   DSM has no `htpasswd`, so make the login line on the homelab server, with rest-server's own
-   image. It asks for the password (paste `rest_password`) and prints a bcrypt hash, never the
-   password:
-   ```bash
-   docker run --rm -it --entrypoint htpasswd restic/rest-server:0.14.0@sha256:d2aff06f47eb38637dff580c3e6bce4af98f386c396a25d32eb6727ec96214a5 -nB recordings
-   ```
-   On the NAS, paste the printed `recordings:$2y$…` line into the password file with an editor:
-   ```bash
-   # on the NAS
-   sudo vi /volume1/backups/rest/.htpasswd
-   sudo chmod 600 /volume1/backups/rest/.htpasswd
-   ```
-   Then, in DSM: Control Panel → Task Scheduler → Create → Triggered Task → User-defined script.
+   In DSM: Control Panel → Task Scheduler → Create → Triggered Task → User-defined script.
    User `root`, event Boot-up, and this script:
    ```bash
    /volume1/backups/bin/rest-server --path /volume1/backups/rest --listen :8000 --append-only --private-repos --tls --tls-cert /volume1/backups/tls/public_key --tls-key /volume1/backups/tls/private_key >>/volume1/backups/rest-server.log 2>&1
    ```
-   Run the task once now (select it, then Run). 1b.6 checks it from the server; reboot the NAS
-   once afterwards and check again, which proves the boot start.
+   Run the task once now (select it, then Run; once only, because a second run finds the port
+   busy). 1b.6 checks it from the server; reboot the NAS once afterwards and check again, which
+   proves the boot start.
 
 6. **Prove it from the server, against a spike repository.**
    ```bash
@@ -244,18 +252,29 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    export RESTIC_REST_PASSWORD="$(cat "$RECORDINGS_HOME/secrets/rest_password")"
    CACERT=(--cacert "$RECORDINGS_HOME/secrets/nas_cacert")     # over the tailnet: CACERT=()
    SPIKE="rest:https://$NAS_HOST:8000/recordings/spike/"        # over the tailnet: rest:http://
+   PROBE="$RECORDINGS_HOME/restore-test/probe.bin"             # a real file: /etc/os-release is often a symlink
+   head -c 5000000 /dev/urandom > "$PROBE"
    "$RESTIC" -r "$SPIKE" "${CACERT[@]}" init
-   "$RESTIC" -r "$SPIKE" "${CACERT[@]}" backup /etc/os-release
-   "$RESTIC" -r "$SPIKE" "${CACERT[@]}" backup /etc/os-release
+   "$RESTIC" -r "$SPIKE" "${CACERT[@]}" backup "$PROBE"
+   "$RESTIC" -r "$SPIKE" "${CACERT[@]}" backup "$PROBE" --force
    "$RESTIC" -r "$SPIKE" "${CACERT[@]}" check
    "$RESTIC" -r "$SPIKE" "${CACERT[@]}" restore latest --target "$RECORDINGS_HOME/restore-test/spike" --verify
+   cmp "$PROBE" "$RECORDINGS_HOME/restore-test/spike$PROBE" && echo "restored file matches"
    "$RESTIC" -r "$SPIKE" "${CACERT[@]}" unlock
    "$RESTIC" -r "$SPIKE" "${CACERT[@]}" forget --keep-last 1 --prune
+   "$RESTIC" -r "$SPIKE" "${CACERT[@]}" snapshots
    rm -rf "$RECORDINGS_HOME/restore-test/spike"
+   rm -f "$PROBE"
    ```
-   Expected: every `restic` command exits 0 except the last, and `restore-test/spike/etc/os-release`
-   appeared before the `rm` removed it. `unlock` works through append-only. `forget` fails with
-   HTTP 403 (Forbidden): the server can't delete a snapshot, which is the point.
+   Expected: `init`, both `backup`s, `check`, `restore` and `unlock` exit 0; `cmp` prints
+   `restored file matches`. `unlock` works through append-only. `forget` fails with HTTP 403
+   (Forbidden), possibly after retrying for a minute or two: the server can't delete a snapshot,
+   which is the point. The proof is the last restic command: `snapshots` still lists **two**
+   snapshots. Anything else (`forget` succeeding, one snapshot left): stop, append-only isn't on.
+   If any command sits silent for over a minute with no output, the NAS or port 8000 is
+   unreachable: Ctrl-C and check the NAS's firewall and rest-server's log
+   (`/volume1/backups/rest-server.log`, for the static binary; `sudo docker logs rest-server`,
+   for the container).
 
    The spike can't be deleted through rest-server either, so delete it on the NAS:
    ```bash
@@ -285,8 +304,10 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
 
    Then, in DSM: Control Panel → Task Scheduler → Create → Scheduled Task → User-defined script.
    User `root`, weekly (Sunday 04:30, say), with run details sent by email when the script ends
-   abnormally, and this script. The cache and temporary files stay on the volume, because DSM's
-   system partition is small.
+   abnormally, and "Save output results" ticked in Task Settings (a folder on `backups`), because
+   without it the history shows only a pass or fail and 2.6 can't show that the NAS's restic opened
+   the repository. This is the script. The cache and temporary files stay on the volume, because
+   DSM's system partition is small.
    ```bash
    export RESTIC_PASSWORD_FILE=/volume1/backups/retention/restic_password
    export RESTIC_CACHE_DIR=/volume1/backups/retention/cache TMPDIR=/volume1/backups/retention/tmp
@@ -337,11 +358,20 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    ```bash
    K="$RECORDINGS_HOME/secrets"
    SSH_OPTS=(-i "$K/nas_ssh_key" -o "UserKnownHostsFile=$K/nas_known_hosts" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
-   rsync -an -e "ssh ${SSH_OPTS[*]}" /etc/os-release "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
-   rsync -a -e "ssh ${SSH_OPTS[*]}" /etc/os-release "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
-   printf -- '-df %s\nrm %s/os-release\nls %s\n' "$NAS_MIRROR_SFTP" "$NAS_MIRROR_SFTP" "$NAS_MIRROR_SFTP" | sftp -b - "${SSH_OPTS[@]}" "$NAS_MIRROR_USER@$NAS_HOST"
+   PROBE="$RECORDINGS_HOME/restore-test/probe.bin"             # a real file, not a symlink
+   [ -f "$PROBE" ] || head -c 5000000 /dev/urandom > "$PROBE"
+   rsync -an -e "ssh ${SSH_OPTS[*]}" "$PROBE" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
+   rsync -a -e "ssh ${SSH_OPTS[*]}" "$PROBE" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
+   printf -- '-df %s\nrm %s/probe.bin\nls %s\n' "$NAS_MIRROR_SFTP" "$NAS_MIRROR_SFTP" "$NAS_MIRROR_SFTP" | sftp -b - "${SSH_OPTS[@]}" "$NAS_MIRROR_USER@$NAS_HOST"
+   rm -f "$PROBE"
    ```
    Expected:
+   - If ssh or rsync is refused outright ("Permission denied", "This account is currently not
+     available", or a connection that closes at once while sftp below works): DSM 7 lets only
+     administrators open an ssh session, and a non-admin account with no shell may get SFTP and the
+     rsync daemon (port 873) only. **Stop.** The mirror as specced (rsync over ssh) can't run with
+     this account. Write it in the checklist and decide with the spec's author (an rsync daemon
+     module, or SFTP, changes `[mirror]`); don't make the mirror account an administrator.
    - Both `rsync` runs exit 0. If rsync says the folder doesn't exist, this DSM shows rsync the
      share's SFTP-style path: set `NAS_MIRROR` to `$NAS_MIRROR_SFTP` and try again.
    - If the real copy fails with "failed to set permissions" (exit 23), the share's ACLs refuse
@@ -360,11 +390,17 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    - DSM's SFTP root lists the shared folders, so the repository path starts at the share:
      `/backups/recordings`, not `/volume1/backups/recordings`.
    ```bash
+   # SSH_OPTS is from 1b.8; in a new shell, define it again first.
+   RESTIC="$RECORDINGS_HOME/bin/restic"
+   export RESTIC_PASSWORD_FILE="$RECORDINGS_HOME/secrets/restic_password"
+   PROBE="$RECORDINGS_HOME/restore-test/probe.bin"
+   [ -f "$PROBE" ] || head -c 5000000 /dev/urandom > "$PROBE"
    SPIKE="sftp:recordings-backup@$NAS_HOST:/backups/recordings-spike"
    "$RESTIC" -r "$SPIKE" -o sftp.args="${SSH_OPTS[*]}" init
-   "$RESTIC" -r "$SPIKE" -o sftp.args="${SSH_OPTS[*]}" backup /etc/os-release
+   "$RESTIC" -r "$SPIKE" -o sftp.args="${SSH_OPTS[*]}" backup "$PROBE"
    "$RESTIC" -r "$SPIKE" -o sftp.args="${SSH_OPTS[*]}" check
    "$RESTIC" -r "$SPIKE" -o sftp.args="${SSH_OPTS[*]}" forget --keep-last 1 --prune
+   rm -f "$PROBE"
    ```
    Expected: each exits 0. Then delete `/volume1/backups/recordings-spike` on the NAS. The
    repository is `sftp:recordings-backup@<NAS_HOST>:/backups/recordings`, with
@@ -391,7 +427,10 @@ calls, so they run before stage 2b's deploy, not now.
 On the homelab server, in the repo checkout.
 
 1. **Settings.** Copy both templates, then edit them:
-   - `config.toml`: `[archive] writer_id`; `[state] path`; `[backup]`, `[nas]` and `[mirror]` as
+   - `config.toml`: `[archive] writer_id`; `[server] base_url` (`http://<$SERVER_TS>:8000`) and
+     `allowed_hosts` (every name you reach the app by: the tailnet address and the MagicDNS name,
+     bare, with no port or scheme. Any other Host gets a 400, which `/healthz` in 2.5 and the
+     Library in 4 would hit); `[state] path`; `[backup]`, `[nas]` and `[mirror]` as
      1b.10 recorded; `[alerts] ntfy_server = "https://ntfy.sh"`; and
      `[plaud] consent_list = "/consent/consent-list.md"` (step 3 brings the list over).
    - `docker/deploy.env`: the UID and GID from 1a.4, this server's tailnet address (`$SERVER_TS`)
@@ -416,8 +455,8 @@ On the homelab server, in the repo checkout.
      read your alerts or keep an outage quiet.
    ```bash
    cd "$RECORDINGS_HOME/secrets"
-   install -m 600 /dev/null ntfy_topic && ${EDITOR:-nano} ntfy_topic
-   install -m 600 /dev/null deadman_url && ${EDITOR:-nano} deadman_url
+   install -m 600 /dev/null ntfy_topic && ${EDITOR:-vi} ntfy_topic
+   install -m 600 /dev/null deadman_url && ${EDITOR:-vi} deadman_url
    ls -l
    cd -
    ```
@@ -426,18 +465,24 @@ On the homelab server, in the repo checkout.
    `-rw-------`, except the `.pub`.
 
 3. **The tailnet ACL, before anything listens** (spec §15: the app's port is for your devices
-   only). Set it in Tailscale's admin console, under Access controls. A sketch to merge into your
-   own policy, with the server tagged `tag:recordings`:
+   only). Tag the server first (`sudo tailscale set --advertise-tags=tag:recordings`, then approve
+   it in the admin console if asked). Then set the policy in Tailscale's admin console, under
+   Access controls. A sketch to merge into your own policy:
    ```jsonc
    {
      "tagOwners": { "tag:recordings": ["autogroup:admin"] },
      "grants": [
-       // Only your own devices reach the app's port (RECORDINGS_PORT).
-       { "src": ["you@example.com"], "dst": ["tag:recordings"], "ip": ["tcp:8000"] }
+       // Only your own devices reach the app's port (RECORDINGS_PORT), and ssh (step 3's rsync).
+       { "src": ["you@example.com"], "dst": ["tag:recordings"], "ip": ["tcp:8000", "tcp:22"] }
+       // If the NAS is on the tailnet, the tagged server also needs to reach it (rest-server and
+       // ssh): add a grant from "tag:recordings" to the NAS for ["tcp:8000", "tcp:22"].
      ]
    }
    ```
-   No broader rule, such as the default allow-all, may still cover the server. Then check from a
+   A tagged node loses its owner's access, so the grants must name what you still need: the
+   `tcp:22` grant keeps your own ssh (and step 3's rsync) working, and if the NAS is on the
+   tailnet, the server's traffic to it needs its own grant. No broader rule, such as the default
+   allow-all, may still cover the server. Then check from a
    device that should be refused (a tagged device, a shared node, or the NAS if it is on the
    tailnet), with `SERVER_TS` set there to the server's tailnet address:
    ```bash
@@ -447,12 +492,14 @@ On the homelab server, in the repo checkout.
    before going on. From one of your own devices, the same line says "refused" for now, because
    nothing listens yet.
 
-4. **Build, initialise once, start.** `rc` is shorthand for the project's compose command, with
-   the image tagged by the commit (as `make deploy` tags it).
+4. **Build, initialise once, start.** `rc` is the function from the top of this runbook, the
+   project's compose command; the image is tagged by the commit (as `make deploy` tags it). Every
+   `rc` line after this needs `RECORDINGS_IMAGE_TAG` exported in the same shell, and it must name
+   an image you built: after a `git pull`, run `rc build` again first.
    ```bash
+   cd "$REPO_DIR"
    git status --porcelain
    export RECORDINGS_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
-   alias rc='docker compose --env-file docker/deploy.env -f docker/compose.yml'
    rc build
    rc run --rm web recordings init
    rc run --rm backup recordings backup init
@@ -469,6 +516,9 @@ On the homelab server, in the repo checkout.
      rest-server: retention runs on the NAS (1b.7).
    - From your own device, `nc -vz -w 5 "$SERVER_TS" 8000` now connects. From the refused
      device it still times out.
+   - If `backup init` or any later `backup` command sits silent for over a minute, the NAS or its
+     port 8000 is unreachable (restic retries for up to about 15 minutes before giving up). Ctrl-C,
+     and run 1b.6's `snapshots` line by hand to see whether the NAS answers.
 
    `rc up -d` also starts the backup service's loop, which runs every due job at once: the first
    backup, mirror, check and restore test run now, on the empty archive.
@@ -483,14 +533,16 @@ On the homelab server, in the repo checkout.
    ```
    If the paths at its top don't match your checkout and `$RECORDINGS_HOME`, change the installed
    copy with `sudo systemctl edit --full recordings.service`, never the checkout's file, which
-   would make the next deploy `-dirty`. Then:
+   would make the next deploy `-dirty`. Before the reboot, wait until the Status page shows the
+   first backup and mirror finished (2.4): a reboot in the middle leaves a stale restic lock and a
+   half-copied mirror. Then:
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable recordings.service
    sudo systemctl reboot
    ```
-   After the reboot, in a new shell with the variables, `RECORDINGS_IMAGE_TAG` and `rc` set
-   again:
+   After the reboot, in a new shell: paste the top block, `cd "$REPO_DIR"`, and export
+   `RECORDINGS_IMAGE_TAG` as in step 4:
    ```bash
    systemctl is-active recordings.service
    rc ps
@@ -501,6 +553,7 @@ On the homelab server, in the repo checkout.
 6. **Prove backup, restore and the mirror.** Stop the loop first, so the manual runs don't
    compete with it for restic's lock, then start it again.
    ```bash
+   rc logs --tail 20 backup      # the loop's first jobs should be finished
    rc stop backup
    rc run --rm backup recordings backup run
    rc run --rm backup recordings backup restore-test
@@ -509,21 +562,27 @@ On the homelab server, in the repo checkout.
    rc start backup
    ```
    Expected:
-   - `backup run`, `restore-test` and `mirror` each report `ok: true`.
+   - `backup run`, `restore-test` and `mirror` each print `ok: True`.
    - The phone gets the test push. Healthchecks shows the check up, with a log entry from
      `alert-test`.
    - The Status page shows the backup, the restore test and the mirror.
 
-   Then, on the NAS, run the retention task once (Task Scheduler: select it, then Run). Its
-   history shows that it ended normally.
+   `rc stop` gives the loop 10 seconds, then kills it. A job it was running leaves a stale restic
+   lock; a lock warning on the next run is expected and clears itself.
+
+   Then, on the NAS, run the retention task once (Task Scheduler: select it, then Run). Its saved
+   output shows `forget` listing the snapshots it keeps, and no error.
 
 7. **Prove that a killed backup raises an alert** (§20: "a killed backup raises an alert").
    ```bash
    rc kill backup
+   rc ps backup
    ```
-   `kill`, not `stop`, because §20 asks for a killed backup, and Docker doesn't restart a
-   container killed by hand. Wait the period plus the grace (1 + 3 hours) from the last ping. The
-   checker's alert arrives on the phone. Then start it again:
+   `kill`, not `stop`, because §20 asks for a killed backup. `rc ps` must not show `backup` as
+   `Up`. If Docker restarted it, the loop keeps pinging and no alert can arrive: stop here,
+   `rc stop backup`, and note it in the checklist. Otherwise wait the period plus the grace
+   (1 + 3 hours) from the last ping. The checker's alert arrives on the phone. Then start it
+   again:
    ```bash
    rc start backup
    ```
@@ -538,13 +597,19 @@ ssh name for the homelab server.
 export AR_MEDIA="$HOME/path/to/audio-router/media"
 export CONSENT_LIST="$HOME/path/to/consent-list.md"
 export HOMELAB=homelab
-cd "$AR_MEDIA" && find . -type f ! -name '.*' -print0 | sort -z | xargs -0 shasum -a 256 > "$TMPDIR/audio-router.sha256"
-rsync -a "$AR_MEDIA"/ "$HOMELAB":/srv/recordings/import/
-rsync -a "$TMPDIR/audio-router.sha256" "$HOMELAB":/srv/recordings/import.sha256
-rsync -a "$CONSENT_LIST" "$HOMELAB":/srv/recordings/consent-list.md
+export SRV_HOME=/srv/recordings          # the server's RECORDINGS_HOME
+cd "$AR_MEDIA" && find . -type f ! -path '*/.*' -print0 | sort -z | xargs -0 shasum -a 256 > "$TMPDIR/audio-router.sha256"
+caffeinate -i rsync -a --exclude='.*' "$AR_MEDIA"/ "$HOMELAB":"$SRV_HOME"/import/
+rsync -a "$TMPDIR/audio-router.sha256" "$HOMELAB":"$SRV_HOME"/import.sha256
+rsync -a "$CONSENT_LIST" "$HOMELAB":"$SRV_HOME"/consent-list.md
 ```
+If the first rsync is interrupted, run the same line again: it carries on. Hidden files
+(`.DS_Store`) are left out of the checksums and the copy alike, so the checksums cover everything
+that is copied. `caffeinate -i` keeps the Mac awake for the copy.
 
-**On the homelab server:** check the copy, make it read-only, and run the dry run.
+**On the homelab server:** check the copy, make it read-only, and run the dry run. Work inside
+`tmux` (or `screen`), so a dropped ssh session doesn't kill an hours-long backup or import. Paste
+the top block, `cd "$REPO_DIR"`, and export `RECORDINGS_IMAGE_TAG` as in 2.4.
 ```bash
 cd "$RECORDINGS_HOME/import" && sha256sum --check --quiet ../import.sha256 && echo "copy verified"
 cd -
@@ -567,7 +632,8 @@ Expected: `copy verified`, then a report in which every catalog row has one disp
 
 ## 4. Import
 
-In the shell from step 3, where `IMPORT_MOUNTS` is set. Stop the loop first, so no scheduled
+In the server's shell from step 3 (the top block, `RECORDINGS_IMAGE_TAG` and `IMPORT_MOUNTS`),
+still inside `tmux` or `screen`. Stop the loop first, so no scheduled
 backup lands in the middle of the import. Pause the Healthchecks check first (its Pause button):
 no backup pings while the loop is stopped, and the import can outlast the grace.
 ```bash
@@ -580,7 +646,7 @@ rc run --rm backup recordings backup restore-test
 rc start backup
 ```
 Expected: the import reports no failures, `validate` reports no problems, and both backups and the
-restore test report `ok: true`. The restore test now proves the imported data, not just an empty
+restore test print `ok: True`. The restore test now proves the imported data, not just an empty
 archive. Resume the Healthchecks check. The first full mirror of the imported archive runs next
 and can take hours; if Healthchecks alerts during it, the next backup's ping clears it.
 
@@ -609,8 +675,13 @@ Then:
   is still there, with the old snapshots.
 - Run step 3 again if `import/` is already gone, then step 4.
 - `recordings init` gives the new archive a new UUID, so the mirror refuses its old copy. Once
-  you're sure, empty the `recordings-mirror` share on the NAS (in File Station), and the next run
-  fills it.
+  you're sure, empty the `recordings-mirror` share on the NAS, and the next run fills it. Your
+  DSM account is read-only on that share (1b.4), so File Station can't do it. Do it in the NAS's
+  shell as an administrator:
+  ```bash
+  # on the NAS
+  sudo find /volume1/recordings-mirror -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  ```
 - When the new import has passed step 4, delete the `.failed-` folders: they are plaintext
   copies too.
 
@@ -620,8 +691,9 @@ When the archive, `state.db`, or the whole server is lost. Each snapshot holds t
 paths `/archive`, `/config/config.toml`, `/backup-extra/deploy.env` and `/state/backup/state.db`
 (a consistent SQLite copy). `index.db` is derived, so it isn't there; `reindex` rebuilds it.
 
-On the homelab server, in the repo checkout, with the variables from the top of this runbook
-set. A new server first goes through 1a, then:
+On the homelab server, with the top block of this runbook pasted (it defines the variables and
+`rc`), inside `tmux` or `screen` because the restore takes hours. A new server first goes
+through 1a, then:
 - clone the repo to `$RECORDINGS_HOME/repo`
 - get restic as in 1b.2
 - get its secret files from your password manager as in 1b.3, 1b.4 and 2.2
@@ -631,9 +703,9 @@ set. A new server first goes through 1a, then:
 
 1. **Find the snapshot.**
    ```bash
+   cd "$REPO_DIR"
    export RECORDINGS_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
-   alias rc='docker compose --env-file docker/deploy.env -f docker/compose.yml'
-   rc down
+   rc down        # skip on a new server: docker/deploy.env doesn't exist until step 3 restores it
    RESTIC="$RECORDINGS_HOME/bin/restic"
    export RESTIC_PASSWORD_FILE="$RECORDINGS_HOME/secrets/restic_password"
    export RESTIC_REST_USERNAME=recordings
@@ -643,12 +715,18 @@ set. A new server first goes through 1a, then:
    WRITER_ID=homelab                                            # [archive] writer_id
    "$RESTIC" -r "$REPO" "${CACERT[@]}" snapshots --host "$WRITER_ID" --tag recordings
    ```
-   `rc down` only matters if anything still runs. `snapshots` lists the newest last.
+   `rc down` only matters if anything still runs. `snapshots` lists the newest last. **Pick the
+   snapshot by ID, not `latest`:** the repository is append-only, so a snapshot of an empty or
+   broken archive may sit at the end (an unmounted disk, a fresh `init`). Check the candidate:
+   ```bash
+   SNAP=1a2b3c4d        # the ID of the snapshot you want
+   "$RESTIC" -r "$REPO" "${CACERT[@]}" stats "$SNAP" --mode restore-size
+   ```
+   The size should be about your archive's. Steps 2 and 5 restore that ID.
 
 2. **Restore it into a scratch folder.** It needs as much free space as the archive.
    ```bash
-   "$RESTIC" -r "$REPO" "${CACERT[@]}" restore latest --host "$WRITER_ID" --tag recordings \
-     --target "$RECORDINGS_HOME/restore-real" --verify
+   "$RESTIC" -r "$REPO" "${CACERT[@]}" restore "$SNAP" --target "$RECORDINGS_HOME/restore-real" --verify
    ```
 
 3. **Move each lost piece into place.** Move what is there aside first, and delete it only once
@@ -685,7 +763,7 @@ set. A new server first goes through 1a, then:
    ```bash
    ID=20261008T143512+0000_0123abcd                             # the recording's ID
    D="recordings/${ID:0:4}/${ID:4:2}/$ID"
-   "$RESTIC" -r "$REPO" "${CACERT[@]}" restore latest --host "$WRITER_ID" --tag recordings \
+   "$RESTIC" -r "$REPO" "${CACERT[@]}" restore "$SNAP" \
      --include "/archive/$D" --target "$RECORDINGS_HOME/restore-real" --verify
    mv "$RECORDINGS_HOME/archive/$D" "$RECORDINGS_HOME/$ID.lost-$(date +%Y%m%d)"
    mv "$RECORDINGS_HOME/restore-real/archive/$D" "$RECORDINGS_HOME/archive/$D"
@@ -727,6 +805,7 @@ set. A new server first goes through 1a, then:
 | rest-server is back after a NAS reboot (1b.5) | yes / no |
 | The NAS's weekly retention task, as root (1b.7) | set up; first run ended normally (2.6) |
 | The mirror account can rsync into its share (1b.8) | yes / no |
+| The mirror account can run rsync over ssh (1b.8) | yes / no: stop and decide |
 | The mirror needs `--no-perms` (1b.8) | yes / no |
 | The NAS's free space over sftp's `df` (1b.8) | works / unknown |
 | NAS transport (1b) | rest-server / SFTP fallback, risk accepted |
