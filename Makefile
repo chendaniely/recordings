@@ -3,7 +3,7 @@
 FRONTEND := packages/ui/frontend
 NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --silent "$$(cat $(CURDIR)/$(FRONTEND)/.nvmrc)"; fi;
 
-.PHONY: setup skills build test test-py test-js e2e demo demo-archive pages pages-serve schemas brand docker deploy
+.PHONY: setup skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy
 
 setup:
 	uv sync
@@ -42,6 +42,10 @@ pages: build
 # Like Pages: under /recordings/, with Range requests, so seeking works.
 pages-serve:
 	uv run python scripts/rangeserver.py _site --prefix /recordings/ --port 8008
+
+pages-test:
+	uv run playwright install chromium
+	uv run pytest -m pages -rs
 
 schemas:
 	uv run recordings schemas --write

@@ -36,8 +36,11 @@ pages = ["shinylive==0.8.12"]
 [tool.pytest.ini_options]
 testpaths = ["packages/core/tests", "packages/ui/tests"]
 # importlib mode: both packages have a tests/ folder with same-named files.
-addopts = "--import-mode=importlib -m 'not e2e'"
-markers = ["e2e: browser tests against a running demo server (need the built frontend)"]
+addopts = "--import-mode=importlib -m 'not e2e and not pages'"
+markers = [
+    "e2e: browser tests against a running demo server (need the built frontend)",
+    "pages: browser tests against the static Pages demo in _site/ (need `make pages`)",
+]
 
 [tool.ruff]
 line-length = 100
