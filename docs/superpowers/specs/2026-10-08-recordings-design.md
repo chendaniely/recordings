@@ -377,8 +377,12 @@ compares them in one canonical form (§9.1.1).
     the hash on disk differs from the hash `mutate` last wrote, someone else has edited the
     file. Recent revisions are kept in `state.db` as merge bases, and the edit is merged
     three ways. Until stage 3, a stale or invalid edit goes to Needs attention instead.
-  - **Multi-file operations** (merge, forget) take their locks in a fixed order: the people
-    files first, then recordings in sorted-ID order.
+  - **Multi-file operations** (merge, forget) take their locks together, in a fixed order: the
+    people files, then `tags.yaml`, then content-hash keys (`sha-<hash>`, so two writers can't
+    add the same bytes at once), then recordings in sorted-ID order, then anything else (the
+    index). Taking an earlier lock while holding a later one is an error, not a wait. Bulk jobs
+    (the import, backups) hold a separate `ops` lock outside this order. A lock is held only
+    by plain, synchronous code: never across an `await`.
   - **Undo** is the inverse operation, applied through `mutate`.
   - This is what lets the web process, the worker, the CLI and Claude's edits write safely
     side by side. A plain changed-since-read check can be passed by two writers at once.
