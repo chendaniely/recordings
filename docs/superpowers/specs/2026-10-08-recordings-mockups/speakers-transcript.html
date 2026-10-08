@@ -1,0 +1,1322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speakers in the transcript</title>
+<script>document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Atkinson+Hyperlegible+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* Tokens: the app's theme.css values (generated from _brand.yml), warm palette. */
+  :root {
+    color-scheme: light;
+    --background: #F8F6F2; --foreground: #1C1A17; --card: #FFFDFA; --popover: #FFFDFA;
+    --primary: #236192; --primary-foreground: #F8F6F2; --secondary: #E8DDD2;
+    --muted: #EFE8DF; --muted-foreground: #6B6258; --accent: #E8DDD2;
+    --destructive: #9A4665; --border: #E0D6CB; --input: #E0D6CB; --ring: #236192;
+    --sidebar: #EFE8DF; --brand-orange: #F26522; --brand-success: #3D6123;
+    --sel: color-mix(in srgb, var(--primary) 12%, transparent);
+    --sel-strong: color-mix(in srgb, var(--primary) 28%, transparent);
+    --orange-tint: color-mix(in srgb, var(--brand-orange) 12%, transparent);
+    --mark: color-mix(in srgb, var(--brand-orange) 32%, transparent);
+    --success-tint: color-mix(in srgb, #72994E 16%, transparent);
+    --toast-bg: #1C1A17; --toast-fg: #F8F6F2; --toast-link: #7DB3E0;
+    --shadow: 0 14px 40px rgba(28, 26, 23, .18), 0 2px 6px rgba(28, 26, 23, .08);
+    /* Speaker bands: a blue scale for named people, warm greys for unnamed. Never orange. */
+    --sp-1: #236192; --sp-2: #5A93C6; --sp-3: #12324D; --sp-4: #93BCE2;
+    --gr-1: #7D7366; --gr-2: #B5AA9C; --gr-3: #9A8F82;
+    --gut: 50px;
+  }
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --background: #171512; --foreground: #F8F6F2; --card: #232019; --popover: #232019;
+    --primary: #6CA6D9; --primary-foreground: #171512; --secondary: #2E2B26;
+    --muted: #1C1A16; --muted-foreground: #B8AEA2; --accent: #2E2B26;
+    --destructive: #D27A9A; --border: #2E2B26; --input: #2E2B26; --ring: #6CA6D9;
+    --sidebar: #1C1A16; --brand-success: #9CC27A;
+    --success-tint: color-mix(in srgb, #72994E 20%, transparent);
+    --toast-bg: #F8F6F2; --toast-fg: #171512; --toast-link: #236192;
+    --shadow: 0 14px 40px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .3);
+    --sp-1: #6CA6D9; --sp-2: #A9CDEE; --sp-3: #3F7CB3; --sp-4: #D3E6F7;
+    --gr-1: #B8AEA2; --gr-2: #7A7064; --gr-3: #968B7E;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body { background: var(--background); color: var(--foreground); font-family: "Atkinson Hyperlegible", system-ui, sans-serif; font-size: 14px; line-height: 1.45; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .mono, code { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; }
+  code { font-size: .92em; }
+  .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-size: 11px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--card); color: var(--foreground); }
+  .muted { color: var(--muted-foreground); }
+
+  /* ---------- mockup chrome (not the app) ---------- */
+  .mk { max-width: 1280px; margin: 0 auto; padding: 18px 16px 48px; }
+  .mk-head { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; justify-content: space-between; }
+  .mk-head h1 { font-size: 22px; margin: 0 0 4px; }
+  .mk-head p { margin: 0; color: var(--muted-foreground); max-width: 860px; }
+  .mk-ctrl { display: flex; gap: 8px; flex-shrink: 0; }
+  .tgl { border: 1px solid var(--border); background: var(--card); border-radius: 999px; padding: 4px 12px; font-size: 13px; white-space: nowrap; }
+  .tgl[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); font-weight: 700; }
+  .mk-bar { margin: 14px 0 12px; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 8px 10px; border: 1.5px dashed var(--muted-foreground); border-radius: 10px; }
+  .mk-bar .lab { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin-right: 2px; }
+  .mk-bar .sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+  .mk-bar button { border: 1px solid var(--border); background: var(--card); border-radius: 7px; padding: 3px 10px; font-size: 12.5px; }
+  .mk-bar button[aria-pressed="true"] { background: var(--sel); border-color: var(--primary); color: var(--primary); font-weight: 700; }
+  .stage { display: flex; justify-content: center; }
+  .notes { max-width: 980px; margin: 26px auto 0; font-size: 13.5px; }
+  .notes h2 { font-size: 17px; margin: 18px 0 6px; }
+  .notes ul { margin: 0; padding-left: 20px; }
+  .notes li { margin: 5px 0; }
+  .notes .q li::marker { content: "? "; color: var(--primary); font-weight: 700; }
+
+  /* ---------- the app frame ---------- */
+  .app { position: relative; width: 100%; height: 900px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--background); }
+  .app.phone { width: min(390px, 100%); height: 820px; border-radius: 26px; box-shadow: 0 0 0 6px var(--muted), var(--shadow); }
+  .topbar { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .logo { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .logo i { width: 10px; height: 10px; border-radius: 50%; background: var(--brand-orange); box-shadow: 4px 0 0 0 var(--primary); margin-right: 4px; }
+  .navs { display: flex; gap: 16px; }
+  .nav { color: var(--muted-foreground); padding-bottom: 2px; border-bottom: 2px solid transparent; }
+  .nav[aria-current="page"] { color: var(--foreground); border-bottom-color: var(--brand-orange); font-weight: 700; }
+  .nav .bdg { font-size: 11px; background: var(--accent); color: var(--foreground); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+  .tb-r { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .icon-btn { min-width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); display: inline-grid; place-items: center; font-weight: 700; color: var(--muted-foreground); }
+  .panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 270px minmax(0, 1fr); }
+  .list { background: var(--card); border-right: 1px solid var(--border); overflow: auto; }
+  .list-head { padding: 9px 12px; color: var(--muted-foreground); border-bottom: 1px solid var(--border); font-size: 12.5px; }
+  .row { display: block; width: 100%; text-align: left; border-bottom: 1px solid var(--border); padding: 10px 12px; }
+  .row:hover { background: var(--background); }
+  .row[aria-current="true"] { background: var(--sel); box-shadow: inset 3px 0 0 var(--primary); }
+  .row .t { font-weight: 700; display: block; }
+  .row .m { display: block; color: var(--muted-foreground); font-size: 12px; margin: 2px 0 4px; }
+  .row .who { display: block; font-size: 12px; }
+  .inf { text-decoration: underline dashed var(--muted-foreground); text-underline-offset: 3px; }
+  @media (max-width: 1100px) { .panes { grid-template-columns: minmax(0, 1fr); } .list { display: none; } }
+  .phone .panes { grid-template-columns: minmax(0, 1fr); }
+  .phone .list, .phone .navs { display: none; }
+
+  .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--card); }
+  .head { padding: 12px 18px 4px; flex-shrink: 0; }
+  .back { display: none; color: var(--primary); font-size: 13px; margin-bottom: 4px; }
+  .phone .back { display: inline-block; }
+  .head h2 { margin: 0 0 2px; font-size: 19px; }
+  .meta { color: var(--muted-foreground); font-size: 12.5px; }
+  .chip { display: inline-block; font-size: 11px; padding: 0 8px; border-radius: 999px; background: var(--accent); margin: 5px 4px 0 0; }
+  .chip.nt { background: var(--success-tint); color: var(--brand-success); font-weight: 700; }
+  .addtag { font-size: 11.5px; color: var(--primary); margin-left: 2px; }
+
+  /* player with the custom scrubber and speaker bands */
+  .player { margin: 6px 18px 0; padding: 8px 12px 8px 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--background); display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 4px 10px; align-items: start; flex-shrink: 0; }
+  .play { width: 34px; height: 34px; border-radius: 50%; background: var(--primary); color: var(--primary-foreground); display: grid; place-items: center; }
+  .play svg { width: 16px; height: 16px; }
+  .clock { font-variant-numeric: tabular-nums; font-size: 12.5px; padding-top: 7px; min-width: 88px; }
+  .scrub { position: relative; padding: 9px 0 2px; cursor: pointer; touch-action: none; border-radius: 4px; }
+  .sc-row, .lane { display: grid; grid-template-columns: var(--gut) minmax(0, 1fr); align-items: center; }
+  .track { position: relative; height: 6px; border-radius: 3px; background: var(--muted); box-shadow: inset 0 0 0 1px var(--border); overflow: hidden; }
+  .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--sel-strong); }
+  .lanes { margin-top: 5px; }
+  .lane { height: 10px; margin-top: 2px; }
+  .lg { font-size: 10.5px; line-height: 1; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 6px; }
+  .lt { position: relative; height: 6px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 80%, transparent); }
+  .lt i { position: absolute; top: 0; bottom: 0; min-width: 1.5px; }
+  .lanes.has-hl .lane:not(.on) .lt i { opacity: .28; }
+  .lanes.has-hl .lane.on .lg { color: var(--foreground); font-weight: 700; }
+  .ph-wrap { position: absolute; top: 0; bottom: 0; left: var(--gut); right: 0; pointer-events: none; }
+  .playhead { position: absolute; top: 4px; bottom: 0; width: 2px; margin-left: -1px; background: var(--brand-orange); border-radius: 1px; }
+  .playhead::before { content: ""; position: absolute; left: -5px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--brand-orange); box-shadow: 0 0 0 2px var(--card); }
+  .tip { position: absolute; top: -20px; transform: translateX(-50%); background: var(--toast-bg); color: var(--toast-fg); font-size: 11px; padding: 1px 6px; border-radius: 5px; white-space: nowrap; display: none; }
+  .scrub:hover .tip { display: block; }
+
+  /* tabs, shadcn-like */
+  .tabs { display: inline-flex; gap: 2px; margin: 10px 18px 0; padding: 3px; background: var(--muted); border-radius: 9px; align-self: flex-start; flex-shrink: 0; max-width: calc(100% - 36px); overflow-x: auto; }
+  .tabs button { padding: 4px 12px; border-radius: 7px; color: var(--muted-foreground); font-size: 13px; white-space: nowrap; }
+  .tabs button[aria-selected="true"] { background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px rgba(0,0,0,.1); font-weight: 700; }
+  .tabpanel { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 18px 0; }
+  .placeholder { padding: 30px 6px; color: var(--muted-foreground); }
+
+  /* speaker strip */
+  .strip { border: 1px solid var(--border); border-radius: 10px; background: var(--card); margin-bottom: 8px; flex-shrink: 0; }
+  .st-head { display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px; font-size: 12.5px; color: var(--muted-foreground); }
+  .st-head b { color: var(--foreground); }
+  .st-head .sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .st-toggle { margin-left: auto; color: var(--primary); font-size: 12.5px; padding: 2px 6px; border-radius: 6px; white-space: nowrap; }
+  .srow { display: grid; grid-template-columns: 28px minmax(0, 330px) 150px 72px minmax(0, 1fr); gap: 8px; align-items: center; padding: 3px 10px; border-top: 1px solid var(--border); min-height: 33px; }
+  .srow.updated { background: var(--sel); box-shadow: inset 3px 0 0 var(--primary); }
+  .s-play { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border); display: grid; place-items: center; color: var(--primary); background: var(--card); }
+  .s-play svg { width: 11px; height: 11px; }
+  @property --p { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+  @keyframes samp { to { --p: 100%; } }
+  .s-play.playing { border-color: var(--primary); background: conic-gradient(var(--sel-strong) var(--p), var(--card) 0); animation: samp 5s linear forwards; }
+  .s-label { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 6px; border-radius: 7px; text-align: left; }
+  .s-label:hover { background: var(--background); }
+  .s-label[aria-pressed="true"] { background: var(--sel); box-shadow: inset 0 0 0 1px var(--primary); }
+  .sw { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .s-name { font-size: 12.5px; color: var(--muted-foreground); white-space: nowrap; }
+  .s-who { min-width: 0; display: flex; align-items: center; gap: 6px; }
+  .sug { color: var(--muted-foreground); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+  .sug b { color: var(--foreground); font-style: normal; }
+  .upd { font-size: 10.5px; color: var(--primary); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+  .s-time { display: flex; align-items: center; gap: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .bar { flex: 1; height: 4px; border-radius: 2px; background: var(--muted); }
+  .bar i { display: block; height: 100%; border-radius: 2px; background: var(--muted-foreground); }
+  .s-conf { font-size: 12px; }
+  .conf { position: relative; border-bottom: 1px dotted var(--muted-foreground); cursor: help; }
+  .conf.med { color: var(--muted-foreground); }
+  .conf[data-tip]:hover::after, .conf[data-tip]:focus-visible::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); background: var(--toast-bg); color: var(--toast-fg); padding: 2px 7px; border-radius: 5px; white-space: nowrap; font-size: 11px; z-index: 5; }
+  .src { color: var(--muted-foreground); }
+  .s-act { display: flex; gap: 6px; justify-content: flex-end; }
+  .btn { border: 1px solid var(--border); border-radius: 7px; padding: 2px 10px; background: var(--card); font-size: 12.5px; white-space: nowrap; }
+  .btn.pri { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); font-weight: 700; }
+  .btn.quiet { border-color: transparent; color: var(--primary); background: transparent; }
+  .strip.closed .srow { display: none; }
+
+  /* speaker chips: confirmed solid, inferred dashed with "· auto", unnamed plain muted text */
+  .spk { display: inline-flex; align-items: center; max-width: 100%; font-size: 12px; line-height: 18px; padding: 0 8px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
+  .spk .nm { overflow: hidden; text-overflow: ellipsis; }
+  .spk.conf-c { background: var(--accent); border-color: var(--accent); font-weight: 700; }
+  .spk.auto { background: transparent; border: 1px dashed var(--muted-foreground); }
+  .spk .at { color: var(--muted-foreground); font-weight: 400; white-space: pre; }
+  .spk .pm { display: none; color: var(--muted-foreground); font-weight: 400; white-space: pre; }
+  .app.plaud-mark .spk .pm { display: inline; }
+  .spk.unnamed { color: var(--muted-foreground); padding: 0 3px; }
+  button.spk::after { content: "▾"; margin-left: 4px; font-size: 10px; color: var(--muted-foreground); opacity: 0; }
+  button.spk:hover::after, button.spk:focus-visible::after, .ln.picking button.spk::after { opacity: 1; }
+  button.spk:hover { box-shadow: 0 0 0 1px var(--primary); }
+  button.spk.unnamed:hover { box-shadow: none; text-decoration: underline; }
+
+  /* transcript */
+  .tools { display: flex; gap: 8px 10px; align-items: center; flex-wrap: wrap; color: var(--muted-foreground); font-size: 12.5px; padding: 0 0 6px; min-height: 34px; flex-shrink: 0; }
+  .tools .r { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  select { font: inherit; font-size: 12.5px; color: var(--foreground); background: var(--card); border: 1px solid var(--input); border-radius: 6px; padding: 2px 6px; }
+  .pillbar { display: inline-flex; gap: 4px; align-items: center; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--sel); color: var(--foreground); }
+  .pillbar .ib { white-space: nowrap; min-width: 24px; height: 22px; border-radius: 6px; display: inline-grid; place-items: center; color: var(--primary); font-weight: 700; padding: 0 4px; }
+  .pillbar .ib:hover { background: var(--card); }
+  .banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px 6px 10px; margin-bottom: 8px; border-radius: 9px; background: var(--sel); border: 1px solid color-mix(in srgb, var(--primary) 40%, transparent); font-size: 13px; flex-shrink: 0; }
+  .banner .lk, .lk { color: var(--primary); font-weight: 700; }
+  .banner .x { margin-left: auto; width: 24px; height: 24px; border-radius: 6px; color: var(--muted-foreground); }
+  .lines { list-style: none; margin: 0; padding: 2px 0 40px; flex: 1; min-height: 0; overflow: auto; position: relative; }
+  .ln { position: relative; border-radius: 8px; }
+  .ln.first:not(:first-child) { margin-top: 5px; }
+  .ln-main { display: grid; grid-template-columns: 44px 152px minmax(0, 1fr); gap: 0 8px; width: 100%; text-align: left; padding: 6px 8px; border-radius: 8px; }
+  .ln:hover { background: var(--background); }
+  .ts { color: var(--primary); font-variant-numeric: tabular-nums; font-size: 12.5px; padding-top: 1px; }
+  .chip-slot { position: absolute; left: 60px; top: 6px; max-width: 152px; visibility: hidden; }
+  .ln.first .chip-slot, .ln:hover .chip-slot, .ln:focus-within .chip-slot, .ln.sel .chip-slot, .ln.picking .chip-slot { visibility: visible; }
+  .ln.hl { background: var(--muted); box-shadow: inset 3px 0 0 var(--hlc, var(--primary)); }
+  .ln.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--primary); }
+  .ln.now { background: var(--orange-tint); box-shadow: inset 3px 0 0 var(--brand-orange); }
+  .ln.now.sel { background: var(--sel); }
+  .ln mark { background: var(--mark); color: inherit; border-radius: 3px; }
+  .ln.flash { animation: flash 1.8s ease; }
+  @keyframes flash { 0%, 30% { background: var(--sel-strong); } 100% { background: transparent; } }
+  .lines.noselect { user-select: none; }
+
+  /* phone layout of a line: the chip sits above the text, first line of a run only */
+  .phone .ln-main { grid-template-columns: 38px minmax(0, 1fr); }
+  .phone .ln-main .gap { display: none; }
+  .phone .chip-slot { left: 54px; top: 5px; display: none; }
+  .phone .ln.first .chip-slot, .phone .ln.sel .chip-slot, .phone .ln.picking .chip-slot { display: block; visibility: visible; }
+  .phone .ln.first .ln-main, .phone .ln.sel .ln-main, .phone .ln.picking .ln-main { padding-top: 28px; }
+
+  /* the speaker picker: popover on desktop, bottom sheet on a phone */
+  .picker { position: absolute; z-index: 40; width: 400px; max-height: min(540px, calc(100% - 24px)); background: var(--popover); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
+  .pk-head { padding: 10px 12px 0; display: flex; gap: 8px; align-items: center; }
+  .pk-head b { font-size: 14px; }
+  .pk-head .keys { margin-left: auto; font-size: 11px; color: var(--muted-foreground); white-space: nowrap; }
+  .pk-head .x { font-size: 11.5px; color: var(--muted-foreground); padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border); }
+  .pk-sub { color: var(--muted-foreground); font-size: 12px; padding: 2px 12px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .pk-q { margin: 8px 12px 2px; padding: 7px 10px; border: 1.5px solid var(--primary); border-radius: 8px; background: var(--card); color: var(--foreground); font: inherit; outline: none; flex-shrink: 0; }
+  .pk-q::placeholder { color: var(--muted-foreground); }
+  .pk-list { overflow: auto; padding: 0 0 6px; min-height: 60px; flex: 1 1 auto; }
+  .pk-sec { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); padding: 8px 12px 2px; }
+  .opt { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%; text-align: left; padding: 4px 12px; min-height: 32px; }
+  .opt:hover:not([disabled]) { background: var(--background); }
+  .opt.hi { background: var(--sel); }
+  .opt[disabled] { cursor: default; }
+  .o-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .o-hint { color: var(--muted-foreground); font-size: 11.5px; white-space: nowrap; }
+  .opt[disabled] .o-hint { font-style: italic; }
+  .opt.create .o-name { color: var(--primary); font-weight: 700; }
+  .pk-empty { padding: 6px 12px; color: var(--muted-foreground); font-size: 12.5px; }
+  .pk-scope { padding: 8px 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .pk-scope .lab, .sh-lab { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin-bottom: 4px; }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { flex: 1 1 auto; padding: 5px 10px; font-size: 12.5px; text-align: center; white-space: nowrap; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); font-weight: 700; }
+  .sc-hint { font-size: 11.5px; color: var(--muted-foreground); margin-top: 4px; }
+  .pk-foot { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted-foreground); flex-shrink: 0; }
+  .verb { border: 1px solid var(--destructive); color: var(--destructive); border-radius: 7px; padding: 3px 10px; font-weight: 700; font-size: 12.5px; white-space: nowrap; background: var(--card); }
+  .pk-extra { display: none; }
+  .phone .picker { left: 0 !important; right: 0; top: auto !important; bottom: 0 !important; width: auto; max-height: 76%; border-radius: 18px 18px 0 0; border-bottom: 0; }
+  .phone .pk-extra { display: block; padding: 6px 12px 8px; border-bottom: 1px solid var(--border); }
+  .phone .pk-head .keys { display: none; }
+  .phone .opt kbd { visibility: hidden; }
+  .phone .pk-head .x { margin-left: auto; }
+  .grab { width: 38px; height: 4px; border-radius: 2px; background: var(--border); margin: 0 auto 8px; }
+  .sh-line { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 2px 6px; font-size: 13px; }
+  .sh-line .sh-tx { grid-column: 2; color: var(--foreground); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .sh-acts { display: flex; gap: 8px; margin-top: 8px; }
+  .sh-acts .btn { padding: 6px 12px; font-size: 13px; }
+  .scrim { position: absolute; inset: 0; background: rgba(20, 18, 15, .38); z-index: 35; }
+
+  /* help sheet */
+  .help { position: absolute; z-index: 50; left: 50%; top: 70px; transform: translateX(-50%); width: 480px; max-width: calc(100% - 24px); max-height: calc(100% - 90px); overflow: auto; background: var(--popover); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 16px 14px; }
+  .help h3 { margin: 0 0 6px; font-size: 15px; display: flex; align-items: center; }
+  .help h3 .btn { margin-left: auto; }
+  .help table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .help td { padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .help td:first-child { white-space: nowrap; width: 1%; }
+  .help td:last-child { color: var(--muted-foreground); }
+  .help tr.other td { color: var(--muted-foreground); }
+
+  /* toast and notices */
+  .toast { position: absolute; left: 50%; bottom: 18px; transform: translate(-50%, 160px); background: var(--toast-bg); color: var(--toast-fg); padding: 9px 14px; border-radius: 10px; display: flex; gap: 14px; align-items: center; transition: transform .25s, visibility 0s .25s; visibility: hidden; z-index: 60; max-width: calc(100% - 24px); font-size: 13px; box-shadow: var(--shadow); }
+  .toast.show { transform: translate(-50%, 0); visibility: visible; transition: transform .25s; }
+  .toast .lnk { color: var(--toast-link); font-weight: 700; white-space: nowrap; }
+  .notices { position: absolute; left: 14px; bottom: 72px; z-index: 55; display: flex; flex-direction: column; gap: 8px; max-width: 380px; }
+  .notice { background: var(--popover); border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 10px; box-shadow: var(--shadow); padding: 8px 8px 8px 12px; font-size: 13px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .notice .x { margin-left: auto; width: 24px; height: 24px; border-radius: 6px; color: var(--muted-foreground); }
+  .tabbar { display: none; }
+  .phone .tabbar { display: grid; grid-template-columns: repeat(6, 1fr); border-top: 1px solid var(--border); background: var(--card); padding: 6px 2px 12px; flex-shrink: 0; }
+  .tabbar button { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 10.5px; color: var(--muted-foreground); padding-top: 2px; border-top: 2px solid transparent; }
+  .tabbar button[aria-current="page"] { color: var(--foreground); font-weight: 700; border-top-color: var(--brand-orange); }
+  .tabbar svg { width: 20px; height: 20px; }
+  .phone .toast { bottom: 82px; }
+  .phone .notices { left: 10px; right: 10px; bottom: 134px; max-width: none; }
+
+  /* phone tweaks */
+  .phone .head { padding: 10px 14px 4px; }
+  .phone .head h2 { font-size: 17px; }
+  .phone .player { margin: 6px 12px 0; grid-template-columns: auto minmax(0, 1fr); }
+  .phone .scrub { grid-column: 1 / -1; }
+  .phone { --gut: 40px; }
+  .phone .tabs { margin: 8px 12px 0; max-width: calc(100% - 24px); }
+  .phone .tabpanel { padding: 8px 12px 0; }
+  .phone .srow { grid-template-columns: 28px minmax(0, 1fr) 40px 52px; gap: 6px; padding: 4px 8px; }
+  .phone .s-act { grid-column: 2 / -1; justify-content: flex-start; }
+  .phone .s-act:empty { display: none; }
+  .phone .bar { display: none; }
+  .phone .s-name { display: none; }
+</style>
+</head>
+<body>
+<div class="mk">
+  <header class="mk-head">
+    <div>
+      <h1>Speakers in the transcript</h1>
+      <p>Naming and fixing who is speaking in one recording (spec §12.6a, §7.6). It all works: hover a line to see its chip; click a chip, or focus a line and press <kbd>P</kbd>. Shift-click a second line for a range. Click a label in the speaker strip, then use <kbd>[</kbd> <kbd>]</kbd>. <kbd>Space</kbd> plays the pretend audio, and <kbd>?</kbd> lists the keys.</p>
+    </div>
+    <div class="mk-ctrl">
+      <button class="tgl" id="mk-phone" aria-pressed="false">Phone</button>
+      <button class="tgl" id="mk-theme" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <div class="mk-bar" role="group" aria-label="Mockup controls, not part of the app">
+    <span class="lab">Mockup states · not part of the app</span>
+    <button data-state="default" aria-pressed="true">Default</button>
+    <button data-state="picker" aria-pressed="false">Picker open</button>
+    <button data-state="range" aria-pressed="false">Range selected</button>
+    <button data-state="sweep" aria-pressed="false">Sweep notice</button>
+    <button data-state="merge" aria-pressed="false">Unnamed merge done</button>
+    <button data-state="phone" aria-pressed="false">Phone</button>
+    <span class="sep" aria-hidden="true"></span>
+    <span class="lab">Plaud-named chip</span>
+    <button id="mk-plaud" aria-pressed="false" title="Open question: should a Plaud-named chip say where its name came from?">Show “· Plaud”</button>
+  </div>
+
+  <div class="stage">
+    <div class="app" id="app">
+      <header class="topbar">
+        <span class="logo"><i aria-hidden="true"></i><span class="logo-t">Recordings</span></span>
+        <nav class="navs" aria-label="Main">
+          <button class="nav" aria-current="page">Library</button>
+          <button class="nav" data-elsewhere>Tags</button>
+          <button class="nav" data-elsewhere>People<span class="bdg">3</span></button>
+          <button class="nav" data-elsewhere>Insights</button>
+          <button class="nav" data-elsewhere>Add</button>
+          <button class="nav" data-elsewhere>Status</button>
+        </nav>
+        <div class="tb-r">
+          <button class="icon-btn" id="help-btn" aria-label="Keyboard shortcuts (?)">?</button>
+        </div>
+      </header>
+
+      <div class="panes">
+        <aside class="list" aria-label="Recordings">
+          <div class="list-head">Library · newest first</div>
+          <div id="list"></div>
+        </aside>
+
+        <section class="pane" aria-label="Recording">
+          <div class="head">
+            <button class="back" data-elsewhere>‹ Library</button>
+            <h2>COURSE 101: Week 4</h2>
+            <div class="meta">Tue Sep 29, 2026 · 10:00 −07:00 · 50 min · Plaud · <span class="mono">20260929T100000-0700_3f9a1c2e</span></div>
+            <div><span class="chip">school/course-101</span><span class="chip nt">notes/lecture</span><button class="addtag" data-elsewhere>+ tag</button></div>
+          </div>
+
+          <div class="player">
+            <button class="play" id="play" aria-label="Play (Space)"></button>
+            <div class="clock mono" id="clock">3:05 / 50:04</div>
+            <div class="scrub" id="scrub" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="3004">
+              <div class="sc-row"><span class="lg" aria-hidden="true"></span><div class="track"><i class="fill" id="fill"></i></div></div>
+              <div class="lanes" id="lanes" aria-hidden="true"></div>
+              <div class="ph-wrap"><i class="playhead" id="ph"></i><span class="tip" id="tip"></span></div>
+            </div>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="Recording">
+            <button role="tab" aria-selected="true" data-tab="transcript">Transcript</button>
+            <button role="tab" aria-selected="false" data-tab="notes">Notes (2)</button>
+            <button role="tab" aria-selected="false" data-tab="plaud">Plaud</button>
+            <button role="tab" aria-selected="false" data-tab="my">My notes</button>
+            <button role="tab" aria-selected="false" data-tab="details">Details</button>
+          </div>
+
+          <div class="tabpanel" id="tp-transcript" role="tabpanel" aria-label="Transcript">
+            <div class="strip" id="strip"></div>
+            <div class="banner" id="banner" role="status" hidden>
+              <span aria-hidden="true">◆</span><span>Voice matching updated 2 labels</span>
+              <button class="lk" id="bn-review">Review</button><span aria-hidden="true">·</span><button class="lk" id="bn-undo">Undo</button>
+              <button class="x" id="bn-x" aria-label="Dismiss">×</button>
+            </div>
+            <div class="tools">
+              <select aria-label="Transcript" id="tsel"><option>Plaud transcript</option><option>Whisper large-v3 (local)</option></select>
+              <span class="pillbar" id="hlnav" hidden></span>
+              <span class="pillbar" id="selbar" hidden></span>
+              <label class="r"><input type="checkbox" id="follow" checked> <span class="fl">Follow audio</span></label>
+            </div>
+            <ol class="lines" id="lines" aria-label="Transcript lines"></ol>
+          </div>
+          <div class="tabpanel" id="tp-other" role="tabpanel" hidden><p class="placeholder">Not part of this mockup. The Notes layout is in <code>library-v2.html</code>.</p></div>
+        </section>
+      </div>
+
+      <nav class="tabbar" aria-label="Main">
+        <button aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Library</button>
+        <button data-elsewhere><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 12V4h8l9 9-8 8z"/><circle cx="7.5" cy="7.5" r="1.4"/></svg>Tags</button>
+        <button data-elsewhere><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>People</button>
+        <button data-elsewhere><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-7"/></svg>Insights</button>
+        <button data-elsewhere><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add</button>
+        <button data-elsewhere><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>Status</button>
+      </nav>
+
+      <div class="scrim" id="scrim" hidden></div>
+
+      <div class="picker" id="picker" role="dialog" aria-modal="true" aria-labelledby="pk-title" hidden>
+        <div class="pk-extra" id="pk-extra"></div>
+        <div class="pk-head"><b id="pk-title">Who is speaking?</b><span class="keys" aria-hidden="true"><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd> · <kbd>1</kbd>–<kbd>9</kbd></span><button class="x" id="pk-close" aria-label="Close">Esc</button></div>
+        <div class="pk-sub" id="pk-sub"></div>
+        <input class="pk-q" id="pk-q" autocomplete="off" spellcheck="false" placeholder="Search people, or type a new name" aria-label="Search people, or type a new name">
+        <div class="pk-list" id="pk-list" role="listbox" aria-label="Choose a speaker"></div>
+        <div class="pk-scope" id="pk-scope"></div>
+        <div class="pk-foot" id="pk-foot"></div>
+      </div>
+
+      <div class="help" id="help" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
+        <h3 id="help-title">Keyboard <button class="btn" id="help-close">Close <kbd>Esc</kbd></button></h3>
+        <table>
+          <tr><td><kbd>P</kbd></td><td>Opens the speaker picker</td><td>the focused line</td></tr>
+          <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>Picks someone already in this recording</td><td>speaker picker, empty search</td></tr>
+          <tr><td><kbd>↑</kbd> <kbd>↓</kbd> · <kbd>Enter</kbd></td><td>Moves between lines · plays from the line</td><td>transcript</td></tr>
+          <tr><td>Shift-click · <kbd>Shift</kbd> <kbd>↑</kbd><kbd>↓</kbd></td><td>Selects a range of lines without seeking</td><td>transcript</td></tr>
+          <tr><td>⌘/Ctrl-click</td><td>Adds or removes one line</td><td>transcript</td></tr>
+          <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Previous or next line of the highlighted label</td><td>transcript</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>Plays or pauses</td><td>wherever a player is shown</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Closes the picker, then clears the selection, then the highlight</td><td>everywhere</td></tr>
+          <tr><td><kbd>?</kbd></td><td>This sheet</td><td>everywhere</td></tr>
+          <tr class="other"><td><kbd>T</kbd> · <kbd>D</kbd> · <kbd>Y</kbd>/<kbd>N</kbd> · <kbd>S</kbd>/<kbd>U</kbd></td><td>Tag picker · date control · accept/reject · skip/undo</td><td>Library, Insights, Suggestions</td></tr>
+        </table>
+      </div>
+
+      <div class="notices" id="notices" aria-live="polite"></div>
+      <div class="toast" id="toast" role="status" aria-live="polite"><span id="t-msg"></span><button class="lnk" id="t-undo">Undo</button></div>
+      <div class="vh" id="live" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <section class="notes" aria-labelledby="dn">
+    <h2 id="dn">Design notes</h2>
+    <ul>
+      <li><b>Three chip styles</b> (§12.6a): confirmed, by you or by Plaud, is solid; inferred is dashed in <code>--muted-foreground</code> with "· auto"; unnamed is plain muted text. The transcript shows no scores; they are only in the strip, on hover.</li>
+      <li><b>Chips sit in their own column on desktop,</b> so the hover chip on a mid-run line appears without moving any text. The built app puts the name above the text; on a phone it stays there, on the first line of each run only, because phones have no hover.</li>
+      <li><b>Each line is an <code>&lt;li&gt;</code> holding two sibling buttons,</b> one to seek and one for the chip. That is the fix §12.6a asks for, with no button inside a button. Only one line is in the Tab order (roving focus), and the arrow keys move between lines.</li>
+      <li><b>The picker</b> lists "In this recording" first, numbered for <kbd>1</kbd>–<kbd>9</kbd>. An unnamed label there says "same voice → Unknown 1", and picking it creates that placeholder (§7.6: <code>recognise: false</code>, people file first). Search puts existing matches before "Create …", the same fix as the tag picker (§12.2). It closes on choice.</li>
+      <li><b>How scope maps to the file</b> (§7.6): "All N lines from this voice" writes <code>labels</code>. "Only 3:12" and "These 7 lines" write <code>spans</code> in media time. "Not Alex" writes <code>not</code> and brings up the next-best match as a Medium suggestion in the strip.</li>
+      <li><b>The range demo is real:</b> at 7:54 Dan says "Sam, you had this working". The seven lines after it are under Speaker 2, Alex's voice. That is two people in one label, and spans are the fix.</li>
+      <li><b>Three kinds of feedback:</b> the toast for your own change, which fades and has Undo; the "Voice matching updated 2 labels" banner on the open recording, which stays up (§12.6a); and "Found Alex in 23 older recordings", which turns up about 2 s after you confirm Alex and also stays up until dismissed.</li>
+      <li><b>Speaker bands:</b> one lane per resolved speaker, in blues for named people and greys for unnamed ones. Orange is used only for the playhead and the line playing now (§12.6). Highlighting a label dims the other lanes.</li>
+      <li><b>On a phone,</b> tapping a line opens a bottom sheet with "Play from", "Select lines…" and the same picker. "Select lines" turns taps into a multi-select, in place of Shift-click.</li>
+      <li>Not shown here: a single-speaker recording, which per §12.6a hides the strip and says one voice was found, and the "Plaud now says X" review item.</li>
+    </ul>
+    <h2>Open questions for Dan</h2>
+    <ul class="q">
+      <li><b>How should a Plaud-named label look?</b> It is confirmed, but derived. §12.6a says confirmed chips are solid, yours or Plaud's, yet its verb is "Not Dan", not "Unassign". As drawn, the chip looks exactly like one you set, so you can't predict the verb until you open the picker. The source shows only in the strip ("Plaud") and in the picker's subtitle. The <b>Show "· Plaud"</b> mockup control tries a muted suffix like "· auto". Which do you want?</li>
+      <li><b>Medium matches.</b> §7.6 sends Medium to <i>Suggestions</i> rather than applying it, while the strip shows "High or Medium". The mockup shows a Medium match only in the strip ("maybe Sam Lee", with Confirm and Reject), and the transcript still reads "Speaker 3". Is that right? Until <code>auto_threshold</code> is calibrated every match is Medium, so at first no "· auto" chip would appear at all.</li>
+      <li><b>"Not Alex" for one line or a range has no form in the file.</b> <code>not</code> exists only per label, and a span needs a person. The mockup applies "Not Alex" to the whole voice, says so, and hides it for a range. Should there be a "not this person" span?</li>
+      <li><b>Sweep banner, or a pinned generation?</b> §7.6 says an open recording pins its generation; §12.6a says a sweep never silently changes the open recording. The mockup applies the update and offers Undo, which is the wording in the task. The other reading holds the update until you click "Show update". And what does Undo record: a <code>not</code>, which is a decision, or just an index rollback?</li>
+      <li><b>"Unknown 1" is your decision, so its chip is solid,</b> but solid reads as a real name. Does a placeholder need its own look, for example italics?</li>
+      <li><b>Picking an unnamed label for a named one,</b> say "Speaker 5" on Alex's auto label: the mockup makes both "Unknown 1" and drops Alex. Would "Speaker 5 → Alex" be the better reading?</li>
+      <li><b>Keys <kbd>1</kbd>–<kbd>9</kbd></b> pick entries in "In this recording", which include unnamed labels as well as people. They work only while the search box is empty, so that digits can still be typed. The current speaker keeps its number but is disabled, unless it is an auto tag, where picking it confirms the tag.</li>
+      <li><b>Space</b> plays and pauses when focus is on a line, so <kbd>Enter</kbd> is what seeks to a line. Is that split acceptable?</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  var fmt = function (t) { t = Math.max(0, Math.floor(t)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
+  var T = function (s) { var p = s.split(':'); return +p[0] * 60 + +p[1]; };
+  var clone = function (o) { return JSON.parse(JSON.stringify(o)); };
+  var DUR = 3004;
+
+  var PEOPLE = {
+    'dan-chen': { name: 'Dan Chen', aliases: ['Daniel', 'Dan'], recs: 212 },
+    'alex-kim': { name: 'Alex Kim', recs: 24 },
+    'priya-shah': { name: 'Priya Shah', recs: 12 },
+    'sam-lee': { name: 'Sam Lee', recs: 9 },
+    'houston-capcom': { name: 'Houston CAPCOM', recs: 2 },
+    'neil-armstrong': { name: 'Neil Armstrong', recs: 1 },
+    'buzz-aldrin': { name: 'Buzz Aldrin', recs: 1 },
+    'john-f-kennedy': { name: 'John F. Kennedy', recs: 1 },
+    'franklin-d-roosevelt': { name: 'Franklin D. Roosevelt', recs: 1 }
+  };
+  var FOUND = { 'alex-kim': 23, 'sam-lee': 7, 'priya-shah': 11 };
+
+  /* ---------- the transcript: hand-written opening, then a seeded filler to 50:04 ---------- */
+  var HAND = [
+    ['0:00', 'S1', "Okay, let's get started. Can everyone at the back hear me? Good."],
+    ['0:09', 'S1', 'Week four. Last week we tidied single tables. Today we put two tables together, which is where most real analysis lives.'],
+    ['0:24', 'S1', "If you remember one thing from today, it's this: a join is only as good as its key."],
+    ['0:35', 'S1', 'A key is a column, or a few columns, that identifies each row. A student ID, a date and a site, an order number.'],
+    ['0:51', 'S1', "Let's look at the two tables on the screen. On the left, enrolments. On the right, grades."],
+    ['1:06', 'S1', 'Each enrolment has a student ID and a section. Each grade row has a student ID, an assignment and a score.'],
+    ['1:22', 'S2', 'Sorry, is the student ID unique in both of them?'],
+    ['1:27', 'S1', "Good question, and no. It's unique in enrolments, but grades has one row per assignment, so the same ID shows up many times."],
+    ['1:41', 'S1', "That's a one-to-many relationship, and it's the most common kind you'll meet."],
+    ['1:52', 'S1', 'A left join keeps every row on the left and brings in the matching rows from the right.'],
+    ['2:06', 'S1', "Where there's no match, you get missing values. That's not an error. It's information."],
+    ['2:18', 'S3', "So if a student hasn't submitted anything yet, they'd still be in the result?"],
+    ['2:24', 'S1', "Exactly. They'd be there, with blanks for the assignment and the score."],
+    ['2:33', 'S1', 'An inner join is stricter. It keeps only the rows that match on both sides.'],
+    ['2:45', 'S1', "Let me run both, and we'll count the rows."],
+    ['2:52', 'S1', 'Left join: four hundred and twelve rows. Inner join: three hundred and ninety-eight.'],
+    ['3:05', 'S1', 'Fourteen rows went missing. Who can tell me who those fourteen are?'],
+    ['3:12', 'S2', "The students who haven't handed anything in? Because they don't have a grade row."],
+    ['3:19', 'S1', 'Yes. And notice that nothing warned us. The inner join just quietly dropped them.'],
+    ['3:31', 'S1', "That's why I'd like you to count rows before and after every join. Every single time."],
+    ['3:42', 'S4', 'Does the order matter? Like, enrolments left join grades, versus grades left join enrolments?'],
+    ['3:50', 'S1', 'It does for a left join. The left table decides which rows survive.'],
+    ['4:01', 'S1', 'For an inner join the rows are the same either way. Only the column order changes.'],
+    ['4:12', 'S2', 'What happens if two students have the same ID by mistake?'],
+    ['4:18', 'S1', "Then every grade for that ID matches twice, and your row count goes up when you didn't expect it."],
+    ['4:30', 'S1', "That's the many-to-many trap. Most tools warn you now, but don't rely on it."],
+    ['4:42', 'S1', 'Check that your key is unique on the side where it should be. One line of code saves an afternoon.'],
+    ['4:55', 'S5', 'Can you check that before you join, or only after?'],
+    ['5:01', 'S1', 'Before. Count the rows per key, and look for any count above one.'],
+    ['5:12', 'S1', "Let's do that now. Group by student ID, count, then keep the ones where the count is more than one."],
+    ['5:25', 'S1', "Two IDs come back. So our enrolments table has a problem we didn't know about."],
+    ['5:37', 'S2', 'Is that a typo in the data, or are they really two people?'],
+    ['5:42', 'S1', "We can't tell from here. That's a question for whoever owns the data, and it's a real conversation you'll have at work."],
+    ['5:56', 'S4', 'Would you drop them for now?'],
+    ['6:00', 'S1', "I'd flag them, not drop them. Make a note, keep going, and come back once you know."],
+    ['6:12', 'S1', "Okay. Right join, briefly. It's a left join with the tables swapped. Almost nobody writes one."],
+    ['6:24', 'S1', "A full join keeps everything from both sides. Useful when you're reconciling two lists."],
+    ['6:37', 'S2', 'Like checking the class list against the people who actually showed up?'],
+    ['6:43', 'S1', 'Perfect example. Anyone on one list but not the other shows up with blanks.'],
+    ['6:55', 'S1', "Then there are filtering joins: semi join and anti join. They don't add any columns."],
+    ['7:08', 'S1', "A semi join keeps the left rows that have a match. An anti join keeps the ones that don't."],
+    ['7:20', 'S1', "The anti join is my favourite debugging tool. Which rows didn't match, and why?"],
+    ['7:32', 'S3', 'Is that how you would find the fourteen from before?'],
+    ['7:37', 'S1', 'Yes. Enrolments anti join grades gives you exactly those fourteen students.'],
+    ['7:46', 'S1', "Let's have someone walk us through it. Sam, you had this working in the lab, didn't you?"],
+    ['7:54', 'S2', "Yeah. So I started with enrolments, because that's everyone who should be there."],
+    ['8:03', 'S2', 'Then anti join grades, by student ID.'],
+    ['8:09', 'S2', 'And that gave me fourteen rows, which matched the difference from before.'],
+    ['8:17', 'S2', 'Then I joined the sections back on, to see if it was one section or all of them.'],
+    ['8:27', 'S2', 'Most of them were in the Thursday section, which made sense, because their deadline moved.'],
+    ['8:38', 'S2', "So it wasn't missing data. It was the extension."],
+    ['8:45', 'S2', "Sorry, that's it."],
+    ['8:48', 'S1', "That's great, thank you. And that's exactly the kind of answer the data can't give you on its own."]
+  ];
+  var LECT = [
+    "Let's switch to the second dataset, the one with the survey responses.",
+    'Here the key is two columns together: the site and the visit date.',
+    "If you join on only one of them, you'll match every visit at that site, which is far too many.",
+    'Give the join both column names, and it matches on the pair.',
+    'Watch the row count again. Before: two thousand and forty. After: two thousand and forty. Good.',
+    "Now, column names. Both tables have a column called date, and they don't mean the same thing.",
+    "The join adds a suffix to keep them apart. I'd rename them yourself so the names say what they mean.",
+    'Type mismatches are the other quiet failure. An ID stored as text on one side and a number on the other.',
+    'Leading zeros are the classic case. Zero zero four two becomes forty-two, and nothing matches.',
+    'So before a join, look at the types of your key columns. It takes ten seconds.',
+    'Let me show you what a bad join looks like, so you recognise it when it happens to you.',
+    "See how the row count jumped from five hundred to almost nine thousand? That's the many-to-many problem.",
+    "When that happens, stop. Don't try to fix it downstream. Go back to the keys.",
+    'A quick word on missing values after a join, because they cause a lot of confusion.',
+    'A blank that came from the join means no match. A blank that was already in the data means something else.',
+    "If you need to tell them apart, add a column to the right table that's always true before you join.",
+    "Then any row where that column is missing had no match. It's a cheap trick, and it works.",
+    "Let's talk about binding rows for a minute, because people mix it up with joining.",
+    'Binding stacks tables on top of each other. Joining puts them side by side, matched by key.',
+    'If your tables have the same columns and different rows, you want to bind, not join.',
+    "This week's lab has three joins in it, and one of them is deliberately broken.",
+    'Your job is to find which one, explain why, and fix it. Write the explanation in plain words.',
+    "I'll be marking the explanation more than the code, so take your time over it.",
+    "Let's go back to the slides for a moment.",
+    "This diagram is the one I'd like you to keep in your head. Left, inner, full, and the two filtering joins.",
+    'Every one of them is the same idea: match on the key, then decide what to keep.',
+    "The only real decision is what happens to the rows that don't match.",
+    'So when you pick a join, ask yourself: which rows must survive this step?',
+    "Let's try one together. Departments on the left, staff on the right.",
+    'We want every department, even the ones with nobody in them yet. Which join?',
+    'Right, a left join from departments. And the empty ones come through with blanks.',
+    'Now suppose we only want departments that have at least one person. Which join now?',
+    "A semi join, if we don't need the staff columns. An inner join if we do.",
+    'I see a few people writing that down. Good. That distinction comes up in the exam.',
+    "Let's take a two-minute break. Stretch, get some water, and we'll pick up with dates.",
+    'Okay, welcome back. Dates as keys are a special kind of trouble.',
+    'Two systems rarely record time the same way. One has a date, the other has a timestamp.',
+    'If you join a date to a timestamp directly, almost nothing matches.',
+    'Convert both sides to the same thing first. Usually that means cutting the timestamp down to a date.',
+    "Time zones make this worse, and we'll come back to them in week nine.",
+    'For now, check the range of dates on both sides before you join. Do they even overlap?',
+    'The left table here starts in January, the right one in March.',
+    'So any join will lose January and February. That might be fine. Just make it a decision, not an accident.'
+  ];
+  var QA = [
+    ['Can you join on more than one column at once?', 'Yes. Give it both names, and it matches on the pair.'],
+    ['What if the key columns have different names in the two tables?', 'You can tell the join which column to use on each side.'],
+    ["Is there a way to see which rows didn't match without a second join?", "Not by default, which is why I like the anti join for that."],
+    ['Does a full join ever make sense for big tables?', "Sometimes, when you're reconciling. Otherwise it's rarely what you want."],
+    ["Why wouldn't you just always use a left join, to be safe?", 'Because it can hide problems. Be deliberate about which rows you keep.'],
+    ['How do you know which table should be on the left?', 'The one whose rows you care about. Usually the one you started from.'],
+    ['Can you go back to the previous slide for a second?', 'Sure, here it is again.'],
+    ['Would trimming spaces fix some of those mismatches too?', 'It would, yes. Trim and lowercase text keys before joining.'],
+    ['Is the suffix thing something you can turn off?', 'You can choose your own suffixes, or rename first, which I prefer.'],
+    ['So the anti join is the opposite of the semi join?', 'Exactly. Same match, opposite decision.'],
+    ["What counts as a key if there isn't an ID column?", "Then you look for a combination of columns that's unique together."],
+    ['Do we have to hand in the counts as part of the lab?', 'Yes, please put them in the write-up.'],
+    ['Is the broken join in the lab the many-to-many one?', "I'm not going to tell you that. But it's a good guess."],
+    ['Does the order of the key columns matter?', "No. It doesn't change the result, only how you read it."],
+    ['What if a timestamp falls exactly on midnight?', 'Then it belongs to the day that starts at that midnight. Be consistent.'],
+    ['Could you convert the text IDs to numbers instead?', "You could, but you'd lose the leading zeros. Go the other way."],
+    ['How do you check the types quickly?', 'Look at the column types in the table summary, or check them in code.'],
+    ['Is binding the same as appending?', 'More or less. Same columns, more rows.'],
+    ['So blanks after a join can mean two different things?', 'Yes. No match, or missing to begin with.'],
+    ['Can you say the deadline for the lab again?', 'Friday at five, the usual time.'],
+    ['Is the exam open book?', "Open notes, one page. I'll say more nearer the time."]
+  ];
+  var CLOSE = [
+    "Alright, we've got a few minutes left. Let me sum up.",
+    'Joins match on keys. Check your keys are unique where they should be, and the same type on both sides.',
+    'Count rows before and after. If the count surprises you, stop and look.',
+    "Use anti joins to find what didn't match. They're the quickest way to understand a join.",
+    "That's it for today. Next week: reshaping, wide to long and back again."
+  ];
+  function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  var rnd = mulberry32(101);
+  var LINES = HAND.map(function (h) { return { t: T(h[0]), L: h[1], x: h[2] }; });
+  (function generate() {
+    var turns = [], add = function (L, n) { for (var k = 0; k < n; k++) turns.push(L); };
+    add('S2', 30); add('S3', 7); add('S4', 12); add('S5', 2);
+    for (var i = turns.length - 1; i > 0; i--) { var j = Math.floor(rnd() * (i + 1)); var tmp = turns[i]; turns[i] = turns[j]; turns[j] = tmp; }
+    var gen = [], li = 0, qi = 0;
+    turns.forEach(function (L) {
+      var n = rnd() < 0.35 ? 2 : 1;
+      for (var k = 0; k < n; k++) gen.push({ L: 'S1', x: LECT[li++ % LECT.length], w: 22 + rnd() * 12 });
+      var qa = QA[qi++ % QA.length];
+      gen.push({ L: L, x: qa[0], w: 4 + rnd() * 5 });
+      gen.push({ L: 'S1', x: qa[1], w: 6 + rnd() * 5 });
+    });
+    CLOSE.forEach(function (x) { gen.push({ L: 'S1', x: x, w: 18 + rnd() * 8 }); });
+    var start = T('8:48') + 12, total = gen.reduce(function (a, g) { return a + g.w; }, 0), scale = (DUR - start) / total, t = start;
+    gen.forEach(function (g) { LINES.push({ t: Math.round(t), L: g.L, x: g.x }); t += g.w * scale; });
+    LINES.forEach(function (l, k) { l.d = (k < LINES.length - 1 ? LINES[k + 1].t : DUR) - l.t; });
+  })();
+  var BYL = {};
+  LINES.forEach(function (l, i) { (BYL[l.L] = BYL[l.L] || []).push(i); });
+  var linesOf = function (L) { return BYL[L] || []; };
+  var idxAt = function (s) { var t = T(s); for (var i = 0; i < LINES.length; i++) if (LINES[i].t === t) return i; return 0; };
+
+  /* ---------- decisions (undoable) and view state ---------- */
+  function initial() {
+    return {
+      labels: {
+        S1: { n: 1, person: 'dan-chen', by: 'plaud', plaudName: 'Daniel', not: [] },
+        S2: { n: 2, person: 'alex-kim', by: 'auto', score: 0.91, conf: 'High', not: [], next: { person: 'sam-lee', score: 0.64, conf: 'Medium' } },
+        S3: { n: 3, person: null, by: null, suggest: { person: 'sam-lee', score: 0.68, conf: 'Medium' }, not: [] },
+        S4: { n: 4, person: 'priya-shah', by: 'you', not: [] },
+        S5: { n: 5, person: null, by: null, not: [] }
+      },
+      spans: {},
+      people: clone(PEOPLE),
+      nextUnknown: 1
+    };
+  }
+  var S = initial();
+  var undoStack = [];
+  var U = { time: T('3:05'), playing: false, focus: null, nowIdx: null, sel: {}, anchor: null, hl: null, hlPos: -1, phone: false, selmode: false, follow: true, stripOpen: true, picker: null, updated: [], sweepBefore: null, sample: null, colors: {}, colorN: { b: 0, g: 0 } };
+  var selCount = function () { return Object.keys(U.sel).length; };
+  var selList = function () { return Object.keys(U.sel).map(Number).sort(function (a, b) { return a - b; }); };
+
+  var labelOrder = function () { return Object.keys(S.labels).sort(function (a, b) { return S.labels[a].n - S.labels[b].n; }); };
+  var pname = function (id) { return S.people[id].name; };
+  var short = function (id) { var p = S.people[id]; return p.placeholder ? p.name : p.name.split(' ')[0]; };
+  function who(i) {
+    var sp = S.spans[i], L = LINES[i].L;
+    if (sp) return { person: sp.person, by: 'you', span: true, L: L };
+    var lb = S.labels[L];
+    if (lb.person) return { person: lb.person, by: lb.by, L: L };
+    return { person: null, L: L };
+  }
+  var idKey = function (w) { return w.person ? 'p:' + w.person : 'l:' + w.L; };
+  var labelKey = function (L) { var lb = S.labels[L]; return lb.person ? 'p:' + lb.person : 'l:' + L; };
+  var chipClass = function (w) { return !w.person ? 'unnamed' : (w.by === 'auto' ? 'auto' : 'conf-c'); };
+  function chipInner(w) {
+    if (!w.person) return '<span class="nm">Speaker ' + S.labels[w.L].n + '</span>';
+    return '<span class="nm">' + esc(pname(w.person)) + '</span>' + (w.by === 'auto' ? '<span class="at"> · auto</span>' : '') + (w.by === 'plaud' ? '<span class="pm"> · Plaud</span>' : '');
+  }
+  function whoText(w) {
+    if (!w.person) return 'Speaker ' + S.labels[w.L].n + ', not named';
+    return pname(w.person) + (w.by === 'auto' ? ', inferred' : w.by === 'plaud' ? ', named in Plaud' : '');
+  }
+  function labelDisplay(L) { var lb = S.labels[L]; return lb.person ? pname(lb.person) : 'Speaker ' + lb.n; }
+
+  /* identities → lane colours */
+  var IDS = [], COLOR = {};
+  function computeIds() {
+    var ids = [], seen = {};
+    labelOrder().forEach(function (L) { var lb = S.labels[L], k = labelKey(L); if (!seen[k]) { seen[k] = 1; ids.push({ k: k, person: lb.person, L: L }); } });
+    Object.keys(S.spans).forEach(function (i) { var p = S.spans[i].person, k = 'p:' + p; if (!seen[k]) { seen[k] = 1; ids.push({ k: k, person: p }); } });
+    ids.forEach(function (id) {
+      var named = id.person && !S.people[id.person].placeholder;
+      if (!U.colors[id.k]) U.colors[id.k] = named ? 'var(--sp-' + ((U.colorN.b++ % 4) + 1) + ')' : 'var(--gr-' + ((U.colorN.g++ % 3) + 1) + ')';
+      id.color = U.colors[id.k];
+      id.name = id.person ? (S.people[id.person].placeholder ? 'Unk ' + S.people[id.person].name.split(' ')[1] : short(id.person)) : 'Spk ' + S.labels[id.L].n;
+    });
+    IDS = ids; COLOR = {}; ids.forEach(function (id) { COLOR[id.k] = id.color; });
+  }
+
+  /* ---------- DOM ---------- */
+  var app = $('#app'), linesEl = $('#lines'), pk = $('#picker'), q = $('#pk-q');
+  var lineEls = LINES.map(function (l, i) {
+    var li = document.createElement('li');
+    li.className = 'ln'; li.dataset.i = i;
+    li.innerHTML = '<button type="button" class="ln-main" tabindex="-1"><span class="ts">' + fmt(l.t) + '</span><span class="gap" aria-hidden="true"></span><span class="tx">' + esc(l.x) + '</span><span class="vh who"></span></button>' +
+      '<span class="chip-slot"><button type="button" class="spk" tabindex="-1" aria-haspopup="dialog"></button></span>';
+    linesEl.appendChild(li);
+    return { li: li, main: li.querySelector('.ln-main'), chip: li.querySelector('.spk'), tx: li.querySelector('.tx'), who: li.querySelector('.who'), html: '' };
+  });
+
+  function updateLines() {
+    var prev = null;
+    linesEl.style.setProperty('--hlc', U.hl ? COLOR[labelKey(U.hl)] : 'var(--primary)');
+    for (var i = 0; i < LINES.length; i++) {
+      var w = who(i), k = idKey(w), E = lineEls[i];
+      E.li.classList.toggle('first', k !== prev); prev = k;
+      E.li.classList.toggle('sel', !!U.sel[i]);
+      E.li.classList.toggle('hl', U.hl === LINES[i].L);
+      var cls = 'spk ' + chipClass(w); if (E.chip.className !== cls) E.chip.className = cls;
+      var html = chipInner(w); if (E.html !== html) { E.chip.innerHTML = html; E.html = html; }
+      E.chip.setAttribute('aria-label', 'Speaker: ' + whoText(w) + '. Change speaker');
+      E.who.textContent = ' — ' + whoText(w) + (U.sel[i] ? ', selected' : '');
+    }
+    updateRoving();
+  }
+  function updateRoving() {
+    var target = U.focus != null ? U.focus : (U.nowIdx != null ? U.nowIdx : 0);
+    lineEls.forEach(function (E, i) { var v = i === target ? '0' : '-1'; if (E.main.getAttribute('tabindex') !== v) { E.main.setAttribute('tabindex', v); E.chip.setAttribute('tabindex', v); } });
+  }
+  function scrollLine(i, mode, smooth) {
+    var li = lineEls[i].li, top = li.offsetTop, h = linesEl.clientHeight, lh = li.offsetHeight, st = linesEl.scrollTop, to = null;
+    if (mode === 'center') to = top - (h - lh) / 2;
+    else if (mode === 'top') to = top - 8;
+    else if (top < st + 4) to = top - 8;
+    else if (top + lh > st + h - 4) to = top + lh - h + 8;
+    if (to != null) linesEl.scrollTo({ top: Math.max(0, to), behavior: smooth ? 'smooth' : 'auto' });
+  }
+  function focusLine(i, mode) {
+    U.focus = i; updateRoving();
+    lineEls[i].main.focus({ preventScroll: true });
+    scrollLine(i, mode || 'nearest', false);
+  }
+
+  /* now line, playhead, clock */
+  function nowIndex(t) { var lo = 0, hi = LINES.length - 1; while (lo < hi) { var mid = (lo + hi + 1) >> 1; if (LINES[mid].t <= t) lo = mid; else hi = mid - 1; } return lo; }
+  function updateTime(fromPlay) {
+    var n = nowIndex(U.time);
+    if (n !== U.nowIdx) {
+      if (U.nowIdx != null) { lineEls[U.nowIdx].li.classList.remove('now'); lineEls[U.nowIdx].tx.textContent = LINES[U.nowIdx].x; }
+      U.nowIdx = n; lineEls[n].li.classList.add('now');
+      if (U.follow && fromPlay) scrollLine(n, 'nearest', true);
+      updateRoving();
+    }
+    var l = LINES[n], words = l.x.split(' '), wi = Math.min(words.length - 1, Math.floor((U.time - l.t) / Math.max(1, l.d) * words.length));
+    lineEls[n].tx.innerHTML = words.map(function (x, j) { return j === wi ? '<mark>' + esc(x) + '</mark>' : esc(x); }).join(' ');
+    var pct = U.time / DUR * 100;
+    $('#ph').style.left = pct + '%'; $('#fill').style.width = pct + '%';
+    $('#clock').textContent = fmt(U.time) + ' / ' + fmt(DUR);
+    var sc = $('#scrub'); sc.setAttribute('aria-valuenow', Math.round(U.time)); sc.setAttribute('aria-valuetext', fmt(U.time) + ' of ' + fmt(DUR) + ', ' + whoText(who(n)));
+  }
+  var timer = null;
+  var PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
+  var PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>';
+  function setPlaying(on) {
+    U.playing = on; clearInterval(timer);
+    $('#play').innerHTML = on ? PAUSE : PLAY; $('#play').setAttribute('aria-label', on ? 'Pause (Space)' : 'Play (Space)');
+    if (on) timer = setInterval(function () { U.time = Math.min(DUR, U.time + 0.25); updateTime(true); if (U.time >= DUR) setPlaying(false); }, 250);
+  }
+  function seek(t) { U.time = Math.max(0, Math.min(DUR, t)); updateTime(false); }
+
+  /* scrubber lanes */
+  function renderLanes() {
+    var segs = {}; IDS.forEach(function (id) { segs[id.k] = []; });
+    LINES.forEach(function (l, i) { var k = idKey(who(i)); (segs[k] = segs[k] || []).push(l); });
+    var hlk = U.hl ? labelKey(U.hl) : null;
+    var el = $('#lanes'); el.classList.toggle('has-hl', !!hlk);
+    el.innerHTML = IDS.map(function (id) {
+      return '<div class="lane' + (id.k === hlk ? ' on' : '') + '"><span class="lg">' + esc(id.name) + '</span><span class="lt">' +
+        segs[id.k].map(function (l) { return '<i style="left:' + (l.t / DUR * 100).toFixed(3) + '%;width:' + (l.d / DUR * 100).toFixed(3) + '%;background:' + id.color + '"></i>'; }).join('') + '</span></div>';
+    }).join('');
+  }
+  (function scrubber() {
+    var sc = $('#scrub'), wrap = $('.ph-wrap'), tip = $('#tip'), down = false;
+    var tAt = function (x) { var r = wrap.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)) * DUR; };
+    sc.addEventListener('pointerdown', function (e) { down = true; sc.setPointerCapture(e.pointerId); seek(tAt(e.clientX)); });
+    sc.addEventListener('pointermove', function (e) {
+      var t = tAt(e.clientX), r = wrap.getBoundingClientRect();
+      tip.style.left = ((t / DUR) * r.width) + 'px'; tip.textContent = fmt(t) + ' · ' + whoText(who(nowIndex(t))).split(',')[0];
+      if (down) seek(t);
+    });
+    sc.addEventListener('pointerup', function () { down = false; });
+    sc.addEventListener('keydown', function (e) {
+      var d = { ArrowRight: 5, ArrowLeft: -5, PageUp: 60, PageDown: -60 }[e.key];
+      if (d) { e.preventDefault(); seek(U.time + d); } else if (e.key === 'Home') { e.preventDefault(); seek(0); } else if (e.key === 'End') { e.preventDefault(); seek(DUR); }
+    });
+  })();
+
+  /* ---------- speaker strip ---------- */
+  function confHTML(c, score, what) { return '<span class="conf' + (c === 'Medium' ? ' med' : '') + '" tabindex="0" data-tip="' + what + ' ' + score.toFixed(2) + '" aria-label="' + c + ', ' + what.toLowerCase() + ' ' + score.toFixed(2) + '">' + c + '</span>'; }
+  function renderStrip() {
+    var st = $('#strip'), act = document.activeElement, keep = act && st.contains(act) ? (act.dataset.act ? '[data-l="' + (act.closest('.srow') || {}).dataset.l + '"] [data-act="' + act.dataset.act + '"]' : (act.classList.contains('st-toggle') ? '.st-toggle' : null)) : null;
+    var order = labelOrder(), max = 0, talk = {};
+    order.forEach(function (L) { talk[L] = linesOf(L).reduce(function (a, i) { return a + LINES[i].d; }, 0); max = Math.max(max, talk[L]); });
+    var names = order.map(function (L) { var lb = S.labels[L]; return lb.person ? pname(lb.person) + (lb.by === 'auto' ? ' · auto' : '') : null; });
+    var uniq = names.filter(function (n, i) { return n && names.indexOf(n) === i; }), unn = names.filter(function (n) { return !n; }).length;
+    var h = '<div class="st-head"><b>Speakers</b><span class="sum">' + order.length + ' labels' + (U.stripOpen ? ' · click a label to highlight its lines' : ' · ' + esc(uniq.join(', ')) + (unn ? ', ' + unn + ' unnamed' : '')) + '</span>' +
+      '<button class="st-toggle" aria-expanded="' + U.stripOpen + '">' + (U.stripOpen ? 'Hide ▴' : 'Show ▾') + '</button></div>';
+    order.forEach(function (L) {
+      var lb = S.labels[L], k = labelKey(L), whoH, conf = '', acts = '';
+      if (lb.person) {
+        var w = { person: lb.person, by: lb.by, L: L };
+        whoH = '<span class="spk ' + chipClass(w) + '">' + chipInner(w) + '</span>';
+        if (lb.by === 'auto') { conf = confHTML(lb.conf, lb.score, 'Voice match'); acts = '<button class="btn pri" data-act="confirm">Confirm</button><button class="btn" data-act="reject">Reject</button>'; }
+        else { conf = lb.by === 'plaud' ? '<span class="conf src" tabindex="0" data-tip="Named “' + esc(lb.plaudName) + '” in Plaud, linked by alias">Plaud</span>' : '<span class="src">Yours</span>'; acts = '<button class="btn quiet" data-act="name">Change…</button>'; }
+      } else if (lb.suggest) {
+        whoH = '<span class="sug">maybe <b>' + esc(pname(lb.suggest.person)) + '</b></span>';
+        conf = confHTML(lb.suggest.conf, lb.suggest.score, 'Voice match');
+        acts = '<button class="btn pri" data-act="confirm">Confirm</button><button class="btn" data-act="reject">Reject</button>';
+      } else { whoH = '<span class="sug">not named</span>'; conf = '<span class="src">—</span>'; acts = '<button class="btn quiet" data-act="name">Name…</button>'; }
+      var playing = U.sample === L;
+      h += '<div class="srow' + (U.updated.indexOf(L) >= 0 ? ' updated' : '') + '" data-l="' + L + '">' +
+        '<button class="s-play' + (playing ? ' playing' : '') + '" data-act="sample" aria-label="' + (playing ? 'Stop sample' : 'Play a 5-second sample of Speaker ' + lb.n) + '">' + PLAY + '</button>' +
+        '<button class="s-label" data-act="hl" aria-pressed="' + (U.hl === L) + '" aria-label="Speaker ' + lb.n + ': ' + esc(lb.person ? whoText({ person: lb.person, by: lb.by, L: L }) : 'not named') + '. Highlight its lines">' +
+          '<i class="sw" style="background:' + COLOR[k] + '"></i><span class="s-name">Speaker ' + lb.n + '</span><span class="s-who">' + whoH + (U.updated.indexOf(L) >= 0 ? '<span class="upd">updated</span>' : '') + '</span></button>' +
+        '<span class="s-time"><span class="mono" title="Talk time">' + fmt(talk[L]) + '</span><span class="bar" aria-hidden="true"><i style="width:' + (talk[L] / max * 100).toFixed(1) + '%"></i></span></span>' +
+        '<span class="s-conf">' + conf + '</span><span class="s-act">' + acts + '</span></div>';
+    });
+    st.innerHTML = h; st.classList.toggle('closed', !U.stripOpen);
+    if (keep) { var el = st.querySelector(keep); if (el) el.focus({ preventScroll: true }); }
+  }
+  $('#strip').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.classList.contains('st-toggle')) { U.stripOpen = !U.stripOpen; renderStrip(); return; }
+    var L = b.closest('.srow').dataset.l, act = b.dataset.act;
+    if (act === 'hl') setHl(U.hl === L ? null : L);
+    else if (act === 'sample') playSample(L);
+    else if (act === 'confirm') confirmLabel(L);
+    else if (act === 'reject') rejectLabel(L);
+    else if (act === 'name') openPicker(linesOf(L)[0], { anchor: b, fromLabel: true, returnFocus: b });
+  });
+  var sampleT = null;
+  function playSample(L) {
+    clearTimeout(sampleT);
+    if (U.sample === L) { U.sample = null; renderStrip(); return; }
+    U.sample = L; renderStrip();
+    $('#live').textContent = 'Playing a 5-second sample of Speaker ' + S.labels[L].n;
+    sampleT = setTimeout(function () { U.sample = null; renderStrip(); }, 5000);
+  }
+  function setHl(L) { U.hl = L; U.hlPos = -1; updateLines(); renderStrip(); renderLanes(); updateTools(); }
+  function jump(dir) {
+    if (!U.hl) { var base = U.focus != null ? U.focus : U.nowIdx; setHl(LINES[base].L); }
+    var list = linesOf(U.hl), cur = U.focus != null ? U.focus : U.nowIdx, pos;
+    if (dir > 0) { pos = list.findIndex(function (i) { return i > cur; }); if (pos < 0) pos = 0; }
+    else { pos = -1; for (var k = list.length - 1; k >= 0; k--) if (list[k] < cur) { pos = k; break; } if (pos < 0) pos = list.length - 1; }
+    U.hlPos = pos; var i = list[pos];
+    seek(LINES[i].t); focusLine(i, 'center'); updateTools();
+  }
+
+  /* ---------- tools row: highlight nav and selection bar ---------- */
+  function updateTools() {
+    var hn = $('#hlnav');
+    if (U.hl) {
+      var lb = S.labels[U.hl], n = linesOf(U.hl).length;
+      hn.innerHTML = '<span><b>' + esc(labelDisplay(U.hl)) + '</b>' + (lb.person ? ' · Speaker ' + lb.n : '') + ' · <span class="mono">' + (U.hlPos >= 0 ? (U.hlPos + 1) + ' of ' + n : n + ' lines') + '</span></span>' +
+        '<button class="ib" data-j="-1" aria-label="Previous line of this label ([)">◀</button><button class="ib" data-j="1" aria-label="Next line of this label (])">▶</button><button class="ib" data-j="0" aria-label="Stop highlighting">×</button>';
+      hn.hidden = false;
+    } else hn.hidden = true;
+    var sb = $('#selbar'), c = selCount();
+    if (c > 1 || (U.selmode && c)) {
+      sb.innerHTML = '<span><b>' + c + ' line' + (c > 1 ? 's' : '') + '</b> selected</span><button class="ib" data-s="name">Name speaker' + (U.phone ? '' : ' <kbd>P</kbd>') + '</button><button class="ib" data-s="clear">' + (U.selmode ? 'Done' : 'Clear') + '</button>';
+      sb.hidden = false;
+    } else if (U.selmode) { sb.innerHTML = '<span>Tap lines to select them</span><button class="ib" data-s="clear">Done</button>'; sb.hidden = false; }
+    else sb.hidden = true;
+  }
+  $('#hlnav').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; var j = +b.dataset.j; if (j) jump(j); else setHl(null); });
+  $('#selbar').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.s === 'name') { var l = selList(); openPicker(l[l.length - 1], {}); }
+    else { U.sel = {}; U.selmode = false; updateLines(); updateTools(); }
+  });
+
+  /* ---------- the library list (left) ---------- */
+  function peopleSummary() {
+    var named = [], seen = {}, other = {};
+    labelOrder().forEach(function (L) { var lb = S.labels[L]; if (lb.person && !S.people[lb.person].placeholder) { if (!seen[lb.person]) { seen[lb.person] = 1; named.push({ p: lb.person, auto: lb.by === 'auto' }); } } else other[labelKey(L)] = 1; });
+    var extra = Math.max(0, named.length - 3) + Object.keys(other).length;
+    return named.slice(0, 3).map(function (x) { return '<span' + (x.auto ? ' class="inf" title="inferred"' : '') + '>' + esc(short(x.p)) + '</span>'; }).join(', ') + (extra ? ' +' + extra : '');
+  }
+  function renderList() {
+    var rows = [
+      ['Office hours', 'Tue Oct 6 · 15:00 · 1 h 05 min · Plaud', 'Dan, Sam, Priya'],
+      ['Team weekly sync', 'Mon Oct 5 · 10:30 · 42 min · Plaud', 'Dan, Alex, Sam'],
+      ['COURSE 101: Week 4', 'Tue Sep 29 · 10:00 · 50 min · Plaud', null],
+      ['Apollo 13 “Houston, we’ve had a problem” (1970)', 'Apr 13, 1970 · 4 min · demo', 'Houston CAPCOM +2'],
+      ['JFK at Rice University (1962)', 'Sep 12, 1962 · 18 min · demo', 'John F. Kennedy']
+    ];
+    $('#list').innerHTML = rows.map(function (r) {
+      var on = !r[2];
+      return '<button class="row"' + (on ? ' aria-current="true"' : ' data-elsewhere') + '><span class="t">' + esc(r[0]) + '</span><span class="m">' + esc(r[1]) + '</span><span class="who">' + (on ? peopleSummary() : esc(r[2])) + '</span></button>';
+    }).join('');
+  }
+
+  function renderAll() { computeIds(); updateLines(); renderStrip(); renderLanes(); updateTools(); renderList(); }
+
+  /* ---------- line interactions ---------- */
+  linesEl.addEventListener('mousedown', function (e) { if ((e.shiftKey || e.metaKey || e.ctrlKey) && e.target.closest('.ln-main')) { e.preventDefault(); } });
+  linesEl.addEventListener('click', function (e) {
+    var chip = e.target.closest('.spk'), main = e.target.closest('.ln-main'); if (!chip && !main) return;
+    var i = +e.target.closest('.ln').dataset.i;
+    if (U.phone) {
+      if (U.selmode) { toggleSel(i); return; }
+      openPicker(i, {}); return;
+    }
+    if (chip) { openPicker(i, { anchor: chip, returnFocus: chip }); return; }
+    if (e.shiftKey) {
+      if (U.anchor == null) U.anchor = U.focus != null ? U.focus : i;
+      selectRange(U.anchor, i); U.focus = i; updateRoving(); main.focus({ preventScroll: true }); return;
+    }
+    if (e.metaKey || e.ctrlKey) { toggleSel(i); U.anchor = i; U.focus = i; updateRoving(); main.focus({ preventScroll: true }); return; }
+    U.sel = {}; U.anchor = i; U.focus = i; seek(LINES[i].t); updateLines(); updateTools();
+  });
+  linesEl.addEventListener('focusin', function (e) { var ln = e.target.closest('.ln'); if (ln) { U.focus = +ln.dataset.i; updateRoving(); } });
+  linesEl.addEventListener('keydown', function (e) {
+    var ln = e.target.closest('.ln'); if (!ln) return;
+    var i = +ln.dataset.i, j = null;
+    if (e.key === 'ArrowDown') j = Math.min(LINES.length - 1, i + 1);
+    else if (e.key === 'ArrowUp') j = Math.max(0, i - 1);
+    else if (e.key === 'Home') j = 0; else if (e.key === 'End') j = LINES.length - 1;
+    if (j == null) return;
+    e.preventDefault();
+    if (e.shiftKey) { if (U.anchor == null) U.anchor = i; selectRange(U.anchor, j); } else U.anchor = j;
+    focusLine(j);
+  });
+  function selectRange(a, b) { U.sel = {}; for (var k = Math.min(a, b); k <= Math.max(a, b); k++) U.sel[k] = true; updateLines(); updateTools(); }
+  function toggleSel(i) { if (U.sel[i]) delete U.sel[i]; else U.sel[i] = true; updateLines(); updateTools(); }
+
+  /* ---------- the picker ---------- */
+  var OPTS = [], REC = [];
+  function openPicker(i, o) {
+    o = o || {};
+    if (U.picker) closePicker(false);
+    var inSel = selCount() > 1 && U.sel[i];
+    if (!inSel && !U.selmode && selCount()) { U.sel = {}; updateLines(); updateTools(); }
+    var range = !!inSel;
+    U.picker = { i: i, L: LINES[i].L, scope: range ? 'range' : (S.spans[i] ? 'line' : 'voice'), hi: -1, fromLabel: !!o.fromLabel, anchor: o.anchor || null, returnFocus: o.returnFocus || lineEls[i].main };
+    lineEls[i].li.classList.add('picking');
+    if (!o.fromLabel && !U.phone) scrollLine(i, 'nearest', false);
+    q.value = '';
+    renderPicker();
+    pk.hidden = false;
+    $('#scrim').hidden = !U.phone;
+    positionPicker();
+    if (U.phone) $('#pk-close').focus(); else q.focus();
+  }
+  function closePicker(restore) {
+    if (!U.picker) return;
+    var p = U.picker; U.picker = null;
+    pk.hidden = true; $('#scrim').hidden = true;
+    lineEls[p.i].li.classList.remove('picking');
+    if (restore && p.returnFocus && document.contains(p.returnFocus)) p.returnFocus.focus({ preventScroll: true });
+  }
+  function positionPicker() {
+    if (U.phone) { pk.style.left = pk.style.top = pk.style.bottom = ''; return; }
+    var p = U.picker, f = app.getBoundingClientRect(), w = pk.offsetWidth, h = pk.offsetHeight;
+    var below = p.anchor || (p.scope === 'range' ? lineEls[selList()[selCount() - 1]].chip : lineEls[p.i].chip);
+    var above = p.anchor || (p.scope === 'range' ? lineEls[selList()[0]].chip : lineEls[p.i].chip);
+    var rb = below.getBoundingClientRect(), ra = above.getBoundingClientRect();
+    var left = Math.max(12, Math.min(rb.left - f.left - 4, f.width - w - 12));
+    // Below the line if it fits; above it for a single line; otherwise to the side, so a range stays readable.
+    if (rb.bottom - f.top + 6 + h <= f.height - 12) { pk.style.left = left + 'px'; pk.style.top = (rb.bottom - f.top + 6) + 'px'; pk.style.bottom = 'auto'; }
+    else if (p.scope !== 'range' && ra.top - f.top - 6 - h >= 12) { pk.style.left = left + 'px'; pk.style.top = 'auto'; pk.style.bottom = (f.bottom - ra.top + 6) + 'px'; }
+    else { pk.style.left = (f.width - w - 16) + 'px'; pk.style.bottom = 'auto'; pk.style.top = Math.max(12, Math.min(ra.top - f.top - 40, f.height - h - 12)) + 'px'; }
+  }
+  function scopeLines() { var p = U.picker; return p.scope === 'range' ? selList() : p.scope === 'line' ? [p.i] : linesOf(p.L); }
+  function currentKey() { var p = U.picker; return p.scope === 'range' ? null : p.scope === 'voice' ? labelKey(p.L) : idKey(who(p.i)); }
+  function nextPlaceholderName() {
+    var p = U.picker, lb = S.labels[p.L];
+    if (p.scope === 'voice' && lb.person && S.people[lb.person].placeholder) return pname(lb.person);
+    return 'Unknown ' + S.nextUnknown;
+  }
+  function verbFor() {
+    var p = U.picker; if (!p || p.scope === 'range') return null;
+    if (p.scope === 'line' && S.spans[p.i]) return { kind: 'remove-span', text: 'Unassign', hint: 'this line goes back to ' + labelDisplay(p.L) };
+    var lb = S.labels[p.L], n = linesOf(p.L).length; if (!lb.person) return null;
+    if (lb.by === 'you') return { kind: 'unassign', text: 'Unassign', hint: (p.scope === 'line' ? 'all ' + n + ' lines · ' : '') + 'Speaker ' + lb.n + ' goes back to unnamed' };
+    return { kind: 'not', text: 'Not ' + short(lb.person), hint: (p.scope === 'line' ? 'all ' + n + ' lines · ' : '') + (lb.by === 'plaud' ? 'Plaud’s name, so not “Unassign” · ' : '') + 'remembered, so it won’t come back' };
+  }
+  function renderPicker() {
+    var p = U.picker, qs = q.value.trim(), ql = qs.toLowerCase(), cur = currentKey(), lbCur = S.labels[p.L];
+    var lines = scopeLines(), n = lines.length, t = fmt(LINES[p.i].t);
+    // subtitle
+    var w = p.scope === 'voice' ? { person: lbCur.person, by: lbCur.by, L: p.L } : who(p.i);
+    var sub = p.scope === 'range' ? '<span>' + n + ' lines · ' + fmt(LINES[lines[0]].t) + '–' + fmt(LINES[lines[n - 1]].t) + '</span>'
+      : '<span>' + (p.fromLabel ? 'Speaker ' + lbCur.n + ' · ' + linesOf(p.L).length + ' lines' : t + ' · Speaker ' + lbCur.n) + ' · now</span><span class="spk ' + chipClass(w) + '">' + chipInner(w) + '</span>' +
+        (w.by === 'auto' && !w.span ? '<span>' + lbCur.conf + '</span>' : '') + (w.by === 'plaud' ? '<span>“' + esc(lbCur.plaudName) + '” in Plaud</span>' : '') + (w.span ? '<span>this line only</span>' : '');
+    $('#pk-sub').innerHTML = sub;
+    // phone sheet extras
+    if (U.phone) {
+      $('#pk-extra').innerHTML = '<div class="grab" aria-hidden="true"></div>' + (p.scope === 'range' ? '<div class="sh-lab">' + n + ' lines selected</div>' :
+        '<div class="sh-line"><span class="ts">' + t + '</span><span class="sh-tx">' + esc(LINES[p.i].x) + '</span></div>') +
+        '<div class="sh-acts"><button class="btn" data-x="play">▶ Play from ' + (p.scope === 'range' ? fmt(LINES[lines[0]].t) : t) + '</button>' + (p.scope === 'range' ? '' : '<button class="btn" data-x="select">Select lines…</button>') + '</div>';
+    } else $('#pk-extra').innerHTML = '';
+    // entries: this recording first (labels named or not, plus anyone only in spans), then people, then Create
+    var rec = [], seen = {};
+    labelOrder().forEach(function (L) {
+      var lb = S.labels[L];
+      if (lb.person) { var k = 'p:' + lb.person; if (seen[k]) { seen[k].labels.push(L); return; } var e = { type: 'person', person: lb.person, by: lb.by, labels: [L], k: k }; seen[k] = e; rec.push(e); }
+      else { var e2 = { type: 'label', L: L, k: 'l:' + L, labels: [L] }; seen[e2.k] = e2; rec.push(e2); }
+    });
+    Object.keys(S.spans).forEach(function (i) { var pp = S.spans[i].person, k = 'p:' + pp; if (!seen[k]) { seen[k] = { type: 'person', person: pp, by: 'you', labels: [], spanOnly: 0, k: k }; rec.push(seen[k]); } if (seen[k].spanOnly != null) seen[k].spanOnly++; });
+    rec.forEach(function (e, ix) {
+      e.num = ix + 1; e.current = e.k === cur;
+      e.confirm = e.current && e.type === 'person' && e.by === 'auto' && p.scope === 'voice';
+      e.disabled = e.current && !e.confirm;
+      e.name = e.type === 'label' ? 'Speaker ' + S.labels[e.L].n : pname(e.person);
+    });
+    var match = function (name, aliases) { return !ql || name.toLowerCase().indexOf(ql) >= 0 || (aliases || []).some(function (a) { return a.toLowerCase().indexOf(ql) >= 0; }); };
+    REC = rec;
+    var recShown = rec.filter(function (e) { return match(e.name, e.person ? S.people[e.person].aliases : null); });
+    var people = Object.keys(S.people).filter(function (id) { var pp = S.people[id]; return !pp.placeholder && !seen['p:' + id] && match(pp.name, pp.aliases); })
+      .sort(function (a, b) { return S.people[b].recs - S.people[a].recs; });
+    var peopleShown = ql ? people.slice(0, 6) : people.slice(0, 1);
+    var exact = ql && Object.keys(S.people).some(function (id) { return S.people[id].name.toLowerCase() === ql; });
+    OPTS = [];
+    var h = '';
+    var opt = function (e, inner, hint, extraCls) {
+      var ix = OPTS.length; OPTS.push(e);
+      return '<button type="button" role="option" class="opt' + (extraCls || '') + '" data-o="' + ix + '" id="pk-o' + ix + '"' + (e.disabled ? ' disabled aria-disabled="true"' : '') + '>' + inner + '<span class="o-hint">' + hint + '</span></button>';
+    };
+    if (recShown.length) {
+      h += '<div class="pk-sec">In this recording</div>';
+      recShown.forEach(function (e) {
+        var key = !ql && e.num <= 9 ? '<kbd>' + e.num + '</kbd>' : '<span></span>', name, hint;
+        if (e.type === 'label') { name = '<span class="spk unnamed"><span class="nm">' + e.name + '</span></span>'; hint = e.current ? 'current' : 'same voice → ' + esc(nextPlaceholderName()); }
+        else {
+          var cw = { person: e.person, by: e.by, L: e.labels[0] };
+          name = '<span class="spk ' + chipClass(cw) + '">' + chipInner(cw) + '</span>';
+          hint = e.confirm ? 'confirm' : e.current ? 'current' : e.spanOnly ? e.spanOnly + ' line' + (e.spanOnly > 1 ? 's' : '') : (e.labels.length > 1 ? 'Speakers ' + e.labels.map(function (L) { return S.labels[L].n; }).join(', ') : 'Speaker ' + S.labels[e.labels[0]].n + (e.by === 'plaud' ? ' · Plaud' : ''));
+        }
+        h += opt(e, key + '<span class="o-name">' + name + '</span>', hint);
+      });
+    }
+    if (peopleShown.length) {
+      h += '<div class="pk-sec">People' + (!ql && people.length > peopleShown.length ? ' · type to search ' + (people.length - peopleShown.length) + ' more' : '') + '</div>';
+      peopleShown.forEach(function (id) { h += opt({ type: 'person', person: id, by: null, outside: true }, '<span></span><span class="o-name">' + esc(pname(id)) + '</span>', S.people[id].recs + ' recording' + (S.people[id].recs > 1 ? 's' : '')); });
+    }
+    if (ql && !exact) h += opt({ type: 'create', name: qs }, '<span aria-hidden="true">+</span><span class="o-name">Create “' + esc(qs) + '”</span>', 'new person', ' create');
+    if (!h) h = '<div class="pk-empty">No one matches.</div>';
+    $('#pk-list').innerHTML = h;
+    if (p.hi >= 0) { var firstOk = OPTS.findIndex(function (e, ix) { return ix >= p.hi && !e.disabled; }); p.hi = firstOk; }
+    markHi();
+    // scope
+    var sc;
+    if (p.scope === 'range') sc = '<div class="seg"><button type="button" aria-pressed="true" data-scope="range">These ' + n + ' lines</button></div><div class="sc-hint">' + (U.phone ? 'Tap lines in the transcript to change the selection.' : 'Shift-click to change the range · Esc clears it') + '</div>';
+    else if (p.fromLabel) sc = '<div class="seg"><button type="button" aria-pressed="true" data-scope="voice">All ' + linesOf(p.L).length + ' lines from this voice</button></div>';
+    else sc = '<div class="seg"><button type="button" data-scope="voice" aria-pressed="' + (p.scope === 'voice') + '">All ' + linesOf(p.L).length + ' lines from this voice</button><button type="button" data-scope="line" aria-pressed="' + (p.scope === 'line') + '">Only ' + t + '</button></div>';
+    $('#pk-scope').innerHTML = '<div class="lab">Apply to</div>' + sc;
+    // verb
+    var v = verbFor();
+    $('#pk-foot').innerHTML = v ? '<button type="button" class="verb" id="pk-verb">' + esc(v.text) + '</button><span>' + esc(v.hint) + '</span>' : '<span>' + (p.scope === 'range' ? 'A pick here becomes spans: these lines only.' : 'Not named yet, so there is nothing to undo here.') + '</span>';
+    $('#pk-close').textContent = U.phone ? 'Close' : 'Esc';
+  }
+  function markHi() {
+    var p = U.picker;
+    $$('#pk-list .opt').forEach(function (b) { b.classList.toggle('hi', +b.dataset.o === p.hi); b.setAttribute('aria-selected', String(+b.dataset.o === p.hi)); });
+    if (p.hi >= 0) { q.setAttribute('aria-activedescendant', 'pk-o' + p.hi); var el = $('#pk-o' + p.hi); if (el) el.scrollIntoView({ block: 'nearest' }); } else q.removeAttribute('aria-activedescendant');
+  }
+  function moveHi(d) {
+    var p = U.picker, ix = p.hi;
+    for (var s = 0; s < OPTS.length; s++) { ix = ix + d; if (ix < 0) ix = OPTS.length - 1; if (ix >= OPTS.length) ix = 0; if (!OPTS[ix].disabled) break; }
+    p.hi = ix; markHi();
+  }
+  q.addEventListener('input', function () { U.picker.hi = q.value.trim() ? 0 : -1; renderPicker(); });
+  pk.addEventListener('keydown', function (e) {
+    var p = U.picker; if (!p) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePicker(true); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); moveHi(e.key === 'ArrowDown' ? 1 : -1); return; }
+    if (e.key === 'Enter' && e.target === q) { e.preventDefault(); var o = OPTS[p.hi]; if (o && !o.disabled) choose(o); return; }
+    if (/^[1-9]$/.test(e.key) && !(e.target === q && q.value !== '')) {
+      var ent = REC[+e.key - 1]; e.preventDefault();
+      if (ent && !ent.disabled) choose(ent);
+      return;
+    }
+    if (e.key === 'Tab') {
+      var f = $$('button:not([disabled]), input', pk).filter(function (el) { return el.offsetParent !== null; });
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+    e.stopPropagation();
+  });
+  pk.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b || !U.picker) return;
+    if (b.id === 'pk-close') { closePicker(true); return; }
+    if (b.dataset.o != null) { var o = OPTS[+b.dataset.o]; if (o && !o.disabled) choose(o); return; }
+    if (b.dataset.scope) { if (U.picker.scope !== 'range' && !U.picker.fromLabel) { U.picker.scope = b.dataset.scope; renderPicker(); positionPicker(); } return; }
+    if (b.id === 'pk-verb') { doVerb(); return; }
+    if (b.dataset.x === 'play') { var i0 = U.picker.scope === 'range' ? selList()[0] : U.picker.i; closePicker(false); seek(LINES[i0].t); setPlaying(true); return; }
+    if (b.dataset.x === 'select') { var i1 = U.picker.i; closePicker(false); U.selmode = true; U.sel = {}; U.sel[i1] = true; updateLines(); updateTools(); return; }
+  });
+  document.addEventListener('pointerdown', function (e) {
+    if (U.picker && !U.phone && !pk.contains(e.target) && !(U.picker.anchor && U.picker.anchor.contains(e.target))) closePicker(false);
+  });
+  $('#scrim').addEventListener('click', function () { closePicker(false); closeHelp(); });
+
+  /* ---------- decisions ---------- */
+  function pushUndo(before, after) { undoStack.push({ S: before, after: after || null }); }
+  function newPlaceholder() {
+    var id = 'unknown-' + S.nextUnknown;
+    S.people[id] = { name: 'Unknown ' + S.nextUnknown, placeholder: true, recognise: false, recs: 1 };
+    S.nextUnknown++;
+    return id;
+  }
+  function createPerson(name) {
+    var slug = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'person', id = slug, k = 2;
+    while (S.people[id]) id = slug + '-' + (k++);
+    S.people[id] = { name: name, recs: 1 };
+    return id;
+  }
+  function choose(e) {
+    var p = U.picker, before = clone(S), msg, person, lines = p.scope === 'voice' ? null : scopeLines(), voiceN = linesOf(p.L).length;
+    if (e.type === 'create') person = createPerson(e.name);
+    else if (e.type === 'person') person = e.person;
+    else {
+      var lbc = S.labels[p.L];
+      person = (p.scope === 'voice' && lbc.person && S.people[lbc.person].placeholder) ? lbc.person : newPlaceholder();
+      var X = S.labels[e.L]; X.person = person; X.by = 'you'; X.suggest = null;
+    }
+    if (lines) {
+      lines.forEach(function (i) { S.spans[i] = { person: person }; });
+      if (e.type === 'label') msg = (lines.length > 1 ? lines.length + ' lines' : fmt(LINES[lines[0]].t)) + ' + Speaker ' + S.labels[e.L].n + ' → ' + pname(person);
+      else msg = p.scope === 'range' ? lines.length + ' lines → ' + pname(person) : fmt(LINES[p.i].t) + ' → ' + pname(person) + ' · 1 line';
+    } else {
+      var lb = S.labels[p.L], was = lb.person;
+      lb.person = person; lb.by = 'you'; lb.suggest = null; lb.not = lb.not.filter(function (x) { return x !== person; });
+      if (e.type === 'label') msg = 'Speaker ' + lb.n + ' + Speaker ' + S.labels[e.L].n + ' → ' + pname(person) + ' · ' + (voiceN + linesOf(e.L).length) + ' lines';
+      else msg = 'Speaker ' + lb.n + ' → ' + pname(person) + ' · ' + voiceN + ' lines' + (e.type === 'create' ? ' · new person' : '');
+      if (was && was !== person && S.people[was] && !S.people[was].placeholder && lb.not.indexOf(was) < 0) { /* reassigning replaces the old name; no "not" is recorded */ }
+    }
+    pushUndo(before);
+    var labelLevel = !lines && e.type === 'person' && !S.people[person].placeholder;
+    U.sel = {}; U.selmode = false;
+    closePicker(true); renderAll(); toast(msg, true);
+    if (labelLevel) scheduleFound(person);
+  }
+  function doVerb() {
+    var p = U.picker, v = verbFor(); if (!v) return;
+    var before = clone(S), lb = S.labels[p.L], n = linesOf(p.L).length, msg;
+    if (v.kind === 'not') {
+      var prev = lb.person; lb.not.push(prev); lb.person = null; lb.by = null;
+      var nb = lb.next && lb.not.indexOf(lb.next.person) < 0 ? lb.next : null; lb.suggest = nb; lb.next = null;
+      msg = 'Speaker ' + lb.n + ' is not ' + pname(prev) + ' · ' + n + ' lines' + (nb ? ' · next best: ' + short(nb.person) + ' (Medium)' : '');
+    } else if (v.kind === 'unassign') { lb.person = null; lb.by = null; msg = 'Speaker ' + lb.n + ' unassigned · ' + n + ' lines'; }
+    else { delete S.spans[p.i]; msg = fmt(LINES[p.i].t) + ' is back to ' + labelDisplay(p.L); }
+    pushUndo(before);
+    closePicker(true); renderAll(); toast(msg, true);
+  }
+  function confirmLabel(L) {
+    var lb = S.labels[L], before = clone(S);
+    if (lb.by === 'auto') lb.by = 'you';
+    else if (lb.suggest) { lb.person = lb.suggest.person; lb.by = 'you'; lb.suggest = null; }
+    else return;
+    pushUndo(before); U.updated = U.updated.filter(function (x) { return x !== L; });
+    renderAll(); toast('Speaker ' + lb.n + ' → ' + pname(lb.person) + ' · ' + linesOf(L).length + ' lines', true);
+    scheduleFound(lb.person);
+  }
+  function rejectLabel(L) {
+    var lb = S.labels[L], before = clone(S), n = linesOf(L).length, msg;
+    if (lb.by === 'auto') {
+      var prev = lb.person; lb.not.push(prev); lb.person = null; lb.by = null;
+      var nb = lb.next && lb.not.indexOf(lb.next.person) < 0 ? lb.next : null; lb.suggest = nb; lb.next = null;
+      msg = 'Speaker ' + lb.n + ' is not ' + pname(prev) + ' · ' + n + ' lines' + (nb ? ' · next best: ' + short(nb.person) + ' (Medium)' : '');
+    } else if (lb.suggest) { lb.not.push(lb.suggest.person); msg = 'Speaker ' + lb.n + ' is not ' + pname(lb.suggest.person) + ' · ' + n + ' lines'; lb.suggest = null; }
+    else return;
+    pushUndo(before); U.updated = U.updated.filter(function (x) { return x !== L; });
+    renderAll(); toast(msg, true);
+  }
+
+  /* ---------- toast, notices, sweep banner ---------- */
+  var toastT = null;
+  function toast(msg, undoable) {
+    $('#t-msg').textContent = msg; $('#t-undo').hidden = !undoable;
+    var t = $('#toast'); t.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove('show'); }, 6500);
+  }
+  function hideToast() { clearTimeout(toastT); $('#toast').classList.remove('show'); }
+  $('#t-undo').addEventListener('click', function () {
+    var last = undoStack.pop(); if (!last) return;
+    S = last.S; clearTimeout(foundT); hideToast(); renderAll();
+    $('#live').textContent = 'Undone';
+  });
+  var foundT = null;
+  function scheduleFound(person) {
+    var n = FOUND[person]; if (!n) return;
+    clearTimeout(foundT);
+    foundT = setTimeout(function () {
+      addNotice('Found ' + short(person) + ' in ' + n + ' older recordings', [
+        ['Review', function () { toast('Opens People › ' + pname(person) + ', with the ' + n + ' recordings (not in this mockup)', false); }],
+        ['Undo', function (el) { el.remove(); toast('Sweep undone · ' + n + ' older recordings back as they were', false); }]
+      ]);
+    }, 2200);
+  }
+  function addNotice(text, actions) {
+    var el = document.createElement('div'); el.className = 'notice';
+    el.innerHTML = '<span aria-hidden="true">◆</span><span>' + esc(text) + '</span>' + actions.map(function (a, i) { return (i ? '<span aria-hidden="true">·</span>' : '') + '<button class="lk" data-a="' + i + '">' + a[0] + '</button>'; }).join('') + '<button class="x" aria-label="Dismiss">×</button>';
+    el.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; if (b.classList.contains('x')) { el.remove(); return; } actions[+b.dataset.a][1](el); });
+    $('#notices').appendChild(el);
+  }
+  function applySweep() {
+    var before = clone(S);
+    [['S3', 0.88], ['S5', 0.86]].forEach(function (x) { var lb = S.labels[x[0]]; if (lb.person) return; lb.person = 'sam-lee'; lb.by = 'auto'; lb.conf = 'High'; lb.score = x[1]; lb.suggest = null; });
+    U.sweepBefore = before; U.updated = ['S3', 'S5'];
+    $('#banner').hidden = false;
+    renderAll();
+    linesOf('S3').concat(linesOf('S5')).forEach(function (i) { var li = lineEls[i].li; li.classList.remove('flash'); void li.offsetWidth; li.classList.add('flash'); });
+  }
+  $('#bn-review').addEventListener('click', function () {
+    U.stripOpen = true; renderStrip();
+    var row = $('#strip .srow.updated .s-label'); if (row) { row.scrollIntoView({ block: 'nearest' }); row.focus(); }
+    setHl('S3');
+  });
+  $('#bn-undo').addEventListener('click', function () {
+    if (U.sweepBefore) S = U.sweepBefore; U.sweepBefore = null; U.updated = [];
+    $('#banner').hidden = true; renderAll(); toast('Voice matching update undone · 2 labels back to unnamed', false);
+  });
+  $('#bn-x').addEventListener('click', function () { $('#banner').hidden = true; U.updated = []; renderStrip(); });
+
+  /* ---------- help sheet ---------- */
+  var helpReturn = null;
+  function openHelp() { helpReturn = document.activeElement; $('#help').hidden = false; $('#scrim').hidden = false; $('#help-close').focus(); }
+  function closeHelp() { if ($('#help').hidden) return; $('#help').hidden = true; $('#scrim').hidden = !(U.picker && U.phone); if (helpReturn && document.contains(helpReturn)) helpReturn.focus(); }
+  $('#help-btn').addEventListener('click', openHelp);
+  $('#help-close').addEventListener('click', closeHelp);
+
+  /* ---------- global keys ---------- */
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!$('#help').hidden) { if (e.key === 'Escape' || e.key === '?') { e.preventDefault(); closeHelp(); } return; }
+    if (U.picker) return;
+    var tg = e.target, inField = tg.matches && tg.matches('input, textarea, select');
+    if (inField && tg.type !== 'checkbox') return;
+    if (e.key === '?') { e.preventDefault(); openHelp(); }
+    else if (e.key === 'p' || e.key === 'P') {
+      var i = U.focus != null ? U.focus : U.nowIdx; if (i == null) return;
+      e.preventDefault();
+      if (selCount() > 1 && !U.sel[i]) i = selList()[selCount() - 1];
+      openPicker(i, {});
+    }
+    else if (e.key === '[' || e.key === ']') { e.preventDefault(); jump(e.key === ']' ? 1 : -1); }
+    else if (e.key === ' ' && (tg === document.body || tg.closest('.ln') || tg.closest('.scrub'))) { e.preventDefault(); setPlaying(!U.playing); }
+    else if (e.key === 'Escape') { if (selCount() || U.selmode) { U.sel = {}; U.selmode = false; updateLines(); updateTools(); } else if (U.hl) setHl(null); }
+  });
+  document.addEventListener('keyup', function (e) { if (e.key === ' ' && !U.picker && (e.target.closest && e.target.closest('.ln'))) e.preventDefault(); });
+  $('#play').addEventListener('click', function () { setPlaying(!U.playing); });
+  $('#follow').addEventListener('change', function () { U.follow = this.checked; });
+  $('#tsel').addEventListener('change', function () { toast('Labels map onto either transcript by time overlap (§7.6). One transcript in this mockup.', false); this.selectedIndex = 0; });
+  $$('.tabs [role=tab]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      $$('.tabs [role=tab]').forEach(function (x) { x.setAttribute('aria-selected', String(x === b)); });
+      var tr = b.dataset.tab === 'transcript'; $('#tp-transcript').hidden = !tr; $('#tp-other').hidden = tr;
+    });
+  });
+  app.addEventListener('click', function (e) { var b = e.target.closest('[data-elsewhere]'); if (b) toast('Not part of this mockup', false); });
+
+  /* ---------- mockup controls ---------- */
+  function setTheme(dark) { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; $('#mk-theme').setAttribute('aria-pressed', String(dark)); }
+  $('#mk-theme').addEventListener('click', function () { setTheme(document.documentElement.dataset.theme !== 'dark'); });
+  setTheme(document.documentElement.dataset.theme === 'dark');
+  function setPhone(on) {
+    U.phone = on; app.classList.toggle('phone', on); $('#mk-phone').setAttribute('aria-pressed', String(on));
+    U.stripOpen = !on; if (!on) U.selmode = false;
+    closePicker(false); renderAll();
+  }
+  $('#mk-phone').addEventListener('click', function () { setPhone(!U.phone); });
+  $('#mk-plaud').addEventListener('click', function () { var on = !app.classList.contains('plaud-mark'); app.classList.toggle('plaud-mark', on); this.setAttribute('aria-pressed', String(on)); });
+
+  function setState(name) {
+    closePicker(false); closeHelp(); hideToast(); clearTimeout(foundT); clearTimeout(sampleT); setPlaying(false);
+    $('#notices').innerHTML = ''; $('#banner').hidden = true;
+    S = initial(); undoStack = [];
+    U.sel = {}; U.anchor = null; U.hl = null; U.hlPos = -1; U.selmode = false; U.updated = []; U.sweepBefore = null; U.sample = null; U.focus = null; U.colors = {}; U.colorN = { b: 0, g: 0 };
+    lineEls.forEach(function (E) { E.li.classList.remove('flash', 'picking'); });
+    if (name === 'phone' && !U.phone) setPhone(true);
+    U.stripOpen = !U.phone;
+    renderAll(); seek(T('3:05'));
+    $$('.mk-bar [data-state]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.state === name)); });
+    var i312 = idxAt('3:12');
+    if (name === 'default') { scrollLine(idxAt('2:33'), 'top'); }
+    else if (name === 'picker') { scrollLine(idxAt('2:52'), 'top'); U.focus = i312; updateRoving(); openPicker(i312, {}); }
+    else if (name === 'range') {
+      var a = idxAt('7:54'), b = idxAt('8:45');
+      scrollLine(idxAt('7:46'), 'top'); U.anchor = a; selectRange(a, b); U.focus = b; updateRoving(); openPicker(b, {});
+    }
+    else if (name === 'sweep') { scrollLine(idxAt('2:06'), 'top'); applySweep(); }
+    else if (name === 'merge') {
+      scrollLine(idxAt('2:06'), 'top');
+      var i3 = idxAt('2:18'); openPicker(i3, {}); var ent = REC.filter(function (e) { return e.type === 'label' && e.L === 'S5'; })[0]; choose(ent);
+    }
+    else if (name === 'phone') { scrollLine(idxAt('2:52'), 'top'); openPicker(i312, {}); }
+  }
+  $$('.mk-bar [data-state]').forEach(function (b) { b.addEventListener('click', function () { setState(b.dataset.state); }); });
+
+  if (window.innerWidth < 700) setPhone(true);
+  setPlaying(false);
+  setState('default');
+  window.__mock = { S: function () { return S; }, U: U, LINES: LINES, setState: setState };
+})();
+</script>
+</body>
+</html>

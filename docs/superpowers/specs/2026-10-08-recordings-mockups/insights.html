@@ -1,0 +1,1186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Insights mockup</title>
+<script>
+  // Follow the OS until the toggle is used (§12.6).
+  (function () { try { document.documentElement.setAttribute('data-theme', matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {} })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Atkinson+Hyperlegible+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* Tokens: the warm palette from theme.css (generated from _brand.yml). */
+  :root {
+    color-scheme: light;
+    --background: #F8F6F2; --card: #FFFDFA; --sidebar: #EFE8DF; --secondary: #E8DDD2; --muted: #EFE8DF;
+    --border: #E0D6CB; --fg: #1C1A17; --mfg: #6B6258;
+    --primary: #236192; --on-primary: #F8F6F2; --ring: #236192;
+    --orange: #F26522; --success: #3D6123; --danger: #9A4665;
+    --sel: rgba(35, 97, 146, .10); --shadow: 0 8px 28px rgba(28, 26, 23, .16);
+    /* Proposed chart tokens (§12.6b: _brand.yml must also generate --chart-1…5). Validated, see notes. */
+    --chart-1: #236192; --chart-2: #B5832A; --chart-3: #8A5BA8;
+    /* Heatmap: one blue scale, brand hue, fixed steps. --heat-0 is the empty day. */
+    --heat-0: #EFE8DF; --heat-1: #CFE4F8; --heat-2: #96C3EC; --heat-3: #5898CF; --heat-4: #27689B; --heat-5: #114064;
+    --grid: #ECE4DA; --axis: #D6CBBE; --track: #E3EDF6;
+  }
+  [data-theme=dark] {
+    color-scheme: dark;
+    --background: #171512; --card: #232019; --sidebar: #1C1A16; --secondary: #2E2B26; --muted: #1C1A16;
+    --border: #2E2B26; --fg: #F8F6F2; --mfg: #B8AEA2;
+    --primary: #6CA6D9; --on-primary: #171512; --ring: #6CA6D9;
+    --success: #9CC27A; --danger: #D27A9A;
+    --sel: rgba(108, 166, 217, .15); --shadow: 0 8px 28px rgba(0, 0, 0, .5);
+    --chart-1: #5A95CF; --chart-2: #B98A30; --chart-3: #A07AC8;
+    --heat-0: #2E2B26; --heat-1: #264056; --heat-2: #2F5C82; --heat-3: #447FB2; --heat-4: #6BA8DC; --heat-5: #A6D0F6;
+    --grid: #2E2B26; --axis: #3A362F; --track: #22323F;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--background); color: var(--fg); font-family: "Atkinson Hyperlegible", system-ui, sans-serif; font-size: 14px; line-height: 1.45; }
+  button, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .mono, code, kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .muted { color: var(--mfg); }
+  .num { font-variant-numeric: tabular-nums; }
+  kbd { font-size: 11px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--card); color: var(--mfg); }
+  a { color: var(--primary); }
+
+  /* ---------- Mockup chrome (not part of the app) ---------- */
+  .mk-head { display: flex; align-items: flex-start; gap: 16px; padding: 18px 20px 6px; max-width: 1220px; margin: 0 auto; }
+  .mk-head h1 { margin: 0; font-size: 20px; }
+  .mk-head p { margin: 4px 0 0; color: var(--mfg); max-width: 760px; }
+  .mk-theme { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 5px 11px; white-space: nowrap; }
+  .mk-bar { max-width: 1220px; margin: 8px auto 14px; padding: 8px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; border: 1.5px dashed var(--axis); border-radius: 10px; font-size: 13px; }
+  .mk-bar .mk-tag { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; font-weight: 700; color: var(--mfg); }
+  .mk-states { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .mk-states button { border: 1px solid var(--border); background: var(--card); border-radius: 999px; padding: 2px 11px; font-size: 12.5px; }
+  .mk-states button[aria-pressed=true] { background: var(--fg); color: var(--background); border-color: var(--fg); font-weight: 700; }
+  .mk-bar label { display: inline-flex; align-items: center; gap: 5px; }
+  .mk-route { margin-left: auto; color: var(--mfg); font-size: 11.5px; }
+  .mk-note { width: 100%; color: var(--mfg); font-size: 12px; display: none; }
+  .mk-note.on { display: block; }
+  .stage { padding: 0 20px 28px; }
+
+  /* ---------- App frame ---------- */
+  .app { container: app / inline-size; max-width: 1180px; margin: 0 auto; background: var(--background); border: 1px solid var(--border); border-radius: 12px; overflow: clip; }
+  .stage.phone .app { width: 390px; }
+  .topbar { display: flex; align-items: center; gap: 18px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
+  .logo { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .logo i { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); box-shadow: 4px 0 0 0 var(--primary); margin-right: 4px; }
+  .navtop { display: flex; gap: 16px; }
+  .navtop a { color: var(--mfg); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; }
+  .navtop a[aria-current=page] { color: var(--fg); border-bottom-color: var(--orange); font-weight: 700; }
+  .tb-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .iconbtn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); background: var(--card); border-radius: 7px; color: var(--fg); padding: 0; }
+  .modeseg { display: inline-flex; gap: 4px; }
+  .modeseg button[aria-pressed=true] { background: var(--secondary); }
+
+  .ins { position: relative; }
+  .sticky-top { position: sticky; top: 0; z-index: 8; }
+  .sample { display: flex; align-items: center; gap: 8px; padding: 7px 16px; background: var(--secondary); border-bottom: 1px solid var(--border); font-size: 13px; }
+  .sample b { white-space: nowrap; }
+  .sample .long { color: var(--fg); }
+  .recalc { position: absolute; left: 0; right: 0; top: 100%; height: 0; pointer-events: none; }
+  .recalc .track { position: absolute; left: 0; right: 0; top: 0; height: 3px; overflow: hidden; opacity: 0; transition: opacity .12s; background: var(--sel); }
+  .recalc .track::before { content: ""; position: absolute; top: 0; bottom: 0; left: -40%; width: 40%; background: var(--primary); animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { to { left: 100%; } }
+  .sample .lbl { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--primary); white-space: nowrap; opacity: 0; transition: opacity .12s; }
+  .sample .lbl::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); }
+  .sample { flex-wrap: nowrap; }
+  .app.recalc-on .recalc .track, .app.recalc-on .sample .lbl { opacity: 1; }
+  #dash, #empty { transition: opacity .15s; }
+  .app.recalc-on #dash, .app.recalc-on #empty { opacity: .5; }
+  @media (prefers-reduced-motion: reduce) { .recalc .track::before { animation: none; left: 0; width: 100%; opacity: .6; } }
+
+  .page { padding: 16px 18px 8px; }
+  .ins-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 14px; }
+  .ins-head h1 { margin: 0; font-size: 20px; margin-right: 6px; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; flex: 1; }
+  .datectl { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 3px 4px 3px 9px; }
+  .datectl select { border: 0; background: transparent; padding: 2px 4px; font-weight: 700; max-width: 230px; }
+  .datectl select:focus-visible { outline: none; }
+  .datectl:focus-within { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .tags { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .tags .lab, .seg-wrap .lab { color: var(--mfg); font-size: 13px; }
+  .tchip { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; padding: 2px 10px; border-radius: 999px; background: var(--secondary); border: 1px solid transparent; }
+  .tchip .n { color: var(--fg); font-variant-numeric: tabular-nums; } /* muted is 4.47:1 on the sand chip */
+  .tchip[aria-pressed=true] { background: var(--sel); color: var(--primary); border-color: var(--primary); font-weight: 700; }
+  .tchip[aria-pressed=true] .n { color: var(--primary); }
+  .tchip .ck { display: none; }
+  .tchip[aria-pressed=true] .ck { display: inline; }
+  .linkbtn { border: 0; background: none; color: var(--primary); padding: 2px 4px; font-size: 12.5px; text-decoration: underline; }
+  .seg-wrap { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card); }
+  .seg button { border: 0; background: transparent; padding: 3px 12px; font-size: 13px; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed=true] { background: var(--primary); color: var(--on-primary); font-weight: 700; }
+  .seg.sm button { font-size: 12px; padding: 2px 9px; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  .card > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; }
+  .card h2 { margin: 0; font-size: 15px; }
+  .card h3 { margin: 0 0 2px; font-size: 13px; }
+  .card .sub { color: var(--mfg); font-size: 12.5px; margin: 0; }
+  .card .hr { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .grid { display: grid; gap: 12px; margin-bottom: 12px; }
+  .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .stat .lab { color: var(--mfg); font-size: 13px; }
+  .stat .val { font-size: 28px; font-weight: 700; line-height: 1.15; margin: 2px 0; }
+  .stat .val small { font-size: 15px; font-weight: 400; color: var(--mfg); }
+  .stat .avg { color: var(--mfg); font-size: 12.5px; }
+  .stat .wait { display: inline-block; margin-top: 3px; font-size: 11.5px; padding: 0 7px; border-radius: 999px; border: 1px dashed var(--mfg); color: var(--mfg); }
+  .row2 { grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); }
+  .row3 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+
+  /* Heatmap */
+  .heat-scroll { overflow-x: auto; overscroll-behavior-x: contain; padding: 2px 2px 4px; }
+  .heat-scroll svg { display: block; }
+  .heat-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; }
+  .caption { color: var(--mfg); font-size: 12.5px; }
+  .caption b { color: var(--fg); }
+  .legend { margin-left: auto; display: inline-flex; align-items: flex-start; gap: 4px; font-size: 11.5px; color: var(--mfg); }
+  .legend .end { padding-top: 0; line-height: 13px; }
+  .legend .box { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; width: 22px; }
+  .legend .box i { width: 13px; height: 13px; border-radius: 3px; display: block; }
+  .legend .box span { font-size: 10.5px; line-height: 1; }
+  .stepper { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .stepper button { border: 0; background: var(--card); width: 28px; height: 26px; padding: 0; font-size: 15px; }
+  .stepper button:disabled { color: var(--axis); cursor: default; }
+  .stepper output { padding: 0 10px; font-weight: 700; font-variant-numeric: tabular-nums; border-left: 1px solid var(--border); border-right: 1px solid var(--border); line-height: 26px; }
+  .hc { stroke: none; }
+  .hc.l0 { fill: var(--heat-0); } .hc.l1 { fill: var(--heat-1); } .hc.l2 { fill: var(--heat-2); } .hc.l3 { fill: var(--heat-3); } .hc.l4 { fill: var(--heat-4); } .hc.l5 { fill: var(--heat-5); }
+  .hc.out { opacity: .28; }
+  .hc:hover, .hc.hot { stroke: var(--fg); stroke-width: 1.5px; }
+  .hc:focus { outline: none; }
+  .hc:focus-visible { stroke: var(--ring); stroke-width: 2.5px; }
+  .hc.today { stroke: var(--fg); stroke-width: 1px; }
+  svg text { fill: var(--mfg); font-size: 10.5px; font-family: "Atkinson Hyperlegible", system-ui, sans-serif; }
+  svg text.ink { fill: var(--fg); }
+  svg text.b { font-weight: 700; }
+  svg .tick { font-variant-numeric: tabular-nums; }
+
+  /* Punch card */
+  .callout { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; border-left: 3px solid var(--primary); background: var(--sel); padding: 6px 10px; border-radius: 0 8px 8px 0; margin: 2px 0 10px; font-size: 13px; }
+  .callout b { font-size: 14px; }
+  .pc-dot { fill: var(--chart-1); }
+  .pc-zero { fill: var(--axis); }
+  .pc-hit { fill: transparent; }
+  .pc-hit:hover + .pc-dot, .pc-cell:hover .pc-dot { opacity: .78; }
+  .pc-ring { fill: none; stroke: var(--fg); stroke-width: 1.5px; }
+  .pc-tot { font-variant-numeric: tabular-nums; }
+  .avgs { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0; font-size: 13px; }
+  .avgs dt { color: var(--mfg); padding: 7px 12px 7px 0; border-bottom: 1px solid var(--grid); }
+  .avgs dd { margin: 0; padding: 7px 0; border-bottom: 1px solid var(--grid); text-align: right; }
+  .avgs dd b { font-weight: 700; }
+  .avgs dd span { display: block; color: var(--mfg); font-size: 12px; }
+  .avgs dt:last-of-type, .avgs dd:last-of-type { border-bottom: 0; }
+
+  /* Bars and columns */
+  .bar-c1 { fill: var(--chart-1); } .bar-c2 { fill: var(--chart-2); } .bar-c3 { fill: var(--chart-3); }
+  .gridline { stroke: var(--grid); stroke-width: 1; }
+  .baseline { stroke: var(--axis); stroke-width: 1; }
+  .avgline { stroke: var(--fg); stroke-width: 1.25; opacity: .7; }
+  .hit { fill: transparent; }
+  .hit:hover { fill: var(--sel); }
+  .colhit { fill: transparent; cursor: pointer; }
+  .colhit:hover, .colhit:focus-visible { fill: var(--sel); outline: none; }
+  .ch-block + .ch-block { margin-top: 14px; }
+  .ch-block svg { display: block; overflow: visible; }
+  .lgd { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--fg); margin: 2px 0 6px; }
+  .lgd span { display: inline-flex; align-items: center; gap: 5px; }
+  .lgd i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .sw-c1 { background: var(--chart-1); } .sw-c2 { background: var(--chart-2); } .sw-c3 { background: var(--chart-3); }
+  .tblbtn { border: 1px solid var(--border); background: var(--card); border-radius: 7px; font-size: 12px; padding: 2px 9px; }
+  .tblbtn[aria-pressed=true] { background: var(--sel); color: var(--primary); border-color: var(--primary); font-weight: 700; }
+  table.dt { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  table.dt th, table.dt td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+  table.dt th:first-child, table.dt td:first-child { text-align: left; }
+  table.dt th { color: var(--mfg); font-weight: 700; }
+  .tblwrap { max-height: 320px; overflow: auto; }
+
+  /* Speakers */
+  .spk-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .8fr); gap: 18px; }
+  .meter { margin: 10px 0 12px; }
+  .meter .top { display: flex; justify-content: space-between; font-size: 13px; }
+  .meter .top b { font-size: 15px; }
+  .meter .tr { height: 12px; border-radius: 6px; background: var(--track); margin-top: 4px; overflow: hidden; }
+  .meter .tr i { display: block; height: 100%; background: var(--chart-1); border-radius: 0 4px 4px 0; }
+  .meter .sub { margin-top: 3px; }
+  .spk-note { margin: 10px 0 0; color: var(--mfg); font-size: 12.5px; display: flex; gap: 6px; align-items: flex-start; }
+  .lockic { display: inline-block; vertical-align: -1px; }
+
+  /* Empty state */
+  .empty { text-align: center; padding: 48px 20px 56px; }
+  .empty h2 { margin: 8px 0 4px; font-size: 17px; }
+  .empty p { margin: 0 0 14px; color: var(--mfg); }
+  .empty .acts { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .btn { border: 1px solid var(--border); border-radius: 7px; padding: 5px 12px; background: var(--card); }
+  .btn.pri { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 700; }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+
+  .ins-foot { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 8px; padding: 10px 16px 18px; color: var(--mfg); font-size: 12.5px; }
+  .ins-foot b { color: var(--fg); }
+  .ins-foot .pyo { display: none; }
+  .app.pages .ins-foot .pyo { display: inline; }
+  .pill { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px dashed var(--mfg); color: var(--mfg); line-height: 16px; vertical-align: 1px; }
+
+  /* Tooltip and the day popover */
+  .tip { position: fixed; z-index: 50; pointer-events: none; background: var(--card); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 6px 10px; font-size: 12.5px; max-width: 280px; opacity: 0; transition: opacity .08s; }
+  .tip.on { opacity: 1; }
+  .tip .row { display: flex; align-items: center; gap: 6px; }
+  .tip .key { width: 12px; height: 2px; border-radius: 1px; display: inline-block; }
+  .tip .k-c1 { background: var(--chart-1); } .tip .k-c2 { background: var(--chart-2); } .tip .k-c3 { background: var(--chart-3); }
+  .pop { position: fixed; z-index: 60; width: 300px; max-width: calc(100vw - 24px); background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 10px; padding: 12px 14px; font-size: 13px; display: none; }
+  .pop.on { display: block; }
+  .pop .ph { display: flex; gap: 8px; align-items: flex-start; }
+  .pop .ph b { flex: 1; }
+  .pop .x { border: 0; background: none; font-size: 18px; line-height: 1; padding: 0 2px; color: var(--mfg); }
+  .pop ul { list-style: none; margin: 8px 0; padding: 0; }
+  .pop li { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px dashed var(--grid); font-size: 12.5px; }
+  .pop li .tm { color: var(--mfg); font-variant-numeric: tabular-nums; }
+  .pop li .du { margin-left: auto; color: var(--mfg); white-space: nowrap; }
+  .pop .why { color: var(--mfg); font-size: 12px; margin: 6px 0 0; }
+
+  dialog.help { border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); padding: 16px 18px; width: 380px; max-width: calc(100vw - 32px); box-shadow: var(--shadow); }
+  dialog.help::backdrop { background: rgba(0, 0, 0, .3); }
+  dialog.help h2 { margin: 0 0 8px; font-size: 16px; }
+  dialog.help table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  dialog.help td { padding: 5px 4px; border-bottom: 1px solid var(--grid); }
+
+  /* Phone tab bar */
+  .tabbar { display: none; position: sticky; bottom: 0; z-index: 7; background: var(--card); border-top: 1px solid var(--border); }
+  .tabbar a { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 0 7px; font-size: 10.5px; color: var(--mfg); text-decoration: none; border-top: 2px solid transparent; margin-top: -1px; }
+  .tabbar a[aria-current=page] { color: var(--fg); font-weight: 700; border-top-color: var(--orange); }
+
+  @container app (max-width: 940px) {
+    .row2, .row3 { grid-template-columns: minmax(0, 1fr); }
+    .spk-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .spk-grid > :last-child { grid-column: 1 / -1; }
+  }
+  @container app (max-width: 620px) {
+    .navtop, .modeseg { display: none; }
+    .tabbar { display: flex; }
+    .page { padding: 12px 12px 6px; }
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .stat .val { font-size: 24px; }
+    .card { padding: 12px; }
+    .sample { padding: 6px 12px; font-size: 12.5px; }
+    .sample .long { display: none; }
+    .ins-head h1 { width: 100%; }
+    .controls { gap: 8px; }
+    .datectl { width: 100%; }
+    .datectl select { flex: 1; max-width: none; }
+    .tags { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; padding-bottom: 2px; }
+    .tchip { white-space: nowrap; }
+    .seg-wrap { margin-left: 0; }
+    .spk-grid { grid-template-columns: minmax(0, 1fr); }
+    .legend { margin-left: 0; }
+  }
+
+  /* Design notes */
+  .notes { max-width: 1180px; margin: 0 auto; padding: 4px 20px 40px; font-size: 13.5px; }
+  .notes h2 { font-size: 16px; margin: 18px 0 6px; }
+  .notes li { margin: 5px 0; }
+  .notes code { font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<header class="mk-head">
+  <div>
+    <h1>Insights</h1>
+    <p>A dashboard of the archive, per spec §12.6b. Every number is computed in Python by Shiny and drawn by React; here one JavaScript function stands in for the Python. The year is invented from a fixed seed.</p>
+  </div>
+  <button class="mk-theme" id="mk-theme" aria-pressed="false" aria-label="Dark mode (mockup control)">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor"/></svg>
+    <span id="mk-theme-l">Dark</span>
+  </button>
+</header>
+
+<div class="mk-bar" role="group" aria-label="Mockup controls, not part of the app">
+  <span class="mk-tag">Mockup controls</span>
+  <span class="mk-states" id="mk-states">
+    <span class="muted">State:</span>
+    <button data-state="default" aria-pressed="true">Default</button>
+    <button data-state="recalc" aria-pressed="false">Recalculating</button>
+    <button data-state="empty" aria-pressed="false">Empty range</button>
+    <button data-state="phone" aria-pressed="false">Phone</button>
+    <button data-state="pages" aria-pressed="false">Pages demo</button>
+  </span>
+  <label><input type="checkbox" id="mk-phone"> Phone (390 px)</label>
+  <label><input type="checkbox" id="mk-pages"> Pages demo (Pyodide)</label>
+  <span class="mk-route mono" id="mk-route" title="The hash route Back returns to (§12.6b)"></span>
+  <span class="mk-note" id="mk-note">The bar is held here so you can look at it. Change any app control to let Python finish.</span>
+</div>
+
+<div class="stage" id="stage">
+  <div class="app" id="app">
+    <header class="topbar">
+      <span class="logo"><i></i>Recordings</span>
+      <nav class="navtop" aria-label="Main">
+        <a href="#" data-nav>Library</a><a href="#" data-nav>Tags</a><a href="#" data-nav>People</a><a href="#" aria-current="page">Insights</a><a href="#" data-nav>Add</a><a href="#" data-nav>Status</a>
+      </nav>
+      <div class="tb-right">
+        <button class="iconbtn" id="help-btn" aria-label="Keyboard shortcuts (?)"><span aria-hidden="true" style="font-weight:700">?</span></button>
+        <div class="modeseg" role="group" aria-label="Colour mode">
+          <button class="iconbtn" data-mode="light" aria-pressed="false" aria-label="Light"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6 13 13M3 13l1.4-1.4M11.6 4.4 13 3"/></svg></button>
+          <button class="iconbtn" data-mode="system" aria-pressed="true" aria-label="System"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5.5 14.5h5M8 11.5v3"/></svg></button>
+          <button class="iconbtn" data-mode="dark" aria-pressed="false" aria-label="Dark"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.5 9.5A6 6 0 0 1 6.5 2.5a6 6 0 1 0 7 7z"/></svg></button>
+        </div>
+      </div>
+    </header>
+
+    <main class="ins" id="ins">
+      <div class="sticky-top">
+        <div class="sample" role="note">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 7.2v4M8 4.6v.1" stroke-linecap="round"/></svg>
+          <span><b>Sample data, made up.</b> <span class="long">An invented year of 312 recordings, so the charts have something to show. Your Library keeps its 4 real recordings, and opening days in the Library is off here.</span></span>
+          <span class="lbl" id="recalc-l" aria-hidden="true">Recalculating in Python…</span>
+        </div>
+        <div class="recalc" id="recalc" aria-hidden="true"><div class="track"></div></div>
+      </div>
+      <div class="sr" role="status" aria-live="polite" id="live"></div>
+
+      <div class="page">
+        <div class="ins-head">
+          <h1>Insights</h1>
+          <div class="controls" role="group" aria-label="Filters">
+            <label class="datectl">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg>
+              <span class="sr">Date range</span>
+              <select id="range" aria-keyshortcuts="D"></select>
+              <kbd aria-hidden="true">D</kbd>
+            </label>
+            <div class="tags" role="group" aria-label="Tags">
+              <span class="lab">Tags</span>
+              <span id="tagchips" style="display:contents"></span>
+              <button class="linkbtn" id="tag-clear" hidden>Clear</button>
+            </div>
+            <div class="seg-wrap">
+              <span class="lab" id="metric-l">Charts show</span>
+              <div class="seg" role="group" aria-labelledby="metric-l" id="metric">
+                <button data-metric="hours" aria-pressed="true">Hours</button>
+                <button data-metric="count" aria-pressed="false">Count</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="dash">
+          <section class="grid cards" aria-label="Totals" id="cards"></section>
+
+          <section class="card grid" style="display:block" aria-labelledby="heat-h">
+            <header>
+              <h2 id="heat-h">Every day</h2>
+              <p class="sub" id="heat-sub"></p>
+              <div class="hr">
+                <div class="stepper" role="group" aria-label="Year">
+                  <button id="yr-prev" aria-label="Previous year">‹</button>
+                  <output id="yr" aria-live="polite"></output>
+                  <button id="yr-next" aria-label="Next year">›</button>
+                </div>
+              </div>
+            </header>
+            <div class="heat-scroll" id="heat-scroll"></div>
+            <div class="heat-foot">
+              <div class="caption" id="heat-cap"></div>
+              <div class="legend" id="heat-legend" aria-label="Colour scale"></div>
+            </div>
+          </section>
+
+          <div class="grid row2">
+            <section class="card" aria-labelledby="pc-h">
+              <header><h2 id="pc-h">When you record</h2><p class="sub" id="pc-sub"></p></header>
+              <div class="callout" id="pc-callout"></div>
+              <div id="pc-box"></div>
+            </section>
+            <section class="card" aria-labelledby="av-h">
+              <header><h2 id="av-h">Averages and busiest times</h2></header>
+              <dl class="avgs" id="avgs"></dl>
+            </section>
+          </div>
+
+          <div class="grid row3">
+            <section class="card" aria-labelledby="mu-h">
+              <header>
+                <h2 id="mu-h">Model usage</h2>
+                <div class="hr">
+                  <div class="seg sm" role="group" aria-label="Model usage view" id="mu-view">
+                    <button data-view="totals" aria-pressed="true">Totals</button>
+                    <button data-view="months" aria-pressed="false">By month</button>
+                  </div>
+                  <button class="tblbtn" data-table="mu" aria-pressed="false">Table</button>
+                </div>
+                <p class="sub" style="width:100%">Words come from each recording's chosen transcript, so they add up to the Words card. The switch above doesn't apply here.</p>
+              </header>
+              <div id="mu-box"></div>
+            </section>
+            <section class="card" aria-labelledby="tr-h">
+              <header>
+                <h2 id="tr-h">Trends</h2>
+                <div class="hr"><button class="tblbtn" data-table="tr" aria-pressed="false">Table</button></div>
+              </header>
+              <div id="tr-box"></div>
+            </section>
+          </div>
+
+          <section class="card grid" style="display:block" aria-labelledby="sp-h">
+            <header><h2 id="sp-h">Speakers</h2><p class="sub">Made-up names for the sample. From each recording's speaker labels (§7.6), with inferred matches included.</p></header>
+            <div class="spk-grid" id="spk"></div>
+            <p class="spk-note"><svg class="lockic" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg><span>People from <code>people.private.yaml</code> are counted but never named here. Voices nobody has named yet are grouped as "Unnamed"; name them in People › To link.</span></p>
+          </section>
+        </div>
+
+        <section class="card empty" id="empty" hidden aria-live="polite"></section>
+      </div>
+
+      <footer class="ins-foot" id="foot">
+        <span>Computed in Python by Shiny<span class="pyo"> in your browser (Pyodide)</span></span><span aria-hidden="true">·</span>
+        <span><b id="f-n">312</b> recordings</span><span aria-hidden="true">·</span>
+        <span id="f-ms" class="num">41 ms</span><span aria-hidden="true">·</span>
+        <a href="https://github.com/chendaniely/recordings" target="_blank" rel="noopener" title="The Python behind this page (to be written)">source ↗</a><span aria-hidden="true">·</span>
+        <span class="pill">Sample</span>
+      </footer>
+    </main>
+
+    <nav class="tabbar" aria-label="Main">
+      <a href="#" data-nav><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h11"/></svg>Library</a>
+      <a href="#" data-nav><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 2.5h5.5L14 9l-5 5-6.5-6.5z"/><circle cx="5" cy="5.5" r="1"/></svg>Tags</a>
+      <a href="#" data-nav><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="6" cy="5.5" r="2.5"/><path d="M1.5 14c.5-3 2.3-4.5 4.5-4.5s4 1.5 4.5 4.5M11 3.2a2.4 2.4 0 0 1 0 4.6M12.5 10c1 .7 1.7 2 2 4"/></svg>People</a>
+      <a href="#" aria-current="page"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 13.5V9M6.2 13.5V3M9.8 13.5V6.5M13.5 13.5V10"/></svg>Insights</a>
+      <a href="#" data-nav><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11"/></svg>Add</a>
+      <a href="#" data-nav><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1.5 8.5h3l2-5 3 9 2-4h3"/></svg>Status</a>
+    </nav>
+  </div>
+</div>
+
+<div class="tip" id="tip" role="tooltip"></div>
+<div class="pop" id="pop" role="dialog" aria-modal="false" aria-labelledby="pop-t"></div>
+
+<dialog class="help" id="help" aria-labelledby="help-h">
+  <h2 id="help-h">Keyboard on Insights</h2>
+  <table>
+    <tr><td><kbd>D</kbd></td><td>opens the date control</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>heatmap: a week back or forward</td></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>heatmap: the day before or after</td></tr>
+    <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>heatmap: first day, or the latest day</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>heatmap: the day's details</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>closes the details or this sheet</td></tr>
+    <tr><td><kbd>?</kbd></td><td>this sheet, on every page</td></tr>
+  </table>
+  <p class="muted" style="font-size:12.5px;margin:10px 0 0">The full map (T, P, Y/N and the rest) lives in §12 and is listed on the pages it applies to.</p>
+  <form method="dialog" style="text-align:right;margin-top:10px"><button class="btn">Close</button></form>
+</dialog>
+
+<section class="notes" aria-labelledby="notes-h">
+  <h2 id="notes-h">Design notes</h2>
+  <ul>
+    <li><b>Order follows §12.6b:</b> four cards, the full-width heatmap, the punch card beside "Averages and busiest times", model usage beside trends, Speakers, then the footer.</li>
+    <li><b>Python computes, React draws.</b> One <code>compute()</code> stands in for <code>@reactive_output("insights")</code>. Its inputs are the date control, the tag chips, the hours/count switch and the year, sent with <code>useShinyInput</code>. Hover, focus and the day details stay in the browser and never round-trip.</li>
+    <li><b>Recalculating:</b> any input change keeps the old charts at half opacity under a thin "Recalculating in Python…" bar (<code>useShinyOutputStatus</code>), for about 400 ms here and 850 ms in the Pages demo, then swaps them. There is no skeleton and no layout jump. The footer timing is made up: 24–68 ms, or 160–420 ms with Pyodide.</li>
+    <li><b>The hours/count switch</b> changes the heatmap, punch card, trends and "who you meet most", never the cards. Model usage stays words and notes, and talk time stays hours.</li>
+    <li><b>Heatmap:</b> one blue scale at the brand hue, never orange, with fixed steps. Out-of-range days are dimmed and future days are blank. The week starts on Monday. The streaks are in the caption. Arrow keys move a week or a day, Enter opens the day, and each cell has an aria-label. "Open in Library →" is disabled with the reason, because the year is invented. On a phone the strip scrolls, starting at the latest week.</li>
+    <li><b>Punch card:</b> circles are sized by area. In hours mode a recording is split across the hours it covers. The callout says <i>busiest</i>, and the row and column totals back it up. Its ring is ink, not orange. On a phone it turns sideways (hours down) and trims to the hours that have data.</li>
+    <li><b>Model usage:</b> colour follows the engine or model between Totals and By month. Whisper is blue and Plaud ochre; qwen3.6 is blue, gemma ochre and claude-opus violet. claude-opus never gets private recordings (§7.4), so its count is lower.</li>
+    <li><b>Proposed <code>--chart-1…3</code></b> for <code>_brand.yml</code>: light <code>#236192 #B5832A #8A5BA8</code>, dark <code>#5A95CF #B98A30 #A07AC8</code>. They pass the dataviz validator against the card colour in both modes: adjacent CVD ΔE at least 21, normal vision at least 22, and 3:1 or better. <code>#6CA6D9</code> sits just outside the dark lightness band, so dark charts use <code>#5A95CF</code>.</li>
+    <li><b>Privacy:</b> private recordings count in every total, but their titles never appear (the day details say "Private recording"). The private person shows as "1 private person".</li>
+    <li><b>The sample year</b> is 312 records from seed 20261008, rolling 12 months ending today. It has Tuesday and Thursday lectures and Friday labs in term weeks, Wednesday office hours, a Monday sync, a Tuesday check-in, a fortnightly planning call, ad-hoc meetings, occasional weekend talks and private memos. Dec 21 – Jan 3 and Aug 3 – 23 are holidays with nothing recorded, which is what the empty-range state uses.</li>
+    <li><b>The real build</b> uses shadcn charts (Recharts, with the brand tokens) for the bars: model usage, trends and speakers. The heatmap and punch card are plain SVG, as here. There is no chart library in this mockup.</li>
+    <li>The date control is a plain preset select here, because the picker has its own mockup. <kbd>D</kbd> focuses it. The route readout in the mockup bar shows the hash route that Back returns to.</li>
+  </ul>
+  <h2>Open questions for Dan</h2>
+  <ul>
+    <li><b>Heatmap steps.</b> "0, under ½, 1, 2 and 4+" leaves ½–1 h with no step if read as five boxes. The mockup reads them as edges, which gives six boxes: 0, under ½, ½–1, 1–2, 2–4 and 4+. Is that right, or should two of them merge?</li>
+    <li><b>Count mode needs its own steps.</b> The mockup uses 0, 1, 2, 3, 4 and 5+ recordings.</li>
+    <li><b>Year stepper or date control?</b> The stepper moves by calendar year and dims days outside the range, so "All time" (a rolling year) is split across 2025 and 2026. The alternative is a GitHub-style "past 12 months" page first.</li>
+    <li><b>Tag chips.</b> The Library combines two tags with AND. These three chips barely overlap, so the mockup uses any-of. Should Insights keep AND?</li>
+    <li><b>Private people in Speakers.</b> The spec says "who you meet most" both <i>leaves out</i> private-only people and <i>masks</i> <code>people.private.yaml</code> names, and by default those are the same people. The mockup shows them as one masked row. Should they be left out entirely?</li>
+    <li><b>Empty days in dark mode.</b> <code>--muted</code> (<code>#1C1A16</code>) is darker than the card in dark mode, so empty days look like holes. The mockup uses <code>--secondary</code> (<code>#2E2B26</code>). Should it be a <code>--heat-0</code> token?</li>
+    <li><b>Clock format.</b> The callout uses 24-hour time ("Tue 14:00–16:00", as in the brief), but the spec's example is "Tuesdays 2–4 pm". Which should it be?</li>
+    <li><b>Week start.</b> §12.6a says the date picker's week "starts on the same day as in Insights", but nothing sets that day. The mockup uses Monday. Should it be a config key?</li>
+  </ul>
+</section>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var DAY = 864e5;
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var MONL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var DOWS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var DOWL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  function dnOf(y, m, d) { return Math.round(Date.UTC(y, m, d) / DAY); }
+  function ymd(n) { var x = new Date(n * DAY); return { y: x.getUTCFullYear(), m: x.getUTCMonth(), d: x.getUTCDate(), dow: (x.getUTCDay() + 6) % 7 }; }
+  var NOW = new Date();
+  var TODAY = dnOf(NOW.getFullYear(), NOW.getMonth(), NOW.getDate());
+  var NOW_MIN = NOW.getHours() * 60 + NOW.getMinutes();
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function sum(a, f) { var t = 0; for (var i = 0; i < a.length; i++) t += f(a[i]); return t; }
+  function median(a) { if (!a.length) return 0; var b = a.slice().sort(function (x, y) { return x - y; }), k = b.length >> 1; return b.length % 2 ? b[k] : (b[k - 1] + b[k]) / 2; }
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function hh(h) { return pad2(h % 24) + ':00'; }
+  function hhmm(min) { min = Math.round(min); return pad2(Math.floor(min / 60)) + ':' + pad2(min % 60); }
+  function fmtDay(n) { var o = ymd(n); return DOWS[o.dow] + ' ' + MON[o.m] + ' ' + o.d; }
+  function fmtShort(n) { var o = ymd(n); return MON[o.m] + ' ' + o.d; }
+  function fmtH(h) { if (h <= 0) return '0 h'; if (h < 0.05) return '<0.1 h'; return (h < 10 ? h.toFixed(1) : Math.round(h).toLocaleString('en-US')) + ' h'; }
+  function fmtMin(min) { min = Math.round(min); if (min < 60) return min + ' min'; var m = min % 60; return Math.floor(min / 60) + ' h' + (m ? ' ' + m + ' min' : ''); }
+  function compact(v) { v = Math.round(v); if (v >= 1e6) return (v / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M'; if (v >= 1e4) return Math.round(v / 1e3) + 'k'; if (v >= 1e3) return (v / 1e3).toFixed(1).replace(/\.0$/, '') + 'k'; return String(v); }
+  function plural(n, w) { return n.toLocaleString('en-US') + ' ' + w + (n === 1 ? '' : 's'); }
+  var LOCK = '<svg class="lockic" width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>';
+
+  /* ======================= The sample year (fixed seed) ======================= */
+  function makeSample() {
+    function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+    var rnd = mulberry32(20261008);
+    function U(a, b) { return a + (b - a) * rnd(); }
+    function I(a, b) { return Math.floor(U(a, b + 1)); }
+    function pick(arr) { return arr[Math.floor(rnd() * arr.length)]; }
+    function md(o) { return (o.m + 1) * 100 + o.d; }
+    function holiday(o) { var v = md(o); return v >= 1221 || v <= 103 || (v >= 803 && v <= 823); }
+    // Term weeks: fall Sep 3 – Dec 5, winter Jan 6 – Apr 9, each with a one-week break.
+    function term(n, o) {
+      var v = md(o);
+      if (v >= 903 && v <= 1205 && !(v >= 1110 && v <= 1114)) return { course: 'COURSE 101', week: Math.floor((n - dnOf(o.y, 8, 3)) / 7) + 1 };
+      if (v >= 106 && v <= 409 && !(v >= 216 && v <= 220)) return { course: 'COURSE 102', week: Math.floor((n - dnOf(o.y, 0, 6)) / 7) + 1 };
+      return null;
+    }
+    var span = 364, start = TODAY - span, recs = [], day = [];
+    function add(kind, title, h, m, dur, tags, ppl, priv) { day.push({ kind: kind, title: title, startMin: h * 60 + m, dur: Math.round(dur), tags: tags, ppl: ppl || [], priv: !!priv }); }
+    var adhoc = [['Design review', ['alex']], ['Project kickoff', ['sam', 'priya']], ['Conference planning call', ['sam', 'alex']], ['Data model chat', ['alex', 'sam']], ['Hiring panel debrief', ['priya', 'sam']], ['Budget check', ['priya']]];
+    var talkTitles = ['Weekend talk: Shiny for teaching', 'Meetup talk: Reactive dashboards', 'Weekend workshop: Plotting basics', 'Guest talk: Reproducible notebooks', 'Weekend talk: Teaching with data'];
+    var semTitles = ['Seminar: Reproducible pipelines', 'Seminar: Open data in practice', 'Seminar: Testing data code', 'Seminar: Version control for teams'];
+    for (var i = 0; i <= span; i++) {
+      var n = start + i, o = ymd(n), dow = o.dow, t = i / span;
+      if (holiday(o)) continue;
+      var tm = term(n, o); day = [];
+      if (tm) {
+        if ((dow === 1 || dow === 3) && rnd() < 0.93) add('lecture', tm.course + ': Week ' + tm.week + (dow === 1 ? ', Tue' : ', Thu'), 14, I(0, 3), U(76, 84), ['teaching']);
+        if (dow === 4 && rnd() < 0.55) add('lecture', tm.course + ': Lab ' + tm.week, 10, I(0, 4), U(95, 120), ['teaching']);
+        if (dow === 2 && rnd() < 0.75) add('office', 'Office hours', 15, I(0, 5), U(35, 60), ['teaching'], rnd() < 0.3 ? ['unknown1'] : []);
+        if (dow === 4 && rnd() < 0.3) add('talk', pick(semTitles), 12, 0, U(50, 62), ['talks', 'teaching'], ['sam', rnd() < 0.5 ? 'unknown1' : null].filter(Boolean));
+      }
+      if (dow === 0 && rnd() < 0.92) add('meeting', 'Team weekly sync', 10, I(0, 6), U(42, 62), ['meetings'], ['alex', 'sam', 'priya'].filter(function () { return rnd() < 0.85; }));
+      if (dow === 1 && rnd() < 0.85) add('meeting', 'Check-in with Priya', 15, 30, U(25, 40), ['meetings'], ['priya']);
+      if (dow === 3 && (Math.floor(i / 7) % 2 === 0) && rnd() < 0.75 && (o.m < 6 || o.m > 7)) add('meeting', 'Conference planning call', 16, I(0, 10), U(28, 55), ['meetings'], ['sam', rnd() < 0.6 ? 'alex' : null].filter(Boolean));
+      if (dow < 5 && rnd() < 0.3) { var a = pick(adhoc); add('meeting', a[0], pick([9, 11, 13, 15, 16]), pick([0, 15, 30]), U(20, 70), ['meetings'], a[1].slice()); }
+      if (dow >= 5 && rnd() < 0.1) add('talk', pick(talkTitles), pick([10, 13, 14]), pick([0, 30]), U(45, 120), ['talks'], rnd() < 0.45 ? ['unknown1'] : []);
+      if (dow === 2 && (Math.floor(i / 7) % 2 === 1) && rnd() < 0.7) add('private', 'Mentoring chat', 17, 0, U(30, 50), ['private'], ['pp'], true);
+      if (rnd() < 0.12) add('memo', 'Voice memo', pick([7, 8, 18, 21]), I(0, 50), U(10, 22), ['private'], [], true);
+      day.forEach(function (r) {
+        if (n === TODAY && r.startMin + r.dur > NOW_MIN) return; // nothing from later today
+        r.dn = n; r.dow = dow; r.t = t; recs.push(r);
+      });
+    }
+    window.__rawCount = recs.length;
+    var TARGET = 312; // trim to a fixed total, dropping seeded-random non-lectures
+    while (recs.length > TARGET) { var k = Math.floor(rnd() * recs.length); if (recs[k].kind !== 'lecture') recs.splice(k, 1); }
+    recs.sort(function (x, y) { return x.dn - y.dn || x.startMin - y.startMin; });
+    var wpm = { lecture: 135, office: 120, meeting: 150, talk: 140, private: 145, memo: 125 };
+    recs.forEach(function (r, idx) {
+      var t = r.t;
+      r.engine = rnd() < 0.06 + 0.86 / (1 + Math.exp(-(t - 0.45) * 10)) ? 'whisper' : 'plaud';
+      r.words = Math.round(r.dur * wpm[r.kind] * U(0.8, 0.95));
+      r.transcribed = idx < recs.length - 2; // the newest two are still transcribing
+      var notes = {};
+      if (rnd() < (t < 0.5 ? 0.85 : Math.max(0.1, 0.85 - (t - 0.5) * 1.6))) notes.gemma = 1;
+      if (rnd() < Math.min(0.95, Math.max(0, (t - 0.3) * 2.6))) notes.qwen = 1;
+      if (!r.priv && rnd() < ({ lecture: 0.8, talk: 0.75, office: 0.3, meeting: 0.25 }[r.kind] || 0)) notes.opus = 1;
+      r.notes = r.transcribed ? notes : {};
+      var speech = r.dur * 0.85, w;
+      if (r.kind === 'lecture') w = [['dan', U(0.78, 0.9)], ['students', 0]];
+      else if (r.kind === 'office') w = [['dan', U(0.45, 0.6)], ['students', 0]];
+      else if (r.kind === 'memo') w = [['dan', 1]];
+      else if (r.kind === 'talk') w = r.title.indexOf('Seminar') === 0 ? [['sam', U(0.55, 0.7)], ['dan', U(0.1, 0.2)]] : [['dan', U(0.82, 0.92)]];
+      else w = [['dan', U(0.25, 0.45)]];
+      var rest = Math.max(0, 1 - sum(w, function (x) { return x[1]; }));
+      var others = r.ppl.filter(function (p) { return !w.some(function (x) { return x[0] === p; }); });
+      w.forEach(function (x) { if (x[0] === 'students') { x[1] = others.length ? rest * 0.75 : rest; rest -= x[1]; } });
+      if (others.length) { var ws = others.map(function () { return U(0.6, 1.4); }), tot = sum(ws, function (v) { return v; }); others.forEach(function (p, j) { w.push([p, rest * ws[j] / tot]); }); }
+      r.talk = w.filter(function (x) { return x[1] > 0; }).map(function (x) { return { p: x[0], min: speech * x[1] }; });
+      delete r.t;
+    });
+    return recs;
+  }
+  var DATA = makeSample();
+  var FIRST = DATA.length ? DATA[0].dn : TODAY;
+
+  /* ======================= Date presets ======================= */
+  var T0 = ymd(TODAY);
+  var AY = T0.m >= 8 ? T0.y : T0.y - 1; // academic year containing today
+  var AUG = T0.m >= 8 ? T0.y : T0.y - 1;
+  var lmEnd = dnOf(T0.y, T0.m, 1) - 1, lmo = ymd(lmEnd);
+  var PRESETS = [
+    { g: 'Presets', id: 'today', label: 'Today', s: TODAY, e: TODAY },
+    { g: 'Presets', id: 'yesterday', label: 'Yesterday', s: TODAY - 1, e: TODAY - 1 },
+    { g: 'Presets', id: 'last7', label: 'Last 7 days', s: TODAY - 6, e: TODAY },
+    { g: 'Presets', id: 'last30', label: 'Last 30 days', s: TODAY - 29, e: TODAY },
+    { g: 'Presets', id: 'thismonth', label: 'This month', s: dnOf(T0.y, T0.m, 1), e: TODAY },
+    { g: 'Presets', id: 'lastmonth', label: 'Last month', s: dnOf(lmo.y, lmo.m, 1), e: lmEnd },
+    { g: 'Presets', id: 'thisyear', label: 'This year', s: dnOf(T0.y, 0, 1), e: TODAY },
+    { g: 'Presets', id: 'all', label: 'All time', s: FIRST, e: TODAY },
+    { g: 'Terms (from config)', id: 'w1', label: AY + 'W1 · Sep – Dec ' + AY, s: dnOf(AY, 8, 1), e: dnOf(AY, 11, 31) },
+    { g: 'Terms (from config)', id: 'w2p', label: (AY - 1) + 'W2 · Jan – Apr ' + AY, s: dnOf(AY, 0, 1), e: dnOf(AY, 3, 30) },
+    { g: 'Terms (from config)', id: 'w1p', label: (AY - 1) + 'W1 · Sep – Dec ' + (AY - 1), s: dnOf(AY - 1, 8, 1), e: dnOf(AY - 1, 11, 31) },
+    { g: 'Custom (from the date picker)', id: 'custom', label: 'Aug 10 – 21, ' + AUG, s: dnOf(AUG, 7, 10), e: dnOf(AUG, 7, 21) }
+  ];
+  function preset(id) { for (var i = 0; i < PRESETS.length; i++) if (PRESETS[i].id === id) return PRESETS[i]; return PRESETS[7]; }
+  (function fillSelect() {
+    var sel = $('#range'), html = '', g = null;
+    PRESETS.forEach(function (p) {
+      if (p.g !== g) { if (g) html += '</optgroup>'; html += '<optgroup label="' + esc(p.g) + '">'; g = p.g; }
+      html += '<option value="' + p.id + '">' + esc(p.label) + '</option>';
+    });
+    sel.innerHTML = html + '</optgroup>';
+  })();
+
+  var TAGS = ['teaching', 'meetings', 'talks'];
+  var NAMES = { dan: 'Dan Chen (you)', alex: 'Alex Kim', sam: 'Sam Lee', priya: 'Priya Shah', unknown1: 'Unnamed (1)', pp: '1 private person', students: 'Students' };
+
+  /* ======================= "Python": compute() =======================
+     Stands in for @reactive_output("insights"). Plain data in, plain data out. */
+  function compute(st) {
+    var t0 = performance.now();
+    var R = preset(st.range), s = R.s, e = Math.min(R.e, TODAY);
+    var hasTag = function (r) { return !st.tags.length || st.tags.some(function (t) { return r.tags.indexOf(t) >= 0; }); };
+    var tagged = DATA.filter(hasTag);
+    var sel = tagged.filter(function (r) { return r.dn >= s && r.dn <= e; });
+    var rangeDays = Math.max(1, e - s + 1), weeks = rangeDays / 7;
+    var H = st.metric === 'hours';
+    var P = { range: R, s: s, e: e, rangeDays: rangeDays, n: sel.length };
+
+    var inRangeAll = DATA.filter(function (r) { return r.dn >= s && r.dn <= e; });
+    P.tagCounts = {}; TAGS.forEach(function (t) { P.tagCounts[t] = inRangeAll.filter(function (r) { return r.tags.indexOf(t) >= 0; }).length; });
+
+    // Empty: suggest ways to widen, with counts (§12.6b, §12.6a)
+    if (!sel.length) {
+      var ty = preset('thisyear'), at = preset('all');
+      P.widen = [
+        { id: 'thisyear', label: 'This year', n: tagged.filter(function (r) { return r.dn >= ty.s && r.dn <= ty.e; }).length },
+        { id: 'all', label: 'All time', n: tagged.length }
+      ];
+      if (st.tags.length) P.widenTags = inRangeAll.length;
+      P.ms = msFor(st, t0); return P;
+    }
+
+    var hours = sum(sel, function (r) { return r.dur; }) / 60;
+    var dayset = {}; sel.forEach(function (r) { dayset[r.dn] = 1; });
+    var ndays = Object.keys(dayset).length;
+    var tx = sel.filter(function (r) { return r.transcribed; });
+    var words = sum(tx, function (r) { return r.words; });
+    var perWeek = rangeDays >= 14;
+    P.cards = [
+      { lab: 'Recordings', val: sel.length.toLocaleString('en-US'), avg: perWeek ? (sel.length / weeks).toFixed(1) + ' a week on average' : (sel.length / rangeDays).toFixed(1) + ' a day on average' },
+      { lab: 'Hours', val: (hours < 10 ? hours.toFixed(1) : Math.round(hours).toLocaleString('en-US')), unit: 'h', avg: fmtMin(hours * 60 / sel.length) + ' per recording' },
+      { lab: 'Days recorded', val: ndays.toLocaleString('en-US'), unit: 'of ' + rangeDays, avg: fmtH(hours / ndays) + ' per day recorded' },
+      { lab: 'Words', val: compact(words), avg: compact(words / Math.max(1, tx.length)) + ' per transcript', wait: sel.length - tx.length }
+    ];
+
+    // Heatmap: the chosen calendar year, tag-filtered, with the range marked
+    var Y = st.year, j1 = dnOf(Y, 0, 1), d31 = dnOf(Y, 11, 31), cells = [];
+    for (var n = j1; n <= d31; n++) cells.push({ dn: n, n: 0, h: 0, inR: n >= R.s && n <= R.e, fut: n > TODAY, recs: [] });
+    tagged.forEach(function (r) { if (r.dn >= j1 && r.dn <= d31) { var c = cells[r.dn - j1]; c.n++; c.h += r.dur / 60; c.recs.push(r); } });
+    var best = { len: 0 }, run = 0, runStart = 0, yN = 0, yD = 0;
+    cells.forEach(function (c) {
+      if (c.fut || !c.inR) { run = 0; return; }
+      if (c.n) { yN += c.n; yD++; if (!run) runStart = c.dn; run++; if (run > best.len) best = { len: run, s: runStart, e: c.dn }; } else run = 0;
+    });
+    var cur = 0;
+    if (TODAY >= j1 && TODAY <= d31) {
+      var k = TODAY - j1; if (!cells[k].n) k--;
+      while (k >= 0 && cells[k].n && cells[k].inR) { cur++; k--; }
+    }
+    P.heat = { year: Y, j1: j1, d31: d31, cells: cells, best: best, cur: cur, yN: yN, yD: yD, H: H };
+
+    // Punch card: weekday x hour. Hours mode splits a recording across the hours it covers.
+    var ph = [], pcn = [];
+    for (var d = 0; d < 7; d++) { ph.push(new Array(24).fill(0)); pcn.push(new Array(24).fill(0)); }
+    sel.forEach(function (r) {
+      var a = r.startMin, b = r.startMin + r.dur;
+      pcn[r.dow][Math.floor(a / 60) % 24]++;
+      for (var hr = Math.floor(a / 60); hr * 60 < b && hr < 24; hr++) ph[r.dow][hr] += (Math.min(b, hr * 60 + 60) - Math.max(a, hr * 60)) / 60;
+    });
+    var G = H ? ph : pcn;
+    var rowT = G.map(function (row) { return sum(row, function (v) { return v; }); });
+    var colT = []; for (var c2 = 0; c2 < 24; c2++) colT.push(sum(G, function (row) { return row[c2]; }));
+    var bz = { v: -1 };
+    for (var d2 = 0; d2 < 7; d2++) for (var h2 = 0; h2 < 23; h2++) { var v2 = G[d2][h2] + G[d2][h2 + 1]; if (v2 > bz.v) bz = { d: d2, h: h2, v: v2 }; }
+    var total = sum(rowT, function (v) { return v; });
+    P.punch = { ph: ph, pc: pcn, G: G, rowT: rowT, colT: colT, busy: bz, total: total, H: H };
+
+    // Averages and busiest times
+    var bd = rowT.indexOf(Math.max.apply(null, rowT)), bh = colT.indexOf(Math.max.apply(null, colT));
+    var months = [], mk = {};
+    var so = ymd(s), eo = ymd(e);
+    var yy = so.y, mm = so.m;
+    while (yy < eo.y || (yy === eo.y && mm <= eo.m)) {
+      mk[yy * 12 + mm] = months.length;
+      months.push({ y: yy, m: mm, h: 0, n: 0, whisper: 0, plaud: 0, qwen: 0, gemma: 0, opus: 0 });
+      if (++mm > 11) { mm = 0; yy++; }
+    }
+    sel.forEach(function (r) { var o = ymd(r.dn), M = months[mk[o.y * 12 + o.m]]; if (!M) return; M.h += r.dur / 60; M.n++; if (r.transcribed) M[r.engine] += r.words; for (var nk in r.notes) M[nk]++; });
+    var bm = months.slice().sort(function (a, b) { return (H ? b.h - a.h : b.n - a.n); })[0];
+    var longest = sel.reduce(function (a, r) { return r.dur > a.dur ? r : a; }, sel[0]);
+    var durs = sel.map(function (r) { return r.dur; });
+    P.avgs = [
+      ['Average recording', fmtMin(hours * 60 / sel.length), 'median ' + fmtMin(median(durs))],
+      ['Per day recorded', fmtH(hours / ndays), (sel.length / ndays).toFixed(1) + ' recordings'],
+      ['Per week', fmtH(hours / weeks), (sel.length / weeks).toFixed(1) + ' recordings'],
+      ['Busiest weekday', DOWL[bd], Math.round(100 * rowT[bd] / total) + '% of ' + (H ? 'hours' : 'recordings')],
+      ['Busiest hour', hh(bh) + '–' + hh(bh + 1), H ? fmtH(colT[bh]) + ' in that hour' : plural(colT[bh], 'recording') + ' start then'],
+      ['Busiest month', MONL[bm.m] + ' ' + bm.y, H ? fmtH(bm.h) : plural(bm.n, 'recording')],
+      ['Typical start', hhmm(median(sel.map(function (r) { return r.startMin; }))), 'median start time'],
+      ['Longest', fmtMin(longest.dur), longest.priv ? 'a private recording' : longest.title]
+    ];
+
+    // Model usage
+    var eng = { whisper: 0, plaud: 0 }, nts = { qwen: 0, gemma: 0, opus: 0 };
+    tx.forEach(function (r) { eng[r.engine] += r.words; for (var nk in r.notes) nts[nk]++; });
+    P.models = { eng: eng, notes: nts, months: months };
+
+    // Trends: per month, and per week with the average
+    var wk = [], w0 = s - ymd(s).dow;
+    for (var ws = w0; ws <= e; ws += 7) wk.push({ s: ws, h: 0, n: 0 });
+    sel.forEach(function (r) { var W = wk[Math.floor((r.dn - w0) / 7)]; if (W) { W.h += r.dur / 60; W.n++; } });
+    P.trends = { months: months, weeks: wk, avgWeek: (H ? hours : sel.length) / weeks, H: H };
+
+    // Speakers
+    var meet = ['alex', 'sam', 'priya', 'unknown1', 'pp'].map(function (p) {
+      var rs = sel.filter(function (r) { return r.ppl.indexOf(p) >= 0; });
+      return { p: p, n: rs.length, h: sum(rs, function (r) { return r.dur; }) / 60 };
+    }).filter(function (x) { return x.n > 0; });
+    meet.sort(function (a, b) { if ((a.p === 'pp') !== (b.p === 'pp')) return a.p === 'pp' ? 1 : -1; if ((a.p === 'unknown1') !== (b.p === 'unknown1')) return a.p === 'unknown1' ? 1 : -1; return H ? b.h - a.h : b.n - a.n; });
+    var talk = {}; sel.forEach(function (r) { r.talk.forEach(function (x) { talk[x.p] = (talk[x.p] || 0) + x.min; }); });
+    var talkArr = Object.keys(talk).map(function (p) { return { p: p, h: talk[p] / 60 }; }).sort(function (a, b) { if ((a.p === 'pp') !== (b.p === 'pp')) return a.p === 'pp' ? 1 : -1; return b.h - a.h; });
+    function share(f) { var you = 0, all = 0; sel.filter(f).forEach(function (r) { r.talk.forEach(function (x) { all += x.min; if (x.p === 'dan') you += x.min; }); }); return all ? { pct: Math.round(100 * you / all), h: all / 60 } : null; }
+    P.speakers = { meet: meet, talk: talkArr, lect: share(function (r) { return r.kind === 'lecture'; }), meet2: share(function (r) { return r.tags.indexOf('meetings') >= 0; }), H: H };
+
+    P.ms = msFor(st, t0);
+    return P;
+  }
+  function msFor(st, t0) { var real = performance.now() - t0; return st.pages ? Math.round(160 + Math.random() * 260 + real) : Math.round(24 + Math.random() * 44 + real); }
+
+  /* ======================= State and the "Shiny" round-trip ======================= */
+  var DEFAULTS = { range: 'all', tags: [], metric: 'hours', year: T0.y, view: 'totals', pages: false };
+  var state = JSON.parse(JSON.stringify(DEFAULTS));
+  var tables = { mu: false, tr: false };
+  var payload = null, timer = null, heatFocus = null;
+  var app = $('#app');
+
+  function setInput(patch) {
+    for (var k in patch) state[k] = patch[k];
+    syncControls();
+    $('#mk-note').classList.remove('on');
+    clearTimeout(timer);
+    app.classList.add('recalc-on');
+    $('#live').textContent = 'Recalculating in Python';
+    hideTip(); closePop();
+    timer = setTimeout(function () {
+      payload = compute(state); render(); app.classList.remove('recalc-on');
+      $('#live').textContent = payload.n ? 'Updated: ' + plural(payload.n, 'recording') : 'Nothing in that range';
+    }, state.pages ? 850 : 380 + Math.random() * 60);
+  }
+  function syncControls() {
+    $('#range').value = state.range;
+    var chips = $('#tagchips');
+    if (!chips.children.length) chips.innerHTML = TAGS.map(function (t) { return '<button class="tchip" data-tag="' + t + '" aria-pressed="false"><span class="ck" aria-hidden="true">✓</span>' + t + ' <span class="n"></span></button>'; }).join('');
+    TAGS.forEach(function (t) {
+      var b = $('[data-tag="' + t + '"]', chips);
+      b.setAttribute('aria-pressed', String(state.tags.indexOf(t) >= 0));
+      $('.n', b).textContent = payload && payload.tagCounts ? payload.tagCounts[t] : '';
+    });
+    $('#tag-clear').hidden = !state.tags.length;
+    $$('#metric button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.metric === state.metric)); });
+    $$('#mu-view button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.view === state.view)); });
+    $$('.tblbtn').forEach(function (b) { b.setAttribute('aria-pressed', String(!!tables[b.dataset.table])); });
+    app.classList.toggle('pages', state.pages);
+    $('#recalc-l').textContent = state.pages ? 'Recalculating in Python, in your browser…' : 'Recalculating in Python…';
+    var route = '#/insights?range=' + state.range + '&by=' + state.metric + (state.tags.length ? '&tags=' + state.tags.join(',') : '') + '&year=' + state.year;
+    $('#mk-route').textContent = route;
+    try { history.replaceState(null, '', route); } catch (e) {}
+  }
+
+  /* ======================= Rendering ======================= */
+  function isPhone() { return app.clientWidth < 620; }
+  function render() {
+    var P = payload;
+    syncControls();
+    $('#f-n').textContent = P.n.toLocaleString('en-US');
+    $('#f-ms').textContent = P.ms + ' ms';
+    var empty = !P.n;
+    $('#dash').hidden = empty;
+    $('#empty').hidden = !empty;
+    if (empty) { renderEmpty(P); return; }
+    renderCards(P); renderHeat(P); renderPunch(P); renderAvgs(P); renderModels(P); renderTrends(P); renderSpeakers(P);
+  }
+  function relayout() { if (payload && payload.n) { renderHeat(payload); renderPunch(payload); renderModels(payload); renderTrends(payload); renderSpeakers(payload); } }
+
+  function renderEmpty(P) {
+    var R = P.range, label = R.s === R.e ? fmtShort(R.s) : 'between ' + fmtShort(R.s) + ' and ' + fmtShort(R.e);
+    var tagTxt = state.tags.length ? ' tagged ' + state.tags.join(' or ') : '';
+    var html = '<svg width="40" height="40" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true" style="color:var(--mfg)"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3M6 9.5l4 3M10 9.5l-4 3"/></svg>' +
+      '<h2>Nothing' + esc(tagTxt) + ' ' + esc(label) + '</h2><p>No recordings fall in that range, so there is nothing to chart.</p><div class="acts">';
+    P.widen.forEach(function (w, i) { html += '<button class="btn' + (i === 0 ? ' pri' : '') + '" data-widen="' + w.id + '"' + (w.n ? '' : ' disabled') + '>Widen to ' + esc(w.label) + ' (' + w.n + ')</button>'; });
+    if (P.widenTags != null) html += '<button class="btn" data-cleartags>All tags (' + P.widenTags + ')</button>';
+    $('#empty').innerHTML = html + '</div>';
+  }
+
+  function renderCards(P) {
+    $('#cards').innerHTML = P.cards.map(function (c) {
+      return '<div class="card stat"><div class="lab">' + c.lab + '</div><div class="val">' + c.val + (c.unit ? ' <small>' + c.unit + '</small>' : '') + '</div><div class="avg">' + c.avg + '</div>' +
+        (c.wait ? '<span class="wait" title="Counted when their transcripts arrive">waiting on ' + c.wait + '</span>' : '') + '</div>';
+    }).join('');
+  }
+
+  // ---------- Heatmap ----------
+  var LV_H = [['0', 'No recordings'], ['<½', 'Under ½ h'], ['½', '½ to 1 h'], ['1', '1 to 2 h'], ['2', '2 to 4 h'], ['4+', '4 h or more']];
+  var LV_C = [['0', 'No recordings'], ['1', '1 recording'], ['2', '2 recordings'], ['3', '3 recordings'], ['4', '4 recordings'], ['5+', '5 or more']];
+  function level(c, H) { if (!c.n) return 0; if (H) return c.h < 0.5 ? 1 : c.h < 1 ? 2 : c.h < 2 ? 3 : c.h < 4 ? 4 : 5; return Math.min(5, c.n); }
+  function dayLine(c) { return fmtDay(c.dn) + ' · ' + (c.n ? plural(c.n, 'recording') + ' · ' + fmtH(c.h) : 'No recordings'); }
+  function renderHeat(P) {
+    var Hm = P.heat, box = $('#heat-scroll'), phone = isPhone();
+    var gs = Hm.j1 - ymd(Hm.j1).dow, nW = Math.ceil((Hm.d31 - gs + 1) / 7);
+    var LBL = 30, TOP = 18, avail = box.clientWidth - 4 || 700;
+    var cs = phone ? 12 : Math.max(9, Math.min(19, Math.floor((avail - LBL) / nW) - 2)), st = cs + 2;
+    var W = LBL + nW * st, Ht = TOP + 7 * st;
+    var s = '<svg width="' + W + '" height="' + Ht + '" role="grid" aria-label="Recordings per day, ' + Hm.year + ', ' + (Hm.H ? 'by hours' : 'by count') + '. Arrow keys move between days; Enter opens a day." id="heat-svg">';
+    for (var m = 0; m < 12; m++) { var f = dnOf(Hm.year, m, 1), col = Math.floor((f - gs) / 7); if (nW - col < 2) continue; s += '<text x="' + (LBL + col * st) + '" y="11" aria-hidden="true">' + MON[m] + '</text>'; }
+    [0, 2, 4].forEach(function (r) { s += '<text x="0" y="' + (TOP + r * st + cs - 2) + '" aria-hidden="true">' + DOWS[r] + '</text>'; });
+    if (heatFocus == null || heatFocus < Hm.j1 || heatFocus > Hm.d31 || heatFocus > TODAY) heatFocus = Math.min(TODAY, Hm.d31);
+    for (var r = 0; r < 7; r++) {
+      s += '<g role="row">';
+      for (var w = 0; w < nW; w++) {
+        var n = gs + w * 7 + r; if (n < Hm.j1 || n > Hm.d31) continue;
+        var c = Hm.cells[n - Hm.j1]; if (c.fut) continue; // future days stay blank
+        var lv = level(c, Hm.H);
+        var lab = DOWL[ymd(n).dow] + ' ' + MONL[ymd(n).m] + ' ' + ymd(n).d + ', ' + Hm.year + ': ' + (c.n ? plural(c.n, 'recording') + ', ' + fmtH(c.h).replace(' h', ' hours') : 'no recordings') + (c.inR ? '' : ', outside the date range') + ', sample';
+        s += '<rect role="gridcell" class="hc l' + lv + (c.inR ? '' : ' out') + (n === TODAY ? ' today' : '') + '" data-dn="' + n + '" x="' + (LBL + w * st) + '" y="' + (TOP + r * st) + '" width="' + cs + '" height="' + cs + '" rx="2.5" tabindex="' + (n === heatFocus ? 0 : -1) + '" aria-label="' + esc(lab) + '"/>';
+      }
+      s += '</g>';
+    }
+    box.innerHTML = s + '</svg>';
+    if (phone) { // start at the latest week
+      var lastCol = Math.floor((Math.min(TODAY, Hm.d31) - gs) / 7);
+      box.scrollLeft = Math.max(0, LBL + (lastCol + 1) * st - box.clientWidth + 8);
+    }
+    $('#yr').textContent = Hm.year;
+    var minY = ymd(FIRST).y;
+    $('#yr-prev').disabled = Hm.year <= minY; $('#yr-next').disabled = Hm.year >= T0.y;
+    $('#heat-sub').textContent = Hm.H ? 'Shaded by hours recorded' : 'Shaded by number of recordings';
+    var b = Hm.best;
+    $('#heat-cap').innerHTML = '<b>' + Hm.year + '</b>: ' + plural(Hm.yN, 'recording') + ' on ' + plural(Hm.yD, 'day') +
+      (b.len ? ' · Longest streak <b>' + plural(b.len, 'day') + '</b> (' + fmtShort(b.s) + (b.len > 1 ? ' – ' + (ymd(b.s).m === ymd(b.e).m ? ymd(b.e).d : fmtShort(b.e)) : '') + ')' : '') +
+      (TODAY <= Hm.d31 && TODAY >= Hm.j1 ? ' · Current streak <b>' + plural(Hm.cur, 'day') + '</b>' : '') + ' · <span class="pill">Sample</span>';
+    var L = Hm.H ? LV_H : LV_C;
+    $('#heat-legend').innerHTML = '<span class="end">Less</span>' + L.map(function (x, i) {
+      return '<span class="box" title="' + x[1] + '"><i style="background:var(--heat-' + i + ')"></i><span>' + x[0] + '</span></span>';
+    }).join('') + '<span class="end">More' + (Hm.H ? ' (h)' : '') + '</span>';
+  }
+  function heatCell(n) { return $('#heat-svg [data-dn="' + n + '"]'); }
+  function heatTip(el) {
+    var c = payload.heat.cells[+el.dataset.dn - payload.heat.j1];
+    return '<b>' + esc(dayLine(c)) + '</b>' + (c.inR ? '' : ' <span class="muted">· outside the range</span>') + ' <span class="pill">Sample</span>';
+  }
+  function openDay(el) {
+    var c = payload.heat.cells[+el.dataset.dn - payload.heat.j1];
+    var list = c.recs.slice(0, 4).map(function (r) {
+      return '<li><span class="tm">' + hhmm(r.startMin) + '</span><span>' + (r.priv ? LOCK + ' Private recording' : esc(r.title)) + '</span><span class="du">' + fmtMin(r.dur) + '</span></li>';
+    }).join('') + (c.recs.length > 4 ? '<li class="muted">and ' + (c.recs.length - 4) + ' more</li>' : '');
+    openPop(el, esc(dayLine(c)), (list ? '<ul>' + list + '</ul>' : '<p class="why">Nothing recorded this day.</p>'), 'the Library filtered to ' + fmtShort(c.dn));
+  }
+
+  // ---------- Punch card ----------
+  function renderPunch(P) {
+    var pc = P.punch, phone = isPhone(), box = $('#pc-box'), G = pc.G;
+    var hmin = 0, hmax = 23;
+    if (phone) { while (hmin < 23 && !pc.colT[hmin]) hmin++; while (hmax > hmin && !pc.colT[hmax]) hmax--; }
+    var hours = []; for (var h = hmin; h <= hmax; h++) hours.push(h);
+    var days = [0, 1, 2, 3, 4, 5, 6];
+    var rows = phone ? hours : days, cols = phone ? days : hours;
+    var val = phone ? function (r, c) { return G[c][r]; } : function (r, c) { return G[r][c]; };
+    var rowTot = phone ? function (r) { return pc.colT[r]; } : function (r) { return pc.rowT[r]; };
+    var colTot = phone ? function (c) { return pc.rowT[c]; } : function (c) { return pc.colT[c]; };
+    var rowLab = phone ? function (r) { return hh(r); } : function (r) { return DOWS[r]; };
+    var colLab = phone ? function (c) { return DOWS[c]; } : function (c) { return c % 2 ? '' : pad2(c); };
+    var LW = phone ? 42 : 32, TW = 42, TOPH = 16, BOT = 22;
+    var avail = box.clientWidth || 560;
+    var cw = Math.max(14, Math.min(phone ? 40 : 30, Math.floor((avail - LW - TW) / cols.length)));
+    var rh = phone ? 21 : Math.max(24, Math.min(32, cw + 6));
+    var W = LW + cols.length * cw + TW, Ht = TOPH + rows.length * rh + BOT;
+    var max = 0; rows.forEach(function (r) { cols.forEach(function (c) { max = Math.max(max, val(r, c)); }); });
+    var rmax = Math.min(cw, rh) / 2 - 1.5;
+    var fmtV = function (v) { return pc.H ? (v >= 10 ? Math.round(v) : v ? v.toFixed(1) : '0') : String(v); };
+    var s = '<svg width="' + W + '" height="' + Ht + '" role="img" aria-label="Punch card, ' + (pc.H ? 'hours' : 'recordings') + ' by weekday and hour. Busiest: ' + DOWS[pc.busy.d] + ' ' + hh(pc.busy.h) + ' to ' + hh(pc.busy.h + 2) + '.">';
+    cols.forEach(function (c, i) { var l = colLab(c); if (l) s += '<text x="' + (LW + i * cw + cw / 2) + '" y="11" text-anchor="middle" class="tick">' + l + '</text>'; });
+    s += '<text x="' + (LW + cols.length * cw + TW - 2) + '" y="11" text-anchor="end" class="b">Total</text>';
+    rows.forEach(function (r, j) {
+      var y = TOPH + j * rh + rh / 2;
+      s += '<text x="0" y="' + (y + 3.5) + '" class="ink tick">' + rowLab(r) + '</text>';
+      cols.forEach(function (c, i) {
+        var v = val(r, c), x = LW + i * cw + cw / 2, d = phone ? c : r, hr = phone ? r : c;
+        var tip = DOWS[d] + ' ' + hh(hr) + '–' + hh(hr + 1) + ' · ' + (pc.H ? fmtH(pc.ph[d][hr]) + ' · ' + plural(pc.pc[d][hr], 'recording') + ' start' : plural(pc.pc[d][hr], 'recording') + ' start · ' + fmtH(pc.ph[d][hr]));
+        s += '<g class="pc-cell"><rect class="pc-hit" x="' + (x - cw / 2) + '" y="' + (y - rh / 2) + '" width="' + cw + '" height="' + rh + '" data-tip="' + esc('<b>' + tip + '</b> <span class="pill">Sample</span>') + '"/>';
+        s += v > 0 ? '<circle class="pc-dot" cx="' + x + '" cy="' + y + '" r="' + Math.max(1.6, rmax * Math.sqrt(v / max)).toFixed(2) + '" pointer-events="none"/>' : '<circle class="pc-zero" cx="' + x + '" cy="' + y + '" r="1" pointer-events="none"/>';
+        s += '</g>';
+      });
+      s += '<text x="' + (LW + cols.length * cw + TW - 2) + '" y="' + (y + 3.5) + '" text-anchor="end" class="ink pc-tot">' + fmtV(rowTot(r)) + '</text>';
+    });
+    var yb = TOPH + rows.length * rh + 15;
+    s += '<line class="baseline" x1="' + LW + '" x2="' + (W - 2) + '" y1="' + (yb - 11) + '" y2="' + (yb - 11) + '"/>';
+    s += '<text x="0" y="' + yb + '" class="b">Total</text>';
+    cols.forEach(function (c, i) { var v = colTot(c); if (!phone && !v) return; s += '<text x="' + (LW + i * cw + cw / 2) + '" y="' + yb + '" text-anchor="middle" class="ink pc-tot" style="font-size:' + (cw < 20 ? 9 : 10.5) + 'px">' + fmtV(v) + '</text>'; });
+    // ring around the busiest two hours
+    var bd = pc.busy.d, bh0 = pc.busy.h;
+    if (phone) { var ci = days.indexOf(bd), ri = hours.indexOf(bh0); if (ri >= 0) s += '<rect class="pc-ring" x="' + (LW + ci * cw + 1) + '" y="' + (TOPH + ri * rh + 1) + '" width="' + (cw - 2) + '" height="' + (2 * rh - 2) + '" rx="8"/>'; }
+    else s += '<rect class="pc-ring" x="' + (LW + bh0 * cw + 1) + '" y="' + (TOPH + bd * rh + 1) + '" width="' + (2 * cw - 2) + '" height="' + (rh - 2) + '" rx="8"/>';
+    box.innerHTML = s + '</svg>';
+    $('#pc-sub').textContent = (pc.H ? 'Hours recorded, split across the hours each recording covers' : 'Recordings, by the hour they start') + (phone ? '. Hours run down the side.' : '');
+    var pct = Math.round(100 * pc.busy.v / pc.total);
+    var topD = pc.rowT.indexOf(Math.max.apply(null, pc.rowT)), topH = pc.colT.indexOf(Math.max.apply(null, pc.colT));
+    var back = topD === bd && (topH === bh0 || topH === bh0 + 1) ? 'The totals agree: ' + DOWL[topD] + ' and ' + hh(topH) + ' lead them.'
+      : 'Totals: ' + DOWL[topD] + ' leads the days and ' + hh(topH) + ' the hours.';
+    $('#pc-callout').innerHTML = '<b>Busiest: ' + DOWS[bd] + ' ' + hh(bh0) + '–' + hh(bh0 + 2) + '</b><span class="muted">' + (pc.H ? fmtH(pc.busy.v) : plural(pc.busy.v, 'recording')) + ', ' + pct + '% of the ' + (pc.H ? 'hours' : 'recordings') + '. ' + back + '</span>';
+  }
+  function renderAvgs(P) {
+    $('#avgs').innerHTML = P.avgs.map(function (a) { return '<dt>' + a[0] + '</dt><dd><b>' + esc(a[1]) + '</b><span>' + esc(a[2]) + '</span></dd>'; }).join('');
+  }
+
+  // ---------- Bar helpers ----------
+  function niceMax(v) { if (v <= 0) return 1; var p = Math.pow(10, Math.floor(Math.log10(v))), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; }
+  function hPath(x, y, w, h, r) { if (w <= 0) return ''; r = Math.min(r, w, h / 2); return 'M' + x + ',' + y + 'h' + (w - r) + 'a' + r + ',' + r + ' 0 0 1 ' + r + ',' + r + 'v' + (h - 2 * r) + 'a' + r + ',' + r + ' 0 0 1 ' + (-r) + ',' + r + 'h' + (-(w - r)) + 'z'; }
+  function vPath(x, y, w, h, r) { if (h <= 0) return ''; r = Math.min(r, h, w / 2); return 'M' + x + ',' + (y + h) + 'v' + (-(h - r)) + 'a' + r + ',' + r + ' 0 0 1 ' + r + ',' + (-r) + 'h' + (w - 2 * r) + 'a' + r + ',' + r + ' 0 0 1 ' + r + ',' + r + 'v' + (h - r) + 'z'; }
+  // rows: [{label, v, txt, cls, lock, tip}]
+  function hbars(rows, W, LW) {
+    var VW = 62, bh = 14, rowH = 26, plot = Math.max(40, W - LW - VW), max = Math.max.apply(null, rows.map(function (r) { return r.v; }).concat([1e-9]));
+    var s = '<svg width="' + W + '" height="' + rows.length * rowH + '" role="img" aria-label="' + esc(rows.map(function (r) { return r.label + ' ' + r.txt; }).join(', ')) + '">';
+    rows.forEach(function (r, i) {
+      var y = i * rowH, len = Math.max(r.v > 0 ? 2 : 0, plot * r.v / max);
+      s += '<rect class="hit" x="0" y="' + y + '" width="' + W + '" height="' + rowH + '" rx="4" data-tip="' + esc(r.tip || '<b>' + esc(r.txt) + '</b> ' + esc(r.label)) + '"/>';
+      s += (r.lock ? '<g transform="translate(0,' + (y + 7) + ') scale(.75)" pointer-events="none" style="color:var(--mfg)"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.8"/></g>' : '') +
+        '<text x="' + (r.lock ? 15 : 0) + '" y="' + (y + rowH / 2 + 4) + '" class="ink" style="font-size:12.5px" pointer-events="none">' + esc(r.label) + '</text>';
+      s += '<path class="bar-' + (r.cls || 'c1') + '" d="' + hPath(LW, y + (rowH - bh) / 2, len, bh, 4) + '" pointer-events="none"/>';
+      s += '<text x="' + (LW + len + 6) + '" y="' + (y + rowH / 2 + 4) + '" class="ink tick" style="font-size:12px" pointer-events="none">' + esc(r.txt) + '</text>';
+    });
+    return s + '</svg>';
+  }
+  // Stacked (or single) columns. cols: [{label, vals:{id:v}, tip, drill}] series: [{id,label,cls}]
+  function columns(cols, series, o) {
+    var RW = o.avg != null ? 58 : 0, W = o.w - RW, LW = 38, PH = o.h || 120, TOP = 8, BOT = 18, gap = 2;
+    var tots = cols.map(function (c) { return sum(series, function (se) { return c.vals[se.id] || 0; }); });
+    var nm = niceMax(Math.max.apply(null, tots.concat([o.avg || 0, 1e-9])));
+    var colW = (W - LW) / cols.length, bw = Math.max(2, Math.min(24, colW - (colW > 10 ? 4 : 1)));
+    var s = '<svg width="' + (W + RW) + '" height="' + (TOP + PH + BOT) + '" role="img" aria-label="' + esc(o.aria) + '">';
+    [0, 0.5, 1].forEach(function (f) { var y = TOP + PH - PH * f; s += '<line class="' + (f ? 'gridline' : 'baseline') + '" x1="' + LW + '" x2="' + W + '" y1="' + y + '" y2="' + y + '"/><text x="' + (LW - 6) + '" y="' + (y + 3.5) + '" text-anchor="end" class="tick">' + o.fmt(nm * f) + '</text>'; });
+    var every = colW < 22 ? Math.ceil(26 / colW) : 1, maxI = tots.indexOf(Math.max.apply(null, tots));
+    cols.forEach(function (c, i) {
+      var x = LW + i * colW + (colW - bw) / 2, yb = TOP + PH, segs = series.filter(function (se) { return (c.vals[se.id] || 0) > 0; });
+      segs.forEach(function (se, k) {
+        var h = PH * c.vals[se.id] / nm, top = k === segs.length - 1;
+        var hh2 = Math.max(0, h - (k > 0 ? gap : 0));
+        s += top ? '<path class="bar-' + se.cls + '" d="' + vPath(x, yb - h, bw, hh2, Math.min(4, bw / 2)) + '" pointer-events="none"/>' : '<rect class="bar-' + se.cls + '" x="' + x + '" y="' + (yb - h) + '" width="' + bw + '" height="' + hh2 + '" pointer-events="none"/>';
+        yb -= h;
+      });
+      if (o.labels && (i === maxI || i === cols.length - 1) && tots[i] > 0) s += '<text x="' + (LW + i * colW + colW / 2) + '" y="' + (TOP + PH - PH * tots[i] / nm - 4) + '" text-anchor="middle" class="ink tick" style="font-size:10.5px" pointer-events="none">' + o.fmt(tots[i]) + '</text>';
+      if (c.label && i % every === 0) s += '<text x="' + (LW + i * colW + colW / 2) + '" y="' + (TOP + PH + 13) + '" text-anchor="middle" class="tick">' + c.label + '</text>';
+      s += '<rect class="' + (c.drill ? 'colhit' : 'hit') + '" x="' + (LW + i * colW) + '" y="' + TOP + '" width="' + colW + '" height="' + PH + '" data-tip="' + esc(c.tip) + '"' + (c.drill ? ' tabindex="0" role="button" aria-label="' + esc(c.drill) + '" data-drill="' + i + '"' : '') + '/>';
+    });
+    if (o.avg != null) { var ya = TOP + PH - PH * o.avg / nm; s += '<line class="avgline" x1="' + LW + '" x2="' + (W + 4) + '" y1="' + ya + '" y2="' + ya + '" pointer-events="none"/><text x="' + (W + 8) + '" y="' + (ya - 2) + '" class="ink b" style="font-size:11px" pointer-events="none">avg</text><text x="' + (W + 8) + '" y="' + (ya + 11) + '" class="ink" style="font-size:11px" pointer-events="none">' + esc(o.avgLabel) + '</text>'; }
+    return s + '</svg>';
+  }
+  function legend(series) { return '<div class="lgd">' + series.map(function (se) { return '<span><i class="sw-' + se.cls + '"></i>' + esc(se.label) + '</span>'; }).join('') + '</div>'; }
+  function seriesTip(title, series, vals, fmt) {
+    return '<b>' + esc(title) + '</b>' + series.map(function (se) { return '<div class="row"><i class="key k-' + se.cls + '"></i><b>' + fmt(vals[se.id] || 0) + '</b> <span class="muted">' + esc(se.label) + '</span></div>'; }).join('') + '<div class="muted" style="margin-top:2px"><span class="pill">Sample</span></div>';
+  }
+  function table(head, rows) { return '<div class="tblwrap"><table class="dt"><thead><tr>' + head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>'; }
+  function monLabel(M, n) { return n > 13 ? MON[M.m][0] : MON[M.m]; }
+
+  var ENG = [{ id: 'whisper', label: 'Whisper', cls: 'c1' }, { id: 'plaud', label: 'Plaud', cls: 'c2' }];
+  var NOTE = [{ id: 'qwen', label: 'qwen3.6', cls: 'c1' }, { id: 'gemma', label: 'gemma', cls: 'c2' }, { id: 'opus', label: 'claude-opus', cls: 'c3' }];
+
+  function renderModels(P) {
+    var box = $('#mu-box'), W = box.clientWidth || 420, M = P.models;
+    if (tables.mu) {
+      box.innerHTML = table(['Month', 'Whisper words', 'Plaud words', 'qwen3.6', 'gemma', 'claude-opus'], M.months.map(function (m) { return [MON[m.m] + ' ' + m.y, m.whisper.toLocaleString('en-US'), m.plaud.toLocaleString('en-US'), m.qwen, m.gemma, m.opus]; }).concat([['Total', M.eng.whisper.toLocaleString('en-US'), M.eng.plaud.toLocaleString('en-US'), M.notes.qwen, M.notes.gemma, M.notes.opus]]));
+      return;
+    }
+    if (state.view === 'totals') {
+      var we = M.eng.whisper + M.eng.plaud || 1;
+      box.innerHTML = '<div class="ch-block"><h3>Words per transcript engine</h3>' + hbars(ENG.map(function (e) { return { label: e.label, v: M.eng[e.id], cls: e.cls, txt: compact(M.eng[e.id]), tip: '<b>' + M.eng[e.id].toLocaleString('en-US') + ' words</b> ' + e.label + ' · ' + Math.round(100 * M.eng[e.id] / we) + '% <span class="pill">Sample</span>' }; }), W, 104) + '</div>' +
+        '<div class="ch-block"><h3>Notes per notes model</h3>' + hbars(NOTE.map(function (e) { return { label: e.label, v: M.notes[e.id], cls: e.cls, txt: String(M.notes[e.id]), tip: '<b>' + plural(M.notes[e.id], 'note') + '</b> ' + e.label + (e.id === 'opus' ? ' · never private recordings' : '') + ' <span class="pill">Sample</span>' }; }), W, 104) + '</div>';
+    } else {
+      var n = M.months.length;
+      var mc = function (keyset) { return M.months.map(function (m) { var v = {}; keyset.forEach(function (se) { v[se.id] = m[se.id]; }); return { label: monLabel(m, n), vals: v, tip: seriesTip(MONL[m.m] + ' ' + m.y, keyset, v, keyset === ENG ? function (x) { return compact(x) + ' words'; } : function (x) { return x + ''; }) }; }); };
+      box.innerHTML = '<div class="ch-block"><h3>Words per transcript engine, by month</h3>' + legend(ENG) + columns(mc(ENG), ENG, { w: W, h: 110, fmt: compact, aria: 'Words per month, Whisper and Plaud stacked' }) + '</div>' +
+        '<div class="ch-block"><h3>Notes per notes model, by month</h3>' + legend(NOTE) + columns(mc(NOTE), NOTE, { w: W, h: 110, fmt: function (v) { return String(Math.round(v)); }, aria: 'Notes per month by model, stacked' }) + '</div>';
+    }
+  }
+  function renderTrends(P) {
+    var box = $('#tr-box'), W = box.clientWidth || 420, T = P.trends, H = T.H, n = T.months.length;
+    var fmt = H ? function (v) { return v >= 10 || v === 0 ? String(Math.round(v)) : v.toFixed(1); } : function (v) { return String(Math.round(v)); };
+    if (tables.tr) {
+      box.innerHTML = '<h3>Per month</h3>' + table(['Month', 'Hours', 'Recordings'], T.months.map(function (m) { return [MONL[m.m] + ' ' + m.y, m.h.toFixed(1), m.n]; })) +
+        '<h3 style="margin-top:10px">Per week</h3>' + table(['Week of', 'Hours', 'Recordings'], T.weeks.map(function (w) { return [fmtShort(w.s), w.h.toFixed(1), w.n]; }));
+      return;
+    }
+    var mcols = T.months.map(function (m) { var v = H ? m.h : m.n; return { label: monLabel(m, n), vals: { v: v }, drill: MONL[m.m] + ' ' + m.y + ': ' + (H ? fmtH(m.h) : plural(m.n, 'recording')) + '. Open details', mi: m, tip: '<b>' + (H ? fmtH(m.h) : plural(m.n, 'recording')) + '</b> ' + MONL[m.m] + ' ' + m.y + ' <span class="pill">Sample</span><div class="muted">Click to open this month</div>' }; });
+    var wcols = T.weeks.map(function (w) { var v = H ? w.h : w.n; return { label: '', vals: { v: v }, tip: '<b>' + (H ? fmtH(w.h) : plural(w.n, 'recording')) + '</b> week of ' + fmtShort(w.s) + ' <span class="pill">Sample</span>' }; });
+    var one = [{ id: 'v', label: H ? 'Hours' : 'Recordings', cls: 'c1' }];
+    var avgTxt = 'avg ' + (H ? fmtH(T.avgWeek) : T.avgWeek.toFixed(1)) + ' a week';
+    box.innerHTML = '<div class="ch-block"><h3>' + (H ? 'Hours' : 'Recordings') + ' per month</h3>' + columns(mcols, one, { w: W, h: 110, fmt: fmt, labels: true, aria: (H ? 'Hours' : 'Recordings') + ' per month: ' + T.months.map(function (m) { return MON[m.m] + ' ' + (H ? m.h.toFixed(1) : m.n); }).join(', ') }) + '</div>' +
+      '<div class="ch-block"><h3>Per week, with the average</h3><p class="sub" style="margin-bottom:4px">' + avgTxt + ' across the range. The gaps are the breaks between terms.</p>' + columns(wcols, one, { w: W, h: 90, fmt: fmt, avg: T.avgWeek, avgLabel: (H ? fmtH(T.avgWeek) : T.avgWeek.toFixed(1)) + '/wk', aria: 'Per week, ' + avgTxt }) + '</div>';
+    $$('[data-drill]', box).forEach(function (el) {
+      var m = mcols[+el.dataset.drill].mi;
+      var act = function () { openPop(el, MONL[m.m] + ' ' + m.y + ' · ' + plural(m.n, 'recording') + ' · ' + fmtH(m.h), '', 'the Library filtered to ' + MONL[m.m] + ' ' + m.y); };
+      el.addEventListener('click', act);
+      el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
+    });
+  }
+  function renderSpeakers(P) {
+    var S = P.speakers, box = $('#spk'), H = S.H, phone = isPhone();
+    var colW = Math.max(220, phone ? box.clientWidth : (app.clientWidth < 940 ? box.clientWidth / 2 - 10 : box.clientWidth * 0.36 - 12));
+    var meet = S.meet.map(function (x) { var v = H ? x.h : x.n, txt = H ? fmtH(x.h) : String(x.n); return { label: NAMES[x.p], v: v, txt: txt, lock: x.p === 'pp', tip: '<b>' + (H ? fmtH(x.h) + ' together' : plural(x.n, 'recording') + ' together') + '</b> ' + esc(NAMES[x.p]) + ' <span class="pill">Sample</span>' }; });
+    var talk = S.talk.map(function (x) { var lab = NAMES[x.p] + (x.p === 'students' ? ' · group' : ''); return { label: lab, v: x.h, txt: fmtH(x.h), lock: x.p === 'pp', tip: '<b>' + fmtH(x.h) + ' talking</b> ' + esc(lab) + ' <span class="pill">Sample</span>' }; });
+    function meter(t, sh, sub) { return sh ? '<div class="meter"><div class="top"><span>' + t + '</span><b>' + sh.pct + '%</b></div><div class="tr" role="img" aria-label="You talk ' + sh.pct + '% of the time in ' + t.toLowerCase() + '"><i style="width:' + sh.pct + '%"></i></div><p class="sub">' + sub + ' · ' + fmtH(sh.h) + ' of talk</p></div>' : '<div class="meter muted">' + t + ': none in this range</div>'; }
+    box.innerHTML = '<div><h3>Who you meet most</h3><p class="sub" style="margin-bottom:6px">' + (H ? 'Hours in the same recording' : 'Recordings together') + ', leaving out you and groups</p>' + (meet.length ? hbars(meet, Math.round(colW), 130) : '<p class="muted">Nobody else in this range.</p>') + '</div>' +
+      '<div><h3>Talk time per person</h3><p class="sub" style="margin-bottom:6px">Hours each voice speaks</p>' + hbars(talk, Math.round(colW), 150) + '</div>' +
+      '<div><h3>Your share of talk time</h3>' + meter('Lectures', S.lect, 'Lectures and labs') + meter('Meetings', S.meet2, 'Anything tagged meetings') + '</div>';
+  }
+
+  /* ======================= Tooltip and popover ======================= */
+  var tip = $('#tip'), pop = $('#pop'), popAnchor = null;
+  function showTip(html, x, y) {
+    tip.innerHTML = html; tip.classList.add('on');
+    var w = tip.offsetWidth, h = tip.offsetHeight, vw = innerWidth;
+    var left = Math.min(vw - w - 8, Math.max(8, x - w / 2)), top = y - h - 12; if (top < 8) top = y + 18;
+    tip.style.left = left + 'px'; tip.style.top = top + 'px';
+  }
+  function hideTip() { tip.classList.remove('on'); $$('.hc.hot').forEach(function (e) { e.classList.remove('hot'); }); }
+  function tipFor(el) { return el.classList.contains('hc') ? heatTip(el) : el.getAttribute('data-tip'); }
+  document.addEventListener('pointermove', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip], .hc');
+    if (!el || pop.classList.contains('on') && pop.contains(e.target)) { if (!el) hideTip(); return; }
+    showTip(tipFor(el), e.clientX, e.clientY);
+  });
+  document.addEventListener('pointerleave', hideTip);
+  document.addEventListener('focusin', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip], .hc');
+    if (!el) { hideTip(); return; }
+    var r = el.getBoundingClientRect(); showTip(tipFor(el), r.left + r.width / 2, r.top);
+  });
+  function openPop(anchor, title, body, target) {
+    hideTip(); popAnchor = anchor;
+    pop.innerHTML = '<div class="ph"><b id="pop-t">' + title + ' <span class="pill">Sample</span></b><button class="x" aria-label="Close details">×</button></div>' + body +
+      '<button class="btn pri" disabled aria-describedby="pop-why" style="margin-top:6px">Open in Library →</button>' +
+      '<p class="why" id="pop-why">Off here: this year is sample data, so there is nothing to open. With your archive this opens ' + esc(target) + ', and Back returns to Insights.</p>';
+    pop.classList.add('on');
+    var r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    var left = Math.min(innerWidth - w - 12, Math.max(12, r.left + r.width / 2 - w / 2)), top = r.bottom + 8;
+    if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+    $('.x', pop).addEventListener('click', function () { closePop(true); });
+  }
+  function closePop(refocus) { if (!pop.classList.contains('on')) return; pop.classList.remove('on'); if (refocus && popAnchor && document.contains(popAnchor)) popAnchor.focus(); popAnchor = null; }
+  document.addEventListener('pointerdown', function (e) { if (pop.classList.contains('on') && !pop.contains(e.target) && e.target !== popAnchor) closePop(false); });
+
+  /* ======================= Heatmap keyboard and clicks ======================= */
+  $('#heat-scroll').addEventListener('click', function (e) { var el = e.target.closest('.hc'); if (el) { moveFocus(+el.dataset.dn, false); openDay(el); } });
+  function moveFocus(n, focus) {
+    var old = heatCell(heatFocus); if (old) old.setAttribute('tabindex', '-1');
+    heatFocus = n; var el = heatCell(n); if (!el) return;
+    el.setAttribute('tabindex', '0'); if (focus) el.focus();
+    // keep it in view inside the sideways scroller
+    var box = $('#heat-scroll'), br = box.getBoundingClientRect(), er = el.getBoundingClientRect();
+    if (er.left < br.left + 30) box.scrollLeft -= (br.left + 30 - er.left); else if (er.right > br.right - 4) box.scrollLeft += er.right - br.right + 4;
+  }
+  $('#heat-scroll').addEventListener('keydown', function (e) {
+    var el = e.target.closest('.hc'); if (!el || !payload) return;
+    var n = +el.dataset.dn, Hm = payload.heat, last = Math.min(TODAY, Hm.d31), to = null;
+    if (e.key === 'ArrowLeft') to = n - 7; else if (e.key === 'ArrowRight') to = n + 7; else if (e.key === 'ArrowUp') to = n - 1; else if (e.key === 'ArrowDown') to = n + 1;
+    else if (e.key === 'Home') to = Hm.j1; else if (e.key === 'End') to = last;
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDay(el); return; }
+    if (to == null) return;
+    e.preventDefault(); closePop(false);
+    to = Math.max(Hm.j1, Math.min(last, to));
+    moveFocus(to, true);
+  });
+
+  /* ======================= Controls ======================= */
+  $('#range').addEventListener('change', function () { setInput({ range: this.value }); });
+  $('#tagchips').addEventListener('click', function (e) {
+    var b = e.target.closest('.tchip'); if (!b) return;
+    var t = b.dataset.tag, tags = state.tags.slice(), i = tags.indexOf(t);
+    if (i >= 0) tags.splice(i, 1); else tags.push(t);
+    setInput({ tags: tags });
+  });
+  $('#tag-clear').addEventListener('click', function () { setInput({ tags: [] }); });
+  $('#metric').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b && b.dataset.metric !== state.metric) setInput({ metric: b.dataset.metric }); });
+  $('#mu-view').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b || b.dataset.view === state.view) return; state.view = b.dataset.view; syncControls(); renderModels(payload); }); // view only, stays in the browser
+  $$('.tblbtn').forEach(function (b) { b.addEventListener('click', function () { tables[b.dataset.table] = !tables[b.dataset.table]; syncControls(); if (b.dataset.table === 'mu') renderModels(payload); else renderTrends(payload); }); });
+  $('#yr-prev').addEventListener('click', function () { heatFocus = null; setInput({ year: state.year - 1 }); });
+  $('#yr-next').addEventListener('click', function () { heatFocus = null; setInput({ year: state.year + 1 }); });
+  $('#empty').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-widen]'); if (b) { setInput({ range: b.dataset.widen }); return; }
+    if (e.target.closest('[data-cleartags]')) setInput({ tags: [] });
+  });
+  $$('[data-nav]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); }); });
+  var help = $('#help');
+  $('#help-btn').addEventListener('click', function () { help.showModal(); });
+  document.addEventListener('keydown', function (e) {
+    var tag = (e.target.tagName || '').toLowerCase();
+    if (e.key === 'Escape' && pop.classList.contains('on')) { closePop(true); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey || tag === 'input' || tag === 'select' || tag === 'textarea' || help.open) return;
+    if (e.key === 'd' || e.key === 'D') { e.preventDefault(); var s = $('#range'); s.focus(); try { s.showPicker(); } catch (err) {} }
+    else if (e.key === '?') { e.preventDefault(); help.showModal(); }
+  });
+
+  /* ======================= Theme ======================= */
+  var mode = 'system';
+  var mq = matchMedia('(prefers-color-scheme: dark)');
+  function applyTheme() {
+    var dark = mode === 'dark' || (mode === 'system' && mq.matches);
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    $('#mk-theme').setAttribute('aria-pressed', String(dark));
+    $('#mk-theme-l').textContent = dark ? 'Light' : 'Dark';
+    $('#mk-theme').setAttribute('aria-label', dark ? 'Switch to light mode (mockup control)' : 'Switch to dark mode (mockup control)');
+    $$('.modeseg button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.mode === mode)); });
+  }
+  try { mq.addEventListener('change', applyTheme); } catch (e) {}
+  $('#mk-theme').addEventListener('click', function () { mode = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'; applyTheme(); });
+  $$('.modeseg button').forEach(function (b) { b.addEventListener('click', function () { mode = b.dataset.mode; applyTheme(); }); });
+
+  /* ======================= Mockup states ======================= */
+  var stage = $('#stage');
+  function setPhone(on) { stage.classList.toggle('phone', on); $('#mk-phone').checked = on; requestAnimationFrame(relayout); }
+  function markState(id) { $$('#mk-states button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.state === id)); }); }
+  function goState(id) {
+    clearTimeout(timer); closePop(false); hideTip();
+    state = JSON.parse(JSON.stringify(DEFAULTS)); tables = { mu: false, tr: false }; heatFocus = null;
+    state.pages = id === 'pages'; $('#mk-pages').checked = state.pages;
+    if (id === 'empty') state.range = 'custom';
+    setPhone(id === 'phone');
+    payload = compute(state); render();
+    app.classList.toggle('recalc-on', id === 'recalc');
+    $('#mk-note').classList.toggle('on', id === 'recalc');
+    markState(id);
+  }
+  $('#mk-states').addEventListener('click', function (e) { var b = e.target.closest('button[data-state]'); if (b) goState(b.dataset.state); });
+  $('#mk-phone').addEventListener('change', function () { setPhone(this.checked); markState(this.checked ? 'phone' : 'default'); });
+  $('#mk-pages').addEventListener('change', function () { setInput({ pages: this.checked }); markState(this.checked ? 'pages' : 'default'); });
+
+  var rq = null;
+  try { new ResizeObserver(function () { cancelAnimationFrame(rq); rq = requestAnimationFrame(relayout); }).observe(app); } catch (e) { addEventListener('resize', relayout); }
+
+  applyTheme();
+  payload = compute(state); render();
+  window.__insights = { state: function () { return state; }, payload: function () { return payload; }, count: DATA.length };
+})();
+</script>
+</body>
+</html>

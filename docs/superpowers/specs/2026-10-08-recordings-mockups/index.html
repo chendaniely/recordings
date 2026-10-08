@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#F8F6F2; --surface:#FFFDFA; --border:#E0D6CB; --text:#1C1A17; --muted:#6B6258; --blue:#236192; --orange:#F26522; --chip:#E8DDD2; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#171512; --surface:#232019; --border:#2E2B26; --text:#F8F6F2; --muted:#B8AEA2; --blue:#6CA6D9; --chip:#2E2B26; } }
+  :root[data-theme="dark"] { --bg:#171512; --surface:#232019; --border:#2E2B26; --text:#F8F6F2; --muted:#B8AEA2; --blue:#6CA6D9; --chip:#2E2B26; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 "Atkinson Hyperlegible", system-ui, sans-serif; }
+  main { max-width:860px; margin:0 auto; padding:28px 16px 48px; }
+  header { display:flex; align-items:center; gap:10px; }
+  .logo { width:12px; height:12px; border-radius:50%; background:var(--orange); box-shadow:5px 0 0 var(--blue); margin-right:6px; }
+  h1 { font-size:22px; margin:0; } .theme { margin-left:auto; }
+  button { font:inherit; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:5px 11px; cursor:pointer; }
+  p.sub { color:var(--muted); margin:6px 0 22px; }
+  h2 { font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:26px 0 8px; }
+  ul { list-style:none; padding:0; margin:0; display:grid; gap:10px; }
+  a.card { display:block; text-decoration:none; color:inherit; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+  a.card:hover, a.card:focus-visible { border-color:var(--blue); outline:none; box-shadow:0 0 0 2px color-mix(in srgb, var(--blue) 25%, transparent); }
+  a.card b { color:var(--blue); } .what { color:var(--muted); font-size:13.5px; margin-top:2px; }
+  .tag { font-size:11.5px; padding:1px 8px; border-radius:999px; background:var(--chip); margin-left:6px; vertical-align:2px; }
+</style>
+</head>
+<body>
+<main>
+  <header><span class="logo" aria-hidden="true"></span><h1>Recordings mockups</h1>
+    <button class="theme" id="theme" aria-label="Toggle light or dark">Light / dark</button></header>
+  <p class="sub">Interactive mockups for review. Every page has a light/dark toggle and a "States" switcher;
+    each ends with design notes and open questions. They are mockups, not the app: data is invented or public-domain.</p>
+
+  <h2>Speakers, people and finding recordings (spec §12.6a, §7.6) <span class="tag">2026-10-08</span></h2>
+  <ul>
+    <li><a class="card" href="speakers-transcript.html"><b>Speaker tagging in the transcript</b>
+      <div class="what">Speaker chips, the person picker with scope, range fixes, merging unnamed labels, the speaker strip and bands, the sweep notice, phone actions.</div></a></li>
+    <li><a class="card" href="people.html"><b>People page</b>
+      <div class="what">People, To link (bulk-link Plaud names), Suggestions (stage 6), Fix in Plaud, a person's page, Forget.</div></a></li>
+    <li><a class="card" href="library-filters.html"><b>Library filters</b>
+      <div class="what">The People facet, filter chips with all/any, people in search, people in list rows, empty states, the phone tab bar.</div></a></li>
+    <li><a class="card" href="date-picker.html"><b>Date picker</b>
+      <div class="what">Presets and terms, the two-month range calendar with recording dots, the month/year jump, keyboard use, the phone sheet.</div></a></li>
+  </ul>
+
+  <h2>Insights (spec §12.6b) <span class="tag">2026-10-08</span></h2>
+  <ul>
+    <li><a class="card" href="insights.html"><b>Insights dashboard</b>
+      <div class="what">Cards, the year heatmap, the punch card, model usage, trends and speakers, computed in Python with Shiny. Shown with a labelled sample year.</div></a></li>
+  </ul>
+
+  <h2>Earlier rounds (stage 1 design)</h2>
+  <ul>
+    <li><a class="card" href="library-v2.html"><b>Library v2</b><div class="what">The list, player, synced transcript and Notes tab.</div></a></li>
+    <li><a class="card" href="tagging-v3.html"><b>Tagging v3</b><div class="what">The tag tree, the grid, drag-to-tag and the <code>T</code> picker.</div></a></li>
+    <li><a class="card" href="approvals.html"><b>Approvals</b><div class="what">Batches of edits waiting to run jobs.</div></a></li>
+    <li><a class="card" href="theme.html"><b>Theme</b><div class="what">The warm neutrals with NYC blue and orange, light and dark.</div></a></li>
+    <li><a class="card" href="library.html"><b>Library v1</b><div class="what">The first layout, superseded by v2.</div></a></li>
+  </ul>
+</main>
+<script>
+  (function () {
+    var root = document.documentElement, key = 'mockups-theme';
+    try { var t = localStorage.getItem(key); if (t) root.dataset.theme = t; } catch (e) {}
+    document.getElementById('theme').addEventListener('click', function () {
+      var dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      root.dataset.theme = dark ? 'light' : 'dark';
+      try { localStorage.setItem(key, root.dataset.theme); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>

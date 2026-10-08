@@ -1,0 +1,1382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>People page</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Atkinson+Hyperlegible+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #F8F6F2; --surface: #FFFDFA; --side: #EFE8DF; --border: #E0D6CB; --text: #1C1A17; --muted: #6B6258;
+  --primary: #236192; --on-primary: #F8F6F2; --chip: #E8DDD2; --orange: #F26522;
+  --success: #3D6123; --danger: #9A4665; --on-danger: #FFFDFA; --toast-link: #8CBCE6;
+  --shadow: 0 14px 44px rgba(28, 26, 23, .20); --scrim: rgba(28, 26, 23, .42);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #171512; --surface: #232019; --side: #1C1A16; --border: #2E2B26; --text: #F8F6F2; --muted: #B8AEA2;
+    --primary: #6CA6D9; --on-primary: #171512; --chip: #2E2B26;
+    --success: #9CC27A; --danger: #D27A9A; --on-danger: #171512; --toast-link: #236192;
+    --shadow: 0 14px 44px rgba(0, 0, 0, .55); --scrim: rgba(0, 0, 0, .55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #171512; --surface: #232019; --side: #1C1A16; --border: #2E2B26; --text: #F8F6F2; --muted: #B8AEA2;
+  --primary: #6CA6D9; --on-primary: #171512; --chip: #2E2B26;
+  --success: #9CC27A; --danger: #D27A9A; --on-danger: #171512; --toast-link: #236192;
+  --shadow: 0 14px 44px rgba(0, 0, 0, .55); --scrim: rgba(0, 0, 0, .55);
+}
+:root {
+  --sel: color-mix(in srgb, var(--primary) 12%, transparent);
+  --dtint: color-mix(in srgb, var(--danger) 11%, transparent);
+  --stint: color-mix(in srgb, #72994E 16%, transparent);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 "Atkinson Hyperlegible", system-ui, sans-serif; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+code, kbd, .mono { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; }
+code { font-size: .92em; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.spacer { flex: 1; }
+
+/* ---------- mockup chrome (not the app) ---------- */
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px; }
+.mk-head { display: flex; align-items: flex-start; gap: 16px; padding-top: 20px; padding-bottom: 10px; }
+.mk-head h1 { font-size: 21px; margin: 0; }
+.mk-head p { margin: 3px 0 0; color: var(--muted); }
+.mk-tog { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.mk-btn { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+.mk-btn[aria-pressed="true"] { background: var(--sel); border-color: var(--primary); color: var(--primary); font-weight: 700; }
+.mk-controls { margin-bottom: 14px; padding: 10px 12px; border: 1.5px dashed var(--muted); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.mk-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-right: 4px; }
+.mk-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+.mk-btn.sm { padding: 3px 9px; font-size: 12.5px; }
+.notes { margin-top: 26px; margin-bottom: 60px; }
+.notes h2 { font-size: 17px; margin: 0 0 6px; }
+.notes h3 { font-size: 14px; margin: 16px 0 4px; }
+.notes ul { margin: 4px 0; padding-left: 20px; }
+.notes li { margin: 5px 0; }
+
+/* ---------- the app frame ---------- */
+.app { container: app / inline-size; position: relative; height: 800px; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; margin: 0 auto; }
+.app.phone { width: 390px; height: 820px; border-radius: 26px; box-shadow: 0 0 0 7px var(--chip), 0 0 0 8px var(--border); }
+.topbar { display: flex; align-items: center; gap: 18px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); flex: none; }
+.logo { font-weight: 700; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.logo i { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); box-shadow: 4px 0 0 0 var(--primary); margin-right: 4px; }
+.topnav { display: flex; gap: 16px; }
+.topnav a { color: var(--muted); text-decoration: none; padding: 2px 0; border-bottom: 2px solid transparent; display: inline-flex; gap: 6px; align-items: center; }
+.topnav a[aria-current="page"] { color: var(--text); font-weight: 700; border-bottom-color: var(--orange); }
+.nbadge { min-width: 19px; height: 19px; padding: 0 6px; border-radius: 999px; background: var(--primary); color: var(--on-primary); font-size: 11.5px; font-weight: 700; display: inline-grid; place-items: center; line-height: 1; }
+.nbadge[hidden] { display: none; }
+.tb-right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.iconbtn { min-width: 30px; height: 30px; border: 1px solid var(--border); background: var(--surface); border-radius: 7px; display: inline-grid; place-items: center; cursor: pointer; padding: 0 6px; }
+.iconbtn[aria-pressed="true"] { background: var(--chip); }
+.iconbtn svg { width: 15px; height: 15px; }
+.seg3 { display: inline-flex; gap: 2px; }
+.bottombar { display: none; }
+
+.pagehead { padding: 14px 20px 0; flex: none; }
+.pagehead h1 { font-size: 20px; margin: 0; }
+.tabs { display: flex; gap: 2px; margin-top: 10px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.tab { border: 0; background: none; padding: 8px 12px; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; color: var(--muted); white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; border-radius: 6px 6px 0 0; }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--text); font-weight: 700; border-bottom-color: var(--primary); }
+.tab .cnt { font-size: 11.5px; padding: 0 7px; border-radius: 999px; background: var(--chip); color: var(--text); font-weight: 700; }
+.tab.ph { outline: 1px dashed var(--muted); outline-offset: -4px; }
+.tab .s6 { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--muted); color: var(--muted); font-weight: 400; }
+.content { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 90px; }
+
+/* ---------- controls ---------- */
+.btn { border: 1px solid var(--border); border-radius: 7px; padding: 5px 11px; background: var(--surface); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: var(--text); white-space: nowrap; line-height: 1.35; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 700; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); font-weight: 700; }
+.btn.danger-o { color: var(--danger); border-color: var(--danger); background: transparent; font-weight: 700; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--primary); }
+.btn.sm { padding: 3px 9px; font-size: 12.5px; }
+.btn.icon { padding: 3px 8px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 11px; background: var(--surface); color: var(--text); }
+.btn.primary kbd { background: transparent; color: inherit; border-color: currentColor; }
+.linkish { border: 0; background: none; padding: 0; color: var(--primary); cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
+.linkish.strong { font-weight: 700; color: var(--text); text-decoration: none; }
+.linkish.strong:hover { color: var(--primary); text-decoration: underline; }
+.txt { width: 100%; padding: 7px 10px; border: 1.5px solid var(--border); border-radius: 8px; background: var(--surface); }
+.txt:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px var(--sel); }
+select { border: 1px solid var(--border); border-radius: 7px; padding: 4px 6px; background: var(--surface); }
+
+.play { position: relative; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--primary); display: inline-grid; place-items: center; cursor: pointer; padding: 0; flex: none; }
+.play svg { width: 12px; height: 12px; }
+.play .i-pause { display: none; }
+.play.playing .i-play { display: none; }
+.play.playing .i-pause { display: block; }
+.play.playing { border-color: var(--orange); }
+.play::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; pointer-events: none; background: conic-gradient(var(--orange) calc(var(--p, 0) * 1turn), transparent 0); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px)); }
+
+.switch { width: 38px; height: 22px; border-radius: 999px; border: 1.5px solid var(--muted); background: transparent; position: relative; cursor: pointer; padding: 0; flex: none; }
+.switch::before { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: var(--muted); transition: transform .15s; }
+.switch[aria-checked="true"] { background: var(--primary); border-color: var(--primary); }
+.switch[aria-checked="true"]::before { transform: translateX(16px); background: var(--on-primary); }
+
+.chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; padding: 0 8px; border-radius: 999px; background: var(--chip); color: var(--text); line-height: 1.65; white-space: nowrap; }
+.chip.auto { background: transparent; border: 1px dashed var(--muted); color: var(--muted); }
+.chip.you { background: var(--sel); color: var(--primary); font-weight: 700; }
+.chip.warn { background: var(--dtint); color: var(--danger); font-weight: 700; }
+.chip.ok { background: var(--stint); color: var(--success); font-weight: 700; }
+.chip.lg { font-size: 12.5px; padding: 1px 4px 1px 10px; }
+.chip .x { border: 0; background: none; cursor: pointer; padding: 0 5px; border-radius: 50%; color: var(--muted); font-size: 14px; line-height: 1; }
+.chip .x:hover { color: var(--text); }
+.lock { display: inline-block; vertical-align: -1px; }
+.privline { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--chip); display: inline-grid; place-items: center; font-size: 11.5px; font-weight: 700; flex: none; color: var(--text); }
+.avatar.ph { background: transparent; border: 1.5px dashed var(--muted); color: var(--muted); }
+.avatar.grp { border-radius: 9px; }
+.avatar.lg { width: 48px; height: 48px; font-size: 16px; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 12px; }
+.search { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface); border-radius: 7px; padding: 4px 8px; color: var(--muted); }
+.search:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
+.search input { border: 0; background: transparent; outline: none; width: 190px; color: var(--text); }
+.search svg { width: 14px; height: 14px; }
+.callout { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 8px; padding: 9px 12px; margin-bottom: 12px; }
+.callout.ok { border-left-color: #72994E; }
+.warnbox { background: var(--dtint); border-radius: 8px; padding: 9px 12px; margin-top: 12px; }
+.warnbox b { color: var(--danger); }
+.err { color: var(--danger); font-size: 12.5px; margin: 6px 0 0; }
+.empty { border: 1px dashed var(--muted); border-radius: 12px; padding: 34px 20px; text-align: center; color: var(--muted); background: var(--surface); max-width: 620px; margin: 24px auto; }
+.empty h3 { color: var(--text); margin: 0 0 6px; font-size: 16px; }
+.empty p { margin: 0 auto 14px; max-width: 460px; }
+.pill6 { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 1px 9px; border-radius: 999px; border: 1px dashed var(--muted); color: var(--muted); margin-bottom: 8px; }
+
+/* ---------- People table ---------- */
+.tcard { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.ptable { width: 100%; border-collapse: collapse; }
+.ptable th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+.ptable td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ptable tbody tr:last-child td { border-bottom: 0; }
+.ptable .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.prow { cursor: pointer; }
+.prow:hover td { background: var(--bg); }
+.pcell { display: flex; gap: 10px; align-items: center; }
+.pline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pname { border: 0; background: none; padding: 0; font-weight: 700; cursor: pointer; text-align: left; }
+.pname:hover { color: var(--primary); text-decoration: underline; }
+.c-al { color: var(--muted); max-width: 220px; }
+.phone-meta { display: none; }
+.grow td { background: var(--bg); }
+.disclosure { border: 0; background: none; cursor: pointer; font-weight: 700; padding: 2px 0; }
+.prow.ph-row td:first-child { padding-left: 28px; }
+
+/* ---------- Person page ---------- */
+.crumb { margin-bottom: 10px; }
+.phead { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+.phead h2 { margin: 0; font-size: 21px; display: inline; }
+.ptitle { min-width: 0; flex: 1 1 220px; }
+.ptitle .row1 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.phead-r { margin-left: auto; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.recog { display: flex; gap: 8px; align-items: center; }
+.pgrid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.card h3 { margin: 0 0 6px; font-size: 14.5px; }
+.card p { margin: 4px 0 8px; }
+.card.dz { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.card.dz h3 { color: var(--danger); }
+.rlist { list-style: none; margin: 0; padding: 0; }
+.rrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.rrow:last-child { border-bottom: 0; }
+.chips { list-style: none; padding: 0; margin: 6px 0 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.addalias { display: flex; gap: 6px; }
+.addalias input { flex: 1; padding: 4px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); min-width: 0; }
+.addalias input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px var(--sel); }
+.merge-panel { display: grid; gap: 10px; }
+.merge-panel fieldset, .radios { border: 0; padding: 0; margin: 0; display: grid; gap: 4px; }
+.merge-panel legend, .radios legend, .flabel { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; margin-bottom: 4px; padding: 0; }
+.radios label, .merge-panel label.r { display: flex; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.radios label:hover { background: var(--bg); }
+.rename { display: flex; gap: 6px; align-items: center; }
+.rename input { font-size: 18px; font-weight: 700; padding: 2px 8px; border: 1.5px solid var(--primary); border-radius: 7px; background: var(--surface); width: 240px; }
+
+/* ---------- To link ---------- */
+.llist { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.lrow { display: grid; grid-template-columns: 18px 30px minmax(130px, 1fr) minmax(220px, 1.7fr) auto; grid-template-areas: "cb play name sugg acts"; gap: 12px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); user-select: none; cursor: default; }
+.lrow:last-child { border-bottom: 0; }
+.lrow:hover { background: var(--bg); }
+.lrow.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--primary); }
+.l-cb { grid-area: cb; width: 16px; height: 16px; margin: 0; }
+.l-play { grid-area: play; } .l-name { grid-area: name; } .l-sugg { grid-area: sugg; } .l-acts { grid-area: acts; }
+.pq { font-weight: 700; }
+.l-sugg { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.why { color: var(--muted); font-size: 12.5px; }
+.l-acts { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.selbar { position: sticky; top: -16px; z-index: 3; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; margin: 0 0 10px; background: var(--surface); border: 1.5px solid var(--primary); border-radius: 10px; box-shadow: var(--shadow); }
+.hiddennote { margin-top: 10px; }
+
+/* ---------- Suggestions ---------- */
+.sticky-tools { position: sticky; top: -16px; z-index: 3; background: var(--bg); padding: 6px 0; }
+.sglist:focus-visible { outline-offset: 4px; border-radius: 10px; }
+.sgroup { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+.sg-h { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.sg-h h3 { margin: 0; font-size: 15px; }
+.ref { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--side); border-bottom: 1px solid var(--border); }
+.cands { list-style: none; margin: 0; padding: 0; }
+.cand { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.cand:last-child { border-bottom: 0; }
+.cand.cur { background: var(--sel); box-shadow: inset 3px 0 0 var(--primary); }
+.cand.isplaying { box-shadow: inset 3px 0 0 var(--orange); }
+.cand.d-accept, .cand.d-reject { background: var(--bg); }
+.conf { font-size: 12.5px; white-space: nowrap; }
+.cacts { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.dec { font-weight: 700; white-space: nowrap; }
+.dec.ok { color: var(--success); } .dec.no { color: var(--danger); }
+
+/* ---------- Fix in Plaud ---------- */
+.fixlist { list-style: none; margin: 0; padding: 0; }
+.fix { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; }
+.fix.done { background: var(--bg); border-style: dashed; border-color: var(--muted); }
+.cmp { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 8px; }
+.cmp .lab { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; }
+.cmp .v { font-weight: 700; }
+.cmp .v.plaud { font-weight: 400; text-decoration: line-through; text-decoration-color: var(--danger); }
+.fx-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.src { margin-top: 6px; }
+
+/* ---------- Plaud vs home ---------- */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font-size: 22px; font-weight: 700; }
+table.mini { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.mini th, table.mini td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+table.mini th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+table.mini td.num, table.mini th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------- overlay, menu, toast ---------- */
+.overlay { position: absolute; inset: 0; background: var(--scrim); display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; z-index: 40; overflow: auto; }
+.overlay[hidden] { display: none; }
+.dlg { width: 540px; max-width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 18px 20px; }
+.dlg.wide { width: 760px; }
+.dlg h2 { font-size: 17px; margin: 0 0 4px; }
+.dlg h3 { font-size: 13px; margin: 0 0 6px; }
+.dlg.danger { border-top: 4px solid var(--danger); }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.dlg .lead { margin: 2px 0 12px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 12px 0; }
+.two section { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; }
+.two ul { margin: 0; padding-left: 18px; }
+.two li { margin: 4px 0; font-size: 13px; }
+.dangerline { color: var(--danger); font-weight: 700; }
+.field { display: block; margin: 12px 0 6px; }
+.preview { margin-top: 10px; font-size: 13px; }
+.pk-list { list-style: none; margin: 8px 0 0; padding: 4px; border: 1px solid var(--border); border-radius: 9px; max-height: 260px; overflow: auto; }
+.pk-list li { padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+.pk-list li[aria-selected="true"] { background: var(--sel); color: var(--primary); font-weight: 700; }
+.pk-list li.create { color: var(--primary); }
+.sptable { width: 100%; border-collapse: collapse; }
+.sptable td { padding: 7px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.sptable select { max-width: 100%; }
+.keytable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.keytable td { padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.keytable tr.here td { background: var(--sel); }
+.menu { position: absolute; z-index: 35; min-width: 240px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow); padding: 4px; }
+.menu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.menu button:hover, .menu button:focus-visible { background: var(--sel); outline: none; }
+.menu button:disabled { opacity: .5; cursor: not-allowed; }
+.menu .sub { display: block; color: var(--muted); font-size: 12px; }
+.toast { position: absolute; left: 50%; bottom: 18px; transform: translate(-50%, 24px); opacity: 0; visibility: hidden; background: var(--text); color: var(--bg); padding: 9px 14px; border-radius: 10px; display: flex; gap: 14px; align-items: center; z-index: 60; transition: transform .2s, opacity .2s, visibility .2s; max-width: calc(100% - 28px); box-shadow: var(--shadow); width: max-content; }
+.toast.show { transform: translate(-50%, 0); opacity: 1; visibility: visible; }
+.toast button { background: none; border: 0; color: var(--toast-link); font-weight: 700; cursor: pointer; padding: 0; text-decoration: underline; flex: none; }
+
+/* ---------- phone: the app frame is a container, so this works both for the 390 px toggle and for a real phone ---------- */
+@container app (max-width: 640px) {
+  .topbar { padding: 8px 12px; gap: 10px; }
+  .topnav { display: none; }
+  .bottombar { display: grid; grid-template-columns: repeat(6, 1fr); border-top: 1px solid var(--border); background: var(--surface); flex: none; padding: 2px 2px 10px; }
+  .bottombar a { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 10.5px; color: var(--muted); text-decoration: none; padding: 6px 0 2px; position: relative; border-top: 2px solid transparent; }
+  .bottombar a svg { width: 19px; height: 19px; }
+  .bottombar a[aria-current="page"] { color: var(--text); font-weight: 700; border-top-color: var(--orange); }
+  .bottombar .nbadge { position: absolute; top: 1px; left: calc(50% + 4px); min-width: 17px; height: 17px; font-size: 10.5px; padding: 0 4px; }
+  .pagehead { padding: 12px 14px 0; }
+  .content { padding: 14px 14px 80px; }
+  .tab { padding: 8px 10px; }
+  .search input { width: 140px; }
+  .ptable thead { display: none; }
+  .ptable, .ptable tbody { display: block; }
+  .ptable tr.prow, .ptable tr.grow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .ptable tr.grow { display: block; }
+  .ptable td { display: block; padding: 0; border: 0; }
+  .ptable .c-al, .ptable .c-n, .ptable .c-t, .ptable .c-l { display: none; }
+  .ptable .grow td { background: none; }
+  .prow.ph-row td:first-child { padding-left: 0; }
+  .phone-meta { display: block; }
+  .pgrid { grid-template-columns: 1fr; }
+  .phead-r { margin-left: 0; width: 100%; }
+  .lrow { grid-template-columns: 18px 30px minmax(0, 1fr); grid-template-areas: "cb play name" ". . sugg" ". . acts"; gap: 6px 10px; }
+  .l-acts { justify-content: flex-start; }
+  .cand { grid-template-columns: 30px minmax(0, 1fr); }
+  .cand .conf { grid-column: 2; }
+  .cand .cacts { grid-column: 1 / -1; justify-content: stretch; }
+  .cand .cacts .btn { flex: 1; justify-content: center; padding: 8px; }
+  .keys, .kh { display: none !important; }
+  .fix { grid-template-columns: 1fr; }
+  .fx-acts { justify-content: flex-start; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .two { grid-template-columns: 1fr; }
+  .overlay { align-items: flex-end; padding: 0; }
+  .dlg, .dlg.wide { border-radius: 16px 16px 0 0; width: 100%; max-height: 94%; overflow: auto; padding: 16px; }
+  .toast { bottom: 78px; }
+  .rename input { width: 100%; }
+}
+</style>
+</head>
+<body>
+
+<header class="wrap mk-head">
+  <div>
+    <h1>People page: interactive mockup</h1>
+    <p>Spec §12.6a and §7.6 · 2026-10-08 · every button below works · clips are silent stand-ins</p>
+  </div>
+  <div class="mk-tog" aria-label="Mockup view toggles">
+    <button type="button" class="mk-btn" id="mk-phone" aria-pressed="false">Phone (390 px)</button>
+    <button type="button" class="mk-btn" id="mk-theme" aria-label="Toggle light or dark">Light / dark</button>
+  </div>
+</header>
+
+<section class="wrap" aria-label="Mockup controls, not part of the app">
+  <div class="mk-controls">
+    <span class="mk-label">Mockup states (not the app)</span>
+    <button type="button" class="mk-btn sm" data-state="people">People</button>
+    <button type="button" class="mk-btn sm" data-state="person">A person's page</button>
+    <button type="button" class="mk-btn sm" data-state="forget">Forget dialog</button>
+    <button type="button" class="mk-btn sm" data-state="link">To link</button>
+    <button type="button" class="mk-btn sm" data-state="linksel">To link, multi-selection</button>
+    <button type="button" class="mk-btn sm" data-state="sugg">Suggestions (stage 6)</button>
+    <button type="button" class="mk-btn sm" data-state="fix">Fix in Plaud</button>
+    <button type="button" class="mk-btn sm" data-state="emptynew">Empty: new archive</button>
+    <button type="button" class="mk-btn sm" data-state="emptyall">Empty: all clear</button>
+    <span class="mk-sep" aria-hidden="true"></span>
+    <span class="mk-label">Build stage</span>
+    <button type="button" class="mk-btn sm" data-stage="3">3 · names</button>
+    <button type="button" class="mk-btn sm" data-stage="6">6 · voice</button>
+    <span class="mk-sep" aria-hidden="true"></span>
+    <button type="button" class="mk-btn sm" data-state="reset">Reset data</button>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="app" id="app">
+    <div class="topbar">
+      <span class="logo"><i aria-hidden="true"></i>Recordings</span>
+      <nav class="topnav" aria-label="Main">
+        <a href="#" data-act="nav-other">Library</a>
+        <a href="#" data-act="nav-other">Tags</a>
+        <a href="#" class="nav-people" aria-current="page" data-act="go-people">People <span class="nbadge nb-people"></span></a>
+        <a href="#" data-act="nav-other">Insights</a>
+        <a href="#" data-act="nav-other">Add</a>
+        <a href="#" data-act="nav-other">Status</a>
+      </nav>
+      <div class="tb-right">
+        <button type="button" class="iconbtn" data-act="help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
+        <span class="seg3" role="group" aria-label="Colour mode">
+          <button type="button" class="iconbtn" data-act="theme" data-id="light" aria-label="Light mode" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6 13 13M3 13l1.4-1.4M11.6 4.4 13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+          <button type="button" class="iconbtn" data-act="theme" data-id="system" aria-label="Follow the system" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 14h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+          <button type="button" class="iconbtn" data-act="theme" data-id="dark" aria-label="Dark mode" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 10.2A6 6 0 0 1 5.8 2.5a6 6 0 1 0 7.7 7.7Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button>
+        </span>
+      </div>
+    </div>
+    <div class="pagehead">
+      <h1>People</h1>
+      <div class="tabs" id="tabs" role="tablist" aria-label="People"></div>
+    </div>
+    <main class="content" id="content" role="tabpanel" tabindex="-1"></main>
+    <nav class="bottombar" aria-label="Main">
+      <a href="#" data-act="nav-other"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>Library</a>
+      <a href="#" data-act="nav-other"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 3h7l7 7-7 7-7-7Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7" cy="7" r="1.3" fill="currentColor"/></svg>Tags</a>
+      <a href="#" class="nav-people" aria-current="page" data-act="go-people"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="7.5" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2 17c.6-3 2.8-4.6 5.5-4.6S12.4 14 13 17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M13 4.5a2.6 2.6 0 0 1 0 5M15 12.6c1.6.6 2.6 2 3 4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>People<span class="nbadge nb-people"></span></a>
+      <a href="#" data-act="nav-other"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 17V9M8 17V4M13 17v-6M18 17V7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Insights</a>
+      <a href="#" data-act="nav-other"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Add</a>
+      <a href="#" data-act="nav-other"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 10h4l2-5 4 10 2-5h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Status</a>
+    </nav>
+    <div class="overlay" id="overlay" hidden></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<section class="wrap notes" aria-labelledby="notes-h">
+  <h2 id="notes-h">Design notes</h2>
+  <h3>What the mockup shows</h3>
+  <ul>
+    <li><b>Tabs, per §12.6a:</b> People · To link · Suggestions · Fix in Plaud · Plaud vs home. At build stage 3, Suggestions and Plaud vs home show as dashed "stage 6" placeholders, so you can see where they will go. The real app hides them until stage 6. Switch <i>Build stage</i> to 6 to review them working.</li>
+    <li><b>The badge on People</b> counts what needs you: names to link, open Fix in Plaud items and, from stage 6, suggestions. It is blue, not orange, because orange already marks the active page (§12.6).</li>
+    <li><b>People:</b>
+      <ul>
+        <li>Rows are sorted by when the person was last heard. Placeholders are collapsed under "Unnamed (3)".</li>
+        <li>Anyone in <code>people.private.yaml</code> shows a lock and "Private: local only" (§7.6). A group shows "Never fingerprinted" in place of the switch.</li>
+        <li>At stage 3, <i>Recognise this voice</i> only sets the rule. At stage 6, turning it off deletes their voice data, and the toast says so.</li>
+      </ul></li>
+    <li><b>A person's page:</b>
+      <ul>
+        <li><b>Aliases are editable.</b> Adding "Sam" to Sam Lee links Plaud's "Sam" straight away, because an alias edit re-runs linking (§9.1.1).</li>
+        <li><b>Rename</b> keeps the slug.</li>
+        <li><b>Merge with…</b> lets you choose which name survives. Aliases are combined, and <i>recognise</i> stays on only if both people had it on (§7.6).</li>
+      </ul></li>
+    <li><b>Forget</b> is the app's one confirmation (§12.2): you type the person's name. The dialog lists the six scrub steps and what still holds the data, Plaud's cloud included (§7.6). It has no Undo, and it also clears the mockup's undo history.</li>
+    <li><b>To link:</b>
+      <ul>
+        <li><b>Suggestions use Plaud's own voice key</b> (<code>embedding_key</code>, §9.1.1). "Sam" points to Sam Lee because Plaud gave both the same key. "Alex K" and "alex kim" share a key, so they get "one person with…". "Dr. Lee" only shares a surname, so it gets no suggestion.</li>
+        <li><b>Selection works like Finder</b> (§12.2): click, ⌘/Ctrl-click, Shift-click or the checkboxes. "One person from these 3" asks which name to show, offering a capitalised "Alex Kim" as well; the other names become aliases.</li>
+        <li><b>"Accept all suggested links"</b> leaves out any row that needs your judgement (two voices, or no suggestion) and names what it left out.</li>
+        <li><b>"Alex" has two voices:</b> the "Alex" in Office hours has Sam Lee's voice key. <i>Split per recording</i> saves that one recording as yours, with <code>plaud_name_seen: "Alex"</code>, which is the example in §7.6. It also adds an item to Fix in Plaud.</li>
+      </ul></li>
+    <li><b>Suggestions (stage 6):</b>
+      <ul>
+        <li>Grouped by person, with their reference clip pinned at the top. Medium matches only, best first.</li>
+        <li><kbd>Space</kbd> <kbd>Y</kbd> <kbd>N</kbd> <kbd>S</kbd> <kbd>U</kbd> work. Each decision plays the next clip.</li>
+        <li>Rows you have decided stay where they are, so the list never reshuffles. Courses (<code>voice: off</code>) and private recordings never appear here.</li>
+      </ul></li>
+    <li><b>Fix in Plaud:</b> each item shows Plaud's name against ours and the right name, with Copy. <i>Open in Plaud ↗</i> and <i>Done in Plaud</i> move the item to "waiting for a re-sync". <i>Re-sync now</i> clears it.</li>
+    <li><b>Phone:</b> the main nav becomes a bottom tab bar (§12), tables become stacked rows, dialogs become bottom sheets, and the key hints are hidden.</li>
+  </ul>
+  <h3>Spec gaps and questions for Dan</h3>
+  <ul>
+    <li><b>Fix in Plaud before stage 6.</b> §7.6 fills it only from the yardstick's "Ours is right", which is stage 6, yet the tab is listed for stage 3. The mockup assumes that overriding a Plaud name yourself (a label, a span or a split, recorded in <code>plaud_name_seen</code>) adds an item from stage 3. Is that right? And is it still worth fixing Plaud once the subscription ends?</li>
+    <li><b>Case in linking.</b> Aliases are unique ignoring case (§7.6), but nothing says whether matching Plaud names ignores case. If it does, "alex kim" never reaches To link once Alex Kim exists. Here it ignores case, and Alex Kim does not exist yet.</li>
+    <li><b>The evidence for two voices.</b> "One Plaud name meaning two people" needs some evidence, and the spec doesn't say what. The mockup uses a differing <code>embedding_key</code>, which assumes Plaud's key is stable across recordings. Worth checking on real data.</li>
+    <li><b>Accept all and the random candidates.</b> About 10% of Suggestions are random lower-scored candidates (§7.6, selection bias), so Accept all would accept them too. Sorting by score also puts them at the bottom, where they stand out. Proposal: interleave them unmarked, and leave them out of Accept all.</li>
+    <li><b>Three counters.</b> Fix in Plaud is also in the Library's Review (N) (§12.1), and the orange approvals badge (§12.5) sits in the same top bar. Should there be one "needs you" number?</li>
+    <li><b>A private person in a non-private recording.</b> Linking one there means moving them to <code>people.yaml</code> "after Dan confirms" (§7.6). That is a confirmation, which §12.2 otherwise rules out, and its design is still open. "Priya S." avoids the problem only because COURSE 101 has <code>external_names: false</code>.</li>
+    <li><b>Groups from courses.</b> A group made from course recordings lands in <code>people.private.yaml</code> by default, so "Students" gets a lock. Is that intended for groups?</li>
+  </ul>
+</section>
+
+<script>
+(function () {
+  'use strict';
+  var app = document.getElementById('app');
+  function $(s, el) { return (el || document).querySelector(s); }
+  function $$(s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function q(n) { return '“' + esc(n) + '”'; }
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function dt(iso, wd) { var a = iso.split('-').map(Number); var w = new Date(Date.UTC(a[0], a[1] - 1, a[2])).getUTCDay(); return (wd ? WD[w] + ' ' : '') + MON[a[1] - 1] + ' ' + a[2] + ' ' + a[0]; }
+  function fmtDur(s) { if (s < 60) return s + ' s'; var m = Math.round(s / 60); if (m < 60) return m + ' min'; return Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min'; }
+  function plural(n, w, ws) { return n + ' ' + (n === 1 ? w : (ws || w + 's')); }
+  function titleCase(s) { return s === s.toLowerCase() ? s.replace(/(^|\s)([a-z])/g, function (m, a, b) { return a + b.toUpperCase(); }) : s; }
+
+  var I = {
+    play: '<svg class="i-play" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor"/></svg><svg class="i-pause" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5h2.5v9H2.5zM7 1.5h2.5v9H7z" fill="currentColor"/></svg>',
+    lock: '<svg class="lock" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4.8 7V5.2a3.2 3.2 0 0 1 6.4 0V7" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="3" y="7" width="10" height="7.5" rx="1.6" fill="currentColor"/></svg>',
+    search: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m10.5 10.5 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+  };
+
+  /* ---------------- data ---------------- */
+  var RECS = {
+    w1006: { t: 'Team weekly sync', iso: '2026-10-06' },
+    c101w4: { t: 'COURSE 101: Week 4', iso: '2026-10-01', course: true },
+    conf0929: { t: 'Conference planning call', iso: '2026-09-29' },
+    oh0925: { t: 'Office hours', iso: '2026-09-25', course: true },
+    c101w3: { t: 'COURSE 101: Week 3', iso: '2026-09-24', course: true },
+    w0922: { t: 'Team weekly sync', iso: '2026-09-22' },
+    w0915: { t: 'Team weekly sync', iso: '2026-09-15' },
+    plan0901: { t: 'Conference planning call', iso: '2026-09-01' },
+    plan0825: { t: 'Conference planning call', iso: '2026-08-25' },
+    w0818: { t: 'Team weekly sync', iso: '2026-08-18' },
+    w0811: { t: 'Team weekly sync', iso: '2026-08-11' },
+    w0804: { t: 'Team weekly sync', iso: '2026-08-04' },
+    w0728: { t: 'Team weekly sync', iso: '2026-07-28' },
+    a13: { t: 'Apollo 13: Houston, we’ve had a problem', iso: '1970-04-13' },
+    a11: { t: 'Apollo 11: first steps on the Moon', iso: '1969-07-20' },
+    jfk: { t: 'JFK at Rice University: We choose to go to the Moon', iso: '1962-09-12' },
+    fdr: { t: 'Fireside Chat 1: On the Banking Crisis', iso: '1933-03-12', priv: true }
+  };
+  function R(rec, label, secs, by, seen) { var o = { rec: rec, label: label, secs: secs, by: by }; if (seen) o.seen = seen; return o; }
+  function O(rec, label, lines, secs, key) { return { rec: rec, label: label, lines: lines, secs: secs, key: key || null }; }
+
+  function seed() {
+    return {
+      people: [
+        { id: 'dan-chen', name: 'Dan Chen', you: true, aliases: ['Daniel', 'Dan', 'Daniel Chen'], recognise: true, keys: ['vD'],
+          recs: [R('w1006', 'Speaker 1', 1260, 'plaud'), R('c101w4', 'Speaker 1', 3720, 'plaud'), R('conf0929', 'Speaker 1', 1110, 'plaud'), R('oh0925', 'Speaker 1', 420, 'you'), R('c101w3', 'Speaker 1', 3900, 'plaud'), R('w0922', 'Speaker 1', 1170, 'plaud'), R('w0915', 'Speaker 1', 980, 'plaud'), R('plan0901', 'Speaker 1', 1340, 'plaud')],
+          auto: [R('w0804', 'Speaker 1', 1400, 'auto')] },
+        { id: 'sam-lee', name: 'Sam Lee', aliases: [], recognise: true, keys: ['vS'],
+          recs: [R('w1006', 'Speaker 2', 850, 'plaud'), R('conf0929', 'Speaker 3', 542, 'you'), R('w0922', 'Speaker 2', 760, 'plaud')],
+          auto: [R('w0804', 'Speaker 2', 700, 'auto')] },
+        { id: 'priya-shah', name: 'Priya Shah', aliases: [], recognise: true, private: true, keys: ['vP'], recs: [R('oh0925', 'Speaker 3', 600, 'you')] },
+        { id: 'houston-capcom', name: 'Houston CAPCOM', aliases: ['CAPCOM', 'Houston'], recognise: true, recs: [R('a11', 'Speaker 3', 24, 'plaud'), R('a13', 'Speaker 2', 6, 'plaud')] },
+        { id: 'neil-armstrong', name: 'Neil Armstrong', aliases: ['Neil'], recognise: true, recs: [R('a11', 'Speaker 1', 41, 'plaud')] },
+        { id: 'buzz-aldrin', name: 'Buzz Aldrin', aliases: ['Buzz'], recognise: true, recs: [R('a11', 'Speaker 2', 12, 'plaud')] },
+        { id: 'john-f-kennedy', name: 'John F. Kennedy', aliases: ['JFK', 'President Kennedy'], recognise: true, recs: [R('jfk', 'Speaker 1', 88, 'plaud')] },
+        { id: 'franklin-d-roosevelt', name: 'Franklin D. Roosevelt', aliases: ['FDR'], recognise: true, private: true, recs: [R('fdr', 'Speaker 1', 60, 'you')] },
+        { id: 'unknown-1', name: 'Unknown 1', placeholder: true, aliases: [], recognise: false, recs: [R('conf0929', 'Speaker 5', 380, 'you'), R('plan0901', 'Speaker 4', 150, 'you')] },
+        { id: 'unknown-2', name: 'Unknown 2', placeholder: true, aliases: [], recognise: false, recs: [R('w0922', 'Speaker 4', 120, 'you')] },
+        { id: 'unknown-3', name: 'Unknown 3', placeholder: true, aliases: [], recognise: false, recs: [R('c101w3', 'Speaker 6', 70, 'you')] }
+      ],
+      toLink: [
+        { name: 'Alex', occ: [O('w1006', 'Speaker 3', 41, 690, 'vA'), O('conf0929', 'Speaker 2', 30, 505, 'vA'), O('c101w4', 'Speaker 4', 25, 300, 'vA'), O('oh0925', 'Speaker 2', 46, 1680, 'vS')] },
+        { name: 'Alex K', occ: [O('w0922', 'Speaker 3', 22, 410, 'vA'), O('w0915', 'Speaker 2', 16, 300, 'vA')] },
+        { name: 'alex kim', occ: [O('plan0901', 'Speaker 2', 21, 380, 'vA')] },
+        { name: 'Sam', occ: [O('w0915', 'Speaker 3', 30, 520, 'vS'), O('plan0901', 'Speaker 3', 20, 300, 'vS')] },
+        { name: 'Students', crowd: true, occ: [O('c101w4', 'Speaker 5', 7, 40), O('c101w3', 'Speaker 5', 5, 30)] },
+        { name: 'Priya S.', occ: [O('c101w4', 'Speaker 3', 27, 540, 'vP')] },
+        { name: 'Dr. Lee', hint: 'shares a surname with Sam Lee, but a different Plaud voice', occ: [O('conf0929', 'Speaker 4', 15, 260, 'vL')] }
+      ],
+      hiddenGeneric: { lines: 18, recs: 5 },
+      fixes: [
+        { id: 'f1', rec: 'w1006', span: '18:02–18:20', what: '1 line', plaud: 'Dan Chen', ours: 'Sam Lee', from: 'You corrected this line in the transcript (a span)', stage: 3, done: false },
+        { id: 'f2', rec: 'a11', span: '0:31–0:36', what: '1 line', plaud: 'Neil Armstrong', ours: 'Buzz Aldrin', from: 'You corrected this line in the transcript (a span)', stage: 3, done: false },
+        { id: 'f3', rec: 'w0922', span: '22:10–22:41', what: '3 lines', plaud: 'Dan Chen', ours: 'Sam Lee', from: 'Plaud vs home: you said ours is right', stage: 6, done: false }
+      ],
+      sugg: [
+        { id: 's1', pid: 'sam-lee', rec: 'plan0825', label: 'Speaker 4', speech: '11 min of speech', secs: 660, score: 0.78, dec: null },
+        { id: 's2', pid: 'sam-lee', rec: 'w0818', label: 'Speaker 3', speech: '6 min of speech', secs: 360, score: 0.74, dec: null },
+        { id: 's3', pid: 'sam-lee', rec: 'w0811', label: 'Speaker 2', speech: '9 min of speech', secs: 540, score: 0.69, dec: null },
+        { id: 's6', pid: 'sam-lee', rec: 'w0728', label: 'Speaker 3', speech: '3 min of speech', secs: 180, score: 0.63, dec: null },
+        { id: 's4', pid: 'dan-chen', rec: 'plan0825', label: 'Speaker 1', speech: '14 min of speech', secs: 840, score: 0.81, dec: null },
+        { id: 's5', pid: 'dan-chen', rec: 'w0728', label: 'Speaker 1', speech: '48 s of speech', secs: 48, score: 0.66, dec: null }
+      ],
+      refs: { 'sam-lee': { rec: 'w1006', at: '04:12' }, 'dan-chen': { rec: 'w0922', at: '00:41' } },
+      dis: [
+        { id: 'd1', rec: 'plan0825', span: '31:02–31:40', what: '2 lines', plaud: 'Sam Lee', ours: 'Dan Chen' },
+        { id: 'd2', rec: 'w0915', span: '40:05–40:21', what: '1 line', plaud: 'Dan Chen', ours: 'Sam Lee' }
+      ],
+      forgotten: 0,
+      ignored: []
+    };
+  }
+
+  var D = seed();
+  var UI = { tab: 'people', view: 'list', pid: null, stage: 3, filter: '', unnamedOpen: false, sel: [], anchor: null, merge: null, rename: false, aliasErr: '', sugCur: null, dialog: null, menu: null, state: 'people' };
+  var hist = [];
+
+  function snap() { hist.push({ D: clone(D), ui: { tab: UI.tab, view: UI.view, pid: UI.pid, sugCur: UI.sugCur } }); if (hist.length > 60) hist.shift(); }
+  function undo() {
+    var h = hist.pop(); if (!h) { toast('Nothing to undo'); return; }
+    D = h.D; UI.tab = h.ui.tab; UI.view = h.ui.view; UI.pid = h.ui.pid; UI.sugCur = h.ui.sugCur;
+    UI.sel = []; UI.merge = null; UI.rename = false; UI.aliasErr = '';
+    closeMenu(); render(); toast('Undone');
+  }
+
+  /* ---------------- helpers ---------------- */
+  function person(id) { return D.people.filter(function (p) { return p.id === id; })[0]; }
+  function live() { return D.people.filter(function (p) { return !p.merged_into; }); }
+  function recsOf(p) { return p.recs.concat(UI.stage === 6 ? (p.auto || []) : []); }
+  function uniqRecs(list) { var s = {}; list.forEach(function (r) { s[r.rec] = 1; }); return Object.keys(s).length; }
+  function talk(p) { return recsOf(p).reduce(function (a, r) { return a + r.secs; }, 0); }
+  function lastHeard(p) { var l = recsOf(p).map(function (r) { return RECS[r.rec].iso; }).sort(); return l.length ? l[l.length - 1] : null; }
+  function initials(p) { if (p.placeholder) return '?'; var w = p.name.replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/); return (w[0] ? w[0][0] : '') + (w.length > 1 ? w[w.length - 1][0] : ''); }
+  function slug(name) { var s = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); if (!s) s = 'person'; var base = s, n = 2; while (D.people.some(function (p) { return p.id === s; })) s = base + '-' + (n++); return s; }
+  function whoHas(n, exceptId) { var l = n.trim().toLowerCase(); return live().filter(function (p) { return p.id !== exceptId && (p.name.toLowerCase() === l || (p.aliases || []).some(function (a) { return a.toLowerCase() === l; })); })[0]; }
+  function rowBy(n) { return D.toLink.filter(function (r) { return r.name === n; })[0]; }
+  function rowLines(r) { return r.occ.reduce(function (a, o) { return a + o.lines; }, 0); }
+  function rowRecs(r) { return uniqRecs(r.occ); }
+  function keysOf(r) { var s = {}; r.occ.forEach(function (o) { if (o.key) s[o.key] = 1; }); return Object.keys(s); }
+  function keyOf(r) { var m = {}, best = null; r.occ.forEach(function (o) { if (o.key) m[o.key] = (m[o.key] || 0) + o.lines; }); Object.keys(m).forEach(function (k) { if (!best || m[k] > m[best]) best = k; }); return best; }
+  function twoVoices(r) { return keysOf(r).length > 1; }
+  function oddOcc(r) { var k = keyOf(r); return r.occ.filter(function (o) { return o.key && o.key !== k; }); }
+  function personByKey(k) { return k ? live().filter(function (p) { return (p.keys || []).indexOf(k) >= 0; })[0] : null; }
+  function allPrivateOcc(occ) { return occ.length && occ.every(function (o) { return RECS[o.rec].course || RECS[o.rec].priv; }); }
+
+  function suggest(r) {
+    if (r.crowd) return { type: 'group', why: 'sounds like several people' };
+    if (twoVoices(r)) {
+      var odd = oddOcc(r), p0 = personByKey(odd[0].key);
+      return { type: 'split', why: (odd.length === 1 ? RECS[odd[0].rec].t : plural(odd.length, 'recording')) + ' sounds like ' + (p0 ? p0.name : 'someone else') };
+    }
+    var k = keyOf(r), p = personByKey(k);
+    if (p) return { type: 'link', pid: p.id, why: 'same Plaud voice as ' + p.name };
+    var others = k ? D.toLink.filter(function (o) { return o !== r && !twoVoices(o) && keyOf(o) === k; }) : [];
+    if (others.length) return { type: 'combine', rows: [r.name].concat(others.map(function (o) { return o.name; })), why: 'same Plaud voice' };
+    return { type: 'none', why: r.hint || 'no match among your people' };
+  }
+  function acceptable() { return D.toLink.filter(function (r) { var t = suggest(r).type; return t === 'link' || t === 'combine' || t === 'group'; }); }
+  function bestDisplay(names) {
+    var b = names.slice().sort(function (a, c) { var wa = a.split(/\s+/).length, wc = c.split(/\s+/).length; return wc - wa || c.length - a.length; })[0];
+    return titleCase(b.replace(/\.$/, ''));
+  }
+  function visibleFixes() { return D.fixes.filter(function (f) { return f.stage <= UI.stage; }); }
+  function openFixes() { return visibleFixes().filter(function (f) { return !f.done; }); }
+  function pendingSugg() { return D.sugg.filter(function (s) { return !s.dec || s.dec === 'skip'; }); }
+  function needCount() { return D.toLink.length + openFixes().length + (UI.stage === 6 ? pendingSugg().length : 0); }
+
+  /* ---------------- operations ---------------- */
+  function mkPerson(name, extra) {
+    var p = { id: slug(name), name: name, aliases: [], recognise: true, keys: [], recs: [] };
+    if (extra) Object.keys(extra).forEach(function (k) { p[k] = extra[k]; });
+    D.people.push(p); return p;
+  }
+  function addAlias(p, n) { if (p.name.toLowerCase() !== n.toLowerCase() && !p.aliases.some(function (a) { return a.toLowerCase() === n.toLowerCase(); })) p.aliases.push(n); }
+  function linkRows(names, pid) {
+    var p = person(pid), nrec = 0;
+    names.forEach(function (n) {
+      var r = rowBy(n); if (!r) return;
+      addAlias(p, n);
+      r.occ.forEach(function (o) { p.recs.push(R(o.rec, o.label, o.secs, 'plaud')); });
+      nrec += rowRecs(r);
+      var k = keyOf(r); if (k) { p.keys = p.keys || []; if (p.keys.indexOf(k) < 0) p.keys.push(k); }
+      D.toLink = D.toLink.filter(function (x) { return x !== r; });
+    });
+    UI.sel = UI.sel.filter(function (n) { return !!rowBy(n); });
+    return nrec;
+  }
+  function combineNew(names, display) {
+    var occ = []; names.forEach(function (n) { var r = rowBy(n); if (r) occ = occ.concat(r.occ); });
+    var p = mkPerson(display, allPrivateOcc(occ) ? { private: true } : null);
+    linkRows(names, p.id); return p;
+  }
+  function makeGroup(names) {
+    var occ = []; names.forEach(function (n) { var r = rowBy(n); if (r) occ = occ.concat(r.occ); });
+    var g = mkPerson(titleCase(names[0]), { kind: 'group', recognise: false });
+    if (allPrivateOcc(occ)) g.private = true;
+    linkRows(names, g.id); return g;
+  }
+  function notPerson(names) { names.forEach(function (n) { D.ignored.push(n); }); D.toLink = D.toLink.filter(function (r) { return names.indexOf(r.name) < 0; }); UI.sel = UI.sel.filter(function (n) { return names.indexOf(n) < 0; }); }
+  function splitRow(name, choices) {
+    var r = rowBy(name), moved = [];
+    choices.forEach(function (c) {
+      if (c.to === 'keep') return;
+      var o = r.occ[c.i], p = person(c.to);
+      p.recs.push(R(o.rec, o.label, o.secs, 'you', name));
+      D.fixes.push({ id: 'f' + Date.now() + c.i, rec: o.rec, span: o.label + ', all ' + o.lines + ' lines', what: 'whole label', plaud: name, ours: p.name, from: 'You split ' + q(name) + ' on To link', stage: 3, done: false });
+      moved.push({ o: o, p: p });
+    });
+    r.occ = r.occ.filter(function (o) { return !moved.some(function (m) { return m.o === o; }); });
+    if (!r.occ.length) D.toLink = D.toLink.filter(function (x) { return x !== r; });
+    return moved;
+  }
+  function relinkAlias(p, alias) {
+    var r = D.toLink.filter(function (x) { return x.name.toLowerCase() === alias.toLowerCase(); })[0];
+    if (!r) return 0;
+    return linkRows([r.name], p.id);
+  }
+
+  /* ---------------- fake audio ---------------- */
+  var playing = null;
+  function play(key, dur) {
+    if (playing && playing.key === key) { playing = null; updatePlay(); return; }
+    playing = { key: key, t0: performance.now(), dur: dur || 5000 }; updatePlay(); requestAnimationFrame(tick);
+  }
+  function tick() {
+    if (!playing) return;
+    var p = Math.min(1, (performance.now() - playing.t0) / playing.dur);
+    $$('[data-play]', app).forEach(function (el) { if (el.dataset.play === playing.key) el.style.setProperty('--p', p); });
+    if (p >= 1) { playing = null; updatePlay(); return; }
+    requestAnimationFrame(tick);
+  }
+  function updatePlay() {
+    $$('[data-play]', app).forEach(function (el) {
+      var on = !!(playing && el.dataset.play === playing.key);
+      el.classList.toggle('playing', on); el.setAttribute('aria-pressed', on ? 'true' : 'false');
+      el.setAttribute('aria-label', (on ? 'Pause ' : 'Play ') + el.dataset.label);
+      if (!on) el.style.setProperty('--p', 0);
+      var c = el.closest('.cand'); if (c) c.classList.toggle('isplaying', on);
+    });
+  }
+  function playBtn(key, label) { return '<button type="button" class="play" data-play="' + esc(key) + '" data-label="' + esc(label) + '" aria-label="Play ' + esc(label) + '" aria-pressed="false">' + I.play + '</button>'; }
+  function sw(on, label, act, id) { return '<button type="button" class="switch" role="switch" aria-checked="' + (on ? 'true' : 'false') + '" aria-label="' + esc(label) + '" data-act="' + act + '" data-id="' + esc(id) + '" data-k="sw-' + esc(id) + '"></button>'; }
+
+  /* ---------------- toast ---------------- */
+  var toastTimer;
+  function toast(html, withUndo) {
+    var t = $('#toast');
+    t.innerHTML = '<span>' + html + '</span>' + (withUndo ? '<button type="button" data-act="undo">Undo</button>' : '');
+    t.classList.add('show'); clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, withUndo ? 6000 : 4000);
+  }
+
+  /* ---------------- render ---------------- */
+  function render() {
+    var ae = document.activeElement, k = ae && app.contains(ae) ? ae.getAttribute('data-k') : null, pos = null;
+    try { pos = ae && ae.selectionStart; } catch (e) { pos = null; }
+    renderNav(); renderTabs(); renderContent(); updatePlay(); renderMockControls();
+    if (k) { var el = app.querySelector('[data-k="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]'); if (el) { el.focus({ preventScroll: true }); if (pos != null && el.setSelectionRange) { try { el.setSelectionRange(pos, pos); } catch (e) {} } } }
+  }
+  function renderNav() {
+    var n = needCount(), parts = [plural(D.toLink.length, 'name') + ' to link'];
+    if (UI.stage === 6) parts.push(plural(pendingSugg().length, 'suggestion'));
+    parts.push(openFixes().length + ' to fix in Plaud');
+    $$('.nb-people').forEach(function (b) { b.textContent = n; b.hidden = !n; b.title = n + ' need you: ' + parts.join(', '); });
+    $$('.nav-people').forEach(function (a) { a.setAttribute('aria-label', 'People' + (n ? ', ' + n + ' need you: ' + parts.join(', ') : '')); a.setAttribute('aria-current', 'page'); });
+  }
+  function renderTabs() {
+    var s6 = UI.stage === 6;
+    var T = [['people', 'People', null, false], ['link', 'To link', D.toLink.length, false], ['sugg', 'Suggestions', pendingSugg().length, true], ['fix', 'Fix in Plaud', openFixes().length, false], ['yard', 'Plaud vs home', null, true]];
+    $('#tabs').innerHTML = T.map(function (t) {
+      var ph = t[3] && !s6, sel = UI.tab === t[0];
+      return '<button type="button" role="tab" id="tab-' + t[0] + '" aria-selected="' + sel + '" aria-controls="content" tabindex="' + (sel ? 0 : -1) + '" class="tab' + (ph ? ' ph' : '') + '" data-act="tab" data-id="' + t[0] + '" data-k="tab-' + t[0] + '">' + t[1] +
+        (ph ? ' <span class="s6">stage 6</span>' : (t[2] != null ? ' <span class="cnt">' + t[2] + '</span>' : '')) + '</button>';
+    }).join('');
+  }
+  function renderContent() {
+    var c = $('#content'), html;
+    if (UI.tab === 'people') html = (UI.view === 'person' && person(UI.pid)) ? vPerson(person(UI.pid)) : vPeople();
+    else if (UI.tab === 'link') html = vLink();
+    else if (UI.tab === 'sugg') html = UI.stage === 6 ? vSugg() : vPlaceholder('sugg');
+    else if (UI.tab === 'fix') html = vFix();
+    else html = UI.stage === 6 ? vYard() : vPlaceholder('yard');
+    c.innerHTML = html; c.setAttribute('aria-labelledby', 'tab-' + UI.tab);
+  }
+
+  /* ----- People ----- */
+  function vPeople() {
+    var all = live(), named = all.filter(function (p) { return !p.placeholder; }), unnamed = all.filter(function (p) { return p.placeholder; });
+    if (!named.length && !unnamed.length) return emptyPeople();
+    var f = UI.filter.trim().toLowerCase();
+    function match(p) { return !f || p.name.toLowerCase().indexOf(f) >= 0 || (p.aliases || []).some(function (a) { return a.toLowerCase().indexOf(f) >= 0; }); }
+    var rows = named.filter(match).sort(function (a, b) { return (lastHeard(b) || '').localeCompare(lastHeard(a) || '') || (b.you ? 1 : 0) - (a.you ? 1 : 0) || a.name.localeCompare(b.name); });
+    var un = unnamed.filter(match), body = rows.map(pRow).join('');
+    if (un.length) {
+      body += '<tr class="grow"><td colspan="7"><button type="button" class="disclosure" data-act="toggle-unnamed" aria-expanded="' + UI.unnamedOpen + '" data-k="unnamed">' + (UI.unnamedOpen ? '▾' : '▸') + ' Unnamed (' + un.length + ')</button> <span class="muted small">voices you grouped but haven’t named yet. Open one to rename it.</span></td></tr>';
+      if (UI.unnamedOpen) body += un.map(pRow).join('');
+    }
+    if (!rows.length && !un.length) body = '<tr><td colspan="7" class="muted">No one matches ' + q(UI.filter) + '.</td></tr>';
+    return '<div class="toolbar"><label class="search">' + I.search + '<input type="search" placeholder="Filter by name or alias" aria-label="Filter people" data-k="pfilter" data-input="filter" value="' + esc(UI.filter) + '"></label>' +
+      '<span class="muted">' + plural(named.length, 'person', 'people') + (unnamed.length ? ' · ' + unnamed.length + ' unnamed' : '') + '</span><span class="spacer"></span><span class="muted small">Most recently heard first</span></div>' +
+      '<div class="tcard"><table class="ptable"><thead><tr><th scope="col">Person</th><th scope="col">Aliases</th><th scope="col" class="num">Recordings</th><th scope="col" class="num">Talk time</th><th scope="col">Last heard</th><th scope="col">Who is this</th><th scope="col">Recognise this voice</th></tr></thead><tbody>' + body + '</tbody></table></div>' +
+      (D.forgotten ? '<p class="muted small">' + plural(D.forgotten, 'forgotten person', 'forgotten people') + ' kept only as a tombstone of salted hashes, so the name can’t come back from Plaud.</p>' : '');
+  }
+  function pRow(p) {
+    var n = uniqRecs(p.recs), autoN = UI.stage === 6 ? (p.auto || []).length : 0, lh = lastHeard(p), tags = '';
+    if (p.you) tags += '<span class="chip you">You</span>';
+    if (p.kind === 'group') tags += '<span class="chip">Group</span>';
+    var priv = p.private ? '<span class="privline">' + I.lock + ' Private: local only</span>' : '';
+    var recog = p.kind === 'group' ? '<span class="muted small">Never fingerprinted</span>' : sw(p.recognise, 'Recognise ' + p.name + '’s voice', 'recog', p.id);
+    var meta = plural(n, 'recording') + ' · ' + fmtDur(talk(p)) + (lh ? ' · ' + dt(lh) : '') + (p.aliases.length ? '<br>aka ' + esc(p.aliases.join(', ')) : '');
+    return '<tr class="prow' + (p.placeholder ? ' ph-row' : '') + '" data-person="' + esc(p.id) + '">' +
+      '<td class="c-name"><div class="pcell"><span class="avatar' + (p.placeholder ? ' ph' : '') + (p.kind === 'group' ? ' grp' : '') + '" aria-hidden="true">' + esc(initials(p)) + '</span><div><div class="pline"><button type="button" class="pname" data-act="open-person" data-id="' + esc(p.id) + '" data-k="open-' + esc(p.id) + '">' + esc(p.name) + '</button>' + tags + '</div>' + priv + '<div class="phone-meta muted small">' + meta + '</div></div></div></td>' +
+      '<td class="c-al">' + (p.aliases.length ? esc(p.aliases.join(', ')) : '—') + '</td>' +
+      '<td class="c-n num">' + n + (autoN ? ' <span class="muted small">+' + autoN + ' auto</span>' : '') + '</td>' +
+      '<td class="c-t num">' + fmtDur(talk(p)) + '</td>' +
+      '<td class="c-l">' + (lh ? dt(lh) : '—') + '</td>' +
+      '<td class="c-play">' + playBtn('clip-' + p.id, 'a 5-second clip of ' + p.name) + '</td>' +
+      '<td class="c-sw">' + recog + '</td></tr>';
+  }
+  function emptyPeople() {
+    var n = D.toLink.length;
+    return '<div class="empty"><h3>Nobody named yet</h3><p>' + (n ? 'Plaud already uses ' + plural(n, 'name') + ' for speakers in your recordings. Link them to people under To link, and they show up here.' : 'Name a speaker by clicking their label in any transcript. Names Plaud uses also wait under To link after a sync.') + '</p>' +
+      '<button type="button" class="btn primary" data-act="tab" data-id="link">' + (n ? 'Link ' + plural(n, 'Plaud name') + ' →' : 'Open To link') + '</button></div>';
+  }
+
+  /* ----- Person page ----- */
+  function byChip(r) { return r.by === 'auto' ? '<span class="chip auto">voice · auto</span>' : r.by === 'you' ? '<span class="chip">you</span>' : '<span class="chip">Plaud</span>'; }
+  function vPerson(p) {
+    var recs = recsOf(p).slice().sort(function (a, b) { return RECS[b.rec].iso.localeCompare(RECS[a.rec].iso); });
+    var n = uniqRecs(p.recs), lh = lastHeard(p), autoN = UI.stage === 6 ? (p.auto || []).length : 0;
+    var rl = recs.map(function (r) {
+      var R0 = RECS[r.rec];
+      return '<li class="rrow"><div><button type="button" class="linkish strong" data-act="rec-open">' + esc(R0.t) + '</button>' + (R0.priv ? ' <span class="muted">' + I.lock + '</span>' : '') +
+        '<div class="muted small">' + dt(R0.iso, true) + ' · as ' + esc(r.label) + (r.seen ? ' · Plaud said ' + q(r.seen) : '') + (R0.course ? ' · course: voice off' : '') + '</div></div><span class="num">' + fmtDur(r.secs) + '</span>' + byChip(r) + '</li>';
+    }).join('');
+    var title = UI.rename
+      ? '<form class="rename" data-form="rename"><input data-k="rename-input" aria-label="Display name" value="' + esc(p.name) + '"><button class="btn sm primary">Save</button><button type="button" class="btn sm" data-act="rename-cancel">Cancel</button></form>'
+      : '<div class="row1"><h2>' + esc(p.name) + '</h2>' + (p.you ? '<span class="chip you">You</span>' : '') + (p.kind === 'group' ? '<span class="chip">Group</span>' : '') + (p.placeholder ? '<span class="chip auto">placeholder</span>' : '') + '<button type="button" class="btn sm ghost" data-act="rename" data-k="rename-btn">Rename</button></div>';
+    var recogBox = p.kind === 'group' ? '<span class="muted small">A group: never fingerprinted</span>' :
+      '<div class="recog">' + sw(p.recognise, 'Recognise this voice', 'recog', p.id) + '<div><b>Recognise this voice</b><div class="muted small">' +
+      (UI.stage === 6 ? (p.recognise ? 'Voice data is kept and matched' : 'No voice data kept') : (p.recognise ? 'Sets the rule now; voice matching starts in stage 6' : 'No voice data will be kept')) + '</div></div></div>';
+    var aliases = '<section class="card"><h3>Aliases</h3><p class="muted small">Names Plaud (or anyone) uses for ' + esc(p.name) + '. Plaud lines under any of them link here automatically; case is ignored.</p>' +
+      (p.aliases.length ? '<ul class="chips">' + p.aliases.map(function (a, i) { return '<li class="chip lg">' + esc(a) + '<button type="button" class="x" data-act="alias-rm" data-id="' + i + '" aria-label="Remove alias ' + esc(a) + '">×</button></li>'; }).join('') + '</ul>' : '<p class="muted small">None yet.</p>') +
+      '<form class="addalias" data-form="alias"><input data-k="alias-input" aria-label="New alias for ' + esc(p.name) + '" placeholder="Add an alias, e.g. ' + (p.id === 'sam-lee' ? 'Sam' : 'a nickname') + '"><button class="btn sm">Add</button></form>' +
+      (UI.aliasErr ? '<p class="err" role="alert">' + esc(UI.aliasErr) + '</p>' : '') + '</section>';
+    var merge = '<section class="card"><h3>Merge</h3>' + (UI.merge ? mergePanel(p) : '<p class="muted small">Two entries for one person? Merging combines their aliases and recordings. Undo is there if it’s wrong.</p><button type="button" class="btn" data-act="merge-open" data-k="merge-open">Merge with…</button>') + '</section>';
+    var voice = '';
+    if (UI.stage === 6 && p.kind !== 'group') {
+      var ex = p.recs.filter(function (r) { return !RECS[r.rec].course && !RECS[r.rec].priv; });
+      voice = '<section class="card"><h3>Voice profile</h3>' + (!p.recognise ? '<p class="muted small">None kept: Recognise is off.</p>' : !ex.length ? '<p class="muted small">None: ' + esc(p.name) + ' is heard only in private or voice-off recordings, which never feed profiles.</p>' :
+        '<p class="small">' + plural(Math.min(32, uniqRecs(ex)), 'exemplar') + ' from ' + plural(uniqRecs(ex), 'recording') + ', built from confirmed time only.' + (uniqRecs(ex) === 1 ? ' Heard in one recording, so matches are suggestions only.' : '') + '</p>' +
+        (p.id === 'sam-lee' ? '<p class="small"><span class="chip warn">1 outlier</span> Team weekly sync, Sep 22 2026 sounds unlike the rest. <button type="button" class="linkish" data-act="rec-open">Check it</button></p>' : '')) + '</section>';
+    }
+    var forget = '<section class="card dz"><h3>Forget ' + esc(p.name) + '</h3><p class="small">Scrubs them from every recording, note and index, and stops Plaud bringing the name back. It can’t be undone.</p><button type="button" class="btn danger-o" data-act="forget-open" data-id="' + esc(p.id) + '" data-k="forget-open">Forget ' + esc(p.name) + '…</button></section>';
+    return '<div class="crumb"><button type="button" class="linkish" data-act="back" data-k="back">← All people</button></div>' +
+      '<div class="phead"><span class="avatar lg' + (p.placeholder ? ' ph' : '') + '" aria-hidden="true">' + esc(initials(p)) + '</span><div class="ptitle">' + title +
+      '<div class="muted small">' + plural(n, 'recording') + (autoN ? ' (+' + autoN + ' auto)' : '') + ' · ' + fmtDur(talk(p)) + ' talking' + (lh ? ' · last heard ' + dt(lh) : '') + ' · <code>' + esc(p.id) + '</code>' + (p.private ? ' · <code>people.private.yaml</code>' : '') + '</div>' +
+      (p.private ? '<div class="privline">' + I.lock + ' Private: local only. External agents and models never see this person.</div>' : '') + '</div>' +
+      '<div class="phead-r">' + playBtn('clip-' + p.id, 'a 5-second clip of ' + p.name) + '<span class="muted small" style="margin-left:-8px">Who is this</span>' + recogBox + '</div></div>' +
+      '<div class="pgrid"><section class="card"><h3>Recordings (' + recs.length + ')</h3><p class="muted small">Solid chips are confirmed (yours or Plaud’s); dashed ones were inferred by voice.</p><ul class="rlist">' + (rl || '<li class="muted">None yet.</li>') + '</ul></section>' +
+      '<div>' + aliases + merge + voice + forget + '</div></div>';
+  }
+  function mergePanel(p) {
+    var others = live().filter(function (o) { return o.id !== p.id; }).sort(function (a, b) { return (a.placeholder ? 1 : 0) - (b.placeholder ? 1 : 0) || a.name.localeCompare(b.name); });
+    var t = UI.merge.target ? person(UI.merge.target) : null;
+    var html = '<div class="merge-panel"><label><span class="flabel">Merge ' + esc(p.name) + ' with</span><br><select data-input="merge-target" data-k="merge-target" aria-label="Person to merge with"><option value="">Choose a person…</option>' +
+      others.map(function (o) { return '<option value="' + esc(o.id) + '"' + (UI.merge.target === o.id ? ' selected' : '') + '>' + esc(o.name) + (o.aliases.length ? ' (' + esc(o.aliases.join(', ')) + ')' : '') + '</option>'; }).join('') + '</select></label>';
+    if (t) {
+      var keepSelf = UI.merge.keep !== 'other';
+      html += '<fieldset><legend>Keep the name</legend><label class="r"><input type="radio" name="keep" value="self" data-input="merge-keep"' + (keepSelf ? ' checked' : '') + '> ' + esc(p.name) + '</label><label class="r"><input type="radio" name="keep" value="other" data-input="merge-keep"' + (!keepSelf ? ' checked' : '') + '> ' + esc(t.name) + '</label></fieldset>' +
+        '<p class="muted small">The other name becomes an alias' + ((keepSelf ? t : p).placeholder ? ' (placeholder names are dropped)' : '') + '. Recordings are combined. Recognise stays on only if both have it on' + ((p.recognise && t.recognise) ? '' : ': it will be <b>off</b>') + '.' + ((p.private !== t.private) ? ' The merged person lives in <code>people.yaml</code>.' : '') + '</p>';
+    }
+    html += '<div style="display:flex;gap:6px"><button type="button" class="btn primary" data-act="merge-do"' + (t ? '' : ' disabled') + '>Merge</button><button type="button" class="btn" data-act="merge-cancel">Cancel</button></div></div>';
+    return html;
+  }
+
+  /* ----- To link ----- */
+  function vLink() {
+    if (!D.toLink.length) return '<div class="empty"><h3>Every Plaud name is linked</h3><p>New names show up here after a sync. Plaud’s generic “Speaker 1”, “Speaker 2”… are never listed; name those from the transcript.</p><button type="button" class="btn" data-act="tab" data-id="people">See people</button></div>';
+    var acc = acceptable(), left = D.toLink.filter(function (r) { return acc.indexOf(r) < 0; });
+    var leftTxt = left.map(function (r) { var s = suggest(r); return q(r.name) + ' (' + (s.type === 'split' ? 'two voices: split it first' : 'no suggestion') + ')'; }).join(' and ');
+    return '<div class="toolbar"><div><b>' + plural(D.toLink.length, 'Plaud name') + '</b> not linked to anyone yet<div class="muted small kh">Click to select · ⌘/Ctrl-click adds · Shift-click selects a range · the checkboxes work too</div></div><span class="spacer"></span>' +
+      '<button type="button" class="btn primary" data-act="accept-all"' + (acc.length ? '' : ' disabled') + ' data-k="accept-all">Accept all suggested links (' + acc.length + ')</button></div>' +
+      (left.length && acc.length ? '<p class="muted small" style="margin:-4px 0 12px">Leaves ' + leftTxt + ' for you.</p>' : '') +
+      selBar() + '<ul class="llist" aria-label="Plaud names to link">' + D.toLink.map(lRow).join('') + '</ul>' +
+      '<p class="muted small hiddennote">Hidden: Plaud’s generic “Speaker N” names (' + D.hiddenGeneric.lines + ' lines in ' + D.hiddenGeneric.recs + ' recordings). Name those from the transcript.' + (D.ignored.length ? ' Marked not a person: ' + D.ignored.map(q).join(', ') + '.' : '') + '</p>';
+  }
+  function selBar() {
+    var n = UI.sel.length; if (!n) return '';
+    return '<div class="selbar" role="region" aria-label="Selected Plaud names"><b>' + n + ' selected</b>' +
+      (n >= 2 ? '<button type="button" class="btn primary" data-act="sel-combine" data-k="sel-combine">One person from these ' + n + '</button>' : '<button type="button" class="btn primary" data-act="sel-linkto">Link to…</button>') +
+      '<button type="button" class="btn" data-act="sel-group">' + (n >= 2 ? 'One group' : 'Group') + '</button><button type="button" class="btn" data-act="sel-notperson">Not a person</button><span class="spacer"></span><button type="button" class="btn ghost" data-act="sel-clear">Clear <kbd class="kh">Esc</kbd></button></div>';
+  }
+  function lRow(r) {
+    var s = suggest(r), sel = UI.sel.indexOf(r.name) >= 0, n = esc(r.name), sug = '', main = '';
+    if (s.type === 'link') { var p = person(s.pid); sug = '<span aria-hidden="true">→</span><span class="chip">' + esc(p.name) + (p.private ? ' ' + I.lock : '') + '</span><span class="why">' + esc(s.why) + '</span>'; main = '<button type="button" class="btn sm primary" data-act="row-accept" data-id="' + n + '" aria-label="Link ' + q(r.name) + ' to ' + esc(p.name) + '">Link</button>'; }
+    else if (s.type === 'combine') { sug = '<span aria-hidden="true">→</span><span>one person with ' + s.rows.filter(function (x) { return x !== r.name; }).map(q).join(', ') + '</span><span class="why">' + esc(s.why) + '</span>'; main = '<button type="button" class="btn sm primary" data-act="row-accept" data-id="' + n + '">One person…</button>'; }
+    else if (s.type === 'group') { sug = '<span aria-hidden="true">→</span><span class="chip">Group</span><span class="why">' + esc(s.why) + '</span>'; main = '<button type="button" class="btn sm primary" data-act="row-accept" data-id="' + n + '">Make group</button>'; }
+    else if (s.type === 'split') { sug = '<span class="chip warn">2 voices</span><span class="why">' + esc(s.why) + '</span>'; main = '<button type="button" class="btn sm primary" data-act="split-open" data-id="' + n + '">Split per recording…</button>'; }
+    else { sug = '<span class="muted">No suggestion</span><span class="why">· ' + esc(s.why) + '</span>'; }
+    return '<li class="lrow' + (sel ? ' sel' : '') + '" data-name="' + n + '">' +
+      '<input class="l-cb" type="checkbox"' + (sel ? ' checked' : '') + ' aria-label="Select ' + q(r.name) + '" data-k="cb-' + n + '">' +
+      '<span class="l-play">' + playBtn('tl-' + r.name, 'a clip of Plaud’s ' + q(r.name)) + '</span>' +
+      '<div class="l-name"><span class="pq">' + q(r.name) + '</span><div class="muted small">' + plural(rowRecs(r), 'recording') + ' · ' + rowLines(r) + ' lines</div></div>' +
+      '<div class="l-sugg">' + sug + '</div>' +
+      '<div class="l-acts">' + main + '<button type="button" class="btn sm" data-act="linkto-open" data-id="' + n + '">Link to…</button><button type="button" class="btn sm icon" data-act="more" data-id="' + n + '" aria-haspopup="menu" aria-expanded="' + (UI.menu === r.name) + '" aria-label="More actions for ' + q(r.name) + '">⋯</button></div></li>';
+  }
+
+  /* ----- Suggestions ----- */
+  function suggGroups() {
+    var by = {};
+    D.sugg.forEach(function (s) { (by[s.pid] = by[s.pid] || []).push(s); });
+    return Object.keys(by).map(function (pid) { return { pid: pid, list: by[pid].sort(function (a, b) { return b.score - a.score; }) }; })
+      .sort(function (a, b) { return b.list.length - a.list.length || b.list[0].score - a.list[0].score; });
+  }
+  function suggOrder() { var o = []; suggGroups().forEach(function (g) { o = o.concat(g.list); }); return o; }
+  function nextAfter(id) {
+    var o = suggOrder(), i = o.map(function (s) { return s.id; }).indexOf(id);
+    for (var j = i + 1; j < o.length; j++) if (!o[j].dec) return o[j].id;
+    for (j = 0; j < o.length; j++) if (!o[j].dec) return o[j].id;
+    return null;
+  }
+  function vSugg() {
+    if (!D.sugg.length) return '<div class="empty"><h3>No suggestions waiting</h3><p>High matches were applied as auto tags. Medium ones land here after the next voice sweep.</p></div>';
+    var order = suggOrder();
+    if (!UI.sugCur || !order.some(function (s) { return s.id === UI.sugCur; })) { var f = order.filter(function (s) { return !s.dec; })[0]; UI.sugCur = f ? f.id : null; }
+    var pend = pendingSugg(), acc = D.sugg.filter(function (s) { return s.dec === 'accept'; }).length, rej = D.sugg.filter(function (s) { return s.dec === 'reject'; }).length;
+    var groups = suggGroups().map(function (g) {
+      var p = person(g.pid), ref = D.refs[g.pid], left = g.list.filter(function (s) { return !s.dec || s.dec === 'skip'; }).length;
+      if (!p) return '';
+      return '<section class="sgroup" aria-labelledby="sg-' + g.pid + '"><div class="sg-h"><span class="avatar" aria-hidden="true">' + esc(initials(p)) + '</span><h3 id="sg-' + g.pid + '">' + esc(p.name) + '</h3><span class="muted small">' + (left ? left + ' to review' : 'done') + '</span></div>' +
+        (ref ? '<div class="ref">' + playBtn('ref-' + g.pid, 'the reference clip of ' + p.name) + '<div><b>Reference clip</b> <span class="chip">pinned</span><div class="muted small">' + esc(RECS[ref.rec].t) + ' · ' + dt(RECS[ref.rec].iso) + ' · at ' + ref.at + ' · confirmed</div></div></div>' : '') +
+        '<ol class="cands">' + g.list.map(function (s) { return cand(s, p); }).join('') + '</ol></section>';
+    }).join('');
+    return '<div class="callout"><b>High matches were already applied</b> as auto tags (the dashed “· auto” chips in transcripts). These are the Medium ones, best first. Profiles don’t rebuild while this tab is open, so nothing reshuffles under you.</div>' +
+      '<div class="toolbar sticky-tools"><button type="button" class="btn primary" data-act="sugg-all"' + (pend.length ? '' : ' disabled') + '>Accept all ' + pend.length + '</button>' +
+      '<span class="keys muted small"><kbd>Space</kbd> play · <kbd>Y</kbd> accept · <kbd>N</kbd> reject · <kbd>S</kbd> skip · <kbd>U</kbd> undo</span><span class="spacer"></span><span class="muted small">' + pend.length + ' left · ' + (acc + rej) + ' decided</span></div>' +
+      (!pend.length ? '<div class="callout ok" role="status"><b>All decided:</b> ' + acc + ' accepted, ' + rej + ' rejected. Profiles rebuild when you leave this tab, then a sweep looks for more.</div>' : '') +
+      '<div class="sglist" tabindex="0" data-k="sglist" aria-label="Suggestions. Space plays the current clip, Y accepts, N rejects, S skips, U undoes.">' + groups + '</div>' +
+      '<p class="muted small">Never listed here: anyone with Recognise off, and anyone heard only in private or <code>voice: off</code> recordings (Priya Shah, Franklin D. Roosevelt).</p>';
+  }
+  function cand(s, p) {
+    var cur = s.id === UI.sugCur, R0 = RECS[s.rec], acts;
+    if (s.dec === 'accept') acts = '<span class="dec ok">✓ ' + esc(p.name) + '</span>';
+    else if (s.dec === 'reject') acts = '<span class="dec no">✕ Not ' + esc(p.name) + '</span>';
+    else acts = (s.dec === 'skip' ? '<span class="chip">Skipped</span>' : '') +
+      '<button type="button" class="btn sm primary" data-act="sugg-accept" data-id="' + s.id + '">Accept' + (cur ? ' <kbd class="kh">Y</kbd>' : '') + '</button>' +
+      '<button type="button" class="btn sm" data-act="sugg-reject" data-id="' + s.id + '">Reject' + (cur ? ' <kbd class="kh">N</kbd>' : '') + '</button>' +
+      '<button type="button" class="btn sm ghost" data-act="sugg-skip" data-id="' + s.id + '">Skip' + (cur ? ' <kbd class="kh">S</kbd>' : '') + '</button>';
+    return '<li class="cand' + (cur ? ' cur' : '') + (s.dec ? ' d-' + s.dec : '') + '" data-sid="' + s.id + '"' + (cur ? ' aria-current="true"' : '') + '>' +
+      playBtn('sg-' + s.id, 'a clip of ' + s.label + ' in ' + R0.t) +
+      '<div><button type="button" class="linkish strong" data-act="sugg-cur" data-id="' + s.id + '">' + esc(R0.t) + '</button><div class="muted small">' + dt(R0.iso, true) + ' · ' + esc(s.label) + ' · ' + esc(s.speech) + '</div></div>' +
+      '<span class="conf" title="Score ' + s.score.toFixed(2) + ' (AS-normed)">Medium <span class="muted">' + s.score.toFixed(2) + '</span></span>' +
+      '<div class="cacts">' + acts + '</div></li>';
+  }
+
+  /* ----- Fix in Plaud ----- */
+  function vFix() {
+    var all = visibleFixes();
+    if (!all.length) return '<div class="empty"><h3>Nothing to fix in Plaud</h3><p>When you correct a name Plaud gave' + (UI.stage === 6 ? ', or say “ours is right” in Plaud vs home' : '') + ', it’s listed here until a re-sync shows Plaud agrees.</p></div>';
+    var open = all.filter(function (f) { return !f.done; }), done = all.filter(function (f) { return f.done; });
+    function item(f) {
+      var R0 = RECS[f.rec];
+      return '<li class="fix' + (f.done ? ' done' : '') + '"><div><div><b>' + esc(R0.t) + '</b> <span class="muted small">' + dt(R0.iso, true) + '</span></div><div class="muted small">' + esc(f.span) + ' · ' + esc(f.what) + '</div>' +
+        '<div class="cmp"><span><span class="lab">Plaud says</span><span class="v plaud">' + esc(f.plaud) + '</span></span><span><span class="lab">Ours says</span><span class="v">' + esc(f.ours) + '</span></span><span><span class="lab">Right name</span><span class="v mono">' + esc(f.ours) + '</span> <button type="button" class="btn sm ghost" data-act="copy" data-id="' + esc(f.ours) + '" aria-label="Copy ' + esc(f.ours) + '">Copy</button></span></div>' +
+        '<div class="muted small src">' + (f.done ? '<b>Waiting for a re-sync.</b> It clears once Plaud shows ' + esc(f.ours) + '.' : 'From: ' + f.from) + '</div></div>' +
+        '<div class="fx-acts"><a class="btn" href="#" data-act="plaud-open" data-id="' + f.id + '">Open in Plaud ↗</a>' +
+        (f.done ? '<button type="button" class="btn" data-act="fix-undone" data-id="' + f.id + '">Not done yet</button>' : '<button type="button" class="btn primary" data-act="fix-done" data-id="' + f.id + '">Done in Plaud</button>') + '</div></li>';
+    }
+    return '<div class="toolbar"><div><b>' + (open.length ? plural(open.length, 'name') + ' to fix in Plaud' : 'All fixed in Plaud') + '</b><div class="muted small">Plaud stays the yardstick until the subscription ends (Aug 29 2027), so its names should be right too. These are also in the Library’s Review queue.</div></div><span class="spacer"></span>' +
+      '<span class="muted small">Last re-sync 12:20 · next 12:40</span><button type="button" class="btn" data-act="resync"' + (done.length ? '' : ' disabled') + '>Re-sync now</button></div>' +
+      '<ul class="fixlist">' + open.map(item).join('') + '</ul>' +
+      (done.length ? '<h3 class="small muted" style="margin:16px 0 8px">Waiting for a re-sync (' + done.length + ')</h3><ul class="fixlist">' + done.map(item).join('') + '</ul>' : '');
+  }
+
+  /* ----- Plaud vs home ----- */
+  function vYard() {
+    return '<div class="callout">Plaud is the yardstick until the subscription ends (Aug 29 2027). This compares Plaud with a <b>voice-only</b> result: pyannote’s labels plus leave-one-out matches, never the names Plaud gave us.</div>' +
+      '<div class="stats"><div class="stat"><div class="k">Word-level speaker error</div><div class="v">6.2%</div><div class="muted small">on Whisper’s words</div></div>' +
+      '<div class="stat"><div class="k">Diarization error (DER)</div><div class="v">11.4%</div><div class="muted small">miss 4.1 · false alarm 3.0 · confusion 4.3</div></div>' +
+      '<div class="stat"><div class="k">JER</div><div class="v">14.0%</div><div class="muted small">0.5 s collar, overlap excluded</div></div>' +
+      '<div class="stat"><div class="k">Identity error, named time</div><div class="v">3.8%</div><div class="muted small">38 recordings</div></div></div>' +
+      '<div class="tcard" style="margin-bottom:12px"><table class="mini"><thead><tr><th>Person</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">Named time</th></tr></thead><tbody>' +
+      '<tr><td>Dan Chen</td><td class="num">0.98</td><td class="num">0.97</td><td class="num">31 h</td></tr><tr><td>Sam Lee</td><td class="num">0.93</td><td class="num">0.88</td><td class="num">6 h 40 min</td></tr><tr><td>Houston CAPCOM</td><td class="num">—</td><td class="num">—</td><td class="num">30 s (too little)</td></tr></tbody></table></div>' +
+      '<p class="muted small">Against Plaud’s sentence-length segments, miss and false alarm mostly measure granularity, not errors. 3 recordings failed the timing check and are left out. Gold set: 0 of 20 clips labelled.</p>' +
+      '<h3 style="font-size:15px;margin:16px 0 8px">Disagreements (' + D.dis.length + ')</h3>' +
+      (D.dis.length ? '<ul class="fixlist">' + D.dis.map(function (d) {
+        var R0 = RECS[d.rec];
+        return '<li class="fix"><div><div><b>' + esc(R0.t) + '</b> <span class="muted small">' + dt(R0.iso, true) + ' · ' + d.span + ' · ' + d.what + '</span></div><div class="cmp"><span><span class="lab">Plaud says</span><span class="v">' + esc(d.plaud) + '</span></span><span><span class="lab">Voice says</span><span class="v">' + esc(d.ours) + '</span></span></div></div>' +
+          '<div class="fx-acts">' + playBtn('dis-' + d.id, 'the disputed lines in ' + R0.t) + '<button type="button" class="btn" data-act="dis-plaud" data-id="' + d.id + '">Plaud is right</button><button type="button" class="btn" data-act="dis-ours" data-id="' + d.id + '">Ours is right</button></div></li>';
+      }).join('') + '</ul>' : '<p class="muted">No disagreements left. Both answers are logged as adjudications, separate from the gold set.</p>');
+  }
+  function vPlaceholder(which) {
+    var t = which === 'sugg'
+      ? ['Suggestions', 'Voice matching (pyannote on the Spark) finds the people you’ve named in your other recordings, old ones too. High matches become auto tags; Medium ones wait here for a yes or no, one clip at a time.']
+      : ['Plaud vs home', 'Scores Plaud’s speaker labels against our voice-only result: word-level speaker error, DER and JER, and identity per person. Disagreements are resolved here; “Ours is right” feeds Fix in Plaud.'];
+    return '<div class="empty"><span class="pill6">From stage 6</span><h3>' + t[0] + '</h3><p>' + t[1] + '</p><p class="small">The app hides this tab until stage 6 (§12.6a); the mockup shows where it will sit.</p><button type="button" class="btn" data-act="show-stage6">Mockup: show stage 6</button></div>';
+  }
+
+  /* ---------------- dialogs ---------------- */
+  var opener = null;
+  function openDialog(d) {
+    UI.dialog = d; opener = document.activeElement; closeMenu();
+    var ov = $('#overlay'), html = '';
+    if (d.type === 'forget') html = dForget(person(d.pid));
+    else if (d.type === 'combine') html = dCombine(d.names);
+    else if (d.type === 'split') html = dSplit(d.name);
+    else if (d.type === 'picker') html = dPicker(d.names);
+    else if (d.type === 'help') html = dHelp();
+    ov.innerHTML = html; ov.hidden = false;
+    if (d.type === 'picker') pkRender();
+    if (d.type === 'combine') cbUpdate();
+    updatePlay();
+    var f = $('[data-autofocus]', ov) || $('input, select, button', ov); if (f) f.focus();
+  }
+  function closeDialog() {
+    UI.dialog = null; var ov = $('#overlay'); ov.hidden = true; ov.innerHTML = '';
+    if (opener && document.body.contains(opener)) opener.focus(); opener = null;
+  }
+  function dlgWrap(inner, cls, label) { return '<div class="dlg ' + (cls || '') + '" role="dialog" aria-modal="true" aria-labelledby="dlg-t"' + (label ? ' aria-describedby="dlg-d"' : '') + '>' + inner + '</div>'; }
+
+  function dForget(p) {
+    var n = uniqRecs(recsOf(p)), names = [p.name].concat(p.aliases).map(q).join(', '), tomb = 'Forgotten ' + (D.forgotten + 1);
+    return dlgWrap('<h2 id="dlg-t">Forget ' + esc(p.name) + '?</h2><p id="dlg-d" class="lead"><span class="dangerline">This can’t be undone, and there is no Undo afterwards.</span> It pauses the worker, rewrites ' + plural(n, 'recording') + ' in place under their locks, and logs every old and new hash in an audit file that never holds the name.</p>' +
+      '<div class="two"><section><h3>Scrubbed now</h3><ul>' +
+      '<li>Their voice data and profile' + (UI.stage === 6 ? (p.recognise ? ' (' + plural(Math.min(32, uniqRecs(p.recs.filter(function (r) { return !RECS[r.rec].course && !RECS[r.rec].priv; }))), 'exemplar') + ')' : ' (none kept: Recognise is off)') : ' (none held yet: voice starts in stage 6)') + '</li>' +
+      '<li>Every label, span and “not” that names them, in ' + plural(n, 'recording') + '</li>' +
+      '<li>' + names + ' replaced with “' + tomb + '” in Plaud snapshots, Plaud transcripts and notes, model-written notes, titles, <code>my-notes.md</code> and <code>trash/</code></li>' +
+      '<li>Their entry in <code>' + (p.private ? 'people.private.yaml' : 'people.yaml') + '</code>, replaced by a tombstone of salted hashes</li>' +
+      '<li>Their rows in <code>state.db</code>, <code>index.db</code> (search too) and <code>voice.db</code>, then <code>VACUUM</code></li>' +
+      '<li>Future Plaud syncs: scrubbed before they’re written</li></ul></section>' +
+      '<section><h3>Still holds the old data</h3><ul>' +
+      '<li>restic backups, up to 12 monthly snapshots. The report has the <code>restic rewrite</code> steps; otherwise they age out within 12 months.</li>' +
+      '<li>The NAS mirror until its next sync, and the Mac’s copy of it</li><li>Synology Drive versions and Time Machine</li><li>Pixeltable’s database</li>' +
+      '<li>Vault notes at 2 paths (listed in the report)</li>' +
+      (p.private ? '<li>External models: nothing, as a private person is never sent</li>' : '<li>What external models already received: 3 notes jobs</li>') +
+      '<li><b>Plaud’s own cloud.</b> Rename or delete there by hand.</li></ul></section></div>' +
+      '<label class="field" for="forget-input">Type <b>' + esc(p.name) + '</b> to confirm</label><input id="forget-input" class="txt" autocomplete="off" spellcheck="false" data-autofocus data-input="forget">' +
+      '<div class="dlg-actions" id="forget-actions"><button type="button" class="btn" data-act="dlg-close">Cancel</button><button type="button" class="btn danger" id="forget-go" data-act="forget-go" data-id="' + esc(p.id) + '" disabled>Forget ' + esc(p.name) + '</button></div>', 'danger wide', true);
+  }
+
+  function cbOptions(names) {
+    var opts = [], seen = {};
+    function add(o) { if (!seen[o.v]) { seen[o.v] = 1; opts.push(o); } }
+    var exist = {};
+    names.forEach(function (n) { var r = rowBy(n); if (!r) return; var s = suggest(r); if (s.type === 'link') exist[s.pid] = 1; });
+    Object.keys(exist).forEach(function (pid) { add({ v: 'pid:' + pid, lab: person(pid).name, note: 'an existing person' }); });
+    names.forEach(function (n) { if (n === n.toLowerCase() && /[a-z]/.test(n)) { var t = titleCase(n); add({ v: t, lab: t, note: 'from ' + q(n) + ', capitalised' }); } });
+    names.forEach(function (n) { add({ v: n, lab: n, note: 'as Plaud has it' }); });
+    return opts;
+  }
+  function dCombine(names) {
+    var opts = cbOptions(names), def = opts[0].v.indexOf('pid:') === 0 ? opts[0].v : bestDisplay(names);
+    var rows = names.map(rowBy).filter(Boolean), lines = rows.reduce(function (a, r) { return a + rowLines(r); }, 0), recs = uniqRecs([].concat.apply([], rows.map(function (r) { return r.occ; })));
+    var flagged = rows.filter(twoVoices);
+    UI.dialog.opts = opts;
+    return dlgWrap('<h2 id="dlg-t">One person from these ' + names.length + ' names</h2><p class="lead muted">Pick the name to show. The others become aliases, so Plaud lines under any of them link to this person. ' + plural(recs, 'recording') + ' · ' + lines + ' lines.</p>' +
+      '<fieldset class="radios"><legend>Display name</legend>' + opts.map(function (o, i) { return '<label><input type="radio" name="dn" value="' + esc(o.v) + '" data-input="dn-radio"' + (o.v === def ? ' checked' : '') + (i === 0 ? ' data-autofocus' : '') + '> <span><b>' + esc(o.lab) + '</b> <span class="muted small">' + o.note + '</span></span></label>'; }).join('') + '</fieldset>' +
+      '<label class="field"><span class="flabel">Or type it</span><input id="dn" class="txt" data-input="dn-text" value="' + esc(def.indexOf('pid:') === 0 ? person(def.slice(4)).name : def) + '" aria-label="Display name"></label>' +
+      '<div class="preview" id="cb-preview"></div>' +
+      (flagged.length ? '<div class="warnbox"><b>' + q(flagged[0].name) + ' sounds like two people.</b> ' + esc(suggest(flagged[0]).why) + '. Split it first, or every ' + q(flagged[0].name) + ' line goes to this person. <button type="button" class="btn sm" data-act="split-open" data-id="' + esc(flagged[0].name) + '">Split ' + q(flagged[0].name) + ' first</button></div>' : '') +
+      '<p class="err" id="cb-err" role="alert"></p>' +
+      '<div class="dlg-actions"><button type="button" class="btn" data-act="dlg-close">Cancel</button><button type="button" class="btn primary" id="cb-go" data-act="combine-go"></button></div>');
+  }
+  function cbChoice() {
+    var ov = $('#overlay'), r = $('input[name=dn]:checked', ov), txt = $('#dn', ov).value.trim();
+    if (r && r.value.indexOf('pid:') === 0 && txt === person(r.value.slice(4)).name) return { pid: r.value.slice(4), name: txt };
+    return { pid: null, name: txt };
+  }
+  function cbUpdate() {
+    var ov = $('#overlay'), c = cbChoice(), names = UI.dialog.names, p = c.pid ? person(c.pid) : null;
+    var aliases = names.filter(function (n) { return n.toLowerCase() !== c.name.toLowerCase() && !(p && p.aliases.some(function (a) { return a.toLowerCase() === n.toLowerCase(); })); });
+    var folded = names.filter(function (n) { return n !== c.name && n.toLowerCase() === c.name.toLowerCase(); });
+    $('#cb-preview', ov).innerHTML = (p ? 'Adds to <b>' + esc(p.name) + '</b>. ' : 'Creates <b>' + esc(c.name || '…') + '</b>. ') + 'Aliases: ' + (aliases.length ? aliases.map(function (a) { return '<span class="chip">' + esc(a) + '</span>'; }).join(' ') : '<span class="muted">none</span>') +
+      (folded.length ? ' <span class="muted small">· ' + folded.map(q).join(', ') + ' already matches the name, since case is ignored</span>' : '');
+    var taken = !p && c.name && whoHas(c.name);
+    $('#cb-err', ov).textContent = taken ? c.name + ' is already a person. Pick them above instead.' : '';
+    var go = $('#cb-go', ov); go.disabled = !c.name || !!taken;
+    go.textContent = p ? 'Add to ' + p.name : 'Create ' + (c.name || 'person');
+  }
+
+  function dSplit(name) {
+    var r = rowBy(name), k = keyOf(r), people = live().filter(function (p) { return p.kind !== 'group'; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+    var rows = r.occ.map(function (o, i) {
+      var pk = personByKey(o.key), def = o.key === k ? 'keep' : (pk ? pk.id : 'keep'), R0 = RECS[o.rec];
+      return '<tr><td>' + playBtn('sp-' + name + '-' + i, 'a clip of ' + q(name) + ' in ' + R0.t) + '</td><td><b>' + esc(R0.t) + '</b><div class="muted small">' + dt(R0.iso, true) + ' · ' + esc(o.label) + ' · ' + o.lines + ' lines' + (o.key && o.key !== k ? ' · <span class="chip warn">different Plaud voice</span>' : '') + '</div></td>' +
+        '<td><select data-occ="' + i + '" aria-label="Who is ' + q(name) + ' in ' + esc(R0.t) + ', ' + dt(R0.iso) + '"><option value="keep"' + (def === 'keep' ? ' selected' : '') + '>Keep as ' + q(name) + '</option>' +
+        people.map(function (p) { return '<option value="' + esc(p.id) + '"' + (def === p.id ? ' selected' : '') + '>' + esc(p.name) + '</option>'; }).join('') + '</select></td></tr>';
+    }).join('');
+    return dlgWrap('<h2 id="dlg-t">Split ' + q(name) + ' per recording</h2><p class="lead muted">Plaud uses ' + q(name) + ' for more than one voice. Choose who it is in each recording. A choice other than “Keep” is saved in that recording as yours, noting that Plaud said ' + q(name) + ', and goes on Fix in Plaud.</p>' +
+      '<table class="sptable">' + rows + '</table>' +
+      '<div class="dlg-actions"><button type="button" class="btn" data-act="dlg-close">Cancel</button><button type="button" class="btn primary" data-act="split-go" data-id="' + esc(name) + '" data-autofocus>Split</button></div>', 'wide');
+  }
+
+  function dPicker(names) {
+    return dlgWrap('<h2 id="dlg-t">Link ' + names.map(q).join(', ') + ' to…</h2><p class="lead muted small">The Plaud name becomes an alias of the person you pick.</p>' +
+      '<input id="pk-q" class="txt" placeholder="Search people, or type a new name" data-autofocus data-input="pk" role="combobox" aria-expanded="true" aria-controls="pk-list" aria-autocomplete="list" aria-label="Search people">' +
+      '<ul id="pk-list" class="pk-list" role="listbox" aria-label="People"></ul><p class="muted small">↑↓ move · Enter picks · existing people always come before “Create”.</p>' +
+      '<div class="dlg-actions"><button type="button" class="btn" data-act="dlg-close">Cancel</button></div>');
+  }
+  function pkRender() {
+    var d = UI.dialog, inp = $('#pk-q'), ql = inp.value.trim().toLowerCase();
+    var ps = live().filter(function (p) { return p.kind !== 'group' && (!ql || p.name.toLowerCase().indexOf(ql) >= 0 || p.aliases.some(function (a) { return a.toLowerCase().indexOf(ql) >= 0; })); })
+      .sort(function (a, b) { var as = a.name.toLowerCase().indexOf(ql) === 0 ? 0 : 1, bs = b.name.toLowerCase().indexOf(ql) === 0 ? 0 : 1; return as - bs || (a.placeholder ? 1 : 0) - (b.placeholder ? 1 : 0) || a.name.localeCompare(b.name); });
+    var cname = inp.value.trim() || titleCase(d.names[0].replace(/\.$/, '')) || d.names[0];
+    var items = ps.map(function (p) { return { t: 'p', id: p.id, lab: p.name, sub: (p.private ? 'private' + (p.aliases.length ? ' · ' : '') : '') + p.aliases.join(', ') }; });
+    if (!whoHas(cname)) items.push({ t: 'c', lab: 'Create “' + cname + '”', name: cname });
+    d.items = items; d.hi = Math.max(0, Math.min(d.hi || 0, items.length - 1));
+    $('#pk-list').innerHTML = items.map(function (it, i) { return '<li role="option" id="pk-' + i + '" data-pk="' + i + '" aria-selected="' + (i === d.hi) + '" class="' + (it.t === 'c' ? 'create' : '') + '"><span>' + esc(it.lab) + '</span>' + (it.sub ? '<span class="muted small">' + esc(it.sub) + '</span>' : '') + '</li>'; }).join('');
+    inp.setAttribute('aria-activedescendant', 'pk-' + d.hi);
+  }
+  function pkPick(i) {
+    var d = UI.dialog, it = d.items[i]; if (!it) return;
+    var names = d.names.slice(); closeDialog(); snap();
+    if (it.t === 'p') { var nr = linkRows(names, it.id); toast(names.map(q).join(', ') + ' → ' + esc(person(it.id).name) + ' · alias added · ' + plural(nr, 'recording'), true); }
+    else { var p = combineNew(names, it.name); toast('Created ' + esc(p.name) + ' from ' + names.map(q).join(', '), true); }
+    render();
+  }
+  function dHelp() {
+    var keys = [['T', 'Opens the tag picker for the selection', 'Library list, Tags grid', 0], ['P', 'Opens the speaker picker', 'The focused transcript line', 0], ['D', 'Opens the date control', 'Library list header, Insights', 0], ['1–9', 'Picks a person already in this recording', 'The speaker picker', 0],
+      ['Y / N', 'Accepts or rejects, and moves to the next clip', 'Suggestions', 1], ['S / U', 'Skips, or undoes the last decision', 'Suggestions', 1], ['[ ]', 'Previous or next line of the selected label', 'Transcript', 0], ['Space', 'Plays or pauses; in Suggestions, plays the clip', 'Everywhere a player is shown', 1], ['Esc', 'Clears the selection', 'To link', 1], ['?', 'Opens this sheet', 'Everywhere', 1]];
+    return dlgWrap('<h2 id="dlg-t">Keyboard shortcuts</h2><p class="lead muted small">Highlighted rows work on this page.</p><table class="keytable">' + keys.map(function (k) { return '<tr' + (k[3] ? ' class="here"' : '') + '><td><kbd>' + k[0] + '</kbd></td><td>' + k[1] + '</td><td class="muted">' + k[2] + '</td></tr>'; }).join('') + '</table><div class="dlg-actions"><button type="button" class="btn primary" data-act="dlg-close" data-autofocus>Close</button></div>');
+  }
+
+  /* ---------------- menu ---------------- */
+  function openMenu(name, btn) {
+    closeMenu(); UI.menu = name;
+    var r = rowBy(name), a = app.getBoundingClientRect(), b = btn.getBoundingClientRect();
+    var m = document.createElement('div'); m.className = 'menu'; m.setAttribute('role', 'menu'); m.setAttribute('aria-label', 'Actions for ' + name);
+    m.innerHTML = '<button type="button" role="menuitem" data-act="m-group" data-id="' + esc(name) + '">Group<span class="sub">a crowd, like “Students”. Never fingerprinted.</span></button>' +
+      '<button type="button" role="menuitem" data-act="m-notperson" data-id="' + esc(name) + '">Not a person<span class="sub">music, a video, the room. Its lines show no speaker.</span></button>' +
+      '<button type="button" role="menuitem" data-act="split-open" data-id="' + esc(name) + '"' + (rowRecs(r) < 2 ? ' disabled' : '') + '>Split per recording…<span class="sub">this name means different people in different recordings</span></button>';
+    app.appendChild(m);
+    var w = 260, left = Math.min(b.right - a.left - w, a.width - w - 8), top = b.bottom - a.top + 4;
+    if (top + 170 > a.height) top = b.top - a.top - 170;
+    m.style.left = Math.max(8, left) + 'px'; m.style.top = top + 'px'; m.style.width = w + 'px';
+    btn.setAttribute('aria-expanded', 'true'); menuBtn = btn;
+    var first = $('button:not([disabled])', m); if (first) first.focus();
+  }
+  var menuBtn = null;
+  function closeMenu() { var m = $('.menu', app); if (m) m.remove(); if (menuBtn) { menuBtn.setAttribute('aria-expanded', 'false'); } UI.menu = null; }
+
+  /* ---------------- actions ---------------- */
+  function setTab(t) { UI.tab = t; UI.view = 'list'; UI.merge = null; UI.rename = false; UI.aliasErr = ''; closeMenu(); render(); $('#content').scrollTop = 0; }
+  function openPerson(id) { UI.tab = 'people'; UI.view = 'person'; UI.pid = id; UI.merge = null; UI.rename = false; UI.aliasErr = ''; render(); $('#content').scrollTop = 0; }
+
+  function decide(id, dec) {
+    var s = D.sugg.filter(function (x) { return x.id === id; })[0]; if (!s || (s.dec && s.dec !== 'skip')) return;
+    var p = person(s.pid);
+    if (dec !== 'skip') snap();
+    s.dec = dec;
+    if (dec === 'accept') p.recs.push(R(s.rec, s.label, s.secs, 'you'));
+    var nx = nextAfter(id); UI.sugCur = nx || id;
+    render();
+    if (dec === 'accept') toast(esc(s.label) + ' in ' + esc(RECS[s.rec].t) + ' → ' + esc(p.name), true);
+    else if (dec === 'reject') toast('Not ' + esc(p.name) + ': ' + esc(s.label) + ' in ' + esc(RECS[s.rec].t) + '. Saved, so it won’t come back', true);
+    if (nx) play('sg-' + nx);
+  }
+
+  function act(a, id, el, e) {
+    var p, r, s, n;
+    switch (a) {
+      case 'tab': setTab(id); break;
+      case 'go-people': setTab('people'); break;
+      case 'nav-other': toast('Mockup: only the People page is built here'); break;
+      case 'help': openDialog({ type: 'help' }); break;
+      case 'theme': setTheme(id); break;
+      case 'undo': undo(); break;
+      case 'show-stage6': setStage(6); break;
+      case 'open-person': openPerson(id); break;
+      case 'back': UI.view = 'list'; UI.merge = null; UI.rename = false; render(); break;
+      case 'toggle-unnamed': UI.unnamedOpen = !UI.unnamedOpen; render(); break;
+      case 'rec-open': toast('Mockup: opens the recording in the Library'); break;
+      case 'recog':
+        p = person(id); snap(); p.recognise = !p.recognise; render();
+        toast(p.recognise ? esc(p.name) + ': voice will be recognised' + (UI.stage === 6 ? '. Rebuilding from the audio on the Spark' : ' from stage 6') : esc(p.name) + ': ' + (UI.stage === 6 ? 'voice data deleted, and none will be kept' : 'no voice data will be kept'), true);
+        break;
+      case 'rename': UI.rename = true; render(); var ri = $('[data-k="rename-input"]'); if (ri) { ri.focus(); ri.select(); } break;
+      case 'rename-cancel': UI.rename = false; render(); break;
+      case 'alias-rm':
+        p = person(UI.pid); snap(); var gone = p.aliases.splice(Number(id), 1)[0]; UI.aliasErr = ''; render();
+        toast('Removed alias ' + q(gone), true);
+        break;
+      case 'merge-open': UI.merge = { target: '', keep: 'self' }; render(); var ms = $('[data-k="merge-target"]'); if (ms) ms.focus(); break;
+      case 'merge-cancel': UI.merge = null; render(); break;
+      case 'merge-do': doMerge(); break;
+      case 'forget-open': openDialog({ type: 'forget', pid: id }); break;
+      case 'forget-go': doForget(id); break;
+      case 'dlg-close': closeDialog(); break;
+      /* To link */
+      case 'row-accept':
+        r = rowBy(id); s = suggest(r);
+        if (s.type === 'link') { snap(); n = linkRows([r.name], s.pid); render(); toast(q(r.name) + ' → ' + esc(person(s.pid).name) + ' · alias added · ' + plural(n, 'recording') + ' linked', true); }
+        else if (s.type === 'combine') { openDialog({ type: 'combine', names: s.rows }); }
+        else if (s.type === 'group') { snap(); var g = makeGroup([r.name]); render(); toast(q(r.name) + ' is a group' + (g.private ? ', kept in people.private.yaml' : '') + '. Never fingerprinted', true); }
+        break;
+      case 'accept-all': acceptAll(); break;
+      case 'linkto-open': openDialog({ type: 'picker', names: [id] }); break;
+      case 'more': if (UI.menu === id) closeMenu(); else openMenu(id, el); break;
+      case 'm-group': closeMenu(); snap(); var g2 = makeGroup([id]); render(); toast(q(id) + ' is a group' + (g2.private ? ', kept in people.private.yaml' : '') + '. Never fingerprinted', true); break;
+      case 'm-notperson': closeMenu(); snap(); notPerson([id]); render(); toast(q(id) + ' marked not a person. Its lines show no speaker', true); break;
+      case 'split-open': closeMenu(); if (UI.dialog) closeDialog(); openDialog({ type: 'split', name: id }); break;
+      case 'split-go': doSplit(id); break;
+      case 'combine-go': doCombine(); break;
+      case 'sel-clear': UI.sel = []; render(); break;
+      case 'sel-combine': openDialog({ type: 'combine', names: UI.sel.slice() }); break;
+      case 'sel-linkto': openDialog({ type: 'picker', names: UI.sel.slice() }); break;
+      case 'sel-group': n = UI.sel.slice(); snap(); var g3 = makeGroup(n); UI.sel = []; render(); toast(n.length > 1 ? 'One group, ' + esc(g3.name) + ', from ' + n.map(q).join(', ') : q(n[0]) + ' is a group. Never fingerprinted', true); break;
+      case 'sel-notperson': n = UI.sel.slice(); snap(); notPerson(n); UI.sel = []; render(); toast(n.map(q).join(', ') + ' marked not a person', true); break;
+      /* Suggestions */
+      case 'sugg-accept': decide(id, 'accept'); break;
+      case 'sugg-reject': decide(id, 'reject'); break;
+      case 'sugg-skip': decide(id, 'skip'); break;
+      case 'sugg-cur': UI.sugCur = id; render(); play('sg-' + id); break;
+      case 'sugg-all':
+        var pend = pendingSugg(); if (!pend.length) break; snap();
+        pend.forEach(function (x) { x.dec = 'accept'; person(x.pid).recs.push(R(x.rec, x.label, x.secs, 'you')); });
+        render(); toast('Accepted ' + plural(pend.length, 'suggestion') + '. Profiles rebuild when you leave this tab', true);
+        break;
+      /* Fix in Plaud */
+      case 'fix-done': snap(); D.fixes.forEach(function (f) { if (f.id === id) f.done = true; }); render(); toast('Marked done in Plaud. It clears after the next re-sync', true); break;
+      case 'fix-undone': snap(); D.fixes.forEach(function (f) { if (f.id === id) f.done = false; }); render(); break;
+      case 'resync':
+        var cleared = visibleFixes().filter(function (f) { return f.done; }).length;
+        D.fixes = D.fixes.filter(function (f) { return !(f.done && f.stage <= UI.stage); }); render();
+        toast('Re-synced from Plaud: it now shows the right name for ' + plural(cleared, 'item') + '. Cleared');
+        break;
+      case 'plaud-open': var fx = D.fixes.filter(function (f) { return f.id === id; })[0]; toast('Mockup: opens this recording in Plaud’s web app' + (fx ? ' at ' + esc(fx.span.split('–')[0]) : '')); break;
+      case 'copy': try { navigator.clipboard.writeText(id).catch(function () {}); } catch (err) {} toast('Copied ' + q(id)); break;
+      /* Plaud vs home */
+      case 'dis-plaud': var d1 = D.dis.filter(function (x) { return x.id === id; })[0]; snap(); D.dis = D.dis.filter(function (x) { return x !== d1; }); render(); toast('Plaud is right: fixed our side, ' + esc(d1.span) + ' → ' + esc(d1.plaud) + '. Logged as an adjudication', true); break;
+      case 'dis-ours':
+        var d2 = D.dis.filter(function (x) { return x.id === id; })[0]; snap(); D.dis = D.dis.filter(function (x) { return x !== d2; });
+        D.fixes.push({ id: 'f' + Date.now(), rec: d2.rec, span: d2.span, what: d2.what, plaud: d2.plaud, ours: d2.ours, from: 'Plaud vs home: you said ours is right', stage: 6, done: false });
+        render(); toast('Ours is right: added to Fix in Plaud. Logged as an adjudication', true);
+        break;
+    }
+  }
+
+  function acceptAll() {
+    var acc = acceptable(); if (!acc.length) return; snap();
+    var msgs = [], done = {};
+    acc.forEach(function (r) {
+      if (done[r.name] || !rowBy(r.name)) return;
+      var s = suggest(r);
+      if (s.type === 'link') { linkRows([r.name], s.pid); msgs.push(q(r.name) + ' → ' + esc(person(s.pid).name)); done[r.name] = 1; }
+      else if (s.type === 'combine') { var p = combineNew(s.rows, bestDisplay(s.rows)); s.rows.forEach(function (x) { done[x] = 1; }); msgs.push(esc(p.name) + ' (new, from ' + s.rows.map(q).join(' + ') + ')'); }
+      else if (s.type === 'group') { makeGroup([r.name]); msgs.push(q(r.name) + ' → group'); done[r.name] = 1; }
+    });
+    UI.sel = []; render();
+    toast('Linked ' + plural(Object.keys(done).length, 'name') + ': ' + msgs.join(', '), true);
+  }
+  function doCombine() {
+    var c = cbChoice(), names = UI.dialog.names.slice(); if (!c.name) return;
+    closeDialog(); snap();
+    var p;
+    if (c.pid) { linkRows(names, c.pid); p = person(c.pid); }
+    else p = combineNew(names, c.name);
+    UI.sel = []; render();
+    toast((c.pid ? 'Added to ' : 'Created ') + esc(p.name) + ' · ' + plural(names.length, 'Plaud name') + ' linked in ' + plural(uniqRecs(p.recs), 'recording'), true);
+  }
+  function doSplit(name) {
+    var ov = $('#overlay'), choices = $$('select[data-occ]', ov).map(function (s) { return { i: Number(s.dataset.occ), to: s.value }; });
+    closeDialog();
+    if (!choices.some(function (c) { return c.to !== 'keep'; })) { toast('Nothing changed: every recording kept ' + q(name)); return; }
+    snap(); var moved = splitRow(name, choices), r = rowBy(name); render();
+    toast(q(name) + ' split: ' + moved.map(function (m) { return esc(RECS[m.o.rec].t) + ' → ' + esc(m.p.name); }).join(', ') + (r ? '. ' + q(name) + ' now has ' + (twoVoices(r) ? 'still two voices' : 'one voice') : '') + '. Added to Fix in Plaud', true);
+  }
+  function doMerge() {
+    var self = person(UI.pid), other = person(UI.merge.target); if (!other) return;
+    var keep = UI.merge.keep === 'other' ? other : self, gone = keep === self ? other : self;
+    snap();
+    gone.merged_into = keep.id;
+    (gone.placeholder ? [] : [gone.name]).concat(gone.aliases).forEach(function (a) { addAlias(keep, a); });
+    keep.recs = keep.recs.concat(gone.recs); keep.auto = (keep.auto || []).concat(gone.auto || []);
+    keep.keys = (keep.keys || []).concat(gone.keys || []);
+    keep.recognise = keep.recognise && gone.recognise;
+    keep.private = !!(keep.private && gone.private);
+    if (keep.placeholder && !gone.placeholder) { keep.name = gone.name; keep.placeholder = false; }
+    D.sugg.forEach(function (x) { if (x.pid === gone.id) x.pid = keep.id; });
+    UI.merge = null; UI.pid = keep.id; render();
+    toast('Merged ' + esc(gone.name) + ' into ' + esc(keep.name) + ' · aliases combined' + (keep.recognise ? '' : ' · Recognise is off'), true);
+  }
+  function doForget(id) {
+    var p = person(id), n = uniqRecs(recsOf(p)), tomb = 'Forgotten ' + (D.forgotten + 1);
+    $('#forget-actions').innerHTML = '<span class="muted" role="status">Pausing the worker · rewriting ' + plural(n, 'recording') + ' · vacuuming the databases…</span>';
+    setTimeout(function () {
+      var names = [p.name].concat(p.aliases).map(function (x) { return x.toLowerCase(); });
+      D.people = D.people.filter(function (x) { return x !== p; });
+      D.forgotten += 1;
+      D.fixes.forEach(function (f) { if (names.indexOf(f.ours.toLowerCase()) >= 0) f.ours = tomb; if (names.indexOf(f.plaud.toLowerCase()) >= 0) f.plaud = tomb; });
+      D.sugg = D.sugg.filter(function (x) { return x.pid !== id; });
+      D.dis.forEach(function (d) { if (names.indexOf(d.ours.toLowerCase()) >= 0) d.ours = tomb; if (names.indexOf(d.plaud.toLowerCase()) >= 0) d.plaud = tomb; });
+      hist = [];
+      closeDialog(); UI.view = 'list'; UI.pid = null; render();
+      toast(esc(p.name) + ' forgotten: ' + plural(n, 'recording') + ' rewritten, report saved. This can’t be undone');
+    }, 900);
+  }
+
+  /* ---------------- events ---------------- */
+  app.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href="#"]'); if (a) e.preventDefault();
+    if (!e.target.closest('.menu') && !e.target.closest('[data-act="more"]')) closeMenu();
+    if (e.target === $('#overlay')) { closeDialog(); return; }
+    var pk = e.target.closest('[data-pk]'); if (pk) { pkPick(Number(pk.dataset.pk)); return; }
+    var pb = e.target.closest('[data-play]'); if (pb) { play(pb.dataset.play); return; }
+    var t = e.target.closest('[data-act]');
+    if (t && !t.disabled) { act(t.dataset.act, t.dataset.id, t, e); return; }
+    var row = e.target.closest('.lrow');
+    if (row && !e.target.closest('button, a, select')) { selectRow(row.dataset.name, e); return; }
+    var pr = e.target.closest('.prow');
+    if (pr && !e.target.closest('button, a, input')) { openPerson(pr.dataset.person); return; }
+    var c = e.target.closest('.cand');
+    if (c && !e.target.closest('button')) { UI.sugCur = c.dataset.sid; render(); }
+  });
+  function selectRow(name, e) {
+    var idx = D.toLink.map(function (r) { return r.name; }).indexOf(name), has = UI.sel.indexOf(name) >= 0;
+    var isCb = e.target.matches && e.target.matches('input[type=checkbox]');
+    if (e.shiftKey && UI.anchor != null) {
+      var a = Math.min(UI.anchor, idx), b = Math.max(UI.anchor, idx);
+      UI.sel = D.toLink.slice(a, b + 1).map(function (r) { return r.name; });
+    } else if (isCb || e.metaKey || e.ctrlKey) {
+      UI.sel = has ? UI.sel.filter(function (n) { return n !== name; }) : UI.sel.concat([name]); UI.anchor = idx;
+    } else { UI.sel = (has && UI.sel.length === 1) ? [] : [name]; UI.anchor = idx; }
+    UI.sel = D.toLink.map(function (r) { return r.name; }).filter(function (n) { return UI.sel.indexOf(n) >= 0; });
+    render();
+  }
+  app.addEventListener('input', function (e) {
+    var k = e.target.dataset.input;
+    if (k === 'filter') { UI.filter = e.target.value; render(); }
+    else if (k === 'forget') { var p = person(UI.dialog.pid); $('#forget-go').disabled = e.target.value.trim().toLowerCase() !== p.name.toLowerCase(); }
+    else if (k === 'pk') { UI.dialog.hi = 0; pkRender(); }
+    else if (k === 'dn-text') { $$('input[name=dn]', $('#overlay')).forEach(function (r) { var v = r.value.indexOf('pid:') === 0 ? person(r.value.slice(4)).name : r.value; r.checked = v === e.target.value.trim(); }); cbUpdate(); }
+  });
+  app.addEventListener('change', function (e) {
+    var k = e.target.dataset.input;
+    if (k === 'merge-target') { UI.merge.target = e.target.value; UI.merge.keep = 'self'; render(); }
+    else if (k === 'merge-keep') { UI.merge.keep = e.target.value; render(); }
+    else if (k === 'dn-radio') { var v = e.target.value; $('#dn').value = v.indexOf('pid:') === 0 ? person(v.slice(4)).name : v; cbUpdate(); }
+  });
+  app.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var f = e.target.dataset.form, p = person(UI.pid), inp, v, other;
+    if (f === 'alias') {
+      inp = $('[data-k="alias-input"]'); v = inp.value.trim(); if (!v) return;
+      other = whoHas(v);
+      if (other) { UI.aliasErr = '“' + v + '”' + (other.id === p.id ? ' is already ' + (other.name.toLowerCase() === v.toLowerCase() ? 'their name' : 'one of their aliases') : ' already belongs to ' + other.name + '. Merge them instead?'); render(); return; }
+      snap(); p.aliases.push(v); UI.aliasErr = '';
+      var linked = relinkAlias(p, v); render();
+      toast('Added alias ' + q(v) + (linked ? '. Plaud’s ' + q(v) + ' now links here in ' + plural(linked, 'recording') : ''), true);
+    } else if (f === 'rename') {
+      inp = $('[data-k="rename-input"]'); v = inp.value.trim(); if (!v || v === p.name) { UI.rename = false; render(); return; }
+      other = whoHas(v, p.id);
+      if (other) { toast(esc(v) + ' is already ' + esc(other.name) + '. Use Merge instead'); return; }
+      snap(); var old = p.name; p.name = v; if (p.placeholder) p.placeholder = false; UI.rename = false; render();
+      toast('Renamed ' + esc(old) + ' to ' + esc(v) + '. The slug stays <code>' + esc(p.id) + '</code>', true);
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    var tag = (e.target.tagName || '').toLowerCase(), typing = tag === 'input' && !/checkbox|radio/.test(e.target.type) || tag === 'textarea' || tag === 'select';
+    if (UI.dialog) {
+      if (e.key === 'Escape') { e.preventDefault(); closeDialog(); return; }
+      if (UI.dialog.type === 'picker' && e.target.id === 'pk-q') {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); UI.dialog.hi = Math.max(0, Math.min(UI.dialog.items.length - 1, UI.dialog.hi + (e.key === 'ArrowDown' ? 1 : -1))); pkRender(); return; }
+        if (e.key === 'Enter') { e.preventDefault(); pkPick(UI.dialog.hi); return; }
+      }
+      if (UI.dialog.type === 'forget' && e.key === 'Enter' && e.target.id === 'forget-input' && !$('#forget-go').disabled) { e.preventDefault(); $('#forget-go').click(); return; }
+      if (UI.dialog.type === 'combine' && e.key === 'Enter' && e.target.id === 'dn' && !$('#cb-go').disabled) { e.preventDefault(); doCombine(); return; }
+      if (e.key === 'Tab') { var f = $$('button:not([disabled]), input, select, [tabindex="0"]', $('#overlay')).filter(function (x) { return x.offsetParent !== null; }); if (!f.length) return; var i = f.indexOf(document.activeElement); if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); } }
+      return;
+    }
+    if ($('.menu', app)) {
+      if (e.key === 'Escape') { var mb = menuBtn; closeMenu(); if (mb) mb.focus(); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); var items = $$('.menu button:not([disabled])', app), j = items.indexOf(document.activeElement); items[(j + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); return; }
+    }
+    if (e.target.getAttribute && e.target.getAttribute('role') === 'tab' && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+      var tabs = $$('[role=tab]', app), ti = tabs.indexOf(e.target), nt = tabs[(ti + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+      setTab(nt.dataset.id); $('[data-k="tab-' + nt.dataset.id + '"]').focus(); return;
+    }
+    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '?') { e.preventDefault(); openDialog({ type: 'help' }); return; }
+    if (UI.tab === 'link' && e.key === 'Escape' && UI.sel.length) { UI.sel = []; render(); return; }
+    if (UI.tab === 'sugg' && UI.stage === 6 && D.sugg.length) {
+      var k = e.key.toLowerCase();
+      if (e.key === ' ') { e.preventDefault(); if (UI.sugCur) play('sg-' + UI.sugCur); return; }
+      if (k === 'y' && UI.sugCur) { e.preventDefault(); decide(UI.sugCur, 'accept'); return; }
+      if (k === 'n' && UI.sugCur) { e.preventDefault(); decide(UI.sugCur, 'reject'); return; }
+      if (k === 's' && UI.sugCur) { e.preventDefault(); decide(UI.sugCur, 'skip'); return; }
+      if (k === 'u') { e.preventDefault(); undo(); return; }
+    }
+  });
+  document.addEventListener('keyup', function (e) { if (e.key === ' ' && UI.tab === 'sugg' && !UI.dialog && e.target.tagName === 'BUTTON' && app.contains(e.target)) e.preventDefault(); }, true);
+  $('#content').addEventListener('scroll', function () { closeMenu(); });
+
+  /* ---------------- theme, phone, mockup states ---------------- */
+  var mq = window.matchMedia('(prefers-color-scheme: dark)'), themePref = 'system';
+  function effective() { return themePref === 'system' ? (mq.matches ? 'dark' : 'light') : themePref; }
+  function setTheme(t) {
+    themePref = t;
+    if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+    $$('[data-act="theme"]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.id === t ? 'true' : 'false'); });
+    $('#mk-theme').textContent = effective() === 'dark' ? 'Dark → light' : 'Light → dark';
+  }
+  mq.addEventListener('change', function () { if (themePref === 'system') setTheme('system'); });
+  $('#mk-theme').addEventListener('click', function () { setTheme(effective() === 'dark' ? 'light' : 'dark'); });
+  $('#mk-phone').addEventListener('click', function () { var on = !app.classList.contains('phone'); app.classList.toggle('phone', on); this.setAttribute('aria-pressed', on ? 'true' : 'false'); closeMenu(); });
+  function setStage(n) { UI.stage = n; if (n === 3 && (UI.tab === 'sugg' || UI.tab === 'yard')) { /* stay to show placeholder */ } render(); }
+  function renderMockControls() {
+    $$('[data-stage]').forEach(function (b) { b.setAttribute('aria-pressed', Number(b.dataset.stage) === UI.stage ? 'true' : 'false'); });
+    $$('[data-state]').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.state === UI.state ? 'true' : 'false'); });
+  }
+  function resetAll() { D = seed(); hist = []; closeDialog(); closeMenu(); UI.view = 'list'; UI.pid = null; UI.sel = []; UI.anchor = null; UI.merge = null; UI.rename = false; UI.aliasErr = ''; UI.filter = ''; UI.unnamedOpen = false; UI.sugCur = null; playing = null; $('#toast').classList.remove('show'); }
+  function presetSplit() {
+    var r = rowBy('Alex'), i = r.occ.map(function (o) { return o.rec; }).indexOf('oh0925');
+    splitRow('Alex', [{ i: i, to: 'sam-lee' }]);
+  }
+  var STATES = {
+    people: function () { resetAll(); UI.tab = 'people'; },
+    person: function () { resetAll(); UI.tab = 'people'; UI.view = 'person'; UI.pid = 'sam-lee'; },
+    forget: function () { STATES.person(); render(); openDialog({ type: 'forget', pid: 'sam-lee' }); },
+    link: function () { resetAll(); UI.tab = 'link'; },
+    linksel: function () { resetAll(); presetSplit(); UI.tab = 'link'; UI.sel = ['Alex', 'Alex K', 'alex kim']; UI.anchor = 0; },
+    sugg: function () { resetAll(); UI.stage = 6; UI.tab = 'sugg'; },
+    fix: function () { resetAll(); UI.tab = 'fix'; },
+    emptynew: function () { resetAll(); D.people = []; D.fixes = []; D.sugg = []; D.dis = []; UI.tab = 'people'; },
+    emptyall: function () { resetAll(); D.people = []; D.toLink = []; D.fixes = []; D.sugg = []; D.dis = []; UI.tab = 'people'; },
+    reset: function () { resetAll(); UI.tab = 'people'; }
+  };
+  $$('[data-state]').forEach(function (b) {
+    b.addEventListener('click', function () { var s = b.dataset.state; UI.state = s === 'reset' ? 'people' : s; STATES[s](); if (s !== 'forget') render(); $('#content').scrollTop = 0; renderMockControls(); });
+  });
+  $$('[data-stage]').forEach(function (b) { b.addEventListener('click', function () { setStage(Number(b.dataset.stage)); }); });
+
+  setTheme('system');
+  render();
+  window.__mock = { get D() { return D; }, UI: UI };
+})();
+</script>
+</body>
+</html>

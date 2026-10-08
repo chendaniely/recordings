@@ -1,0 +1,1055 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Date control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Atkinson+Hyperlegible+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* Tokens: the warm palette (theme.css, generated from _brand.yml). */
+  :root {
+    color-scheme: light;
+    --background: #F8F6F2; --card: #FFFDFA; --popover: #FFFDFA; --muted: #EFE8DF; --sidebar: #EFE8DF;
+    --foreground: #1C1A17; --muted-foreground: #6B6258; --border: #E0D6CB; --input: #E0D6CB; --accent: #E8DDD2;
+    --primary: #236192; --primary-hover: #1C5280; --primary-foreground: #F8F6F2; --ring: #236192;
+    --orange: #F26522; --success: #3D6123; --danger: #9A4665;
+    --popover-border: #E0D6CB; --border-strong: #CFC3B5;
+    --sel: color-mix(in srgb, var(--primary) 12%, transparent);
+    --band: color-mix(in srgb, var(--primary) 15%, var(--popover));
+    --band-hover: color-mix(in srgb, var(--primary) 24%, var(--popover));
+    --band-preview: color-mix(in srgb, var(--primary) 7%, var(--popover));
+    --success-tint: color-mix(in srgb, #72994E 16%, transparent);
+    --shadow: 0 14px 34px rgba(28, 26, 23, .14), 0 2px 6px rgba(28, 26, 23, .06);
+    --scrim: rgba(28, 26, 23, .34);
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --background: #171512; --card: #232019; --popover: #232019; --muted: #1C1A16; --sidebar: #1C1A16;
+    --foreground: #F8F6F2; --muted-foreground: #B8AEA2; --border: #2E2B26; --input: #3A362F; --accent: #2E2B26;
+    --primary: #6CA6D9; --primary-hover: #8BBAE3; --primary-foreground: #171512; --ring: #6CA6D9;
+    --success: #9CC27A; --danger: #D27A9A;
+    --popover-border: #3D3830; --border-strong: #4A443B;
+    --band: color-mix(in srgb, var(--primary) 20%, var(--popover));
+    --band-hover: color-mix(in srgb, var(--primary) 30%, var(--popover));
+    --band-preview: color-mix(in srgb, var(--primary) 10%, var(--popover));
+    --success-tint: color-mix(in srgb, #72994E 20%, transparent);
+    --shadow: 0 18px 44px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .3);
+    --scrim: rgba(0, 0, 0, .55);
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; }
+  body { background: var(--background); color: var(--foreground); font-family: "Atkinson Hyperlegible", system-ui, sans-serif; font-size: 14px; line-height: 1.45; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
+  button:disabled { cursor: default; }
+  :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .mono, code, kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; }
+  kbd { font-size: 11px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--card); color: var(--muted-foreground); line-height: 1.5; }
+  code { font-size: .92em; background: var(--muted); border-radius: 4px; padding: 0 4px; }
+
+  /* ---------- Mockup chrome (not part of the app) ---------- */
+  .mock { max-width: 1120px; margin: 0 auto; padding: 18px 16px 48px; }
+  .mock-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  .mock-head h1 { font-size: 21px; margin: 0; }
+  .mock-head p { margin: 2px 0 0; color: var(--muted-foreground); max-width: 72ch; }
+  .mock-tools { display: flex; gap: 8px; }
+  .tog { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--card); font-size: 13px; }
+  .tog:hover { background: var(--accent); }
+  .tog[aria-pressed="true"] { border-color: var(--foreground); font-weight: 700; }
+  .states { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border: 1.5px dashed var(--border-strong); border-radius: 10px; margin-bottom: 14px; }
+  .states-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin-right: 4px; }
+  .st { border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; background: var(--card); font-size: 13px; }
+  .st:hover { background: var(--accent); }
+  .st[aria-pressed="true"] { background: var(--foreground); color: var(--background); border-color: var(--foreground); }
+  .keys { flex-basis: 100%; font-size: 12px; color: var(--muted-foreground); margin-top: 2px; }
+  .keys kbd { margin: 0 1px; }
+
+  /* ---------- The app frame ---------- */
+  .stage { display: flex; justify-content: center; }
+  .frame { position: relative; width: 100%; height: 640px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--background); display: flex; flex-direction: column; }
+  .frame.phone { width: 390px; max-width: 100%; height: 800px; border-radius: 30px; border-width: 6px; border-color: var(--border-strong); }
+
+  .topbar { flex: none; display: flex; align-items: center; gap: 18px; padding: 9px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
+  .logo { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .logo i { width: 10px; height: 10px; border-radius: 50%; background: var(--orange); box-shadow: 4px 0 0 0 var(--primary); margin-right: 4px; }
+  .nav { display: flex; gap: 16px; }
+  .nav span { color: var(--muted-foreground); padding-bottom: 2px; border-bottom: 2px solid transparent; }
+  .nav span.on { color: var(--foreground); border-bottom-color: var(--orange); font-weight: 700; }
+
+  .panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 196px 380px minmax(0, 1fr); }
+  .sidebar { background: var(--sidebar); border-right: 1px solid var(--border); padding: 10px 8px; overflow: auto; font-size: 13.5px; }
+  .grp { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin: 14px 8px 4px; }
+  .si { display: flex; justify-content: space-between; gap: 6px; padding: 4px 8px; border-radius: 6px; }
+  .si .n { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+  .si.on { background: var(--sel); color: var(--primary); font-weight: 700; }
+  .si.on .n { color: var(--primary); }
+  .si small { color: var(--muted-foreground); font-size: 11.5px; }
+
+  .list { display: flex; flex-direction: column; min-height: 0; background: var(--card); border-right: 1px solid var(--border); }
+  .lh { flex: none; padding: 10px 12px 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+  .lh-row { display: flex; align-items: center; gap: 8px; }
+  .search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; border: 1px solid var(--input); border-radius: 8px; padding: 5px 9px; background: var(--background); color: var(--muted-foreground); font-size: 13px; white-space: nowrap; overflow: hidden; }
+  .date-btn { flex: none; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--input); border-radius: 8px; padding: 5px 7px 5px 9px; background: var(--card); font-size: 13px; white-space: nowrap; max-width: 230px; }
+  .date-btn:hover { background: var(--accent); }
+  .date-btn .lbl { overflow: hidden; text-overflow: ellipsis; }
+  .date-btn svg { flex: none; color: var(--muted-foreground); }
+  .date-btn.active { border-color: color-mix(in srgb, var(--primary) 50%, var(--input)); background: var(--sel); color: var(--primary); font-weight: 700; }
+  .date-btn.active svg { color: var(--primary); }
+  .date-btn[aria-expanded="true"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+  .fchips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .fchip { display: inline-flex; align-items: center; border-radius: 999px; background: var(--sel); color: var(--primary); font-size: 12.5px; font-weight: 700; }
+  .fchip-label { display: inline-flex; align-items: center; gap: 5px; padding: 2px 4px 2px 9px; border-radius: 999px 0 0 999px; }
+  .fchip-x { display: grid; place-items: center; width: 24px; height: 22px; border-radius: 0 999px 999px 0; }
+  .fchip-label:hover, .fchip-x:hover { background: color-mix(in srgb, var(--primary) 14%, transparent); }
+  .linkish { color: var(--primary); font-size: 12.5px; text-decoration: underline; text-underline-offset: 2px; }
+  .count { color: var(--muted-foreground); font-size: 12px; }
+
+  .rows { flex: 1; overflow: auto; }
+  .ghead { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; padding: 5px 12px; font-size: 11.5px; font-weight: 700; color: var(--muted-foreground); background: var(--muted); border-bottom: 1px solid var(--border); }
+  .row { display: block; width: 100%; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  .row:hover { background: var(--background); }
+  .row.on { background: var(--sel); box-shadow: inset 3px 0 0 var(--primary); }
+  .row .t { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
+  .row .m { display: block; color: var(--muted-foreground); font-size: 12px; margin: 2px 0 5px; }
+  .inf { text-decoration: underline dashed var(--muted-foreground); text-underline-offset: 3px; }
+  .chip { display: inline-block; font-size: 11px; padding: 0 8px; border-radius: 999px; background: var(--accent); margin: 0 4px 0 0; }
+  .chip.nt { background: var(--success-tint); color: var(--success); font-weight: 700; }
+  .lock { color: var(--muted-foreground); flex: none; margin-top: 2px; }
+  .empty { padding: 28px 18px; text-align: center; color: var(--muted-foreground); }
+  .empty b { color: var(--foreground); }
+  .empty .widen { margin-top: 8px; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 6px; align-items: center; }
+
+  .pane { background: var(--card); padding: 16px 20px; overflow: auto; min-width: 0; }
+  .pane h2 { font-size: 19px; margin: 0 0 4px; display: flex; gap: 8px; align-items: center; }
+  .pane .meta { color: var(--muted-foreground); font-size: 12.5px; }
+  .pane .tagrow { margin-top: 8px; }
+  .player { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--background); }
+  .play { width: 30px; height: 30px; border-radius: 50%; background: var(--primary); color: var(--primary-foreground); display: grid; place-items: center; flex: none; }
+  .bar { flex: 1; height: 5px; border-radius: 999px; background: var(--accent); position: relative; }
+  .bar i { position: absolute; inset: 0 70% 0 0; background: var(--primary); border-radius: 999px; }
+  .tm { font-size: 11.5px; color: var(--muted-foreground); }
+  .tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .tabs span { padding: 6px 0; color: var(--muted-foreground); border-bottom: 2px solid transparent; }
+  .tabs span.on { color: var(--foreground); font-weight: 700; border-bottom-color: var(--foreground); }
+  .sk { display: grid; grid-template-columns: 50px 1fr; gap: 10px; padding: 9px 0 3px; }
+  .sk .ts { color: var(--primary); font-size: 12px; }
+  .sk .sp { font-weight: 700; font-size: 12.5px; }
+  .sk .ln { display: block; height: 7px; border-radius: 4px; background: var(--accent); margin-top: 7px; }
+
+  .tabbar { display: none; }
+
+  /* ---------- Phone frame ---------- */
+  .frame.phone .nav { display: none; }
+  .frame.phone .panes { grid-template-columns: minmax(0, 1fr); }
+  .frame.phone .sidebar, .frame.phone .pane { display: none; }
+  .frame.phone .list { border-right: 0; }
+  .frame.phone .date-btn kbd { display: none; }
+  .frame.phone .date-btn { padding: 7px 9px; }
+  .frame.phone .search { padding: 7px 10px; }
+  .frame.phone .tabbar { display: flex; flex: none; background: var(--card); border-top: 1px solid var(--border); }
+  .tabbar span { flex: 1; text-align: center; padding: 9px 0 14px; font-size: 11.5px; color: var(--muted-foreground); border-top: 2px solid transparent; margin-top: -1px; }
+  .tabbar span.on { color: var(--foreground); font-weight: 700; border-top-color: var(--orange); }
+
+  /* ---------- The date control: popover ---------- */
+  .pop { position: absolute; z-index: 20; display: none; background: var(--popover); border: 1px solid var(--popover-border); border-radius: 12px; box-shadow: var(--shadow); }
+  .pop.open { display: block; animation: popin .14s ease-out; }
+  @keyframes popin { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .pk-main { display: flex; }
+  .pk-presets { width: 170px; flex: none; padding: 8px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 1px; }
+  .pre { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; padding: 4px 9px; border-radius: 6px; font-size: 13px; min-height: 28px; }
+  .pre .n { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .pre:hover { background: var(--accent); }
+  .pre.on { background: var(--sel); color: var(--primary); font-weight: 700; }
+  .pre.on .n { color: var(--primary); }
+  .pk-h { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); padding: 9px 9px 3px; margin-top: 5px; border-top: 1px solid var(--border); }
+  .pk-cal { padding: 10px 14px 12px; }
+  .pk-months { display: flex; gap: 24px; }
+  .mon-cap { position: relative; display: flex; align-items: center; justify-content: center; height: 30px; margin-bottom: 4px; }
+  .cap { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 13.5px; }
+  .cap:hover { background: var(--accent); }
+  .cap svg { color: var(--muted-foreground); }
+  .nav-b { position: absolute; top: 1px; width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: var(--muted-foreground); }
+  .nav-b.prev { left: 0; } .nav-b.next { right: 0; }
+  .nav-b:hover:not(:disabled) { background: var(--accent); color: var(--foreground); }
+  .nav-b:disabled { opacity: .35; }
+  .grid { display: grid; grid-template-columns: repeat(7, 34px); }
+  .grid > [role="row"] { display: contents; }
+  .wd { height: 24px; display: grid; place-items: center; font-size: 11px; color: var(--muted-foreground); }
+  .cell { position: relative; height: 34px; display: grid; place-items: center; }
+  .cell::before { content: ""; position: absolute; top: 1px; bottom: 1px; left: 0; right: 0; background: var(--band); display: none; }
+  .cell.b-r::before { display: block; left: 50%; }
+  .cell.b-l::before { display: block; right: 50%; }
+  .cell.b-m::before { display: block; }
+  .cell.rl::before { left: 1px; border-top-left-radius: 999px; border-bottom-left-radius: 999px; }
+  .cell.rr::before { right: 1px; border-top-right-radius: 999px; border-bottom-right-radius: 999px; }
+  .cell.pv::before { background: var(--band-preview); }
+  .day { position: relative; z-index: 1; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .day:hover { background: var(--accent); }
+  .cell.b-m .day:hover { background: var(--band-hover); }
+  .day.fut { color: var(--muted-foreground); }
+  .day.today { box-shadow: inset 0 0 0 1.5px var(--muted-foreground); font-weight: 700; }
+  .day.end, .day.end.fut { background: var(--primary); color: var(--primary-foreground); font-weight: 700; }
+  .day.end:hover { background: var(--primary-hover); }
+  .day.end.today { box-shadow: inset 0 0 0 2px var(--primary), inset 0 0 0 3.5px var(--popover); }
+  .day.pv-end { box-shadow: inset 0 0 0 1.5px var(--primary); color: var(--primary); font-weight: 700; background: var(--popover); }
+  .day:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+  .dot { position: absolute; bottom: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--muted-foreground); }
+  .cell.b-m .dot { background: var(--primary); }
+  .day.end .dot { background: currentColor; }
+  .day.pv-end .dot { background: var(--primary); }
+
+  .pk-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); }
+  .pk-sum { flex: 1; min-width: 0; }
+  .pk-line { font-size: 13.5px; }
+  .pk-line .c { color: var(--muted-foreground); }
+  .pk-hint { font-size: 12px; color: var(--muted-foreground); min-height: 17px; }
+  .btn { border: 1px solid var(--input); border-radius: 7px; padding: 5px 12px; background: var(--card); font-size: 13px; }
+  .btn:hover { background: var(--accent); }
+  .btn.ghost { border-color: transparent; background: transparent; }
+  .btn.ghost:hover { background: var(--accent); }
+  .btn.pri { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); font-weight: 700; }
+  .btn.pri:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+
+  /* Month and year grid */
+  .ym { display: flex; gap: 14px; width: 500px; height: 262px; }
+  .ym-years { width: 96px; flex: none; display: flex; flex-direction: column; gap: 1px; border-right: 1px solid var(--border); padding-right: 8px; overflow: auto; }
+  .yr { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; border-radius: 6px; font-size: 13px; min-height: 28px; font-variant-numeric: tabular-nums; }
+  .yr .n { color: var(--muted-foreground); font-size: 12px; }
+  .yr:hover { background: var(--accent); }
+  .yr.on { background: var(--sel); color: var(--primary); font-weight: 700; }
+  .yr.on .n { color: var(--primary); }
+  .yr-gap { font-size: 11px; color: var(--muted-foreground); padding: 1px 8px; white-space: nowrap; }
+  .ym-right { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .ym-head { display: flex; justify-content: space-between; align-items: center; height: 30px; margin-bottom: 6px; }
+  .ym-head .yc { font-size: 13px; color: var(--muted-foreground); }
+  .ym-head .yc b { color: var(--foreground); font-size: 13.5px; }
+  .ym-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .ym-m { height: 52px; border-radius: 8px; border: 1px solid var(--border); background: color-mix(in srgb, var(--primary) var(--p, 0%), var(--popover)); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; }
+  .ym-m .mn { font-weight: 700; font-size: 13px; }
+  .ym-m .mc { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ym-m.zero .mc { color: var(--muted-foreground); }
+  .ym-m:hover:not(:disabled) { border-color: var(--primary); }
+  .ym-m.vis { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+  .ym-m:disabled { opacity: .4; }
+  .ym-m:focus-visible { outline-offset: 1px; }
+  .ym-legend { margin-top: auto; font-size: 11.5px; color: var(--muted-foreground); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .ym-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border); vertical-align: -2px; }
+
+  /* ---------- The date control: phone bottom sheet ---------- */
+  .scrim { position: absolute; inset: 0; z-index: 25; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .scrim.open { opacity: 1; pointer-events: auto; }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 30; max-height: 94%; overflow: auto; background: var(--popover); border-radius: 18px 18px 0 0; box-shadow: 0 -10px 30px rgba(0, 0, 0, .2); transform: translateY(105%); visibility: hidden; transition: transform .26s cubic-bezier(.2, .8, .2, 1), visibility 0s linear .26s; }
+  .sheet.open { transform: none; visibility: visible; transition: transform .26s cubic-bezier(.2, .8, .2, 1), visibility 0s; }
+  .sh-head { padding: 0 8px 4px 16px; }
+  .grab { display: block; width: 38px; height: 4px; border-radius: 2px; background: var(--border-strong); margin: 8px auto 2px; }
+  .sh-row { display: flex; align-items: center; justify-content: space-between; }
+  .sh-title { font-size: 16px; margin: 0; }
+  .icon-b { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--muted-foreground); }
+  .icon-b:hover { background: var(--accent); color: var(--foreground); }
+  .pk-chips { display: flex; gap: 6px; overflow-x: auto; padding: 4px 16px 12px; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 86%, transparent); mask-image: linear-gradient(to right, #000 86%, transparent); }
+  .pk-chips::-webkit-scrollbar { display: none; }
+  .pchip { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 13px; border: 1px solid var(--input); border-radius: 999px; background: var(--card); font-size: 13.5px; white-space: nowrap; }
+  .pchip .n { color: var(--muted-foreground); font-size: 12px; }
+  .pchip.on { background: var(--sel); border-color: var(--primary); color: var(--primary); font-weight: 700; }
+  .pchip.on .n { color: var(--primary); }
+  .pchip-sep { flex: none; width: 1px; margin: 6px 3px; background: var(--border); }
+  .picker.phone .pk-cal { padding: 0 14px 6px; min-height: 340px; }
+  .picker.phone .pk-months { display: block; }
+  .picker.phone .mon-cap { height: 42px; }
+  .picker.phone .nav-b { width: 40px; height: 40px; top: 1px; }
+  .picker.phone .grid { grid-template-columns: repeat(7, 1fr); }
+  .picker.phone .wd { height: 26px; font-size: 12px; }
+  .picker.phone .cell { height: 44px; }
+  .picker.phone .cell::before { top: 2px; bottom: 2px; }
+  .picker.phone .day { width: 40px; height: 40px; font-size: 15px; }
+  .picker.phone .dot { bottom: 4px; width: 5px; height: 5px; margin-left: -2.5px; }
+  .picker.phone .pk-foot { flex-wrap: wrap; padding: 12px 16px 20px; }
+  .picker.phone .pk-sum { flex-basis: 100%; margin-bottom: 4px; }
+  .picker.phone .pk-foot .btn { min-height: 44px; padding: 0 18px; font-size: 14px; }
+  .picker.phone .pk-foot .btn.pri { flex: 1; }
+  .picker.phone .ym { width: auto; height: auto; flex-direction: column; gap: 8px; }
+  .picker.phone .ym-years { width: auto; flex-direction: row; border-right: 0; padding: 0 0 6px; overflow-x: auto; }
+  .picker.phone .yr { flex: none; gap: 8px; min-height: 36px; border: 1px solid var(--input); border-radius: 999px; padding: 0 12px; }
+  .picker.phone .yr.on { border-color: var(--primary); }
+  .picker.phone .yr-gap { align-self: center; }
+  .picker.phone .ym-m { height: 56px; }
+  .picker.phone .ym-legend { margin-top: 10px; }
+
+  /* ---------- Design notes ---------- */
+  .notes { margin-top: 26px; max-width: 900px; }
+  .notes h2 { font-size: 17px; margin: 0 0 6px; }
+  .notes h3 { font-size: 14.5px; margin: 18px 0 4px; }
+  .notes ul { margin: 4px 0; padding-left: 20px; }
+  .notes li { margin: 5px 0; }
+  .notes pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; overflow-x: auto; }
+  .notes pre code { background: none; padding: 0; }
+
+  @media (max-width: 640px) {
+    .mock { padding: 12px 16px 40px; }
+    .keys { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="mock">
+  <header class="mock-head mock-ctl">
+    <div>
+      <h1>The date control</h1>
+      <p>The Library list header, spec §12.6a. Press <kbd>D</kbd> or click the date button. Pick a preset, or click two days and Apply. The rows below filter to match.</p>
+    </div>
+    <div class="mock-tools">
+      <button class="tog" id="phoneTog" type="button" aria-pressed="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>Phone</button>
+      <button class="tog" id="themeTog" type="button" aria-pressed="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>Dark</button>
+    </div>
+  </header>
+
+  <div class="states mock-ctl" role="group" aria-labelledby="statesLbl">
+    <span class="states-label" id="statesLbl">Mockup states, not part of the app</span>
+    <button class="st" type="button" data-state="closed">Closed</button>
+    <button class="st" type="button" data-state="preset">Open on a preset</button>
+    <button class="st" type="button" data-state="custom">Custom range</button>
+    <button class="st" type="button" data-state="ym">Month/year grid</button>
+    <button class="st" type="button" data-state="phone">Phone sheet</button>
+    <button class="st" type="button" data-state="dark">Dark</button>
+    <span class="keys">In the calendar: <kbd>←</kbd><kbd>→</kbd> day · <kbd>↑</kbd><kbd>↓</kbd> week · <kbd>PgUp</kbd><kbd>PgDn</kbd> month (<kbd>Shift</kbd> for a year) · <kbd>Shift</kbd>+arrows extend the range · <kbd>Enter</kbd> selects · <kbd>Esc</kbd> closes</span>
+  </div>
+
+  <div class="stage">
+    <div class="frame" id="frame">
+      <header class="topbar">
+        <span class="logo"><i aria-hidden="true"></i>Recordings</span>
+        <nav class="nav" aria-label="Pages"><span class="on">Library</span><span>Tags</span><span>People</span><span>Insights</span><span>Add</span><span>Status</span></nav>
+      </header>
+      <div class="panes">
+        <aside class="sidebar" id="sidebar" aria-label="Library filters"></aside>
+        <section class="list" aria-label="Recordings">
+          <div class="lh">
+            <div class="lh-row">
+              <div class="search" title="Search is not part of this mockup">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <span>Search titles, transcripts, notes</span>
+              </div>
+              <button class="date-btn" id="dateBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-keyshortcuts="d">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>
+                <span class="lbl" id="dateLabel">Any date</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                <kbd aria-hidden="true">D</kbd>
+              </button>
+            </div>
+            <div class="fchips" id="chips" hidden></div>
+            <div class="count" id="countLine"></div>
+          </div>
+          <div class="rows" id="rows"></div>
+        </section>
+        <section class="pane" id="pane" aria-label="Recording"></section>
+      </div>
+      <div class="tabbar" aria-hidden="true"><span class="on">Library</span><span>Tags</span><span>People</span><span>Insights</span><span>Status</span></div>
+      <div class="pop" id="pop" role="dialog" aria-label="Filter by date"></div>
+      <div class="scrim" id="scrim"></div>
+      <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Filter by date"></div>
+    </div>
+  </div>
+
+  <section class="notes" aria-labelledby="notesH">
+    <h2 id="notesH">Design notes</h2>
+    <h3>What it shows</h3>
+    <ul>
+      <li><b>One button, one chip</b> (§12.6a). The button in the list header reads <i>Any date</i>, a preset's name (<i>Last 7 days</i>, <i>2026W1</i>), a whole month (<i>October 2026</i>), a year (<i>2026</i>), <i>Today</i>, or the range (<i>Oct 1 – 15</i>). The active range also sits in the chip row above the list (<i>Oct 1–15 ×</i>), where every active filter lives, and <b>×</b> removes it.</li>
+      <li><b>Presets apply at once</b> and close the popover. Calendar clicks are a draft until <b>Apply</b>. <b>Esc</b> or a click outside discards the draft. <b>Clear</b> empties the draft and leaves the popover open.</li>
+      <li><b>The footer reads live</b>: "Oct 1 – 15 · 9 recordings". It also previews whatever is under the pointer, either a preset ("Last 7 days · Oct 2 – 8 · 7 recordings") or the range a second click would make.</li>
+      <li><b>Picking:</b> the first click selects that day, a second click makes the range, and a third starts again. Shift-click extends the range. A hand-picked range that matches a preset highlights that preset, so Oct 2 – 8 lights up <i>Last 7 days</i>.</li>
+      <li><b>The band:</b> solid blue ends, a blue tint between them, and rounded caps where a week or month wraps, so it reads as one band. Today has a ring in the muted text colour, so it isn't mistaken for the blue focus ring. There is no orange in the control (§12.6). Orange appears only on the active page in the top bar.</li>
+      <li><b>Dots</b> mark days with recordings. A dot turns white on a solid end, as the spec asks, and blue inside the tinted band, where white would vanish.</li>
+      <li><b>Layout:</b> two months, with the current month on the right, and no paging into the future. Days from other months are hidden, so a day never shows twice in the band. There are always six week rows, so the popover doesn't change size as you page. Weeks start on Monday.</li>
+      <li><b>The month caption</b> opens a grid of months and years. It lists only years with recordings, plus this one, so the demo's 1933–1970 recordings are two clicks away. Each month is shaded by its count on a single blue scale (Insights' heatmap scale, §12.6b) and outlined if it's showing now. Picking a month jumps the calendar there. Esc goes back to the days.</li>
+      <li><b>On a phone:</b> a bottom sheet with one month, 44 px day targets, presets as a scrolling row of chips (terms after a divider) and the same footer, with a full-width Apply.</li>
+      <li><b>Ranges use local dates</b> from <code>recorded_at</code> and its own offset (§12.6a), so a 23:30 −07:00 recording stays on its own day. The mockup fixes "today" at Thu Oct 8, 2026. It has 40 invented recordings over 14 months, plus the four historical demo recordings.</li>
+      <li><b>Future days</b> in the current month are muted but can be picked, so "Oct 1 – 15" works as in the spec. An empty result suggests wider ranges with counts (§12.6a, empty states).</li>
+    </ul>
+    <h3>Building it</h3>
+    <ul>
+      <li>The real build uses <b>shadcn's Calendar</b> (react-day-picker) in range mode with a custom day style: <code>mode="range"</code>, <code>numberOfMonths={2}</code> (1 on a phone), <code>weekStartsOn={1}</code>, <code>showOutsideDays={false}</code>, <code>endMonth</code> set to this month, a <code>hasRecordings</code> modifier for the dots, and a custom <code>DayButton</code> for the band, ring and dot. Wrap it in shadcn's Popover on desktop and its Drawer on a phone.</li>
+      <li><b>Check the current docs first</b> (§12.6a). On 2026-10-08, react-day-picker's own docs showed a v10 that imports from <code>@daypicker/react</code>, while shadcn's Calendar still imports <code>react-day-picker</code>. Confirm which version the shadcn registry pins before writing the custom day.</li>
+      <li><b>Its built-in keys clash with the spec.</b> DayPicker uses Shift+arrow to move by month (←→) or by year (↑↓). The spec wants Shift to extend the range, as this mockup does, so the build needs an <code>onDayKeyDown</code> override. PgUp and PgDn already move by month.</li>
+      <li><b>The month/year grid is custom.</b> <code>captionLayout="dropdown"</code> gives two native selects with no counts, so the grid replaces <code>MonthCaption</code>.</li>
+      <li>DayPicker's default range clicks may handle a third click differently from "start again". Check this against the docs.</li>
+    </ul>
+    <h3>Open questions for Dan</h3>
+    <ul>
+      <li>Should the list preview the draft live behind the popover, or change only on Apply, as here?</li>
+      <li>The button and the chip both show the range, as the spec says. Keep both, or let the active button act as the chip?</li>
+      <li><b>Week start:</b> the spec says "the same day as in Insights", but §12.6b doesn't name a day. This mockup uses Monday. Should it be a config value?</li>
+      <li><b>The shape of <code>[calendar] terms</code></b> isn't specified anywhere. Here is a proposal:
+        <pre><code>[calendar]
+week_start = "monday"     # proposed
+terms = [
+  { name = "2026W1", start = 2026-09-08, end = 2026-12-18 },
+  { name = "2025W2", start = 2026-01-05, end = 2026-04-17 },
+  { name = "2025W1", start = 2025-09-02, end = 2025-12-19 },
+]</code></pre></li>
+      <li><b>Dark mode dot:</b> the spec says the dot turns white on selected days. In dark mode the end is light blue (#6CA6D9), where white is only about 2.3:1, so the mockup uses the day's dark text colour there. Please confirm.</li>
+      <li>In a saved link or hash route, should <i>Last 7 days</i> keep rolling, or freeze to its dates?</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // ---------- Dates as whole-day numbers (UTC-based, so no time-zone drift) ----------
+  var MS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var ML = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var WDL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  function dn(y, m, d) { return Math.round(Date.UTC(y, m - 1, d) / 864e5); }
+  function ymd(n) { var t = new Date(n * 864e5); return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate(), w: (t.getUTCDay() + 6) % 7 }; }
+  function dim(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+  function mk(y, m) { return y * 12 + m - 1; }
+  function unmk(k) { return { y: Math.floor(k / 12), m: (k % 12) + 1 }; }
+  function firstOf(k) { var a = unmk(k); return dn(a.y, a.m, 1); }
+  function lastOf(k) { var a = unmk(k); return dn(a.y, a.m, dim(a.y, a.m)); }
+  function monthOf(n) { var a = ymd(n); return mk(a.y, a.m); }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  var TODAY = dn(2026, 10, 8), T = ymd(TODAY), CUR = mk(T.y, T.m);
+
+  // ---------- Data: 40 invented recordings over 14 months, plus the 4 historical demo ones ----------
+  function off(d) { return (d >= '2025-11-02' && d < '2026-03-08') ? '-08:00' : '-07:00'; }
+  function R(d, t, title, dur, ppl, tags, extra) {
+    var o = Object.assign({ d: d, t: t, title: title, dur: dur, ppl: ppl, tags: tags, off: off(d), src: 'Plaud', priv: false }, extra || {});
+    return o;
+  }
+  function lec(d, t, w, l, dur) { return R(d, t, 'COURSE 101: Week ' + w + ', lecture ' + l, dur, ['Dan Chen', 'Unknown 1'], ['school/course-101', 'notes/lecture']); }
+  function oh(d, t, dur, who, tags) { return R(d, t, 'Office hours', dur, ['Dan Chen', who || 'Sam Lee'], tags || ['school/course-101']); }
+  function sync(d, t, dur) { return R(d, t, 'Team weekly sync', dur, ['Dan Chen', 'Alex Kim', 'Priya Shah', '~Sam Lee'], ['work', 'notes/action-items']); }
+  function conf(d, t, dur) { return R(d, t, 'Conference planning call', dur, ['Dan Chen', 'Priya Shah', '~Alex Kim'], ['conf']); }
+
+  var RAW = [
+    lec('2026-10-08', '10:02', 5, 2, '1h 16m'),
+    oh('2026-10-07', '14:00', '32m', 'Unknown 1', []),
+    conf('2026-10-06', '16:10', '51m'),
+    oh('2026-10-06', '13:30', '27m'),
+    lec('2026-10-06', '10:00', 5, 1, '1h 18m'),
+    conf('2026-10-05', '16:00', '47m'),
+    sync('2026-10-02', '11:00', '44m'),
+    oh('2026-10-01', '14:05', '38m', 'Priya Shah'),
+    lec('2026-10-01', '10:00', 4, 2, '1h 20m'),
+    lec('2026-09-29', '10:00', 4, 1, '1h 17m'),
+    lec('2026-09-24', '10:01', 3, 2, '1h 19m'),
+    oh('2026-09-22', '13:30', '41m', 'Unknown 1', []),
+    lec('2026-09-17', '10:00', 2, 2, '1h 15m'),
+    sync('2026-09-11', '11:00', '46m'),
+    lec('2026-09-10', '10:00', 1, 2, '1h 12m'),
+    lec('2026-09-08', '10:03', 1, 1, '1h 21m'),
+    sync('2026-09-03', '11:00', '39m'),
+    conf('2026-08-20', '15:00', '58m'),
+    sync('2026-07-14', '11:00', '42m'),
+    sync('2026-06-23', '11:00', '45m'),
+    conf('2026-06-04', '15:00', '52m'),
+    sync('2026-05-12', '11:00', '40m'),
+    oh('2026-04-09', '13:30', '36m'),
+    lec('2026-04-07', '10:00', 13, 1, '1h 14m'),
+    sync('2026-03-20', '11:00', '47m'),
+    oh('2026-03-12', '13:30', '29m'),
+    lec('2026-03-03', '10:00', 9, 1, '1h 18m'),
+    conf('2026-02-26', '15:00', '49m'),
+    lec('2026-02-10', '10:00', 6, 1, '1h 16m'),
+    sync('2026-01-23', '11:00', '43m'),
+    oh('2026-01-15', '13:30', '33m', 'Priya Shah'),
+    lec('2026-01-06', '10:00', 1, 1, '1h 20m'),
+    oh('2025-12-04', '13:30', '31m'),
+    lec('2025-11-18', '10:00', 11, 1, '1h 17m'),
+    conf('2025-11-06', '15:00', '55m'),
+    oh('2025-10-21', '13:30', '35m'),
+    lec('2025-10-09', '10:00', 6, 2, '1h 19m'),
+    sync('2025-09-19', '11:00', '41m'),
+    lec('2025-09-04', '10:00', 1, 2, '1h 13m'),
+    conf('2025-08-27', '15:00', '50m'),
+    R('1970-04-13', '21:07', "Apollo 13: Houston, we've had a problem", '1m 04s', ['Houston CAPCOM', 'Unknown 1'], [], { off: '-06:00', src: 'Imported' }),
+    R('1969-07-20', '21:56', 'Apollo 11: first steps on the Moon', '2m 31s', ['Neil Armstrong', 'Buzz Aldrin', 'Houston CAPCOM'], ['space/apollo', 'notes/general-fallback'], { off: '-05:00', src: 'Imported' }),
+    R('1962-09-12', '10:00', 'JFK at Rice University: We choose to go to the Moon (opening)', '3m 12s', ['John F. Kennedy'], ['talks', 'notes/conference-talk'], { off: '-05:00', src: 'Imported' }),
+    R('1933-03-12', '22:00', 'Fireside Chat 1: On the Banking Crisis (opening)', '2m 48s', ['Franklin D. Roosevelt'], ['private'], { off: '-05:00', src: 'Imported', priv: true })
+  ];
+  function hash8(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return ('00000000' + (h >>> 0).toString(16)).slice(-8); }
+  var RECS = RAW.map(function (r) {
+    var y = +r.d.slice(0, 4), m = +r.d.slice(5, 7), d = +r.d.slice(8, 10);
+    r.dn = dn(y, m, d);
+    r.id = r.d.replace(/-/g, '') + 'T' + r.t.replace(':', '') + '00' + r.off.replace(':', '') + '_' + hash8(r.title + r.d + r.t);
+    return r;
+  }).sort(function (a, b) { return b.dn - a.dn || (b.t < a.t ? -1 : 1); });
+  var byDay = new Map();
+  RECS.forEach(function (r) { byDay.set(r.dn, (byDay.get(r.dn) || 0) + 1); });
+  var MINM = monthOf(Math.min.apply(null, RECS.map(function (r) { return r.dn; })));
+  function countRange(a, b) { var n = 0; RECS.forEach(function (r) { if (r.dn >= a && r.dn <= b) n++; }); return n; }
+  function countMonth(k) { return countRange(firstOf(k), lastOf(k)); }
+  function countYear(y) { return countRange(dn(y, 1, 1), dn(y, 12, 31)); }
+  function plural(n) { return n + ' recording' + (n === 1 ? '' : 's'); }
+
+  // ---------- Presets and terms ----------
+  var PRESETS = [
+    { id: 'today', name: 'Today', from: TODAY, to: TODAY, named: true },
+    { id: 'yesterday', name: 'Yesterday', from: TODAY - 1, to: TODAY - 1, named: true },
+    { id: 'last7', name: 'Last 7 days', from: TODAY - 6, to: TODAY, named: true },
+    { id: 'last30', name: 'Last 30 days', from: TODAY - 29, to: TODAY, named: true },
+    { id: 'thisMonth', name: 'This month', from: firstOf(CUR), to: lastOf(CUR) },
+    { id: 'lastMonth', name: 'Last month', from: firstOf(CUR - 1), to: lastOf(CUR - 1) },
+    { id: 'thisYear', name: 'This year', from: dn(T.y, 1, 1), to: dn(T.y, 12, 31) },
+    { id: 'all', name: 'All time', from: null, to: null }
+  ];
+  var TERMS = [ // [calendar] terms, invented dates
+    { id: '2026W1', name: '2026W1', from: dn(2026, 9, 8), to: dn(2026, 12, 18), named: true },
+    { id: '2025W2', name: '2025W2', from: dn(2026, 1, 5), to: dn(2026, 4, 17), named: true },
+    { id: '2025W1', name: '2025W1', from: dn(2025, 9, 2), to: dn(2025, 12, 19), named: true }
+  ];
+  var ALLP = PRESETS.concat(TERMS);
+  function pById(id) { return ALLP.find(function (p) { return p.id === id; }); }
+  function findPreset(a, b) { return ALLP.find(function (p) { return p.from === a && p.to === b; }); }
+  function rng(a, b) { var f = Math.min(a, b), t = Math.max(a, b), p = findPreset(f, t); return { from: f, to: t, pid: p ? p.id : null }; }
+  function presetRange(id) { var p = pById(id); return p.from == null ? null : { from: p.from, to: p.to, pid: p.id }; }
+  function pCount(p) { return p.from == null ? RECS.length : countRange(p.from, p.to); }
+
+  // ---------- Labels ----------
+  function fmtDay(n, withYear) { var a = ymd(n); return MS[a.m - 1] + ' ' + a.d + (withYear ? ', ' + a.y : ''); }
+  function dayLong(n) { var a = ymd(n); return WD[a.w] + ' ' + MS[a.m - 1] + ' ' + a.d + (a.y !== T.y ? ', ' + a.y : ''); }
+  function rangeText(f, t, compact) {
+    var a = ymd(f), b = ymd(t);
+    if (f === t) { if (f === TODAY) return 'Today'; if (f === TODAY - 1) return 'Yesterday'; return fmtDay(f, a.y !== T.y); }
+    if (a.y === b.y && a.m === b.m && a.d === 1 && b.d === dim(b.y, b.m)) return ML[a.m - 1] + ' ' + a.y;
+    if (a.y === b.y && a.m === 1 && a.d === 1 && b.m === 12 && b.d === 31) return String(a.y);
+    var yr = a.y !== T.y ? ', ' + a.y : '';
+    if (a.y === b.y && a.m === b.m) return MS[a.m - 1] + ' ' + a.d + (compact ? '–' : ' – ') + b.d + yr;
+    if (a.y === b.y) return MS[a.m - 1] + ' ' + a.d + ' – ' + MS[b.m - 1] + ' ' + b.d + yr;
+    return fmtDay(f, true) + ' – ' + fmtDay(t, true);
+  }
+  function pOf(r) { return r && r.pid ? pById(r.pid) : null; }
+  function labelOf(r, compact) {
+    if (!r) return 'Any date';
+    var p = pOf(r);
+    if (p && p.named) return p.name;
+    return rangeText(r.from, r.to, compact);
+  }
+  function summary(r) {
+    if (!r) return '<b>Any date</b><span class="c"> · ' + plural(RECS.length) + '</span>';
+    var p = pOf(r), n = countRange(r.from, r.to), lab, extra = '';
+    if (p && p.named) { lab = p.name; extra = ' · ' + (r.from === r.to ? dayLong(r.from) : rangeText(r.from, r.to, false)); }
+    else if (r.from === r.to) lab = dayLong(r.from);
+    else lab = rangeText(r.from, r.to, false);
+    return '<b>' + esc(lab) + '</b><span class="c">' + esc(extra) + ' · ' + plural(n) + '</span>';
+  }
+
+  // ---------- Icons ----------
+  var I = {
+    cal: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>',
+    down: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+    left: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
+    right: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
+    x: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    xl: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    lock: '<svg class="lock" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-label="Private" role="img"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>',
+    play: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>'
+  };
+
+  // ---------- State ----------
+  var S = {
+    committed: null, draft: null, picking: false, anchor: null, hover: null, kbAnchor: null, hoverPreset: null,
+    open: false, viewEnd: CUR, focus: TODAY, ym: false, ymYear: T.y, ymFocus: CUR, phone: false, selId: null
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  var frame = $('frame'), dateBtn = $('dateBtn'), pop = $('pop'), sheet = $('sheet'), scrim = $('scrim');
+  var picker = document.createElement('div');
+  picker.className = 'picker';
+
+  function nMonths() { return S.phone ? 1 : 2; }
+  function visibleMonths() { var out = []; for (var i = nMonths() - 1; i >= 0; i--) out.push(S.viewEnd - i); return out; }
+  function clampView() { S.viewEnd = Math.min(CUR, Math.max(MINM + nMonths() - 1, S.viewEnd)); }
+
+  // ---------- Picker rendering ----------
+  function presetList() {
+    var h = PRESETS.map(presetBtn).join('');
+    h += '<div class="pk-h" id="termsH">Terms</div>';
+    h += '<div role="group" aria-labelledby="termsH" style="display:contents">' + TERMS.map(presetBtn).join('') + '</div>';
+    return h;
+  }
+  function presetBtn(p) {
+    var tip = p.from == null ? 'Every recording' : rangeText(p.from, p.to, false);
+    return '<button type="button" class="pre" data-preset="' + p.id + '" aria-pressed="false" title="' + esc(tip) + '"><span>' + esc(p.name) + '</span><span class="n">' + pCount(p) + '</span></button>';
+  }
+  function presetChips() {
+    var h = PRESETS.map(chipBtn).join('');
+    h += '<span class="pchip-sep" aria-hidden="true"></span>';
+    h += TERMS.map(chipBtn).join('');
+    return h;
+  }
+  function chipBtn(p) {
+    return '<button type="button" class="pchip" data-preset="' + p.id + '" aria-pressed="false">' + esc(p.name) + ' <span class="n">' + pCount(p) + '</span></button>';
+  }
+  function monthBlock(k, first, last) {
+    var a = unmk(k), name = ML[a.m - 1] + ' ' + a.y, ms = visibleMonths();
+    var h = '<div class="mon"><div class="mon-cap">';
+    if (first) h += '<button type="button" class="nav-b prev" data-nav="-1" aria-label="Previous month"' + (ms[0] <= MINM ? ' disabled' : '') + '>' + I.left + '</button>';
+    h += '<button type="button" class="cap" data-cap="' + k + '" aria-label="' + name + '. Choose a month and year">' + name + I.down + '</button>';
+    if (last) h += '<button type="button" class="nav-b next" data-nav="1" aria-label="Next month"' + (S.viewEnd >= CUR ? ' disabled' : '') + '>' + I.right + '</button>';
+    h += '</div><div class="grid" role="grid" aria-label="' + name + '"><div role="row">';
+    h += WD.map(function (w, i) { return '<span class="wd" role="columnheader" aria-label="' + WDL[i] + '">' + w.slice(0, 2) + '</span>'; }).join('') + '</div>';
+    var f = firstOf(k), L = dim(a.y, a.m), lead = ymd(f).w, cells = [], i;
+    for (i = 0; i < lead; i++) cells.push(null);
+    for (i = 0; i < L; i++) cells.push(f + i);
+    while (cells.length < 42) cells.push(null);
+    for (var r = 0; r < 6; r++) {
+      h += '<div role="row">';
+      for (var c = 0; c < 7; c++) {
+        var n = cells[r * 7 + c];
+        h += n == null ? '<div class="cell" role="gridcell"></div>'
+          : '<div class="cell" role="gridcell" data-c="' + n + '"><button type="button" class="day" data-dn="' + n + '" tabindex="-1">' + ymd(n).d + (byDay.has(n) ? '<i class="dot" aria-hidden="true"></i>' : '') + '</button></div>';
+      }
+      h += '</div>';
+    }
+    return h + '</div></div>';
+  }
+  function monthsView() {
+    var ms = visibleMonths();
+    return '<div class="pk-months">' + ms.map(function (k, i) { return monthBlock(k, i === 0, i === ms.length - 1); }).join('') + '</div>';
+  }
+  function shade(c) { return c === 0 ? 0 : c === 1 ? 8 : c <= 3 ? 15 : c <= 6 ? 23 : 31; }
+  function ymView() {
+    var years = Array.from(new Set(RECS.map(function (r) { return ymd(r.dn).y; }).concat([T.y]))).sort(function (a, b) { return b - a; });
+    var yl = '', prevY = null;
+    years.forEach(function (y) {
+      if (prevY != null && prevY - y > 1) yl += '<div class="yr-gap" aria-hidden="true">' + (prevY - y > 2 ? (y + 1) + '–' + (prevY - 1) : (y + 1)) + ': none</div>';
+      yl += '<button type="button" class="yr' + (y === S.ymYear ? ' on' : '') + '" data-year="' + y + '" aria-pressed="' + (y === S.ymYear) + '" aria-label="' + y + ', ' + plural(countYear(y)) + '">' + y + '<span class="n">' + countYear(y) + '</span></button>';
+      prevY = y;
+    });
+    var vis = visibleMonths(), y = S.ymYear, g = '';
+    for (var m = 1; m <= 12; m++) {
+      var k = mk(y, m), c = countMonth(k), fut = k > CUR, isVis = vis.indexOf(k) >= 0;
+      g += '<button type="button" class="ym-m' + (isVis ? ' vis' : '') + (c ? '' : ' zero') + '" data-month="' + k + '"' + (fut ? ' disabled' : '') +
+        ' style="--p:' + shade(c) + '%" tabindex="' + (k === S.ymFocus ? 0 : -1) + '" aria-label="' + ML[m - 1] + ' ' + y + ', ' + (fut ? 'in the future' : plural(c)) + (isVis ? ', showing now' : '') + '">' +
+        '<span class="mn">' + MS[m - 1] + '</span><span class="mc">' + (fut ? '' : (c || '–')) + '</span></button>';
+    }
+    return '<div class="ym"><div class="ym-years" role="group" aria-label="Years with recordings">' + yl + '</div>' +
+      '<div class="ym-right"><div class="ym-head"><span class="yc"><b>' + y + '</b> · ' + plural(countYear(y)) + '</span>' +
+      '<button type="button" class="btn ghost" data-act="back">' + 'Back to days' + '</button></div>' +
+      '<div class="ym-grid" role="group" aria-label="Months of ' + y + '">' + g + '</div>' +
+      '<div class="ym-legend"><span>Shaded by number of recordings</span><i style="background:color-mix(in srgb,var(--primary) 8%,var(--popover))"></i><i style="background:color-mix(in srgb,var(--primary) 15%,var(--popover))"></i><i style="background:color-mix(in srgb,var(--primary) 23%,var(--popover))"></i><i style="background:color-mix(in srgb,var(--primary) 31%,var(--popover))"></i><span>· outlined: showing now</span></div>' +
+      '</div></div>';
+  }
+  function renderPicker() {
+    clampView();
+    var ph = S.phone, cal = '<div class="pk-cal">' + (S.ym ? ymView() : monthsView()) + '</div>', h = '';
+    picker.className = 'picker' + (ph ? ' phone' : '');
+    if (ph) {
+      h += '<div class="sh-head"><span class="grab" aria-hidden="true"></span><div class="sh-row"><h2 class="sh-title">Filter by date</h2><button type="button" class="icon-b" data-act="close" aria-label="Close">' + I.xl + '</button></div></div>';
+      h += '<div class="pk-chips" role="group" aria-label="Presets">' + presetChips() + '</div>' + cal;
+    } else {
+      h += '<div class="pk-main"><div class="pk-presets" role="group" aria-label="Presets">' + presetList() + '</div>' + cal + '</div>';
+    }
+    h += '<div class="pk-foot"><div class="pk-sum"><div class="pk-line" id="pkLine" aria-live="polite"></div><div class="pk-hint" id="pkHint"></div></div>' +
+      '<button type="button" class="btn ghost" data-act="clear">Clear</button><button type="button" class="btn pri" data-act="apply">Apply</button></div>';
+    picker.innerHTML = h;
+    paint();
+    if (ph) {
+      var on = picker.querySelector('.pchip.on');
+      if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }
+
+  // Classes for the band, ends, today, dots, roving tabindex and the footer.
+  function paint() {
+    if (!S.open) return;
+    var sel = S.draft, Rg = sel, prev = false;
+    if (S.picking && S.hover != null && S.anchor != null && S.hover !== S.anchor) {
+      Rg = { from: Math.min(S.anchor, S.hover), to: Math.max(S.anchor, S.hover) }; prev = true;
+    }
+    if (!S.ym) {
+      var ms = visibleMonths(), lo = firstOf(ms[0]), hi = lastOf(ms[ms.length - 1]);
+      if (S.focus < lo) S.focus = lo;
+      if (S.focus > hi) S.focus = hi;
+    }
+    picker.querySelectorAll('.cell[data-c]').forEach(function (cell) {
+      var n = +cell.dataset.c, b = cell.firstElementChild, a = ymd(n), last = dim(a.y, a.m);
+      var cc = 'cell', bc = 'day';
+      if (Rg && n >= Rg.from && n <= Rg.to) {
+        var single = Rg.from === Rg.to, isS = n === Rg.from, isE = n === Rg.to;
+        var le = a.w === 0 || a.d === 1, re = a.w === 6 || a.d === last;
+        if (!single) {
+          if (isS) { if (!re) cc += ' b-r'; }
+          else if (isE) { if (!le) cc += ' b-l'; }
+          else cc += ' b-m' + (le ? ' rl' : '') + (re ? ' rr' : '');
+        }
+        if (prev) cc += ' pv';
+        if (isS || isE) bc += (prev && n === S.hover) ? ' pv-end' : ' end';
+      }
+      if (n === TODAY) bc += ' today';
+      if (n > TODAY) bc += ' fut';
+      cell.className = cc; b.className = bc;
+      var inSel = !!(sel && n >= sel.from && n <= sel.to);
+      cell.setAttribute('aria-selected', inSel ? 'true' : 'false');
+      b.tabIndex = n === S.focus ? 0 : -1;
+      var c = byDay.get(n) || 0;
+      var pos = !inSel ? '' : sel.from === sel.to ? ', selected' : n === sel.from ? ', range start' : n === sel.to ? ', range end' : ', in range';
+      b.setAttribute('aria-label', WDL[a.w] + ', ' + ML[a.m - 1] + ' ' + a.d + ', ' + a.y + ', ' + (c ? plural(c) : 'no recordings') + (n === TODAY ? ', today' : '') + pos);
+      b.title = WD[a.w] + ' ' + MS[a.m - 1] + ' ' + a.d + (c ? ' · ' + plural(c) : '');
+    });
+    var shown = S.hoverPreset ? presetRange(S.hoverPreset) : prev ? rng(Rg.from, Rg.to) : sel;
+    picker.querySelector('#pkLine').innerHTML = summary(shown);
+    picker.querySelector('#pkHint').textContent = S.hoverPreset ? 'Click to apply now'
+      : S.picking ? 'Click a second day for a range, or Apply for this day'
+      : sel ? 'Shift-click a day to extend' : 'Click a day, then a second day for a range';
+    var cur = sel ? sel.pid : 'all';
+    picker.querySelectorAll('[data-preset]').forEach(function (b) {
+      var on = b.dataset.preset === cur;
+      b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  // ---------- Picker behaviour ----------
+  function focusDay() { var b = picker.querySelector('[data-dn="' + S.focus + '"]'); if (b) b.focus({ preventScroll: true }); }
+  function focusSel(q) { var b = picker.querySelector(q); if (b) b.focus({ preventScroll: true }); }
+  function selectDay(n, shift) {
+    if (shift && S.draft) { var anc = n >= S.draft.from ? S.draft.from : S.draft.to; S.draft = rng(anc, n); S.picking = false; S.anchor = null; }
+    else if (S.picking && S.anchor != null) { S.draft = rng(S.anchor, n); S.picking = false; S.anchor = null; }
+    else { S.draft = rng(n, n); S.anchor = n; S.picking = true; }
+    S.hover = null; S.kbAnchor = null; S.focus = n;
+    paint(); focusDay();
+  }
+  function addMonthsDay(n, k) { var a = ymd(n), b = unmk(mk(a.y, a.m) + k); return dn(b.y, b.m, Math.min(a.d, dim(b.y, b.m))); }
+  function clampDay(n) { return Math.max(firstOf(MINM), Math.min(lastOf(CUR), n)); }
+  function ensureVisible(n) {
+    var k = monthOf(n), ms = visibleMonths();
+    if (k > ms[ms.length - 1]) { S.viewEnd = k; renderPicker(); }
+    else if (k < ms[0]) { S.viewEnd = k + nMonths() - 1; renderPicker(); }
+    else paint();
+    focusDay();
+  }
+  function handleDayKey(e) {
+    var n = S.focus, a = ymd(n), arrow = false;
+    switch (e.key) {
+      case 'ArrowLeft': n -= 1; arrow = true; break;
+      case 'ArrowRight': n += 1; arrow = true; break;
+      case 'ArrowUp': n -= 7; arrow = true; break;
+      case 'ArrowDown': n += 7; arrow = true; break;
+      case 'Home': n -= a.w; break;
+      case 'End': n += 6 - a.w; break;
+      case 'PageUp': n = addMonthsDay(n, e.shiftKey ? -12 : -1); break;
+      case 'PageDown': n = addMonthsDay(n, e.shiftKey ? 12 : 1); break;
+      case 'Enter': case ' ': e.preventDefault(); selectDay(S.focus, e.shiftKey && e.key === 'Enter'); return;
+      default: return;
+    }
+    e.preventDefault();
+    n = clampDay(n);
+    if (arrow && e.shiftKey) {
+      if (S.kbAnchor == null) {
+        var d = S.draft;
+        S.kbAnchor = d ? (S.focus === d.to ? d.from : S.focus === d.from ? d.to : S.focus) : S.focus;
+      }
+      S.focus = n; S.draft = rng(S.kbAnchor, n); S.picking = false; S.anchor = null; S.hover = null;
+    } else {
+      S.kbAnchor = null; S.focus = n;
+      if (S.picking) S.hover = n;
+    }
+    ensureVisible(n);
+  }
+  function handleMonthKey(e, k) {
+    var d = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -4, ArrowDown: 4 }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    var y = S.ymYear, nk = Math.max(mk(y, 1), Math.min(mk(y, 12), k + d));
+    if (nk > CUR) nk = CUR;
+    S.ymFocus = nk;
+    picker.querySelectorAll('.ym-m').forEach(function (b) { b.tabIndex = +b.dataset.month === nk ? 0 : -1; });
+    focusSel('[data-month="' + nk + '"]');
+  }
+  function shiftView(k) {
+    S.viewEnd += k; clampView(); renderPicker();
+    var b = picker.querySelector('[data-nav="' + k + '"]');
+    if (b && !b.disabled) b.focus(); else focusDay();
+  }
+  function defaultYmFocus(y) {
+    var vis = visibleMonths().filter(function (k) { return unmk(k).y === y; });
+    if (vis.length) return vis[0];
+    for (var m = 12; m >= 1; m--) { var k = mk(y, m); if (k <= CUR && countMonth(k)) return k; }
+    return Math.min(mk(y, 12), CUR);
+  }
+  function openYM(k, focus) {
+    S.ym = true; S.ymYear = unmk(k).y; S.ymFocus = k; renderPicker();
+    if (focus !== false) focusSel('[data-month="' + k + '"]');
+  }
+  function jumpTo(k) {
+    S.ym = false;
+    S.viewEnd = Math.min(CUR, k + nMonths() - 1);
+    var f = firstOf(k), l = lastOf(k), first = null;
+    for (var n = f; n <= l; n++) if (byDay.has(n)) { first = n; break; }
+    S.focus = first != null ? first : f;
+    renderPicker(); focusDay();
+  }
+
+  picker.addEventListener('click', function (e) {
+    var t = e.target.closest('button');
+    if (!t || !picker.contains(t)) return;
+    if (t.dataset.dn) { selectDay(+t.dataset.dn, e.shiftKey); return; }
+    if (t.dataset.preset) { applyPreset(t.dataset.preset); return; }
+    if (t.dataset.nav) { shiftView(+t.dataset.nav); return; }
+    if (t.dataset.cap) { openYM(+t.dataset.cap); return; }
+    if (t.dataset.year) { S.ymYear = +t.dataset.year; S.ymFocus = defaultYmFocus(S.ymYear); renderPicker(); focusSel('[data-year="' + S.ymYear + '"]'); return; }
+    if (t.dataset.month) { jumpTo(+t.dataset.month); return; }
+    var act = t.dataset.act;
+    if (act === 'clear') { S.draft = null; S.picking = false; S.anchor = null; S.hover = null; S.kbAnchor = null; paint(); }
+    else if (act === 'apply') { commit(S.draft); close(); }
+    else if (act === 'close') close();
+    else if (act === 'back') { S.ym = false; renderPicker(); focusDay(); }
+  });
+  picker.addEventListener('mouseover', function (e) {
+    var changed = false;
+    if (S.picking) {
+      var d = e.target.closest('[data-dn]'), h = d ? +d.dataset.dn : null;
+      if (h !== S.hover) { S.hover = h; changed = true; }
+    }
+    var p = e.target.closest('[data-preset]'), hp = p ? p.dataset.preset : null;
+    if (hp !== S.hoverPreset) { S.hoverPreset = hp; changed = true; }
+    if (changed) paint();
+  });
+  picker.addEventListener('mouseleave', function () { if (S.hover != null || S.hoverPreset) { S.hover = null; S.hoverPreset = null; paint(); } });
+  picker.addEventListener('focusin', function (e) {
+    var p = e.target.closest && e.target.closest('[data-preset]'), hp = p ? p.dataset.preset : null;
+    if (hp !== S.hoverPreset) { S.hoverPreset = hp; paint(); }
+  });
+  picker.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      if (S.ym) { S.ym = false; renderPicker(); focusDay(); } else close();
+      return;
+    }
+    var day = e.target.closest && e.target.closest('[data-dn]');
+    if (day) { handleDayKey(e); return; }
+    var m = e.target.closest && e.target.closest('[data-month]');
+    if (m) handleMonthKey(e, +m.dataset.month);
+  });
+
+  // ---------- Open, close, commit ----------
+  function place() {
+    if (S.phone || !S.open) return;
+    var fr = frame.getBoundingClientRect(), br = dateBtn.getBoundingClientRect(), w = pop.offsetWidth;
+    var left = br.left - fr.left;
+    if (left + w > fr.width - 10) left = Math.max(10, fr.width - 10 - w);
+    pop.style.left = left + 'px';
+    pop.style.top = (br.bottom - fr.top + 6) + 'px';
+  }
+  function mount() {
+    if (S.phone) {
+      pop.classList.remove('open'); sheet.appendChild(picker);
+      sheet.classList.add('open'); scrim.classList.add('open');
+    } else {
+      sheet.classList.remove('open'); scrim.classList.remove('open');
+      pop.appendChild(picker); pop.classList.add('open');
+    }
+  }
+  function openPicker(opts) {
+    opts = opts || {};
+    if (S.open) return;
+    var c = S.committed;
+    S.open = true; S.draft = c ? { from: c.from, to: c.to, pid: c.pid } : null;
+    S.picking = false; S.anchor = null; S.hover = null; S.hoverPreset = null; S.kbAnchor = null; S.ym = false;
+    S.viewEnd = c ? Math.min(CUR, monthOf(c.to)) : CUR;
+    S.focus = c ? Math.min(c.to, TODAY) : TODAY;
+    mount(); renderPicker(); place();
+    dateBtn.setAttribute('aria-expanded', 'true');
+    if (opts.focus) focusDay();
+  }
+  function close() {
+    if (!S.open) return;
+    var had = picker.contains(document.activeElement);
+    S.open = false; S.hoverPreset = null;
+    pop.classList.remove('open'); sheet.classList.remove('open'); scrim.classList.remove('open');
+    dateBtn.setAttribute('aria-expanded', 'false');
+    if (had) dateBtn.focus();
+  }
+  function commit(r) { S.committed = r ? { from: r.from, to: r.to, pid: r.pid } : null; renderList(); }
+  function applyPreset(id) { var r = presetRange(id); S.draft = r; commit(r); close(); }
+
+  dateBtn.addEventListener('click', function () { if (S.open) close(); else openPicker({ focus: true }); });
+  scrim.addEventListener('click', close);
+  document.addEventListener('pointerdown', function (e) {
+    if (!S.open) return;
+    var t = e.target;
+    if (picker.contains(t) || dateBtn.contains(t) || t.closest('.mock-ctl') || t.closest('.fchip-label')) return;
+    close();
+  });
+  document.addEventListener('keydown', function (e) {
+    var t = e.target;
+    if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (t.matches && t.matches('input, textarea, select, [contenteditable]')) return;
+      if (!S.open) { e.preventDefault(); openPicker({ focus: true }); }
+      return;
+    }
+    if (e.key === 'Escape' && S.open) close();
+  });
+  window.addEventListener('resize', place);
+
+  // ---------- The list, chips, sidebar and pane ----------
+  function shortName(n) {
+    var map = { 'Dan Chen': 'Dan', 'Alex Kim': 'Alex', 'Sam Lee': 'Sam', 'Priya Shah': 'Priya' };
+    return map[n] || n;
+  }
+  function peopleHtml(ppl, max) {
+    var shown = ppl.slice(0, max).map(function (p) {
+      var inf = p[0] === '~', n = inf ? p.slice(1) : p;
+      return inf ? '<span class="inf" title="' + esc(n) + ', inferred">' + esc(shortName(n)) + '</span>' : esc(shortName(n));
+    });
+    return shown.join(', ') + (ppl.length > max ? ' +' + (ppl.length - max) : '');
+  }
+  function chipsHtml(tags) {
+    return tags.filter(function (t) { return t !== 'private'; }).slice(0, 2).map(function (t) {
+      return '<span class="chip' + (t.indexOf('notes/') === 0 ? ' nt' : '') + '">' + esc(t) + '</span>';
+    }).join('');
+  }
+  function widenHtml(f) {
+    var span = f.to - f.from, n0 = countRange(f.from, f.to);
+    var cands = PRESETS.concat(TERMS).filter(function (p) {
+      return p.from != null && p.from <= f.from && p.to >= f.to && (p.to - p.from) > span && countRange(p.from, p.to) > n0;
+    }).sort(function (a, b) { return (a.to - a.from) - (b.to - b.from); }).slice(0, 2);
+    var parts = cands.map(function (p) { return '<button type="button" class="linkish" data-widen="' + p.id + '">' + esc(p.name) + ': ' + pCount(p) + '</button>'; });
+    parts.push('<button type="button" class="linkish" data-widen="all">All dates: ' + RECS.length + '</button>');
+    return parts.join('<span aria-hidden="true">·</span>');
+  }
+  function renderList() {
+    var f = S.committed;
+    var vis = RECS.filter(function (r) { return !f || (r.dn >= f.from && r.dn <= f.to); });
+    var lab = labelOf(f, false);
+    $('dateLabel').textContent = lab;
+    dateBtn.classList.toggle('active', !!f);
+    dateBtn.setAttribute('aria-label', 'Date: ' + lab + '. Shortcut D');
+    var chips = $('chips');
+    if (f) {
+      var cl = labelOf(f, true);
+      chips.innerHTML = '<span class="fchip"><button type="button" class="fchip-label" data-act="edit" aria-label="Date ' + esc(cl) + ', change">' + I.cal + esc(cl) + '</button>' +
+        '<button type="button" class="fchip-x" data-act="remove" aria-label="Remove date filter ' + esc(cl) + '">' + I.x + '</button></span>' +
+        '<button type="button" class="linkish" data-act="clearall">Clear</button>';
+      chips.hidden = false;
+    } else { chips.innerHTML = ''; chips.hidden = true; }
+    $('countLine').textContent = (f ? vis.length + ' of ' + RECS.length : RECS.length) + ' recordings · newest first';
+
+    if (!vis.some(function (r) { return r.id === S.selId; })) S.selId = vis.length ? vis[0].id : null;
+    var h = '', lastK = null;
+    if (!vis.length) {
+      h = '<div class="empty"><b>No recordings ' + (f.from === f.to ? 'on ' + esc(dayLong(f.from)) : 'in ' + esc(labelOf(f, false))) + '</b><div class="widen">' + widenHtml(f) + '</div></div>';
+    }
+    vis.forEach(function (r) {
+      var k = monthOf(r.dn);
+      if (k !== lastK) {
+        var a = unmk(k), n = vis.filter(function (x) { return monthOf(x.dn) === k; }).length;
+        h += '<div class="ghead"><span>' + ML[a.m - 1] + ' ' + a.y + '</span><span>' + n + '</span></div>';
+        lastK = k;
+      }
+      var a2 = ymd(r.dn);
+      h += '<button type="button" class="row' + (r.id === S.selId ? ' on' : '') + '" data-id="' + r.id + '">' +
+        '<span class="t"><span>' + esc(r.title) + '</span>' + (r.priv ? I.lock : '') + '</span>' +
+        '<span class="m">' + WD[a2.w] + ' ' + MS[a2.m - 1] + ' ' + a2.d + (a2.y !== T.y ? ', ' + a2.y : '') + ' · ' + r.t + ' · ' + r.dur + ' · ' + peopleHtml(r.ppl, 2) + '</span>' +
+        chipsHtml(r.tags) + '</button>';
+    });
+    $('rows').innerHTML = h;
+    renderSidebar();
+    renderPane();
+  }
+  $('rows').addEventListener('click', function (e) {
+    var w = e.target.closest('[data-widen]');
+    if (w) { commit(w.dataset.widen === 'all' ? null : presetRange(w.dataset.widen)); return; }
+    var row = e.target.closest('.row');
+    if (!row) return;
+    S.selId = row.dataset.id;
+    $('rows').querySelectorAll('.row').forEach(function (b) { b.classList.toggle('on', b === row); });
+    renderPane();
+  });
+  $('chips').addEventListener('click', function (e) {
+    var t = e.target.closest('button');
+    if (!t) return;
+    if (t.dataset.act === 'edit') { if (S.open) close(); else openPicker({ focus: true }); }
+    else { close(); commit(null); dateBtn.focus(); }
+  });
+
+  function renderSidebar() {
+    var tags = {}, ppl = {}, untagged = 0;
+    RECS.forEach(function (r) {
+      if (!r.tags.length) untagged++;
+      r.tags.forEach(function (t) { if (t.indexOf('notes/') !== 0 && t !== 'private') tags[t] = (tags[t] || 0) + 1; });
+      r.ppl.forEach(function (p) {
+        var inf = p[0] === '~', n = inf ? p.slice(1) : p;
+        if (!ppl[n]) ppl[n] = { n: 0, inf: 0 };
+        ppl[n].n++; if (inf) ppl[n].inf++;
+      });
+    });
+    var on = !S.committed;
+    var h = '<div class="si' + (on ? ' on' : '') + '"><span>All</span><span class="n">' + RECS.length + '</span></div>' +
+      '<div class="si"><span>Untagged</span><span class="n">' + untagged + '</span></div>' +
+      '<div class="si"><span>Needs attention</span><span class="n">1</span></div>' +
+      '<div class="grp">Tags</div>';
+    ['school/course-101', 'work', 'conf', 'talks', 'space/apollo'].forEach(function (t) { h += '<div class="si"><span>' + t + '</span><span class="n">' + (tags[t] || 0) + '</span></div>'; });
+    h += '<div class="grp">People</div>';
+    ['Dan Chen', 'Alex Kim', 'Priya Shah', 'Sam Lee'].forEach(function (p) {
+      var x = ppl[p];
+      h += '<div class="si"><span>' + shortName(p) + (x.inf ? ' <small>(' + x.inf + ' unconfirmed)</small>' : '') + '</span><span class="n">' + x.n + '</span></div>';
+    });
+    h += '<div class="si"><span>Unnamed</span><span class="n">' + (ppl['Unknown 1'] ? ppl['Unknown 1'].n : 0) + '</span></div>';
+    $('sidebar').innerHTML = h;
+  }
+  function renderPane() {
+    var r = RECS.find(function (x) { return x.id === S.selId; }), pane = $('pane');
+    if (!r) { pane.innerHTML = '<p class="count" style="margin-top:40px;text-align:center">No recording selected</p>'; return; }
+    var a = ymd(r.dn), names = r.ppl.map(function (p) { return p[0] === '~' ? p.slice(1) : p; });
+    var lines = [['0:00', names[0], 88], ['0:41', names[1] || names[0], 64], ['1:12', names[0], 92], ['2:05', names[2] || names[0], 51]];
+    pane.innerHTML = '<h2>' + esc(r.title) + (r.priv ? I.lock : '') + '</h2>' +
+      '<div class="meta">' + WDL[a.w] + ', ' + ML[a.m - 1] + ' ' + a.d + ', ' + a.y + ' · ' + r.t + ' (' + r.off.replace('-', '−') + ') · ' + r.dur + ' · ' + r.src + ' · <span class="mono">' + r.id + '</span></div>' +
+      '<div class="tagrow">' + r.tags.map(function (t) { return '<span class="chip' + (t.indexOf('notes/') === 0 ? ' nt' : '') + '">' + esc(t) + '</span>'; }).join('') + '<span class="chip">+ tag</span></div>' +
+      '<div class="player" aria-hidden="true"><span class="play">' + I.play + '</span><span class="bar"><i></i></span><span class="tm mono">0:00 / ' + r.dur + '</span></div>' +
+      '<div class="tabs" aria-hidden="true"><span class="on">Transcript</span><span>Notes (2)</span><span>Plaud</span><span>My notes</span><span>Details</span></div>' +
+      lines.map(function (l) { return '<div class="sk" aria-hidden="true"><span class="ts mono">' + l[0] + '</span><span><span class="sp">' + esc(l[1]) + '</span><span class="ln" style="width:' + l[2] + '%"></span><span class="ln" style="width:' + (l[2] - 22) + '%"></span></span></div>'; }).join('');
+  }
+
+  // ---------- Mockup controls: theme, phone, states ----------
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  var themePref = mq.matches ? 'dark' : 'light';
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    $('themeTog').setAttribute('aria-pressed', t === 'dark' ? 'true' : 'false');
+  }
+  $('themeTog').addEventListener('click', function () {
+    themePref = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyTheme(themePref);
+  });
+  mq.addEventListener('change', function (e) { themePref = e.matches ? 'dark' : 'light'; applyTheme(themePref); });
+
+  function setPhone(on) {
+    S.phone = on;
+    frame.classList.toggle('phone', on);
+    $('phoneTog').setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (S.open) { mount(); renderPicker(); place(); }
+  }
+  $('phoneTog').addEventListener('click', function () { setPhone(!S.phone); });
+
+  function narrow() { return window.innerWidth < 760; }
+  function reset(phone, theme) { close(); setPhone(phone || narrow()); applyTheme(theme || themePref); }
+  var STATES = {
+    closed: function () { reset(false); commit(null); },
+    preset: function () { reset(false); commit(presetRange('last30')); openPicker(); },
+    custom: function () { reset(false); commit(rng(dn(2026, 10, 1), dn(2026, 10, 15))); openPicker(); },
+    ym: function () { reset(false); commit(null); openPicker(); openYM(CUR, false); },
+    phone: function () { reset(true); commit(presetRange('last7')); openPicker(); },
+    dark: function () { reset(false, 'dark'); commit(rng(dn(2026, 9, 24), dn(2026, 10, 6))); openPicker(); }
+  };
+  function setState(name) {
+    STATES[name]();
+    document.querySelectorAll('.st').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.state === name ? 'true' : 'false'); });
+  }
+  document.querySelectorAll('.st').forEach(function (b) { b.addEventListener('click', function () { setState(b.dataset.state); }); });
+  window.__setState = setState; // for the screenshot script
+
+  applyTheme(themePref);
+  setState('closed');
+})();
+</script>
+</body>
+</html>
