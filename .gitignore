@@ -24,3 +24,5 @@ secrets/
 # Environment files can hold secrets: never commit one.
 .env
 .env.*
+# Git bundles (such as the pre-public history backup) can carry private history.
+*.bundle
