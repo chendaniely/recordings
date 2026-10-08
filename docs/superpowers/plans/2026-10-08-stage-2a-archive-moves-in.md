@@ -172,7 +172,7 @@ Nothing in it calls Plaud.
     - The spec's "Later: Synology's own snapshots" no longer applies on ext4.
 23. **`audio-router`'s tags all come over** (Dan, 2026-10-09).
     - Every label in the catalog's `tags` column becomes a tag.
-    - The privacy labels become private tags. Task 8 recognises every protected marker in `audio-router`'s `sources/local_.py` at 64612df, and trims the tags to one per meaning (Dan, 2026-10-09: "counselling and counseling are the same"): `private`, `personal` and `voiceprints` → `private`; `therapy` → `private/therapy`; `counselling` and `counseling` → `private/counselling`; `journal`, `medical` and `students` → `private/<label>`.
+    - The privacy labels become private tags. Task 8 recognises every protected marker in `audio-router`'s `sources/local_.py` at 64612df, and trims the tags to one per meaning (Dan, 2026-10-09: "counselling and counseling are the same", and "therapy and counseling are also all the same"): `private`, `personal` and `voiceprints` → `private`; `therapy`, `counselling` and `counseling` → `private/therapy`; `journal`, `medical` and `students` → `private/<label>`.
     - A row is `new-private` when its source is `private`, its `access` is non-empty, or any of its tags is a privacy label.
     - The private tag is in `Incoming.tags` when the recording is created, so it is never published untagged (Global Constraints: privacy comes first).
 
@@ -7562,7 +7562,7 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
       - `REQUIRED_COLUMNS`, now with `tags`
       - `DISPOSITIONS = ("new", "new-private", "duplicate", "present", "no-audio", "deferred-to-2b", "consent-excluded", "unplaced")`
       - `IMPORTED = ("new", "new-private", "duplicate", "present")`: what a run imports
-      - `PRIVATE_TAGS`, each recognised label to its one tag: `private`, `personal` and `voiceprints` → `private`; `therapy` → `private/therapy`; `counselling` and `counseling` → `private/counselling`; `journal`, `medical` and `students` → `private/<label>`. `PRIVACY_LABELS = frozenset(PRIVATE_TAGS)`
+      - `PRIVATE_TAGS`, each recognised label to its one tag: `private`, `personal` and `voiceprints` → `private`; `therapy`, `counselling` and `counseling` → `private/therapy`; `journal`, `medical` and `students` → `private/<label>`. `PRIVACY_LABELS = frozenset(PRIVATE_TAGS)`
     - `class CatalogError(RuntimeError)`
     - `@dataclass(frozen=True) Row(uri, source, file_id, recorded_at_local, timezone, time_source, audio_rel, audio_sha256, dup_of, tags: tuple[str, ...], access)`
     - `@dataclass(frozen=True) Item(row: Row, disposition: str, reason: str = "", kind: str = "", audio: Path | None = None, sha256: str = "", recorded_at: datetime | None = None, timezone: str = "", time_source: str = "", snapshots: tuple[Path, ...] = (), renditions: tuple[Path, ...] = (), texts: tuple[Path, ...] = (), present_id: str | None = None, private: bool = False, tags: tuple[str, ...] = (), probed: MediaProbe | None = None)`
@@ -8095,9 +8095,10 @@ def test_audio_routers_privacy_labels_make_a_recording_private(ar_archive, plaud
     assert (by_id[D].disposition, by_id[D].tags) == ("new-private", ("lecture", "private/therapy"))
     assert map_tags(["medical", "journal", "students", "private", "lecture"]) == (
         "private/medical", "private/journal", "private/students", "private", "lecture")
-    # One tag per meaning: the spellings fold together, and the generic markers are `private`.
-    assert map_tags(["counseling", "counselling", "personal", "voiceprints", "private"]) == (
-        "private/counselling", "private")
+    # One tag per meaning: therapy and counselling fold together, and the generic markers are
+    # `private`.
+    assert map_tags(["counseling", "therapy", "counselling", "personal", "voiceprints", "private"]) == (
+        "private/therapy", "private")
 
 
 def test_the_private_tier_is_found_by_hash_whatever_its_files_are_called(ar_archive):
@@ -8283,15 +8284,15 @@ IMPORTED = ("new", "new-private", "duplicate", "present")  # the dispositions a 
 # audio-router's privacy labels: the protected markers in its sources/local_.py at 64612df
 # (PROTECTED_SEGMENTS, and the markers it checks in file names only), and the one tag each
 # becomes (Dan, 2026-10-09; spec §7.4, §9.3). Every marker is recognised, so a recording carrying
-# any of them is private. The tags are trimmed to one per meaning: the two spellings of
+# any of them is private. The tags are trimmed to one per meaning: therapy and both spellings of
 # counselling are one tag, and the generic markers are plain `private`.
 PRIVATE_TAGS: dict[str, str] = {
     "private": "private",
     "personal": "private",
     "voiceprints": "private",  # audio-router's marker for voice data, not a topic
     "therapy": "private/therapy",
-    "counselling": "private/counselling",
-    "counseling": "private/counselling",
+    "counselling": "private/therapy",  # Dan: therapy and counselling are the same
+    "counseling": "private/therapy",
     "journal": "private/journal",
     "medical": "private/medical",
     "students": "private/students",
@@ -8386,8 +8387,8 @@ class Plan:
 
 def map_tags(labels: Iterable[str]) -> tuple[str, ...]:
     """audio-router's tags as recordings tags (Dan, 2026-10-09). Every label comes over, and a
-    privacy label becomes its one tag in PRIVATE_TAGS: `therapy` becomes `private/therapy`, both
-    spellings of counselling become `private/counselling`, and `personal` becomes `private`."""
+    privacy label becomes its one tag in PRIVATE_TAGS: `therapy` and both spellings of
+    counselling become `private/therapy`, and `personal` becomes `private`."""
     out: list[str] = []
     for label in labels:
         tag = PRIVATE_TAGS.get(label, label)
