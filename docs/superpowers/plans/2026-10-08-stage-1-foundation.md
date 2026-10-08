@@ -5461,7 +5461,11 @@ RUN npm ci
 COPY packages/ui/frontend/ ./
 RUN npm run build
 
-FROM python:3.14-slim AS runtime
+# libsass (shiny -> shinychat) ships Linux wheels for amd64 only, so on arm64 it compiles from
+# source and needs a C++ toolchain. Build the venv here; the runtime stage stays toolchain-free.
+FROM python:3.14-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
@@ -5472,6 +5476,10 @@ COPY packages/core packages/core
 COPY packages/ui packages/ui
 COPY --from=frontend /src/packages/ui/src/recordings_ui/www/ui.js /src/packages/ui/src/recordings_ui/www/ui.css packages/ui/src/recordings_ui/www/
 RUN uv sync --frozen --no-dev --no-editable
+
+FROM python:3.14-slim AS runtime
+WORKDIR /app
+COPY --from=build /app/.venv .venv
 COPY demo/archive demo/archive
 RUN useradd --create-home --uid 10001 app
 USER app
@@ -5494,7 +5502,7 @@ services:
 
 `docker/compose.yml`:
 ```yaml
-# The real deployment (the homelab server). Every ${VAR} comes from docker/deploy.env, which is
+# The real deployment (the homelab server). Every variable below comes from docker/deploy.env, which is
 # git-ignored, via `make deploy`; docker/deploy.example.env documents them. Nothing
 # machine-specific and no secret lives in this file. The archive is read-only in stage 1.
 # Secrets arrive in stage 2 as Docker secrets (files under /run/secrets, read through
@@ -5645,19 +5653,25 @@ jobs:
         run: ./gitleaks git --redact --no-banner -v .
 
   docker:
-    runs-on: ubuntu-24.04
+    # amd64 for the homelab server, arm64 so the image runs on the Mac too, each on a native runner:
+    # libsass compiles from C++ source on arm64, which under QEMU could outlast the timeout.
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux/amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux/arm64 }
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # amd64 for the homelab server, arm64 so the image runs on the Mac too. Built, never pushed.
+      # Built, never pushed.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: false
 ```
 
