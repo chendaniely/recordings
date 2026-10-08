@@ -3,7 +3,7 @@
 FRONTEND := packages/ui/frontend
 NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --silent "$$(cat $(CURDIR)/$(FRONTEND)/.nvmrc)"; fi;
 
-.PHONY: setup skills build test test-py test-js e2e demo demo-archive schemas brand docker
+.PHONY: setup skills build test test-py test-js e2e demo demo-archive schemas brand docker deploy
 
 setup:
 	uv sync
@@ -43,3 +43,6 @@ brand:
 
 docker:
 	docker compose -f docker/compose.demo.yml up --build
+
+deploy:
+	docker compose --env-file docker/deploy.env -f docker/compose.yml up -d --build

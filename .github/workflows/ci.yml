@@ -1,0 +1,89 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with: { version: "0.12.23" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: packages/ui/frontend/.nvmrc, cache: npm, cache-dependency-path: packages/ui/frontend/package-lock.json }
+      - run: npm ci && npm run build
+        working-directory: packages/ui/frontend
+      - run: uv run --frozen pytest
+      - run: uv run --frozen recordings schemas --check
+      - run: uv run --frozen recordings validate demo/archive
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults: { run: { working-directory: packages/ui/frontend } }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: packages/ui/frontend/.nvmrc, cache: npm, cache-dependency-path: packages/ui/frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with: { version: "0.12.23" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: packages/ui/frontend/.nvmrc, cache: npm, cache-dependency-path: packages/ui/frontend/package-lock.json }
+      - run: npm ci && npm run build
+        working-directory: packages/ui/frontend
+      - run: uv run --frozen playwright install --with-deps chromium
+      - run: uv run --frozen pytest -m e2e
+
+  leaks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: download gitleaks
+        run: curl -fsSL --retry 3 --max-time 120 -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+      - name: check gitleaks against its pinned checksum, then unpack it
+        run: |
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: gitleaks over the whole history
+        run: ./gitleaks git --redact --no-banner -v .
+
+  docker:
+    # amd64 for the homelab server, arm64 so the image runs on the Mac too, each on a native runner:
+    # libsass compiles from C++ source on arm64, which under QEMU could outlast the timeout.
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux/amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux/arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Built, never pushed.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: false

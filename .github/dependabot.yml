@@ -1,0 +1,25 @@
+# Update proposals, a few at a time, on Fridays. Actions stay SHA-pinned: Dependabot moves a
+# SHA pin and its version comment together. shinyreact's Python and npm pins are upgraded
+# together on purpose (CLAUDE.md "Upgrading shinyreact"), so review those two PRs as a pair.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: friday }
+    open-pull-requests-limit: 3
+    commit-message: { prefix: "ci" }
+  - package-ecosystem: uv
+    directory: /
+    schedule: { interval: weekly, day: friday }
+    open-pull-requests-limit: 3
+    commit-message: { prefix: "build" }
+  - package-ecosystem: npm
+    directory: /packages/ui/frontend
+    schedule: { interval: weekly, day: friday }
+    open-pull-requests-limit: 3
+    commit-message: { prefix: "build(ui)" }
+  - package-ecosystem: docker
+    directory: /docker
+    schedule: { interval: weekly, day: friday }
+    open-pull-requests-limit: 2
+    commit-message: { prefix: "build(docker)" }
