@@ -750,7 +750,8 @@ people:
     "Speaker 2": { "person": "sam-lee", "by": "you", "plaud_name_seen": "Alex" },
     "Speaker 3": { "not": ["alex-kim"] }
   },
-  "spans": [ { "start": 41.2, "end": 58.0, "person": "alex-kim", "by": "you" } ]
+  "spans": [ { "start": 41.2, "end": 58.0, "person": "alex-kim", "by": "you" },
+             { "start": 300.0, "end": 312.5, "person": "unknown", "by": "you" } ]
 }
 ```
 
@@ -759,6 +760,9 @@ people:
   so every view agrees.
 - **`spans`:** media time in seconds. A span survives a new transcript, a Plaud re-sync or
   Whisper arriving. Line numbers wouldn't.
+  - **The reserved person `unknown`** means "not anyone known": a span set to `unknown`
+    overrides every inferred name for that time. It is how "Not Alex" works for one line or
+    a range (§12.6a). No real person can have the slug `unknown`.
 - **The corrections:**
   - **One person split into two labels:** point both labels at the same person. For two
     *unnamed* labels, the UI creates a placeholder person ("Unknown 1", `recognise: false`)
@@ -789,8 +793,13 @@ people:
   single line:
   - each label gets its majority name
   - minority names become Plaud-named spans
-  - a name matching a person's `name` or `aliases` links to them
+  - a name matching a person's `name` or `aliases`, **ignoring case and extra spaces**,
+    links to them, and the person's properly cased `name` is what's shown. So "alex kim"
+    links to Alex Kim (Dan, 2026-10-08)
   - unknown or ambiguous names go on the People page's *To link* list
+  - **Plaud-named speech is prime voice data** (Dan, 2026-10-08). Labels named in Plaud
+    count as confirmed when profiles are seeded (stage 6, below), within the timing check's
+    limits
   - an `embedding_key` shared by different names is shown as evidence for a merge
 - **By voice and carried over:** stage 6, below.
 - **Catalog:**
@@ -1448,8 +1457,18 @@ later" until its build stage (§20):
 
 ## 12. Interface
 
+- **Times and dates follow ISO 8601** (Dan, 2026-10-08). The app uses no am/pm.
+  - **Times are 24-hour:** "14:05", "Busiest: Tue 14:00–16:00".
+  - **Weeks start on Monday,** everywhere: the date control, Insights and the punch card.
+  - **Full dates read `2026-10-06`.** Where space is tight, a compact label may use the
+    month name ("Oct 6", "Oct 1 – 15"). Stored values are ISO 8601 throughout (§6.2).
 - **Navigation** (added 2026-10-08): the top bar holds Library, Tags, People, Insights,
-  Add and Status. On a phone it becomes a bottom tab bar.
+  Add and Status.
+  - **Badges:** at most two. People counts naming work (To link, Suggestions, Fix in
+    Plaud). Review counts everything else waiting for Dan: the review queue and the
+    approvals batches.
+  - **On a phone** it becomes a bottom tab bar with five slots: Library, Tags, People,
+    Insights, and More (Add, Status).
 - **A keyboard map,** with a `?` help sheet that lists it on every page:
 
   | Key | Does | Where it works |
@@ -1517,8 +1536,11 @@ later" until its build stage (§20):
     a partial name chooses the existing tag. (A bug found in testing.)
   - Enter adds a tag, and the picker stays open for more. Esc closes it.
   - `/` creates folders.
-- **No confirmation dialogs** in the UI. Every action shows an Undo toast. The one exception
-  is *Forget*, which can't be undone: you type the person's name to confirm (§7.6).
+- **No confirmation dialogs** in the UI. Every action shows an Undo toast. There are two
+  exceptions, both about privacy:
+  - *Forget*, which can't be undone: you type the person's name to confirm (§7.6).
+  - Moving a person from `people.private.yaml` into `people.yaml`, which makes their name
+    visible to external readers (§7.6).
 
 ### 12.3 Tags page
 
@@ -1621,13 +1643,21 @@ later" until its build stage (§20):
       The dash is drawn in `--muted-foreground`, not `--border`, which at about 1.3:1 is
       nearly invisible.
     - **Unnamed:** plain muted text ("Speaker 2").
+    - **Placeholders** ("Unknown 1"): an outlined chip with muted text, so a placeholder
+      never looks like a real name.
+    - **Named in Plaud:** the same solid chip as yours. Hovering it, and the speaker strip,
+      say "named in Plaud". Plaud-named speech is treated as confirmed and feeds the voice
+      profiles (§7.6).
 
     The transcript shows no scores.
   - **The picker:** clicking a chip, or pressing `P` on the focused line, opens it.
-    - **"In this recording":** this recording's labels come first, named or not. Picking an
-      unnamed label merges into a placeholder ("Unknown 1").
-    - **Then people,** with search. Enter picks an existing match before "Create *Name*"
-      (the same fix as the tag picker).
+    - **"In this recording":** this recording's labels come first, named or not.
+      - Picking an unnamed label for an unnamed one merges both into a placeholder ("Unknown
+        1").
+      - Picking an unnamed label for a named one assigns that label to the same person.
+    - **Then people,** with search, and the people Dan tags most often listed first. Enter
+      picks an existing match before "Create *Name*" (the same fix as the tag picker).
+      Matching ignores case.
     - **Keys:** 1–9 pick people already in this recording.
     - **Scope** is a two-way toggle with counts: **All 42 lines from this voice** (the
       default) | **Only 3:12**.
@@ -1637,13 +1667,20 @@ later" until its build stage (§20):
     - **One verb, chosen by the tag's state:** "Not Alex" on an inferred tag (it removes the
       tag, records `not`, and offers the next-best match); "Unassign" on yours. A
       Plaud-named label is derived, so it gets "Not Alex", not "Unassign".
+      - **For one line or a range,** "Not Alex" writes a span with the reserved person
+        `unknown` (§7.6). Choosing a person instead writes a span for them.
     - **It closes on choice.** A label has one person.
   - **The toast:** "Speaker 2 → Alex Kim · 42 lines · Undo".
   - **The sweep notice** comes later and stays up until dismissed: "Found Alex in 23 older
     recordings · Review · Undo". It has its own Undo, because sweeps finish long after a
     toast is gone.
-  - **A sweep never silently changes the open recording.** A banner offers "Voice matching
-    updated 2 labels · Review".
+    - **Undo** reverses the confirmation that triggered the sweep. The profile is rebuilt
+      without it, and the matches that depended on it are withdrawn.
+  - **A sweep never silently changes the open recording.** The open recording stays pinned
+    to the assignment generation it opened with (§7.6). A banner offers "Voice matching
+    updated 2 labels · Show". *Show* moves the pin to the newest generation.
+  - **Medium matches** appear in the speaker strip with Confirm (Dan, 2026-10-08), as well
+    as in *Suggestions*.
   - **Each line** is restructured so a chip button no longer sits inside the line's button,
     which is invalid HTML. The built `TranscriptTab` lines and `RecordingList` rows still
     put a `<div>` inside a `<button>`; stage 3a fixes both.
@@ -1675,7 +1712,15 @@ later" until its build stage (§20):
     (§7.6). They are grouped by person, with the person's reference clip pinned at the top
     and sorted by score, and "Accept all" sits over the top of the list. Space plays, Y/N
     decides and moves to the next clip, and Skip and Undo have keys (§12).
+    - **"Accept all" skips the random lower-scored candidates** mixed in for calibration
+      (§7.6). Those always need a single Y or N.
   - **Fix in Plaud (N),** which is also part of the review queue (§12.1).
+    - **From stage 3b,** it lists every label where Dan's own assignment differs from
+      Plaud's name for it.
+    - **From stage 6,** it adds the "Ours is right" calls.
+    - **One Plaud name, two voices:** evidence that a name covers two people comes from
+      differing Plaud `embedding_key` values. Whether that key is stable across recordings
+      is checked in the stage 2b spike before it's relied on.
   - **Plaud vs. home** statistics.
 
   The Suggestions and Plaud-vs-home tabs stay hidden until stage 6.
@@ -1687,9 +1732,17 @@ later" until its build stage (§20):
     *Clear* clears them all. The all/any toggle sits inside the People chip: "Dan + Alex ·
     all ▾".
   - **The People facet** in the sidebar lists people with counts, inferred ones split out:
-    "Alex 42 (8 unconfirmed)". Click to filter; Cmd/Ctrl-click adds more people. On a phone
-    it collapses. "Unknown N" placeholders are grouped as "Unnamed (N)" and left out of the
-    filter.
+    "Alex 42 (8 unconfirmed)".
+    - It sits **below Tags** (Dan, 2026-10-08). Below the fold is fine: Dan mostly picks a
+      tag first, then names people.
+    - Click to filter. ⌘-click on a Mac, Ctrl-click elsewhere, adds more people.
+    - On a phone it collapses.
+    - "Unknown N" placeholders are grouped as "Unnamed (N)" and left out of the filter.
+    - **Counts** are for the whole library. The all/any menu's counts include the other
+      active filters.
+    - **Untagged and a tag** replace each other, since a recording can't be both.
+    - **A "confirmed only" switch** in the list header narrows a person filter to
+      confirmed matches.
   - **A person filter includes inferred matches by default** (Dan, 2026-10-08), and the count
     stays split, as above.
   - **Search** shows "Person: Alex Kim" as its own row, which turns into a chip, separate
@@ -1703,12 +1756,24 @@ later" until its build stage (§20):
     - **On the right,** a two-month calendar:
       - Range ends are solid NYC blue (`#236192`; `#6CA6D9` in dark), the days between take
         a blue tint so the selection forms one continuous band, and today has a ring.
-      - The week starts on the same day as in Insights.
-      - Days with recordings carry a muted dot, which turns white on selected days.
+      - The week starts on Monday (ISO 8601).
+      - Days with recordings carry a muted dot, which turns white on selected days. On a
+        range end in dark mode (`#6CA6D9`) the dot uses the dark text colour, because a
+        white dot there measures about 2.3:1.
       - No orange: that marks the line playing now.
-    - **The month caption** opens a month and year grid with counts, for jumping back years.
-    - **The footer** reads "Oct 1 – 15 · 9 recordings", with Clear.
-    - **Keys:** arrows, PgUp and PgDn, and Shift to extend the range.
+    - **The month caption** opens a custom month and year grid with counts, for jumping back
+      years. react-day-picker's built-in dropdown only gives two plain selects.
+    - **The footer** reads "Oct 1 – 15 · 9 recordings", with Clear and Apply.
+      - **Presets** apply at once.
+      - **Calendar clicks** are a draft until Apply.
+    - **Keys:**
+      - Arrows, and PgUp and PgDn.
+      - Shift-arrows extend the range. react-day-picker uses Shift-arrows to move by month,
+        so the build overrides `onDayKeyDown`.
+      - Check which react-day-picker version shadcn pins: its docs now show v10, under
+        `@daypicker/react`.
+    - **Term presets** come from config:
+      `[calendar] terms = [{ name = "2026W1", start = "2026-09-08", end = "2026-12-04" }]`.
     - **On a phone:** a bottom sheet with one month, and the presets as a scrolling row of
       chips.
     - **Ranges** use each recording's local date (`recorded_at` with its offset).
@@ -1730,21 +1795,33 @@ it recalculates as the controls change.
   6. the footer
 - **Controls:**
   - the same date control as the Library
-  - **a tag filter** (Dan, 2026-10-08), reusing the Library's tag chips
+  - **a tag filter** (Dan, 2026-10-08), reusing the Library's tag chips. Here the chips
+    combine as *any of*, not the Library's AND, because Insights compares categories that
+    rarely overlap, such as teaching, meetings and talks.
+  - **private people** are counted but never named: they appear as one masked row ("1
+    private person")
   - an hours or count switch, which changes the charts, not the cards
   - only days and months drill down, into the Library
   - hash routes, so Back returns to Insights
 - **The heatmap,** in the style of GitHub's: one square per day.
-  - **Colour:** a single blue scale, never orange, with fixed steps (0, under ½, 1, 2 and
-    4+ hours). Empty days are `--muted`, days outside the range are dimmed, and future days
-    are blank.
-  - **A legend** ("Less ▢▢▢▢ More") with the values, and a year stepper.
-  - **Hover** shows "Tue Oct 6 · 3 recordings · 2.4 h". Clicking a day opens the Library
-    filtered to it. On a phone, a tap shows the tooltip with "Open in Library →".
+  - **Colour:** a single blue scale, never orange, in six fixed steps.
+    - **Hours mode:** 0, under ½, ½–1, 1–2, 2–4, 4+.
+    - **Count mode:** 0, 1, 2, 3, 4, 5+.
+  - **Empty and other days:**
+    - Empty days use a `--heat-0` token, distinct from the card in both modes; `--muted` is
+      darker than the card in dark mode and reads as holes.
+    - Days outside the range are dimmed.
+    - Future days are blank.
+  - **A legend** ("Less ▢▢▢▢ More") with the values.
+  - **Years:** the default view is the past 12 months, rolling. A year stepper switches to
+    calendar years.
+  - **Hover** shows "Tue 2026-10-06 · 3 recordings · 2.4 h". Clicking a day opens the
+    Library filtered to it. On a phone, a tap shows the tooltip with "Open in Library →".
   - **Keys:** arrow keys move between days, and each cell has an aria-label.
 - **The punch card:**
   - weekdays down, hours across, with circles sized by area
-  - totals for each row and column, which back up the callout ("Busiest: Tuesdays 2–4 pm").
+  - totals for each row and column, which back up the callout ("Busiest: Tue 14:00–16:00",
+    in 24-hour time).
     It says *busiest*, not *most productive*: recording time measures meeting load.
   - in hours mode, a recording is split across the hours it covers
   - turned sideways on a phone
@@ -2360,3 +2437,17 @@ answers to its questions, 2026-10-08.
 30. **Forget is complete** (§7.6): future fetches are scrubbed, the databases are vacuumed,
     the tombstone keeps only salted hashes, and you type the name to confirm.
 31. **The Plaud token is a refreshed store, not a static secret** (§9.1).
+32. **Times and dates follow ISO 8601** (§12): 24-hour times, weeks starting on Monday,
+    and full dates as `2026-10-06`.
+33. **Plaud-named speech is prime voice data**, treated as confirmed when profiles are
+    seeded (§7.6). Plaud names match people ignoring case, and the person's properly cased
+    name is shown.
+34. **From the mockups** (§12.6a, §12.6b):
+    - Medium matches show in the speaker strip with Confirm.
+    - The picker lists the people Dan tags most often first.
+    - People sits below Tags in the sidebar.
+    - The reserved person `unknown` makes "Not Alex" work for a single line.
+    - The open recording stays pinned to its assignment generation.
+    - Insights' tag chips combine as *any of*.
+    - The heatmap has six steps.
+    - Confirmation dialogs are kept only for Forget and for making a private person public.
