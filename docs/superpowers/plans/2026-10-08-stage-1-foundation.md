@@ -5751,7 +5751,7 @@ the archive read-only, and the image runs as a non-root user.
 
 - [ ] **Step 5: Run everything and scan for secrets**
 
-Run: `make test && make e2e && gitleaks dir . --no-banner && gitleaks git . --no-banner`
+Run: `make test && make e2e && gitleaks dir . --redact --no-banner && gitleaks git . --redact --no-banner`
 Expected: all tests pass, and both gitleaks scans report `no leaks found`.
 
 - [ ] **Step 6: Commit**
