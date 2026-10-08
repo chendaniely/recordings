@@ -6,6 +6,7 @@ SHA-256, e.g. `20261006T140003-0700_3fa91c2e`. IDs never change.
 
 ```
 <archive>/
+  archive.json                   the sentinel: the archive's UUID, written once by `recordings init`
   README.md  AGENTS.md  FORMAT.md
   schemas/recording.schema.json  schemas/rendition.schema.json
   catalog/                       flat tables, rebuilt by the app (from stage 3)
@@ -43,6 +44,10 @@ renditions/<name>-<utc-stamp>.json
   save writes a temporary file and renames it into place.
 - **Work in progress:** writers assemble a new recording in `.tmp/` at the archive root and
   write temporary files named `.*.tmp`; readers and mirrors should ignore both.
+- **The sentinel.** `archive.json` holds the archive's `format` and UUID, and is written once,
+  by `recordings init`. Every writer, the backups and the mirror refuse to run without it, or when
+  its UUID has changed, so an unmounted, empty folder can never pass for the archive. Never edit
+  or copy it into another archive.
 - **Versions:** every `recording.json` names its format in `format`
   (`recordings-archive@1`, major version 1). A reader must refuse a major version it
   doesn't know.

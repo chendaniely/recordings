@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from recordings.archive import Archive, RawSource
+from recordings.init import init_archive
 from recordings.models import Rendition
 from recordings.selfdoc import layout_patterns, validate, write_docs
 
@@ -10,6 +11,7 @@ T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 def build_one(tmp_path) -> Archive:
     media = tmp_path / "clip.mp3"
     media.write_bytes(b"ID3 fake")
+    init_archive(tmp_path / "archive", tmp_path / "state", writer_id="test")
     archive = Archive(tmp_path / "archive")
     rec = archive.add_recording(
         media=media,

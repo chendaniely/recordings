@@ -7,8 +7,10 @@
 # The archive folder. In Docker the container sees it at /archive, and docker/compose.yml sets
 # RECORDINGS_ARCHIVE=/archive, which overrides this value.
 path = "/srv/recordings/archive"
-# The only machine allowed to write the archive (stage 2): that machine's hostname.
-writer_host = "my-homelab"
+# The archive's one writer (spec §3): a short name for the homelab server. It is never read from a
+# host name, because a container's host name isn't the server's. `recordings init` records it in
+# state.db, and only a machine whose config and state.db both name it may write.
+writer_id = "homelab"
 # Time zone for recordings whose source doesn't say.
 default_timezone = "America/Vancouver"
 
@@ -21,9 +23,14 @@ base_url = "http://my-homelab:8000"
 # RECORDINGS_ALLOWED_HOSTS adds more, comma-separated.
 allowed_hosts = ["my-homelab", "my-homelab.your-tailnet.ts.net", "100.64.0.1"]
 
-[index]
-# SQLite index and job queue (stage 3), on the same local disk as the archive.
-path = "/data/index.sqlite"
+[state]                                 # stage 2a: state.db and the lock files (spec §6.8)
+# Outside the archive, on a local disk: flock and SQLite's WAL don't work over NFS or SMB. In
+# Docker it is /state, and docker/compose.yml sets RECORDINGS_STATE=/state, which overrides it.
+path = "/srv/recordings/state"
+
+[index]                                 # stage 2a: the derived index, rebuilt by `recordings reindex`
+# In Docker it lives on a named volume at /index, and RECORDINGS_INDEX overrides this value.
+path = "/srv/recordings/index/index.db"
 
 [plaud]                                 # stage 2
 schedule_minutes = 20                   # scheduled sync interval; 0 turns it off

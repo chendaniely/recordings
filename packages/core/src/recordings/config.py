@@ -8,6 +8,7 @@ file (Docker secrets live in /run/secrets/). A secret's value is never printed o
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_PATH = Path("config.toml")
+WRITER_ID_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,62}")
 
 
 @dataclass(frozen=True)
@@ -41,12 +43,14 @@ class ConfigError(RuntimeError):
 class Config:
     path: Path | None  # the file actually read, or None
     archive_path: Path | None
-    writer_host: str | None
+    writer_id: str | None  # the archive's one writer (§3); `recordings init` records it
     default_timezone: str
     base_url: str | None
     data: dict[str, Any] = field(default_factory=dict)  # every section, for later stages
     # Names the app answers to besides localhost and base_url's host (recordings_ui.hosts).
     allowed_hosts: tuple[str, ...] = ()
+    state_path: Path | None = None  # [state] path: state.db and the locks (§6.8)
+    index_path: Path | None = None  # [index] path: the derived index.db
 
 
 def config_path(environ: Mapping[str, str]) -> Path:
@@ -60,6 +64,35 @@ def _allowed_hosts(server: dict[str, Any]) -> tuple[str, ...]:
             "[server] allowed_hosts must be a list of host names, "
             'for example ["my-homelab", "100.64.0.1"]')
     return tuple(h.strip() for h in value)
+
+
+def _writer_id(archive: dict[str, Any]) -> str | None:
+    if "writer_host" in archive:
+        raise ConfigError(
+            "[archive] writer_host was renamed writer_id in stage 2a. It names the archive's "
+            'one writer and is not a host name: set writer_id = "homelab" (any short name).')
+    value = archive.get("writer_id")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not WRITER_ID_RE.fullmatch(value):
+        raise ConfigError(
+            '[archive] writer_id must be a short lowercase name such as "homelab": letters, '
+            "digits, '.', '_' or '-'")
+    return value
+
+
+def _base_url(server: dict[str, Any]) -> str | None:
+    value = server.get("base_url")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.startswith(("http://", "https://")):
+        raise ConfigError('[server] base_url must be a URL, such as "http://my-homelab:8000"')
+    return value
+
+
+def _path(environ: Mapping[str, str], env: str, section: dict[str, Any]) -> Path | None:
+    value = environ.get(env) or section.get("path")
+    return Path(value).expanduser() if value else None
 
 
 def load_config(environ: Mapping[str, str]) -> Config:
@@ -79,11 +112,13 @@ def load_config(environ: Mapping[str, str]) -> Config:
     return Config(
         path=path if path.is_file() else None,
         archive_path=Path(archive_path).expanduser() if archive_path else None,
-        writer_host=archive.get("writer_host"),
+        writer_id=_writer_id(archive),
         default_timezone=archive.get("default_timezone", "America/Vancouver"),
-        base_url=server.get("base_url"),
+        base_url=_base_url(server),
         data=data,
         allowed_hosts=_allowed_hosts(server),
+        state_path=_path(environ, "RECORDINGS_STATE", data.get("state", {})),
+        index_path=_path(environ, "RECORDINGS_INDEX", data.get("index", {})),
     )
 
 

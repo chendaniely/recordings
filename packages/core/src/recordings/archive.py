@@ -7,7 +7,6 @@ renamed into place, so a reader never sees half a recording.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import os
 import re
@@ -21,6 +20,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from recordings.files import copy_file_synced, fsync_dir, publish_exclusive, write_text_atomic
 from recordings.ids import make_id, relative_dir
 from recordings.models import (
     SCHEMA_REF,
@@ -49,62 +49,8 @@ def utc_stamp(t: datetime) -> str:
     return t.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def write_text_atomic(path: Path, text: str) -> None:
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    except BaseException:
-        # A failed write or replace leaves the old file as it was, and no temp file behind.
-        with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
-        raise
-
-
-def _publish_bytes_exclusive(data: bytes, target_path: Path) -> Path:
-    """Publish bytes exclusively (write-once). Raises FileExistsError if target exists.
-
-    On collision, retries with next -N suffix. Always cleans up temp file.
-    """
-    path = _unique(target_path)
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_bytes(data)
-        os.link(tmp, path)
-        return path
-    except FileExistsError:
-        # Collision: retry with next suffix
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        return _publish_bytes_exclusive(data, target_path)
-    except BaseException:
-        # Cleanup temp file on any other error
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    finally:
-        # Ensure temp is removed
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-
-
 def _slug(value: str) -> str:
     return _UNSAFE.sub("_", value).strip("_") or "x"
-
-
-def _unique(path: Path) -> Path:
-    if not path.exists():
-        return path
-    n = 2
-    while (candidate := path.with_name(f"{path.stem}-{n}{path.suffix}")).exists():
-        n += 1
-    return candidate
 
 
 @dataclass(frozen=True)
@@ -225,7 +171,7 @@ class Archive:
             (tmp / "source").mkdir(parents=True)
             (tmp / "renditions").mkdir()
             media_name = f"{rid}{media.suffix.lower()}"
-            shutil.copy2(media, tmp / media_name)
+            copy_file_synced(media, tmp / media_name)
             rec = Recording(
                 schema_ref=SCHEMA_REF,
                 id=rid,
@@ -244,6 +190,9 @@ class Archive:
             write_text_atomic(tmp / "recording.json", dump_json(rec))
             final.parent.mkdir(parents=True, exist_ok=True)
             os.replace(tmp, final)
+            # The recording's entry, and the month and year folders' entries when they are new.
+            for folder in (final.parent, final.parent.parent, final.parent.parent.parent):
+                fsync_dir(folder)
             self._drop_empty_tmp()
             return rec
         except BaseException:
@@ -263,7 +212,7 @@ class Archive:
         raw = None
         if source.payload is not None:
             target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(source.added_at)}.json"
-            path = _publish_bytes_exclusive(source.payload, target)
+            path = publish_exclusive(source.payload, target)
             raw = path.relative_to(folder).as_posix()
         return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at, raw=raw)
 
@@ -275,7 +224,7 @@ class Archive:
         target = folder / "renditions" / f"{name}.json"
         target.parent.mkdir(exist_ok=True)
         # write-once: publish exclusively to prevent overwrites on collision
-        path = _publish_bytes_exclusive(dump_json(rendition).encode("utf-8"), target)
+        path = publish_exclusive(dump_json(rendition).encode("utf-8"), target)
         return path.relative_to(folder).as_posix()
 
     def _merge_source(self, rec: Recording, source: RawSource) -> Recording:

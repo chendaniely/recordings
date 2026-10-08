@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 
 from recordings import __version__, config, schemas, selfdoc
+from recordings.init import InitError, adopt_archive, init_archive
+from recordings.sentinel import SentinelError, read_sentinel
+from recordings.state import StateError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,6 +20,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"recordings {__version__}")
     sub = parser.add_subparsers(dest="command")
+
+    p = sub.add_parser("init", help="set up a new, empty archive, once: its sentinel and state.db")
+    p.add_argument("--adopt", action="store_true",
+                   help="recreate a lost state.db for the existing archive, from its archive.json")
+    p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("schemas", help="regenerate or check the committed JSON Schemas")
     p.add_argument("--write", action="store_true", help="rewrite the package's schema files")
@@ -44,6 +52,40 @@ def _emit(payload: dict, as_json: bool) -> None:
             print(f"{key}: {value}")
 
 
+def _fail(message: str, as_json: bool, code: int) -> int:
+    if as_json:
+        print(json.dumps({"error": message}, ensure_ascii=False))
+    else:
+        print(f"recordings: {message}", file=sys.stderr)
+    return code
+
+
+def _config(as_json: bool) -> config.Config | int:
+    try:
+        return config.load_config(os.environ)
+    except config.ConfigError as exc:
+        return _fail(str(exc), as_json, 78)
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    missing = [name for name, value in (("[archive] path", cfg.archive_path),
+                                        ("[state] path", cfg.state_path),
+                                        ("[archive] writer_id", cfg.writer_id)) if value is None]
+    if missing:
+        return _fail("set " + ", ".join(missing) + " in config.toml first", args.json, 78)
+    setup = adopt_archive if args.adopt else init_archive
+    try:
+        identity = setup(cfg.archive_path, cfg.state_path, writer_id=cfg.writer_id)
+    except (InitError, StateError) as exc:
+        return _fail(str(exc), args.json, 1)
+    _emit({"archive": str(cfg.archive_path), "uuid": identity.uuid,
+           "writer_id": cfg.writer_id, "adopted": args.adopt}, args.json)
+    return 0
+
+
 def cmd_schemas(args: argparse.Namespace) -> int:
     target = schemas.package_dir()
     if args.write:
@@ -56,6 +98,10 @@ def cmd_schemas(args: argparse.Namespace) -> int:
 
 
 def cmd_docs(args: argparse.Namespace) -> int:
+    try:
+        read_sentinel(args.archive)  # §6.7: docs go only into an archive with its sentinel
+    except SentinelError as exc:
+        return _fail(str(exc), args.json, 1)
     _emit({"written": selfdoc.write_docs(args.archive)}, args.json)
     return 0
 
@@ -75,7 +121,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    commands = {"schemas": cmd_schemas, "docs": cmd_docs, "validate": cmd_validate, "doctor": cmd_doctor}
+    commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "validate": cmd_validate, "doctor": cmd_doctor}
     if args.command in commands:
         return commands[args.command](args)
     parser.print_help(sys.stdout)

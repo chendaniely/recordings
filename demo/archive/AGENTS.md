@@ -15,7 +15,8 @@
    to consult.
 3. **Only edit `recording.json`, `my-notes.md` and `tags.yaml`.** Never edit media,
    `source/` or `renditions/`. They are write-once.
-4. **Check edits** against `schemas/` (`recordings validate <archive>`).
-5. **After a bulk edit, run `recordings reindex`** (available from stage 3). Jobs that the
+4. **Never edit, create or delete `archive.json`.** It is the archive's sentinel (see `FORMAT.md`).
+5. **Check edits** against `schemas/` (`recordings validate <archive>`).
+6. **After a bulk edit, run `recordings reindex`** (available from stage 3). Jobs that the
    edit would start wait for approval in the app.
-6. **Prefer the `recordings` CLI with `--json`** to editing files by hand.
+7. **Prefer the `recordings` CLI with `--json`** to editing files by hand.

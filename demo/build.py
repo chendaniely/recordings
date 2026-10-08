@@ -9,6 +9,7 @@ import argparse
 import json
 import shutil
 import sys
+import tempfile
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,17 +18,23 @@ from zoneinfo import ZoneInfo
 from recordings.archive import Archive, RawSource, sha256_file
 from recordings.backends import CannedBackend, CompletionRequest
 from recordings.ids import make_id
+from recordings.init import init_archive
 from recordings.models import Rendition, TagRef
-from recordings.selfdoc import write_docs
 
 HERE = Path(__file__).resolve().parent
 # Every stamp in the demo derives from this instant, so a rebuild is byte-identical.
 BUILD_AT = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+# A fixed UUID, so a rebuild is byte-identical. Every copy of the demo shares it, harmlessly: each
+# demo run gets a fresh temporary state folder.
+DEMO_UUID = "5f0c8e2a-3b1d-4c6e-9a7f-1d2e3f405162"
 WHISPER = {"model": "mlx-community/whisper-large-v3-turbo", "version": "large-v3-turbo@a4aaeec"}
 
 
 def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
     entries = tomllib.loads((HERE / "sources.toml").read_text())["recording"]
+    with tempfile.TemporaryDirectory(prefix="recordings-demo-state-") as state:
+        init_archive(out, Path(state) / "state", writer_id="demo", archive_uuid=DEMO_UUID,
+                     created_at=BUILD_AT)
     archive = Archive(out)
     ids: dict[str, str] = {}
     for n, entry in enumerate(entries):
@@ -84,7 +91,6 @@ def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
             renditions=renditions,
             my_notes=my_notes_path.read_text(encoding="utf-8") if my_notes_path.is_file() else None,
         )
-    write_docs(archive.root)
     return dict(sorted(ids.items()))
 
 

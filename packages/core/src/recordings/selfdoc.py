@@ -8,8 +8,10 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from recordings.archive import Archive, write_text_atomic
+from recordings.archive import Archive
+from recordings.files import write_text_atomic
 from recordings.models import Rendition
+from recordings.sentinel import SENTINEL, SentinelError, read_sentinel
 
 DOC_FILES = {
     "README.md": "README.md",
@@ -68,8 +70,12 @@ def validate(root: Path) -> list[dict]:
     if not (root / "recordings").is_dir():
         return [{"path": str(root),
                  "message": "is not a recordings archive: it has no recordings/ folder"}]
-    archive = Archive(root)
     problems = []
+    try:
+        read_sentinel(root)
+    except SentinelError as exc:
+        problems.append({"path": str(root / SENTINEL), "message": str(exc)})
+    archive = Archive(root)
     recordings = list(archive.iter_recordings())
     problems += [{"path": str(p.path), "message": p.message} for p in archive.problems]
     for rec in recordings:

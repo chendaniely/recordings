@@ -266,3 +266,38 @@ def test_allowed_hosts_must_be_a_list_of_names(tmp_path, value):
 def test_doctor_reports_a_bad_allowed_hosts(tmp_path):
     report = doctor({"RECORDINGS_CONFIG": str(write(tmp_path, "[server]\nallowed_hosts = 5\n"))})
     assert any("allowed_hosts" in p for p in report["problems"])
+
+
+def test_writer_id_and_the_state_and_index_paths(tmp_path):
+    cfg_file = write(tmp_path, '[archive]\nwriter_id = "homelab"\n[state]\npath = "/s"\n'
+                               '[index]\npath = "/i/index.db"\n')
+    cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+    assert (cfg.writer_id, cfg.state_path, cfg.index_path) == ("homelab", Path("/s"), Path("/i/index.db"))
+
+
+def test_the_environment_overrides_the_state_and_index_paths(tmp_path):
+    cfg_file = write(tmp_path, '[state]\npath = "/s"\n[index]\npath = "/i/index.db"\n')
+    cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_STATE": "/state",
+                       "RECORDINGS_INDEX": "/index/index.db"})
+    assert (cfg.state_path, cfg.index_path) == (Path("/state"), Path("/index/index.db"))
+
+
+def test_the_old_writer_host_key_fails_loudly(tmp_path):
+    # why: it named a host, and §3 says a writer's identity never comes from a host name.
+    cfg_file = write(tmp_path, '[archive]\nwriter_host = "my-homelab"\n')
+    with pytest.raises(ConfigError, match="renamed writer_id"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+
+
+@pytest.mark.parametrize("value", ['"My Homelab"', '"-x"', "7"])
+def test_a_bad_writer_id_is_refused(tmp_path, value):
+    cfg_file = write(tmp_path, f"[archive]\nwriter_id = {value}\n")
+    with pytest.raises(ConfigError, match="writer_id"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+
+
+@pytest.mark.parametrize("value", ["7", '"my-homelab:8000"', '"ftp://x"'])
+def test_base_url_must_be_an_http_url(tmp_path, value):
+    cfg_file = write(tmp_path, f"[server]\nbase_url = {value}\n")
+    with pytest.raises(ConfigError, match="base_url"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file)})
