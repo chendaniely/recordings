@@ -9,6 +9,7 @@ backups and the mirror refuse to run when it is missing or its UUID has changed.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,6 +19,9 @@ from recordings.files import create_exclusive
 from recordings.models import FORMAT
 
 SENTINEL = "archive.json"
+# The NAS mirror's mark (Task 12). The mirror carries archive.json too, so this is what tells its
+# copy from the archive: `init --adopt` and every Writer refuse a folder that holds it.
+MIRROR = "MIRROR.md"
 
 
 class SentinelError(RuntimeError):
@@ -49,6 +53,11 @@ def read_sentinel(root: Path) -> ArchiveIdentity:
     if identity.created_at.utcoffset() is None:
         raise SentinelError(f"{path}: created_at has no UTC offset")
     return identity
+
+
+def is_mirror(root: Path) -> bool:
+    """A copy the mirror made: read it like the archive, never write it (spec §3, §15.1)."""
+    return os.path.lexists(Path(root) / MIRROR)
 
 
 def write_sentinel(root: Path, identity: ArchiveIdentity) -> Path:

@@ -25,8 +25,28 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 MIGRATIONS: dict[int, tuple[str, ...]] = {}
 
 RESTORE_HINT = (
-    "restore state.db from the backup (runbook: Restoring for real). If no backup copy is "
-    "usable, move it aside and run `recordings init --adopt`.")
+    "restore state.db from the backup (runbook: Restoring for real). If no backup copy is usable, "
+    "stop the app, move the whole state folder aside (never state.db alone: its -wal file holds "
+    "the latest commits), and run `recordings init --adopt`.")
+# SQLite's logs beside state.db hold commits not yet in it. SQLite replays a -wal over whatever
+# state.db is next put beside it, and deletes one it finds beside a new, empty state.db.
+LOGS = ("state.db-wal", "state.db-journal")
+# SQLite's codes for a sound state.db that can't be reached now: a mode, an owner or a missing
+# mount (CANTOPEN), a read-only folder, a lock held too long, a full disk, an I/O error.
+_NOT_DAMAGE = ("SQLITE_CANTOPEN", "SQLITE_READONLY", "SQLITE_BUSY", "SQLITE_LOCKED",
+               "SQLITE_FULL", "SQLITE_IOERR", "SQLITE_PERM", "SQLITE_NOMEM")
+
+
+def unreadable(db_path: Path, exc: sqlite3.Error) -> str:
+    """Why state.db can't be used, from a fixed template with SQLite's code, never its message.
+    Only damage gets the way back: moving a sound state.db aside throws away the queue and every
+    merge base."""
+    code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
+    if code.startswith(_NOT_DAMAGE):
+        return (f"{db_path} can't be opened now ({code}). That is not damage, so leave it where it "
+                "is: check that the state folder is mounted, owned by this user, writable and not "
+                "full, and that no other process holds it, then try again.")
+    return f"{db_path} can't be read ({code}). If it is damaged, {RESTORE_HINT}"
 
 
 class StateError(RuntimeError):
@@ -56,6 +76,11 @@ class State:
         state = cls(path)
         if state.db_path.exists():
             raise StateError(_already(state.db_path))
+        if logs := [name for name in LOGS if (state.path / name).exists()]:
+            raise StateError(
+                f"{state.path} still holds {', '.join(logs)}: an earlier state.db's latest "
+                "commits, which a new state.db would destroy. Move the whole state folder aside "
+                "first.")
         state.path.mkdir(parents=True, exist_ok=True)
         state.locks_dir.mkdir(exist_ok=True)
         try:
@@ -89,9 +114,7 @@ class State:
                 db.executescript(SCHEMA)
                 state._upgrade(db)
         except sqlite3.DatabaseError as exc:
-            raise StateError(
-                f"{state.db_path} can't be read ({exc}). If it is damaged, {RESTORE_HINT}"
-                ) from None
+            raise StateError(unreadable(state.db_path, exc)) from None
         state.locks_dir.mkdir(exist_ok=True)
         return state
 
@@ -119,6 +142,9 @@ class State:
         except (TypeError, ValueError):
             raise StateError(f"{self.db_path} has no readable schema_version, so it is damaged: "
                              f"{RESTORE_HINT}") from None
+        if version < 1:
+            raise StateError(f"{self.db_path} has schema version {version}, so it is damaged: "
+                             f"{RESTORE_HINT}")
         if version > SCHEMA_VERSION:
             raise StateError(
                 f"{self.db_path} is at schema version {version}, newer than this release's "

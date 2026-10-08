@@ -90,9 +90,16 @@ def _base_url(server: dict[str, Any]) -> str | None:
     return value
 
 
-def _path(environ: Mapping[str, str], env: str, section: dict[str, Any]) -> Path | None:
-    value = environ.get(env) or section.get("path")
-    return Path(value).expanduser() if value else None
+def _path(environ: Mapping[str, str], env: str, name: str, data: dict[str, Any]) -> Path | None:
+    value = environ.get(env) or data.get(name, {}).get("path")
+    if not value:
+        return None
+    path = Path(value).expanduser() if isinstance(value, str) else None
+    if path is None or not path.is_absolute():
+        # A relative one follows the folder a command runs in, and a second state.db, with its own
+        # locks, would be a second writer (spec §3).
+        raise ConfigError(f"[{name}] path (or {env}) must be an absolute path, in quotes")
+    return path
 
 
 def load_config(environ: Mapping[str, str]) -> Config:
@@ -117,8 +124,8 @@ def load_config(environ: Mapping[str, str]) -> Config:
         base_url=_base_url(server),
         data=data,
         allowed_hosts=_allowed_hosts(server),
-        state_path=_path(environ, "RECORDINGS_STATE", data.get("state", {})),
-        index_path=_path(environ, "RECORDINGS_INDEX", data.get("index", {})),
+        state_path=_path(environ, "RECORDINGS_STATE", "state", data),
+        index_path=_path(environ, "RECORDINGS_INDEX", "index", data),
     )
 
 

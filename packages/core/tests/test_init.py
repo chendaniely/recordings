@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 
@@ -9,7 +10,14 @@ from recordings import state as state_module
 from recordings.cli import main
 from recordings.init import InitError, adopt_archive, init_archive
 from recordings.selfdoc import validate
-from recordings.sentinel import SENTINEL, ArchiveIdentity, SentinelError, read_sentinel, write_sentinel
+from recordings.sentinel import (
+    MIRROR,
+    SENTINEL,
+    ArchiveIdentity,
+    SentinelError,
+    read_sentinel,
+    write_sentinel,
+)
 from recordings.state import MIGRATIONS, SCHEMA_VERSION, State, StateError
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
@@ -166,8 +174,47 @@ def test_adopt_recreates_a_lost_state_db_from_the_sentinel(new_archive):
 
 def test_adopt_never_replaces_a_state_db(new_archive):
     root, state = new_archive
-    with pytest.raises(InitError, match="move it aside"):
+    with pytest.raises(InitError, match="whole state folder aside"):
         adopt_archive(root, state, writer_id="test")
+
+
+def test_adopt_refuses_the_nas_mirror(new_archive, tmp_path):
+    # why: §3. The mirror carries archive.json, so adopting it would give a second machine a
+    # state.db that every writer check accepts. The mirror job marks its copy (Task 12).
+    root, _ = new_archive
+    (root / MIRROR).write_text("a copy\n", encoding="utf-8")
+    with pytest.raises(InitError, match="mirror"):
+        adopt_archive(root, tmp_path / "mac-state", writer_id="homelab")
+    assert not (tmp_path / "mac-state").exists()
+
+
+@pytest.mark.parametrize("log", ["state.db-wal", "state.db-journal"])
+def test_a_new_state_db_never_meets_an_earlier_ones_log(new_archive, log):
+    # why: SQLite replays a stray -wal over the next state.db put beside it, so a restored copy
+    # silently stops being the backup, and deletes it beside a new, empty one, so moving state.db
+    # alone and adopting destroys its latest commits. The whole state folder moves aside.
+    root, state = new_archive
+    (state / "state.db").rename(state.parent / "state.db.aside")
+    (state / log).write_bytes(b"the latest commits")
+    with pytest.raises(InitError, match="whole state folder"):
+        adopt_archive(root, state, writer_id="test")
+    assert (state / log).read_bytes() == b"the latest commits"
+    assert not (state / "state.db").exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root opens files whatever their mode")
+def test_a_state_db_that_cant_be_opened_is_not_called_damaged(new_archive):
+    # why: "restore it, or move it aside and adopt" for a sound file that a mode, an owner or a
+    # full disk keeps shut would throw away the queue and every merge base.
+    _, state = new_archive
+    state.chmod(0o500)  # WAL can't make its -shm in a read-only folder
+    try:
+        with pytest.raises(StateError) as caught:
+            State.open(state)
+    finally:
+        state.chmod(0o700)
+    assert "not damage" in str(caught.value)
+    assert "--adopt" not in str(caught.value) and "Restoring for real" not in str(caught.value)
 
 
 def test_adopt_needs_the_archives_sentinel(tmp_path):

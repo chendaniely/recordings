@@ -301,3 +301,16 @@ def test_base_url_must_be_an_http_url(tmp_path, value):
     cfg_file = write(tmp_path, f"[server]\nbase_url = {value}\n")
     with pytest.raises(ConfigError, match="base_url"):
         load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+
+
+@pytest.mark.parametrize("line", ['path = "state"', "path = 7", "path = ['/srv']"])
+def test_the_state_and_index_paths_are_absolute_text(tmp_path, line):
+    # why: §3. A relative [state] path follows the folder a command runs in, so a second state.db,
+    # with its own locks, is one `cd` away; a number reached Path() as a TypeError.
+    cfg = tmp_path / "config.toml"
+    for section in ("state", "index"):
+        cfg.write_text(f"[{section}]\n{line}\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match=rf"\[{section}\] path"):
+            load_config({"RECORDINGS_CONFIG": str(cfg)})
+    with pytest.raises(ConfigError, match="RECORDINGS_STATE"):
+        load_config({"RECORDINGS_CONFIG": str(cfg), "RECORDINGS_STATE": "state"})

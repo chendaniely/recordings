@@ -1447,6 +1447,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - `copy_file_synced(src: Path, dst: Path) -> None`
   - **`recordings.sentinel`:**
     - `SENTINEL = "archive.json"`
+    - `MIRROR = "MIRROR.md"` and `is_mirror(root: Path) -> bool`: the NAS mirror's mark, which Task 12's mirror puts on its copy. `init --adopt` (here) and the Writer (Task 5b) refuse a root that holds it.
     - `class SentinelError(RuntimeError)`
     - `@dataclass(frozen=True) ArchiveIdentity(uuid: str, created_at: datetime)`
     - `read_sentinel(root: Path) -> ArchiveIdentity`
@@ -1454,17 +1455,18 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - **`recordings.state`:**
     - `class StateError(RuntimeError)`
     - `class State(path: Path)`, with the properties `db_path` and `locks_dir`
-    - `State.create(path, *, archive_uuid: str, writer_id: str) -> State`, the only code that creates a `state.db` (SQLite `mode=rwc`). Of two racing creates, one wins and the other raises `StateError("… already exists …")`.
-    - `State.open(path) -> State`. It raises `StateError` when `state.db` is missing ("not the archive's writer"), damaged (any `sqlite3.DatabaseError`; the message points to the runbook's "Restoring for real" and to `init --adopt`), or newer than the code. It runs the migrations an older one hasn't had.
+    - `State.create(path, *, archive_uuid: str, writer_id: str) -> State`, the only code that creates a `state.db` (SQLite `mode=rwc`). Of two racing creates, one wins and the other raises `StateError("… already exists …")`. It also refuses a folder that still holds `state.db-wal` or `state.db-journal` (`LOGS`): an earlier state.db's latest commits.
+    - `State.open(path) -> State`. It raises `StateError` when `state.db` is missing ("not the archive's writer"), can't be used (any `sqlite3.DatabaseError`, worded by `unreadable`), or newer than the code. It runs the migrations an older one hasn't had.
     - `State.db()`, a context manager yielding a `sqlite3.Connection`. It opens with `mode=rw`, so a missing `state.db` is an error, never a new, empty file.
     - `State._connect(mode: str) -> sqlite3.Connection`: private, the one place a connection is made. Task 15 passes `"ro"`.
     - `State.meta(key) -> str | None` and `State.set_meta(key, value) -> None`
-    - Module constants `SCHEMA` (the version-1 tables), `SCHEMA_VERSION = 1`, `MIGRATIONS: dict[int, tuple[str, ...]] = {}` (numbered from 2) and `RESTORE_HINT`.
+    - Module constants `SCHEMA` (the version-1 tables), `SCHEMA_VERSION = 1`, `MIGRATIONS: dict[int, tuple[str, ...]] = {}` (numbered from 2), `RESTORE_HINT` and `LOGS`.
+    - `unreadable(db_path: Path, exc: sqlite3.Error) -> str`: a fixed template with SQLite's code (`exc.sqlite_errorname`), never `str(exc)`. Only damage (`SQLITE_NOTADB`, `SQLITE_CORRUPT`, missing tables) gets `RESTORE_HINT`. A sound file that can't be reached now (`SQLITE_CANTOPEN`, `_READONLY…`, `_BUSY`, `_LOCKED`, `_FULL`, `_IOERR…`) is "not damage", with what to check.
   - **`recordings.init`:**
     - `class InitError(RuntimeError)`
     - `WRITER_ID_PATTERN = r"[a-z0-9][a-z0-9_.-]{0,62}"`
     - `init_archive(archive_root: Path, state_path: Path, *, writer_id: str, archive_uuid: str | None = None, created_at: datetime | None = None) -> ArchiveIdentity`
-    - `adopt_archive(archive_root: Path, state_path: Path, *, writer_id: str) -> ArchiveIdentity`: recreates a lost `state.db` from the archive's sentinel, and refuses when `state.db` exists. Each file's merge base is adopted the next time the app writes it (Task 5b's `_check_fresh`).
+    - `adopt_archive(archive_root: Path, state_path: Path, *, writer_id: str) -> ArchiveIdentity`: recreates a lost `state.db` from the archive's sentinel. It refuses when `state.db` exists, when the state folder still holds an earlier one's log, or when the root holds the mirror's `MIRROR.md`. Each file's merge base is adopted the next time the app writes it (Task 5b's `_check_fresh`).
   - **`recordings.config.Config`** gains `writer_id: str | None`, `state_path: Path | None` and `index_path: Path | None`, and loses `writer_host`. `RECORDINGS_STATE` and `RECORDINGS_INDEX` override the file.
   - **CLI:** `recordings init [--adopt] [--json]`. Its JSON is `{"archive", "uuid", "writer_id", "adopted"}`.
   - **Test fixture** in `packages/core/tests/conftest.py`: `new_archive` → `(root: Path, state: Path)`.
@@ -1751,6 +1753,7 @@ def new_archive(tmp_path):
 `packages/core/tests/test_init.py`:
 ```python
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 
@@ -1761,7 +1764,14 @@ from recordings import state as state_module
 from recordings.cli import main
 from recordings.init import InitError, adopt_archive, init_archive
 from recordings.selfdoc import validate
-from recordings.sentinel import SENTINEL, ArchiveIdentity, SentinelError, read_sentinel, write_sentinel
+from recordings.sentinel import (
+    MIRROR,
+    SENTINEL,
+    ArchiveIdentity,
+    SentinelError,
+    read_sentinel,
+    write_sentinel,
+)
 from recordings.state import MIGRATIONS, SCHEMA_VERSION, State, StateError
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
@@ -1918,8 +1928,47 @@ def test_adopt_recreates_a_lost_state_db_from_the_sentinel(new_archive):
 
 def test_adopt_never_replaces_a_state_db(new_archive):
     root, state = new_archive
-    with pytest.raises(InitError, match="move it aside"):
+    with pytest.raises(InitError, match="whole state folder aside"):
         adopt_archive(root, state, writer_id="test")
+
+
+def test_adopt_refuses_the_nas_mirror(new_archive, tmp_path):
+    # why: §3. The mirror carries archive.json, so adopting it would give a second machine a
+    # state.db that every writer check accepts. The mirror job marks its copy (Task 12).
+    root, _ = new_archive
+    (root / MIRROR).write_text("a copy\n", encoding="utf-8")
+    with pytest.raises(InitError, match="mirror"):
+        adopt_archive(root, tmp_path / "mac-state", writer_id="homelab")
+    assert not (tmp_path / "mac-state").exists()
+
+
+@pytest.mark.parametrize("log", ["state.db-wal", "state.db-journal"])
+def test_a_new_state_db_never_meets_an_earlier_ones_log(new_archive, log):
+    # why: SQLite replays a stray -wal over the next state.db put beside it, so a restored copy
+    # silently stops being the backup, and deletes it beside a new, empty one, so moving state.db
+    # alone and adopting destroys its latest commits. The whole state folder moves aside.
+    root, state = new_archive
+    (state / "state.db").rename(state.parent / "state.db.aside")
+    (state / log).write_bytes(b"the latest commits")
+    with pytest.raises(InitError, match="whole state folder"):
+        adopt_archive(root, state, writer_id="test")
+    assert (state / log).read_bytes() == b"the latest commits"
+    assert not (state / "state.db").exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root opens files whatever their mode")
+def test_a_state_db_that_cant_be_opened_is_not_called_damaged(new_archive):
+    # why: "restore it, or move it aside and adopt" for a sound file that a mode, an owner or a
+    # full disk keeps shut would throw away the queue and every merge base.
+    _, state = new_archive
+    state.chmod(0o500)  # WAL can't make its -shm in a read-only folder
+    try:
+        with pytest.raises(StateError) as caught:
+            State.open(state)
+    finally:
+        state.chmod(0o700)
+    assert "not damage" in str(caught.value)
+    assert "--adopt" not in str(caught.value) and "Restoring for real" not in str(caught.value)
 
 
 def test_adopt_needs_the_archives_sentinel(tmp_path):
@@ -2020,6 +2069,19 @@ def test_base_url_must_be_an_http_url(tmp_path, value):
     cfg_file = write(tmp_path, f"[server]\nbase_url = {value}\n")
     with pytest.raises(ConfigError, match="base_url"):
         load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+
+
+@pytest.mark.parametrize("line", ['path = "state"', "path = 7", "path = ['/srv']"])
+def test_the_state_and_index_paths_are_absolute_text(tmp_path, line):
+    # why: §3. A relative [state] path follows the folder a command runs in, so a second state.db,
+    # with its own locks, is one `cd` away; a number reached Path() as a TypeError.
+    cfg = tmp_path / "config.toml"
+    for section in ("state", "index"):
+        cfg.write_text(f"[{section}]\n{line}\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match=rf"\[{section}\] path"):
+            load_config({"RECORDINGS_CONFIG": str(cfg)})
+    with pytest.raises(ConfigError, match="RECORDINGS_STATE"):
+        load_config({"RECORDINGS_CONFIG": str(cfg), "RECORDINGS_STATE": "state"})
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -2045,6 +2107,7 @@ backups and the mirror refuse to run when it is missing or its UUID has changed.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -2054,6 +2117,9 @@ from recordings.files import create_exclusive
 from recordings.models import FORMAT
 
 SENTINEL = "archive.json"
+# The NAS mirror's mark (Task 12). The mirror carries archive.json too, so this is what tells its
+# copy from the archive: `init --adopt` and every Writer refuse a folder that holds it.
+MIRROR = "MIRROR.md"
 
 
 class SentinelError(RuntimeError):
@@ -2085,6 +2151,11 @@ def read_sentinel(root: Path) -> ArchiveIdentity:
     if identity.created_at.utcoffset() is None:
         raise SentinelError(f"{path}: created_at has no UTC offset")
     return identity
+
+
+def is_mirror(root: Path) -> bool:
+    """A copy the mirror made: read it like the archive, never write it (spec §3, §15.1)."""
+    return os.path.lexists(Path(root) / MIRROR)
 
 
 def write_sentinel(root: Path, identity: ArchiveIdentity) -> Path:
@@ -2124,8 +2195,28 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 MIGRATIONS: dict[int, tuple[str, ...]] = {}
 
 RESTORE_HINT = (
-    "restore state.db from the backup (runbook: Restoring for real). If no backup copy is "
-    "usable, move it aside and run `recordings init --adopt`.")
+    "restore state.db from the backup (runbook: Restoring for real). If no backup copy is usable, "
+    "stop the app, move the whole state folder aside (never state.db alone: its -wal file holds "
+    "the latest commits), and run `recordings init --adopt`.")
+# SQLite's logs beside state.db hold commits not yet in it. SQLite replays a -wal over whatever
+# state.db is next put beside it, and deletes one it finds beside a new, empty state.db.
+LOGS = ("state.db-wal", "state.db-journal")
+# SQLite's codes for a sound state.db that can't be reached now: a mode, an owner or a missing
+# mount (CANTOPEN), a read-only folder, a lock held too long, a full disk, an I/O error.
+_NOT_DAMAGE = ("SQLITE_CANTOPEN", "SQLITE_READONLY", "SQLITE_BUSY", "SQLITE_LOCKED",
+               "SQLITE_FULL", "SQLITE_IOERR", "SQLITE_PERM", "SQLITE_NOMEM")
+
+
+def unreadable(db_path: Path, exc: sqlite3.Error) -> str:
+    """Why state.db can't be used, from a fixed template with SQLite's code, never its message.
+    Only damage gets the way back: moving a sound state.db aside throws away the queue and every
+    merge base."""
+    code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
+    if code.startswith(_NOT_DAMAGE):
+        return (f"{db_path} can't be opened now ({code}). That is not damage, so leave it where it "
+                "is: check that the state folder is mounted, owned by this user, writable and not "
+                "full, and that no other process holds it, then try again.")
+    return f"{db_path} can't be read ({code}). If it is damaged, {RESTORE_HINT}"
 
 
 class StateError(RuntimeError):
@@ -2155,6 +2246,11 @@ class State:
         state = cls(path)
         if state.db_path.exists():
             raise StateError(_already(state.db_path))
+        if logs := [name for name in LOGS if (state.path / name).exists()]:
+            raise StateError(
+                f"{state.path} still holds {', '.join(logs)}: an earlier state.db's latest "
+                "commits, which a new state.db would destroy. Move the whole state folder aside "
+                "first.")
         state.path.mkdir(parents=True, exist_ok=True)
         state.locks_dir.mkdir(exist_ok=True)
         try:
@@ -2188,9 +2284,7 @@ class State:
                 db.executescript(SCHEMA)
                 state._upgrade(db)
         except sqlite3.DatabaseError as exc:
-            raise StateError(
-                f"{state.db_path} can't be read ({exc}). If it is damaged, {RESTORE_HINT}"
-                ) from None
+            raise StateError(unreadable(state.db_path, exc)) from None
         state.locks_dir.mkdir(exist_ok=True)
         return state
 
@@ -2218,6 +2312,9 @@ class State:
         except (TypeError, ValueError):
             raise StateError(f"{self.db_path} has no readable schema_version, so it is damaged: "
                              f"{RESTORE_HINT}") from None
+        if version < 1:
+            raise StateError(f"{self.db_path} has schema version {version}, so it is damaged: "
+                             f"{RESTORE_HINT}")
         if version > SCHEMA_VERSION:
             raise StateError(
                 f"{self.db_path} is at schema version {version}, newer than this release's "
@@ -2272,13 +2369,15 @@ from pathlib import Path
 
 from recordings.selfdoc import write_docs
 from recordings.sentinel import (
+    MIRROR,
     SENTINEL,
     ArchiveIdentity,
     SentinelError,
+    is_mirror,
     read_sentinel,
     write_sentinel,
 )
-from recordings.state import State
+from recordings.state import State, StateError
 
 WRITER_ID_PATTERN = r"[a-z0-9][a-z0-9_.-]{0,62}"
 
@@ -2312,7 +2411,7 @@ def init_archive(archive_root: Path, state_path: Path, *, writer_id: str,
         write_docs(root)
         State.create(state_dir, archive_uuid=identity.uuid, writer_id=writer_id)
         write_sentinel(root, identity)
-    except OSError as exc:
+    except (OSError, StateError) as exc:
         # Never "remove": a wrong path in that advice could cost a real archive.
         raise InitError(
             f"init stopped part-way ({exc}) and wrote no {SENTINEL}. Check that {root} and "
@@ -2329,13 +2428,19 @@ def adopt_archive(archive_root: Path, state_path: Path, *, writer_id: str) -> Ar
         identity = read_sentinel(root)
     except SentinelError as exc:
         raise InitError(str(exc)) from None
+    if is_mirror(root):
+        raise InitError(
+            f"{root} holds {MIRROR}: it is the NAS mirror's copy, not the archive. Only the "
+            "archive's writer writes (spec §3), so --adopt runs there; anywhere else, use the "
+            "app.")
     if (state_dir / "state.db").exists():
         raise InitError(
             f"{state_dir / 'state.db'} exists: --adopt only replaces a lost one. If it is damaged "
-            "and no backup copy is usable, move it aside first.")
+            "and no backup copy is usable, stop the app and move the whole state folder aside "
+            "first.")
     try:
         State.create(state_dir, archive_uuid=identity.uuid, writer_id=writer_id)
-    except OSError as exc:
+    except (OSError, StateError) as exc:
         raise InitError(f"--adopt stopped ({exc}); it changed nothing in {root}") from None
     return identity
 ```
@@ -2386,9 +2491,16 @@ In `packages/core/src/recordings/config.py`:
        return value
 
 
-   def _path(environ: Mapping[str, str], env: str, section: dict[str, Any]) -> Path | None:
-       value = environ.get(env) or section.get("path")
-       return Path(value).expanduser() if value else None
+   def _path(environ: Mapping[str, str], env: str, name: str, data: dict[str, Any]) -> Path | None:
+       value = environ.get(env) or data.get(name, {}).get("path")
+       if not value:
+           return None
+       path = Path(value).expanduser() if isinstance(value, str) else None
+       if path is None or not path.is_absolute():
+           # A relative one follows the folder a command runs in, and a second state.db, with its own
+           # locks, would be a second writer (spec §3).
+           raise ConfigError(f"[{name}] path (or {env}) must be an absolute path, in quotes")
+       return path
    ```
 4. **Replace** the `return Config(...)` at the end of `load_config` with:
    ```python
@@ -2400,8 +2512,8 @@ In `packages/core/src/recordings/config.py`:
            base_url=_base_url(server),
            data=data,
            allowed_hosts=_allowed_hosts(server),
-           state_path=_path(environ, "RECORDINGS_STATE", data.get("state", {})),
-           index_path=_path(environ, "RECORDINGS_INDEX", data.get("index", {})),
+           state_path=_path(environ, "RECORDINGS_STATE", "state", data),
+           index_path=_path(environ, "RECORDINGS_INDEX", "index", data),
        )
    ```
 
