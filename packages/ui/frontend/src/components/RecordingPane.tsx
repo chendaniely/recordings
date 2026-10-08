@@ -5,7 +5,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { useShinyOutputStatus, useShinyOutputValue } from "../sr";
 import type { RecordingView } from "../types";
+import { DetailsTab } from "./DetailsTab";
+import { MyNotesTab } from "./MyNotesTab";
+import { NotesTab } from "./NotesTab";
 import { Player } from "./Player";
+import { PlaudTab } from "./PlaudTab";
 import { TranscriptTab } from "./TranscriptTab";
 
 export function RecordingPane({ selectedId }: { selectedId: string | null }) {
@@ -38,10 +42,18 @@ function RecordingDetail({ rec, dimmed }: { rec: RecordingView; dimmed: boolean 
       <Tabs defaultValue="transcript" className="flex min-h-0 flex-1 flex-col">
         <TabsList className="tabs-list" aria-label="Recording">
           <TabsTrigger value="transcript" data-testid="tab-transcript">Transcript</TabsTrigger>
+          <TabsTrigger value="notes" data-testid="tab-notes">Notes ({rec.notes.reduce((n, g) => n + g.outputs.length, 0)})</TabsTrigger>
+          <TabsTrigger value="plaud" data-testid="tab-plaud">Plaud</TabsTrigger>
+          <TabsTrigger value="my-notes" data-testid="tab-my-notes">My notes</TabsTrigger>
+          <TabsTrigger value="details" data-testid="tab-details">Details</TabsTrigger>
         </TabsList>
         <TabsContent value="transcript" className="tab">
           <TranscriptTab transcripts={rec.transcripts} chosen={rec.chosen_transcript} time={time} onSeek={seek} />
         </TabsContent>
+        <TabsContent value="notes" className="tab"><NotesTab groups={rec.notes} /></TabsContent>
+        <TabsContent value="plaud" className="tab"><PlaudTab notes={rec.plaud_notes} /></TabsContent>
+        <TabsContent value="my-notes" className="tab"><MyNotesTab html={rec.my_notes_html} /></TabsContent>
+        <TabsContent value="details" className="tab"><DetailsTab rec={rec} /></TabsContent>
       </Tabs>
     </section>
   );
