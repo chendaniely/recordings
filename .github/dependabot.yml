@@ -21,7 +21,24 @@ updates:
     schedule: { interval: weekly, day: friday }
     open-pull-requests-limit: 3
     commit-message: { prefix: "build(ui)" }
+    # React and React DOM must move together, or each PR alone leaves them mismatched.
+    groups:
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
     ignore:
+      # The browser runs shinyreact's bundled React, so ours stays on that minor version.
+      # Minor and major bumps happen only with a shinyreact upgrade (CLAUDE.md).
+      - dependency-name: react
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: react-dom
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Node's types follow the Node major in .nvmrc (22).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
       - dependency-name: vite
         update-types: ["version-update:semver-major"]
       - dependency-name: "@vitejs/plugin-react"

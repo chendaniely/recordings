@@ -39,7 +39,8 @@ exactly. To upgrade:
 3. `make skills`.
 4. Check that `.nvmrc` still matches shinyreact's `pkg-js/.nvmrc`.
 5. Check that its examples' Vite, plugin-react, TypeScript and Vitest versions still match
-   ours.
+   ours. Move `react`, `react-dom` and their `@types` to the React minor version that
+   `shinyreact.js` bundles (`grep -o '"19\.[0-9.]*"' …/shinyreact/www/shinyreact.js`).
 6. `make test e2e`.
 
 ## Archive rules (spec §6)
