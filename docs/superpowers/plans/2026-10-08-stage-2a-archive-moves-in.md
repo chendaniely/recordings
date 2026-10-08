@@ -8098,8 +8098,8 @@ def test_audio_routers_privacy_labels_make_a_recording_private(ar_archive, plaud
         "private/medical", "private/journal", "private/students", "private", "lecture")
     # One tag per meaning: therapy and counselling fold together, and the generic markers are
     # `private`.
-    assert map_tags(["counseling", "therapy", "counselling", "personal", "voiceprints", "private"]) == (
-        "private/therapy", "private")
+    folded = ["counseling", "therapy", "counselling", "personal", "voiceprints", "private"]
+    assert map_tags(folded) == ("private/therapy", "private")
 
 
 def test_the_private_tier_is_found_by_hash_whatever_its_files_are_called(ar_archive):
