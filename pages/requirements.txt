@@ -1,0 +1,4 @@
+# Packages for the Pages demo, loaded from the Pyodide packages Shinylive bundles (spec §17.1).
+# shinyreact is vendored next to app.py instead, so the site never fetches from PyPI.
+pydantic
+markdown-it-py

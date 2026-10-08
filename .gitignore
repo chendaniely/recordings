@@ -9,6 +9,11 @@ packages/ui/src/recordings_ui/www/ui.js
 packages/ui/src/recordings_ui/www/ui.css
 # Downloaded originals and encoded clips for rebuilding the demo archive.
 demo/.cache/
+# The static Pages demo: `make pages` assembles build/pages/ and writes _site/. Shinylive's assets
+# (about 400 MB) are cached in .cache/shinylive/ (scripts/shinylive_local.py).
+_site/
+build/
+/.cache/
 # Agent tooling is local: skills are recreated by `make skills`, and settings stay per machine.
 .claude/
 **/skills-lock.json

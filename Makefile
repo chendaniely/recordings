@@ -3,7 +3,7 @@
 FRONTEND := packages/ui/frontend
 NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --silent "$$(cat $(CURDIR)/$(FRONTEND)/.nvmrc)"; fi;
 
-.PHONY: setup skills build test test-py test-js e2e demo demo-archive schemas brand docker deploy
+.PHONY: setup skills build test test-py test-js e2e demo demo-archive pages pages-serve schemas brand docker deploy
 
 setup:
 	uv sync
@@ -34,6 +34,14 @@ demo: build
 
 demo-archive:
 	uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
+
+# The static GitHub Pages demo (spec §17.1): only demo/archive/ is ever exported.
+pages: build
+	uv run --group pages python scripts/build_pages.py
+
+# Like Pages: under /recordings/, with Range requests, so seeking works.
+pages-serve:
+	uv run python scripts/rangeserver.py _site --prefix /recordings/ --port 8008
 
 schemas:
 	uv run recordings schemas --write

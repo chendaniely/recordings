@@ -26,6 +26,12 @@ dev = [
     "pyyaml==6.0.3",
     "ruff==0.16.10",
 ]
+# The static GitHub Pages demo (spec §17.1): `make pages`, run with `uv run --group pages`.
+# Pinned exactly: scripts/shinylive_local.py patches one of its private functions, and the
+# version fixes the Shinylive assets it downloads (0.8.12 uses assets 0.10.15, with Pyodide
+# 0.27.7, Python 3.12 and shiny 1.8.0). A bump changes what the browser runs, so a bump PR
+# must pass the Pages smoke test (pages.yml runs it on pull requests).
+pages = ["shinylive==0.8.12"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/core/tests", "packages/ui/tests"]
