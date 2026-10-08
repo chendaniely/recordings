@@ -94,7 +94,7 @@ def _label(r: Rendition) -> str:
     return "Plaud" if r.engine == "plaud" else f"{(r.model or r.engine).split('/')[-1]} · {r.engine}"
 
 
-def recording_view(archive: Archive, rid: str) -> dict | None:
+def recording_view(archive: Archive, rid: str, *, media_base: str | None = None) -> dict | None:
     if not ID_RE.fullmatch(rid or ""):
         return None
     try:
@@ -129,7 +129,9 @@ def recording_view(archive: Archive, rid: str) -> dict | None:
         "duration": duration_label(rec.media.duration_ms),
         "kind": rec.media.kind,
         "private": is_private(rec),
-        "media_url": f"/media/{rec.id}",
+        # The server's own route, or with a base (the static Pages demo, spec §17.1) the file
+        # itself, whose extension sets the Content-Type.
+        "media_url": f"/media/{rec.id}" if media_base is None else f"{media_base}{rec.media.file}",
         "tags": _tags(rec),
         "sources": [{"kind": s.kind, "ref": s.ref, "added_at": s.added_at.isoformat()}
                     for s in rec.sources],

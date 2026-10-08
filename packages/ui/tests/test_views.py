@@ -39,6 +39,21 @@ def test_recording_view_for_jfk(demo_archive, demo_ids):
     assert "My notes" in view["my_notes_html"]
 
 
+def test_a_media_base_links_the_media_file_itself(demo_archive, demo_ids):
+    # The static Pages demo (spec §17.1) serves media as files, so the URL keeps the extension
+    # and the host sends the right Content-Type.
+    archive = Archive(demo_archive)
+    jfk = recording_view(archive, demo_ids["jfk-rice"], media_base="../media/")
+    assert jfk["media_url"] == f"../media/{demo_ids['jfk-rice']}.mp3"
+    apollo = recording_view(archive, demo_ids["apollo11-first-steps"], media_base="../media/")
+    assert apollo["media_url"] == f"../media/{demo_ids['apollo11-first-steps']}.mp4"
+
+
+def test_without_a_media_base_media_goes_through_the_server_route(demo_archive, demo_ids):
+    view = recording_view(Archive(demo_archive), demo_ids["apollo11-first-steps"], media_base=None)
+    assert view["media_url"] == f"/media/{demo_ids['apollo11-first-steps']}"
+
+
 def test_plaud_outputs_go_to_the_plaud_tab_not_notes(demo_archive, demo_ids):
     view = recording_view(Archive(demo_archive), demo_ids["apollo13-problem"])
     assert view["notes"] == []

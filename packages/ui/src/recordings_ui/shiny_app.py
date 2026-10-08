@@ -13,6 +13,7 @@ from recordings_ui import runtime, views
 
 def server(input: Inputs, output: Outputs, session: Session) -> None:
     archive = runtime.archive()
+    media_base = runtime.media_base()
 
     @reactive_output
     def library():
@@ -23,7 +24,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         # Unset (before the client's first message) is a silent exception, which the client
         # sees as "pending"; an explicit null clears the pane.
         rid = input.selected_id()
-        return views.recording_view(archive, rid) if rid else None
+        return views.recording_view(archive, rid, media_base=media_base) if rid else None
 
 
 app = ReactApp(server)
