@@ -314,3 +314,33 @@ def test_the_state_and_index_paths_are_absolute_text(tmp_path, line):
             load_config({"RECORDINGS_CONFIG": str(cfg)})
     with pytest.raises(ConfigError, match="RECORDINGS_STATE"):
         load_config({"RECORDINGS_CONFIG": str(cfg), "RECORDINGS_STATE": "state"})
+
+
+@pytest.mark.parametrize("index", ["/srv/r/state/state.db", "/srv/r/state/index.db",
+                                   "/srv/r/state/backup/state.db", "/srv/r/state"])
+def test_the_index_never_lies_inside_the_state_folder(tmp_path, index):
+    # why: §6.8. The state folder holds state.db, its backup copy, voice.db and the Plaud token, and
+    # their writers don't take the index lock. A typo that points the index there is refused here,
+    # before rebuild opens any of them; the index's header mark is the second guard.
+    cfg_file = write(tmp_path, f'[state]\npath = "/srv/r/state"\n[index]\npath = "{index}"\n')
+    with pytest.raises(ConfigError, match=r"\[index\] path .* inside \[state\] path"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+    with pytest.raises(ConfigError, match="RECORDINGS_INDEX"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_STATE": "/state",
+                     "RECORDINGS_INDEX": "/state/state.db"})
+
+
+def test_the_index_inside_the_state_folder_through_a_symlink_is_refused(tmp_path):
+    (tmp_path / "state").mkdir()
+    (tmp_path / "index").symlink_to(tmp_path / "state")
+    cfg_file = write(tmp_path, f'[state]\npath = "{tmp_path / "state"}"\n'
+                               f'[index]\npath = "{tmp_path / "index" / "index.db"}"\n')
+    with pytest.raises(ConfigError, match="inside"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+
+
+def test_an_index_beside_the_state_folder_is_fine(tmp_path):
+    cfg_file = write(tmp_path, '[state]\npath = "/srv/r/state"\n'
+                               '[index]\npath = "/srv/r/state-index/index.db"\n')
+    assert load_config({"RECORDINGS_CONFIG": str(cfg_file)}).index_path == Path(
+        "/srv/r/state-index/index.db")

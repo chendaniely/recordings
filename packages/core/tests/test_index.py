@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -15,6 +16,10 @@ from recordings.state import State
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 HEX = "0123456789abcdef0123456789abcdef"
+# The first 100 bytes of a file that says it is an index (its application_id at offset 68), with a
+# page size of 0, so SQLite can't read a page of it.
+INDEX_HEADER = (b"SQLite format 3\x00" + bytes(52) + index_module.APPLICATION_ID.to_bytes(4, "big")
+                + bytes(28))
 
 
 def put(root, *, when="2026-10-06T14:00:03-07:00", sha="a" * 64, sources=()) -> Recording:
@@ -105,7 +110,7 @@ def test_a_garbage_index_is_rebuilt(new_archive, tmp_path):
     root, _ = new_archive
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
-    index.path.write_bytes(b"SQLite format 3\x00" + b"corrupted data " * 100)
+    index.path.write_bytes(INDEX_HEADER + b"corrupted data " * 100)
     assert (index.count(), index.archive_uuid()) == (0, None)
     assert index.find_by_source("plaud", HEX) == []
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
@@ -192,7 +197,7 @@ def test_corrupted_sqlite_file_is_renamed_aside_and_rebuilt(new_archive, tmp_pat
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
-    header = b"SQLite format 3\x00"
+    header = INDEX_HEADER
     index.path.write_bytes(header + b"corrupted data" * 100)
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
     renamed_files = list(tmp_path.glob("index.db.unreadable-*"))
@@ -210,7 +215,7 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
     # Create a pre-existing quarantine file with a fixed timestamp
-    header = b"SQLite format 3\x00"
+    header = INDEX_HEADER
     fixed_stamp = "20261009T143512Z"
     pre_existing = tmp_path / f"index.db.unreadable-{fixed_stamp}"
     pre_existing.write_bytes(b"pre-existing data")
@@ -229,6 +234,8 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     assert new_file.exists()
     assert b"new corrupted data" in new_file.read_bytes()
     assert index.find_by_sha256(rec.media.sha256) == rec.id
+
+
 def test_corrupted_index_quarantines_every_sibling_untouched(new_archive, tmp_path):
     # why: the -wal, -shm and -journal beside an unreadable index are evidence too. They move with
     # the main file under one suffix, byte for byte; the readability probe must not alter them.
@@ -236,7 +243,7 @@ def test_corrupted_index_quarantines_every_sibling_untouched(new_archive, tmp_pa
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
     original = {
-        "": b"SQLite format 3\x00" + b"garbage" * 50,
+        "": INDEX_HEADER + b"garbage" * 50,
         "-wal": b"wal bytes " * 40,
         "-shm": b"shm bytes " * 40,
         "-journal": b"journal bytes " * 40,
@@ -269,3 +276,82 @@ def test_empty_index_file_is_replaced_not_renamed(new_archive, tmp_path):
     assert len(quarantined) == 0
     # Index should work normally
     assert index.find_by_sha256(rec.media.sha256) == rec.id
+
+
+def test_a_damaged_database_that_does_not_say_it_is_an_index_is_left_alone(tmp_path):
+    # why: only a file whose header says it is an index is ever renamed aside. A probe that misreads
+    # a live state.db, voice.db or another program's database then can't move it, on any filesystem.
+    index = Index(tmp_path / "index.db")
+    data = b"SQLite format 3\x00" + b"garbage" * 50
+    index.path.write_bytes(data)
+    with pytest.raises(IndexRefused, match="doesn't say it is an index"):
+        index.rebuild(Archive(tmp_path / "nope"), archive_uuid="u-1", allow_empty=True)
+    assert index.path.read_bytes() == data
+    assert list(tmp_path.glob("index.db*.unreadable-*")) == []
+
+
+def test_state_db_is_never_taken_for_this_archives_index(new_archive):
+    # why: state.db's meta holds this archive's archive_uuid too, so a Writer pointed at it would
+    # take it for its index, skip the rebuild and find nothing on every lookup.
+    _, state = new_archive
+    assert Index(state / "state.db").archive_uuid() is None
+
+
+def test_an_index_whose_header_lost_its_mark_is_not_this_archives(new_archive, tmp_path):
+    # why: archive_uuid() answers only for a file whose header says it is an index, so a Writer
+    # rebuilds one that doesn't; the rebuild writes the mark again.
+    root, _ = new_archive
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1", allow_empty=True)
+    assert index.path.read_bytes()[68:72] == b"RIDX" and index.archive_uuid() == "u-1"
+    db = sqlite3.connect(index.path)
+    db.execute("PRAGMA application_id = 0")
+    db.close()
+    assert index.archive_uuid() is None
+    index.rebuild(Archive(root), archive_uuid="u-1", allow_empty=True)
+    assert index.archive_uuid() == "u-1"
+
+
+def test_an_index_written_during_the_probe_is_rebuilt_in_place_not_quarantined(
+        new_archive, tmp_path, monkeypatch):
+    # why: the immutable probe can misread a file that changes under it; the stamp check keeps an
+    # index that is being written from being renamed aside.
+    root, _ = new_archive
+    rec = put(root)
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+
+    def written_meanwhile(self):
+        st = os.stat(self.path)
+        os.utime(self.path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        return False
+
+    monkeypatch.setattr(Index, "_readable", written_meanwhile)
+    assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
+    assert list(tmp_path.glob("index.db*.unreadable-*")) == []
+    assert index.find_by_sha256(rec.media.sha256) == rec.id
+
+
+def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(new_archive, tmp_path,
+                                                                   monkeypatch):
+    # why: the siblings move first and the file last. A -wal or -journal left beside a new, empty
+    # index.db is deleted by SQLite, so a rename that fails part-way must leave the file, not them.
+    root, _ = new_archive
+    put(root)
+    index = Index(tmp_path / "index.db")
+    index.path.write_bytes(INDEX_HEADER + b"garbage" * 50)
+    wal = b"wal bytes " * 40
+    (tmp_path / "index.db-wal").write_bytes(wal)
+    rename = Path.rename
+
+    def failing_rename(self, target):
+        if self.name == "index.db":
+            raise OSError("Simulated I/O error")
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing_rename)
+    with pytest.raises(OSError, match="Simulated I/O error"):
+        index.rebuild(Archive(root), archive_uuid="u-1")
+    assert index.path.read_bytes().startswith(INDEX_HEADER)
+    (moved,) = tmp_path.glob("index.db-wal.unreadable-*")
+    assert moved.read_bytes() == wal

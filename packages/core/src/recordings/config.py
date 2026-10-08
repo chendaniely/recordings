@@ -102,6 +102,16 @@ def _path(environ: Mapping[str, str], env: str, name: str, data: dict[str, Any])
     return path
 
 
+def _index_apart(index: Path | None, state: Path | None) -> None:
+    """The index never lies inside the state folder (spec §6.8). state.db, its backup copy, voice.db
+    and the Plaud token live there, and their writers don't take the index lock: a typo that points
+    the index there is refused before rebuild opens any of them."""
+    if index is not None and state is not None and index.resolve().is_relative_to(state.resolve()):
+        raise ConfigError(
+            f"[index] path (or RECORDINGS_INDEX) {index} lies inside [state] path {state}, beside "
+            "state.db. Give the index a folder of its own, such as /srv/recordings/index/index.db.")
+
+
 def load_config(environ: Mapping[str, str]) -> Config:
     path = config_path(environ)
     data: dict[str, Any] = {}
@@ -116,6 +126,9 @@ def load_config(environ: Mapping[str, str]) -> Config:
     # The environment wins, so one config.toml works on the host and inside Docker.
     archive_path = environ.get("RECORDINGS_ARCHIVE") or archive.get("path")
     server = data.get("server", {})
+    state_path = _path(environ, "RECORDINGS_STATE", "state", data)
+    index_path = _path(environ, "RECORDINGS_INDEX", "index", data)
+    _index_apart(index_path, state_path)
     return Config(
         path=path if path.is_file() else None,
         archive_path=Path(archive_path).expanduser() if archive_path else None,
@@ -124,8 +137,8 @@ def load_config(environ: Mapping[str, str]) -> Config:
         base_url=_base_url(server),
         data=data,
         allowed_hosts=_allowed_hosts(server),
-        state_path=_path(environ, "RECORDINGS_STATE", "state", data),
-        index_path=_path(environ, "RECORDINGS_INDEX", "index", data),
+        state_path=state_path,
+        index_path=index_path,
     )
 
 

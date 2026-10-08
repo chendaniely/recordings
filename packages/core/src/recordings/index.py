@@ -5,7 +5,8 @@ writer needs at scale: which recording holds these bytes, and which holds this s
 `rebuild` refuses to empty an index that holds recordings (§6.7): an archive that suddenly lists
 none is far more likely unmounted than empty. It rebuilds inside one transaction on the live file,
 so a failed rebuild leaves the old index as it was and nothing beside it, and readers see the old
-index until the new one commits. A file SQLite can't read at all is renamed aside and rebuilt.
+index until the new one commits. An index SQLite can't read at all is renamed aside and rebuilt;
+only a file whose header says it is an index (APPLICATION_ID) is ever moved.
 """
 
 from __future__ import annotations
@@ -23,9 +24,14 @@ from recordings.models import Recording
 from recordings.refs import canonical_ref
 
 INDEX_VERSION = 1
+# In the file's header (offset 68), so a file says it is an index before SQLite reads a page of it.
+# Only a file that says so is ever renamed aside.
+APPLICATION_ID = 0x52494458  # "RIDX"
+_MARK = APPLICATION_ID.to_bytes(4, "big")
 _TABLES = ("meta", "recordings", "source_refs")  # dropping a table drops its indexes too
 # One statement each: they run inside rebuild's transaction, which executescript would commit.
 _SCHEMA = (
+    f"PRAGMA application_id = {APPLICATION_ID}",
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE recordings ("
     " id TEXT PRIMARY KEY, folder TEXT NOT NULL, sha256 TEXT NOT NULL, rev INTEGER NOT NULL)",
@@ -80,7 +86,12 @@ class Index:
         return int(self._one("SELECT count(*) FROM recordings") or 0)
 
     def archive_uuid(self) -> str | None:
-        return self._one("SELECT value FROM meta WHERE key = 'archive_uuid'")
+        # state.db's meta holds the same archive_uuid: only a file that says it is an index (its
+        # header) and is one (its meta) answers.
+        if self._one("PRAGMA application_id") != APPLICATION_ID:
+            return None
+        return self._one("SELECT value FROM meta WHERE key = 'archive_uuid' AND EXISTS "
+                         "(SELECT 1 FROM meta WHERE key = 'index_version')")
 
     def rebuild(self, archive: Archive, *, archive_uuid: str, allow_empty: bool = False) -> int:
         recordings = list(archive.iter_recordings())
@@ -88,19 +99,19 @@ class Index:
         if self.exists():
             self._handle_unreadable_file()
         with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
-            self._check_ours(db)
-            # Check empty inside the lock, before dropping tables. The old code read the count
-            # outside the transaction, where a locked index read as 0. This read on the same
-            # connection is protected by BEGIN IMMEDIATE.
-            held = 0
             try:
-                held = int(db.execute("SELECT count(*) FROM recordings").fetchone()[0])
-            except sqlite3.OperationalError as exc:
-                if "no such table" not in str(exc):
+                db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
+                tables = self._check_ours(db)
+                # Counted inside the lock, on this connection: outside it, a locked index read as 0.
+                held = (db.execute("SELECT count(*) FROM recordings").fetchone()[0]
+                        if "recordings" in tables else 0)
+            except sqlite3.DatabaseError as exc:
+                if exc.sqlite_errorname not in _UNREADABLE:
                     raise
-            except TypeError:
-                pass
+                raise IndexRefused(
+                    f"{self.path} can't be read ({exc.sqlite_errorname}) and doesn't say it is an "
+                    "index, so rebuild leaves it alone. Check [index] path. If it is the index, "
+                    "move it aside and run `recordings reindex`.") from None
             if not recordings and held and not allow_empty:
                 raise IndexRefused(
                     f"{archive.root} lists no recordings but the index holds {held}: refusing to "
@@ -143,24 +154,26 @@ class Index:
         return tuple(stamps)
 
     def _handle_unreadable_file(self) -> None:
-        """Check file type and handle corruption. Never deletes."""
+        """Refuse a file that isn't SQLite, and rename aside an index SQLite can't read. Never
+        deletes, and never moves a file whose header doesn't say it is an index."""
         if not self.path.exists():
             return
         size = self.path.stat().st_size
         if size == 0:
             return
-        # Check for SQLite header
         try:
             with self.path.open("rb") as f:
-                header = f.read(16)
-        except OSError:
-            raise IndexRefused(f"{self.path} is not an index (cannot read file). "
-                             "Check [index] path.")
-        if header != b"SQLite format 3\x00":
+                header = f.read(100)
+        except OSError as exc:
+            raise IndexRefused(f"{self.path} can't be read ({type(exc).__name__}): check its "
+                               "owner and mode, and [index] path.") from None
+        if header[:16] != b"SQLite format 3\x00":
             raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
                              "Check [index] path.")
-        # It's a SQLite file; check if it's readable. A file written during the probe proves
-        # nothing, so it goes on to BEGIN IMMEDIATE, where a database that isn't ours is refused.
+        if header[68:72] != _MARK:
+            return  # it doesn't say it is an index: never renamed; BEGIN IMMEDIATE decides
+        # It says it is an index; can SQLite read it? A file written during the probe proves
+        # nothing, so it goes on to BEGIN IMMEDIATE.
         before = self._stamp()
         if not self._readable() and self._stamp() == before:
             # Corrupted SQLite; rename aside with collision-safe timestamp
@@ -180,14 +193,18 @@ class Index:
                     break
                 # Increment and try again
                 suffix_num = f"-{int(suffix_num[1:] if suffix_num else 1) + 1}"
-            # Now rename all siblings with the same base suffix
-            for sibling_suffix in ("", "-journal", "-wal", "-shm"):
+            # The siblings first and the file last: a failure part-way leaves the file where it
+            # was, and never a -wal or -journal alone, which SQLite deletes beside a new, empty file.
+            for sibling_suffix in ("-journal", "-wal", "-shm", ""):
                 old_path = Path(f"{self.path}{sibling_suffix}")
-                if old_path.exists():
-                    new_path = old_path.with_name(f"{old_path.name}{base_suffix}")
-                    old_path.rename(new_path)
+                try:
+                    old_path.rename(old_path.with_name(f"{old_path.name}{base_suffix}"))
+                except FileNotFoundError:
+                    if not sibling_suffix:
+                        raise
 
-    def _check_ours(self, db: sqlite3.Connection) -> None:
+    def _check_ours(self, db: sqlite3.Connection) -> set[str]:
+        """The file's tables, once it is known to be empty or an index."""
         tables = {row[0] for row in
                   db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         ours = "meta" in tables and db.execute(
@@ -196,6 +213,7 @@ class Index:
             raise IndexRefused(
                 f"{self.path} is a database but not an index, so rebuild won't replace it. "
                 "Check [index] path.")
+        return tables
 
     def upsert(self, rec: Recording) -> None:
         with self._db() as db:

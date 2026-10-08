@@ -30,6 +30,7 @@ path = "/srv/recordings/state"
 
 [index]                                 # stage 2a: the derived index, rebuilt by `recordings reindex`
 # In Docker it lives on a named volume at /index, and RECORDINGS_INDEX overrides this value.
+# Never inside [state] path: the config refuses it.
 path = "/srv/recordings/index/index.db"
 
 [plaud]                                 # stage 2

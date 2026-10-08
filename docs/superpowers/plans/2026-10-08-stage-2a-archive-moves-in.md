@@ -1469,7 +1469,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - `WRITER_ID_PATTERN = r"[a-z0-9][a-z0-9_.-]{0,62}"`
     - `init_archive(archive_root: Path, state_path: Path, *, writer_id: str, archive_uuid: str | None = None, created_at: datetime | None = None) -> ArchiveIdentity`
     - `adopt_archive(archive_root: Path, state_path: Path, *, writer_id: str) -> ArchiveIdentity`: recreates a lost `state.db` from the archive's sentinel. It refuses when `state.db` exists, when the state folder still holds an earlier one's log, or when the root holds the mirror's `MIRROR.md`. Each file's merge base is adopted the next time the app writes it (Task 5b's `_check_fresh`).
-  - **`recordings.config.Config`** gains `writer_id: str | None`, `state_path: Path | None` and `index_path: Path | None`, and loses `writer_host`. `RECORDINGS_STATE` and `RECORDINGS_INDEX` override the file.
+  - **`recordings.config.Config`** gains `writer_id: str | None`, `state_path: Path | None` and `index_path: Path | None`, and loses `writer_host`. `RECORDINGS_STATE` and `RECORDINGS_INDEX` override the file. `load_config` raises `ConfigError` for an `index_path` that lies inside `state_path`.
   - **CLI:** `recordings init [--adopt] [--json]`. Its JSON is `{"archive", "uuid", "writer_id", "adopted"}`.
   - **Test fixture** in `packages/core/tests/conftest.py`: `new_archive` → `(root: Path, state: Path)`.
 
@@ -2084,6 +2084,36 @@ def test_the_state_and_index_paths_are_absolute_text(tmp_path, line):
             load_config({"RECORDINGS_CONFIG": str(cfg)})
     with pytest.raises(ConfigError, match="RECORDINGS_STATE"):
         load_config({"RECORDINGS_CONFIG": str(cfg), "RECORDINGS_STATE": "state"})
+
+
+@pytest.mark.parametrize("index", ["/srv/r/state/state.db", "/srv/r/state/index.db",
+                                   "/srv/r/state/backup/state.db", "/srv/r/state"])
+def test_the_index_never_lies_inside_the_state_folder(tmp_path, index):
+    # why: §6.8. The state folder holds state.db, its backup copy, voice.db and the Plaud token, and
+    # their writers don't take the index lock. A typo that points the index there is refused here,
+    # before rebuild opens any of them; the index's header mark is the second guard.
+    cfg_file = write(tmp_path, f'[state]\npath = "/srv/r/state"\n[index]\npath = "{index}"\n')
+    with pytest.raises(ConfigError, match=r"\[index\] path .* inside \[state\] path"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+    with pytest.raises(ConfigError, match="RECORDINGS_INDEX"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_STATE": "/state",
+                     "RECORDINGS_INDEX": "/state/state.db"})
+
+
+def test_the_index_inside_the_state_folder_through_a_symlink_is_refused(tmp_path):
+    (tmp_path / "state").mkdir()
+    (tmp_path / "index").symlink_to(tmp_path / "state")
+    cfg_file = write(tmp_path, f'[state]\npath = "{tmp_path / "state"}"\n'
+                               f'[index]\npath = "{tmp_path / "index" / "index.db"}"\n')
+    with pytest.raises(ConfigError, match="inside"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+
+
+def test_an_index_beside_the_state_folder_is_fine(tmp_path):
+    cfg_file = write(tmp_path, '[state]\npath = "/srv/r/state"\n'
+                               '[index]\npath = "/srv/r/state-index/index.db"\n')
+    assert load_config({"RECORDINGS_CONFIG": str(cfg_file)}).index_path == Path(
+        "/srv/r/state-index/index.db")
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -2092,7 +2122,8 @@ Run: `uv run pytest packages/core/tests/test_init.py packages/core/tests/test_co
 Expected: pytest stops before running anything, with
 `ImportError while loading conftest '…/packages/core/tests/conftest.py'` and
 `E   ModuleNotFoundError: No module named 'recordings.init'`. That error hides the new
-`test_config.py` tests, which would otherwise fail on `Config` having no `writer_id`.
+`test_config.py` tests, which would otherwise fail on `Config` having no `writer_id`, and on
+nothing refusing an index inside the state folder.
 
 - [ ] **Step 7: Write the sentinel, state, `init`, the config changes and the CLI**
 
@@ -2503,9 +2534,22 @@ In `packages/core/src/recordings/config.py`:
            # locks, would be a second writer (spec §3).
            raise ConfigError(f"[{name}] path (or {env}) must be an absolute path, in quotes")
        return path
+
+
+   def _index_apart(index: Path | None, state: Path | None) -> None:
+       """The index never lies inside the state folder (spec §6.8). state.db, its backup copy, voice.db
+       and the Plaud token live there, and their writers don't take the index lock: a typo that points
+       the index there is refused before rebuild opens any of them."""
+       if index is not None and state is not None and index.resolve().is_relative_to(state.resolve()):
+           raise ConfigError(
+               f"[index] path (or RECORDINGS_INDEX) {index} lies inside [state] path {state}, beside "
+               "state.db. Give the index a folder of its own, such as /srv/recordings/index/index.db.")
    ```
 4. **Replace** the `return Config(...)` at the end of `load_config` with:
    ```python
+       state_path = _path(environ, "RECORDINGS_STATE", "state", data)
+       index_path = _path(environ, "RECORDINGS_INDEX", "index", data)
+       _index_apart(index_path, state_path)
        return Config(
            path=path if path.is_file() else None,
            archive_path=Path(archive_path).expanduser() if archive_path else None,
@@ -2514,8 +2558,8 @@ In `packages/core/src/recordings/config.py`:
            base_url=_base_url(server),
            data=data,
            allowed_hosts=_allowed_hosts(server),
-           state_path=_path(environ, "RECORDINGS_STATE", "state", data),
-           index_path=_path(environ, "RECORDINGS_INDEX", "index", data),
+           state_path=state_path,
+           index_path=index_path,
        )
    ```
 
@@ -2621,6 +2665,7 @@ In `config.example.toml`, make two replacements:
 
    [index]                                 # stage 2a: the derived index, rebuilt by `recordings reindex`
    # In Docker it lives on a named volume at /index, and RECORDINGS_INDEX overrides this value.
+   # Never inside [state] path: the config refuses it.
    path = "/srv/recordings/index/index.db"
    ```
 
@@ -2721,7 +2766,8 @@ git commit -m "feat(core): durable writes, the archive sentinel, state.db and re
 
 fsync the file and its folder on every write (stage-1 carry-over). state.db opens with mode=rw,
 refuses a damaged or newer file with the way back, and migrates by number. init --adopt
-recreates a lost state.db from the sentinel. Checked: docs.python.org sqlite3 (URI mode=rw,
+recreates a lost state.db from the sentinel. The config refuses an [index] path inside the
+[state] folder. Checked: docs.python.org sqlite3 (URI mode=rw,
 connection handling, PRAGMA journal_mode) and os.fsync/os.link.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -3390,7 +3436,7 @@ uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --f
 uv run pytest
 ```
 Expected: `written: [...]`, `built 4 recordings into demo/archive`, then every test passes:
-320 passed, 11 deselected (292 after Task 2, plus this task's 28 new tests). Record the count in the ledger. The
+326 passed, 11 deselected (298 after Task 2, plus this task's 28 new tests). Record the count in the ledger. The
 demo's Plaud source entry now has `sha256`. Its `speakers` stay `{}`, and the schemas and docs in
 `demo/archive/` change.
 
@@ -3423,7 +3469,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Produces:
   - **`recordings.refs`:** `canonical_plaud_id(ref: str) -> str` and `canonical_ref(kind: str, ref: str) -> str`.
   - **`recordings.index`:**
-    - `INDEX_VERSION = 1`
+    - `INDEX_VERSION = 1`, and `APPLICATION_ID = 0x52494458` ("RIDX"), which every rebuild writes into the file's header
     - `class IndexRefused(RuntimeError)`
     - `class Index(path: Path)`, with these methods:
 
@@ -3438,8 +3484,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
       | `sha256_of(recording_id: str)` | `str \| None` |
       | `find_by_source(kind: str, ref: str)` | `list[str]` |
 
-    - `rebuild` runs as one `BEGIN IMMEDIATE` transaction on the live file, so a failed rebuild leaves the old index and no temp file. A file SQLite can't read (`SQLITE_NOTADB` or `SQLITE_CORRUPT`) is renamed aside, with its `-wal`, `-shm` and `-journal` siblings under the same suffix, and rebuilt; the readability probe opens it `mode=ro&immutable=1` so SQLite can't touch those siblings. That probe skips locking and can misread a file another process is writing, so the file is quarantined only if it and its `-journal` and `-wal` kept the same inode, size and mtime throughout the probe; otherwise the rebuild goes on to `BEGIN IMMEDIATE`, where a database that isn't an index is refused. A database that isn't an index raises `IndexRefused`, and so does emptying a non-empty index without `allow_empty`.
-    - A missing or unreadable index answers every lookup with nothing.
+    - `rebuild` runs as one `BEGIN IMMEDIATE` transaction on the live file, so a failed rebuild leaves the old index and no temp file. A file SQLite can't read (`SQLITE_NOTADB` or `SQLITE_CORRUPT`) is renamed aside only if its header says it is an index (`APPLICATION_ID` at offset 68); any other is refused with `IndexRefused`, untouched. It is renamed aside with its `-wal`, `-shm` and `-journal` siblings under the same suffix, the siblings first and the file last, and rebuilt; the readability probe opens it `mode=ro&immutable=1` so SQLite can't touch those siblings. That probe skips locking and can misread a file another process is writing, so the file is quarantined only if it and its `-journal` and `-wal` kept the same inode, size and mtime throughout the probe; otherwise the rebuild goes on to `BEGIN IMMEDIATE`, where a database that isn't an index is refused. A database that isn't an index raises `IndexRefused`, and so does emptying a non-empty index without `allow_empty`.
+    - A missing or unreadable index answers every lookup with nothing. `archive_uuid()` answers only for an index: its header carries `APPLICATION_ID` and its meta holds `index_version`. `state.db`'s meta holds the same archive_uuid.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3448,6 +3494,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -3462,6 +3509,10 @@ from recordings.state import State
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 HEX = "0123456789abcdef0123456789abcdef"
+# The first 100 bytes of a file that says it is an index (its application_id at offset 68), with a
+# page size of 0, so SQLite can't read a page of it.
+INDEX_HEADER = (b"SQLite format 3\x00" + bytes(52) + index_module.APPLICATION_ID.to_bytes(4, "big")
+                + bytes(28))
 
 
 def put(root, *, when="2026-10-06T14:00:03-07:00", sha="a" * 64, sources=()) -> Recording:
@@ -3552,7 +3603,7 @@ def test_a_garbage_index_is_rebuilt(new_archive, tmp_path):
     root, _ = new_archive
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
-    index.path.write_bytes(b"SQLite format 3\x00" + b"corrupted data " * 100)
+    index.path.write_bytes(INDEX_HEADER + b"corrupted data " * 100)
     assert (index.count(), index.archive_uuid()) == (0, None)
     assert index.find_by_source("plaud", HEX) == []
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
@@ -3639,7 +3690,7 @@ def test_corrupted_sqlite_file_is_renamed_aside_and_rebuilt(new_archive, tmp_pat
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
-    header = b"SQLite format 3\x00"
+    header = INDEX_HEADER
     index.path.write_bytes(header + b"corrupted data" * 100)
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
     renamed_files = list(tmp_path.glob("index.db.unreadable-*"))
@@ -3657,7 +3708,7 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
     # Create a pre-existing quarantine file with a fixed timestamp
-    header = b"SQLite format 3\x00"
+    header = INDEX_HEADER
     fixed_stamp = "20261009T143512Z"
     pre_existing = tmp_path / f"index.db.unreadable-{fixed_stamp}"
     pre_existing.write_bytes(b"pre-existing data")
@@ -3676,6 +3727,8 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     assert new_file.exists()
     assert b"new corrupted data" in new_file.read_bytes()
     assert index.find_by_sha256(rec.media.sha256) == rec.id
+
+
 def test_corrupted_index_quarantines_every_sibling_untouched(new_archive, tmp_path):
     # why: the -wal, -shm and -journal beside an unreadable index are evidence too. They move with
     # the main file under one suffix, byte for byte; the readability probe must not alter them.
@@ -3683,7 +3736,7 @@ def test_corrupted_index_quarantines_every_sibling_untouched(new_archive, tmp_pa
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
     original = {
-        "": b"SQLite format 3\x00" + b"garbage" * 50,
+        "": INDEX_HEADER + b"garbage" * 50,
         "-wal": b"wal bytes " * 40,
         "-shm": b"shm bytes " * 40,
         "-journal": b"journal bytes " * 40,
@@ -3716,6 +3769,85 @@ def test_empty_index_file_is_replaced_not_renamed(new_archive, tmp_path):
     assert len(quarantined) == 0
     # Index should work normally
     assert index.find_by_sha256(rec.media.sha256) == rec.id
+
+
+def test_a_damaged_database_that_does_not_say_it_is_an_index_is_left_alone(tmp_path):
+    # why: only a file whose header says it is an index is ever renamed aside. A probe that misreads
+    # a live state.db, voice.db or another program's database then can't move it, on any filesystem.
+    index = Index(tmp_path / "index.db")
+    data = b"SQLite format 3\x00" + b"garbage" * 50
+    index.path.write_bytes(data)
+    with pytest.raises(IndexRefused, match="doesn't say it is an index"):
+        index.rebuild(Archive(tmp_path / "nope"), archive_uuid="u-1", allow_empty=True)
+    assert index.path.read_bytes() == data
+    assert list(tmp_path.glob("index.db*.unreadable-*")) == []
+
+
+def test_state_db_is_never_taken_for_this_archives_index(new_archive):
+    # why: state.db's meta holds this archive's archive_uuid too, so a Writer pointed at it would
+    # take it for its index, skip the rebuild and find nothing on every lookup.
+    _, state = new_archive
+    assert Index(state / "state.db").archive_uuid() is None
+
+
+def test_an_index_whose_header_lost_its_mark_is_not_this_archives(new_archive, tmp_path):
+    # why: archive_uuid() answers only for a file whose header says it is an index, so a Writer
+    # rebuilds one that doesn't; the rebuild writes the mark again.
+    root, _ = new_archive
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1", allow_empty=True)
+    assert index.path.read_bytes()[68:72] == b"RIDX" and index.archive_uuid() == "u-1"
+    db = sqlite3.connect(index.path)
+    db.execute("PRAGMA application_id = 0")
+    db.close()
+    assert index.archive_uuid() is None
+    index.rebuild(Archive(root), archive_uuid="u-1", allow_empty=True)
+    assert index.archive_uuid() == "u-1"
+
+
+def test_an_index_written_during_the_probe_is_rebuilt_in_place_not_quarantined(
+        new_archive, tmp_path, monkeypatch):
+    # why: the immutable probe can misread a file that changes under it; the stamp check keeps an
+    # index that is being written from being renamed aside.
+    root, _ = new_archive
+    rec = put(root)
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+
+    def written_meanwhile(self):
+        st = os.stat(self.path)
+        os.utime(self.path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        return False
+
+    monkeypatch.setattr(Index, "_readable", written_meanwhile)
+    assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
+    assert list(tmp_path.glob("index.db*.unreadable-*")) == []
+    assert index.find_by_sha256(rec.media.sha256) == rec.id
+
+
+def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(new_archive, tmp_path,
+                                                                   monkeypatch):
+    # why: the siblings move first and the file last. A -wal or -journal left beside a new, empty
+    # index.db is deleted by SQLite, so a rename that fails part-way must leave the file, not them.
+    root, _ = new_archive
+    put(root)
+    index = Index(tmp_path / "index.db")
+    index.path.write_bytes(INDEX_HEADER + b"garbage" * 50)
+    wal = b"wal bytes " * 40
+    (tmp_path / "index.db-wal").write_bytes(wal)
+    rename = Path.rename
+
+    def failing_rename(self, target):
+        if self.name == "index.db":
+            raise OSError("Simulated I/O error")
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing_rename)
+    with pytest.raises(OSError, match="Simulated I/O error"):
+        index.rebuild(Archive(root), archive_uuid="u-1")
+    assert index.path.read_bytes().startswith(INDEX_HEADER)
+    (moved,) = tmp_path.glob("index.db-wal.unreadable-*")
+    assert moved.read_bytes() == wal
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -3761,7 +3893,8 @@ writer needs at scale: which recording holds these bytes, and which holds this s
 `rebuild` refuses to empty an index that holds recordings (§6.7): an archive that suddenly lists
 none is far more likely unmounted than empty. It rebuilds inside one transaction on the live file,
 so a failed rebuild leaves the old index as it was and nothing beside it, and readers see the old
-index until the new one commits. A file SQLite can't read at all is renamed aside and rebuilt.
+index until the new one commits. An index SQLite can't read at all is renamed aside and rebuilt;
+only a file whose header says it is an index (APPLICATION_ID) is ever moved.
 """
 
 from __future__ import annotations
@@ -3779,9 +3912,14 @@ from recordings.models import Recording
 from recordings.refs import canonical_ref
 
 INDEX_VERSION = 1
+# In the file's header (offset 68), so a file says it is an index before SQLite reads a page of it.
+# Only a file that says so is ever renamed aside.
+APPLICATION_ID = 0x52494458  # "RIDX"
+_MARK = APPLICATION_ID.to_bytes(4, "big")
 _TABLES = ("meta", "recordings", "source_refs")  # dropping a table drops its indexes too
 # One statement each: they run inside rebuild's transaction, which executescript would commit.
 _SCHEMA = (
+    f"PRAGMA application_id = {APPLICATION_ID}",
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE recordings ("
     " id TEXT PRIMARY KEY, folder TEXT NOT NULL, sha256 TEXT NOT NULL, rev INTEGER NOT NULL)",
@@ -3836,7 +3974,12 @@ class Index:
         return int(self._one("SELECT count(*) FROM recordings") or 0)
 
     def archive_uuid(self) -> str | None:
-        return self._one("SELECT value FROM meta WHERE key = 'archive_uuid'")
+        # state.db's meta holds the same archive_uuid: only a file that says it is an index (its
+        # header) and is one (its meta) answers.
+        if self._one("PRAGMA application_id") != APPLICATION_ID:
+            return None
+        return self._one("SELECT value FROM meta WHERE key = 'archive_uuid' AND EXISTS "
+                         "(SELECT 1 FROM meta WHERE key = 'index_version')")
 
     def rebuild(self, archive: Archive, *, archive_uuid: str, allow_empty: bool = False) -> int:
         recordings = list(archive.iter_recordings())
@@ -3844,19 +3987,19 @@ class Index:
         if self.exists():
             self._handle_unreadable_file()
         with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
-            self._check_ours(db)
-            # Check empty inside the lock, before dropping tables. The old code read the count
-            # outside the transaction, where a locked index read as 0. This read on the same
-            # connection is protected by BEGIN IMMEDIATE.
-            held = 0
             try:
-                held = int(db.execute("SELECT count(*) FROM recordings").fetchone()[0])
-            except sqlite3.OperationalError as exc:
-                if "no such table" not in str(exc):
+                db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
+                tables = self._check_ours(db)
+                # Counted inside the lock, on this connection: outside it, a locked index read as 0.
+                held = (db.execute("SELECT count(*) FROM recordings").fetchone()[0]
+                        if "recordings" in tables else 0)
+            except sqlite3.DatabaseError as exc:
+                if exc.sqlite_errorname not in _UNREADABLE:
                     raise
-            except TypeError:
-                pass
+                raise IndexRefused(
+                    f"{self.path} can't be read ({exc.sqlite_errorname}) and doesn't say it is an "
+                    "index, so rebuild leaves it alone. Check [index] path. If it is the index, "
+                    "move it aside and run `recordings reindex`.") from None
             if not recordings and held and not allow_empty:
                 raise IndexRefused(
                     f"{archive.root} lists no recordings but the index holds {held}: refusing to "
@@ -3899,24 +4042,26 @@ class Index:
         return tuple(stamps)
 
     def _handle_unreadable_file(self) -> None:
-        """Check file type and handle corruption. Never deletes."""
+        """Refuse a file that isn't SQLite, and rename aside an index SQLite can't read. Never
+        deletes, and never moves a file whose header doesn't say it is an index."""
         if not self.path.exists():
             return
         size = self.path.stat().st_size
         if size == 0:
             return
-        # Check for SQLite header
         try:
             with self.path.open("rb") as f:
-                header = f.read(16)
-        except OSError:
-            raise IndexRefused(f"{self.path} is not an index (cannot read file). "
-                             "Check [index] path.")
-        if header != b"SQLite format 3\x00":
+                header = f.read(100)
+        except OSError as exc:
+            raise IndexRefused(f"{self.path} can't be read ({type(exc).__name__}): check its "
+                               "owner and mode, and [index] path.") from None
+        if header[:16] != b"SQLite format 3\x00":
             raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
                              "Check [index] path.")
-        # It's a SQLite file; check if it's readable. A file written during the probe proves
-        # nothing, so it goes on to BEGIN IMMEDIATE, where a database that isn't ours is refused.
+        if header[68:72] != _MARK:
+            return  # it doesn't say it is an index: never renamed; BEGIN IMMEDIATE decides
+        # It says it is an index; can SQLite read it? A file written during the probe proves
+        # nothing, so it goes on to BEGIN IMMEDIATE.
         before = self._stamp()
         if not self._readable() and self._stamp() == before:
             # Corrupted SQLite; rename aside with collision-safe timestamp
@@ -3936,14 +4081,18 @@ class Index:
                     break
                 # Increment and try again
                 suffix_num = f"-{int(suffix_num[1:] if suffix_num else 1) + 1}"
-            # Now rename all siblings with the same base suffix
-            for sibling_suffix in ("", "-journal", "-wal", "-shm"):
+            # The siblings first and the file last: a failure part-way leaves the file where it
+            # was, and never a -wal or -journal alone, which SQLite deletes beside a new, empty file.
+            for sibling_suffix in ("-journal", "-wal", "-shm", ""):
                 old_path = Path(f"{self.path}{sibling_suffix}")
-                if old_path.exists():
-                    new_path = old_path.with_name(f"{old_path.name}{base_suffix}")
-                    old_path.rename(new_path)
+                try:
+                    old_path.rename(old_path.with_name(f"{old_path.name}{base_suffix}"))
+                except FileNotFoundError:
+                    if not sibling_suffix:
+                        raise
 
-    def _check_ours(self, db: sqlite3.Connection) -> None:
+    def _check_ours(self, db: sqlite3.Connection) -> set[str]:
+        """The file's tables, once it is known to be empty or an index."""
         tables = {row[0] for row in
                   db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         ours = "meta" in tables and db.execute(
@@ -3952,6 +4101,7 @@ class Index:
             raise IndexRefused(
                 f"{self.path} is a database but not an index, so rebuild won't replace it. "
                 "Check [index] path.")
+        return tables
 
     def upsert(self, rec: Recording) -> None:
         with self._db() as db:
@@ -3984,9 +4134,12 @@ git add packages/core/src/recordings/refs.py packages/core/src/recordings/index.
 git commit -m "feat(core): the derived index.db, with lookups by hash and either Plaud ID form
 
 rebuild refuses to empty a non-empty index (spec §6.7) and runs as one BEGIN IMMEDIATE
-transaction on the live file, so a failed rebuild leaves the old index and no debris. A file
-SQLite can't read is rebuilt; a database that isn't an index is refused. Checked:
-docs.python.org sqlite3 (transaction control, sqlite_errorname).
+transaction on the live file, so a failed rebuild leaves the old index and no debris. Every
+rebuild marks the file with PRAGMA application_id 0x52494458 (RIDX). An index SQLite can't read
+is renamed aside and rebuilt; only a file whose header carries the mark is ever moved, and any
+other database is refused. Checked: docs.python.org sqlite3 (transaction control,
+sqlite_errorname); sqlite.org/fileformat.html (the header's 4-byte big-endian application ID at
+offset 68) and sqlite.org/pragma.html#pragma_application_id.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
