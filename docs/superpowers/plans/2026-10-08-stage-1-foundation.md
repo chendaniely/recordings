@@ -5465,6 +5465,18 @@ demo/.cache
 packages/ui/src/recordings_ui/www/ui.js
 packages/ui/src/recordings_ui/www/ui.css
 .superpowers
+.env
+.env.*
+config.toml
+docker/deploy.env
+secrets
+**/.venv
+.pytest_cache
+.ruff_cache
+test-results
+.playwright-mcp
+.claude
+.agents
 ```
 
 `docker/Dockerfile`:
@@ -5509,10 +5521,11 @@ CMD ["recordings-ui", "--host", "0.0.0.0", "--port", "8000"]
 `docker/compose.demo.yml`:
 ```yaml
 # Demo mode: the bundled public-domain archive, no real data, no secrets. `make docker`.
+name: recordings-demo
 services:
   web:
     build: { context: .., dockerfile: docker/Dockerfile }
-    image: recordings:dev
+    image: recordings:demo
     command: ["recordings-ui", "--demo", "--host", "0.0.0.0", "--port", "8000"]
     ports: ["127.0.0.1:8000:8000"]
 ```
@@ -5524,10 +5537,11 @@ services:
 # machine-specific and no secret lives in this file. The archive is read-only in stage 1.
 # Secrets arrive in stage 2 as Docker secrets (files under /run/secrets, read through
 # the *_FILE variables), so they never show up in `docker inspect`.
+name: recordings
 services:
   web:
     build: { context: .., dockerfile: docker/Dockerfile }
-    image: recordings:dev
+    image: recordings:local
     user: "${RECORDINGS_UID:?}:${RECORDINGS_GID:?}"
     environment:
       RECORDINGS_CONFIG: /config/config.toml
@@ -5605,6 +5619,9 @@ name: ci
 on:
   push:
   pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 
@@ -5695,8 +5712,9 @@ jobs:
 `.github/dependabot.yml`:
 ```yaml
 # Update proposals, a few at a time, on Fridays. Actions stay SHA-pinned: Dependabot moves a
-# SHA pin and its version comment together. shinyreact's Python and npm pins are upgraded
-# together on purpose (CLAUDE.md "Upgrading shinyreact"), so review those two PRs as a pair.
+# SHA pin and its version comment together.
+# shinyreact (Python and npm) is never bumped here: it is upgraded by hand, both pins together
+# (CLAUDE.md "Upgrading shinyreact"), and so are the toolchain majors that must match its examples.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -5709,16 +5727,33 @@ updates:
     schedule: { interval: weekly, day: friday }
     open-pull-requests-limit: 3
     commit-message: { prefix: "build" }
+    ignore:
+      - dependency-name: shinyreact
   - package-ecosystem: npm
     directory: /packages/ui/frontend
     schedule: { interval: weekly, day: friday }
     open-pull-requests-limit: 3
     commit-message: { prefix: "build(ui)" }
+    ignore:
+      - dependency-name: "@posit-dev/shinyreact"
+      - dependency-name: vite
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: vitest
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /docker
     schedule: { interval: weekly, day: friday }
     open-pull-requests-limit: 2
     commit-message: { prefix: "build(docker)" }
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 ```
 
 - [ ] **Step 4: Add Docker to the README**
