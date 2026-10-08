@@ -49,8 +49,10 @@ renditions/<name>-<utc-stamp>.json
 - **A recording is private** when any tag in its `recording.json` has `private` as its first
   folder, in any capitalisation: `private`, `private/journal`, `Private/health` and so on,
   but not `privateer` or `notes/private`. Private recordings are for local models only,
-  meaning those running on the owner's own hardware. No other agent or model reads or
-  receives their transcripts, notes or speakers.
+  meaning models running on the owner's own hardware (where the model runs counts, not
+  where the agent program runs). No other agent or model reads or receives their
+  transcripts, notes or speakers. External agents treat untagged recordings as private too,
+  until the owner tags them.
 - **Stamps** are ISO 8601 basic UTC, for example `20261008T143512Z`. When two outputs would
   get the same name, the later one gets a `-2`, `-3`, … suffix before `.json`, and nothing
   is ever overwritten.
