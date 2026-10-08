@@ -1,7 +1,8 @@
 # Demo mode: the bundled public-domain archive, no real data, no secrets. `make docker`.
+name: recordings-demo
 services:
   web:
     build: { context: .., dockerfile: docker/Dockerfile }
-    image: recordings:dev
+    image: recordings:demo
     command: ["recordings-ui", "--demo", "--host", "0.0.0.0", "--port", "8000"]
     ports: ["127.0.0.1:8000:8000"]

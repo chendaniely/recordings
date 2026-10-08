@@ -3,10 +3,11 @@
 # machine-specific and no secret lives in this file. The archive is read-only in stage 1.
 # Secrets arrive in stage 2 as Docker secrets (files under /run/secrets, read through
 # the *_FILE variables), so they never show up in `docker inspect`.
+name: recordings
 services:
   web:
     build: { context: .., dockerfile: docker/Dockerfile }
-    image: recordings:dev
+    image: recordings:local
     user: "${RECORDINGS_UID:?}:${RECORDINGS_GID:?}"
     environment:
       RECORDINGS_CONFIG: /config/config.toml
