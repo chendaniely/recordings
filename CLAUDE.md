@@ -9,6 +9,8 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
   installs.
 - **`make test`** runs pytest and Vitest. **`make e2e`** runs the Playwright tests against
   demo mode.
+- **`make pages`** builds the static GitHub Pages demo into `_site/` (spec §17.1). Only the demo
+  archive is ever exported.
 
 ## Check the docs, never write from memory
 

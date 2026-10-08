@@ -18,3 +18,7 @@ test-results
 .playwright-mcp
 .claude
 .agents
+# The static Pages demo's build output and Shinylive's assets (make pages)
+_site
+build
+.cache

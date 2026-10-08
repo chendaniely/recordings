@@ -6,6 +6,12 @@ listening, reading and tagging. Design: `docs/superpowers/specs/2026-10-08-recor
 
 Stage 1 (this release) is the read-only Library over a demo archive.
 
+## Live demo
+
+<https://chendaniely.github.io/recordings/> runs the bundled public-domain demo entirely in
+your browser, with Python on WebAssembly (Shinylive). The first load is about 16 MB, and the
+browser caches it. It never touches real data.
+
 ## Try the demo
 
 ```bash
@@ -20,8 +26,19 @@ The demo uses four public-domain recordings (see `demo/CREDITS.md`) and never to
 - `packages/core`: `recordings`, the library and CLI that do the work.
 - `packages/ui`: `recordings-ui`, the FastAPI + shinyreact interface over it.
 - `demo/`: the demo archive and how it is built.
+- `pages/`: the Live demo's entry, which `make pages` exports with Shinylive.
 
 MIT licensed.
+
+## Developing
+
+```bash
+make test         # pytest and Vitest
+make e2e          # Playwright tests against `make demo`
+make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ is exported)
+make pages-serve  # serve _site/ like Pages, at http://127.0.0.1:8008/recordings/
+make pages-test   # Playwright smoke test of _site/, after `make pages`
+```
 
 ## Docker
 
