@@ -1393,7 +1393,7 @@ later" until its build stage (§20):
   | Plaud, Google Recorder and Pocket recordings | one recording each, with a source reference that keeps `audio-router`'s source and ID |
   | rows with no audio | reported by the dry run and not imported. A Plaud one arrives later through the sync. |
   | the `media/private/` tier | imported, tagged `private`. Its files are matched by SHA-256 (a 64-hex ID is the audio's hash), and a Recorder export's `.txt` comes too |
-  | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels move under `private/` (`therapy` → `private/therapy`). A privacy label or a non-empty `access` makes the recording private. |
+  | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels become private tags, one per meaning (`therapy` → `private/therapy`; both spellings of counselling → `private/counselling`; `personal` → `private`). A privacy label or a non-empty `access` makes the recording private. |
   | Plaud rows with audio but no snapshot and no time | deferred to 2b's sync, which matches them by Plaud ID; if Plaud no longer has them, 2b imports them timed by the file's mtime |
   | an ID on the consent list (§9.1) | not imported, and reported only as a count |
   | turns or segments with no time, and speaker names Dan typed | kept: untimed segments as reconcile keeps them, typed names verbatim in `source/` |
