@@ -13,6 +13,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from recordings.archive import Archive
@@ -82,18 +83,23 @@ class Index:
 
     def rebuild(self, archive: Archive, *, archive_uuid: str, allow_empty: bool = False) -> int:
         recordings = list(archive.iter_recordings())
-        held = self.count()
-        if not recordings and held and not allow_empty:
-            raise IndexRefused(
-                f"{archive.root} lists no recordings but the index holds {held}: refusing to "
-                "empty it. Is the archive mounted? Pass --allow-empty if it really is empty.")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.exists() and not self._readable():
-            for suffix in ("", "-journal", "-wal", "-shm"):  # derived (§6.8): start again
-                Path(f"{self.path}{suffix}").unlink(missing_ok=True)
+        if self.exists():
+            self._handle_unreadable_file()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
             self._check_ours(db)
+            # Check empty inside the lock, before dropping tables
+            held = 0
+            try:
+                held = int(db.execute("SELECT count(*) FROM recordings").fetchone()[0])
+            except (sqlite3.OperationalError, TypeError):
+                # recordings table doesn't exist yet, or other error; treat as 0
+                held = 0
+            if not recordings and held and not allow_empty:
+                raise IndexRefused(
+                    f"{archive.root} lists no recordings but the index holds {held}: refusing to "
+                    "empty it. Is the archive mounted? Pass --allow-empty if it really is empty.")
             for table in _TABLES:
                 db.execute(f"DROP TABLE IF EXISTS {table}")
             for statement in _SCHEMA:
@@ -113,6 +119,34 @@ class Index:
             if exc.sqlite_errorname in _UNREADABLE:
                 return False
             raise
+
+    def _handle_unreadable_file(self) -> None:
+        """Check file type and handle corruption. Never deletes."""
+        if not self.path.exists():
+            return
+        size = self.path.stat().st_size
+        # Empty files can be replaced
+        if size == 0:
+            return
+        # Check for SQLite header
+        try:
+            content = self.path.read_bytes()
+            header = content[:16]
+        except OSError:
+            return  # Can't read; let rebuild's _db() handle it
+        if header != b"SQLite format 3\x00":
+            # Not a SQLite file at all
+            raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
+                             "Check [index] path.")
+        # It's a SQLite file; check if it's readable
+        if not self._readable():
+            # Corrupted SQLite; rename aside with timestamp
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            for suffix in ("", "-journal", "-wal", "-shm"):
+                old_path = Path(f"{self.path}{suffix}")
+                if old_path.exists():
+                    new_path = old_path.with_name(f"{old_path.name}.unreadable-{stamp}")
+                    old_path.rename(new_path)
 
     def _check_ours(self, db: sqlite3.Connection) -> None:
         tables = {row[0] for row in

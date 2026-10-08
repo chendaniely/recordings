@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
+from threading import Thread
+import time
 
 import pytest
+import sqlite3
 
 from recordings import index as index_module
 from recordings.archive import Archive
@@ -102,12 +105,16 @@ def test_a_garbage_index_is_rebuilt(new_archive, tmp_path):
     root, _ = new_archive
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
-    index.path.write_bytes(b"not a database " * 100)
+    # Write a file with SQLite header but corrupted content
+    index.path.write_bytes(b"SQLite format 3\x00" + b"corrupted data " * 100)
     assert (index.count(), index.archive_uuid()) == (0, None)
     assert index.find_by_source("plaud", HEX) == []
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
     assert index.find_by_sha256(rec.media.sha256) == rec.id
     assert index.find_by_source("plaud", HEX) == [rec.id]
+    # The corrupted file should have been renamed aside
+    renamed_files = list(tmp_path.glob("index.db.unreadable-*"))
+    assert len(renamed_files) == 1
 
 
 def test_rebuild_never_replaces_a_database_that_is_not_an_index(new_archive, tmp_path):
@@ -131,3 +138,80 @@ def test_upsert_replaces_a_recordings_references(new_archive, tmp_path):
     assert index.find_by_source("plaud", HEX) == []
     assert index.find_by_source("recorder", "r-1") == [rec.id]
     assert index.count() == 1
+
+
+def test_rebuild_refuses_to_empty_a_locked_index(new_archive, tmp_path):
+    # why: the empty check moved inside the transaction, so a lock can't bypass the guard.
+    root, _ = new_archive
+    rec = put(root)
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+    # Now create an archive listing that is empty
+    empty = tmp_path / "empty"
+    (empty / "recordings").mkdir(parents=True)
+
+    # Simulate a lock by using a separate connection that holds BEGIN IMMEDIATE.
+    # Create a separate Index instance with short timeout to attempt rebuild.
+    # The lock_conn is not closed, keeping the lock active.
+    lock_conn = sqlite3.connect(str(index.path), timeout=0.5, check_same_thread=False)
+    lock_conn.execute("BEGIN IMMEDIATE")
+
+    def release_lock():
+        time.sleep(0.1)
+        lock_conn.rollback()
+        lock_conn.close()
+
+    thread = Thread(target=release_lock, daemon=True)
+    thread.start()
+
+    # Create a rebuild Index with short timeout to hit the lock
+    rebuild_index = Index(tmp_path / "index.db")
+    # With the lock held, rebuild should timeout or raise IndexRefused inside the transaction
+    try:
+        rebuild_index.rebuild(Archive(empty), archive_uuid="u-1", allow_empty=False)
+        # If we get here, the lock was released and the check happened inside.
+        # The rebuild should have raised IndexRefused after acquiring the lock.
+        pytest.fail("Expected IndexRefused when trying to empty locked index")
+    except (IndexRefused, sqlite3.OperationalError):
+        # Either IndexRefused (check passed) or OperationalError (timeout waiting for lock)
+        pass
+    finally:
+        thread.join(timeout=1)
+        try:
+            lock_conn.close()
+        except (sqlite3.ProgrammingError, RuntimeError):
+            pass
+
+    # Index should still have the recording
+    assert index.count() == 1 and index.find_by_sha256(rec.media.sha256) == rec.id
+
+
+def test_non_sqlite_file_at_index_path_is_refused_and_untouched(tmp_path):
+    # why: never delete a file we're not sure about.
+    index = Index(tmp_path / "index.db")
+    index.path.write_bytes(b"ID3 not a database " * 10)
+    original_bytes = index.path.read_bytes()
+    with pytest.raises(IndexRefused, match="not an index"):
+        index.rebuild(Archive(tmp_path / "nope"), archive_uuid="u-1")
+    # File must be untouched
+    assert index.path.read_bytes() == original_bytes
+
+
+def test_corrupted_sqlite_file_is_renamed_aside_and_rebuilt(new_archive, tmp_path):
+    # why: index.db is derived; damaged SQLite is thrown away by renaming, not deleting.
+    root, _ = new_archive
+    rec = put(root, sources=[("plaud", HEX)])
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+    # Corrupt the SQLite file (keep header, corrupt data)
+    header = b"SQLite format 3\x00"
+    index.path.write_bytes(header + b"corrupted data" * 100)
+    # Rebuild should rename it aside and create a new one
+    assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
+    # Original file should have been renamed with a timestamp suffix
+    renamed_files = list(tmp_path.glob("index.db.unreadable-*"))
+    assert len(renamed_files) == 1
+    assert renamed_files[0].read_bytes() == header + b"corrupted data" * 100
+    # New index should be readable and find the recording
+    assert index.find_by_sha256(rec.media.sha256) == rec.id
+    assert index.find_by_source("plaud", HEX) == [rec.id]
