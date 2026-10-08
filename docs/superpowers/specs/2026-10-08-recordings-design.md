@@ -357,8 +357,8 @@ Pixeltable can all load them directly.
 
 - **`recordings.csv`:** id, recorded_at, duration, source kinds, title, has_transcript,
   note counts, stale counts, `private` (calculated, §7.4). Private recordings are listed
-  like any other. The `private` column tells readers to keep their content away from cloud
-  models.
+  like any other. The `private` column tells readers to keep their content away from any
+  model or agent that isn't local (§7.4).
 - **`recording_tags.csv`:** one row per recording and tag, with who applied it.
 - **`notes.csv`:** one row per notes output: recording, note type, model, path, stale.
 - **`people.csv`** and **`recording_speakers.csv`** (§7.6) hold the resolved speakers:
@@ -408,14 +408,14 @@ school/course-101:
 - **Speaker rules for sensitive contexts** (§7.6). Like privacy, the strictest rule wins:
   - `voice: off`: these recordings are never fingerprinted or auto-matched, and any voice
     data they have is deleted.
-  - `cloud_names: false`: cloud models see "Speaker 2" instead of names.
+  - `external_names: false`: external models (§7.4) see "Speaker 2" instead of names.
 
   Dan sets both on course and client tags (2026-10-08):
 
   ```yaml
   school/course-101:
     voice: off
-    cloud_names: false
+    external_names: false
   ```
 
 ### 7.3 Note types
@@ -457,27 +457,37 @@ school/course-101:
   - **`recording.json` is the single source of truth.** Privacy needs no other file, no
     marker files and no lists to keep up to date (Dan, 2026-10-08).
   - **The UI's Private section is the `private/` folder.**
-- **Private recordings only ever use Spark backends:**
-  - Claude is skipped even if another tag's rules name a Claude model, and the Details tab
-    says "Claude skipped: private".
-  - The "Generate with Claude" button shows a lock and "Private: Spark only".
+- **Local and external, decided by an allow-list:**
+  - **Local** means the model or agent runs on Dan's own hardware (the DGX Spark or the
+    homelab server) and sends nothing off it.
+  - **Everything else is external:** Claude, other hosted APIs (OpenAI, Gemini and the
+    like), and any third-party agent. That holds whoever builds it and however trusted it
+    is.
+  - **A backend is local only if config marks it `local = true`** (§8.4). Anything unmarked
+    is external, so a newly added backend is blocked until Dan says otherwise.
+- **Private recordings only ever use local backends:**
+  - Every external backend is skipped, even if another tag's rules name one, and the Details
+    tab says "External models skipped: private".
+  - "Generate with Claude", and any other external action, shows a lock and "Private: local
+    models only".
 - **Privacy is checked again when each job runs**, not only when it is queued. Adding a
-  private tag drops any waiting Claude job.
-- **It can't be recalled.** Adding a private tag cannot undo what Claude already processed.
-  The Details tab shows which outputs came from Claude.
+  private tag drops any waiting external job.
+- **It can't be recalled.** Adding a private tag cannot undo what an external model already
+  processed. The Details tab shows which outputs came from external models.
 - **Automatic private tags:**
   - Plaud recordings matching the title patterns in config are tagged `private`.
   - Recordings `audio-router` held come in tagged `private`.
-- **Cloud models, including Claude Code sessions,** follow the same rule. `AGENTS.md` states
-  it once: "If a recording's `recording.json` has a `private` or `private/…` tag, a cloud
-  model never opens its `renditions/` or `source/`, never reads its `speakers`, and never
-  reads `people.private.yaml`. Local models and agents may; that is what the private tier is
-  for."
+- **Agents follow the same allow-list.** That covers Claude Code sessions, and any other
+  agent or model not running on Dan's hardware. `AGENTS.md` states it once: "If a
+  recording's `recording.json` has a `private` or `private/…` tag, an agent or model that
+  isn't local never opens its `renditions/` or `source/`, never reads its `speakers`, and
+  never reads `people.private.yaml`. Only agents driven by models on Dan's DGX Spark or
+  homelab server may; that is what the private tier is for."
   - `AGENTS.md` never lists private recordings, because the metadata file is the only
     source.
   - There is no hook change.
-  - Otherwise, Dan permits Claude to read the recording folders and the catalog. Catalog
-    rows for private recordings carry `private`, and cloud models skip their content.
+  - Otherwise, external agents may read the recording folders and the catalog. Catalog rows
+    for private recordings carry `private`, and external agents skip their content.
 
 ### 7.5 The tag gate
 
@@ -539,7 +549,7 @@ people:
 
 - **`people.private.yaml`** has the same shape. It holds people who appear only in private
   recordings, and a person created from a private recording goes there by default. Local
-  tools read it; cloud models never do (§7.4).
+  tools read it; external agents and models never do (§7.4).
 - **Slugs:**
   - **Shape:** they match `^[a-z0-9]+(-[a-z0-9]+)*$`, ASCII-folded.
   - **Stable:** they never change when the display name does. Renaming a slug is a merge.
@@ -694,12 +704,12 @@ people:
 **Sensitive contexts (tag rules, §7.2):**
 - **`voice: off`:** these recordings are never fingerprinted or auto-matched, and their voice
   data is deleted.
-- **`cloud_names: false`:** cloud models see "Speaker 2" instead of names.
+- **`external_names: false`:** external models see "Speaker 2" instead of names.
 - **The strictest rule wins,** as with privacy. Dan sets these on course and client tags.
   Naming people by hand still works there.
 
-**Names in Claude prompts:** confirmed names only (yours or Plaud's), never inferred ones,
-and none at all on recordings where `cloud_names` is false.
+**Names in prompts to external models:** confirmed names only (yours or Plaud's), never inferred ones,
+and none at all on recordings where `external_names` is false.
 
 **Bulk edits (Claude):**
 - **Edit the files directly,** on the homelab server. The Mac's mirror is read-only.
@@ -736,13 +746,15 @@ and none at all on recordings where `cloud_names` is false.
 
 **Privacy:**
 - **Speakers are metadata,** like tags.
-- **What cloud models may not do:** open a private recording's `renditions/` or `source/`,
+- **What external agents and models may not do:** open a private recording's `renditions/` or `source/`,
   read its speakers, or read `people.private.yaml`.
-- **Local agents and models** (the Spark, local tools) may do all of those. That is what the
-  private tier is for.
-- **Enforcement:** the catalog has a `private` column. The app's own Claude backend (§8.4)
-  enforces the rule in code. Outside agents are told by `AGENTS.md`, backed by Dan's tool
-  hooks.
+- **Local agents and models** (on the Spark or the homelab server) may do all of those. That
+  is what the private tier is for.
+- **Enforcement:**
+  - The catalog has a `private` column.
+  - The app's backend layer enforces the rule in code for every backend not marked
+    `local = true` (§8.4).
+  - Outside agents are told by `AGENTS.md`, backed by Dan's tool hooks.
 - **Test fixtures are synthetic,** never from the real archive. A local pre-commit hook
   checks staged files against the names in the people files.
 
@@ -768,8 +780,8 @@ Each step is a queued job. Each job writes one output.
   "Regenerate all for this tag" (bulk) run them again.
 - **A vocabulary change** does not re-transcribe automatically. There is a "Re-transcribe"
   button.
-- **"Reprocess archive"** is a bulk job for tagged recordings. It runs only on the Spark,
-  never Claude.
+- **"Reprocess archive"** is a bulk job for tagged recordings. It runs only on local backends,
+  never on external ones (§7.4).
 - **Jobs can safely run twice.** A job's identity is its step, recording ID and input
   versions, and a job whose output already exists is skipped. After a crash, unfinished
   jobs go back on the queue.
@@ -789,6 +801,12 @@ later.
 
 ### 8.4 Backends
 
+- **Local or external** (added 2026-10-08):
+  - Each backend entry in config says `local = true` only if it runs on Dan's hardware and
+    sends nothing off it: the Spark, or a model on the homelab server.
+  - Anything without that flag is external: Claude today, and any hosted API added later.
+  - The privacy rule (§7.4) and the `external_names` rule (§7.2) check this flag, never a
+    backend's name. A new backend is therefore external until it's explicitly marked.
 - **Claude** reuses `class_notes.py`'s `run_claude` as is:
   - **The command:**
     `claude -p --system-prompt <plain text-transformer prompt> --model <m> --tools ""
@@ -1027,7 +1045,7 @@ later" until its build stage (§20):
 
   It returns private recordings like any other, with `private: true` in every response. The
   caller is responsible for honouring it, as `AGENTS.md` says. The app itself never sends a
-  private recording to Claude (§7.4).
+  private recording to an external backend (§7.4).
 - **CLI:** `recordings …` with `--json`. Agents use this first.
 - **Links:** every recording has a stable link, `<base>/r/<id>`.
 
@@ -1147,8 +1165,8 @@ later" until its build stage (§20):
   - **An orange badge in the top bar**, visible on every page, shows "N waiting · M jobs".
     Clicking it opens this panel.
   - **Each batch is a card** showing what changed, when it was detected, and chips for the
-    jobs it would start. Claude jobs are blue so they stand out. Private recordings show
-    "🔒 Claude skipped: private" and never list Claude jobs.
+    jobs it would start. Jobs for external models are blue so they stand out. Private recordings show
+    "🔒 External models skipped: private" and never list such jobs.
   - **Selecting:** tick whole batches, or **All**. Expand a batch to untick single
     recordings.
   - **A sticky action bar** shows "N batches · M jobs, K with Claude", with three buttons:
@@ -1617,7 +1635,7 @@ Each stage leaves a working, demonstrable app.
      - the People page, with the Plaud names to link
      - the People and date filters, and people in search (§12.6a)
      - the `people` and `speakers` CLI, including the patch format, `report` and `forget`
-     - the `voice: off` and `cloud_names: false` tag rules
+     - the `voice: off` and `external_names: false` tag rules
    - the **Insights** page (§12.6b), with the demo's sample year
    - cross-site protection on every route that writes (§15)
 4. **Processing:**
@@ -1688,7 +1706,7 @@ reliability.
    - **A person can opt out:** *Recognise this voice* (`recognise: false`) means no voice
      data is kept for them.
    - **A tag can opt out:** tags marked `voice: off` (courses, clients) are never
-     fingerprinted. `cloud_names: false` keeps names out of cloud prompts there.
+     fingerprinted. `external_names: false` keeps names out of prompts to external models there.
 
    The tool doesn't decide what FIPPA or PIPA require; it makes the cautious setting one tag
    rule.
@@ -1711,9 +1729,13 @@ reliability.
    - It is the reference for the comparison (DER, JER, identity).
    - The final full re-sync is YouTrack DAN-15, due 2027-08-15.
    - A hand-labelled gold set of about 20 clips scores both systems against the truth.
-8. **Private recordings:** speakers are metadata. Local agents and models may read them;
-   cloud models (Claude) never open a private recording's renditions, source or speakers,
-   or `people.private.yaml`.
+8. **Private recordings use an allow-list.** Only agents and models running on Dan's own
+   hardware (the DGX Spark or the homelab server) may read a private recording's renditions,
+   source or speakers, or `people.private.yaml`.
+   - Every other agent or model is blocked, whoever makes it: Claude, other hosted APIs,
+     third-party agents.
+   - A backend counts as local only when config marks it `local = true`.
+   - Speakers are metadata.
 9. **Forgetting a person scrubs everything** they appear in. That includes rewriting the
    Plaud snapshots and outputs that hold their name, as a logged exception to write-once.
    What remains in backups, the mirror and Plaud's cloud is reported.

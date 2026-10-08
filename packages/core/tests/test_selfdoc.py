@@ -51,13 +51,21 @@ def test_agents_md_states_the_privacy_rule():
     assert "`private` or `private/…` tag" in text
 
 
-def test_the_docs_say_privacy_ignores_capitalisation_and_means_spark_only():
+def test_the_docs_say_privacy_ignores_capitalisation_and_means_local_models_only():
+    # why: privacy is an allow-list. Only models on the owner's own hardware may read a
+    # private recording; every other agent or model, Claude included, is blocked.
     from importlib import resources
+    def read(doc):  # whitespace-insensitive: the docs are wrapped at 92 columns
+        return " ".join((resources.files("recordings") / "format" / doc).read_text(encoding="utf-8").split())
     for doc in ("AGENTS.md", "FORMAT.md"):
-        text = (resources.files("recordings") / "format" / doc).read_text(encoding="utf-8")
+        text = read(doc)
         assert "in any capitalisation" in text, doc
         assert "`Private/health`" in text, doc
-        assert "Spark-only" in text, doc
+        assert "local models only" in text, doc
+        assert "own hardware" in text, doc
+    agents = read("AGENTS.md")
+    assert "any other agent or model" in agents
+    assert "treat yourself as external" in agents
 
 
 def test_every_file_the_writer_produces_is_documented(tmp_path):

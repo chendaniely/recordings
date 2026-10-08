@@ -48,8 +48,9 @@ renditions/<name>-<utc-stamp>.json
   doesn't know.
 - **A recording is private** when any tag in its `recording.json` has `private` as its first
   folder, in any capitalisation: `private`, `private/journal`, `Private/health` and so on,
-  but not `privateer` or `notes/private`. Treat every private recording as Spark-only, and
-  never send its transcript or notes to a cloud model, agents included.
+  but not `privateer` or `notes/private`. Private recordings are for local models only,
+  meaning those running on the owner's own hardware. No other agent or model reads or
+  receives their transcripts, notes or speakers.
 - **Stamps** are ISO 8601 basic UTC, for example `20261008T143512Z`. When two outputs would
   get the same name, the later one gets a `-2`, `-3`, … suffix before `.json`, and nothing
   is ever overwritten.
