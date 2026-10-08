@@ -777,9 +777,10 @@ through 1a, then:
    rc run --rm web recordings reindex
    ```
 
-6. **`state.db` lost, and its backup copy unusable.** Move the damaged `state/` aside, then
-   recreate `state.db` from the archive's sentinel. Each file's merge base is adopted on its next
-   write.
+6. **`state.db` lost, and its backup copy unusable.** Move the whole damaged `state/` aside,
+   never `state.db` alone (its `-wal` file holds the latest commits). In 2a the folder holds only
+   `state.db*`, `locks/` and `backup/`. Then recreate `state.db` from the archive's sentinel. Each
+   file's merge base is adopted on its next write.
    ```bash
    rc down
    mv "$RECORDINGS_HOME/state" "$RECORDINGS_HOME/state.lost-$(date +%Y%m%d)"
