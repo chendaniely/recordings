@@ -4248,11 +4248,11 @@ def test_lock_acquisition_follows_lock_order_regardless_of_argument_order(tmp_pa
         return original_acquire(key)
 
     monkeypatch.setattr(locks, "_acquire", spy_acquire)
-    
-    keys = (B, "index", A, "tags.yaml", "people.yaml")
+
+    keys = (B, "index", "sha-" + "f" * 64, A, "tags.yaml", "people.private.yaml", "people.yaml")
     with locks.hold(*keys):
         pass
-    
+
     assert acquired == sorted(keys, key=lock_order)
 
 
