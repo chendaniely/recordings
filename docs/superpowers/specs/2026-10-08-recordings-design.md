@@ -980,6 +980,26 @@ come from that frame.
 - **Purpose:** a bug report reads "from `make demo`, do X". It also doubles as the format's
   worked example and the test data.
 
+### 17.1 The static demo on GitHub Pages (added 2026-10-08)
+
+- **Where:** the same demo runs entirely in the browser at
+  <https://chendaniely.github.io/recordings/>. It is built with Shinylive (Shiny for Python on
+  Pyodide) and deployed by `.github/workflows/pages.yml` on every push to `main`. There is no
+  `gh-pages` branch; the workflow uploads the site directly.
+- **Demo only:** the Pages entry module runs demo mode and nothing else. It never reads
+  `config.toml` or `RECORDINGS_ARCHIVE`, and the build exports only `demo/archive/`.
+  Everything in the site is public, including the source and the archive.
+- **No FastAPI in the browser:** Shinylive bundles Starlette 0.38, which can't run the FastAPI
+  layer and can't answer Range requests. So Pages serves the media itself, as static files at
+  `media/<id>.<ext>`, and the app links to them through a configurable media base URL. The
+  server keeps `/media/{id}`.
+- **Older runtime:** the browser runs Python 3.12, with Pyodide's pydantic 2.10 and
+  markdown-it-py 3.0. The Pages smoke test in CI guards against code that only works on the
+  server's newer versions.
+- **Cost:** the first visit downloads about 16 MB, which is cached afterwards. The server demo
+  (`make demo`, Docker) stays the reference for bug reports. AI-generated demo outputs (a tiny
+  model on the runner, or the Copilot CLI) are a possible later addition.
+
 ## 18. Pixeltable
 
 - **Not inside the app.** The archive and catalog are designed so Pixeltable can read them

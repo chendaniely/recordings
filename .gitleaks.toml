@@ -1,0 +1,13 @@
+# gitleaks settings: the default rules, minus Shinylive's own minified JavaScript in git-ignored
+# build output (`make pages`). Those files are third-party and never committed, and their
+# identifiers trip the generic-key rule. The exported app bundle (_site/app.json) and the
+# demo media (_site/media/) are still scanned, so a wrongly exported archive would show up.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Shinylive's vendored assets in build output"
+paths = [
+  '''^_site/shinylive/''',
+  '''^\.cache/shinylive/''',
+]

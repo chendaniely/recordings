@@ -45,6 +45,19 @@ exactly. To upgrade:
    `shinyreact.js` bundles (`grep -o '"19\.[0-9.]*"' …/shinyreact/www/shinyreact.js`).
 6. `make test e2e`.
 
+## Upgrading Shinylive (the Pages demo)
+
+`shinylive` is pinned exactly in the `pages` dependency group. Its version fixes the Pyodide,
+Python, shiny and pydantic that run in visitors' browsers. A Dependabot bump fails the Pages
+smoke test on purpose until someone does the steps below:
+
+1. Read the release notes, and check which shiny it bundles. That shiny must still satisfy
+   shinyreact.
+2. Check that `shinylive/_assets.py` still has `shinylive_cache_dir()`, which
+   `scripts/shinylive_local.py` overrides to keep its assets in the repo's `.cache/`. Then
+   update `PINNED` there.
+3. Run `make pages pages-test`, and also `make pages-serve` to check it by hand.
+
 ## Archive rules (spec §6)
 
 - **Write once:** media, `source/` and `renditions/` are never overwritten. Only
