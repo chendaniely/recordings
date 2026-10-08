@@ -41,6 +41,11 @@ renditions/<name>-<utc-stamp>.json
 
 - **Only three files are edited:** `recording.json`, `my-notes.md` and `tags.yaml`. Each
   save writes a temporary file and renames it into place.
+- **Work in progress:** writers assemble a new recording in `.tmp/` at the archive root and
+  write temporary files named `.*.tmp`; readers and mirrors should ignore both.
+- **Versions:** every `recording.json` names its format in `format`
+  (`recordings-archive@1`, major version 1). A reader must refuse a major version it
+  doesn't know.
 - **A recording is private** when any tag in its `recording.json` has `private` as its first
   folder, in any capitalisation: `private`, `private/journal`, `Private/health` and so on,
   but not `privateer` or `notes/private`. Treat every private recording as Spark-only, and

@@ -27,17 +27,36 @@ MIT licensed.
 
 ```bash
 make docker                                         # demo mode, http://127.0.0.1:8000
-cp config.example.toml config.toml                  # app settings (git-ignored)
-cp docker/deploy.example.env docker/deploy.env      # host paths, bind IP, UID/GID (git-ignored)
-make deploy
-uv run recordings doctor                            # what's set; secrets shown as set/unset only
 ```
 
+To deploy for real, on the host:
+
+```bash
+cp config.example.toml config.toml                  # app settings (git-ignored)
+cp docker/deploy.example.env docker/deploy.env      # host paths, bind IP, UID/GID (git-ignored)
+# Before the first deploy, create the archive folder (RECORDINGS_ARCHIVE_HOST) owned by
+# RECORDINGS_UID:RECORDINGS_GID. Otherwise Docker creates it, owned by root.
+sudo mkdir -p /srv/recordings/archive && sudo chown <uid>:<gid> /srv/recordings/archive
+make deploy
+# Check the deployment from inside the container; secrets show as set or unset, never values.
+docker compose --env-file docker/deploy.env -f docker/compose.yml exec web recordings doctor
+```
+
+- **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
+  as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
+  always allowed; the app refuses any other name.
+- **The library starts empty.** A stage-1 deployment shows an empty library until stage 2
+  imports recordings.
+
 ## Configuration and secrets
+
+`config.toml` is read from the current directory, unless `RECORDINGS_CONFIG` names another
+file. Docker sets it to `/config/config.toml`.
 
 | Setting | Where | Needed from |
 |---|---|---|
 | Archive folder, schedules, Spark address, model names | `config.toml` (template: `config.example.toml`) | stage 1 |
+| The names the app answers to | `[server] allowed_hosts` in `config.toml`, plus `RECORDINGS_ALLOWED_HOSTS` (comma-separated) | stage 1 |
 | Host archive path, config path, bind IP and port, UID/GID | `docker/deploy.env` (template: `docker/deploy.example.env`) | stage 1 |
 | `RECORDINGS_PLAUD_TOKEN` | environment, or `RECORDINGS_PLAUD_TOKEN_FILE` (a Docker secret) | stage 2 |
 | `RECORDINGS_SPARK_API_KEY` | environment, or `…_FILE` | stage 4 |
