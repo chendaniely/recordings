@@ -46,7 +46,8 @@ exactly. To upgrade:
 
 - **Write once:** media, `source/` and `renditions/` are never overwritten. Only
   `recording.json`, `my-notes.md` and `tags.yaml` change, by atomic replace.
-- **Privacy:** a recording is private if a tag is `private` or under `private/`. Don't read
-  a private recording's transcript or notes.
+- **Privacy:** a recording is private if a tag is `private` or under `private/`, in any
+  capitalisation (`recordings.models.is_private_tag`). Don't read a private recording's
+  transcript or notes.
 - **The archive's own docs** come from `packages/core/src/recordings/format/`. Edit them
   there.

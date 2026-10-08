@@ -417,7 +417,9 @@ school/course-101:
 
 - **Everything comes in.** There is no import refusal and no held status.
 - **The rule:** a recording is **private** if its `recording.json` has the tag `private`
-  or any tag under `private/` (for example `private/journal` or `private/personal`).
+  or any tag under `private/` (for example `private/journal` or `private/personal`), in any
+  capitalisation: `Private` and `PRIVATE/journal` count too. The rule errs towards private.
+  One function decides it (`recordings.models.is_private_tag`).
   - **`recording.json` is the single source of truth.** Privacy needs no other file, no
     marker files and no lists to keep up to date (Dan, 2026-10-08).
   - **The UI's Private section is the `private/` folder.**
@@ -879,6 +881,12 @@ come from that frame.
 
 - **Access:** reachable only over Tailscale, published on a port. There is no app login in
   version 1.
+- **Your own browser is not a trust boundary.** Any website Dan visits runs in a browser that
+  can reach the tailnet. So the app answers only to the host names it knows: localhost, the
+  host in `[server] base_url`, `[server] allowed_hosts`, and `RECORDINGS_ALLOWED_HOSTS`.
+  Other Host headers get 400, which defeats DNS rebinding. A websocket whose `Origin` isn't
+  one of those names is closed before Shiny accepts it. (Added 2026-10-08, after the stage-1
+  final review showed a foreign page could read a private recording through the websocket.)
 - **Before the app goes beyond Tailscale:** when the reverse proxy arrives, the proxy
   handles login and the app only accepts requests from the proxy. This is a requirement.
 - **Containers:** both run as non-root users. Secrets follow §5.

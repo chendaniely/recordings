@@ -5819,3 +5819,76 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     `[archive]` path.
 
   Those arrive in stages 2–4, each with its own plan.
+
+---
+
+## As built (2026-10-08)
+
+Review fix rounds changed some code after a task's text was written. Tasks 7, 12 (colour only)
+and 13–15 were re-synced, so their text above matches the code. In the rows marked "not
+synced", the committed code is authoritative and the task text above is the earlier version.
+
+| Task | Where the code differs from the text above | Commits |
+|---|---|---|
+| 1 | The dev pin reads `httpx2==2.13.1` (synced). The `make skills` target is the non-interactive one from Task 12 Step 5, not Task 1's. | — |
+| 4 | **Not synced.** Write-once holds even against a name race: files are published with an exclusive `os.link`. A failed new-recording assembly removes its `.tmp/` folder. | 478a111..9e89435 |
+| 5 | **Not synced.** Adds a test for exact file names, a negative layout test, and the FORMAT.md sentence on the `-N` suffix for a name collision. | 4cf6ee4..3052076 |
+| 7 | `convert_oneoff` drops segments that start at or after `duration_ms` (synced in 10c854f). | 2e08493..381304e |
+| 9 | **Not synced.** A missing, non-file, unreadable or empty `NAME_FILE` raises `ConfigError` without the value. The `--json` CLI test asserts the secret sentinel never reaches stdout or stderr, and the chmod tests skip when run as root. | 1589d8e..0359a3c |
+| 10 | **Not synced.** `Archive.renditions(rid, problems=None)` skips an unreadable rendition and records it. `recording_view` returns `problems`. A test pins that a corrupt `recording.json` gives `None`. | 8dd0597..2f08573 |
+| 11 | **Not synced.** `/media/{id}` returns 404 when `media.file` resolves outside the recording folder or isn't a file. The `client` fixture resets the runtime, and two tests cover the 404s. | 71bc23b, 1c50f0b |
+| 12 | **Partly synced** (the colour is). `lib/theme.ts` exports `browserStorage()`, and `ui.tsx` applies the saved theme before first render. `test_note_type_chips_meet_wcag_aa_in_both_modes`. The light success text is `#3D6123`. | 1a36c45, 25905db |
+| 13 | Synced: `RecordingDetail` keyed by recording id, the sidebar lock class, and `formatClock` NaN. | 6bd14b1, bd1cef6 |
+| 14 | Synced: `lib/notes.ts` (`flattenNotes`, `noteSelection`) and its tests. | c82ba05, c4b9c07 |
+| 15 | Synced: the server fixture fails fast with the log tail and always stops the server, and the seek check waits. | 974117a, 2b34960 |
+| 16 | Synced. The Dockerfile builds the venv in a stage with `build-essential`, because libsass has no arm64 wheel. CI builds Docker per architecture on native runners. The demo and real Compose projects are separate (`recordings-demo` / `recordings`). Dependabot ignores the toolchain majors. The final review re-allowed shinyreact PRs (see below). | ff1008d, ca8e622 |
+| Final review | **Not in any task above.** These were fixed after the final whole-branch review: (1) **HostGuard** (`recordings_ui/hosts.py`): unknown Host gives 400, and a websocket from a foreign Origin is closed. Hosts come from `[server] allowed_hosts`, `base_url` and `RECORDINGS_ALLOWED_HOSTS`. (2) A `recording.json` whose id doesn't match its folder is reported and skipped. (3) `is_private_tag` ignores capitalisation and is defined once. (4) The media route serves audio and video only, with `nosniff`, and never returns 500. Markdown images are disabled. (5) `ID_RE` uses `[0-9]`, `Recording.id` has a schema pattern, a jsonschema test covers the demo, `validate` is stricter, and `write_text_atomic` cleans up after itself. (6) Archive-doc and README precision. (7) `.env` ignores, `**/` patterns in `.dockerignore`, Dependabot opens shinyreact PRs again (spec §13) as the upgrade signal, and the `.si.on` contrast is pinned. | 40156c1..f26c4d8 |
+
+### Carried to later stages
+
+The final review's triage. Each item belongs to a named stage:
+
+- **Stage 2, which brings the first real writes and the first homelab server deploy:**
+  - `fsync` the file and its parent directory on every write.
+  - Decide how a duplicate merge treats Plaud's renditions. A Plaud sync of a recording that audio-router already imported must not drop Plaud's transcript or notes.
+  - Writers get their own `Archive` instance, never the UI's.
+  - Compose bind mounts use `create_host_path: false`, so a missing config file isn't silently created as a directory.
+  - `doctor` reports the secrets even when the config fails, and probes hard-link support on the archive volume.
+  - `validate` checks that the media file exists, and handles a broken `recording.json`'s renditions.
+  - The demo guard test from spec §17 (no network, no secrets).
+  - Write the archive docs at startup (§6.7).
+  - `ruff check` in CI, plus a Docker `/healthz` smoke test in CI.
+  - Run the real Compose once as UID 1000 against a temporary archive.
+  - Harden Compose with `read_only`, `cap_drop` and `no-new-privileges`, after auditing which paths are writable.
+  - Clean up the demo temp folders.
+  - A `RawSource.added_at` must be an aware datetime.
+  - `allowed_hosts` entries with a port or scheme are rejected or normalised. Today they pass validation but never match, so you get a bare 400. Also: `create_app` now returns the `HostGuard` wrapper, not the FastAPI app.
+  - `base_url` is type-checked in config.
+  - UX: the page title "Recordings" (shinyreact's `ReactApp` takes no title), a favicon, the phone layout, an error state for the pane, and Details dates.
+  - Measure re-renders with a real hour-long transcript.
+- **Stage 3, which brings tag and note writing and the index:**
+  - A lock or changed-since-read check (§6.4).
+  - `find_by_sha256` moves into the index.
+  - `Problem` messages carry the file and line (§11).
+  - Validation of hand-edited `schema_ref`.
+  - Where `tags.yaml` lives.
+  - The library's tag counts.
+  - Tests for the view helpers.
+  - The filter and the selection can disagree; fix that.
+  - Accessibility: `aria-pressed` and `aria-current`, and no `div` inside a `button`.
+  - `ID_RE`-style error messages.
+- **Stage 4:**
+  - The open rendition-payload schema.
+  - The `claude` CLI in the image.
+  - The compared output's model name shown at the top.
+- **Stage 5:**
+  - Media extension allow-list at ingest.
+  - Hash the copied file, not the source, for watched folders.
+- **Spec items stage 1 didn't build** (now listed so none are lost):
+  - Layout B's "⟲ N older" and the prompt version in the footer (§12.1), stage 4.
+  - The header's time with its offset, stage 2.
+  - The §17 demo guard test and writing the archive docs at startup, both stage 2.
+
+### Follow-ups decided outside the plan
+- **A static demo on GitHub Pages via Shinylive.** A spike on 2026-10-08 showed it works with changes: media served by Pages, a demo-only entry module, relative font URLs, `pydantic` in `requirements.txt`, `make pages` and a CI Pages job. It is not built; a later plan needs Dan's go-ahead, since it publishes.
+- **GitHub Models was retired on 2026-07-30,** so build-time demo outputs would come from a small open model run on the Actions runner (whisper.cpp plus llama.cpp), not from a hosted API.
