@@ -16,6 +16,7 @@ a secret: everything in the site is public, the source and the archive included.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import shutil
@@ -117,6 +118,9 @@ def export(app: Path) -> None:
 def main() -> None:
     check_inputs()
     media = demo_media()
+    if importlib.util.find_spec("shinylive") is None:  # before anything is deleted
+        raise SystemExit("build_pages: Shinylive isn't installed here. Run `make pages`, or "
+                         "`uv run --group pages python scripts/build_pages.py`.")
     for old in (BUILD, SITE):  # both are build output, git-ignored
         shutil.rmtree(old, ignore_errors=True)
     app = BUILD / "app"
