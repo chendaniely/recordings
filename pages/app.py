@@ -24,6 +24,6 @@ settings = from_env({}, demo=True)
 # The app runs at <site>/app_<id>/, so the site's media/ folder is one level up.
 runtime.configure(Archive(settings.archive), media_base="../media/")
 
-from recordings_ui.shiny_app import app  # noqa: E402  (after configure)
+from recordings_ui.shiny_app import app  # after configure()
 
 __all__ = ["app"]

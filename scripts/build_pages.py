@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -89,20 +90,35 @@ def relative_font_urls(css: str) -> str:
     return text
 
 
-def assemble(app: Path, media: dict[Path, str], ui: Path = UI) -> None:
+def refuse_symlinks(*roots: Path) -> None:
+    """copytree and copy2 follow symlinks, so a link in a source could copy anything it points
+    at, a real archive or a secret, into the public site. None is expected, so none is allowed."""
+    found = [root for root in roots if root.is_symlink()]
+    for root in roots:
+        if root.is_dir() and not root.is_symlink():
+            for folder, dirs, files in os.walk(root):  # never enters a linked folder
+                found += [Path(folder) / n for n in dirs + files if (Path(folder) / n).is_symlink()]
+    if found:
+        raise SystemExit("build_pages: refusing to copy a symlink into the site, which would copy "
+                         "what it points at: " + ", ".join(_shown(p) for p in sorted(found)))
+
+
+def assemble(app: Path, media: dict[Path, str], ui: Path = UI, demo: Path = DEMO_ARCHIVE) -> None:
     """The Shinylive app dir. Its only archive is demo/archive/, without the media files."""
+    shinyreact_dir = Path(shinyreact.__file__).parent
+    refuse_symlinks(ENTRY / "app.py", ENTRY / "requirements.txt", CORE, ui, shinyreact_dir, demo)
     shutil.copy2(ENTRY / "app.py", app / "app.py")
     shutil.copy2(ENTRY / "requirements.txt", app / "requirements.txt")
     shutil.copytree(CORE, app / "recordings", ignore=SKIP)
     shutil.copytree(ui, app / "recordings_ui", ignore=UI_SKIP)
-    shutil.copytree(Path(shinyreact.__file__).parent, app / "shinyreact", ignore=SHINYREACT_SKIP)
+    shutil.copytree(shinyreact_dir, app / "shinyreact", ignore=SHINYREACT_SKIP)
     skip_media = {p.resolve() for p in media}
 
     def ignore(folder: str, names: list[str]) -> set[str]:
         return {n for n in names if n.startswith(".") or n == "__pycache__"
                 or (Path(folder) / n).resolve() in skip_media}
 
-    shutil.copytree(DEMO_ARCHIVE, app / "demo" / "archive", ignore=ignore)
+    shutil.copytree(demo, app / "demo" / "archive", ignore=ignore)
     # Only this copy changes; the normal build keeps /fonts/, which the server serves.
     css = app / "recordings_ui" / "www" / "ui.css"
     css.write_text(relative_font_urls(css.read_text(encoding="utf-8")), encoding="utf-8")

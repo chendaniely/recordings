@@ -53,11 +53,17 @@ def test_font_urls_become_relative_and_nothing_else_may_be_root_absolute(build_p
         build_pages.relative_font_urls("a{color:red}")  # the fonts moved: check, don't guess
 
 
-def test_the_app_holds_the_browser_parts_and_the_demo_without_media(build_pages, tmp_path):
-    ui = tmp_path / "recordings_ui"  # a built frontend, without needing `make build` here
+def _built_ui(tmp_path: Path) -> Path:
+    """A copy of recordings_ui with a built frontend, without needing `make build` here."""
+    ui = tmp_path / "recordings_ui"
     shutil.copytree(UI, ui, ignore=shutil.ignore_patterns("ui.js", "ui.css"))
     (ui / "www" / "ui.js").write_text("", encoding="utf-8")
     (ui / "www" / "ui.css").write_text("x{src:url(/fonts/A.woff2)}", encoding="utf-8")
+    return ui
+
+
+def test_the_app_holds_the_browser_parts_and_the_demo_without_media(build_pages, tmp_path):
+    ui = _built_ui(tmp_path)
     app = tmp_path / "app"
     app.mkdir()
     build_pages.assemble(app, build_pages.demo_media(), ui=ui)
@@ -73,6 +79,30 @@ def test_the_app_holds_the_browser_parts_and_the_demo_without_media(build_pages,
         "app.py", "requirements.txt", "recordings", "recordings_ui", "shinyreact", "demo"}
     assert (app / "recordings_ui/www/ui.css").read_text(encoding="utf-8") == "x{src:url(fonts/A.woff2)}"
     assert (ui / "www/ui.css").read_text(encoding="utf-8") == "x{src:url(/fonts/A.woff2)}"
+
+
+def test_a_symlink_in_the_sources_stops_the_build(build_pages, tmp_path):
+    # copytree would follow it, and copy whatever it points at into the public site.
+    secret = tmp_path / "outside.txt"
+    secret.write_text("not for the site", encoding="utf-8")
+    ui = _built_ui(tmp_path)
+    (ui / "www" / "fonts" / "extra.woff2").symlink_to(secret)
+    app = tmp_path / "app"
+    app.mkdir()
+    with pytest.raises(SystemExit, match=r"symlink.*extra\.woff2"):
+        build_pages.assemble(app, build_pages.demo_media(), ui=ui)
+    assert not any(app.iterdir())  # refused before anything was copied
+
+
+def test_a_symlink_in_the_demo_archive_stops_the_build(build_pages, tmp_path, demo_archive):
+    elsewhere = tmp_path / "real-archive"
+    elsewhere.mkdir()
+    (demo_archive / "recordings" / "more").symlink_to(elsewhere, target_is_directory=True)
+    app = tmp_path / "app"
+    app.mkdir()
+    with pytest.raises(SystemExit, match=r"symlink.*recordings/more"):
+        build_pages.assemble(app, build_pages.demo_media(demo_archive), ui=_built_ui(tmp_path),
+                             demo=demo_archive)
 
 
 def test_the_pages_entry_is_demo_only_and_links_media_files(tmp_path, monkeypatch):
