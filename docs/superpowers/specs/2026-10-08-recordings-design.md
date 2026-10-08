@@ -287,7 +287,7 @@ recordings/                      (repo root, uv workspace, MIT)
   "tags": [ { "tag": "school/course-101", "by": "you" }, { "tag": "notes/lecture", "by": "auto" } ],
   "excluded_note_types": ["glossary"],
   "speakers": { "source": "renditions/transcript-plaud-…json",
-                "labels": { "Speaker 1": { "person": "dan-chen", "by": "plaud" } } },
+                "labels": { "Speaker 1": { "person": "dan-chen", "by": "you" } } },
   "chosen": { "transcript": "renditions/transcript-whisper.cpp-large-v3-turbo@…-20261008T143512Z.json" }
 }
 ```
@@ -302,11 +302,20 @@ strings. Matching against `audio-router`'s archive accepts either form.
 - **Write once:**
   - The media and `source/` are never overwritten.
   - Outputs are never overwritten. Running a step again adds a new file.
-- **Editable files:** only `recording.json`, `my-notes.md`, `tags.yaml` and `people.yaml`
-  (§7.6).
+- **Editable files:** only `recording.json`, `my-notes.md`, `tags.yaml`, `people.yaml` and
+  `people.private.yaml` (§7.6).
   - Each save writes a temporary file and renames it into place.
-  - Before saving, the core checks the file hasn't changed since it was read. If it has,
-    it reloads and re-applies the change instead of overwriting.
+  - **Every write is an operation, not a whole document.** The core's
+    `mutate(recording_id, op)` runs under a per-recording lock. The lock files live in
+    `/srv/recordings/state`, outside the archive, so backups and the mirror never copy them.
+  - Changes are detected by content hash, not mtime.
+  - `recording.json` carries a monotonic `rev`. An outside edit made from a stale read shows
+    up as `rev` going backwards. It is merged three ways, or sent to Needs attention.
+  - Undo applies the inverse operation.
+  - This is what lets the web process, the worker, the CLI and Claude's edits write safely
+    side by side. A plain changed-since-read check can be passed by two writers at once.
+- **One exception to write-once:** forgetting a person (§7.6) rewrites the Plaud snapshots
+  and outputs that hold their name. Each rewrite is logged.
 - **Recordings appear complete or not at all.** A new recording is assembled in a temporary
   folder and moved in only when complete.
 - **Duplicates merge.** If identical bytes arrive again (same SHA-256), the new source
@@ -324,8 +333,13 @@ strings. Matching against `audio-router`'s archive accepts either form.
     as new.
 - **Kinds:**
   - `transcript`: segments with start and end times, speaker and text
-  - `speakers`: diarization, with a voice fingerprint (an embedding) for each label (§7.6)
-  - `speakers-compare`: Plaud's named speakers against the home-built result (§7.6)
+  - `speakers`: diarization: who spoke when, as segments only. Voice fingerprints never
+    enter the archive (§7.6).
+  - `speakers-compare`: Plaud's named speakers against the home-built result (§7.6). Its
+    `inputs` pin both outputs and a hash of the assignments, so it goes stale when any of
+    them changes.
+- **Outputs are found by their `kind` field,** not by file name. A `speakers-*` glob also
+  matches `speakers-compare`.
   - `pick`: the note-type auto-pick result
   - `notes-<type>`: Markdown, with prompt ID and hash, model, and the model that actually
     answered
@@ -347,6 +361,11 @@ Pixeltable can all load them directly.
   models.
 - **`recording_tags.csv`:** one row per recording and tag, with who applied it.
 - **`notes.csv`:** one row per notes output: recording, note type, model, path, stale.
+- **`people.csv`** and **`recording_speakers.csv`** (§7.6) hold the resolved speakers:
+  - your decisions, Plaud's names and voice matches, each with `by`, `from` and `score`
+  - a `private` column
+
+  Pixeltable and the vault then never re-implement overlap, precedence or merge resolution.
 
 ### 6.7 Self-documentation
 
@@ -386,6 +405,18 @@ school/course-101:
 - **Model and prompt names refer to config entries**, so `tags.yaml` contains no paths or
   secrets.
 - **Privacy isn't a rule in this file.** It comes from the tag's name (§7.4).
+- **Speaker rules for sensitive contexts** (§7.6). Like privacy, the strictest rule wins:
+  - `voice: off`: these recordings are never fingerprinted or auto-matched, and any voice
+    data they have is deleted.
+  - `cloud_names: false`: cloud models see "Speaker 2" instead of names.
+
+  Dan sets both on course and client tags (2026-10-08):
+
+  ```yaml
+  school/course-101:
+    voice: off
+    cloud_names: false
+  ```
 
 ### 7.3 Note types
 
@@ -437,11 +468,16 @@ school/course-101:
 - **Automatic private tags:**
   - Plaud recordings matching the title patterns in config are tagged `private`.
   - Recordings `audio-router` held come in tagged `private`.
-- **Claude Code sessions** follow the same rule, and `AGENTS.md` states it once: "If a
-  recording's `recording.json` has a `private` or `private/…` tag, don't read its
-  transcript or notes." `AGENTS.md` never lists private recordings, because the metadata
-  file is the only source. There is no hook change. Otherwise, Dan permits Claude to read
-  the recording folders and catalog.
+- **Cloud models, including Claude Code sessions,** follow the same rule. `AGENTS.md` states
+  it once: "If a recording's `recording.json` has a `private` or `private/…` tag, a cloud
+  model never opens its `renditions/` or `source/`, never reads its `speakers`, and never
+  reads `people.private.yaml`. Local models and agents may; that is what the private tier is
+  for."
+  - `AGENTS.md` never lists private recordings, because the metadata file is the only
+    source.
+  - There is no hook change.
+  - Otherwise, Dan permits Claude to read the recording folders and the catalog. Catalog
+    rows for private recordings carry `private`, and cloud models skip their content.
 
 ### 7.5 The tag gate
 
@@ -458,138 +494,257 @@ school/course-101:
 - **Any tag counts**, including `notes/*` and auto-applied `private`.
 - **Removing all tags undoes nothing.** The recording goes back to Untagged.
 
-### 7.6 Speakers and people (added 2026-10-08)
+### 7.6 Speakers and people (added 2026-10-08, revised after the design council)
 
 **The goal:**
 - Every recording says who is speaking.
-- People you name are remembered and found again in your other recordings, past ones too.
+- People you name are remembered, and found again in your other recordings, past ones too.
 - Mistakes are cheap to fix and stay fixed.
-- The core package owns all of this. The web UI is where you name people, and the files
-  stay easy for Claude to change in bulk.
+- The core package owns all of this. The web UI is the main place to name people. The files
+  stay small and easy for Claude to change in bulk.
 
-**People (`people.yaml`, at the archive root).** This is an editable file, replaced
-atomically like `tags.yaml`. It has its own JSON Schema, and pydantic validates it.
+**The principle: files hold decisions; the index derives inferences.**
+- **`recording.json` stores what *you* decided:**
+  - who a speaker label is
+  - a span of time that is someone else
+  - a rejection
+- **Derived, never written into recording files:**
+  - names linked from Plaud
+  - voice matches
+  - names carried over from an older diarization
+
+  These live in the SQLite index and are published in the catalog.
+
+  So a sweep or an alias edit never rewrites hundreds of recordings. Linking a Plaud name is
+  one alias edit, and there are no false outside-edit alerts.
+- **Rejections are stored.** The index can be rebuilt, and it would otherwise forget them.
+
+**People files** (archive root; editable; replaced atomically like `tags.yaml`):
 
 ```yaml
-schema: recordings/people@1
+format: recordings-people@1
 people:
   dan-chen:
     name: Dan Chen
-    aliases: [Daniel, Dan, Daniel Chen]   # names Plaud (or a person) uses for them
+    aliases: [Daniel, Dan, Daniel Chen]   # names Plaud (or anyone) uses for them
   alex-kim:
     name: Alex Kim
-    recognise: false                      # don't learn this voice (default: true)
+    recognise: false                      # keep no voice data for them
+  students:
+    name: Students
+    kind: group                           # a crowd, never fingerprinted
   daniel-c:
-    merged_into: dan-chen                 # a duplicate merged away; old references resolve
+    merged_into: dan-chen                 # a duplicate merged away
 ```
 
-- **IDs are readable slugs.** They never change when the display name does. A clash gets
-  `-2`. Merging two people leaves a `merged_into` pointer, so older references still
-  resolve.
-- **Names only.** The file holds names and aliases, never which recordings a person is in,
-  and never voice data.
+- **`people.private.yaml`** has the same shape. It holds people who appear only in private
+  recordings, and a person created from a private recording goes there by default. Local
+  tools read it; cloud models never do (§7.4).
+- **Slugs:**
+  - **Shape:** they match `^[a-z0-9]+(-[a-z0-9]+)*$`, ASCII-folded.
+  - **Stable:** they never change when the display name does. Renaming a slug is a merge.
+  - **Never reused:** a forgotten or merged person leaves a tombstone.
+  - **Unique aliases:** aliases are unique across people, ignoring case.
+  - **Unknown slugs:** an unknown slug in a recording holds that file, like a schema error
+    (§11). It never auto-creates a person.
+- **Merging:**
+  - A merged entry holds only `merged_into`. Chains resolve transitively; loops and dangling
+    targets are errors.
+  - Aliases are combined.
+  - `recognise` stays true only if both people had it.
+  - A person who ends up in their own `not` list is flagged.
+- **Write order:** to create and assign, or to merge, write the people file first, then the
+  recordings. An orphan person is harmless; a dangling reference is not. Undo runs in
+  reverse.
+- **`recognise: false`** means no voice data is kept for this person, and any already held
+  is deleted (stage 6).
 
-**Assignments live in each recording's `recording.json`.** That file stays the single
-source of truth for a recording, including its privacy.
+**Decisions in `recording.json`:**
 
 ```json
 "speakers": {
-  "source": "renditions/speakers-pyannote-3.1-<stamp>.json",
+  "source": "renditions/transcript-plaud-<stamp>.json",
   "labels": {
-    "SPEAKER_00": { "person": "dan-chen" },
-    "SPEAKER_02": { "person": "dan-chen" },
-    "SPEAKER_01": { "person": "alex-kim", "by": "auto", "from": "voice", "score": 0.87 },
-    "SPEAKER_03": { "not": ["alex-kim"] }
+    "Speaker 1": { "person": "dan-chen", "by": "you" },
+    "Speaker 2": { "person": "sam-lee", "by": "you", "plaud_name_seen": "Alex" },
+    "Speaker 3": { "not": ["alex-kim"] }
   },
-  "lines": [ { "transcript": "renditions/transcript-…json", "line": 14, "person": "alex-kim" } ]
+  "spans": [ { "start": 41.2, "end": 58.0, "person": "alex-kim", "by": "you" } ]
 }
 ```
 
-**What the fields mean:**
 - **`source`:** labels belong to one diarization. Plaud's "Speaker 1" is not pyannote's
-  `SPEAKER_00` (`audio-router`'s merge stage makes the same point). `source` names the
-  diarization the labels come from: a `speakers` output, or a transcript whose segments
-  carry speakers.
-- **`by`:** who set the assignment.
-  - Absent means you set it in the app, or Claude did for you.
-  - `plaud` means it came from a name you gave in Plaud.
-  - `auto` means the app inferred it. `from` then says how: `plaud-name`, `voice` or
-    `carried-over`, with a `score` where there is one.
+  `SPEAKER_00`. The core maps labels onto any transcript by time overlap with `source`, once,
+  so every view agrees.
+- **`spans`:** media time in seconds. A span survives a new transcript, a Plaud re-sync or
+  Whisper arriving. Line numbers wouldn't.
 - **The corrections:**
-  - **One person split into two labels:** point both labels at the same person. No
-    separate merge step is needed.
-  - **Two people in one label:** `lines` overrides single lines.
-  - **A wrong tag:** delete the assignment. If it was an auto tag, add the person to `not`
-    so automation never re-applies it.
-- **Precedence:** a line override wins over a label assignment, which wins over a generic
-  label like "Speaker 2".
+  - **One person split into two labels:** point both labels at the same person. For two
+    *unnamed* labels, the UI creates a placeholder person ("Unknown 1", `recognise: false`)
+    to rename later.
+  - **Two people in one label:** use a span.
+  - **A wrong tag:** delete the assignment. To stop an inferred name coming back, add the
+    person to `not`.
+- **`plaud_name_seen`:** recorded when you override a Plaud name. The UI shows "Plaud now
+  says X" only when Plaud's name changes from the one seen.
+- **Precedence**, highest first:
+  1. your span
+  2. your label
+  3. a Plaud-named span
+  4. a Plaud-named label
+  5. a voice match
+  6. a name carried over
+  7. a generic label
 
-**How a recording's speakers get named:**
-1. **From Plaud.** Plaud's transcript keeps, for every segment, `original_speaker` (a
-   generic label) and `speaker` (the name Dan gave in Plaud). In the current archive, 2,866
-   of 4,305 segments are named. Names matching a person's `name` or `aliases` become
-   `by: plaud`. The People page lists names not linked yet, to link or create in bulk.
-2. **By voice (stage 6).**
-   - **Fingerprints:** pyannote on the Spark writes a `speakers` output that includes a
-     voice fingerprint (an embedding) for each label. This output is never rewritten.
-   - **Profiles:** a person's voice profile is built only from confirmed assignments (yours
-     and Plaud's), never from auto ones. It is a derived index, never stored in an editable
-     file.
-   - **Opt-out:** everyone you name is fingerprinted unless their `recognise` is false.
-3. **Carried over.** When a newer diarization replaces an older one (pyannote arriving after
-   Plaud's labels, say), each old label's person moves to the new label it overlaps most in
-   time. The moved assignment is marked `auto`, `from: carried-over`, for you to confirm.
+**Derived assignments** (index and catalog; recomputed whenever their inputs change):
+- **From Plaud.** Plaud's transcript keeps, for every segment, `original_speaker` (the
+  generic label, stored as the segment's `speaker`) and `speaker` (the name Dan gave,
+  stored as `speaker_name`). In the current archive, 2,866 of 4,305 segments are named. Plaud
+  can also rename a single line:
+  - each label gets its majority name
+  - minority names become Plaud-named spans
+  - a name matching a person's `name` or `aliases` links to them
+  - unknown or ambiguous names go on the People page's *To link* list
+- **By voice and carried over:** stage 6, below.
+- **Catalog:**
+  - `people.csv` (id, name, aliases, recognise, kind, merged_into)
+  - `recording_speakers.csv` (recording_id, person_id resolved, label, source, talk_ms, by,
+    from, score, private)
+- **Change events:** `changes.jsonl` gets "speakers changed" and "people changed" events.
+  Events and logs carry recording IDs and counts, never person slugs, because slugs are
+  names.
 
-**Retroactive matching (stage 6).**
-- **The trigger:** confirming a person, merging two people or removing a wrong tag
-  rebuilds that person's profile. The app then sweeps every diarized recording, comparing
-  the profile with the stored fingerprints. No audio is processed again.
-- **The outcome:**
-  - At or above `[speakers] auto_threshold`, the label is tagged `auto`.
-  - Between `suggest_threshold` and `auto_threshold`, it goes to a review list.
-  - Below `suggest_threshold`, it is ignored.
-- **The limits:** a sweep may only add, update or withdraw `auto` assignments. It never
-  touches your own assignments, Plaud's, or a `not`.
-- **Removing a wrong tag** therefore cleans the profile, and the next sweep withdraws any
-  auto matches that relied on it.
-- **The backfill:** when stage 6 arrives, a one-off job diarizes every recording that has
-  already passed the tag gate (§7.5), on the Spark only.
+**Voice (stage 6, pyannote on the Spark):**
+- **The diarization wrapper** (`local-ai` Phase 3) must return:
+  - exclusive (non-overlapping) diarization
+  - one embedding per non-overlapped turn of about 1.5 s or more
+  - the model, revision, dimension and sample rate
 
-**Plaud as the yardstick (stage 6, while the subscription lasts: it expires 2027-08-29).**
-- **The comparison:** a recording with both Plaud's names and the home-built result gets a
-  `speakers-compare` output. It holds the agreement percentage and each stretch where the
-  two disagree ("0:41–0:58: Plaud says Alex, ours says unknown").
-- **Archive-wide:** per-person accuracy against Plaud, which pairs get confused, and how the
-  thresholds would score. Calibration uses Dan's own data.
+  Uploads go as FLAC: a two-hour lecture as 16 kHz PCM is over the upload limit.
+- **`speakers` outputs** (write-once, in the archive) hold who spoke when, and nothing else.
+- **Voice fingerprints never enter the archive.**
+  - **Where:** a derived store at `/srv/recordings/state/voice.db`, keyed by (diarization
+    output, embedding model) and stored as float16.
+  - **Not copied:** it is excluded from backups and from the read-only mirror. It can be
+    rebuilt from the audio by a Spark job.
+  - **Deleted** for a person with `recognise: false`, for a forgotten person, and for any
+    recording whose tags say `voice: off` (§7.2).
+- **Voice profiles** are built from confirmed time only: yours, plus Plaud-named segments.
+  - **Plaud-named segments** are embedded directly: the audio is cut at Plaud's times,
+    keeping segments of 2 s or more and skipping overlapped speech. Dan's Plaud labelling
+    therefore seeds the profiles.
+  - **Shape:** one exemplar per person per recording, weighted by duration.
+  - **Sources:** profiles learn only from non-private recordings that allow voice.
+  - **Outliers:** an exemplar that looks unlike the rest of that person's is shown to Dan as
+    a probable wrong tag.
+  - **Versions:** profiles and thresholds are kept per embedding-model version, and matching
+    happens only within one version. A model upgrade means re-embedding and recalibrating.
+- **Matching:**
+  - **The score:** the mean of the top-k exemplar similarities, AS-normed against a cohort.
+  - **Requirements:** a margin between the best and second-best match, at least about 8 s
+    of net speech, and never the same person on two labels that speak at once.
+  - **What's stored:** each score, with the model ID and the profile revision.
+- **Thresholds** (`[speakers] auto_threshold`, `suggest_threshold`) are calibrated
+  leave-one-recording-out. The trials are Plaud-named, plus your confirmations and
+  rejections. `auto_threshold` is set at a false-accept rate of 1% or less. Statistics carry
+  confidence intervals.
+- **Retroactive sweeps:**
+  - **The trigger:** a profile change, such as a confirmation, a merge or a removed tag.
+  - **Debouncing:** one pending sweep per (person, profile revision); a newer one replaces
+    it. Each label is decided across all profiles, and the best match wins, so the order
+    sweeps run in doesn't matter.
+  - **Effects:** sweeps update the index only, so they never write recording files.
+  - **In the UI:** high matches show as auto tags. Medium matches go to *Suggestions*.
+    Profile rebuilds wait while *Suggestions* is open, so the list doesn't reshuffle.
+- **Carry-over to a newer diarization:**
+  - **The method:** an overlap matrix on non-overlapped speech. Each new label needs purity
+    of about 0.7 or more, and at least 50% of its time covered.
+  - **Conflicts:** if two different people would land on one label, neither is assigned and
+    the label is flagged.
+  - **Determinism:** ties break by sorted label, and the algorithm version is recorded. The
+    result is the same on every run.
+  - **Your decisions:** when `source` changes, the core re-keys them the same way.
+    Ambiguous ones go to review.
+- **Backfill:** a one-off job diarizes every recording past the tag gate (§7.5) that allows
+  voice, on the Spark only.
+
+**Plaud as the yardstick (stage 6; the subscription expires 2027-08-29):**
+- **The comparison:** a `speakers-compare` output pins both of its inputs and a hash of the
+  assignments, and goes stale when any of them changes (§6.5).
+- **What it reports:**
+  - **Diarization agreement:** DER split into miss, false alarm and confusion, with a 0.5 s
+    collar, scored inside Plaud's segments with overlap excluded. Plus JER.
+  - **Identity on named time:** identification error rate, per-person precision and recall,
+    and a coverage-against-precision curve over the threshold.
+  - **Word-level speaker error** on Whisper's words, which avoids mismatched segment
+    boundaries.
+- **The timing check:** Plaud's segment times are checked against the media duration (§9.1).
+  Recordings that fail are kept out of calibration.
+- **Unnamed Plaud segments** count as unknown, not as negatives.
 - **Resolving a disagreement:**
-  - **"Plaud is right"** fixes our side and becomes training data.
-  - **"Ours is right"** adds the stretch to a *Fix in Plaud* list. The item clears once a
-    re-sync pulls Plaud's corrected transcript.
-  - **"Neither"** means you set it by hand.
-- **After the subscription:** Plaud's labels stay in the archive (`source/` is never
-  rewritten). Before the subscription ends, a final full re-sync (YouTrack DAN-15, due
-  2027-08-15) captures every late rename.
+  - **"Plaud is right"** fixes our side.
+  - **"Ours is right"** goes on the *Fix in Plaud* list, which is derived. The item clears
+    once a re-sync shows the corrected name.
+  - **Both answers** are logged as gold labels.
+- **A gold set:** about 20 three-minute clips, hand-labelled once in a small labelling screen,
+  scores both systems against the truth.
+- **After the subscription:** Plaud's labels stay in the archive. The final full re-sync is
+  YouTrack DAN-15, due 2027-08-15.
 
-**Bulk edits (Claude).**
-- **Edit the files directly:** `AGENTS.md` and `FORMAT.md` document the shapes, with worked
-  examples.
-- **Or use the CLI:**
-  - `recordings people list|rename|alias|merge`
-  - `recordings speakers assign --label SPEAKER_01 --person alex-kim --where tag=…`. It is
-    a dry run by default; `--apply` applies it.
-- **`recordings validate` checks the result:**
-  - unknown people
-  - `merged_into` loops
+**Sensitive contexts (tag rules, §7.2):**
+- **`voice: off`:** these recordings are never fingerprinted or auto-matched, and their voice
+  data is deleted.
+- **`cloud_names: false`:** cloud models see "Speaker 2" instead of names.
+- **The strictest rule wins,** as with privacy. Dan sets these on course and client tags.
+  Naming people by hand still works there.
+
+**Names in Claude prompts:** confirmed names only (yours or Plaud's), never inferred ones,
+and none at all on recordings where `cloud_names` is false.
+
+**Bulk edits (Claude):**
+- **Edit the files directly,** on the homelab server. The Mac's mirror is read-only.
+- **Or use a patch file:** JSONL lines of the form `{recording, source, label | span,
+  set | not, expect}`, applied with `recordings speakers apply --dry-run` and then
+  `--apply`. It also works over `--remote`.
+  - `expect` refuses a change if the file has moved on.
+  - Confirmations queue one profile rebuild as a batch job (§11). The batch keeps a before
+    and after record, so it can be reverted.
+- **The people CLI:** `recordings people list|rename|alias|merge|report|forget`. It takes
+  names, refuses ambiguous ones, and shows display names in dry runs.
+- **`recordings validate` checks:**
+  - unknown slugs
+  - `merged_into` loops and dangling targets
+  - duplicate aliases
   - labels missing from their `source`
-  - line numbers past the end of the transcript
-- **The UI shows what changed:** outside-edit detection (§11) shows bulk changes for review.
+  - spans outside the media
+- **No label-wide bulk assignment.** "Assign SPEAKER_01 in every recording tagged X" is not
+  offered: diarization labels are arbitrary in each recording.
 
-**Privacy.**
-- Speaker assignments are part of `recording.json`, so §7.4 covers them: an agent never
-  reads a private recording's speakers.
-- Voice fingerprints and profiles stay in the archive and the index on the homelab server.
-  Matching runs on the Spark only.
-- The public demo (§17) names only historical public figures.
+**Forgetting a person (scrub everything):** `recordings people forget <id>` does five things.
+1. It deletes their voice data and profile.
+2. It removes every assignment, span and `not` that refers to them.
+3. It replaces their entry with an anonymous tombstone.
+4. It rewrites the Plaud snapshots in `source/`, and the Plaud transcript and notes outputs,
+   to replace their name with the tombstone label. This is a logged exception to write-once,
+   recorded in `changes.jsonl` and an audit file.
+5. It reports what still holds the old data:
+   - restic backups (up to 12 monthly snapshots; it prints the `restic rewrite` steps)
+   - the NAS mirror (cleared on its next `rsync --delete`)
+   - Plaud's own cloud
+
+`recordings people report <id> --json` is the matching audit and export.
+
+**Privacy:**
+- **Speakers are metadata,** like tags.
+- **What cloud models may not do:** open a private recording's `renditions/` or `source/`,
+  read its speakers, or read `people.private.yaml`.
+- **Local agents and models** (the Spark, local tools) may do all of those. That is what the
+  private tier is for.
+- **Enforcement:** the catalog has a `private` column. The app's own Claude backend (§8.4)
+  enforces the rule in code. Outside agents are told by `AGENTS.md`, backed by Dan's tool
+  hooks.
+- **Test fixtures are synthetic,** never from the real archive. A local pre-commit hook
+  checks staged files against the names in the people files.
 
 ## 8. Processing
 
@@ -718,46 +873,113 @@ before any other source. It reuses `audio-router`'s Plaud client, copied in (§1
 - **What's kept:** the full payload, including Dan's own in-app notes, goes into
   `source/`. Plaud IDs are opaque strings, and the `of_` form is accepted.
 
-#### 9.1.1 Keeping up with edits made in Plaud (added 2026-10-08)
+#### 9.1.1 Keeping up with edits made in Plaud (added 2026-10-08, revised after the design council)
 
 Dan keeps editing in Plaud: renaming speakers, fixing titles, regenerating notes. Those
-edits must flow down, for old recordings too.
+edits must flow down, for old recordings too. Plaud's API has no change signal: no
+`updated_at` and no etag (`audio-router`'s Plaud client documents this). So a change can only
+be found by fetching again and comparing.
 
-- **Detecting a change takes a re-fetch.** Plaud's API has no change signal: no
-  `updated_at` and no etag. This is documented in `audio-router`'s Plaud client.
-  - A check fetches `files/{id}` and hashes a **normalised** copy, with the presigned audio
-    URL and any other per-request values removed. Without that, every check would look
-    like an update.
-  - A different hash means something changed. A new `source/plaud-<stamp>.json` is saved,
-    and nothing is overwritten.
+- **Two steps, so a crash can't hide an update:**
+  - **Fetch** writes a new `source/plaud-<stamp>.json` snapshot, but only if the normalised
+    content changed. Nothing is overwritten.
+  - **Reconcile** is a pure function: the latest snapshot, the people files and
+    `recording.json` in, the Plaud outputs and the fields Plaud owns out. It is keyed by the
+    hash of each part. It runs on every check and on `reindex`, so an update interrupted
+    after the snapshot is finished next time.
+- **Normalising before hashing** (the normaliser is versioned):
+  - **Dropped:**
+    - the presigned audio URL
+    - `data_link`
+    - `_meta`
+    - the fetcher's own fields (`_fetched_from_data_link`, `_data_link_error`)
+  - **Inside strings,** only the X-Amz query part of a URL is replaced, never the whole
+    string.
+  - **Ordering:** `source_list` and `note_list` are sorted by (type, tab, id). The segment
+    arrays inside them are never reordered. The transcript's inner JSON is re-serialised
+    canonically.
+  - **Unknown new fields** count as changes.
+  - **Bumping the normaliser's version** recomputes both sides at compare time. A test checks
+    that a version bump over the fixtures writes zero snapshots.
+- **Per-part hashes:** title, transcript text, speaker names, each note tab, Dan's own notes,
+  and everything else. The Sync screen can then say what changed. A new Plaud output is
+  written only when its own part changed, so a title edit doesn't create a transcript
+  version.
+- **Rename or re-segmentation?** Each Plaud transcript gets a diarization fingerprint: a hash
+  of each segment's start, end and `original_speaker`.
+  - **The same fingerprint** means only names changed. `source` moves in place, and the
+    Plaud-derived names follow.
+  - **A different fingerprint** means a new diarization, so carry-over runs (§7.6).
 - **What a change updates:**
-  - **Transcript or notes:** a new version of the Plaud transcript or Plaud notes output.
-    Old versions stay, so a diff is always possible.
-  - **Speaker names:** a label named from Plaud (`by: plaud`) follows Plaud's new name. If
-    you have set that label in the app, or rejected the name, your choice stays and the
-    difference is listed to settle ("Plaud now says Alex; you said Sam").
-  - **Title:** it follows Plaud unless you edited it in the app. Your edit wins, and the
+  - **Transcript or notes:** a new version of that output. Old versions stay.
+  - **Speaker names:** derived Plaud names follow (§7.6). Your own assignments stay, and a
+    difference is shown only when Plaud's name changes from `plaud_name_seen`. A dismissed
+    difference is stored per (recording, label, name).
+  - **Title:** `title_by` and `plaud.title_seen` in `recording.json` record where the title
+    came from. A Plaud title change applies unless you edited the title, and then the
     difference is shown.
-- **When it checks:**
+  - **Removals are never applied on their own:** a name reverting to "Speaker N", or notes
+    vanishing, waits for review. This is most likely around the subscription lapse.
+  - **Editing an alias** re-runs the linking from the stored transcripts, with no re-fetch.
+- **Partial and degraded responses:**
+  - A snapshot with link errors is never used as the baseline, and nothing is built from it.
+    The whole envelope is fetched again (links expire within 300 s), or the check is marked
+    failed.
+  - **A circuit breaker:** if more than about 5% of a sweep reports changes, snapshot writing
+    stops and an alarm is raised. One new volatile field would otherwise mint thousands of
+    permanent snapshots.
+- **Cadence: a rolling sweep, with no freeze.**
+  - **Check state** lives in a SQLite table that `reindex` keeps: last checked, last changed,
+    failures. An unchanged check never writes `recording.json`.
+  - **Every scheduled run** (20 min) checks:
+    - recordings from the last `recheck_days` (14)
+    - plus the K recordings checked longest ago, where K = N / (`full_sweep_days` × 72)
 
-  | Check | What | When |
-  |---|---|---|
-  | Recent | recordings from the last `recheck_days` (14) | every scheduled sync (20 min) |
-  | Full sweep | every Plaud recording, never "frozen" | every `full_sweep_days` (default 1 while relabelling, can be 7) |
-  | One recording | Re-sync from Plaud in its Details tab | on demand |
-  | Everything now | `recordings plaud sync --full`, or the Sync screen | on demand (DAN-15's final pass) |
-
-  `audio-router`'s "freeze" (skipping long-untouched recordings) is dropped. It is exactly
-  what would miss a speaker renamed on an old recording.
+    So the whole account is covered every `full_sweep_days` (default 1 while relabelling;
+    7 later).
+  - **The interval adapts:** after each unchanged check it doubles, capped at
+    `full_sweep_days`. That keeps the savings of `audio-router`'s freeze without its blind
+    spot.
+  - **Titles** come from the list endpoint on every run, which is cheap.
+  - **Errors:**
+    - 429 and Retry-After are respected, with exponential backoff.
+    - A 401 stops the run and raises an alarm.
+    - How the token is refreshed inside Docker is defined in the stage 2 plan.
+  - **Limits:**
+    - Only one sync runs at a time, and sweeps run in chunks so the worker isn't blocked.
+    - An empty or shrunken listing never marks recordings "Only in the archive".
+  - **On demand:** *Re-sync from Plaud* (one recording, in Details), and
+    `recordings plaud sync --full` or the Sync screen button (everything).
+  - **DAN-15's final pass:** `--full` exits non-zero unless every listed recording was
+    checked successfully.
+- **Keeping Plaud's speaker data intact (stage 2):**
+  - Segments store `original_speaker` as `speaker`, Plaud's name as `speaker_name`, and
+    Plaud's `embeddingKey`.
+  - **A timing check** compares the last segment's end with the media duration. `audio-router`
+    found timings at up to 135% of the file, after a trim in Plaud.
 - **What you see:**
-  - The Sync screen's "Updated on Plaud" list says what changed: title, transcript, notes
+  - **The Sync screen's "Updated on Plaud" list** says what changed: title, transcript, notes
     or speakers.
-  - Each recording shows when it was last checked against Plaud.
-- **Tests:** recorded payloads, including:
-  - one that differs only in the presigned URL, which must *not* count as an update
-  - a speaker rename
-  - notes regenerated on an old recording
-
+  - **Each recording** shows when it was last checked.
+  - **Status** shows:
+    - the last good listing, and how far the sweep has got (the oldest check)
+    - counts for each part, and failures
+    - the circuit breaker's state and the normaliser version
+    - a diff of the payload's field names between runs (it would have caught the `of_` ID
+      change)
+    - the share of named segments, as a canary
+- **Tests:**
+  - **A fake Plaud server on a real socket,** injecting:
+    - 401, 429 and 5xx responses, and timeouts
+    - short bodies and expired links
+    - a clamped page size, and an empty listing
+    - a change in the ID form, and reordered blocks
+    - content switching between inline and link
+  - **A property test** that changing any field not on the drop list changes the hash.
+  - **A lost-update test** with two writer processes.
+  - **Reruns:** sweeps and carry-over produce byte-identical files.
+  - **An injectable clock.**
+  - **Synthetic fixtures only.**
 ### 9.2 Import your own audio (a placeholder until a later stage)
 
 These sources share one place in the UI, **Import your own audio**. It is shown as "coming
@@ -973,49 +1195,117 @@ later" until its build stage (§20):
 - **Phone width:** every page works on a phone. The list and recording stack, so you can
   play and read on the phone.
 
-### 12.6a Speakers, people and finding recordings (proposal, 2026-10-08; mockups to follow)
+### 12.6a Speakers, people and finding recordings (2026-10-08, revised after the design council; mockups to follow)
 
 - **In the transcript:**
-  - Each turn's speaker shows as a chip: a person's name, "auto" for unconfirmed tags, or a
-    dashed "Speaker 2" for an unnamed label.
-  - Clicking a chip opens a person picker:
-    - search existing people, or "Create *Name*"
-    - **All of Speaker 2's lines** (the default), or **Just this line**
-    - **Same person as…**, to merge a split label
-    - **Not this person**
-    - **Remove**
-  - A strip above the transcript lists the recording's labels, with:
-    - each label's share of talk time
-    - its person
-    - **Confirm** or **Reject** on auto tags
-    - a ▶ button for a 5-second sample
-- **People page** (top navigation, beside Library and Tags):
-  - **Table:** one row per person, with aliases, recordings, talk time, last heard, and the
-    *Recognise this voice* switch.
-  - **A person's page:** their recordings, plus *Merge with…* and alias editing.
-  - **Lists:**
-    - **Plaud names not linked yet:** link or create, in bulk.
-    - **Suggestions (N):** voice matches to review in a batch, in the approvals layout,
-      with play buttons.
-    - **Fix in Plaud.**
-  - **Plaud vs. home statistics,** once stage 6 arrives.
+  - **Speaker chips:** every line shows its speaker chip on hover or focus, so a wrong line
+    in the middle of a run can be fixed.
+  - **Chip styles:**
+    - **Confirmed** (yours or Plaud's): solid.
+    - **Inferred (auto):** dashed, as auto tags are.
+    - **Unnamed:** plain muted text ("Speaker 2").
+
+    The transcript shows no scores.
+  - **The picker:** clicking a chip, or pressing `P` on the focused line, opens it.
+    - **"In this recording":** this recording's labels come first, named or not. Picking an
+      unnamed label merges into a placeholder ("Unknown 1").
+    - **Then people,** with search. Enter picks an existing match before "Create *Name*"
+      (the same fix as the tag picker).
+    - **Keys:** 1–9 pick people already in this recording.
+    - **Scope** is a two-way toggle with counts: **Every Speaker 2 line (42)** | **Only
+      3:12**.
+    - **Range fixes:** Shift-click selects a range of lines, Finder-style, and the scope then
+      reads **These 7 lines**.
+    - **One verb, chosen by the tag's state:** "Not Alex" on an inferred tag (it removes the
+      tag, records `not`, and offers the next-best match); "Unassign" on yours.
+    - **It closes on choice.** A label has one person.
+  - **The toast:** "Speaker 2 → Alex Kim · 42 lines · Undo". After a voice sweep it adds
+    "…and found Alex in 23 older recordings · Review". Undo withdraws those too.
+  - **A sweep never silently changes the open recording.** A banner offers "Voice matching
+    updated 2 labels · Review".
+  - **Each line** is restructured so a chip button no longer sits inside the line's button,
+    which is invalid HTML.
+- **The speaker strip** above the transcript has one row per label:
+  - talk time, the person, and the confidence (High or Medium, with the number on hover)
+  - Confirm and Reject
+  - a ▶ button that plays a 5-second sample
+
+  Clicking a label highlights its lines and adds ◀ ▶ to jump between them (keys `[` `]`).
+  Speaker bands run under the player's scrubber.
+- **The People page** (top navigation, beside Library and Tags; its badge counts what needs
+  you). Tabs:
+  - **People:** one row per person, with aliases, recordings, talk time, last heard, a "who
+    is this" clip, and the *Recognise this voice* switch. A person's page lists their
+    recordings, plus *Merge with…*, aliases and *Forget*.
+  - **To link (N):** Plaud names not yet linked.
+    - Each name shows a count, a ▶ and a suggested link.
+    - Multi-select, then "One person from these 3": the first becomes the name, the rest
+      aliases.
+    - "Not a person" or "Group" (for "Students" and the like).
+    - Plaud's generic "Speaker N" names are hidden.
+  - **Suggestions (N):** grouped by person, with the person's reference clip pinned at the
+    top and sorted by score. Space plays, Y/N decides and moves to the next clip, and
+    "Accept all High" clears the top.
+  - **Fix in Plaud (N).**
+  - **Plaud vs. home** statistics, once stage 6 arrives.
 - **Finding recordings (Library):**
-  - **The sidebar's People section:** people with counts, most frequent first.
-    - Click to filter. Cmd/Ctrl-click to add more people, the Finder-style selection used
-      elsewhere.
-    - With two or more, an *all of / any of* toggle appears. The default is *all of*: "Dan
-      and Alex".
-  - **The date control:** a button in the list header reads *Any date*, or the current
-    range ("Oct 1 – 15", "October 2026").
-    - It opens a popover with presets on the left: Today, Yesterday, Last 7 days, This
-      month, Last month, This year, Custom.
-    - On the right is a two-month calendar in range mode. Click one day for that day; click
-      a second for a range.
-    - Days that have recordings carry a dot.
-    - Ranges use each recording's local date (`recorded_at` with its offset).
-  - **Search:** the search box also matches people's names and aliases.
-  - **Active filters:** shown as removable chips above the list ("Alex ×", "Oct 1–15 ×"),
-    with *Clear*.
+  - **Combining filters:** AND across kinds (tags, people, date, search, Untagged). Inside
+    People, *all of* (the default) or *any of*. Untagged plus a person is allowed, and is
+    handy for triage.
+  - **Every active filter is a chip** above the list, search text and Untagged included.
+    *Clear* clears them all. The all/any toggle sits inside the People chip: "Dan + Alex ·
+    all ▾".
+  - **The People facet** in the sidebar lists people with counts, inferred ones split out:
+    "Alex 42 (8 unconfirmed)". Click to filter; Cmd/Ctrl-click adds more people. On a phone
+    it collapses.
+  - **Search** shows "Person: Alex Kim" as its own row, which turns into a chip, separate
+    from transcript hits.
+  - **The date control** is a button in the list header ("Any date", "Oct 1 – 15",
+    "October 2026"; `D` opens it). It is built on shadcn's Calendar in range mode; check its
+    current docs first.
+    - **Presets on the left:** Today, Yesterday, Last 7 days, Last 30 days, This month, Last
+      month, This year, All time. Term presets defined in config (`[calendar] terms`, such as
+      2026W1) come after them.
+    - **On the right,** a two-month calendar:
+      - Range ends are solid NYC blue (`#236192`; `#6CA6D9` in dark), the days between take
+        a blue tint, and today has a ring.
+      - Days with recordings carry a muted dot, which turns white on selected days.
+      - No orange: that marks the line playing now.
+    - **The month caption** opens a month and year grid with counts, for jumping back years.
+    - **The footer** reads "Oct 1 – 15 · 9 recordings", with Clear.
+    - **Keys:** arrows, PgUp and PgDn, and Shift to extend the range.
+    - **On a phone:** a bottom sheet with one month, and the presets as a scrolling row of
+      chips.
+    - **Ranges** use each recording's local date (`recorded_at` with its offset).
+  - **Empty states** suggest ways to widen, with counts: "Any of: 12 · All dates: 3 · Clear".
+
+### 12.6b Insights (added 2026-10-08)
+
+A dashboard of the archive. It doubles as a showcase of the architecture: every number is
+computed in Python on the Shiny side (`@reactive_output("insights")`) and drawn by React, and
+it recalculates as the controls change.
+
+- **Controls:** the same date control as the Library, and an hours or count switch.
+- **Cards:**
+  - recordings, total hours, and days with a recording
+  - words transcribed, notes written, and average length
+  - longest streak and busiest month
+  - people met (from stage 3)
+- **A year heatmap**, in the style of GitHub's: one square per day, shaded by hours. Hover
+  shows "Tue Oct 6 · 3 recordings · 2.4 h". Clicking a day opens the Library filtered to it.
+- **A punch card:** weekday by hour of day, with a callout ("Busiest: Tuesdays 2–4 pm"). It
+  says *busiest*, not *most productive*: recording time measures meeting load.
+- **Model usage:** words per transcript engine (Plaud against Whisper), and notes and words
+  per notes model.
+- **Trends:** hours per month, and the average per week.
+- **Speakers** (once stage 3 is in place): who you meet most, talk time per person, and your
+  share of talk time in lectures against meetings.
+- **Building it:** charts use shadcn's chart components (Recharts, with the brand tokens, so
+  light and dark both work). The heatmap and punch card are plain SVG. The Python is plain
+  standard library, so it runs on the Pages demo (Pyodide) too.
+- **Private recordings** count in the totals. Their titles never appear here.
+- **The demo** ships a generated, clearly labelled sample year: about 300 recording records
+  with no audio. It appears only on Insights, so the Library keeps its 4 real recordings.
 
 ### 12.7 Mockups
 
@@ -1109,6 +1399,13 @@ come from that frame.
   final review showed a foreign page could read a private recording through the websocket.)
 - **Before the app goes beyond Tailscale:** when the reverse proxy arrives, the proxy
   handles login and the app only accepts requests from the proxy. This is a requirement.
+- **Cross-site writes:** the Host allow-list stops DNS rebinding, but not a foreign page
+  posting to the app's real host name. So every route that changes data (from stage 3:
+  tags, people, merges, *Recognise*, *Forget*):
+  - checks `Origin` or `Sec-Fetch-Site`
+  - requires a JSON body
+
+  A tailnet ACL limits the app's port to Dan's devices.
 - **Containers:** both run as non-root users. Secrets follow §5.
 
 ### 15.1 Backups to the NAS (from stage 2, the first stage that writes)
@@ -1146,6 +1443,9 @@ come from that frame.
 
 ## 16. Testing
 
+- **Fixtures are synthetic.** Recorded payloads from the real Plaud account would carry real
+  names into a public repo, and gitleaks can't see names. A local pre-commit hook checks
+  staged files against the names in the people files.
 - **pytest on the core:**
   - the archive writer and reader, and naming
   - tag rules and the privacy calculation
@@ -1199,6 +1499,14 @@ come from that frame.
   A test enforces this.
 - **Purpose:** a bug report reads "from `make demo`, do X". It also doubles as the format's
   worked example and the test data.
+- **Speakers in the demo:**
+  - only historical public figures, in `people.yaml`
+  - one label split in two, one label holding two people, and one rejected inferred name,
+    so every correction can be tried
+  - synthetic embeddings, never voiceprints of real people (the Apollo 11 clip includes a
+    living person)
+- **Insights in the demo** use a generated, clearly labelled sample year with no audio
+  (§12.6b).
 
 ### 17.1 The static demo on GitHub Pages (added 2026-10-08)
 
@@ -1275,9 +1583,20 @@ Each stage leaves a working, demonstrable app.
 2. **Plaud:**
    - the `audio-router` import
    - Plaud sync with its compare (Missing, Updated, Only in archive) and the scheduled run
-   - keeping up with edits made in Plaud (§9.1.1): normalised hashing, the full sweep, and
-     Re-sync from Plaud
-   - Plaud's per-segment speaker names kept, and shown in the transcript (read-only)
+   - keeping up with edits made in Plaud (§9.1.1):
+     - the fetch and reconcile split
+     - the versioned normaliser, with a hash for each part
+     - the diarization fingerprint
+     - the rolling sweep, with check state in SQLite
+     - the circuit breaker and the listing floor
+     - Re-sync from Plaud, and `sync --full`
+     - the Status sync panel
+     - a fake Plaud server for tests
+   - the locked write path (`mutate`, `rev`; §6.4), because this is the first stage that
+     writes real files
+   - the `speakers` field's new shape (§7.6), set now while the real archive is still empty
+   - Plaud's speaker data kept (`speaker` as the label, `speaker_name`, `embeddingKey`, and
+     the timing check), and the names shown in the transcript (read-only)
    - the Add page's Plaud panel
 
    All of Dan's real recordings arrive in the Library here, read-only until stage 3.
@@ -1297,7 +1616,10 @@ Each stage leaves a working, demonstrable app.
      - naming and corrections in the transcript
      - the People page, with the Plaud names to link
      - the People and date filters, and people in search (§12.6a)
-     - the `people` and `speakers` CLI
+     - the `people` and `speakers` CLI, including the patch format, `report` and `forget`
+     - the `voice: off` and `cloud_names: false` tag rules
+   - the **Insights** page (§12.6b), with the demo's sample year
+   - cross-site protection on every route that writes (§15)
 4. **Processing:**
    - the queue and worker, with the tag gate and privacy re-check
    - Spark Whisper
@@ -1311,13 +1633,20 @@ Each stage leaves a working, demonstrable app.
    with yt-dlp (YouTube, talks), the watched folder, and video handling. This replaces the
    placeholder from stage 2.
 6. **Speakers by voice** (§7.6), with pyannote on the Spark (Phase 3):
-   - diarization with a voice fingerprint for each label
-   - voice profiles built from confirmed tags
+   - the wrapper requirements on `local-ai` Phase 3:
+     - exclusive diarization
+     - an embedding for each turn
+     - model revisions
+     - FLAC upload
+   - the voice store outside the archive (`state/voice.db`, never backed up or mirrored)
+   - profiles from confirmed and Plaud-named time, with outlier review
+   - calibrated thresholds
    - retroactive sweeps and the Suggestions review
-   - carrying names over to a newer diarization
+   - carry-over by overlap matrix
    - backfilling the archive
-   - the Plaud-vs-home comparison, with *Fix in Plaud*, while the subscription lasts
-     (until 2027-08-29)
+   - the Plaud-vs-home comparison (DER, JER, identity), with *Fix in Plaud*, while the
+     subscription lasts (until 2027-08-29)
+   - the gold-set labelling screen (about 20 three-minute clips)
 
 **Later, separately:** suggested tags, the vault listener, the course-repo skill and the
 Pixeltable notebook.
@@ -1347,23 +1676,58 @@ Pixeltable notebook.
 9. **Docs before code** (§13): the shinyreact, brand.yml, shadcn and Tailwind docs and
    skills are consulted before writing against them.
 
-## 22. Decisions on speakers, people and sync (2026-10-08)
+## 22. Decisions on speakers, people, sync and insights (2026-10-08)
 
-1. **Names now, voice later** (§7.6): people, naming, corrections and filters come first
-   (stage 3), using Plaud's speaker names. Voice matching arrives with pyannote on the Spark
-   (stage 6).
-2. **Everyone you name is fingerprinted.** Each person has a *Recognise this voice* switch
-   (`recognise: false`) to opt them out.
-3. **The web UI is the main way to tag people.** The files (`people.yaml`, and `speakers`
-   in `recording.json`) are shaped for bulk edits by Claude: readable slugs, one shape per
-   label, documented in `AGENTS.md`, and checked by `recordings validate`.
-4. **Retroactive matching:** confirming a person sweeps every diarized recording, using
-   stored fingerprints. Sweeps only ever touch `auto` assignments.
-5. **Plaud is the yardstick** until the subscription expires (2027-08-29 22:01). Its named
-   segments are training data and the reference for the Plaud-vs-home comparison. The final
-   full re-sync is YouTrack DAN-15, due 2027-08-15.
-6. **Edits made in Plaud sync down** from stage 2 (§9.1.1), old recordings included. There
-   is no freeze.
-7. **Format change:** stage 1's `speakers` field (a label → name map, empty in every demo
-   recording) becomes the `{source, labels, lines}` object of §7.6. The `recording` schema's
-   version goes up. The core reads the old shape, and writes the new one on the next save.
+Dan's decisions, together with the design council's review: five reviewers covering
+diarization and voice ML, the data model, privacy and law, product and UX, and sync and
+reliability.
+
+1. **Names now, voice later** (§7.6). People, naming, corrections and the filters come in
+   stage 3, using Plaud's names. Voice matching comes in stage 6, with pyannote on the Spark.
+2. **Who gets fingerprinted:** everyone Dan names, everywhere, with two exceptions.
+   - **A person can opt out:** *Recognise this voice* (`recognise: false`) means no voice
+     data is kept for them.
+   - **A tag can opt out:** tags marked `voice: off` (courses, clients) are never
+     fingerprinted. `cloud_names: false` keeps names out of cloud prompts there.
+
+   The tool doesn't decide what FIPPA or PIPA require; it makes the cautious setting one tag
+   rule.
+3. **Files hold decisions; the index derives inferences.** Plaud-name links, voice matches
+   and carry-overs are computed and published in the catalog, never written into recording
+   files. Rejections are stored.
+4. **The web UI is the main way to name people.** The files are shaped for bulk edits by
+   Claude:
+   - readable slugs
+   - one shape per label
+   - spans in media time
+   - a patch format with `expect`
+   - `recordings validate`
+5. **Retroactive matching:** a profile change sweeps every diarized recording, using stored
+   fingerprints. Sweeps update the index only.
+6. **Voice fingerprints never enter the archive.** They sit in a deletable derived store,
+   outside backups and the mirror, and can be rebuilt from the audio.
+7. **Plaud is the yardstick** until the subscription expires (2027-08-29 22:01).
+   - Its named segments seed the voice profiles, with outliers sent for review.
+   - It is the reference for the comparison (DER, JER, identity).
+   - The final full re-sync is YouTrack DAN-15, due 2027-08-15.
+   - A hand-labelled gold set of about 20 clips scores both systems against the truth.
+8. **Private recordings:** speakers are metadata. Local agents and models may read them;
+   cloud models (Claude) never open a private recording's renditions, source or speakers,
+   or `people.private.yaml`.
+9. **Forgetting a person scrubs everything** they appear in. That includes rewriting the
+   Plaud snapshots and outputs that hold their name, as a logged exception to write-once.
+   What remains in backups, the mirror and Plaud's cloud is reported.
+10. **Edits made in Plaud sync down** from stage 2, old recordings included (§9.1.1).
+    - The sync is a fetch-and-reconcile pair: a versioned normaliser, a hash for each part,
+      and a rolling sweep with no freeze.
+    - Removals wait for review.
+11. **Stage 2 gets the foundations** that can't be added later without migrating live files:
+    - the locked write path (`mutate`, `rev`)
+    - the new `speakers` shape
+    - Plaud's speaker fields
+    - the sync machinery
+12. **The format change** happens now, inside `recordings-archive@1`, with every new key
+    optional. Every demo recording has `"speakers": {}`, and no real archive exists yet, so
+    no dual reader is needed.
+13. **Insights page** (§12.6b): computed in Python with Shiny, and drawn in React. The demo
+    shows a generated, labelled sample year.
