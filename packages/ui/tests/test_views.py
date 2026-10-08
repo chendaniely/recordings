@@ -105,3 +105,24 @@ def test_recording_view_with_corrupt_recording_json_is_none(demo_archive, demo_i
     
     view = recording_view(archive, demo_ids["jfk-rice"])
     assert view is None
+
+
+def test_library_reports_a_copied_folder_and_a_mistyped_id(demo_archive, demo_ids):
+    import json
+    import shutil
+
+    archive = Archive(demo_archive)
+    jfk = archive.path_for(demo_ids["jfk-rice"])
+    copy = jfk.with_name(f"{jfk.name} copy")
+    shutil.copytree(jfk, copy)
+    apollo = archive.path_for(demo_ids["apollo13-problem"]) / "recording.json"
+    data = json.loads(apollo.read_text(encoding="utf-8"))
+    data["id"] = data["id"][:-1] + ("1" if data["id"][-1] == "0" else "0")
+    apollo.write_text(json.dumps(data), encoding="utf-8")
+
+    view = library_view(archive)
+    assert sorted(r["id"] for r in view["recordings"]) == sorted(
+        [demo_ids["jfk-rice"], demo_ids["apollo11-first-steps"], demo_ids["fdr-fireside-1"]])
+    assert sorted(p["path"] for p in view["problems"]) == sorted(
+        [str(copy / "recording.json"), str(apollo)])
+    assert all("does not match its folder" in p["message"] for p in view["problems"])

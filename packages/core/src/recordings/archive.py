@@ -132,14 +132,28 @@ class Archive:
                 yield folder
 
     def iter_recordings(self) -> Iterator[Recording]:
-        """Every readable recording. A broken file is recorded in .problems, not raised (§11)."""
+        """Every readable recording. A broken file is recorded in .problems, not raised (§11).
+
+        So is a recording whose id doesn't match its folder (a typo, or a copied folder):
+        listing it would show a recording that load() can't find, or the same one twice.
+        """
         self.problems = []
         for folder in self.recording_dirs():
             path = folder / "recording.json"
             try:
-                yield Recording.model_validate_json(path.read_text(encoding="utf-8"))
+                rec = Recording.model_validate_json(path.read_text(encoding="utf-8"))
             except (ValidationError, UnicodeDecodeError, OSError) as exc:
                 self.problems.append(Problem(path=path, message=str(exc).splitlines()[0]))
+                continue
+            try:
+                expected = relative_dir(rec.id).as_posix()
+            except ValueError:  # an id of the right shape with an impossible date
+                expected = None
+            if expected != folder.relative_to(self.root).as_posix():
+                message = f"id {rec.id!r} does not match its folder"
+                self.problems.append(Problem(path=path, message=message))
+                continue
+            yield rec
 
     def path_for(self, rid: str) -> Path:
         return self.root / relative_dir(rid)

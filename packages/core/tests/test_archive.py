@@ -245,3 +245,40 @@ def test_renditions_skips_corrupt_files_when_problems_given(tmp_path):
     assert len(problems) == 1
     assert problems[0].path == corrupt_path
     assert len(problems[0].message) > 0
+
+
+def _set_id(folder: Path, rid: str) -> None:
+    path = folder / "recording.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["id"] = rid
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+@pytest.mark.parametrize("wrong", [
+    lambda rid: rid[:-1] + ("1" if rid[-1] == "0" else "0"),  # a typo in the hash
+    lambda rid: rid.replace("T140003", "T140004"),  # a typo in the time
+    lambda rid: "20261399T256199+0000_deadbeef",  # the right shape, but no such date
+], ids=["hash", "time", "impossible-date"])
+def test_a_recording_whose_id_does_not_match_its_folder_is_reported(tmp_path, wrong):
+    archive = Archive(tmp_path / "archive")
+    good = add(archive, media(tmp_path))
+    bad = add(archive, media(tmp_path, b"other bytes", name="b.mp3"),
+              recorded_at=datetime.fromisoformat("2026-10-07T14:00:03-07:00"))
+    typo = wrong(bad.id)
+    _set_id(archive.path_for(bad.id), typo)
+    assert [r.id for r in archive.iter_recordings()] == [good.id]
+    (problem,) = archive.problems
+    assert problem.path == archive.path_for(bad.id) / "recording.json"
+    assert problem.message == f"id {typo!r} does not match its folder"
+
+
+def test_a_copied_recording_folder_is_reported_and_the_original_kept(tmp_path):
+    archive = Archive(tmp_path / "archive")
+    rec = add(archive, media(tmp_path))
+    original = archive.path_for(rec.id)
+    copy = original.with_name(f"{rec.id} copy")  # what Finder calls a duplicate
+    shutil.copytree(original, copy)
+    assert [r.id for r in archive.iter_recordings()] == [rec.id]
+    (problem,) = archive.problems
+    assert problem.path == copy / "recording.json"
+    assert problem.message == f"id {rec.id!r} does not match its folder"

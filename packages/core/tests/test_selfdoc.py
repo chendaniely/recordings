@@ -104,3 +104,26 @@ def test_layout_patterns_reject_bogus_paths():
         assert not any(p.fullmatch(path) for p in patterns), (
             f"pattern incorrectly accepted {path!r}"
         )
+
+
+def test_validate_reports_a_copied_folder_and_a_mismatched_id(tmp_path, capsys):
+    import json
+    import shutil
+
+    from recordings.cli import main
+
+    archive, rec = build_one(tmp_path)
+    folder = archive.path_for(rec.id)
+    copy = folder.parent.parent / "11" / rec.id  # copied into the wrong month
+    shutil.copytree(folder, copy)
+    other = folder.with_name("20261006T140003-0700_00000000")  # renamed by hand
+    shutil.copytree(folder, other)
+    expected = sorted([str(copy / "recording.json"), str(other / "recording.json")])
+
+    problems = validate(archive.root)
+    assert sorted(p["path"] for p in problems) == expected
+    assert all(p["message"] == f"id {rec.id!r} does not match its folder" for p in problems)
+
+    assert main(["validate", str(archive.root), "--json"]) == 1
+    out = json.loads(capsys.readouterr().out)["problems"]
+    assert sorted(p["path"] for p in out) == expected
