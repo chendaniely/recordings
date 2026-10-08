@@ -999,7 +999,8 @@ calls, so they run before stage 2b's deploy, not now.
 
 ## 2. Deploy 2a against an empty, initialised archive
 
-On the homelab server, in the repo checkout.
+On the homelab server, in the repo checkout. It must be at `$REPO_DIR` (`$RECORDINGS_HOME/repo`),
+where the boot unit in 2.5 expects it: clone it there if it isn't.
 
 1. **Settings.** Copy both templates, then edit them:
    - `config.toml`: `[archive] writer_id`; `[server] base_url` (`http://<$SERVER_TS>:8000`) and
@@ -1040,9 +1041,10 @@ On the homelab server, in the repo checkout.
    `-rw-------`, except the `.pub`.
 
 3. **The tailnet ACL, before anything listens** (spec §15: the app's port is for your devices
-   only). Tag the server first (`sudo tailscale set --advertise-tags=tag:recordings`, then approve
-   it in the admin console if asked). Then set the policy in Tailscale's admin console, under
-   Access controls. A sketch to merge into your own policy:
+   only). First save the policy in Tailscale's admin console, under Access controls: Tailscale
+   rejects a tag that `tagOwners` doesn't list. Grants for `tag:recordings` match nothing until
+   the server carries the tag, so saving them first is safe. A sketch to merge into your own
+   policy:
    ```jsonc
    {
      "tagOwners": { "tag:recordings": ["autogroup:admin"] },
@@ -1057,7 +1059,10 @@ On the homelab server, in the repo checkout.
    A tagged node loses its owner's access, so the grants must name what you still need: the
    `tcp:22` grant keeps your own ssh (and step 3's rsync) working, and if the NAS is on the
    tailnet, the server's traffic to it needs its own grant. No broader rule, such as the default
-   allow-all, may still cover the server. Then check from a
+   allow-all, may still cover the server.
+
+   Then tag the server (`sudo tailscale set --advertise-tags=tag:recordings`, and approve it in
+   the admin console if asked). Last, check from a
    device that should be refused (a tagged device, a shared node, or the NAS if it is on the
    tailnet), with `SERVER_TS` set there to the server's tailnet address:
    ```bash
@@ -1334,7 +1339,9 @@ through 1a, then:
    ```
 
 5. **One recording, not the whole archive.** Restore just its folder with `--include`, move the
-   damaged copy aside (if there is one), move the restored one in, and run `reindex`.
+   damaged copy aside (if there is one), move the restored one in, and run `reindex`. In a new
+   shell, paste the top block, `cd "$REPO_DIR"`, export `RECORDINGS_IMAGE_TAG`, and set `RESTIC`,
+   `REPO`, `CACERT` and `SNAP` as in step 1.
    ```bash
    ID=20261008T143512+0000_0123abcd                             # the recording's ID
    D="recordings/${ID:0:4}/${ID:4:2}/$ID"
