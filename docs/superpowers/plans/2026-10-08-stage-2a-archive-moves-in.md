@@ -3438,7 +3438,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
       | `sha256_of(recording_id: str)` | `str \| None` |
       | `find_by_source(kind: str, ref: str)` | `list[str]` |
 
-    - `rebuild` runs as one `BEGIN IMMEDIATE` transaction on the live file, so a failed rebuild leaves the old index and no temp file. A file SQLite can't read (`SQLITE_NOTADB` or `SQLITE_CORRUPT`) is renamed aside and rebuilt. A database that isn't an index raises `IndexRefused`, and so does emptying a non-empty index without `allow_empty`.
+    - `rebuild` runs as one `BEGIN IMMEDIATE` transaction on the live file, so a failed rebuild leaves the old index and no temp file. A file SQLite can't read (`SQLITE_NOTADB` or `SQLITE_CORRUPT`) is renamed aside, with its `-wal`, `-shm` and `-journal` siblings under the same suffix, and rebuilt; the readability probe opens it `mode=ro&immutable=1` so SQLite can't touch those siblings. A database that isn't an index raises `IndexRefused`, and so does emptying a non-empty index without `allow_empty`.
     - A missing or unreadable index answers every lookup with nothing.
 
 - [ ] **Step 1: Write the failing tests**
@@ -3654,33 +3654,30 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     assert new_file.exists()
     assert b"new corrupted data" in new_file.read_bytes()
     assert index.find_by_sha256(rec.media.sha256) == rec.id
-def test_corrupted_index_with_journal_sibling_renamed_same_suffix(new_archive, tmp_path):
-    # why: when index.db is corrupted, any existing -journal siblings are renamed with the same
-    # suffix to keep them together and prevent losing state about the corruption.
+def test_corrupted_index_quarantines_every_sibling_untouched(new_archive, tmp_path):
+    # why: the -wal, -shm and -journal beside an unreadable index are evidence too. They move with
+    # the main file under one suffix, byte for byte; the readability probe must not alter them.
     root, _ = new_archive
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
-    # First rebuild creates a valid index
-    index.rebuild(Archive(root), archive_uuid="u-1")
-    # Manually create a -journal sibling (simulating SQLite's own recovery file)
-    journal = tmp_path / "index.db-journal"
-    journal.write_bytes(b"journal recovery data")
-    journal_bytes = journal.read_bytes()
-    # Corrupt the index
-    header = b"SQLite format 3\x00"
-    index.path.write_bytes(header + b"corrupted" * 50)
-    # Rebuild will detect corruption and rename both files
+    original = {
+        "": b"SQLite format 3\x00" + b"garbage" * 50,
+        "-wal": b"wal bytes " * 40,
+        "-shm": b"shm bytes " * 40,
+        "-journal": b"journal bytes " * 40,
+    }
+    for sibling, data in original.items():
+        (tmp_path / f"index.db{sibling}").write_bytes(data)
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
-    # Both should be renamed with same suffix
-    main_quarantined = list(tmp_path.glob("index.db.unreadable-*"))
-    assert len(main_quarantined) == 1
-    main_suffix = main_quarantined[0].name[len("index.db"):]
-    journal_renamed = tmp_path / f"index.db-journal{main_suffix}"
-    if journal_renamed.exists():
-        # If journal was renamed, verify it kept its bytes
-        assert journal_renamed.read_bytes() == journal_bytes
-    # New index should be rebuilt
+    main = list(tmp_path.glob("index.db.unreadable-*"))
+    assert len(main) == 1
+    suffix = main[0].name[len("index.db"):]
+    assert suffix.startswith(".unreadable-")
+    for sibling, data in original.items():
+        assert (tmp_path / f"index.db{sibling}{suffix}").read_bytes() == data
+    assert not (tmp_path / "index.db-journal").exists()
     assert index.find_by_sha256(rec.media.sha256) == rec.id
+    assert index.count() == 1
 
 
 def test_empty_index_file_is_replaced_not_renamed(new_archive, tmp_path):
@@ -3697,7 +3694,6 @@ def test_empty_index_file_is_replaced_not_renamed(new_archive, tmp_path):
     assert len(quarantined) == 0
     # Index should work normally
     assert index.find_by_sha256(rec.media.sha256) == rec.id
-
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -3855,9 +3851,12 @@ class Index:
 
     def _readable(self) -> bool:
         """False only when SQLite can't read the file at all; a busy file is still an error."""
+        # Read-only and immutable: SQLite then ignores the -wal and -journal and never replays,
+        # checkpoints or deletes them. Those siblings are the evidence the quarantine keeps.
+        uri = f"{self.path.resolve().as_uri()}?mode=ro&immutable=1"
         try:
-            with self._db() as db:
-                return db.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+            with closing(sqlite3.connect(uri, uri=True)) as conn:
+                return conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
         except sqlite3.DatabaseError as exc:
             if exc.sqlite_errorname in _UNREADABLE:
                 return False
@@ -3933,7 +3932,6 @@ class Index:
             "SELECT DISTINCT recording_id FROM source_refs WHERE kind = ? AND canonical = ? "
             "ORDER BY recording_id", (kind, canonical_ref(kind, ref)))
         return [row[0] for row in rows]
-
 ```
 
 - [ ] **Step 4: Run the tests to see them pass**

@@ -117,9 +117,12 @@ class Index:
 
     def _readable(self) -> bool:
         """False only when SQLite can't read the file at all; a busy file is still an error."""
+        # Read-only and immutable: SQLite then ignores the -wal and -journal and never replays,
+        # checkpoints or deletes them. Those siblings are the evidence the quarantine keeps.
+        uri = f"{self.path.resolve().as_uri()}?mode=ro&immutable=1"
         try:
-            with self._db() as db:
-                return db.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+            with closing(sqlite3.connect(uri, uri=True)) as conn:
+                return conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
         except sqlite3.DatabaseError as exc:
             if exc.sqlite_errorname in _UNREADABLE:
                 return False
