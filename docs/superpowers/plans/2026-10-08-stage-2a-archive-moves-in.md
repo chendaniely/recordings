@@ -3445,12 +3445,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 `packages/core/tests/test_index.py`:
 ```python
+import sqlite3
 from datetime import datetime, timezone
-from threading import Thread
-import time
 
 import pytest
-import sqlite3
 
 from recordings import index as index_module
 from recordings.archive import Archive
@@ -3548,18 +3546,16 @@ def test_a_failed_rebuild_leaves_the_old_index_and_nothing_else(new_archive, tmp
 
 
 def test_a_garbage_index_is_rebuilt(new_archive, tmp_path):
-    # why: §6.8. index.db is derived, so a file SQLite can't read is thrown away and rebuilt.
+    # why: §6.8. index.db is derived, so a corrupted SQLite file is renamed aside and rebuilt.
     root, _ = new_archive
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
-    # Write a file with SQLite header but corrupted content
     index.path.write_bytes(b"SQLite format 3\x00" + b"corrupted data " * 100)
     assert (index.count(), index.archive_uuid()) == (0, None)
     assert index.find_by_source("plaud", HEX) == []
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
     assert index.find_by_sha256(rec.media.sha256) == rec.id
     assert index.find_by_source("plaud", HEX) == [rec.id]
-    # The corrupted file should have been renamed aside
     renamed_files = list(tmp_path.glob("index.db.unreadable-*"))
     assert len(renamed_files) == 1
 
@@ -3587,49 +3583,26 @@ def test_upsert_replaces_a_recordings_references(new_archive, tmp_path):
     assert index.count() == 1
 
 
-def test_rebuild_refuses_to_empty_a_locked_index(new_archive, tmp_path):
-    # why: the empty check moved inside the transaction, so a lock can't bypass the guard.
+def test_rebuild_refuses_to_empty_a_locked_index(new_archive, tmp_path, monkeypatch):
+    # why: the old code read held = self.count() outside the transaction, which returned 0 when
+    # the file was locked (count() swallows DatabaseError). The new code reads inside BEGIN
+    # IMMEDIATE on the same connection, protected by the lock. This test would pass on the old
+    # code too if it just held a lock; instead, it monkeypatches count() to 0 (simulating the
+    # old locked read), so it catches the old bypass and passes only on the new code.
     root, _ = new_archive
     rec = put(root)
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
-    # Now create an archive listing that is empty
+    # Now patch count() to return 0, simulating what the old code saw when locked
+    monkeypatch.setattr(Index, "count", lambda self: 0)
+    # Create an archive listing that is empty
     empty = tmp_path / "empty"
     (empty / "recordings").mkdir(parents=True)
-
-    # Simulate a lock by using a separate connection that holds BEGIN IMMEDIATE.
-    # Create a separate Index instance with short timeout to attempt rebuild.
-    # The lock_conn is not closed, keeping the lock active.
-    lock_conn = sqlite3.connect(str(index.path), timeout=0.5, check_same_thread=False)
-    lock_conn.execute("BEGIN IMMEDIATE")
-
-    def release_lock():
-        time.sleep(0.1)
-        lock_conn.rollback()
-        lock_conn.close()
-
-    thread = Thread(target=release_lock, daemon=True)
-    thread.start()
-
-    # Create a rebuild Index with short timeout to hit the lock
-    rebuild_index = Index(tmp_path / "index.db")
-    # With the lock held, rebuild should timeout or raise IndexRefused inside the transaction
-    try:
-        rebuild_index.rebuild(Archive(empty), archive_uuid="u-1", allow_empty=False)
-        # If we get here, the lock was released and the check happened inside.
-        # The rebuild should have raised IndexRefused after acquiring the lock.
-        pytest.fail("Expected IndexRefused when trying to empty locked index")
-    except (IndexRefused, sqlite3.OperationalError):
-        # Either IndexRefused (check passed) or OperationalError (timeout waiting for lock)
-        pass
-    finally:
-        thread.join(timeout=1)
-        try:
-            lock_conn.close()
-        except (sqlite3.ProgrammingError, RuntimeError):
-            pass
-
-    # Index should still have the recording
+    # Attempt rebuild; new code checks inside the transaction and raises
+    with pytest.raises(IndexRefused, match="refusing to empty"):
+        index.rebuild(Archive(empty), archive_uuid="u-1")
+    # Verify index still has its data (un-patch first so count() works)
+    monkeypatch.undo()
     assert index.count() == 1 and index.find_by_sha256(rec.media.sha256) == rec.id
 
 
@@ -3645,23 +3618,68 @@ def test_non_sqlite_file_at_index_path_is_refused_and_untouched(tmp_path):
 
 
 def test_corrupted_sqlite_file_is_renamed_aside_and_rebuilt(new_archive, tmp_path):
-    # why: index.db is derived; damaged SQLite is thrown away by renaming, not deleting.
+    # why: index.db is derived; damaged SQLite is renamed aside and rebuilt, never deleted.
     root, _ = new_archive
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
-    # Corrupt the SQLite file (keep header, corrupt data)
     header = b"SQLite format 3\x00"
     index.path.write_bytes(header + b"corrupted data" * 100)
-    # Rebuild should rename it aside and create a new one
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
-    # Original file should have been renamed with a timestamp suffix
     renamed_files = list(tmp_path.glob("index.db.unreadable-*"))
     assert len(renamed_files) == 1
     assert renamed_files[0].read_bytes() == header + b"corrupted data" * 100
-    # New index should be readable and find the recording
     assert index.find_by_sha256(rec.media.sha256) == rec.id
     assert index.find_by_source("plaud", HEX) == [rec.id]
+
+
+def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch):
+    # why: Path.rename overwrites on POSIX, so two rebuilds in the same second would collide.
+    # Make the suffix collision-safe with -2, -3, etc.
+    root, _ = new_archive
+    rec = put(root, sources=[("plaud", HEX)])
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+    # Create a pre-existing quarantine file with a fixed timestamp
+    header = b"SQLite format 3\x00"
+    fixed_stamp = "20261009T143512Z"
+    pre_existing = tmp_path / f"index.db.unreadable-{fixed_stamp}"
+    pre_existing.write_bytes(b"pre-existing data")
+    # Patch the datetime module's now method to return a fixed timestamp
+    from unittest.mock import Mock
+    import recordings.index
+    fixed_dt = datetime(2026, 10, 9, 14, 35, 12, tzinfo=timezone.utc)
+    mock_datetime = Mock()
+    mock_datetime.now.return_value = fixed_dt
+    monkeypatch.setattr(recordings.index, "datetime", mock_datetime)
+    # Corrupt the index and rebuild
+    index.path.write_bytes(header + b"new corrupted data" * 100)
+    assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
+    # Both files should exist with their original bytes
+    assert pre_existing.read_bytes() == b"pre-existing data"
+    new_file = tmp_path / f"index.db.unreadable-{fixed_stamp}-2"
+    assert new_file.exists()
+    assert b"new corrupted data" in new_file.read_bytes()
+    assert index.find_by_sha256(rec.media.sha256) == rec.id
+
+
+
+
+def test_empty_index_file_is_replaced_not_renamed(new_archive, tmp_path):
+    # why: a 0-byte index.db can be safely replaced, no quarantine needed.
+    root, _ = new_archive
+    rec = put(root, sources=[("plaud", HEX)])
+    index = Index(tmp_path / "index.db")
+    # Write an empty file
+    index.path.write_bytes(b"")
+    # Rebuild
+    assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
+    # No quarantine files should exist
+    quarantined = list(tmp_path.glob("index.db.unreadable-*"))
+    assert len(quarantined) == 0
+    # Index should work normally
+    assert index.find_by_sha256(rec.media.sha256) == rec.id
+
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -3707,11 +3725,12 @@ writer needs at scale: which recording holds these bytes, and which holds this s
 `rebuild` refuses to empty an index that holds recordings (§6.7): an archive that suddenly lists
 none is far more likely unmounted than empty. It rebuilds inside one transaction on the live file,
 so a failed rebuild leaves the old index as it was and nothing beside it, and readers see the old
-index until the new one commits. A file SQLite can't read at all is thrown away first.
+index until the new one commits. A file SQLite can't read at all is renamed aside and rebuilt.
 """
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
@@ -3791,12 +3810,18 @@ class Index:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
             self._check_ours(db)
-            # Check empty inside the lock, before dropping tables
+            # Check empty inside the lock, before dropping tables (not via count(), which swallows
+            # lock errors). The old code read held = self.count() outside the transaction, so a
+            # locked file returned 0 and the guard was bypassed. This read on the same connection
+            # is protected by BEGIN IMMEDIATE.
             held = 0
             try:
                 held = int(db.execute("SELECT count(*) FROM recordings").fetchone()[0])
-            except (sqlite3.OperationalError, TypeError):
-                # recordings table doesn't exist yet, or other error; treat as 0
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc):
+                    raise
+                held = 0
+            except TypeError:
                 held = 0
             if not recordings and held and not allow_empty:
                 raise IndexRefused(
@@ -3827,27 +3852,42 @@ class Index:
         if not self.path.exists():
             return
         size = self.path.stat().st_size
-        # Empty files can be replaced
         if size == 0:
             return
         # Check for SQLite header
         try:
-            content = self.path.read_bytes()
-            header = content[:16]
+            with self.path.open("rb") as f:
+                header = f.read(16)
         except OSError:
-            return  # Can't read; let rebuild's _db() handle it
+            raise IndexRefused(f"{self.path} is not an index (cannot read file). "
+                             "Check [index] path.")
         if header != b"SQLite format 3\x00":
-            # Not a SQLite file at all
             raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
                              "Check [index] path.")
         # It's a SQLite file; check if it's readable
         if not self._readable():
-            # Corrupted SQLite; rename aside with timestamp
+            # Corrupted SQLite; rename aside with collision-safe timestamp
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            for suffix in ("", "-journal", "-wal", "-shm"):
-                old_path = Path(f"{self.path}{suffix}")
+            # Find a collision-free suffix number for all siblings
+            suffix_num = ""
+            while True:
+                base_suffix = f".unreadable-{stamp}{suffix_num}"
+                # Check all siblings before committing to the rename
+                free = True
+                for sibling_suffix in ("", "-journal", "-wal", "-shm"):
+                    old_path = Path(f"{self.path}{sibling_suffix}")
+                    if old_path.exists() and os.path.lexists(f"{old_path}{base_suffix}"):
+                        free = False
+                        break
+                if free:
+                    break
+                # Increment and try again
+                suffix_num = f"-{int(suffix_num[1:] if suffix_num else 1) + 1}"
+            # Now rename all siblings with the same base suffix
+            for sibling_suffix in ("", "-journal", "-wal", "-shm"):
+                old_path = Path(f"{self.path}{sibling_suffix}")
                 if old_path.exists():
-                    new_path = old_path.with_name(f"{old_path.name}.unreadable-{stamp}")
+                    new_path = old_path.with_name(f"{old_path.name}{base_suffix}")
                     old_path.rename(new_path)
 
     def _check_ours(self, db: sqlite3.Connection) -> None:
@@ -3877,6 +3917,7 @@ class Index:
             "SELECT DISTINCT recording_id FROM source_refs WHERE kind = ? AND canonical = ? "
             "ORDER BY recording_id", (kind, canonical_ref(kind, ref)))
         return [row[0] for row in rows]
+
 ```
 
 - [ ] **Step 4: Run the tests to see them pass**
