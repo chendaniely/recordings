@@ -56,3 +56,13 @@ def test_note_type_chips_meet_wcag_aa_in_both_modes():
         for row in (t["card"], t["background"], selected):
             chip = _mix(t["brand-success"], 0.16, row)
             assert contrast(t["brand-success"], chip) >= 4.5, f"{mode}: note-type chip on {row}"
+
+
+def test_the_selected_sidebar_item_meets_wcag_aa_in_both_modes():
+    # app.css: .si.on (and its count, .si.on .n) is --primary text on --sel, which is 12% of
+    # --primary over --sidebar. Light mode clears 4.5:1 only narrowly, so this pins it.
+    module = brand_css()
+    for mode in ("light", "dark"):
+        t = module.tokens(REPO, mode)
+        selected = _mix(t["primary"], 0.12, t["sidebar"])
+        assert contrast(t["primary"], selected) >= 4.5, f"{mode}: selected sidebar item"

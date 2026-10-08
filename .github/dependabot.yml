@@ -1,7 +1,9 @@
 # Update proposals, a few at a time, on Fridays. Actions stay SHA-pinned: Dependabot moves a
 # SHA pin and its version comment together.
-# shinyreact (Python and npm) is never bumped here: it is upgraded by hand, both pins together
-# (CLAUDE.md "Upgrading shinyreact"), and so are the toolchain majors that must match its examples.
+# A shinyreact PR (Python `shinyreact` or npm `@posit-dev/shinyreact`) is the upgrade signal
+# (spec §13). Never merge one alone: follow CLAUDE.md "Upgrading shinyreact", which bumps both
+# pins together. The toolchain majors that must match shinyreact's examples are ignored here and
+# upgraded by hand, as part of that.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -14,15 +16,12 @@ updates:
     schedule: { interval: weekly, day: friday }
     open-pull-requests-limit: 3
     commit-message: { prefix: "build" }
-    ignore:
-      - dependency-name: shinyreact
   - package-ecosystem: npm
     directory: /packages/ui/frontend
     schedule: { interval: weekly, day: friday }
     open-pull-requests-limit: 3
     commit-message: { prefix: "build(ui)" }
     ignore:
-      - dependency-name: "@posit-dev/shinyreact"
       - dependency-name: vite
         update-types: ["version-update:semver-major"]
       - dependency-name: "@vitejs/plugin-react"

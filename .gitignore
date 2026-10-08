@@ -23,3 +23,6 @@ test-results/
 /config.toml
 docker/deploy.env
 secrets/
+# Environment files can hold secrets: never commit one.
+.env
+.env.*

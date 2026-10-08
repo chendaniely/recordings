@@ -6,11 +6,11 @@ demo/.cache
 packages/ui/src/recordings_ui/www/ui.js
 packages/ui/src/recordings_ui/www/ui.css
 .superpowers
-.env
-.env.*
+**/.env
+**/.env.*
 config.toml
 docker/deploy.env
-secrets
+**/secrets
 **/.venv
 .pytest_cache
 .ruff_cache
