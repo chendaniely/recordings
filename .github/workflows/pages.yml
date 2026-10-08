@@ -1,0 +1,72 @@
+# The static demo on GitHub Pages (spec §17.1): https://chendaniely.github.io/recordings/
+# Builds _site/ with `make pages` (only demo/archive/ is ever exported), smoke-tests it in
+# Chromium, and deploys it straight from the Actions artifact, with no gh-pages branch.
+# Pull requests build and test only, so a Shinylive bump (which changes the Pyodide and shiny the
+# browser runs) is tested before it merges.
+name: pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+# One deployment at a time, never cancelled midway; a newer queued run replaces an older queued
+# one. Pull requests get a group each, so they can't displace a queued deployment.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.event.pull_request.number) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: read # configure-pages reads the site's settings
+    env:
+      UV_FROZEN: "1" # every `uv run` in the Makefile uses uv.lock as it is
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with: { version: "0.12.23" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: packages/ui/frontend/.nvmrc, cache: npm, cache-dependency-path: packages/ui/frontend/package-lock.json }
+      - run: npm ci
+        working-directory: packages/ui/frontend
+      - run: uv sync --frozen --group pages
+      # Shinylive's assets (about 400 MB) depend only on its assets version, which the pinned
+      # Shinylive package fixes. scripts/shinylive_local.py keeps them in .cache/shinylive/.
+      - name: Shinylive assets version
+        id: shinylive
+        run: echo "assets=$(uv run --frozen --group pages python -c 'from shinylive._version import SHINYLIVE_ASSETS_VERSION as v; print(v)')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/shinylive
+          key: shinylive-assets-${{ steps.shinylive.outputs.assets }}
+      - run: make pages
+      - run: uv run --frozen playwright install --with-deps chromium
+      - run: make pages-test
+      - if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        # include-hidden-files keeps _site/.nojekyll, the only dotfile build_pages.py writes.
+        with: { path: _site, include-hidden-files: true }
+
+  deploy:
+    needs: build
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write # to deploy to Pages
+      id-token: write # to verify the deployment comes from this workflow
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
