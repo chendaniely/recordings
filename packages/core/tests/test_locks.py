@@ -1,0 +1,70 @@
+import subprocess
+import sys
+import threading
+import time
+
+import pytest
+
+from recordings.locks import Locks, LockOrderError, LockTimeout, lock_order
+
+A = "20261006T140003-0700_aaaaaaaa"
+B = "20261007T140003-0700_bbbbbbbb"
+
+
+def test_the_lock_order_is_people_then_tags_then_hashes_then_recordings():
+    keys = ["index", B, "sha-" + "f" * 64, "tags.yaml", A, "people.private.yaml", "people.yaml"]
+    assert sorted(keys, key=lock_order) == [
+        "people.yaml", "people.private.yaml", "tags.yaml", "sha-" + "f" * 64, A, B, "index"]
+
+
+def test_locks_taken_together_never_deadlock(tmp_path):
+    # why: §6.4. Two operations naming the same files in opposite orders still take them in one.
+    locks = Locks(tmp_path, timeout=10)
+    done = []
+
+    def worker(keys):
+        for _ in range(50):
+            with locks.hold(*keys):
+                pass
+        done.append(keys)
+
+    threads = [threading.Thread(target=worker, args=(k,)) for k in ((A, B), (B, A))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert len(done) == 2
+
+
+def test_taking_an_earlier_lock_while_holding_a_later_one_is_an_error(tmp_path):
+    locks = Locks(tmp_path)
+    with locks.hold(A), pytest.raises(LockOrderError), locks.hold("people.yaml"):
+        pass
+
+
+def test_holding_a_key_again_only_counts(tmp_path):
+    locks, probe = Locks(tmp_path), Locks(tmp_path, timeout=0)
+    with locks.hold(A):
+        with locks.hold(A):
+            pass
+        with pytest.raises(LockTimeout), probe.hold(A):  # still held after the inner exit
+            pass
+    with probe.hold(A):  # released after the outer exit
+        pass
+
+
+def test_a_lock_is_released_when_its_process_dies(tmp_path):
+    # why: §6.8. flock is released by the kernel, so a crash never leaves a stale lock.
+    script = ("import sys,time; from pathlib import Path; from recordings.locks import Locks\n"
+              "with Locks(Path(sys.argv[1])).hold(sys.argv[2]):\n"
+              "    print('held', flush=True); time.sleep(60)\n")
+    proc = subprocess.Popen([sys.executable, "-c", script, str(tmp_path), A],
+                            stdout=subprocess.PIPE, text=True)
+    assert proc.stdout.readline().strip() == "held"
+    with pytest.raises(LockTimeout), Locks(tmp_path, timeout=0.2).hold(A):
+        pass
+    proc.kill()
+    proc.wait(timeout=10)
+    started = time.monotonic()
+    with Locks(tmp_path, timeout=5).hold(A):
+        assert time.monotonic() - started < 5
