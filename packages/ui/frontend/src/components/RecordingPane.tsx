@@ -38,7 +38,7 @@ function RecordingDetail({ rec, dimmed }: { rec: RecordingView; dimmed: boolean 
         <div className="meta">{[rec.when, rec.duration, rec.sources.map((s) => s.kind).join(", ")].filter(Boolean).join(" · ")} · <span className="mono">{rec.id}</span></div>
         <div>{rec.tags.map((t) => <span key={t.tag} className={`chip${t.by === "auto" ? " auto" : ""}`}>{t.tag}</span>)}</div>
       </div>
-      <Player url={rec.media_url} kind={rec.kind} mediaRef={mediaRef} onTime={setTime} />
+      {rec.media_url && <Player url={rec.media_url} kind={rec.kind} mediaRef={mediaRef} onTime={setTime} />}
       <Tabs defaultValue="transcript" className="flex min-h-0 flex-1 flex-col">
         <TabsList className="tabs-list" aria-label="Recording">
           <TabsTrigger value="transcript" data-testid="tab-transcript">Transcript</TabsTrigger>

@@ -25,7 +25,8 @@ export interface NotesGroup { note_type: string; outputs: NotesOutput[] }
 
 export interface RecordingView {
   id: string; title: string; recorded_at: string; when: string; timezone: string;
-  duration: string | null; kind: "audio" | "video"; private: boolean; media_url: string;
+  duration: string | null; kind: "audio" | "video"; private: boolean;
+  media_url: string | null; // null: media.file can't be linked (the reason is in problems)
   tags: TagRef[]; sources: { kind: string; ref: string; added_at: string }[];
   transcripts: TranscriptView[]; chosen_transcript: string | null;
   notes: NotesGroup[]; plaud_notes: { rendition: string; created_at: string; html: string }[];

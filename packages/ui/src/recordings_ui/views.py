@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+from urllib.parse import quote
 
 from markdown_it import MarkdownIt
 
@@ -94,6 +95,22 @@ def _label(r: Rendition) -> str:
     return "Plaud" if r.engine == "plaud" else f"{(r.model or r.engine).split('/')[-1]} · {r.engine}"
 
 
+def _media_url(archive: Archive, rec: Recording, media_base: str | None,
+               problems: list[Problem]) -> str | None:
+    """The server's own route, which checks the file itself; or, with a base (the static Pages
+    demo, spec §17.1), the file under it, whose extension sets the Content-Type. recording.json
+    is hand-editable, so then media.file must be a plain name: no folder, no way out of the base.
+    """
+    if media_base is None:
+        return f"/media/{rec.id}"
+    name = rec.media.file
+    if name in ("", ".", "..") or "/" in name or "\\" in name:
+        problems.append(Problem(path=archive.path_for(rec.id) / "recording.json",
+                                message=f"media.file {name!r} is not a plain file name"))
+        return None
+    return f"{media_base}{quote(name, safe='')}"
+
+
 def recording_view(archive: Archive, rid: str, *, media_base: str | None = None) -> dict | None:
     if not ID_RE.fullmatch(rid or ""):
         return None
@@ -120,6 +137,7 @@ def recording_view(archive: Archive, rid: str, *, media_base: str | None = None)
                 "html": render_markdown(r.payload["markdown"]),
             })
     my_notes = archive.read_my_notes(rid)
+    media_url = _media_url(archive, rec, media_base, problems)  # before problems is listed
     return {
         "id": rec.id,
         "title": rec.title,
@@ -129,9 +147,7 @@ def recording_view(archive: Archive, rid: str, *, media_base: str | None = None)
         "duration": duration_label(rec.media.duration_ms),
         "kind": rec.media.kind,
         "private": is_private(rec),
-        # The server's own route, or with a base (the static Pages demo, spec §17.1) the file
-        # itself, whose extension sets the Content-Type.
-        "media_url": f"/media/{rec.id}" if media_base is None else f"{media_base}{rec.media.file}",
+        "media_url": media_url,
         "tags": _tags(rec),
         "sources": [{"kind": s.kind, "ref": s.ref, "added_at": s.added_at.isoformat()}
                     for s in rec.sources],

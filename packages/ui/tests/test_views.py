@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from recordings.archive import Archive, RawSource
 from recordings.models import Rendition
 from recordings_ui.views import library_view, recording_view, render_markdown
@@ -44,9 +46,42 @@ def test_a_media_base_links_the_media_file_itself(demo_archive, demo_ids):
     # and the host sends the right Content-Type.
     archive = Archive(demo_archive)
     jfk = recording_view(archive, demo_ids["jfk-rice"], media_base="../media/")
-    assert jfk["media_url"] == f"../media/{demo_ids['jfk-rice']}.mp3"
+    assert jfk["media_url"] == f"../media/{demo_ids['jfk-rice']}.mp3"  # unchanged by encoding
+    assert jfk["problems"] == []
     apollo = recording_view(archive, demo_ids["apollo11-first-steps"], media_base="../media/")
     assert apollo["media_url"] == f"../media/{demo_ids['apollo11-first-steps']}.mp4"
+
+
+def _set_media_file(archive, rid, name):
+    import json
+
+    path = archive.path_for(rid) / "recording.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["media"]["file"] = name
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("name", ["../x", "../../etc/passwd", "sub/x.mp3", "sub\\x.mp3", "/x.mp3",
+                                  "", ".", ".."])
+def test_a_media_base_links_no_file_outside_the_media_folder(demo_archive, demo_ids, name):
+    # recording.json is hand-editable: with a base, media.file becomes part of a URL.
+    archive = Archive(demo_archive)
+    path = _set_media_file(archive, demo_ids["jfk-rice"], name)
+    view = recording_view(archive, demo_ids["jfk-rice"], media_base="../media/")
+    assert view["media_url"] is None
+    assert [p["path"] for p in view["problems"]] == [str(path)]
+    assert "media.file" in view["problems"][0]["message"]
+    # The server's route checks the file itself, so its URL doesn't change.
+    assert recording_view(archive, demo_ids["jfk-rice"])["media_url"] == f"/media/{demo_ids['jfk-rice']}"
+
+
+def test_a_media_base_percent_encodes_the_file_name(demo_archive, demo_ids):
+    archive = Archive(demo_archive)
+    _set_media_file(archive, demo_ids["jfk-rice"], "talk #1 50%?.mp3")
+    view = recording_view(archive, demo_ids["jfk-rice"], media_base="../media/")
+    assert view["media_url"] == "../media/talk%20%231%2050%25%3F.mp3"
+    assert view["problems"] == []
 
 
 def test_without_a_media_base_media_goes_through_the_server_route(demo_archive, demo_ids):

@@ -5,7 +5,7 @@ export function DetailsTab({ rec }: { rec: RecordingView }) {
     <>
       {rec.problems.length > 0 && (
         <div className="problems" role="status" data-testid="recording-problems">
-          {rec.problems.length} output file{rec.problems.length > 1 ? "s" : ""} couldn't be read:
+          {rec.problems.length} file{rec.problems.length > 1 ? "s" : ""} couldn't be read:
           <ul>{rec.problems.map((p) => <li key={p.path} className="mono">{p.path}: {p.message}</li>)}</ul>
         </div>
       )}
