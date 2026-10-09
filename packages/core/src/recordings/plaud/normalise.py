@@ -14,9 +14,8 @@ The rules:
 - `of_<hex>` and the bare hex are one ID.
 - Everything else, unknown new fields included, is kept, so it counts as a change.
 
-The normalised form is for hashing only. Notes are rendered from the raw block (`note_blocks`
-hands back both): the URL scrub runs to the next space or quote, so it also eats a Markdown
-link's closing parenthesis.
+Notes are still rendered from the raw block (`note_blocks` hands back both), so a rule here can
+never alter what Dan reads.
 
 The envelope's shape is audio-router's `files/{id}` snapshot (archive/sources/plaud.py,
 plaud_transcript.py and schemas.py at commit 64612df).
@@ -41,8 +40,16 @@ OWN_NOTE_TYPES = frozenset({"high_light", "consumer_note", "mark_memo"})  # Dan'
 # What Plaud emits before it knows a person: "Speaker 1", "spk_2", bare numbers, "unknown".
 GENERIC_SPEAKER = re.compile(r"(?i)^\s*(speaker[\s_-]*\d+|spk[\s_-]*\d+|unknown|\d+)\s*$")
 PRESIGNED = "<presigned>"
+# A SigV4 query percent-encodes everything but these, so the match stops at a closing `)`, `>`,
+# `,` or a space and never swallows the text glued to a link. It must end on an alphanumeric,
+# `%` or `=`, so a sentence's final period survives.
+_QUERY_CHARS = r"[A-Za-z0-9\-._~%&=+/:@]*"
 _PRESIGNED_QUERY = re.compile(
-    r"(https?://[^\s?#\"'\\]+)\?[^\s#\"'\\]*X-Amz-[^\s#\"'\\]*", re.I)
+    r"(https?://[^\s?#\"'\\]+)\?" + _QUERY_CHARS + r"X-Amz-" + _QUERY_CHARS
+    + r"(?<=[A-Za-z0-9%=])", re.I)
+# A note block's own fields. Any other key on one is unknown, so it goes to "other" and counts
+# towards the circuit breaker, while an edit to a known field is a notes edit (§9.1.1).
+_NOTE_KEYS = frozenset({"data_type", "data_tab_name", "data_id", "data_title", "data_content"})
 # A segment row's fields, by part: the text with its timing, and the names. A field outside both
 # counts as "other", so a field Plaud starts adding to every row still reaches the circuit breaker.
 _TEXT_KEYS = ("start_time", "end_time", "content", "original_speaker")
@@ -50,26 +57,34 @@ _NAME_KEYS = ("speaker", "embeddingKey")
 _ROW_KEYS = frozenset(_TEXT_KEYS + _NAME_KEYS)
 
 
+_UNPARSEABLE = (ValueError, RecursionError)  # JSONDecodeError is a ValueError; so is the int-size limit
+
+
+def _is_segment(block: Any) -> bool:
+    kind = block.get("data_type") if isinstance(block, dict) else None
+    return isinstance(kind, str) and kind in SEGMENT_TYPES  # a list-valued type is not hashable
+
+
 def canonical_json(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 def sha256_of(obj: Any) -> str:
-    return hashlib.sha256(canonical_json(obj).encode("utf-8")).hexdigest()
+    # surrogatepass: a lone surrogate (a valid JSON escape) must hash, not crash the sync.
+    return hashlib.sha256(canonical_json(obj).encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def _scrub(obj: Any) -> Any:
     if isinstance(obj, dict):
         out = {k: _scrub(v) for k, v in obj.items() if k not in DROPPED_KEYS}
-        if out.get("data_type") in SEGMENT_TYPES and isinstance(obj.get("data_content"), str):
+        if _is_segment(out) and isinstance(obj.get("data_content"), str):
             # A segment block's content is JSON inside a string. Scrub the parsed leaves, never
             # the encoded text: there the URL is followed by an escape (`\\n`, `\\"`) that the
             # scrub would eat, breaking the JSON or merging two different texts.
             try:
-                inner = json.loads(obj["data_content"])
-            except json.JSONDecodeError:
-                return out
-            out["data_content"] = canonical_json(_scrub(inner))
+                out["data_content"] = canonical_json(_scrub(json.loads(obj["data_content"])))
+            except _UNPARSEABLE:
+                pass  # keep the string, scrubbed as plain text
         return out
     if isinstance(obj, list):
         return [_scrub(v) for v in obj]
@@ -86,13 +101,11 @@ def _block_key(block: Any) -> tuple[str, str, str, str]:
 
 
 def _canonical_block(block: Any) -> Any:
-    if (isinstance(block, dict) and block.get("data_type") in SEGMENT_TYPES
-            and isinstance(block.get("data_content"), str)):
+    if _is_segment(block) and isinstance(block.get("data_content"), str):
         try:
-            inner = json.loads(block["data_content"])
-        except json.JSONDecodeError:
+            return {**block, "data_content": canonical_json(json.loads(block["data_content"]))}
+        except _UNPARSEABLE:
             return block
-        return {**block, "data_content": canonical_json(inner)}
     return block
 
 
@@ -166,14 +179,14 @@ def is_complete(envelope: dict) -> bool:
 def _rows_of(block: Any) -> list[dict] | None:
     """A segment block's rows, or None when it isn't one or its content isn't a JSON list of
     objects."""
-    if not isinstance(block, dict) or block.get("data_type") not in SEGMENT_TYPES:
+    if not _is_segment(block):
         return None
     content = block.get("data_content")
     if not isinstance(content, str) or not content.strip():
         return None
     try:
         rows = json.loads(content)
-    except json.JSONDecodeError:
+    except _UNPARSEABLE:
         return None
     ok = isinstance(rows, list) and rows and all(isinstance(r, dict) for r in rows)
     return rows if ok else None
@@ -201,7 +214,7 @@ def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
     """Each note block as (note type, normalised block, raw block), in normalised order: the
     `outline`, then every `note_list` tab, Dan's own highlights and memos included. The note
     type is `plaud-<tab>` (§6.5); a second tab with the same name gets `-2`, then `-3`, and so
-    on. Hash the normalised block. Render the raw one, whose links are whole."""
+    on. Hash the normalised block. Render the raw one."""
     outline = [b for b in envelope.get("source_list") or []
                if isinstance(b, dict) and b.get("data_type") == "outline"]
     tabs = [b for b in envelope.get("note_list") or [] if isinstance(b, dict)]
@@ -216,14 +229,29 @@ def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
     return out
 
 
+def _ms(value: Any) -> Any:
+    """1500.0 and 1500 are the same millisecond: a client re-serialising must not look re-diarized."""
+    return int(value) if isinstance(value, float) and value.is_integer() else value
+
+
+def _generic_label(row: dict) -> str:
+    """The row's label before Dan named anyone. Without `original_speaker`, the current name counts
+    only if it is itself generic ("Speaker 2"), so a rename is never a new diarization."""
+    original = row.get("original_speaker")
+    if isinstance(original, str) and original:
+        return original
+    name = row.get("speaker")
+    return name if isinstance(name, str) and GENERIC_SPEAKER.match(name) else ""
+
+
 def diarization_fingerprint(envelope: dict) -> str | None:
     """Each segment's start and end, in Plaud's integer milliseconds, and its generic label: the
     same fingerprint means only names changed; a different one is a new diarization (§9.1.1)."""
     rows = transcript_rows(normalise(envelope))
     if rows is None:
         return None
-    return sha256_of([[r.get("start_time"), r.get("end_time"),
-                       r.get("original_speaker") or r.get("speaker") or ""] for r in rows])
+    return sha256_of([[_ms(r.get("start_time")), _ms(r.get("end_time")), _generic_label(r)]
+                      for r in rows])
 
 
 def part_hashes(envelope: dict) -> dict[str, str]:
@@ -255,12 +283,18 @@ def part_hashes(envelope: dict) -> dict[str, str]:
     if text:
         parts["transcript"] = sha256_of(text)
         parts["speakers"] = sha256_of(names)
+    unknown = []  # a note block's fields outside _NOTE_KEYS: unknown, so "other", never a notes edit
     for note_type, block, _raw in note_blocks(env):
-        parts[f"notes:{note_type}"] = sha256_of(block)
+        parts[f"notes:{note_type}"] = sha256_of({k: v for k, v in block.items() if k in _NOTE_KEYS})
+        extra = {k: v for k, v in block.items() if k not in _NOTE_KEYS}
+        if extra:
+            unknown.append([note_type, extra])
     rest = {k: v for k, v in env.items() if k != "name"}
     if isinstance(sources, list):
         rest["source_list"] = residue
     if isinstance(env.get("note_list"), list):
-        rest["note_list"] = [b for b in env["note_list"] if not isinstance(b, dict)]
+        rest["note_list"] = [[b for b in env["note_list"] if not isinstance(b, dict)], unknown]
+    elif unknown:
+        rest["note_unknown"] = unknown  # an outline can carry unknown fields with no note_list
     parts["other"] = sha256_of(rest)
     return parts

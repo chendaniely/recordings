@@ -7396,6 +7396,7 @@ import pytest
 
 from recordings.plaud.normalise import (
     DROPPED_KEYS,
+    NORMALISER_VERSION,
     diarization_fingerprint,
     envelope_sha256,
     is_complete,
@@ -7618,14 +7619,13 @@ def test_note_types_are_plaud_and_the_tab_ascii_folded_and_numbered(plaud_env):
 
 
 def test_note_blocks_pair_each_normalised_block_with_its_raw_one(plaud_env):
-    # why: notes are rendered from the raw block. The scrub runs to the next space, so on the
-    # normalised block a Markdown link loses its closing parenthesis.
+    # why: notes render from the raw block, never the normalised one.
     text = "See [the chart](https://notes.example/a.png?X-Amz-Signature=1) here."
     env = plaud_env(notes=[{"data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
                             "data_content": text}])
     _outline, (note_type, block, raw) = note_blocks(env)
     assert note_type == "plaud-s" and raw["data_content"] == text
-    assert block["data_content"] == "See [the chart](https://notes.example/a.png?<presigned> here."
+    assert block["data_content"] == "See [the chart](https://notes.example/a.png?<presigned>) here."
 
 
 def test_the_diarization_fingerprint_ignores_names_but_not_timing(plaud_env):
@@ -7687,6 +7687,109 @@ def test_every_field_lands_in_some_part_and_new_row_fields_are_other(plaud_env):
     more = copy.deepcopy(garbled)
     more["source_list"][-1]["data_content"] = "not json either"
     assert _parts_changed(garbled, more) == {"other"}
+
+
+def _note(text):
+    return {"id": HEX, "note_list": [{"data_type": "auto_sum_note", "data_id": "n",
+                                      "data_tab_name": "S", "data_content": text}]}
+
+
+def test_text_glued_to_a_signed_link_is_still_compared():
+    # why: the scrub once ran to the next space, so an edit to `)ok` or to the second of two
+    # adjacent images never changed the hash. A permanent miss.
+    glued = "see (http://h/x?X-Amz-S=1)"
+    assert envelope_sha256(_note(glued + "ok")) != envelope_sha256(_note(glued + "NO"))
+    images = "![a](http://h/x?X-Amz-S=1)![b](http://h/{}?X-Amz-S=2)"
+    assert envelope_sha256(_note(images.format("y"))) != envelope_sha256(_note(images.format("z")))
+    # The signature still goes, and a sentence's period stays.
+    assert normalise(_note("a http://h/q?a=1&X-Amz-Date=2%3A3. b"))["note_list"][0][
+        "data_content"] == "a http://h/q?<presigned>. b"
+
+
+@pytest.mark.parametrize("hostile", [
+    {"id": HEX, "name": "\ud800"},                                          # lone surrogate
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": "[" * 5000 + "]" * 5000}]},     # too deep
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": '[{"start_time": ' + "9" * 5000 + "}]"}]},
+    {"id": HEX, "source_list": [{"data_type": ["x"], "data_id": "t"}]},          # unhashable type
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": '[{"content": "x", "start_time": NaN}]'}]},
+])
+def test_hostile_payloads_hash_instead_of_raising(hostile):
+    # why: one odd snapshot from a third party must not abort a whole import or sync pass.
+    assert envelope_sha256(hostile) == envelope_sha256(copy.deepcopy(hostile))
+    assert "other" in part_hashes(hostile)
+    assert normalise(normalise(hostile)) is not None
+
+
+def _with_rows(rows):
+    return {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                        "data_content": json.dumps(rows)}]}
+
+
+def test_the_fingerprint_survives_a_rename_without_original_speaker_and_float_times():
+    def rows(first, mid=1500):
+        return [{"content": "a", "start_time": 0, "end_time": mid, "speaker": first},
+                {"content": "b", "start_time": mid, "end_time": 2600, "speaker": "Speaker 2"}]
+    base = diarization_fingerprint(_with_rows(rows("Ada")))
+    assert diarization_fingerprint(_with_rows(rows("Grace"))) == base         # a rename
+    assert diarization_fingerprint(_with_rows(rows("Ada", 1500.0))) == base   # 1500.0 is 1500
+    assert diarization_fingerprint(_with_rows(rows("Ada", 1400))) != base     # re-segmented
+    assert (diarization_fingerprint(_with_rows(rows("Speaker 1")))
+            != diarization_fingerprint(_with_rows(rows("Speaker 3"))))        # generic label
+
+
+def test_a_new_field_on_a_note_block_is_other_not_a_notes_edit(plaud_env):
+    # why: §9.1.1. Unknown fields count towards the circuit breaker; notes edits never do. A
+    # volatile field Plaud adds to every note block must not look like Dan edited every note.
+    env = plaud_env()
+    tagged = copy.deepcopy(env)
+    for block in tagged["note_list"]:
+        block["volatile_new"] = "abc"
+    for block in tagged["source_list"]:
+        if block["data_type"] == "outline":
+            block["volatile_new"] = "abc"
+    assert _parts_changed(env, tagged) == {"other"}
+    edited = copy.deepcopy(env)
+    edited["note_list"][0]["data_title"] = "Renamed"
+    assert _parts_changed(env, edited) == {"notes:plaud-summary"}
+
+
+GOLDEN_ENVELOPE = {
+    "id": "of_0123456789abcdef0123456789abcdef", "name": "Week 4 \u4f1a\u8b70", "duration": 2600,
+    "presigned_url": "https://a.example/x.mp3?X-Amz-Signature=abc",
+    "source_list": [
+        {"data_type": "transaction", "data_id": "t-1", "data_tab_name": None,
+         "data_content": json.dumps([
+             {"content": "Hello \u00e9.", "start_time": 0, "end_time": 1500, "speaker": "Ada",
+              "original_speaker": "Speaker 1"},
+             {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2",
+              "original_speaker": "Speaker 2"}])},
+        {"data_type": "outline", "data_id": "o-1", "data_tab_name": None,
+         "data_content": '[{"topic": "Hi", "start_time": 0}]'}],
+    "note_list": [{"data_type": "auto_sum_note", "data_id": "n-1", "data_tab_name": "Summary",
+                   "data_content": "See [c](https://n.example/a.png?X-Amz-Signature=1) now."}],
+    "_meta": {"tool": "x"},
+}
+
+
+def test_the_normaliser_version_is_pinned_to_its_behaviour():
+    # why: every stored Plaud hash and output `version` is computed by this function. Changing a
+    # rule without bumping NORMALISER_VERSION makes the next sync see every recording as changed
+    # (or miss real edits). Change these only together with NORMALISER_VERSION.
+    assert NORMALISER_VERSION == 1
+    assert envelope_sha256(GOLDEN_ENVELOPE) == (
+        "dc6cb5b2bd9bc97705148b6ae3cdc355e5a9ac338b8b2f6c986bfbe594ac2d8c")
+    assert part_hashes(GOLDEN_ENVELOPE) == {
+        "title": "ffba669af7869bb0f89d4b48a826866cdb406fc6495268b43df7e97bdaff7161",
+        "transcript": "67e0b85575db1594ffabddb4212c9211d20d4e7d6604e6fa52200b622b747b31",
+        "speakers": "52e370b791f4b3277153c56521f8fcfcd7f0827300a7dbaff76524039f141fbf",
+        "notes:plaud-outline": "19c6f09bde57fc5e25d3ae808a508de00674a79d25fb87cd898a41305ae53855",
+        "notes:plaud-summary": "0fcd3affdaa0fd4a9e19924fc9a00f123aacfb4fdb9f814c8057850f77314cab",
+        "other": "61b023a3b6f767843c8ff2b059b872efbaae82554d17edf3f7b5c9eb9da3d8ba"}
+    assert diarization_fingerprint(GOLDEN_ENVELOPE) == (
+        "df7b445ce1c5b6fd3c6907eb3d64349e443feece735a1f7ccda674771a29632b")
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -7723,9 +7826,8 @@ The rules:
 - `of_<hex>` and the bare hex are one ID.
 - Everything else, unknown new fields included, is kept, so it counts as a change.
 
-The normalised form is for hashing only. Notes are rendered from the raw block (`note_blocks`
-hands back both): the URL scrub runs to the next space or quote, so it also eats a Markdown
-link's closing parenthesis.
+Notes are still rendered from the raw block (`note_blocks` hands back both), so a rule here can
+never alter what Dan reads.
 
 The envelope's shape is audio-router's `files/{id}` snapshot (archive/sources/plaud.py,
 plaud_transcript.py and schemas.py at commit 64612df).
@@ -7750,8 +7852,16 @@ OWN_NOTE_TYPES = frozenset({"high_light", "consumer_note", "mark_memo"})  # Dan'
 # What Plaud emits before it knows a person: "Speaker 1", "spk_2", bare numbers, "unknown".
 GENERIC_SPEAKER = re.compile(r"(?i)^\s*(speaker[\s_-]*\d+|spk[\s_-]*\d+|unknown|\d+)\s*$")
 PRESIGNED = "<presigned>"
+# A SigV4 query percent-encodes everything but these, so the match stops at a closing `)`, `>`,
+# `,` or a space and never swallows the text glued to a link. It must end on an alphanumeric,
+# `%` or `=`, so a sentence's final period survives.
+_QUERY_CHARS = r"[A-Za-z0-9\-._~%&=+/:@]*"
 _PRESIGNED_QUERY = re.compile(
-    r"(https?://[^\s?#\"'\\]+)\?[^\s#\"'\\]*X-Amz-[^\s#\"'\\]*", re.I)
+    r"(https?://[^\s?#\"'\\]+)\?" + _QUERY_CHARS + r"X-Amz-" + _QUERY_CHARS
+    + r"(?<=[A-Za-z0-9%=])", re.I)
+# A note block's own fields. Any other key on one is unknown, so it goes to "other" and counts
+# towards the circuit breaker, while an edit to a known field is a notes edit (§9.1.1).
+_NOTE_KEYS = frozenset({"data_type", "data_tab_name", "data_id", "data_title", "data_content"})
 # A segment row's fields, by part: the text with its timing, and the names. A field outside both
 # counts as "other", so a field Plaud starts adding to every row still reaches the circuit breaker.
 _TEXT_KEYS = ("start_time", "end_time", "content", "original_speaker")
@@ -7759,26 +7869,34 @@ _NAME_KEYS = ("speaker", "embeddingKey")
 _ROW_KEYS = frozenset(_TEXT_KEYS + _NAME_KEYS)
 
 
+_UNPARSEABLE = (ValueError, RecursionError)  # JSONDecodeError is a ValueError; so is the int-size limit
+
+
+def _is_segment(block: Any) -> bool:
+    kind = block.get("data_type") if isinstance(block, dict) else None
+    return isinstance(kind, str) and kind in SEGMENT_TYPES  # a list-valued type is not hashable
+
+
 def canonical_json(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 def sha256_of(obj: Any) -> str:
-    return hashlib.sha256(canonical_json(obj).encode("utf-8")).hexdigest()
+    # surrogatepass: a lone surrogate (a valid JSON escape) must hash, not crash the sync.
+    return hashlib.sha256(canonical_json(obj).encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def _scrub(obj: Any) -> Any:
     if isinstance(obj, dict):
         out = {k: _scrub(v) for k, v in obj.items() if k not in DROPPED_KEYS}
-        if out.get("data_type") in SEGMENT_TYPES and isinstance(obj.get("data_content"), str):
+        if _is_segment(out) and isinstance(obj.get("data_content"), str):
             # A segment block's content is JSON inside a string. Scrub the parsed leaves, never
             # the encoded text: there the URL is followed by an escape (`\\n`, `\\"`) that the
             # scrub would eat, breaking the JSON or merging two different texts.
             try:
-                inner = json.loads(obj["data_content"])
-            except json.JSONDecodeError:
-                return out
-            out["data_content"] = canonical_json(_scrub(inner))
+                out["data_content"] = canonical_json(_scrub(json.loads(obj["data_content"])))
+            except _UNPARSEABLE:
+                pass  # keep the string, scrubbed as plain text
         return out
     if isinstance(obj, list):
         return [_scrub(v) for v in obj]
@@ -7795,13 +7913,11 @@ def _block_key(block: Any) -> tuple[str, str, str, str]:
 
 
 def _canonical_block(block: Any) -> Any:
-    if (isinstance(block, dict) and block.get("data_type") in SEGMENT_TYPES
-            and isinstance(block.get("data_content"), str)):
+    if _is_segment(block) and isinstance(block.get("data_content"), str):
         try:
-            inner = json.loads(block["data_content"])
-        except json.JSONDecodeError:
+            return {**block, "data_content": canonical_json(json.loads(block["data_content"]))}
+        except _UNPARSEABLE:
             return block
-        return {**block, "data_content": canonical_json(inner)}
     return block
 
 
@@ -7875,14 +7991,14 @@ def is_complete(envelope: dict) -> bool:
 def _rows_of(block: Any) -> list[dict] | None:
     """A segment block's rows, or None when it isn't one or its content isn't a JSON list of
     objects."""
-    if not isinstance(block, dict) or block.get("data_type") not in SEGMENT_TYPES:
+    if not _is_segment(block):
         return None
     content = block.get("data_content")
     if not isinstance(content, str) or not content.strip():
         return None
     try:
         rows = json.loads(content)
-    except json.JSONDecodeError:
+    except _UNPARSEABLE:
         return None
     ok = isinstance(rows, list) and rows and all(isinstance(r, dict) for r in rows)
     return rows if ok else None
@@ -7910,7 +8026,7 @@ def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
     """Each note block as (note type, normalised block, raw block), in normalised order: the
     `outline`, then every `note_list` tab, Dan's own highlights and memos included. The note
     type is `plaud-<tab>` (§6.5); a second tab with the same name gets `-2`, then `-3`, and so
-    on. Hash the normalised block. Render the raw one, whose links are whole."""
+    on. Hash the normalised block. Render the raw one."""
     outline = [b for b in envelope.get("source_list") or []
                if isinstance(b, dict) and b.get("data_type") == "outline"]
     tabs = [b for b in envelope.get("note_list") or [] if isinstance(b, dict)]
@@ -7925,14 +8041,29 @@ def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
     return out
 
 
+def _ms(value: Any) -> Any:
+    """1500.0 and 1500 are the same millisecond: a client re-serialising must not look re-diarized."""
+    return int(value) if isinstance(value, float) and value.is_integer() else value
+
+
+def _generic_label(row: dict) -> str:
+    """The row's label before Dan named anyone. Without `original_speaker`, the current name counts
+    only if it is itself generic ("Speaker 2"), so a rename is never a new diarization."""
+    original = row.get("original_speaker")
+    if isinstance(original, str) and original:
+        return original
+    name = row.get("speaker")
+    return name if isinstance(name, str) and GENERIC_SPEAKER.match(name) else ""
+
+
 def diarization_fingerprint(envelope: dict) -> str | None:
     """Each segment's start and end, in Plaud's integer milliseconds, and its generic label: the
     same fingerprint means only names changed; a different one is a new diarization (§9.1.1)."""
     rows = transcript_rows(normalise(envelope))
     if rows is None:
         return None
-    return sha256_of([[r.get("start_time"), r.get("end_time"),
-                       r.get("original_speaker") or r.get("speaker") or ""] for r in rows])
+    return sha256_of([[_ms(r.get("start_time")), _ms(r.get("end_time")), _generic_label(r)]
+                      for r in rows])
 
 
 def part_hashes(envelope: dict) -> dict[str, str]:
@@ -7964,13 +8095,19 @@ def part_hashes(envelope: dict) -> dict[str, str]:
     if text:
         parts["transcript"] = sha256_of(text)
         parts["speakers"] = sha256_of(names)
+    unknown = []  # a note block's fields outside _NOTE_KEYS: unknown, so "other", never a notes edit
     for note_type, block, _raw in note_blocks(env):
-        parts[f"notes:{note_type}"] = sha256_of(block)
+        parts[f"notes:{note_type}"] = sha256_of({k: v for k, v in block.items() if k in _NOTE_KEYS})
+        extra = {k: v for k, v in block.items() if k not in _NOTE_KEYS}
+        if extra:
+            unknown.append([note_type, extra])
     rest = {k: v for k, v in env.items() if k != "name"}
     if isinstance(sources, list):
         rest["source_list"] = residue
     if isinstance(env.get("note_list"), list):
-        rest["note_list"] = [b for b in env["note_list"] if not isinstance(b, dict)]
+        rest["note_list"] = [[b for b in env["note_list"] if not isinstance(b, dict)], unknown]
+    elif unknown:
+        rest["note_unknown"] = unknown  # an outline can carry unknown fields with no note_list
     parts["other"] = sha256_of(rest)
     return parts
 ```

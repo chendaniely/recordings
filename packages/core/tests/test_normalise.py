@@ -6,6 +6,7 @@ import pytest
 
 from recordings.plaud.normalise import (
     DROPPED_KEYS,
+    NORMALISER_VERSION,
     diarization_fingerprint,
     envelope_sha256,
     is_complete,
@@ -228,14 +229,13 @@ def test_note_types_are_plaud_and_the_tab_ascii_folded_and_numbered(plaud_env):
 
 
 def test_note_blocks_pair_each_normalised_block_with_its_raw_one(plaud_env):
-    # why: notes are rendered from the raw block. The scrub runs to the next space, so on the
-    # normalised block a Markdown link loses its closing parenthesis.
+    # why: notes render from the raw block, never the normalised one.
     text = "See [the chart](https://notes.example/a.png?X-Amz-Signature=1) here."
     env = plaud_env(notes=[{"data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
                             "data_content": text}])
     _outline, (note_type, block, raw) = note_blocks(env)
     assert note_type == "plaud-s" and raw["data_content"] == text
-    assert block["data_content"] == "See [the chart](https://notes.example/a.png?<presigned> here."
+    assert block["data_content"] == "See [the chart](https://notes.example/a.png?<presigned>) here."
 
 
 def test_the_diarization_fingerprint_ignores_names_but_not_timing(plaud_env):
@@ -297,3 +297,106 @@ def test_every_field_lands_in_some_part_and_new_row_fields_are_other(plaud_env):
     more = copy.deepcopy(garbled)
     more["source_list"][-1]["data_content"] = "not json either"
     assert _parts_changed(garbled, more) == {"other"}
+
+
+def _note(text):
+    return {"id": HEX, "note_list": [{"data_type": "auto_sum_note", "data_id": "n",
+                                      "data_tab_name": "S", "data_content": text}]}
+
+
+def test_text_glued_to_a_signed_link_is_still_compared():
+    # why: the scrub once ran to the next space, so an edit to `)ok` or to the second of two
+    # adjacent images never changed the hash. A permanent miss.
+    glued = "see (http://h/x?X-Amz-S=1)"
+    assert envelope_sha256(_note(glued + "ok")) != envelope_sha256(_note(glued + "NO"))
+    images = "![a](http://h/x?X-Amz-S=1)![b](http://h/{}?X-Amz-S=2)"
+    assert envelope_sha256(_note(images.format("y"))) != envelope_sha256(_note(images.format("z")))
+    # The signature still goes, and a sentence's period stays.
+    assert normalise(_note("a http://h/q?a=1&X-Amz-Date=2%3A3. b"))["note_list"][0][
+        "data_content"] == "a http://h/q?<presigned>. b"
+
+
+@pytest.mark.parametrize("hostile", [
+    {"id": HEX, "name": "\ud800"},                                          # lone surrogate
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": "[" * 5000 + "]" * 5000}]},     # too deep
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": '[{"start_time": ' + "9" * 5000 + "}]"}]},
+    {"id": HEX, "source_list": [{"data_type": ["x"], "data_id": "t"}]},          # unhashable type
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": '[{"content": "x", "start_time": NaN}]'}]},
+])
+def test_hostile_payloads_hash_instead_of_raising(hostile):
+    # why: one odd snapshot from a third party must not abort a whole import or sync pass.
+    assert envelope_sha256(hostile) == envelope_sha256(copy.deepcopy(hostile))
+    assert "other" in part_hashes(hostile)
+    assert normalise(normalise(hostile)) is not None
+
+
+def _with_rows(rows):
+    return {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                        "data_content": json.dumps(rows)}]}
+
+
+def test_the_fingerprint_survives_a_rename_without_original_speaker_and_float_times():
+    def rows(first, mid=1500):
+        return [{"content": "a", "start_time": 0, "end_time": mid, "speaker": first},
+                {"content": "b", "start_time": mid, "end_time": 2600, "speaker": "Speaker 2"}]
+    base = diarization_fingerprint(_with_rows(rows("Ada")))
+    assert diarization_fingerprint(_with_rows(rows("Grace"))) == base         # a rename
+    assert diarization_fingerprint(_with_rows(rows("Ada", 1500.0))) == base   # 1500.0 is 1500
+    assert diarization_fingerprint(_with_rows(rows("Ada", 1400))) != base     # re-segmented
+    assert (diarization_fingerprint(_with_rows(rows("Speaker 1")))
+            != diarization_fingerprint(_with_rows(rows("Speaker 3"))))        # generic label
+
+
+def test_a_new_field_on_a_note_block_is_other_not_a_notes_edit(plaud_env):
+    # why: §9.1.1. Unknown fields count towards the circuit breaker; notes edits never do. A
+    # volatile field Plaud adds to every note block must not look like Dan edited every note.
+    env = plaud_env()
+    tagged = copy.deepcopy(env)
+    for block in tagged["note_list"]:
+        block["volatile_new"] = "abc"
+    for block in tagged["source_list"]:
+        if block["data_type"] == "outline":
+            block["volatile_new"] = "abc"
+    assert _parts_changed(env, tagged) == {"other"}
+    edited = copy.deepcopy(env)
+    edited["note_list"][0]["data_title"] = "Renamed"
+    assert _parts_changed(env, edited) == {"notes:plaud-summary"}
+
+
+GOLDEN_ENVELOPE = {
+    "id": "of_0123456789abcdef0123456789abcdef", "name": "Week 4 \u4f1a\u8b70", "duration": 2600,
+    "presigned_url": "https://a.example/x.mp3?X-Amz-Signature=abc",
+    "source_list": [
+        {"data_type": "transaction", "data_id": "t-1", "data_tab_name": None,
+         "data_content": json.dumps([
+             {"content": "Hello \u00e9.", "start_time": 0, "end_time": 1500, "speaker": "Ada",
+              "original_speaker": "Speaker 1"},
+             {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2",
+              "original_speaker": "Speaker 2"}])},
+        {"data_type": "outline", "data_id": "o-1", "data_tab_name": None,
+         "data_content": '[{"topic": "Hi", "start_time": 0}]'}],
+    "note_list": [{"data_type": "auto_sum_note", "data_id": "n-1", "data_tab_name": "Summary",
+                   "data_content": "See [c](https://n.example/a.png?X-Amz-Signature=1) now."}],
+    "_meta": {"tool": "x"},
+}
+
+
+def test_the_normaliser_version_is_pinned_to_its_behaviour():
+    # why: every stored Plaud hash and output `version` is computed by this function. Changing a
+    # rule without bumping NORMALISER_VERSION makes the next sync see every recording as changed
+    # (or miss real edits). Change these only together with NORMALISER_VERSION.
+    assert NORMALISER_VERSION == 1
+    assert envelope_sha256(GOLDEN_ENVELOPE) == (
+        "dc6cb5b2bd9bc97705148b6ae3cdc355e5a9ac338b8b2f6c986bfbe594ac2d8c")
+    assert part_hashes(GOLDEN_ENVELOPE) == {
+        "title": "ffba669af7869bb0f89d4b48a826866cdb406fc6495268b43df7e97bdaff7161",
+        "transcript": "67e0b85575db1594ffabddb4212c9211d20d4e7d6604e6fa52200b622b747b31",
+        "speakers": "52e370b791f4b3277153c56521f8fcfcd7f0827300a7dbaff76524039f141fbf",
+        "notes:plaud-outline": "19c6f09bde57fc5e25d3ae808a508de00674a79d25fb87cd898a41305ae53855",
+        "notes:plaud-summary": "0fcd3affdaa0fd4a9e19924fc9a00f123aacfb4fdb9f814c8057850f77314cab",
+        "other": "61b023a3b6f767843c8ff2b059b872efbaae82554d17edf3f7b5c9eb9da3d8ba"}
+    assert diarization_fingerprint(GOLDEN_ENVELOPE) == (
+        "df7b445ce1c5b6fd3c6907eb3d64349e443feece735a1f7ccda674771a29632b")
