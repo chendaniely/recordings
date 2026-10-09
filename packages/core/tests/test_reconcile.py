@@ -218,6 +218,69 @@ def test_a_plaud_title_equal_to_yours_is_no_difference(plaud_env):
     assert reconcile(mine, [snap(plaud_env(name="Week 5"))], []).title_difference is None
 
 
+def test_a_difference_the_transcript_output_cant_show_writes_no_new_output(plaud_env):
+    # why: outputs are write-once (§6.5). 1500.0 for 1500, a trailing space, or an empty
+    # embeddingKey for none give the same output, so none may be written again.
+    env = plaud_env()
+    rows = json.loads(env["source_list"][0]["data_content"])
+    same = [{**rows[0], "content": rows[0]["content"] + " ", "end_time": 1500.0},
+            {**rows[1], "start_time": 1500.0, "speaker": rows[1]["speaker"] + " ",
+             "embeddingKey": ""}]
+    s1, s2 = snap(env), snap(plaud_env(segments=same), 1)
+    first = reconcile(rec(), [s1], [])
+    assert reconcile(rec(), [s1, s2], first.outputs).outputs == ()
+
+
+def test_a_difference_a_notes_output_cant_show_writes_no_new_output(plaud_env):
+    # why: the notes twin. A field the Markdown doesn't show (data_title, data_id), or a JSON
+    # tab laid out again, gives the same output, so none may be written again.
+    other = plaud_env()
+    other["note_list"][0]["data_title"] = "Week 4: revised"
+    other["note_list"][0]["data_id"] = "n-9"
+    outline = other["source_list"][1]
+    outline["data_content"] = json.dumps(json.loads(outline["data_content"]), indent=2)
+    s1, s2 = snap(plaud_env()), snap(other, 1)
+    first = reconcile(rec(), [s1], [])
+    assert reconcile(rec(), [s1, s2], first.outputs).outputs == ()
+
+
+def test_a_private_tag_dan_removed_stays_removed_until_plauds_title_changes(plaud_env):
+    # why: §7.4. The patterns run on the first reconcile and again when Plaud's title changes,
+    # never on every reindex, which would undo Dan's decision each time.
+    removed = rec(title="Interview: Ada", plaud=PlaudState(title_seen="Interview: Ada"))
+    assert reconcile(removed, [snap(plaud_env(name="Interview: Ada"))], []).add_private is False
+    renamed = [snap(plaud_env(name="Interview: Ada")),
+               snap(plaud_env(name="Interview: Ada, part 2"), 1)]
+    assert reconcile(removed, renamed, []).add_private is True
+    assert reconcile(rec(), [snap(plaud_env(name="Interview: Ada"))], []).add_private is True
+
+
+def test_a_new_title_under_either_id_or_in_a_degraded_snapshot_runs_the_patterns_again(plaud_env):
+    # why: privacy still errs towards private once Dan has removed a tag: a new title under the
+    # other Plaud ID, or in a snapshot nothing is built from, is a title change.
+    removed = rec(title="Week 4", plaud=PlaudState(title_seen="Week 4"))
+    other = [snap(plaud_env(name="Week 4")),
+             snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER)]
+    assert reconcile(removed, other, []).add_private is True
+    degraded = [snap(plaud_env(name="Week 4")),
+                snap(plaud_env(name="Private", link_error=True), 1)]
+    assert reconcile(removed, degraded, []).add_private is True
+
+
+def test_accepting_a_later_removal_never_rewrites_a_slot_that_came_back_as_it_was(plaud_env):
+    # why: the marker is positional, so accepting a later hold also accepts an earlier removal.
+    # A transcript that vanished and came back unchanged has its output already: no second one.
+    gone = plaud_env()
+    gone["source_list"] = gone["source_list"][1:]
+    no_summary = plaud_env()
+    no_summary["note_list"] = no_summary["note_list"][1:]
+    s1, s2, s3, s4 = snap(plaud_env()), snap(gone, 1), snap(plaud_env(), 2), snap(no_summary, 3)
+    first = reconcile(rec(), [s1, s2, s3, s4], [])
+    assert [h.slot for h in first.held] == ["notes:plaud-summary"]
+    accepted = rec(plaud=PlaudState(acknowledged_up_to=s4.path))
+    assert reconcile(accepted, [s1, s2, s3, s4], first.outputs).outputs == ()
+
+
 def test_the_timing_check_catches_a_trim_without_plauds_duration():
     rows = [{"start_time": 0, "end_time": 5000}]
     trimmed = timing_check({}, rows, 3400)
@@ -482,3 +545,19 @@ def test_reconcile_holds_no_lock_when_it_returns(writer, make_incoming, plaud_en
         RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),)))
     writer.reconcile_plaud(added.recording.id)
     assert not writer.locks._held()  # a released key is removed, so nothing is held
+
+
+def test_an_output_that_cant_be_read_is_never_written_again(writer, make_incoming, plaud_env):
+    # why: write-once. An output that can't be read now (damaged, or an I/O error) isn't a
+    # missing one: writing it again would leave a second, permanent copy beside it.
+    payload = json.dumps(plaud_env()).encode()
+    rid = writer.add(make_incoming(title_by="plaud", sources=(
+        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1,
+                  payload=payload),))).recording.id
+    assert writer.reconcile_plaud(rid).written == 4
+    renditions = writer.archive.path_for(rid) / "renditions"
+    next(renditions.glob("transcript-*.json")).write_text("{damaged", encoding="utf-8")
+    report = writer.reconcile_plaud(rid)
+    assert report.written == 0 and report.problem is not None
+    assert len(list(renditions.glob("*.json"))) == 4
+    assert writer.reindex().to_dict()["plaud"]["problems"] == 1

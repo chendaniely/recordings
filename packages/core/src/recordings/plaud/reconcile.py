@@ -4,28 +4,33 @@ fields Plaud owns come out.
 A pure function. The import (stage 2a) and the sync (stage 2b) both call it, so they write
 identical Plaud outputs, and running it again writes nothing new.
 
-- **Outputs:** one transcript output per change in the transcript's segment rows, and one notes
-  output per change in each note tab. Each names its snapshot (`inputs.source`) and its part's
-  hash (`inputs.part_sha256`). `version` is `plaud@<normaliser version>`. `created_at` is the
-  snapshot's fetch time, so a re-run writes byte-identical files.
+- **Outputs:** one transcript output per change in what it carries (its segments, untimed count,
+  last segment's end and diarization keys), and one notes output per change in each tab's
+  Markdown. Each names its snapshot (`inputs.source`) and the hash of what it carries
+  (`inputs.part_sha256`), so a difference the output can't show is never a new write-once file.
+  That hash isn't the Sync screen's part hash: stage 2b compares snapshots with `part_hashes`,
+  never with this. `version` is `plaud@<normaliser version>`. `created_at` is the snapshot's fetch time, so a
+  re-run writes byte-identical files.
 - **An output's identity** is its kind, note type, snapshot, part hash and `version`. An output
   of another version doesn't count, so a normaliser bump writes every part again (§6.5). The skip
   check (`_identity`) keys on `version` and `part_sha256` together, never the hash alone.
 - **A diarization fingerprint of `None`** (a recording with only `transaction_polish`) is stored
   as `meta.diarization: null`. Stage 2b's comparison must read it as a new diarization, never as
   "unchanged". Nothing in this task compares fingerprints.
-- **Hashed normalised, rendered raw:** a note's hash comes from its normalised block, so a
-  rotating signature is never a change. Its Markdown comes from the raw block, so a link and a
-  highlight's picture link stay as Plaud wrote them.
+- **Hashed normalised, rendered raw:** a note's hash is of the Markdown its normalised block
+  renders to, so a rotating signature is never a change. Its Markdown comes from the raw block,
+  so a link and a highlight's picture link stay as Plaud wrote them.
 - **Removals wait for review:** a tab or transcript that vanishes, or names that revert to
   "Speaker N" on an unchanged diarization. They are held while their snapshot is newer than
-  `plaud.acknowledged_up_to`.
+  `plaud.acknowledged_up_to`. One that comes back as it was writes nothing, even once accepted.
 - **The title:** Plaud owns it only while `title_by` is `plaud` or absent. Any other value
   (`you`, or another source's kind) keeps the title, and Plaud's shows as a difference until it
   is dismissed.
-- **Auto-private:** every title any snapshot carries, under either Plaud ID and degraded
+- **Auto-private:** on the first reconcile, and again whenever a Plaud ID's newest title isn't
+  the one last seen, every title any snapshot carries, under either Plaud ID and degraded
   snapshots included, is matched against the patterns, with Plaud's "MM-DD " prefix stripped.
-  A match adds `private` and never removes it. The Writer applies it before any output.
+  A match adds `private` and never removes it, and a tag Dan removed stays removed until a
+  title changes. The Writer applies it before any output.
 - **Skipped snapshots:** one with link errors, or one that isn't a JSON object, is skipped and
   reported. Nothing is ever built from it.
 - **Two Plaud IDs on one recording** are reconciled separately. The title follows the ID whose
@@ -49,13 +54,11 @@ from recordings.plaud.blocks import render_note
 from recordings.plaud.normalise import (
     GENERIC_SPEAKER,
     NORMALISER_VERSION,
-    _ROW_KEYS,
     diarization_fingerprint,
     diarization_key,
     is_complete,
     normalise,
     note_blocks,
-    part_hashes,
     sha256_of,
     transcript_rows,
 )
@@ -179,26 +182,8 @@ def _title_of(envelope: Any) -> str | None:
     return name.strip() if isinstance(name, str) and name.strip() else None
 
 
-def _slots(envelope: dict) -> dict[str, tuple[str, Any]]:
-    """Each part reconcile writes, as (hash, value). The transcript's value is its normalised
-    rows. A note's value is its raw block, which is what gets rendered; its hash is of the
-    normalised block."""
-    out: dict[str, tuple[str, Any]] = {}
-    rows = transcript_rows(normalise(envelope))
-    if rows:
-        # Only the fields the output is built from: an unknown row field is "other" (as in
-        # part_hashes), never a transcript edit, and outputs are write-once.
-        rows = [{k: r[k] for k in sorted(_ROW_KEYS) if k in r} for r in rows]
-        out["transcript"] = (sha256_of(rows), rows)
-    parts = part_hashes(envelope)  # the Sync screen's own note hashes: unknown fields are "other"
-    for note_type, _block, raw in note_blocks(envelope):
-        if render_note(raw):
-            out[f"notes:{note_type}"] = (parts[f"notes:{note_type}"], raw)
-    return out
-
-
-def _transcript(rows: list[dict], digest: str, snap: Snapshot, env: dict,
-                rec: Recording) -> Rendition:
+def _segments(rows: list[dict]) -> tuple[list[dict], int]:
+    """The segments a transcript output carries, and how many rows had no usable timing."""
     segments, untimed, previous_end = [], 0, 0.0
     for row in rows:
         start_ms, end_ms = row.get("start_time"), row.get("end_time")
@@ -220,6 +205,37 @@ def _transcript(rows: list[dict], digest: str, snap: Snapshot, env: dict,
         if key:
             segment["embedding_key"] = key
         segments.append(segment)
+    return segments, untimed
+
+
+def _slots(envelope: dict) -> dict[str, tuple[str, Any]]:
+    """Each part reconcile writes, as (hash, value). The transcript's value is its normalised
+    rows. A note's value is its raw block, which is what gets rendered. Each hash covers only
+    what its output carries, never where it came from."""
+    out: dict[str, tuple[str, Any]] = {}
+    rows = transcript_rows(normalise(envelope))
+    if rows:
+        # Outputs are write-once, so a difference the output can't show is never a new one:
+        # 1500.0 for 1500, a trailing space, an empty embeddingKey for none, an unknown row
+        # field. The hash is of the segments, the untimed count, the last segment's end and
+        # the diarization keys: everything the output takes from the rows.
+        segments, untimed = _segments(rows)
+        last_end = timing_check({}, rows, None).get("last_segment_end_ms")
+        out["transcript"] = (sha256_of([segments, untimed, last_end,
+                                        [diarization_key(r) for r in rows]]), rows)
+    for note_type, block, raw in note_blocks(envelope):
+        if render_note(raw):
+            # Rendered from the normalised block, so a rotating signature is never a change,
+            # and neither is a field the Markdown doesn't show (data_title, data_id, an unknown
+            # field) nor how a JSON tab's text is laid out.
+            digest = sha256_of([render_note(block), str(block.get("data_type") or "")])
+            out[f"notes:{note_type}"] = (digest, raw)
+    return out
+
+
+def _transcript(rows: list[dict], digest: str, snap: Snapshot, env: dict,
+                rec: Recording) -> Rendition:
+    segments, untimed = _segments(rows)
     meta: dict[str, Any] = {"diarization": diarization_fingerprint(env),
                             "timing": timing_check(env, rows, rec.media.duration_ms)}
     if untimed:
@@ -257,6 +273,7 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
     names: dict[str, str] = {}
     for ref, members in groups.items():
         applied: dict[str, tuple[str, Any]] = {}
+        gone: dict[str, tuple[str, Any]] = {}  # removals accepted: nothing was written for them
         for position, snapshot in members:
             if not isinstance(snapshot.envelope, dict) or not is_complete(snapshot.envelope):
                 skipped.append(snapshot.path)
@@ -270,7 +287,7 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
             for slot in sorted(set(applied) | set(current)):
                 if slot not in current:
                     if reviewed:
-                        del applied[slot]
+                        gone[slot] = applied.pop(slot)
                     else:
                         reason = "transcript removed" if slot == "transcript" else "notes removed"
                         held[(ref, slot)] = Held(snapshot.path, slot, reason)
@@ -278,6 +295,9 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
                 digest, value = current[slot]
                 if slot in applied and applied[slot][0] == digest:
                     held.pop((ref, slot), None)
+                    continue
+                if slot not in applied and slot in gone and gone[slot][0] == digest:
+                    applied[slot] = gone.pop(slot)  # back as it was: its output is already there
                     continue
                 if (slot == "transcript" and slot in applied and not reviewed
                         and _names_removed(applied[slot][1], value)):
@@ -294,8 +314,8 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
     title = title_seen = difference = None
     primary = canonical_plaud_id(snapshots[0].ref) if snapshots else None
     plaud_title = names.get(primary) if primary is not None else None
+    seen = rec.plaud.title_seen if rec.plaud else None
     if plaud_title is not None:
-        seen = rec.plaud.title_seen if rec.plaud else None
         if rec.title_by in (None, "plaud"):
             # Only a change on Plaud's side moves the title: one Dan edited by hand stays.
             if plaud_title != seen and plaud_title != rec.title:
@@ -304,10 +324,17 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
                 title_seen = plaud_title
         elif plaud_title != seen and plaud_title != rec.title:
             difference = plaud_title
-    # Privacy errs towards private: every title any snapshot carries, under either Plaud ID,
-    # degraded snapshots and titles Plaud has since changed included.
-    titles = [t for t in (_title_of(s.envelope) for s in ordered) if t is not None]
-    add_private = not is_private(rec) and matches_auto_private(titles, auto_private)
+    # §7.4: the patterns run on the first reconcile, and again whenever a Plaud ID's newest title
+    # (a degraded snapshot's included) isn't the one last seen, so a private tag Dan removed
+    # isn't put back on every reindex. When they run, privacy errs towards private: every title
+    # any snapshot carries, under either Plaud ID, titles Plaud has since changed included.
+    titles, newest = [], {}
+    for snapshot in ordered:
+        if (name := _title_of(snapshot.envelope)) is not None:
+            titles.append(name)
+            newest[canonical_plaud_id(snapshot.ref)] = name
+    due = seen is None or any(name != seen for name in newest.values())
+    add_private = due and not is_private(rec) and matches_auto_private(titles, auto_private)
     return Reconciled(outputs=tuple(outputs), title=title, title_seen=title_seen,
                       title_difference=difference, add_private=add_private,
                       held=tuple(held.values()), skipped=tuple(skipped))

@@ -716,11 +716,18 @@ class Writer:
                                           envelope=envelope))
             if not snapshots:
                 return ReconcileReport(recording_id, 0, (), (), False)
-            existing = [r for _, r in self.archive.renditions(recording_id, problems=[])]
+            unreadable: list = []
+            existing = [r for _, r in self.archive.renditions(recording_id, problems=unreadable)]
             result = reconcile(rec, snapshots, existing, auto_private=self.auto_private)
             if result.title is not None or result.title_seen is not None or result.add_private:
                 self.mutate(recording_id, SetPlaudFields(result.title, result.title_seen,
                                                          result.add_private))
+            if unreadable:
+                # An output that can't be read now (damaged, or an I/O error) isn't a missing
+                # one: writing it again would leave a second, permanent copy beside it.
+                return ReconcileReport(recording_id, 0, result.held, result.skipped,
+                                       result.title_difference is not None,
+                                       problem="an output can't be read: not reconciled")
             written = sum(self._write_rendition_locked(folder, r) is not None
                           for r in result.outputs)
             return ReconcileReport(recording_id, written, result.held, result.skipped,

@@ -52,8 +52,12 @@ files read unchanged.
   dismissing it is stage 3a).
 - `plaud.title_seen`: the Plaud title last seen or dismissed. `plaud.acknowledged_up_to`: the
   newest `source/` snapshot whose removals have been reviewed. Until then, a Plaud note that
-  vanished, or names that reverted to "Speaker N", are held, not applied. The review that moves the marker is stage 3a, so until then they stay
-  held.
+  vanished, or names that reverted to "Speaker N", are held, not applied. The review that
+  moves the marker is stage 3a, so until then they stay held.
+- `tags`: each is `{"tag": …, "by": …}`. `by` is `you`, or `auto` for a `private` tag added
+  because a Plaud title matched the auto-private patterns. The patterns run on a recording's
+  first Plaud snapshot, and again whenever a Plaud title isn't the one in `plaud.title_seen`.
+  They only ever add the tag: one you remove stays removed until then.
 - `sources`: one entry per raw payload in `source/`, with the source's own `ref`, `added_at`,
   `fetched_at` (when the source returned it) and the file's `sha256`. Snapshots are ordered by
   `fetched_at`, then by their place in this list, never by file name.
@@ -67,12 +71,33 @@ files read unchanged.
 
 Each segment has `start` and `end` (seconds), `text`, optional `words`, and `speaker`: the
 generic diarization label (for Plaud, its `original_speaker`). A Plaud transcript also carries
-`speaker_name`, the name given in Plaud when it differs from the label, and `embedding_key`,
-Plaud's `embeddingKey`.
+`speaker_name`, the name given in Plaud, and `embedding_key`, Plaud's `embeddingKey`.
+`speaker_name` is set for a real name, and for any name that differs from the label. It is left
+out when Plaud's name is just the label. A Plaud row with no `original_speaker` has its name as
+`speaker` too, so a named row then has `speaker_name` equal to `speaker`.
+
+## Plaud's outputs
 
 Plaud's own transcript and notes are outputs with engine `plaud`, rebuilt from `source/`. Each
-records its snapshot in `inputs.source` and its part's hash in `inputs.part_sha256`, and its
-`version` (`plaud@<n>`) names the normaliser that produced it.
+records its snapshot in `inputs.source` and the hash of what it carries in
+`inputs.part_sha256`, so a difference it can't show is never a new file, and its `version`
+(`plaud@<n>`) names the normaliser that produced it.
+
+- `meta.timing`, on a transcript: Plaud's timing checked against the media, by `rule`
+  (`timing@1`). `plaud_duration_ms` is Plaud's duration, `last_segment_end_ms` the latest end
+  among its segments, and `media_duration_ms` the media's. `ok` is `false` when Plaud's duration
+  differs from the media's, or its last segment ends after the media does, by more than 1 s or
+  1% of the media (whichever is larger): a sign of a trim in Plaud. A missing `ok` means the
+  check didn't run (the media's duration is unknown, or there was nothing to compare), never
+  that it passed. The verdict is as of the snapshot in `inputs.source`.
+- `meta.diarization`, on a transcript: a hash of each segment's start and end in Plaud's
+  milliseconds, and its generic label. The same value means only names changed. `null` means
+  no fingerprint could be taken: read it as a new diarization, never as unchanged.
+- `meta.untimed_segments`, on a transcript: how many rows had no usable timing. Each is kept,
+  with `start` and `end` both at the previous segment's end.
+- On a notes output, `meta.data_type` is Plaud's block type, and `payload.markdown` is
+  rendered from the block as Plaud delivered it, so its links stay as Plaud wrote them. A
+  highlight's picture link is presigned, and expires within minutes.
 
 ## Rules
 

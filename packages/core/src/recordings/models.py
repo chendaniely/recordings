@@ -195,7 +195,7 @@ class Segment(_Model):
     start: float = Field(ge=0)
     end: float = Field(ge=0)
     speaker: str | None = None  # the generic diarization label: Plaud's original_speaker (§9.1.1)
-    speaker_name: str | None = None  # the name given in Plaud, when it differs from the label
+    speaker_name: str | None = None  # the name given in Plaud: a real one, or one unlike the label
     embedding_key: str | None = None  # Plaud's embeddingKey, snake_case in this schema
     text: str
     words: list[Word] = Field(default_factory=list)
