@@ -8149,15 +8149,15 @@ Three rules shape this task:
   strip, `^\s*private` matches no real title. Task 9 calls the same `matches_auto_private` to tag
   a recording when it is created.
 - **Hashed normalised, rendered raw.** A note's `part_sha256` hashes its normalised block, so a
-  rotating signature is never a change. Its Markdown comes from the raw block: the scrub would eat
-  a Markdown link's closing parenthesis. `version` is part of an output's identity, so a
+  rotating signature is never a change. Its Markdown comes from the raw block, so a rule in the
+  normaliser can never alter what Dan reads. `version` is part of an output's identity, so a
   normaliser bump writes every part again (§6.5).
 
 **Files:**
 - Create: `packages/core/src/recordings/plaud/blocks.py`, `packages/core/src/recordings/plaud/reconcile.py`
-- Modify: `packages/core/src/recordings/writer.py` (`SetPlaudFields`, `ReconcileReport`, `Writer.reconcile_plaud`, `auto_private`, `reindex` reconciles)
+- Modify: `packages/core/src/recordings/writer.py` (`SetPlaudFields`, `ReconcileReport`, `Writer.reconcile_plaud`, `auto_private`, `reindex` reconciles after it rebuilds), `packages/core/src/recordings/cli.py` (`reindex` exits 1 for a recording that could not be reconciled)
 - Modify: `config.example.toml` (`[plaud] auto_private_patterns`), `demo/build.py` (a synthetic Plaud envelope, Plaud outputs from reconcile), `demo/archive/` (rebuilt)
-- Test: `packages/core/tests/test_reconcile.py`
+- Test: `packages/core/tests/test_reconcile.py`, `packages/core/tests/test_cli.py`
 
 **Interfaces:**
 - Consumes:
@@ -8188,6 +8188,7 @@ Three rules shape this task:
 `packages/core/tests/test_reconcile.py`:
 ```python
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -8263,8 +8264,8 @@ def test_an_output_of_another_version_is_not_this_ones(plaud_env):
 
 
 def test_notes_are_rendered_from_the_raw_block_and_hashed_from_the_normalised_one(plaud_env):
-    # why: the normaliser's scrub eats a Markdown link's closing parenthesis, and a highlight's
-    # picture link must survive. A rotating signature is still never a change.
+    # why: notes render from the raw block, so a link and a highlight's picture link survive as
+    # Plaud wrote them. A rotating signature is still never a change.
     link = "https://notes.example/a.png?X-Amz-Expires=300&X-Amz-Signature={}"
 
     def envelope(signature):
@@ -8538,6 +8539,67 @@ def test_a_bad_pattern_in_config_refuses_the_writer_cleanly(new_archive, tmp_pat
                  state_path=state, index_path=tmp_path / "index" / "index.db")
     with pytest.raises(NotTheWriter, match="auto_private_patterns"):
         Writer.open(cfg)
+
+
+def test_reindex_reconciles_after_it_rebuilds_the_index(writer, make_incoming, plaud_env, caplog):
+    # why: with index.db gone, a reconcile before the rebuild would log "left pending" for each
+    # recording whose fields it changes; after the rebuild, each `mutate` just upserts.
+    for n in range(2):
+        fid = HEX[:-1] + str(n)
+        payload = json.dumps(plaud_env(fid, name="Interview: A")).encode()
+        writer.add(make_incoming(title_by="plaud", sources=(
+            RawSource(kind="plaud", ref=fid, added_at=T1, fetched_at=T1, payload=payload),)))
+    writer.index.path.unlink()
+    with caplog.at_level(logging.WARNING, logger="recordings.writer"):
+        report = writer.reindex()
+    assert not [r for r in caplog.records if "left pending" in r.getMessage()]
+    assert report.recordings == 2 and report.to_dict()["plaud"]["written"] == 8
+
+
+def test_reconcile_holds_no_lock_when_it_returns(writer, make_incoming, plaud_env):
+    # why: Task 5b. `add`, `rebuild_index` and `reindex` take locks that sort before a held
+    # recording's, so reconcile must never call them, and must leave nothing held.
+    payload = json.dumps(plaud_env(name="Week 4")).encode()
+    added = writer.add(make_incoming(title_by="plaud", sources=(
+        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),)))
+    writer.reconcile_plaud(added.recording.id)
+    assert not writer.locks._held()  # a released key is removed, so nothing is held
+```
+
+`packages/core/tests/test_cli.py`: **replace** its first five lines (the imports) with
+```python
+import json
+import shutil
+from datetime import datetime, timezone
+
+from recordings.archive import RawSource
+from recordings.cli import main
+from recordings.init import init_archive
+from recordings.locks import LockTimeout
+from recordings.writer import Writer
+```
+and **append**:
+```python
+
+
+def test_reindex_exits_1_when_a_plaud_recording_could_not_be_reconciled(
+        writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys):
+    # why: that recording's outputs are missing, so a script must be told, as it is for an
+    # invalid file. The message ("busy") must not reach the report.
+    when = datetime(2026, 8, 1, 16, 10, tzinfo=timezone.utc)
+    writer.add(make_incoming(sources=(RawSource(
+        kind="plaud", ref="0123456789abcdef0123456789abcdef", added_at=when, fetched_at=when,
+        payload=json.dumps(plaud_env()).encode()),)))
+
+    def refuse(self, recording_id):
+        raise LockTimeout("busy")
+
+    monkeypatch.setattr(Writer, "reconcile_plaud", refuse)
+    _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+    assert main(["reindex", "--json"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["plaud"]["problems"] == 1
+    assert "busy" not in json.dumps(out)
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -8651,10 +8713,14 @@ identical Plaud outputs, and running it again writes nothing new.
   hash (`inputs.part_sha256`). `version` is `plaud@<normaliser version>`. `created_at` is the
   snapshot's fetch time, so a re-run writes byte-identical files.
 - **An output's identity** is its kind, note type, snapshot, part hash and `version`. An output
-  of another version doesn't count, so a normaliser bump writes every part again (§6.5).
+  of another version doesn't count, so a normaliser bump writes every part again (§6.5). The skip
+  check (`_identity`) keys on `version` and `part_sha256` together, never the hash alone.
+- **A diarization fingerprint of `None`** (a recording with only `transaction_polish`) is stored
+  as `meta.diarization: null`. Stage 2b's comparison must read it as a new diarization, never as
+  "unchanged". Nothing in this task compares fingerprints.
 - **Hashed normalised, rendered raw:** a note's hash comes from its normalised block, so a
-  rotating signature is never a change. Its Markdown comes from the raw block, so a link keeps
-  its closing parenthesis and a highlight keeps its picture link.
+  rotating signature is never a change. Its Markdown comes from the raw block, so a link and a
+  highlight's picture link stay as Plaud wrote them.
 - **Removals wait for review:** a tab or transcript that vanishes, or names that revert to
   "Speaker N" on an unchanged diarization. They are held while their snapshot is newer than
   `plaud.acknowledged_up_to`.
@@ -9034,6 +9100,7 @@ In `packages/core/src/recordings/writer.py`:
            Privacy first: Plaud's fields, an auto-private tag among them, land in one `mutate`
            before any output is published. A crash in between leaves a tagged recording whose
            outputs the next reconcile writes."""
+           self._check_sentinel()  # outputs are written even when no field changes, so check here
            with self.locks.hold(recording_id):
                rec = self._load_fresh(self._rel(recording_id))
                folder = self.archive.path_for(recording_id)
@@ -9064,19 +9131,20 @@ In `packages/core/src/recordings/writer.py`:
    `count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)` to the end of
    the method (the `return ReindexReport(...)` statement) with the code below. The
    missing-files check at the top of `reindex` has already run, so a refused `reindex` has
-   reconciled nothing:
+   reconciled nothing. Reconcile runs after the rebuild, so with `index.db` absent each `mutate`
+   upserts into a fresh index instead of logging "left pending" once per recording:
    ```python
+           count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
            reconciled = []
            for rec in list(self.archive.iter_recordings()):
                if not any(s.kind == "plaud" for s in rec.sources):
                    continue
                try:
                    reconciled.append(self.reconcile_plaud(rec.id))
-               except (WriterError, KeyError) as exc:
+               except (WriterError, KeyError, LockTimeout, OSError) as exc:
                    # A fixed phrase, never the exception's text, which can carry a title.
                    problem = f"{type(exc).__name__}: not reconciled"
                    reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
-           count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
            for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
                self.state.forget(rel)
            problems = tuple({"path": str(p.path), "message": p.message}
@@ -9085,6 +9153,18 @@ In `packages/core/src/recordings/writer.py`:
                                 problems=problems, forgotten=tuple(Path(f).parent.name for f in gone),
                                 reconciled=tuple(reconciled))
    ```
+8. In `packages/core/src/recordings/cli.py`:
+   - In `cmd_reindex`, **replace** `    return 1 if report.invalid or report.problems else 0` with
+     ```python
+         # A Plaud recording that could not be reconciled is a failure too: its outputs are missing.
+         return 1 if report.invalid or report.problems or any(
+             r.problem for r in report.reconciled) else 0
+     ```
+   - **Replace** `help="accept outside edits and rebuild the derived index.db")` with
+     ```python
+     help="accept outside edits, rebuild the derived index.db and build any "
+          "missing Plaud outputs")
+     ```
 
 In `config.example.toml`, **replace** the line `auto_private_patterns = ["^private"] …` with:
 ```toml
@@ -9143,12 +9223,28 @@ In `demo/build.py`:
 
 - [ ] **Step 6: Rebuild the demo and run every test**
 
-Run:
+`demo/.cache/media` is git-ignored and may not exist, and refilling it needs the network and
+ffmpeg. Build from the committed archive's own media instead, which is what
+`test_rebuilding_from_the_archives_own_media_is_byte_identical` does:
 ```bash
+uv run python - <<'PY'
+import json, shutil, tomllib
+from pathlib import Path
+from recordings.archive import Archive
+demo, out = Path("demo"), Path("demo/.cache/media")
+out.mkdir(parents=True, exist_ok=True)
+ext = {e["slug"]: e["ext"] for e in tomllib.loads((demo / "sources.toml").read_text())["recording"]}
+archive = Archive(demo / "archive")
+for rid, slug in json.loads((demo / "canned" / "aliases.json").read_text()).items():
+    shutil.copy(archive.media_path(rid), out / f"{slug}.{ext[slug]}")
+PY
 uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 uv run pytest
 ```
-Expected: every test passes. The Apollo 13 recording's `source/plaud-20261008T120130Z.json` is
+Expected: every test passes (491 in all, up from 454 after Task 6's council fixes: 34 in
+`test_reconcile.py` as written, 2 more from the reindex and lock tests, 1 from the CLI test).
+`test_rebuilding_from_the_archives_own_media_is_byte_identical` fails if the demo archive is
+stale. The Apollo 13 recording's `source/plaud-20261008T120130Z.json` is
 now a Plaud-shaped envelope, and its Plaud outputs are
 `transcript-plaud-plaud@1-20261008T120130Z.json` and
 `notes-plaud-summary-plaud-plaud@1-20261008T120130Z.json`, each with `inputs.source` and
@@ -9158,7 +9254,7 @@ now a Plaud-shaped envelope, and its Plaud outputs are
 - [ ] **Step 7: Commit**
 
 ```bash
-git add packages/core/src/recordings packages/core/tests/test_reconcile.py config.example.toml demo/build.py demo/archive
+git add packages/core/src/recordings packages/core/tests/test_reconcile.py packages/core/tests/test_cli.py config.example.toml demo/build.py demo/archive
 git commit -m "feat(core): reconcile Plaud snapshots into outputs and the fields Plaud owns
 
 A pure function over every complete snapshot in fetch order (spec §9.1.1): idempotent, version
