@@ -7,6 +7,7 @@ import pytest
 from recordings.archive import RawSource
 from recordings.config import Config, ConfigError
 from recordings.models import MediaInfo, PlaudState, Recording, TagRef, is_private
+from recordings.plaud.blocks import render_note
 from recordings.plaud.reconcile import (
     PLAUD_VERSION,
     Snapshot,
@@ -173,6 +174,81 @@ def test_an_unknown_note_field_never_writes_a_notes_output(plaud_env):
     assert kinds(reconcile(rec(), snaps, []).outputs) == kinds(once.outputs)
 
 
+def test_an_unknown_transcript_row_field_never_writes_a_transcript_output(plaud_env):
+    # why: the transcript twin of the notes test above. A row field outside the ones the output is
+    # built from is "other" (part_hashes), never a transcript edit: outputs are write-once, so a
+    # volatile field would leave one permanent, identical transcript per fetch.
+    snaps = []
+    for i in range(3):
+        env = plaud_env()
+        rows = json.loads(env["source_list"][0]["data_content"])
+        for row in rows:
+            row["seq"] = i
+        env["source_list"][0]["data_content"] = json.dumps(rows)
+        snaps.append(snap(env, i))
+    once = reconcile(rec(), snaps[:1], [])
+    result = reconcile(rec(), snaps, [])
+    assert kinds(result.outputs) == kinds(once.outputs)
+    assert sum(o.kind == "transcript" for o in result.outputs) == 1
+
+
+def test_a_title_dan_edited_by_hand_is_not_reverted(plaud_env):
+    # why: Plaud's title hasn't changed since it was last seen, so it has no claim on the title.
+    edited = rec(title="Dan's own title", title_by="plaud", plaud=PlaudState(title_seen="Week 4"))
+    result = reconcile(edited, [snap(plaud_env(name="Week 4"))], [])
+    assert (result.title, result.title_seen, result.title_difference) == (None, None, None)
+    changed = reconcile(edited, [snap(plaud_env(name="Week 5"))], [])
+    assert (changed.title, changed.title_seen) == ("Week 5", "Week 5")
+
+
+def test_a_real_name_without_an_original_speaker_is_kept_as_speaker_name(plaud_env):
+    # why: stage 3b links Plaud's names to people, so a named row must carry its name.
+    env = plaud_env(segments=[{"content": "Hello.", "start_time": 0, "end_time": 1000,
+                               "speaker": "Ada"},
+                              {"content": "Hi.", "start_time": 1000, "end_time": 2000,
+                               "speaker": "Speaker 2"}])
+    (transcript,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.kind == "transcript"]
+    first, second = transcript.payload["segments"]
+    assert (first["speaker"], first["speaker_name"]) == ("Ada", "Ada")
+    assert second["speaker"] == "Speaker 2" and "speaker_name" not in second
+
+
+def test_a_plaud_title_equal_to_yours_is_no_difference(plaud_env):
+    mine = rec(title="Week 5", title_by="you")
+    assert reconcile(mine, [snap(plaud_env(name="Week 5"))], []).title_difference is None
+
+
+def test_the_timing_check_catches_a_trim_without_plauds_duration():
+    rows = [{"start_time": 0, "end_time": 5000}]
+    trimmed = timing_check({}, rows, 3400)
+    assert trimmed == {"rule": "timing@1", "last_segment_end_ms": 5000,
+                       "media_duration_ms": 3400, "ok": False}
+    assert timing_check({}, [{"start_time": 0, "end_time": 3400}], 3400)["ok"] is True
+    assert "ok" not in timing_check({}, [], 3400)
+
+
+def test_odd_numbers_and_deep_nesting_never_raise(plaud_env):
+    # why: a payload the renderers and the timing check can't handle must degrade, not raise.
+    deep = "[" * 100_000
+    assert render_note({"data_type": "outline", "data_content": deep}) == deep
+    assert render_note({"data_type": "high_light", "data_content": deep}) == deep
+    huge = "1" + "0" * 4000
+    marks = json.loads('[{"timestamp": Infinity, "title": "A"}, {"timestamp": 1e400, "title": "B"}]')
+    assert render_note({"data_type": "high_light", "data_content": json.dumps(marks)}) == (
+        "**[--:--] A**\n\n**[--:--] B**")
+    assert render_note({"data_type": "outline", "data_content":
+                        '[{"topic": "T", "start_time": ' + huge + "}]"}) == "- [--:--] T"
+    check = timing_check({"duration": float("inf")}, [{"end_time": float("inf")}], 3400)
+    assert check == {"rule": "timing@1", "media_duration_ms": 3400}
+    env = plaud_env(duration=int(huge), segments=[
+        {"content": "x", "start_time": 0, "end_time": int(huge), "speaker": "Speaker 1"}])
+    (transcript,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.kind == "transcript"]
+    assert transcript.meta["untimed_segments"] == 1
+    env = plaud_env(duration=0)
+    env["duration"] = float("inf")
+    reconcile(rec(), [snap(env)], [])
+
+
 def test_a_vanished_transcript_waits_for_review(plaud_env):
     env = plaud_env()
     gone = plaud_env()
@@ -312,6 +388,8 @@ def test_the_patterns_come_from_config_and_are_checked():
         patterns_from_config({"plaud": {"auto_private_patterns": ["("]}})
     with pytest.raises(ConfigError, match="auto_private_patterns"):
         patterns_from_config({"plaud": {"auto_private_patterns": "^x"}})
+    with pytest.raises(ConfigError, match="auto_private_patterns"):
+        patterns_from_config({"plaud": "not a table"})
 
 
 # ---- through the Writer ----------------------------------------------------------------------
@@ -326,7 +404,9 @@ def test_the_writer_reconciles_once_and_owns_the_plaud_fields(writer, make_incom
     recording = writer.archive.load(added.recording.id)
     assert recording.plaud.title_seen == "Interview: Ada"
     assert ("private", "auto") in {(t.tag, t.by) for t in recording.tags}
+    rev = recording.rev
     assert writer.reconcile_plaud(added.recording.id).written == 0
+    assert writer.archive.load(added.recording.id).rev == rev  # a second run changes nothing
 
 
 def test_the_private_tag_lands_before_any_plaud_output(writer, make_incoming, plaud_env,

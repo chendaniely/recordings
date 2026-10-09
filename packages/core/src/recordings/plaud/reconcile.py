@@ -36,6 +36,7 @@ identical Plaud outputs, and running it again writes nothing new.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -48,6 +49,7 @@ from recordings.plaud.blocks import render_note
 from recordings.plaud.normalise import (
     GENERIC_SPEAKER,
     NORMALISER_VERSION,
+    _ROW_KEYS,
     diarization_fingerprint,
     diarization_key,
     is_complete,
@@ -97,7 +99,10 @@ class Reconciled:
 
 
 def patterns_from_config(data: dict) -> tuple[str, ...]:
-    value = data.get("plaud", {}).get("auto_private_patterns", list(DEFAULT_AUTO_PRIVATE))
+    section = data.get("plaud", {})
+    if not isinstance(section, dict):
+        raise ConfigError("[plaud] must be a table (auto_private_patterns is read from it)")
+    value = section.get("auto_private_patterns", list(DEFAULT_AUTO_PRIVATE))
     if not isinstance(value, list) or not all(isinstance(p, str) for p in value):
         raise ConfigError("[plaud] auto_private_patterns must be a list of regular expressions")
     for pattern in value:
@@ -125,7 +130,13 @@ def matches_auto_private(titles: Iterable[str],
 
 
 def _number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A usable number: not a bool, not Infinity or NaN, and an integer small enough to be a
+    millisecond count (a huge one would overflow the arithmetic below)."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return abs(value) < 2**53
+    return isinstance(value, float) and math.isfinite(value) and abs(value) < 2**53
 
 
 def timing_check(envelope: dict, rows: list[dict], media_ms: int | None) -> dict:
@@ -139,10 +150,14 @@ def timing_check(envelope: dict, rows: list[dict], media_ms: int | None) -> dict
         out["last_segment_end_ms"] = int(max(ends))
     if media_ms is not None:
         out["media_duration_ms"] = media_ms
+        tolerance = max(TIMING_TOLERANCE_MS, media_ms // 100)
+        checks = []
         if "plaud_duration_ms" in out:
-            tolerance = max(TIMING_TOLERANCE_MS, media_ms // 100)
-            out["ok"] = (abs(out["plaud_duration_ms"] - media_ms) <= tolerance
-                         and out.get("last_segment_end_ms", 0) <= media_ms + tolerance)
+            checks.append(abs(out["plaud_duration_ms"] - media_ms) <= tolerance)
+        if "last_segment_end_ms" in out:  # a trim shows here even when Plaud gives no duration
+            checks.append(out["last_segment_end_ms"] <= media_ms + tolerance)
+        if checks:
+            out["ok"] = all(checks)
     return out
 
 
@@ -171,6 +186,9 @@ def _slots(envelope: dict) -> dict[str, tuple[str, Any]]:
     out: dict[str, tuple[str, Any]] = {}
     rows = transcript_rows(normalise(envelope))
     if rows:
+        # Only the fields the output is built from: an unknown row field is "other" (as in
+        # part_hashes), never a transcript edit, and outputs are write-once.
+        rows = [{k: r[k] for k in sorted(_ROW_KEYS) if k in r} for r in rows]
         out["transcript"] = (sha256_of(rows), rows)
     parts = part_hashes(envelope)  # the Sync screen's own note hashes: unknown fields are "other"
     for note_type, _block, raw in note_blocks(envelope):
@@ -196,7 +214,7 @@ def _transcript(rows: list[dict], digest: str, snap: Snapshot, env: dict,
                                    "text": str(row.get("content") or "").strip()}
         if label:
             segment["speaker"] = label
-        if name and name != label:
+        if name and (name != label or _named(row)):  # a real name is kept even without a label
             segment["speaker_name"] = name
         key = str(row.get("embeddingKey") or "").strip()
         if key:
@@ -279,11 +297,12 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
     if plaud_title is not None:
         seen = rec.plaud.title_seen if rec.plaud else None
         if rec.title_by in (None, "plaud"):
-            if plaud_title != rec.title:
+            # Only a change on Plaud's side moves the title: one Dan edited by hand stays.
+            if plaud_title != seen and plaud_title != rec.title:
                 title = plaud_title
             if plaud_title != seen:
                 title_seen = plaud_title
-        elif plaud_title != seen:
+        elif plaud_title != seen and plaud_title != rec.title:
             difference = plaud_title
     # Privacy errs towards private: every title any snapshot carries, under either Plaud ID,
     # degraded snapshots and titles Plaud has since changed included.

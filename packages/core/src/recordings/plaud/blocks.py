@@ -15,6 +15,7 @@ output would (§6.5).
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -23,7 +24,7 @@ def _rows(raw: str) -> list[dict] | None:
         return None
     try:
         rows = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    except (ValueError, TypeError, RecursionError):  # JSONDecodeError is a ValueError
         return None
     if not isinstance(rows, list) or not rows:
         return None
@@ -32,8 +33,10 @@ def _rows(raw: str) -> list[dict] | None:
 
 def _stamp(ms: Any) -> str:
     """`[MM:SS]`, or `[--:--]` when there is no timing: never a made-up 00:00."""
-    if not isinstance(ms, (int, float)) or isinstance(ms, bool):
+    if isinstance(ms, bool) or not isinstance(ms, (int, float)):
         return "[--:--]"
+    if isinstance(ms, float) and not math.isfinite(ms) or abs(ms) >= 2**53:
+        return "[--:--]"  # Infinity, NaN or an absurd integer: no made-up time either
     s = int(ms // 1000)
     return f"[{s // 60:02d}:{s % 60:02d}]"
 

@@ -709,7 +709,7 @@ class Writer:
                     continue
                 try:
                     envelope = json.loads((folder / source.raw).read_text(encoding="utf-8"))
-                except (OSError, UnicodeDecodeError, ValueError):
+                except (OSError, UnicodeDecodeError, ValueError, RecursionError):
                     envelope = None
                 snapshots.append(Snapshot(path=source.raw, ref=source.ref,
                                           fetched_at=source.fetched_at or source.added_at,
@@ -784,8 +784,10 @@ class Writer:
                 continue
             try:
                 reconciled.append(self.reconcile_plaud(rec.id))
-            except (WriterError, KeyError, LockTimeout, OSError, ValueError,
-                    TypeError) as exc:  # ValueError: a payload the renditions can't encode
+            except (WriterError, KeyError, LockTimeout, OSError, ValueError, TypeError,
+                    RecursionError, ArithmeticError) as exc:  # ValueError: a payload the
+                # renditions can't encode; RecursionError: a payload nested too deep to parse
+                log.debug("reconcile of %s failed", rec.id, exc_info=True)
                 # A fixed phrase, never the exception's text, which can carry a title.
                 problem = f"{type(exc).__name__}: not reconciled"
                 reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
