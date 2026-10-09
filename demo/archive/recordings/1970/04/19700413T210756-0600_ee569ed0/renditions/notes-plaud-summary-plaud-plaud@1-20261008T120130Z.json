@@ -1,0 +1,19 @@
+{
+  "schema": "recordings/rendition@1",
+  "kind": "notes",
+  "note_type": "plaud-summary",
+  "engine": "plaud",
+  "model": "plaud",
+  "version": "plaud@1",
+  "created_at": "2026-10-08T12:01:30Z",
+  "inputs": {
+    "source": "source/plaud-20261008T120130Z.json",
+    "part_sha256": "720fea83d45504c3ad2447278ddc98cc8b19a65335556e2936ec87974b24a7b5"
+  },
+  "meta": {
+    "data_type": "auto_sum_note"
+  },
+  "payload": {
+    "markdown": "# Apollo 13 anomaly call\n\n**Summary:** The crew reports a problem to Houston: a main B undervolt. Mission Control\nacknowledges and asks them to stand by while it looks into it.\n\n**Action items**\n- Houston to look into the main B undervolt."
+  }
+}

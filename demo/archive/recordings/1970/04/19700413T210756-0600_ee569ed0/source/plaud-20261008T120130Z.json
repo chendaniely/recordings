@@ -1,0 +1,22 @@
+{
+  "id": "demo-apollo13",
+  "name": "Apollo 13: Houston, we've had a problem",
+  "duration": 16550,
+  "demo": true,
+  "source_list": [
+    {
+      "data_type": "transaction",
+      "data_id": "demo-transaction",
+      "data_tab_name": null,
+      "data_content": "[{\"content\": \"Okay, Houston, we've had a problem here.\", \"start_time\": 0, \"end_time\": 1900, \"speaker\": \"Speaker 1\", \"original_speaker\": \"Speaker 1\"}, {\"content\": \"This is Houston, say again, please.\", \"start_time\": 2820, \"end_time\": 4220, \"speaker\": \"Speaker 1\", \"original_speaker\": \"Speaker 1\"}, {\"content\": \"Houston, we've had a problem.\", \"start_time\": 5320, \"end_time\": 6320, \"speaker\": \"Speaker 1\", \"original_speaker\": \"Speaker 1\"}, {\"content\": \"We've had a main B plus undervolt.\", \"start_time\": 7840, \"end_time\": 9400, \"speaker\": \"Speaker 1\", \"original_speaker\": \"Speaker 1\"}, {\"content\": \"Roger, main B undervolt.\", \"start_time\": 10800, \"end_time\": 11920, \"speaker\": \"Speaker 2\", \"original_speaker\": \"Speaker 2\"}, {\"content\": \"Okay, stand by, 13, we're looking at it.\", \"start_time\": 14140, \"end_time\": 16080, \"speaker\": \"Speaker 2\", \"original_speaker\": \"Speaker 2\"}]"
+    }
+  ],
+  "note_list": [
+    {
+      "data_type": "auto_sum_note",
+      "data_id": "demo-summary",
+      "data_tab_name": "Summary",
+      "data_content": "# Apollo 13 anomaly call\n\n**Summary:** The crew reports a problem to Houston: a main B undervolt. Mission Control\nacknowledges and asks them to stand by while it looks into it.\n\n**Action items**\n- Houston to look into the main B undervolt.\n"
+    }
+  ]
+}

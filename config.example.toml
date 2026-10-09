@@ -37,7 +37,11 @@ path = "/srv/recordings/index/index.db"
 schedule_minutes = 20                   # scheduled sync interval; 0 turns it off
 auto_import = true                      # import missing recordings (safe: nothing runs until tagged)
 recheck_days = 14                       # keep re-checking recent recordings for Plaud's late notes
-auto_private_patterns = ["^private"]    # titles matching these are tagged `private`
+# Plaud titles matching these are tagged `private` (spec §7.4): Python regular expressions,
+# searched ignoring case in every title a snapshot carries, as given and with Plaud's "MM-DD "
+# date prefix stripped (as audio-router's normalize_title does). Read from stage 2a, by
+# reconcile and the import. They only ever add `private`.
+auto_private_patterns = ["^\\s*private", "interview:"]
 
 [spark]                                 # stage 4
 base_url = "https://spark.your-tailnet.ts.net"   # llama-swap, reached over Tailscale

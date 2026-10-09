@@ -1,8 +1,12 @@
 import json
 import shutil
+from datetime import datetime, timezone
 
+from recordings.archive import RawSource
 from recordings.cli import main
 from recordings.init import init_archive
+from recordings.locks import LockTimeout
+from recordings.writer import Writer
 
 
 def _writer_config(tmp_path, monkeypatch, archive, state, index=None):
@@ -147,3 +151,23 @@ def test_reindex_allow_missing_works_with_an_index_update_pending(
     assert main(["reindex", "--allow-missing", "--json"]) == 0
     assert main(["reindex", "--json"]) == 0
     assert writer.state.index_pending() == []
+
+
+def test_reindex_exits_1_when_a_plaud_recording_could_not_be_reconciled(
+        writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys):
+    # why: that recording's outputs are missing, so a script must be told, as it is for an
+    # invalid file. The message ("busy") must not reach the report.
+    when = datetime(2026, 8, 1, 16, 10, tzinfo=timezone.utc)
+    writer.add(make_incoming(sources=(RawSource(
+        kind="plaud", ref="0123456789abcdef0123456789abcdef", added_at=when, fetched_at=when,
+        payload=json.dumps(plaud_env()).encode()),)))
+
+    def refuse(self, recording_id):
+        raise LockTimeout("busy")
+
+    monkeypatch.setattr(Writer, "reconcile_plaud", refuse)
+    _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+    assert main(["reindex", "--json"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["plaud"]["problems"] == 1
+    assert "busy" not in json.dumps(out)

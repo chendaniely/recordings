@@ -23,6 +23,7 @@ import re
 import shutil
 import sqlite3
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +32,7 @@ from typing import Literal, Protocol
 from pydantic import ValidationError
 
 from recordings.archive import Archive, RawSource, sha256_file, utc_stamp
-from recordings.config import Config
+from recordings.config import Config, ConfigError
 from recordings.files import (
     copy_file_synced,
     fsync_dir,
@@ -45,6 +46,7 @@ from recordings.locks import Locks, LockTimeout
 from recordings.models import (
     SCHEMA_REF,
     MediaInfo,
+    PlaudState,
     Recording,
     Rendition,
     SourceRef,
@@ -52,7 +54,15 @@ from recordings.models import (
     TimeSource,
     TitleBy,
     dump_json,
+    is_private,
     is_private_tag,
+)
+from recordings.plaud.reconcile import (
+    DEFAULT_AUTO_PRIVATE,
+    Held,
+    Snapshot,
+    patterns_from_config,
+    reconcile,
 )
 from recordings.refs import canonical_ref
 from recordings.selfdoc import write_docs
@@ -127,6 +137,45 @@ class MergeIncoming:
         return rec.model_copy(update={"sources": [*rec.sources, *self.sources],
                                       "excluded_note_types": excluded})
 
+@dataclass(frozen=True)
+class SetPlaudFields:
+    """The fields Plaud owns (§9.1.1): the title while title_by is plaud or absent, the title
+    last seen, and an auto-private tag, which is only ever added."""
+
+    title: str | None = None
+    title_seen: str | None = None
+    add_private: bool = False
+    name: str = "plaud-fields"
+
+    def apply(self, rec: Recording) -> Recording:
+        update: dict = {}
+        if self.title is not None:
+            update |= {"title": self.title, "title_by": "plaud"}
+        if self.title_seen is not None:
+            plaud = rec.plaud or PlaudState()
+            update["plaud"] = plaud.model_copy(update={"title_seen": self.title_seen})
+        rec = rec.model_copy(update=update)
+        if self.add_private and not is_private(rec):
+            rec = AddTags((TagRef(tag="private", by="auto"),)).apply(rec)
+        return rec
+
+
+@dataclass(frozen=True)
+class ReconcileReport:
+    recording_id: str
+    written: int
+    held: tuple[Held, ...]
+    skipped: tuple[str, ...]
+    title_difference: bool  # whether Plaud's title differs from yours; never the title itself
+    problem: str | None = None  # a fixed phrase: never exception text, which can carry a title
+
+    def to_dict(self) -> dict:
+        return {"recording_id": self.recording_id, "written": self.written,
+                "held": [{"snapshot": h.snapshot, "slot": h.slot, "reason": h.reason}
+                         for h in self.held],
+                "skipped": list(self.skipped), "title_difference": self.title_difference,
+                "problem": self.problem}
+
 
 @dataclass(frozen=True)
 class Incoming:
@@ -166,11 +215,16 @@ class ReindexReport:
     invalid: tuple[str, ...]  # files that don't validate, flagged in state.db
     problems: tuple[dict, ...]
     forgotten: tuple[str, ...] = ()  # --allow-missing: recordings state.db no longer remembers
+    reconciled: tuple[ReconcileReport, ...] = ()
 
     def to_dict(self) -> dict:
         return {"recordings": self.recordings, "adopted": list(self.adopted),
                 "invalid": list(self.invalid), "problems": list(self.problems),
-                "forgotten": list(self.forgotten)}
+                "forgotten": list(self.forgotten),
+                "plaud": {"written": sum(r.written for r in self.reconciled),
+                          "held": sum(len(r.held) for r in self.reconciled),
+                          "skipped": sum(len(r.skipped) for r in self.reconciled),
+                          "problems": sum(r.problem is not None for r in self.reconciled)}}
 
 
 def _slug(value: str) -> str:
@@ -199,7 +253,9 @@ def _rev_of(raw: bytes) -> int:
 
 class Writer:
     def __init__(self, root: Path, state: State, index: Index, *, writer_id: str,
-                 rebuild: bool = True) -> None:
+                 rebuild: bool = True,
+                 auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> None:
+        self.auto_private = tuple(auto_private)
         self.root = Path(root)
         try:
             self.identity = read_sentinel(self.root)
@@ -257,8 +313,12 @@ class Writer:
             state = State.open(cfg.state_path)
         except StateError as exc:
             raise NotTheWriter(str(exc)) from None
+        try:
+            patterns = patterns_from_config(cfg.data)
+        except ConfigError as exc:  # a bad regex must not crash the CLI or stop the web app
+            raise NotTheWriter(str(exc)) from None
         writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
-                     rebuild=rebuild)
+                     rebuild=rebuild, auto_private=patterns)
         if docs:
             writer.write_docs()  # §6.7: at startup, and only into an archive with its sentinel
         return writer
@@ -632,6 +692,40 @@ class Writer:
         return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at,
                          fetched_at=source.fetched_at, raw=raw, sha256=digest)
 
+    def reconcile_plaud(self, recording_id: str) -> ReconcileReport:
+        """Build any Plaud outputs this recording's snapshots imply, and apply the fields Plaud
+        owns (§9.1.1). Writes nothing when there is nothing new.
+
+        Privacy first: Plaud's fields, an auto-private tag among them, land in one `mutate`
+        before any output is published. A crash in between leaves a tagged recording whose
+        outputs the next reconcile writes."""
+        self._check_sentinel()  # outputs are written even when no field changes, so check here
+        with self.locks.hold(recording_id):
+            rec = self._load_fresh(self._rel(recording_id))
+            folder = self.archive.path_for(recording_id)
+            snapshots = []
+            for source in rec.sources:
+                if source.kind != "plaud" or not source.raw:
+                    continue
+                try:
+                    envelope = json.loads((folder / source.raw).read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, ValueError):
+                    envelope = None
+                snapshots.append(Snapshot(path=source.raw, ref=source.ref,
+                                          fetched_at=source.fetched_at or source.added_at,
+                                          envelope=envelope))
+            if not snapshots:
+                return ReconcileReport(recording_id, 0, (), (), False)
+            existing = [r for _, r in self.archive.renditions(recording_id, problems=[])]
+            result = reconcile(rec, snapshots, existing, auto_private=self.auto_private)
+            if result.title is not None or result.title_seen is not None or result.add_private:
+                self.mutate(recording_id, SetPlaudFields(result.title, result.title_seen,
+                                                         result.add_private))
+            written = sum(self._write_rendition_locked(folder, r) is not None
+                          for r in result.outputs)
+            return ReconcileReport(recording_id, written, result.held, result.skipped,
+                                   result.title_difference is not None)
+
     # ---- housekeeping ------------------------------------------------------------------------
     def _sweep_tmp(self) -> None:
         """Remove assemblies a killed writer left in .tmp/ (Review Focus 2). Each is named
@@ -684,12 +778,24 @@ class Writer:
             elif outcome == "invalid":
                 invalid.append(rel)
         count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
+        reconciled = []
+        for rec in list(self.archive.iter_recordings()):
+            if not any(s.kind == "plaud" for s in rec.sources):
+                continue
+            try:
+                reconciled.append(self.reconcile_plaud(rec.id))
+            except (WriterError, KeyError, LockTimeout, OSError, ValueError,
+                    TypeError) as exc:  # ValueError: a payload the renditions can't encode
+                # A fixed phrase, never the exception's text, which can carry a title.
+                problem = f"{type(exc).__name__}: not reconciled"
+                reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
         for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
             self.state.forget(rel)
-        problems = tuple({"path": str(p.path), "message": p.message} for p in self.archive.problems)
+        problems = tuple({"path": str(p.path), "message": p.message}
+                         for p in self.archive.problems)
         return ReindexReport(recordings=count, adopted=tuple(adopted), invalid=tuple(invalid),
-                             problems=problems,
-                             forgotten=tuple(Path(f).parent.name for f in gone))
+                             problems=problems, forgotten=tuple(Path(f).parent.name for f in gone),
+                             reconciled=tuple(reconciled))
 
     def _accept(self, rel: str, raw: bytes) -> str:
         sha = _sha(raw)

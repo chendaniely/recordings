@@ -2,8 +2,12 @@
   "$schema": "../../../../schemas/recording.schema.json",
   "format": "recordings-archive@1",
   "id": "19700413T210756-0600_ee569ed0",
-  "rev": 1,
+  "rev": 2,
   "title": "Apollo 13: Houston, we've had a problem",
+  "title_by": "plaud",
+  "plaud": {
+    "title_seen": "Apollo 13: Houston, we've had a problem"
+  },
   "recorded_at": "1970-04-13T21:07:56-06:00",
   "timezone": "America/Chicago",
   "time_source": "published",
@@ -18,8 +22,9 @@
       "kind": "plaud",
       "ref": "demo-apollo13",
       "added_at": "2026-10-08T12:00:00Z",
-      "raw": "source/plaud-20261008T120000Z.json",
-      "sha256": "2a136d5095ed5d518d14c0e5dce924a6b39719f35286c4747bcb35e40686a33e"
+      "fetched_at": "2026-10-08T12:01:30Z",
+      "raw": "source/plaud-20261008T120130Z.json",
+      "sha256": "1bf2ffe4779c5d422ff2e0d6e3983154a74d3c104ebdb0d886435c4e15087043"
     }
   ],
   "tags": [],

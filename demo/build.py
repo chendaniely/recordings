@@ -33,6 +33,27 @@ DEMO_UUID = "5f0c8e2a-3b1d-4c6e-9a7f-1d2e3f405162"
 WHISPER = {"model": "mlx-community/whisper-large-v3-turbo", "version": "large-v3-turbo@a4aaeec"}
 
 
+def plaud_envelope(entry: dict, transcript: dict, summary_md: str) -> dict:
+    """A synthetic Plaud `files/{id}` envelope, built from the canned transcript, so the demo's
+    Plaud outputs come from reconcile, the way the real ones do. Generic speaker labels only:
+    no real person's name."""
+    labels: dict[str, str] = {}
+    rows = []
+    for seg in transcript["segments"]:
+        raw_label = seg.get("speaker") or "SPEAKER_00"
+        label = labels.setdefault(raw_label, f"Speaker {len(labels) + 1}")
+        rows.append({"content": seg["text"], "start_time": round(seg["start"] * 1000),
+                     "end_time": round(seg["end"] * 1000), "speaker": label,
+                     "original_speaker": label})
+    return {"id": entry["source_ref"], "name": entry["title"], "duration": entry["duration_ms"],
+            "demo": True,
+            "source_list": [{"data_type": "transaction", "data_id": "demo-transaction",
+                             "data_tab_name": None,
+                             "data_content": json.dumps(rows, ensure_ascii=False)}],
+            "note_list": [{"data_type": "auto_sum_note", "data_id": "demo-summary",
+                           "data_tab_name": "Summary", "data_content": summary_md}]}
+
+
 def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
     entries = tomllib.loads((HERE / "sources.toml").read_text())["recording"]
     ids: dict[str, str] = {}
@@ -65,22 +86,15 @@ def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
                     inputs={"audio_sha256": sha}, meta={"demo": True},
                     payload={"markdown": done.text}))
             payload = None
+            fetched_at = None
             if entry.get("plaud"):
-                transcript = renditions[0].payload
-                renditions.append(Rendition(
-                    kind="transcript", engine="plaud", model="plaud", version="plaud@demo",
-                    created_at=stamp + timedelta(seconds=30), meta={"demo": True},
-                    payload=transcript))
-                renditions.append(Rendition(
-                    kind="notes", note_type="plaud-summary", engine="plaud", model="plaud",
-                    version="plaud@demo", created_at=stamp + timedelta(seconds=31),
-                    meta={"demo": True},
-                    payload={"markdown": (canned_dir / "notes" / entry["slug"] / "plaud.md")
-                             .read_text(encoding="utf-8")}))
-                payload = json.dumps({"id": entry["source_ref"], "demo": True,
-                                      "name": entry["title"]}, indent=2).encode() + b"\n"
+                summary = (canned_dir / "notes" / entry["slug"] / "plaud.md").read_text(
+                    encoding="utf-8")
+                envelope = plaud_envelope(entry, renditions[0].payload, summary)
+                payload = json.dumps(envelope, indent=2, ensure_ascii=False).encode() + b"\n"
+                fetched_at = stamp + timedelta(seconds=30)
             my_notes_path = canned_dir / "my-notes" / f"{entry['slug']}.md"
-            writer.add(Incoming(
+            added = writer.add(Incoming(
                 media=media,
                 recorded_at=recorded_at,
                 timezone_name=entry["timezone"],
@@ -89,12 +103,16 @@ def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
                 kind=entry["kind"],
                 duration_ms=entry["duration_ms"],
                 sources=(RawSource(kind=entry["source_kind"], ref=entry["source_ref"],
-                                   added_at=BUILD_AT, payload=payload),),
+                                   added_at=BUILD_AT, fetched_at=fetched_at,
+                                   payload=payload),),
+                title_by="plaud" if entry.get("plaud") else None,
                 tags=tuple(TagRef(**t) for t in entry.get("tags", [])),
                 renditions=tuple(renditions),
                 my_notes=(my_notes_path.read_text(encoding="utf-8")
                           if my_notes_path.is_file() else None),
             ))
+            if entry.get("plaud"):
+                writer.reconcile_plaud(added.recording.id)  # Plaud's outputs, as the sync makes them
     return dict(sorted(ids.items()))
 
 

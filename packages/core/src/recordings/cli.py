@@ -44,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("archive", type=Path)
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("reindex", help="accept outside edits and rebuild the derived index.db")
+    p = sub.add_parser("reindex", help="accept outside edits, rebuild the derived index.db and build any "
+                        "missing Plaud outputs")
     p.add_argument("--allow-empty", action="store_true",
                    help="let the index become empty (refused by default: is the archive mounted?)")
     p.add_argument("--allow-missing", action="store_true",
@@ -125,7 +126,9 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     _emit(report.to_dict(), args.json)
     # A recording the rebuild left out (not valid, or its id doesn't match its folder) is
     # dropped from the index: exit 1 so a script notices (§11).
-    return 1 if report.invalid or report.problems else 0
+    # A Plaud recording that could not be reconciled is a failure too: its outputs are missing.
+    return 1 if report.invalid or report.problems or any(
+        r.problem for r in report.reconciled) else 0
 
 
 def cmd_schemas(args: argparse.Namespace) -> int:
