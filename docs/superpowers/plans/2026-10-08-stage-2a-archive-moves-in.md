@@ -1336,8 +1336,9 @@ through 1a, then:
    it names is missing from the app until then. Do not import while `reindex` reports an invalid
    file. It also refuses, exit 1, and does not rebuild the index, when `state.db` knows
    recordings that are not in the archive now: a folder did not restore or is not mounted. The
-   app and an import refuse the same way. Fix that first, and pass `--allow-missing` only for
-   recordings you removed on purpose: it rebuilds, and `state.db` forgets them.
+   app then starts read-only, and an import stops with `IndexUnavailable` (the IDs are in the
+   debug log). Fix that first, and pass `--allow-missing` only for recordings you removed on
+   purpose: it rebuilds, and `state.db` forgets them.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex
@@ -4547,21 +4548,22 @@ Three orderings matter here:
     - `begin(file, rev, sha256, body, origin) -> int`, `commit(revision_id)`, `discard(revision_id)`, `adopt(file, rev, sha256, body) -> int`
     - `flag(file, kind, message)`, `clear_flags(file)`, `flags() -> list[dict]`
     - `mark_index_pending(recording_id)`, `clear_index_pending(recording_id)`, `index_pending() -> list[str]`
+    - `committed_files() -> list[str]` (every `recording.json` with a committed revision) and `forget(file)` (drops its revisions and flags; `reindex --allow-missing` calls it)
     - `@dataclass(frozen=True) Revision(id, file, rev, sha256, body, origin, committed)`, and `KEEP_REVISIONS = 8`
   - **`recordings.writer`:**
-    - errors: `class WriterError(RuntimeError)`, and its subclasses `NotTheWriter`, `StaleFile`, `InvalidFile`, `IndexUnavailable` (`add` refuses rather than read a busy index as "none")
+    - errors: `class WriterError(RuntimeError)`, and its subclasses `NotTheWriter`, `StaleFile`, `InvalidFile`, `IndexUnavailable` (`add` refuses rather than read a busy index as "none", or rebuild over recordings state.db knows are gone). `MissingRecordings(IndexRefused)`: state.db knows recordings the archive no longer lists, or can't read; `rebuild_index` raises it unless `allow_missing`
     - `class Op(Protocol)`, with `name: str` and `apply(rec: Recording) -> Recording`
     - ops: `@dataclass(frozen=True) AddTags(tags: tuple[TagRef, ...])` and `MergeIncoming(sources: tuple[SourceRef, ...], tags: tuple[TagRef, ...] = (), excluded_note_types: tuple[str, ...] = ())`
     - `@dataclass(frozen=True) Incoming(media, recorded_at, timezone_name, time_source, title, kind, sources: tuple[RawSource, ...], title_by: TitleBy | None = None, duration_ms=None, sample_rate=None, channels=None, tags=(), renditions=(), my_notes=None, excluded_note_types=())`. A private tag goes in `tags`.
     - `@dataclass(frozen=True) Added(recording: Recording, created: bool, sources_added: int, renditions_added: int)`
-    - `@dataclass(frozen=True) ReindexReport(recordings: int, adopted: tuple[str, ...], invalid: tuple[str, ...], problems: tuple[dict, ...])`, with `.to_dict()`
+    - `@dataclass(frozen=True) ReindexReport(recordings: int, adopted: tuple[str, ...], invalid: tuple[str, ...], problems: tuple[dict, ...], forgotten: tuple[str, ...] = ())`, with `.to_dict()`. `forgotten` lists the IDs `--allow-missing` made state.db forget.
     - `rendition_filename(rendition: Rendition) -> str`
-    - `class Writer(root: Path, state: State, index: Index, *, writer_id: str)`:
+    - `class Writer(root: Path, state: State, index: Index, *, writer_id: str, rebuild: bool = True)`. `rebuild=False` skips the start-up index rebuild (only `reindex` passes it):
 
       | Member | Returns |
       |---|---|
       | `root`, `state`, `index`, `archive`, `locks`, `identity`, `writer_id` | (attributes) |
-      | `Writer.open(cfg: Config, *, docs: bool = True)` | `Writer` |
+      | `Writer.open(cfg: Config, *, docs: bool = True, rebuild: bool = True)` | `Writer` |
       | `write_docs()` | `list[str]` |
       | `add(incoming: Incoming)` | `Added` |
       | `mutate(recording_id: str, op: Op)` | `Recording` |
@@ -4570,11 +4572,11 @@ Three orderings matter here:
       | `rebuild_index(*, allow_empty: bool = False, allow_missing: bool = False)` | `int` |
 
       Private helpers that later tasks call or quote: `_rel`, `_load_fresh`, `_check_fresh`,
-      `_write_recording`, `_write_rendition_locked`, `_publish_raw`, `_index`, `_catch_up_index`.
+      `_write_recording`, `_write_rendition_locked`, `_publish_raw`, `_index`, `_catch_up_index`, `_check_sentinel`, `_missing`.
   - **Test fixtures** in core `conftest.py`: `make_writer(name="archive", writer_id="test") -> Writer`, `writer`, `make_incoming(content=None, *, name="clip.MP3", **over) -> Incoming`. `new_archive` stays.
 
-**Done when:** the full suite passes, with 42 more passed than after Task 5a: `test_writer.py`'s
-49, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
+**Done when:** the full suite passes, with 44 more passed than after Task 5a: `test_writer.py`'s
+51, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing writer tests**
 
@@ -4842,22 +4844,63 @@ def test_a_recording_json_that_cannot_be_read_does_not_abort_the_adoption(writer
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
 def test_no_index_rebuild_runs_over_an_unreadable_year_folder(writer, make_incoming):
     # why: §6.4. A year folder that reads as empty made _holding rebuild a shrunken index, and
-    # the same bytes then looked new: a second recording. Every rebuild is guarded.
+    # the same bytes then looked new: a second recording. Every rebuild is guarded. Another year
+    # stays readable, so the archive is not empty and the empty-index guard can't be what stops it.
+    kept = writer.add(make_incoming(b"kept", recorded_at=datetime.fromisoformat(
+        "2025-03-01T09:00:00-07:00"))).recording
     rec = writer.add(make_incoming(b"same bytes")).recording
     year = writer.root / "recordings" / "2026"
     before = sorted(p.relative_to(writer.root) for p in writer.root.rglob("*"))
     year.chmod(0)
     try:
-        with pytest.raises(IndexUnavailable, match="allow-missing"):
+        with pytest.raises(IndexUnavailable, match="can't be read"):
             writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
         writer.state.mark_index_pending(rec.id)
-        with pytest.raises(NotTheWriter, match="not in the archive now") as caught:
+        with pytest.raises(NotTheWriter, match="can't be read") as caught:
             Writer(writer.root, writer.state, writer.index, writer_id="test")
         assert "--allow-empty" not in str(caught.value)
-        assert writer.index.count() == 1
+        with pytest.raises(IndexRefused, match="can't be read"):
+            writer.reindex(allow_missing=True)  # unreadable is not gone: never forgotten
+        assert writer.state.committed_files() != [] and writer._rel(rec.id) in \
+            writer.state.committed_files()
     finally:
         year.chmod(0o755)
+    assert writer.index.count() == 2 and writer.index.find_by_sha256(
+        writer.archive.load(rec.id).media.sha256) == rec.id
     assert sorted(p.relative_to(writer.root) for p in writer.root.rglob("*")) == before
+    assert {r.id for r in writer.archive.iter_recordings()} == {kept.id, rec.id}
+
+
+def test_a_start_with_no_committed_revisions_still_never_empties_the_index(
+        writer, make_incoming, tmp_path):
+    # why: §6.7. A state.db recreated by `init --adopt` has no committed revisions, so the
+    # missing-files guard has nothing to say; only allow_empty=foreign stands between a pending
+    # mark and an index emptied by an archive that reads as empty.
+    rec = writer.add(make_incoming()).recording
+    shutil.rmtree(writer.state.path)
+    adopt_archive(writer.root, writer.state.path, writer_id="test")
+    state = State.open(writer.state.path)
+    assert state.committed_files() == []
+    state.mark_index_pending(rec.id)
+    (writer.root / "recordings").rename(tmp_path / "moved-away")
+    (writer.root / "recordings").mkdir()
+    with pytest.raises(NotTheWriter, match="refusing to empty"):
+        Writer(writer.root, state, writer.index, writer_id="test")
+    assert writer.index.count() == 1
+
+
+def test_reindex_skips_a_copy_of_the_same_id_in_another_month(writer, make_incoming):
+    # why: the copy's recording.json is the right ID at the wrong path. Its edit must not be
+    # adopted as the original's base; iter_recordings reports the copy.
+    rec = writer.add(make_incoming()).recording
+    folder = writer.archive.path_for(rec.id)
+    original = (folder / "recording.json").read_bytes()
+    copy = folder.parent.parent / "11" / rec.id
+    shutil.copytree(folder, copy)
+    (copy / "recording.json").write_bytes(original.replace(b"Week 4", b"Copied"))
+    report = writer.reindex()
+    assert report.adopted == () and report.invalid == ()
+    assert writer.state.last_committed(writer._rel(rec.id)).body == original
 
 
 def test_reindex_adopts_only_a_folder_in_its_own_place(writer, make_incoming, tmp_path):
@@ -5775,7 +5818,8 @@ def _rev_of(raw: bytes) -> int:
 
 
 class Writer:
-    def __init__(self, root: Path, state: State, index: Index, *, writer_id: str) -> None:
+    def __init__(self, root: Path, state: State, index: Index, *, writer_id: str,
+                 rebuild: bool = True) -> None:
         self.root = Path(root)
         try:
             self.identity = read_sentinel(self.root)
@@ -5803,7 +5847,8 @@ class Writer:
         self.locks = Locks(state.locks_dir)
         self._sweep_tmp()
         foreign = index.archive_uuid() != self.identity.uuid  # new, damaged or another archive's
-        if foreign or state.index_pending():
+        # rebuild=False is for `reindex`, which rebuilds on its own terms (--allow-missing).
+        if rebuild and (foreign or state.index_pending()):
             try:
                 # §6.7: only an index that isn't this archive's may start out empty.
                 self.rebuild_index(allow_empty=foreign)
@@ -5820,7 +5865,7 @@ class Writer:
                     "derived, so an empty folder for it will do.") from None
 
     @classmethod
-    def open(cls, cfg: Config, *, docs: bool = True) -> Writer:
+    def open(cls, cfg: Config, *, docs: bool = True, rebuild: bool = True) -> Writer:
         missing = [name for name, value in (("[archive] path", cfg.archive_path),
                                             ("[state] path", cfg.state_path),
                                             ("[index] path", cfg.index_path),
@@ -5832,7 +5877,8 @@ class Writer:
             state = State.open(cfg.state_path)
         except StateError as exc:
             raise NotTheWriter(str(exc)) from None
-        writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id)
+        writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
+                     rebuild=rebuild)
         if docs:
             writer.write_docs()  # §6.7: at startup, and only into an archive with its sentinel
         return writer
@@ -5843,8 +5889,36 @@ class Writer:
             return write_docs(self.root)
 
     def _missing(self) -> list[str]:
-        """The recording.json files state.db committed that are no longer files in the archive."""
-        return [f for f in self.state.committed_files() if not (self.root / f).is_file()]
+        """The recording.json files state.db committed that are no longer in the archive. Only a
+        file that is not there counts: one that can't be read (a folder without permission, a
+        half-mounted disk) is refused, even with --allow-missing, never forgotten."""
+        gone, unreadable = [], []
+        for f in self.state.committed_files():
+            try:
+                os.stat(self.root / f)
+            except FileNotFoundError:
+                gone.append(f)
+            except OSError:
+                unreadable.append(f)
+        if unreadable:
+            raise MissingRecordings(
+                f"{len(unreadable)} recording file(s) state.db knows can't be read "
+                f"({self._shown(unreadable)}). Is the archive fully mounted and readable? "
+                "Nothing was changed.")
+        return gone
+
+    @staticmethod
+    def _shown(files: list[str]) -> str:
+        ids = [Path(f).parent.name for f in files]
+        return ", ".join(ids[:5]) + (f" and {len(ids) - 5} more" if len(ids) > 5 else "")
+
+    def _refuse_missing(self, gone: list[str]) -> None:
+        if gone:
+            raise MissingRecordings(
+                f"{len(gone)} recording(s) state.db knows are not in the archive now "
+                f"({self._shown(gone)}). Is the archive fully mounted and readable? The index was "
+                "not rebuilt. If they were removed on purpose, run `recordings reindex "
+                "--allow-missing`.")
 
     def rebuild_index(self, *, allow_empty: bool = False, allow_missing: bool = False) -> int:
         # state.db knows every file the app committed. One that is no longer a file means a folder
@@ -5852,15 +5926,7 @@ class Writer:
         # an import make a second copy of its bytes (§6.4). Every rebuild is guarded, not only
         # `reindex`. For a deletion Dan means: `recordings reindex --allow-missing`.
         if not allow_missing:
-            missing = [Path(f).parent.name for f in self._missing()]
-            if missing:
-                shown = ", ".join(missing[:5]) + (
-                    f" and {len(missing) - 5} more" if len(missing) > 5 else "")
-                raise MissingRecordings(
-                    f"{len(missing)} recording(s) state.db knows are not in the archive now "
-                    f"({shown}). Is the archive fully mounted and readable? The index was not "
-                    "rebuilt. If they were removed on purpose, run `recordings reindex "
-                    "--allow-missing`.")
+            self._refuse_missing(self._missing())
         with self.locks.hold(INDEX_LOCK):
             count = self.index.rebuild(self.archive, archive_uuid=self.identity.uuid,
                                        allow_empty=allow_empty)
@@ -6213,6 +6279,10 @@ class Writer:
     def reindex(self, *, allow_empty: bool = False,
                 allow_missing: bool = False) -> ReindexReport:
         self._check_sentinel()
+        # Before anything is adopted or reconciled: a refused reindex writes nothing.
+        gone = self._missing()
+        if not allow_missing:
+            self._refuse_missing(gone)
         adopted, invalid = [], []
         for folder in self.archive.recording_dirs():
             if not ID_RE.fullmatch(folder.name):
@@ -6233,7 +6303,6 @@ class Writer:
                 adopted.append(rel)
             elif outcome == "invalid":
                 invalid.append(rel)
-        gone = self._missing() if allow_missing else []
         count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
         for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
             self.state.forget(rel)
@@ -6271,7 +6340,7 @@ class Writer:
 - [ ] **Step 5: Run the writer tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_writer.py packages/core/tests/test_locks.py -v`
-Expected: 62 passed (`test_writer.py`'s 49 and `test_locks.py`'s 13).
+Expected: 64 passed (`test_writer.py`'s 51 and `test_locks.py`'s 13).
 
 - [ ] **Step 6: Retire the `test_archive.py` tests that `test_writer.py` now covers**
 
@@ -6292,7 +6361,7 @@ Leave the file's helpers and imports as they are: Task 5c replaces the whole fil
 - [ ] **Step 7: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 42 more than after Task 5a. Record the count in the ledger.
+Expected: every test passes, 44 more than after Task 5a. Record the count in the ledger.
 
 - [ ] **Step 8: Commit**
 
@@ -6332,7 +6401,7 @@ no `state.db`.
 
 **Interfaces:**
 - Consumes:
-  - `Writer`, `Writer.open(cfg, *, docs=True)`, `Incoming`, `WriterError` (Task 5b)
+  - `Writer`, `Writer.open(cfg, *, docs=True, rebuild=True)`, `Incoming`, `WriterError` (Task 5b)
   - `LockTimeout` (Task 5a)
   - `IndexRefused` (Task 4)
   - `Config` (Task 2)
@@ -6340,13 +6409,13 @@ no `state.db`.
   - **CLI:**
     - `recordings reindex [--allow-empty] [--allow-missing] [--json]`: exit 0, 1 when a file doesn't validate, the rebuild left a recording out (`invalid` or `problems` is non-empty), or `state.db` knows recordings that are gone from the archive (refused, no rebuild, unless `--allow-missing`, which rebuilds and makes `state.db` forget them: the report's `forgotten` lists their IDs), 75 when a lock stayed busy, 78 when this process isn't the writer. It opens the `Writer` with `docs=False`.
     - `recordings docs [ARCHIVE] [--json]` now opens the `Writer`. `ARCHIVE` is optional, and must be `[archive] path`. It exits 78 when this process isn't the writer.
-    - the helper `_writer(as_json: bool, *, docs: bool = True) -> Writer | int`
+    - the helper `_writer(as_json: bool, *, docs: bool = True, rebuild: bool = True) -> Writer | int`. `reindex` passes `rebuild=False`: it rebuilds the index itself, on its own terms, so `--allow-missing` is not stopped by the Writer's start-up rebuild (exit 78).
   - **`recordings_ui.settings.Settings`** gains `config: Config | None = None`.
   - **`recordings_ui.app.write_docs_at_startup(cfg: Config) -> None`**
   - **Test fixture** in ui `conftest.py`: `writer`, in folders of its own (`written-archive`, `written-state`, `written-index/`), so a test can take `demo_archive` as well.
 - **Removed:** `Archive.add_recording`, `Archive.write_rendition`, `Archive.find_by_sha256`, and the private writing helpers in `archive.py` (`_write_raw`, `_write_rendition_into`, `_merge_source`, `_drop_empty_tmp`, `_slug`, `_UNSAFE`).
 
-**Done when:** the full suite passes, with 7 more passed than after Task 5b (six in
+**Done when:** the full suite passes, with 9 more passed than after Task 5b (eight in
 `test_cli.py`, one in `test_app.py`), and the demo is rebuilt. Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing tests**
@@ -6456,7 +6525,48 @@ In `packages/core/tests/test_cli.py`:
        assert gone.id in message and keep.id not in message
        assert writer.index.count() == 2  # the index is untouched
        assert main(["reindex", "--allow-missing", "--json"]) == 0
+       assert json.loads(capsys.readouterr().out)["forgotten"] == [gone.id]
        assert writer.index.count() == 1
+       assert main(["reindex", "--json"]) == 0  # forgotten once: the next plain reindex is clean
+
+
+   def test_validate_exits_1_on_problems(tmp_path, capsys):
+       init_archive(tmp_path / "a", tmp_path / "state", writer_id="test")
+       folder = tmp_path / "a" / "recordings" / "2026" / "10" / "20261006T140003-0700_3fa91c2e"
+       folder.mkdir(parents=True)
+       (folder / "recording.json").write_text("{", encoding="utf-8")
+       assert main(["validate", str(tmp_path / "a"), "--json"]) == 1
+       assert len(json.loads(capsys.readouterr().out)["problems"]) == 1
+
+
+   def test_reindex_allow_missing_works_when_index_db_is_gone(
+           writer, make_incoming, tmp_path, monkeypatch, capsys):
+       # why: the runbook's restore does not bring index.db back, and a hand deletion needs
+       # --allow-missing. The command must not stop at the Writer's own start-up rebuild (exit 78).
+       writer.add(make_incoming(sources=()))
+       gone = writer.add(make_incoming(sources=())).recording
+       shutil.rmtree(writer.archive.path_for(gone.id))
+       writer.index.path.unlink()
+       _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+       assert main(["reindex", "--json"]) == 1
+       assert gone.id in json.loads(capsys.readouterr().out)["error"]
+       assert main(["reindex", "--allow-missing", "--json"]) == 0
+       assert json.loads(capsys.readouterr().out)["forgotten"] == [gone.id]
+       assert main(["reindex", "--json"]) == 0
+
+
+   def test_reindex_allow_missing_works_with_an_index_update_pending(
+           writer, make_incoming, tmp_path, monkeypatch, capsys):
+       keep = writer.add(make_incoming(sources=())).recording
+       gone = writer.add(make_incoming(sources=())).recording
+       shutil.rmtree(writer.archive.path_for(gone.id))
+       writer.state.mark_index_pending(keep.id)
+       _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+       assert main(["reindex", "--json"]) == 1
+       capsys.readouterr()
+       assert main(["reindex", "--allow-missing", "--json"]) == 0
+       assert main(["reindex", "--json"]) == 0
+       assert writer.state.index_pending() == []
    ```
 
 In `packages/core/tests/test_init.py`, **replace** `test_docs_refuses_a_folder_without_a_sentinel`
@@ -6509,13 +6619,13 @@ def test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write(tmp_p
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `uv run pytest packages/core/tests/test_cli.py packages/core/tests/test_init.py packages/ui/tests/test_app.py -v`
-Expected: 9 failures:
+Expected: 11 failures:
 - `test_docs_then_validate_on_a_new_archive` and `test_docs_refuses_a_folder_without_a_sentinel`: `SystemExit: 2` (argparse: "the following arguments are required: archive")
 - `test_docs_are_never_written_into_the_macs_mirror`: `assert 0 == 78`, because the sentinel check alone lets `docs` write into the mirror
 - `test_reindex_accepts_an_outside_edit`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
 - `test_reindex_exits_1_and_names_a_recording_the_rebuild_left_out`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
 - `test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write`: `TypeError: Settings.__init__() got an unexpected keyword argument 'config'`
-- `test_reindex_writes_no_docs_so_a_read_only_archive_cannot_stop_it`, `test_reindex_names_an_index_it_cannot_rebuild` and `test_reindex_refuses_when_recordings_state_db_knows_are_gone`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
+- `test_reindex_writes_no_docs_so_a_read_only_archive_cannot_stop_it`, `test_reindex_names_an_index_it_cannot_rebuild` and `test_reindex_refuses_when_recordings_state_db_knows_are_gone`, `test_reindex_allow_missing_works_when_index_db_is_gone` and `test_reindex_allow_missing_works_with_an_index_update_pending`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
 
 - [ ] **Step 3: Add `recordings reindex`, and write the docs through the `Writer`**
 
@@ -6554,12 +6664,12 @@ In `packages/core/src/recordings/cli.py`:
    ```
 4. **Add** after `cmd_init`:
    ```python
-   def _writer(as_json: bool, *, docs: bool = True) -> Writer | int:
+   def _writer(as_json: bool, *, docs: bool = True, rebuild: bool = True) -> Writer | int:
        cfg = _config(as_json)
        if isinstance(cfg, int):
            return cfg
        try:
-           return Writer.open(cfg, docs=docs)
+           return Writer.open(cfg, docs=docs, rebuild=rebuild)
        except LockTimeout as exc:  # busy, not misconfigured: 75 (EX_TEMPFAIL), as the import uses
            return _fail(str(exc), as_json, 75)
        except (WriterError, OSError, sqlite3.Error) as exc:  # docs write: a read-only mount, a full disk
@@ -6567,7 +6677,8 @@ In `packages/core/src/recordings/cli.py`:
 
 
    def cmd_reindex(args: argparse.Namespace) -> int:
-       writer = _writer(args.json, docs=False)  # the recovery command writes no docs
+       # The recovery command writes no docs, and rebuilds the index itself, on its own terms.
+       writer = _writer(args.json, docs=False, rebuild=False)
        if isinstance(writer, int):
            return writer
        try:

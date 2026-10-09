@@ -117,3 +117,33 @@ def test_validate_exits_1_on_problems(tmp_path, capsys):
     (folder / "recording.json").write_text("{", encoding="utf-8")
     assert main(["validate", str(tmp_path / "a"), "--json"]) == 1
     assert len(json.loads(capsys.readouterr().out)["problems"]) == 1
+
+
+def test_reindex_allow_missing_works_when_index_db_is_gone(
+        writer, make_incoming, tmp_path, monkeypatch, capsys):
+    # why: the runbook's restore does not bring index.db back, and a hand deletion needs
+    # --allow-missing. The command must not stop at the Writer's own start-up rebuild (exit 78).
+    writer.add(make_incoming(sources=()))
+    gone = writer.add(make_incoming(sources=())).recording
+    shutil.rmtree(writer.archive.path_for(gone.id))
+    writer.index.path.unlink()
+    _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+    assert main(["reindex", "--json"]) == 1
+    assert gone.id in json.loads(capsys.readouterr().out)["error"]
+    assert main(["reindex", "--allow-missing", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["forgotten"] == [gone.id]
+    assert main(["reindex", "--json"]) == 0
+
+
+def test_reindex_allow_missing_works_with_an_index_update_pending(
+        writer, make_incoming, tmp_path, monkeypatch, capsys):
+    keep = writer.add(make_incoming(sources=())).recording
+    gone = writer.add(make_incoming(sources=())).recording
+    shutil.rmtree(writer.archive.path_for(gone.id))
+    writer.state.mark_index_pending(keep.id)
+    _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+    assert main(["reindex", "--json"]) == 1
+    capsys.readouterr()
+    assert main(["reindex", "--allow-missing", "--json"]) == 0
+    assert main(["reindex", "--json"]) == 0
+    assert writer.state.index_pending() == []

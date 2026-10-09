@@ -759,8 +759,9 @@ through 1a, then:
    it names is missing from the app until then. Do not import while `reindex` reports an invalid
    file. It also refuses, exit 1, and does not rebuild the index, when `state.db` knows
    recordings that are not in the archive now: a folder did not restore or is not mounted. The
-   app and an import refuse the same way. Fix that first, and pass `--allow-missing` only for
-   recordings you removed on purpose: it rebuilds, and `state.db` forgets them.
+   app then starts read-only, and an import stops with `IndexUnavailable` (the IDs are in the
+   debug log). Fix that first, and pass `--allow-missing` only for recordings you removed on
+   purpose: it rebuilds, and `state.db` forgets them.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex

@@ -198,7 +198,8 @@ def _rev_of(raw: bytes) -> int:
 
 
 class Writer:
-    def __init__(self, root: Path, state: State, index: Index, *, writer_id: str) -> None:
+    def __init__(self, root: Path, state: State, index: Index, *, writer_id: str,
+                 rebuild: bool = True) -> None:
         self.root = Path(root)
         try:
             self.identity = read_sentinel(self.root)
@@ -226,7 +227,8 @@ class Writer:
         self.locks = Locks(state.locks_dir)
         self._sweep_tmp()
         foreign = index.archive_uuid() != self.identity.uuid  # new, damaged or another archive's
-        if foreign or state.index_pending():
+        # rebuild=False is for `reindex`, which rebuilds on its own terms (--allow-missing).
+        if rebuild and (foreign or state.index_pending()):
             try:
                 # §6.7: only an index that isn't this archive's may start out empty.
                 self.rebuild_index(allow_empty=foreign)
@@ -243,7 +245,7 @@ class Writer:
                     "derived, so an empty folder for it will do.") from None
 
     @classmethod
-    def open(cls, cfg: Config, *, docs: bool = True) -> Writer:
+    def open(cls, cfg: Config, *, docs: bool = True, rebuild: bool = True) -> Writer:
         missing = [name for name, value in (("[archive] path", cfg.archive_path),
                                             ("[state] path", cfg.state_path),
                                             ("[index] path", cfg.index_path),
@@ -255,7 +257,8 @@ class Writer:
             state = State.open(cfg.state_path)
         except StateError as exc:
             raise NotTheWriter(str(exc)) from None
-        writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id)
+        writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
+                     rebuild=rebuild)
         if docs:
             writer.write_docs()  # §6.7: at startup, and only into an archive with its sentinel
         return writer
@@ -266,8 +269,36 @@ class Writer:
             return write_docs(self.root)
 
     def _missing(self) -> list[str]:
-        """The recording.json files state.db committed that are no longer files in the archive."""
-        return [f for f in self.state.committed_files() if not (self.root / f).is_file()]
+        """The recording.json files state.db committed that are no longer in the archive. Only a
+        file that is not there counts: one that can't be read (a folder without permission, a
+        half-mounted disk) is refused, even with --allow-missing, never forgotten."""
+        gone, unreadable = [], []
+        for f in self.state.committed_files():
+            try:
+                os.stat(self.root / f)
+            except FileNotFoundError:
+                gone.append(f)
+            except OSError:
+                unreadable.append(f)
+        if unreadable:
+            raise MissingRecordings(
+                f"{len(unreadable)} recording file(s) state.db knows can't be read "
+                f"({self._shown(unreadable)}). Is the archive fully mounted and readable? "
+                "Nothing was changed.")
+        return gone
+
+    @staticmethod
+    def _shown(files: list[str]) -> str:
+        ids = [Path(f).parent.name for f in files]
+        return ", ".join(ids[:5]) + (f" and {len(ids) - 5} more" if len(ids) > 5 else "")
+
+    def _refuse_missing(self, gone: list[str]) -> None:
+        if gone:
+            raise MissingRecordings(
+                f"{len(gone)} recording(s) state.db knows are not in the archive now "
+                f"({self._shown(gone)}). Is the archive fully mounted and readable? The index was "
+                "not rebuilt. If they were removed on purpose, run `recordings reindex "
+                "--allow-missing`.")
 
     def rebuild_index(self, *, allow_empty: bool = False, allow_missing: bool = False) -> int:
         # state.db knows every file the app committed. One that is no longer a file means a folder
@@ -275,15 +306,7 @@ class Writer:
         # an import make a second copy of its bytes (§6.4). Every rebuild is guarded, not only
         # `reindex`. For a deletion Dan means: `recordings reindex --allow-missing`.
         if not allow_missing:
-            missing = [Path(f).parent.name for f in self._missing()]
-            if missing:
-                shown = ", ".join(missing[:5]) + (
-                    f" and {len(missing) - 5} more" if len(missing) > 5 else "")
-                raise MissingRecordings(
-                    f"{len(missing)} recording(s) state.db knows are not in the archive now "
-                    f"({shown}). Is the archive fully mounted and readable? The index was not "
-                    "rebuilt. If they were removed on purpose, run `recordings reindex "
-                    "--allow-missing`.")
+            self._refuse_missing(self._missing())
         with self.locks.hold(INDEX_LOCK):
             count = self.index.rebuild(self.archive, archive_uuid=self.identity.uuid,
                                        allow_empty=allow_empty)
@@ -636,6 +659,10 @@ class Writer:
     def reindex(self, *, allow_empty: bool = False,
                 allow_missing: bool = False) -> ReindexReport:
         self._check_sentinel()
+        # Before anything is adopted or reconciled: a refused reindex writes nothing.
+        gone = self._missing()
+        if not allow_missing:
+            self._refuse_missing(gone)
         adopted, invalid = [], []
         for folder in self.archive.recording_dirs():
             if not ID_RE.fullmatch(folder.name):
@@ -656,7 +683,6 @@ class Writer:
                 adopted.append(rel)
             elif outcome == "invalid":
                 invalid.append(rel)
-        gone = self._missing() if allow_missing else []
         count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
         for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
             self.state.forget(rel)

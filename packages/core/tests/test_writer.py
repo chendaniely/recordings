@@ -197,22 +197,63 @@ def test_a_recording_json_that_cannot_be_read_does_not_abort_the_adoption(writer
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
 def test_no_index_rebuild_runs_over_an_unreadable_year_folder(writer, make_incoming):
     # why: §6.4. A year folder that reads as empty made _holding rebuild a shrunken index, and
-    # the same bytes then looked new: a second recording. Every rebuild is guarded.
+    # the same bytes then looked new: a second recording. Every rebuild is guarded. Another year
+    # stays readable, so the archive is not empty and the empty-index guard can't be what stops it.
+    kept = writer.add(make_incoming(b"kept", recorded_at=datetime.fromisoformat(
+        "2025-03-01T09:00:00-07:00"))).recording
     rec = writer.add(make_incoming(b"same bytes")).recording
     year = writer.root / "recordings" / "2026"
     before = sorted(p.relative_to(writer.root) for p in writer.root.rglob("*"))
     year.chmod(0)
     try:
-        with pytest.raises(IndexUnavailable, match="allow-missing"):
+        with pytest.raises(IndexUnavailable, match="can't be read"):
             writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
         writer.state.mark_index_pending(rec.id)
-        with pytest.raises(NotTheWriter, match="not in the archive now") as caught:
+        with pytest.raises(NotTheWriter, match="can't be read") as caught:
             Writer(writer.root, writer.state, writer.index, writer_id="test")
         assert "--allow-empty" not in str(caught.value)
-        assert writer.index.count() == 1
+        with pytest.raises(IndexRefused, match="can't be read"):
+            writer.reindex(allow_missing=True)  # unreadable is not gone: never forgotten
+        assert writer.state.committed_files() != [] and writer._rel(rec.id) in \
+            writer.state.committed_files()
     finally:
         year.chmod(0o755)
+    assert writer.index.count() == 2 and writer.index.find_by_sha256(
+        writer.archive.load(rec.id).media.sha256) == rec.id
     assert sorted(p.relative_to(writer.root) for p in writer.root.rglob("*")) == before
+    assert {r.id for r in writer.archive.iter_recordings()} == {kept.id, rec.id}
+
+
+def test_a_start_with_no_committed_revisions_still_never_empties_the_index(
+        writer, make_incoming, tmp_path):
+    # why: §6.7. A state.db recreated by `init --adopt` has no committed revisions, so the
+    # missing-files guard has nothing to say; only allow_empty=foreign stands between a pending
+    # mark and an index emptied by an archive that reads as empty.
+    rec = writer.add(make_incoming()).recording
+    shutil.rmtree(writer.state.path)
+    adopt_archive(writer.root, writer.state.path, writer_id="test")
+    state = State.open(writer.state.path)
+    assert state.committed_files() == []
+    state.mark_index_pending(rec.id)
+    (writer.root / "recordings").rename(tmp_path / "moved-away")
+    (writer.root / "recordings").mkdir()
+    with pytest.raises(NotTheWriter, match="refusing to empty"):
+        Writer(writer.root, state, writer.index, writer_id="test")
+    assert writer.index.count() == 1
+
+
+def test_reindex_skips_a_copy_of_the_same_id_in_another_month(writer, make_incoming):
+    # why: the copy's recording.json is the right ID at the wrong path. Its edit must not be
+    # adopted as the original's base; iter_recordings reports the copy.
+    rec = writer.add(make_incoming()).recording
+    folder = writer.archive.path_for(rec.id)
+    original = (folder / "recording.json").read_bytes()
+    copy = folder.parent.parent / "11" / rec.id
+    shutil.copytree(folder, copy)
+    (copy / "recording.json").write_bytes(original.replace(b"Week 4", b"Copied"))
+    report = writer.reindex()
+    assert report.adopted == () and report.invalid == ()
+    assert writer.state.last_committed(writer._rel(rec.id)).body == original
 
 
 def test_reindex_adopts_only_a_folder_in_its_own_place(writer, make_incoming, tmp_path):

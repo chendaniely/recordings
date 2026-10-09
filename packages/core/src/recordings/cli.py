@@ -99,12 +99,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _writer(as_json: bool, *, docs: bool = True) -> Writer | int:
+def _writer(as_json: bool, *, docs: bool = True, rebuild: bool = True) -> Writer | int:
     cfg = _config(as_json)
     if isinstance(cfg, int):
         return cfg
     try:
-        return Writer.open(cfg, docs=docs)
+        return Writer.open(cfg, docs=docs, rebuild=rebuild)
     except LockTimeout as exc:  # busy, not misconfigured: 75 (EX_TEMPFAIL), as the import uses
         return _fail(str(exc), as_json, 75)
     except (WriterError, OSError, sqlite3.Error) as exc:  # docs write: a read-only mount, a full disk
@@ -112,7 +112,8 @@ def _writer(as_json: bool, *, docs: bool = True) -> Writer | int:
 
 
 def cmd_reindex(args: argparse.Namespace) -> int:
-    writer = _writer(args.json, docs=False)  # the recovery command writes no docs
+    # The recovery command writes no docs, and rebuilds the index itself, on its own terms.
+    writer = _writer(args.json, docs=False, rebuild=False)
     if isinstance(writer, int):
         return writer
     try:
