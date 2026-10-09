@@ -8212,7 +8212,7 @@ Three rules shape this task:
 
 **Interfaces:**
 - Consumes:
-  - from Task 6: `normalise`, `is_complete`, `transcript_rows`, `note_blocks` (with each raw block), `diarization_fingerprint`, `sha256_of`, `GENERIC_SPEAKER`, `NORMALISER_VERSION`
+  - from Task 6: `normalise`, `is_complete`, `transcript_rows`, `note_blocks` (with each raw block), `part_hashes`, `diarization_fingerprint`, `diarization_key`, `sha256_of`, `GENERIC_SPEAKER`, `NORMALISER_VERSION`
   - from Task 5b: `Writer.mutate`, `Writer._write_rendition_locked`, `Writer._load_fresh`, `AddTags`
   - from Task 3: `PlaudState`, `is_private`, and `Recording.title_by: Literal["you", "plaud", "recorder", "pocket"] | None`
 - Produces:
@@ -8384,6 +8384,20 @@ def test_names_reverting_to_speaker_n_wait_for_review(plaud_env):
     assert [h.reason for h in result.held] == ["names removed"]
     reviewed = rec(plaud=PlaudState(acknowledged_up_to=s2.path))
     assert kinds(reconcile(reviewed, [s1, s2], first.outputs).outputs) == [("transcript", None)]
+
+
+def test_names_reverting_wait_for_review_when_rows_have_no_original_speaker(plaud_env):
+    # why: the diarization key must not depend on the current name, or "Ada" going back to
+    # "Speaker 1" reads as a new diarization and the removal is applied without review.
+    rows = [{"content": "Hello there.", "start_time": 0, "end_time": 1500, "speaker": "Ada"},
+            {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2"}]
+    env = plaud_env(segments=rows)
+    reverted = plaud_env(segments=[{**rows[0], "speaker": "Speaker 1"}, rows[1]])
+    s1, s2 = snap(env), snap(reverted, 1)
+    first = reconcile(rec(), [s1], [])
+    result = reconcile(rec(), [s1, s2], first.outputs)
+    assert result.outputs == ()
+    assert [h.reason for h in result.held] == ["names removed"]
 
 
 def test_a_vanished_transcript_waits_for_review(plaud_env):
@@ -8804,9 +8818,11 @@ from recordings.plaud.normalise import (
     GENERIC_SPEAKER,
     NORMALISER_VERSION,
     diarization_fingerprint,
+    diarization_key,
     is_complete,
     normalise,
     note_blocks,
+    part_hashes,
     sha256_of,
     transcript_rows,
 )
@@ -8904,14 +8920,10 @@ def _named(row: dict) -> bool:
     return bool(name) and not GENERIC_SPEAKER.match(name)
 
 
-def _diarization_key(row: dict) -> tuple:
-    return (row.get("start_time"), row.get("end_time"),
-            row.get("original_speaker") or row.get("speaker") or "")
-
-
 def _names_removed(old: list[dict], new: list[dict]) -> bool:
-    """Same diarization, and a name that was there has gone back to a generic label."""
-    if [_diarization_key(r) for r in old] != [_diarization_key(r) for r in new]:
+    """Same diarization (the fingerprint's own per-segment key), and a name that was there has
+    gone back to a generic label."""
+    if [diarization_key(r) for r in old] != [diarization_key(r) for r in new]:
         return False
     return any(_named(a) and not _named(b) for a, b in zip(old, new, strict=True))
 
@@ -8929,9 +8941,10 @@ def _slots(envelope: dict) -> dict[str, tuple[str, Any]]:
     rows = transcript_rows(normalise(envelope))
     if rows:
         out["transcript"] = (sha256_of(rows), rows)
-    for note_type, block, raw in note_blocks(envelope):
+    parts = part_hashes(envelope)  # the Sync screen's own note hashes: unknown fields are "other"
+    for note_type, _block, raw in note_blocks(envelope):
         if render_note(raw):
-            out[f"notes:{note_type}"] = (sha256_of(block), raw)
+            out[f"notes:{note_type}"] = (parts[f"notes:{note_type}"], raw)
     return out
 
 
@@ -9141,7 +9154,7 @@ In `packages/core/src/recordings/writer.py`:
            writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
                         rebuild=rebuild, auto_private=patterns)
    ```
-   (The test for this is the last one in Step 1's `test_reconcile.py`.)
+   (The test for this is `test_a_bad_pattern_in_config_refuses_the_writer_cleanly` in Step 1.)
 6. **Add** this method after `_publish_raw`:
    ```python
        def reconcile_plaud(self, recording_id: str) -> ReconcileReport:
@@ -9192,7 +9205,8 @@ In `packages/core/src/recordings/writer.py`:
                    continue
                try:
                    reconciled.append(self.reconcile_plaud(rec.id))
-               except (WriterError, KeyError, LockTimeout, OSError) as exc:
+               except (WriterError, KeyError, LockTimeout, OSError, ValueError,
+                       TypeError) as exc:  # ValueError: a payload the renditions can't encode
                    # A fixed phrase, never the exception's text, which can carry a title.
                    problem = f"{type(exc).__name__}: not reconciled"
                    reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
@@ -9292,8 +9306,9 @@ PY
 uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 uv run pytest
 ```
-Expected: every test passes (491 in all, up from 454 after Task 6's council fixes: 34 in
-`test_reconcile.py` as written, 2 more from the reindex and lock tests, 1 from the CLI test).
+Expected: every test passes (500 in all, up from 462 after Task 6's council fixes: 37 in
+`test_reconcile.py` (34 as first written, 2 for reindex and locks, 1 for a revert without
+`original_speaker`), 1 in `test_cli.py`).
 `test_rebuilding_from_the_archives_own_media_is_byte_identical` fails if the demo archive is
 stale. The Apollo 13 recording's `source/plaud-20261008T120130Z.json` is
 now a Plaud-shaped envelope, and its Plaud outputs are
