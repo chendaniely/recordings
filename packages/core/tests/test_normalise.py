@@ -8,6 +8,7 @@ from recordings.plaud.normalise import (
     DROPPED_KEYS,
     NORMALISER_VERSION,
     diarization_fingerprint,
+    diarization_key,
     envelope_sha256,
     is_complete,
     link_errors,
@@ -339,15 +340,46 @@ def _with_rows(rows):
 
 
 def test_the_fingerprint_survives_a_rename_without_original_speaker_and_float_times():
-    def rows(first, mid=1500):
-        return [{"content": "a", "start_time": 0, "end_time": mid, "speaker": first},
-                {"content": "b", "start_time": mid, "end_time": 2600, "speaker": "Speaker 2"}]
-    base = diarization_fingerprint(_with_rows(rows("Ada")))
-    assert diarization_fingerprint(_with_rows(rows("Grace"))) == base         # a rename
-    assert diarization_fingerprint(_with_rows(rows("Ada", 1500.0))) == base   # 1500.0 is 1500
-    assert diarization_fingerprint(_with_rows(rows("Ada", 1400))) != base     # re-segmented
-    assert (diarization_fingerprint(_with_rows(rows("Speaker 1")))
-            != diarization_fingerprint(_with_rows(rows("Speaker 3"))))        # generic label
+    def rows(first, mid=1500, original=None):
+        out = [{"content": "a", "start_time": 0, "end_time": mid, "speaker": first},
+               {"content": "b", "start_time": mid, "end_time": 2600, "speaker": "Speaker 2"}]
+        if original:
+            out[0]["original_speaker"] = original
+        return out
+    base = diarization_fingerprint(_with_rows(rows("Speaker 1")))
+    assert diarization_fingerprint(_with_rows(rows("Ada"))) == base                 # named
+    assert diarization_fingerprint(_with_rows(rows("Grace"))) == base               # renamed
+    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1500.0))) == base   # 1500.0 is 1500
+    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1400))) != base     # re-segmented
+    assert (diarization_fingerprint(_with_rows(rows("Ada", original="Speaker 1")))
+            != diarization_fingerprint(_with_rows(rows("Ada", original="Speaker 3"))))  # relabelled
+
+
+def test_the_diarization_key_is_what_the_fingerprint_hashes():
+    # why: reconcile's "names removed" hold must use the same key, or a revert looks like a new
+    # diarization and the removal is applied without review.
+    row = {"start_time": 1500.0, "end_time": 2600, "speaker": "Ada"}
+    assert diarization_key(row) == [1500, 2600, ""]
+    assert diarization_key({**row, "original_speaker": "Speaker 1"}) == [1500, 2600, "Speaker 1"]
+
+
+def test_an_html_entity_signed_query_is_fully_stripped():
+    # why: an <img src> in a note writes `&amp;` between the query's pairs; the signature must go.
+    text = '<img src="http://h/x.png?X-Amz-Algorithm=A&amp;X-Amz-Signature=abc">'
+    assert normalise(_note(text))["note_list"][0]["data_content"] == (
+        '<img src="http://h/x.png?<presigned>">')
+
+
+@pytest.mark.parametrize("section", ["note_list", "source_list"])
+@pytest.mark.parametrize("junk", [5, True, 1.5])
+def test_a_section_that_is_not_a_list_does_not_raise(section, junk):
+    # why: one odd snapshot must not abort a whole import or sync pass.
+    env = {"id": HEX, section: junk}
+    assert link_errors(env) == []
+    assert note_blocks(env) == []
+    assert transcript_rows(env) is None
+    assert diarization_fingerprint(env) is None
+    assert "other" in part_hashes(env) and envelope_sha256(env)
 
 
 def test_a_new_field_on_a_note_block_is_other_not_a_notes_edit(plaud_env):
@@ -366,20 +398,29 @@ def test_a_new_field_on_a_note_block_is_other_not_a_notes_edit(plaud_env):
     assert _parts_changed(env, edited) == {"notes:plaud-summary"}
 
 
+GOLDEN_ROWS = [
+    {"content": "Hello \u00e9.", "start_time": 0, "end_time": 1500, "speaker": "Ada",
+     "original_speaker": "Speaker 1"},
+    {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2",
+     "original_speaker": "Speaker 2"},
+    {"content": "Bye.", "start_time": 2600.0, "end_time": 3000, "speaker": "spk_2"}]
 GOLDEN_ENVELOPE = {
-    "id": "of_0123456789abcdef0123456789abcdef", "name": "Week 4 \u4f1a\u8b70", "duration": 2600,
+    "id": "of_0123456789abcdef0123456789abcdef", "name": "Week 4 \u4f1a\u8b70", "duration": 3000,
     "presigned_url": "https://a.example/x.mp3?X-Amz-Signature=abc",
     "source_list": [
         {"data_type": "transaction", "data_id": "t-1", "data_tab_name": None,
-         "data_content": json.dumps([
-             {"content": "Hello \u00e9.", "start_time": 0, "end_time": 1500, "speaker": "Ada",
-              "original_speaker": "Speaker 1"},
-             {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2",
-              "original_speaker": "Speaker 2"}])},
+         "data_content": json.dumps(GOLDEN_ROWS)},
+        {"data_type": "transaction_polish", "data_id": "t-2", "data_tab_name": None,
+         "data_content": json.dumps(GOLDEN_ROWS)},
         {"data_type": "outline", "data_id": "o-1", "data_tab_name": None,
          "data_content": '[{"topic": "Hi", "start_time": 0}]'}],
-    "note_list": [{"data_type": "auto_sum_note", "data_id": "n-1", "data_tab_name": "Summary",
-                   "data_content": "See [c](https://n.example/a.png?X-Amz-Signature=1) now."}],
+    "note_list": [
+        {"data_type": "auto_sum_note", "data_id": "n-1", "data_tab_name": "Summary",
+         "data_title": "Recap", "data_error_code": 0,
+         "data_content": "See [c](https://n.example/a.png?X-Amz-Signature=1) now. "
+                         "Or http://n.example/b.png?X-Amz-Signature=2."},
+        {"data_type": "auto_sum_note", "data_id": "n-2", "data_tab_name": "R\u00e9sum\u00e9",
+         "data_content": "![a](http://h/x?X-Amz-S=1)![b](http://h/y?X-Amz-S=2)"}],
     "_meta": {"tool": "x"},
 }
 
@@ -390,13 +431,14 @@ def test_the_normaliser_version_is_pinned_to_its_behaviour():
     # (or miss real edits). Change these only together with NORMALISER_VERSION.
     assert NORMALISER_VERSION == 1
     assert envelope_sha256(GOLDEN_ENVELOPE) == (
-        "dc6cb5b2bd9bc97705148b6ae3cdc355e5a9ac338b8b2f6c986bfbe594ac2d8c")
+        "e11df2135a32ff64a0130254c40c9c987534ebbecd11f87264b96d39f7371525")
     assert part_hashes(GOLDEN_ENVELOPE) == {
         "title": "ffba669af7869bb0f89d4b48a826866cdb406fc6495268b43df7e97bdaff7161",
-        "transcript": "67e0b85575db1594ffabddb4212c9211d20d4e7d6604e6fa52200b622b747b31",
-        "speakers": "52e370b791f4b3277153c56521f8fcfcd7f0827300a7dbaff76524039f141fbf",
+        "transcript": "f2297e1afec9413a533b6051b1607d399782f5e088e2b155fcfd1a0a9686cf7e",
+        "speakers": "c7896c5547f47b53531b8e30932137d90921145c56b38766d8002e9a6a9033bf",
         "notes:plaud-outline": "19c6f09bde57fc5e25d3ae808a508de00674a79d25fb87cd898a41305ae53855",
-        "notes:plaud-summary": "0fcd3affdaa0fd4a9e19924fc9a00f123aacfb4fdb9f814c8057850f77314cab",
-        "other": "61b023a3b6f767843c8ff2b059b872efbaae82554d17edf3f7b5c9eb9da3d8ba"}
+        "notes:plaud-resume": "3181d74088af69ce2ccd0dec8abe3513e6b2345d5852d5b325ce6b59d980ba02",
+        "notes:plaud-summary": "d1816bd50f86a93da01915538d4904972de800c957d725616e18ddcf59a4d270",
+        "other": "a5afe73e3ace44be4eb81a0684a6aa0b96643fedb7c55b866157ab2db8cce54c"}
     assert diarization_fingerprint(GOLDEN_ENVELOPE) == (
-        "df7b445ce1c5b6fd3c6907eb3d64349e443feece735a1f7ccda674771a29632b")
+        "baae9531d588f19e7cff5149c7ad2c64314aa4c952767dbc1e0755382f441ec8")

@@ -42,8 +42,8 @@ GENERIC_SPEAKER = re.compile(r"(?i)^\s*(speaker[\s_-]*\d+|spk[\s_-]*\d+|unknown|
 PRESIGNED = "<presigned>"
 # A SigV4 query percent-encodes everything but these, so the match stops at a closing `)`, `>`,
 # `,` or a space and never swallows the text glued to a link. It must end on an alphanumeric,
-# `%` or `=`, so a sentence's final period survives.
-_QUERY_CHARS = r"[A-Za-z0-9\-._~%&=+/:@]*"
+# `%` or `=`, so a sentence's final period survives. `&amp;` is an HTML-escaped `&`.
+_QUERY_CHARS = r"(?:&amp;|[A-Za-z0-9\-._~%&=+/:@])*"
 _PRESIGNED_QUERY = re.compile(
     r"(https?://[^\s?#\"'\\]+)\?" + _QUERY_CHARS + r"X-Amz-" + _QUERY_CHARS
     + r"(?<=[A-Za-z0-9%=])", re.I)
@@ -63,6 +63,12 @@ _UNPARSEABLE = (ValueError, RecursionError)  # JSONDecodeError is a ValueError; 
 def _is_segment(block: Any) -> bool:
     kind = block.get("data_type") if isinstance(block, dict) else None
     return isinstance(kind, str) and kind in SEGMENT_TYPES  # a list-valued type is not hashable
+
+
+def _section(envelope: Any, name: str) -> list:
+    """A source_list or note_list as a list; anything else (a number, a string) is no blocks."""
+    value = envelope.get(name) if isinstance(envelope, dict) else None
+    return value if isinstance(value, list) else []
 
 
 def canonical_json(obj: Any) -> str:
@@ -158,7 +164,7 @@ def link_errors(envelope: dict) -> list[str]:
     snapshots, from audio-router's retired rescue script, record their failures in `_meta`."""
     out = []
     for section in ("source_list", "note_list"):
-        for block in envelope.get(section) or []:
+        for block in _section(envelope, section):
             if not isinstance(block, dict):
                 continue
             empty = not str(block.get("data_content") or "").strip()
@@ -194,7 +200,7 @@ def _rows_of(block: Any) -> list[dict] | None:
 
 def transcript_rows(envelope: dict) -> list[dict] | None:
     """The `transaction` block's segment rows, or None when there is none or it isn't JSON."""
-    for block in envelope.get("source_list") or []:
+    for block in _section(envelope, "source_list"):
         if isinstance(block, dict) and block.get("data_type") == "transaction":
             return _rows_of(block)
     return None
@@ -215,9 +221,9 @@ def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
     `outline`, then every `note_list` tab, Dan's own highlights and memos included. The note
     type is `plaud-<tab>` (§6.5); a second tab with the same name gets `-2`, then `-3`, and so
     on. Hash the normalised block. Render the raw one."""
-    outline = [b for b in envelope.get("source_list") or []
+    outline = [b for b in _section(envelope, "source_list")
                if isinstance(b, dict) and b.get("data_type") == "outline"]
-    tabs = [b for b in envelope.get("note_list") or [] if isinstance(b, dict)]
+    tabs = [b for b in _section(envelope, "note_list") if isinstance(b, dict)]
     out, seen = [], {}
     for blocks in (outline, tabs):
         pairs = sorted(((_normal_block(b), b) for b in blocks), key=lambda p: _block_key(p[0]))
@@ -235,13 +241,16 @@ def _ms(value: Any) -> Any:
 
 
 def _generic_label(row: dict) -> str:
-    """The row's label before Dan named anyone. Without `original_speaker`, the current name counts
-    only if it is itself generic ("Speaker 2"), so a rename is never a new diarization."""
+    """The row's label before Dan named anyone: Plaud's `original_speaker`. Without one there is
+    no label, never the current name: "Speaker 1" to "Ada" and back are renames, so neither may
+    look like a new diarization (§9.1.1)."""
     original = row.get("original_speaker")
-    if isinstance(original, str) and original:
-        return original
-    name = row.get("speaker")
-    return name if isinstance(name, str) and GENERIC_SPEAKER.match(name) else ""
+    return original if isinstance(original, str) else ""
+
+
+def diarization_key(row: dict) -> list:
+    """One segment's share of the fingerprint: its start and end in integer ms, and its label."""
+    return [_ms(row.get("start_time")), _ms(row.get("end_time")), _generic_label(row)]
 
 
 def diarization_fingerprint(envelope: dict) -> str | None:
@@ -250,8 +259,7 @@ def diarization_fingerprint(envelope: dict) -> str | None:
     rows = transcript_rows(normalise(envelope))
     if rows is None:
         return None
-    return sha256_of([[_ms(r.get("start_time")), _ms(r.get("end_time")), _generic_label(r)]
-                      for r in rows])
+    return sha256_of([diarization_key(r) for r in rows])
 
 
 def part_hashes(envelope: dict) -> dict[str, str]:
