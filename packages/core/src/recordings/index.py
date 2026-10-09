@@ -42,6 +42,9 @@ _SCHEMA = (
     "CREATE INDEX source_refs_by_canonical ON source_refs (kind, canonical)",
 )
 _UNREADABLE = ("SQLITE_NOTADB", "SQLITE_CORRUPT")
+# A sound index that can't answer now: locked past the busy timeout, or an I/O error. A lookup
+# that decides whether to make a new recording passes strict=True, and these raise (§6.4).
+_NO_ANSWER = ("SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_IOERR", "SQLITE_NOMEM", "SQLITE_CANTOPEN")
 
 
 class IndexRefused(RuntimeError):
@@ -69,17 +72,21 @@ class Index:
     def exists(self) -> bool:
         return self.path.is_file()
 
-    def _rows(self, sql: str, args: tuple = ()) -> list[tuple]:
+    def _rows(self, sql: str, args: tuple = (), *, strict: bool = False) -> list[tuple]:
         if not self.exists():
             return []
         try:
             with self._db() as db:
                 return db.execute(sql, args).fetchall()
-        except sqlite3.DatabaseError:  # a damaged or foreign file answers nothing; rebuild it
+        except sqlite3.DatabaseError as exc:
+            # A damaged or foreign file answers nothing; rebuild it. A busy one is not "nothing":
+            # a strict lookup raises rather than say no recording holds these bytes.
+            if strict and (getattr(exc, "sqlite_errorname", None) or "").startswith(_NO_ANSWER):
+                raise
             return []
 
-    def _one(self, sql: str, args: tuple = ()) -> object | None:
-        rows = self._rows(sql, args)
+    def _one(self, sql: str, args: tuple = (), *, strict: bool = False) -> object | None:
+        rows = self._rows(sql, args, strict=strict)
         return rows[0][0] if rows else None
 
     def count(self) -> int:
@@ -221,8 +228,10 @@ class Index:
             db.execute("DELETE FROM recordings WHERE id = ?", (rec.id,))
             _insert(db, rec)
 
-    def find_by_sha256(self, sha: str) -> str | None:
-        return self._one("SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,))
+    def find_by_sha256(self, sha: str, *, strict: bool = False) -> str | None:
+        """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
+        return self._one("SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,),
+                         strict=strict)
 
     def sha256_of(self, recording_id: str) -> str | None:
         return self._one("SELECT sha256 FROM recordings WHERE id = ?", (recording_id,))

@@ -81,6 +81,11 @@ class InvalidFile(WriterError):
     """The file on disk doesn't validate, so nothing is applied to it (§11)."""
 
 
+class IndexUnavailable(WriterError):
+    """The index can't answer now (busy past its timeout, an I/O error), so nothing was added:
+    "none" from it would make a second recording of bytes the archive holds (§6.4)."""
+
+
 class Op(Protocol):
     name: str
 
@@ -264,16 +269,18 @@ class Writer:
         self._catch_up_index()
         return count
 
-    def _index(self, rec: Recording) -> None:
+    def _index(self, rec: Recording) -> bool:
         """Bring the index up to date after a committed write. The write has landed, so a busy or
         damaged index never fails it: the pending mark stays, and the next add, or the next
-        Writer, finishes the update."""
+        Writer, finishes the update. True when the index took it."""
         try:
             with self.locks.hold(INDEX_LOCK):
                 self.index.upsert(rec)
                 self.state.clear_index_pending(rec.id)
         except (LockTimeout, sqlite3.DatabaseError) as exc:
             log.warning("index update for %s left pending (%s)", rec.id, type(exc).__name__)
+            return False
+        return True
 
     def _catch_up_index(self) -> None:
         """Finish the index updates a writer left pending: it crashed, or the index was busy.
@@ -293,7 +300,8 @@ class Writer:
                     # or every Writer start would rebuild for it again.
                     self.state.clear_index_pending(rid)
                     continue
-                self._index(rec)
+                if not self._index(rec):
+                    return  # the index can't take updates now; one wait per add, not one per mark
 
     # ---- mutate: every change to a recording.json -------------------------------------------
     @staticmethod
@@ -382,16 +390,16 @@ class Writer:
         # commits, so a recording missing from this snapshot is already in the index, and one in
         # it leads to its file. Another process's catch-up can't slip between the two reads.
         pending = self.state.index_pending()
-        existing = self.index.find_by_sha256(sha)
+        existing = self._find(sha)
         if existing is not None and not (self.root / self._rel(existing)).is_file():
             # The index names a folder that is gone (removed by hand): rebuild, then ask again.
             self.rebuild_index()
-            existing = self.index.find_by_sha256(sha)
+            existing = self._find(sha)
         if existing is None and self.index.archive_uuid() != self.identity.uuid:
             # An index that can't answer (gone, unreadable, not this archive's) says "none" to
             # everything: rebuild it before believing that no recording holds these bytes.
             self.rebuild_index()
-            existing = self.index.find_by_sha256(sha)
+            existing = self._find(sha)
         if existing is None:
             # An update the index couldn't take (busy, or read-only) leaves a pending mark and an
             # index that says "none" with a matching UUID. The marks name those recordings.
@@ -400,14 +408,26 @@ class Writer:
             existing = rid  # the index is behind (a crash after the rename): the folder wins
         return existing
 
+    def _find(self, sha: str) -> str | None:
+        """The index's answer. A sound index that can't answer now (busy past its timeout, an I/O
+        error) refuses the add instead of answering "none", which would make a second recording
+        of bytes the archive already holds (§6.4)."""
+        try:
+            return self.index.find_by_sha256(sha, strict=True)
+        except sqlite3.DatabaseError as exc:
+            code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
+            raise IndexUnavailable(f"the index at {self.index.path} can't answer now ({code}), "
+                                   "so nothing was written: try again") from None
+
     def _pending_holding(self, sha: str, pending: list[str]) -> str | None:
         """A recording among `pending` that holds these bytes. recording.json is replaced
         atomically, so it is read without the recording's lock."""
         for rid in pending:
             try:
                 rec = Recording.model_validate_json((self.root / self._rel(rid)).read_bytes())
-            except (OSError, ValidationError):
-                continue  # missing or invalid: nothing to merge into
+            except (FileNotFoundError, ValidationError):
+                continue  # gone or invalid: nothing to merge into. Any other OSError raises: a
+                # file that can't be read now never means no recording holds these bytes.
             if rec.media.sha256 == sha:
                 return rid
         return None

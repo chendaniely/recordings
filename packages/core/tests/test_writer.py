@@ -1,3 +1,5 @@
+import contextlib
+import errno
 import hashlib
 import json
 import shutil
@@ -19,6 +21,7 @@ from recordings.sentinel import MIRROR, SENTINEL
 from recordings.state import State
 from recordings.writer import (
     AddTags,
+    IndexUnavailable,
     InvalidFile,
     MergeIncoming,
     NotTheWriter,
@@ -443,8 +446,8 @@ def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recordi
     real_find = writer.index.find_by_sha256
     calls = []
 
-    def find_then_catch_up(sha):
-        found = real_find(sha)
+    def find_then_catch_up(sha, *, strict=False):
+        found = real_find(sha, strict=strict)
         if not calls:
             calls.append(sha)
             monkeypatch.setattr(writer.index, "upsert", real_upsert)
@@ -455,6 +458,91 @@ def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recordi
     again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
     assert not again.created and again.recording.id == first.id
     assert len(list(writer.archive.recording_dirs())) == 1
+
+
+def test_a_busy_index_is_never_read_as_no_recording_holding_the_bytes(
+        writer, make_incoming, monkeypatch):
+    # why: §6.4. Index._rows read every DatabaseError as "no rows". A lookup that waited out the
+    # busy timeout behind another process, then an archive_uuid() that read fine, made add
+    # believe nothing held these bytes: the same bytes under another recorded_at became a
+    # second recording. The import's `duplicate` rows take exactly this path.
+    first = writer.add(make_incoming(b"same bytes")).recording
+    real_db = Index._db
+
+    class BusyLookups:  # only the lookup by hash times out, as when a lock clears in between
+        def __init__(self, db):
+            self._db = db
+
+        def execute(self, sql, *args):
+            if "WHERE sha256 = ?" in sql:
+                exc = sqlite3.OperationalError("database is locked")
+                exc.sqlite_errorname = "SQLITE_BUSY"
+                raise exc
+            return self._db.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._db, name)
+
+    @contextlib.contextmanager
+    def busy_lookups(self):
+        with real_db(self) as db:
+            yield BusyLookups(db)
+
+    monkeypatch.setattr(Index, "_db", busy_lookups)
+    with pytest.raises(IndexUnavailable, match="can't answer now"):
+        writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    monkeypatch.undo()
+    assert [folder.name for folder in writer.archive.recording_dirs()] == [first.id]
+    assert not (writer.root / ".tmp").exists()
+    again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    assert not again.created and again.recording.id == first.id
+
+
+def test_a_pending_recording_that_cannot_be_read_now_is_not_read_as_none(
+        writer, make_incoming, monkeypatch):
+    # why: §6.4. _pending_holding skipped every OSError, so an I/O error on a pending
+    # recording's file read as "nothing holds these bytes", and the add made a second recording.
+    def busy(rec):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(writer.index, "upsert", busy)
+    first = writer.add(make_incoming(b"same bytes")).recording
+    held = writer.archive.path_for(first.id) / "recording.json"
+    real_read = Path.read_bytes
+
+    def failing_read(self):
+        if self == held:
+            raise OSError(errno.EIO, "Input/output error")
+        return real_read(self)
+
+    monkeypatch.setattr(writer, "_catch_up_index", lambda: None)  # its own read would fail first
+    monkeypatch.setattr(Path, "read_bytes", failing_read)
+    with pytest.raises(OSError):
+        writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    monkeypatch.undo()
+    assert [folder.name for folder in writer.archive.recording_dirs()] == [first.id]
+
+
+def test_a_stuck_index_costs_an_add_one_wait_not_one_per_pending_mark(
+        writer, make_incoming, monkeypatch):
+    # why: each add first retries every pending mark, and each retry can wait 30 s for the
+    # index lock. With the index stuck, an import's adds slowed by 30 s more each time.
+    tried = []
+
+    def busy(rec):
+        tried.append(rec.id)
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(writer.index, "upsert", busy)
+    for _ in range(3):
+        writer.add(make_incoming())
+    assert len(writer.state.index_pending()) == 3
+    tried.clear()
+    writer.add(make_incoming())
+    assert len(tried) == 2  # one catch-up try, then its own update
+    monkeypatch.undo()
+    writer.add(make_incoming())
+    assert writer.state.index_pending() == [] and writer.index.count() == 5
 
 
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(

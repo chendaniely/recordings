@@ -753,7 +753,10 @@ through 1a, then:
 
 4. **Rebuild what's derived, check, start.** `reindex` adopts every `recording.json` as it now
    stands, so files written after the snapshot's `state.db` copy aren't refused as edited
-   outside the app, and it rebuilds `index.db`.
+   outside the app, and it rebuilds `index.db`. It exits 1 and names the file when a
+   `recording.json` doesn't validate, or when a folder's name doesn't match its recording's ID
+   (a copied or renamed folder): fix or move that folder, then run `reindex` again. A recording
+   it names is missing from the app until then.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex

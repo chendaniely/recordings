@@ -1330,7 +1330,10 @@ through 1a, then:
 
 4. **Rebuild what's derived, check, start.** `reindex` adopts every `recording.json` as it now
    stands, so files written after the snapshot's `state.db` copy aren't refused as edited
-   outside the app, and it rebuilds `index.db`.
+   outside the app, and it rebuilds `index.db`. It exits 1 and names the file when a
+   `recording.json` doesn't validate, or when a folder's name doesn't match its recording's ID
+   (a copied or renamed folder): fix or move that folder, then run `reindex` again. A recording
+   it names is missing from the app until then.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex
@@ -3482,7 +3485,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
       | `archive_uuid()` | `str \| None` |
       | `rebuild(archive: Archive, *, archive_uuid: str, allow_empty: bool = False)` | `int` |
       | `upsert(rec: Recording)` | `None` |
-      | `find_by_sha256(sha: str)` | `str \| None` |
+      | `find_by_sha256(sha: str, *, strict: bool = False)` | `str \| None`; strict raises on an index busy or unreadable right now |
       | `sha256_of(recording_id: str)` | `str \| None` |
       | `find_by_source(kind: str, ref: str)` | `list[str]` |
 
@@ -3932,6 +3935,9 @@ _SCHEMA = (
     "CREATE INDEX source_refs_by_canonical ON source_refs (kind, canonical)",
 )
 _UNREADABLE = ("SQLITE_NOTADB", "SQLITE_CORRUPT")
+# A sound index that can't answer now: locked past the busy timeout, or an I/O error. A lookup
+# that decides whether to make a new recording passes strict=True, and these raise (§6.4).
+_NO_ANSWER = ("SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_IOERR", "SQLITE_NOMEM", "SQLITE_CANTOPEN")
 
 
 class IndexRefused(RuntimeError):
@@ -3959,17 +3965,21 @@ class Index:
     def exists(self) -> bool:
         return self.path.is_file()
 
-    def _rows(self, sql: str, args: tuple = ()) -> list[tuple]:
+    def _rows(self, sql: str, args: tuple = (), *, strict: bool = False) -> list[tuple]:
         if not self.exists():
             return []
         try:
             with self._db() as db:
                 return db.execute(sql, args).fetchall()
-        except sqlite3.DatabaseError:  # a damaged or foreign file answers nothing; rebuild it
+        except sqlite3.DatabaseError as exc:
+            # A damaged or foreign file answers nothing; rebuild it. A busy one is not "nothing":
+            # a strict lookup raises rather than say no recording holds these bytes.
+            if strict and (getattr(exc, "sqlite_errorname", None) or "").startswith(_NO_ANSWER):
+                raise
             return []
 
-    def _one(self, sql: str, args: tuple = ()) -> object | None:
-        rows = self._rows(sql, args)
+    def _one(self, sql: str, args: tuple = (), *, strict: bool = False) -> object | None:
+        rows = self._rows(sql, args, strict=strict)
         return rows[0][0] if rows else None
 
     def count(self) -> int:
@@ -4111,8 +4121,10 @@ class Index:
             db.execute("DELETE FROM recordings WHERE id = ?", (rec.id,))
             _insert(db, rec)
 
-    def find_by_sha256(self, sha: str) -> str | None:
-        return self._one("SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,))
+    def find_by_sha256(self, sha: str, *, strict: bool = False) -> str | None:
+        """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
+        return self._one("SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,),
+                         strict=strict)
 
     def sha256_of(self, recording_id: str) -> str | None:
         return self._one("SELECT sha256 FROM recordings WHERE id = ?", (recording_id,))
@@ -4533,7 +4545,7 @@ Three orderings matter here:
     - `mark_index_pending(recording_id)`, `clear_index_pending(recording_id)`, `index_pending() -> list[str]`
     - `@dataclass(frozen=True) Revision(id, file, rev, sha256, body, origin, committed)`, and `KEEP_REVISIONS = 8`
   - **`recordings.writer`:**
-    - errors: `class WriterError(RuntimeError)`, and its subclasses `NotTheWriter`, `StaleFile`, `InvalidFile`
+    - errors: `class WriterError(RuntimeError)`, and its subclasses `NotTheWriter`, `StaleFile`, `InvalidFile`, `IndexUnavailable` (`add` refuses rather than read a busy index as "none")
     - `class Op(Protocol)`, with `name: str` and `apply(rec: Recording) -> Recording`
     - ops: `@dataclass(frozen=True) AddTags(tags: tuple[TagRef, ...])` and `MergeIncoming(sources: tuple[SourceRef, ...], tags: tuple[TagRef, ...] = (), excluded_note_types: tuple[str, ...] = ())`
     - `@dataclass(frozen=True) Incoming(media, recorded_at, timezone_name, time_source, title, kind, sources: tuple[RawSource, ...], title_by: TitleBy | None = None, duration_ms=None, sample_rate=None, channels=None, tags=(), renditions=(), my_notes=None, excluded_note_types=())`. A private tag goes in `tags`.
@@ -4557,8 +4569,8 @@ Three orderings matter here:
       `_write_recording`, `_write_rendition_locked`, `_publish_raw`, `_index`, `_catch_up_index`.
   - **Test fixtures** in core `conftest.py`: `make_writer(name="archive", writer_id="test") -> Writer`, `writer`, `make_incoming(content=None, *, name="clip.MP3", **over) -> Incoming`. `new_archive` stays.
 
-**Done when:** the full suite passes, with 30 more passed than after Task 5a: `test_writer.py`'s
-37, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
+**Done when:** the full suite passes, with 33 more passed than after Task 5a: `test_writer.py`'s
+40, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing writer tests**
 
@@ -4627,6 +4639,8 @@ def make_incoming(tmp_path):
 
 `packages/core/tests/test_writer.py`:
 ```python
+import contextlib
+import errno
 import hashlib
 import json
 import shutil
@@ -4648,6 +4662,7 @@ from recordings.sentinel import MIRROR, SENTINEL
 from recordings.state import State
 from recordings.writer import (
     AddTags,
+    IndexUnavailable,
     InvalidFile,
     MergeIncoming,
     NotTheWriter,
@@ -5072,8 +5087,8 @@ def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recordi
     real_find = writer.index.find_by_sha256
     calls = []
 
-    def find_then_catch_up(sha):
-        found = real_find(sha)
+    def find_then_catch_up(sha, *, strict=False):
+        found = real_find(sha, strict=strict)
         if not calls:
             calls.append(sha)
             monkeypatch.setattr(writer.index, "upsert", real_upsert)
@@ -5084,6 +5099,91 @@ def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recordi
     again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
     assert not again.created and again.recording.id == first.id
     assert len(list(writer.archive.recording_dirs())) == 1
+
+
+def test_a_busy_index_is_never_read_as_no_recording_holding_the_bytes(
+        writer, make_incoming, monkeypatch):
+    # why: §6.4. Index._rows read every DatabaseError as "no rows". A lookup that waited out the
+    # busy timeout behind another process, then an archive_uuid() that read fine, made add
+    # believe nothing held these bytes: the same bytes under another recorded_at became a
+    # second recording. The import's `duplicate` rows take exactly this path.
+    first = writer.add(make_incoming(b"same bytes")).recording
+    real_db = Index._db
+
+    class BusyLookups:  # only the lookup by hash times out, as when a lock clears in between
+        def __init__(self, db):
+            self._db = db
+
+        def execute(self, sql, *args):
+            if "WHERE sha256 = ?" in sql:
+                exc = sqlite3.OperationalError("database is locked")
+                exc.sqlite_errorname = "SQLITE_BUSY"
+                raise exc
+            return self._db.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._db, name)
+
+    @contextlib.contextmanager
+    def busy_lookups(self):
+        with real_db(self) as db:
+            yield BusyLookups(db)
+
+    monkeypatch.setattr(Index, "_db", busy_lookups)
+    with pytest.raises(IndexUnavailable, match="can't answer now"):
+        writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    monkeypatch.undo()
+    assert [folder.name for folder in writer.archive.recording_dirs()] == [first.id]
+    assert not (writer.root / ".tmp").exists()
+    again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    assert not again.created and again.recording.id == first.id
+
+
+def test_a_pending_recording_that_cannot_be_read_now_is_not_read_as_none(
+        writer, make_incoming, monkeypatch):
+    # why: §6.4. _pending_holding skipped every OSError, so an I/O error on a pending
+    # recording's file read as "nothing holds these bytes", and the add made a second recording.
+    def busy(rec):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(writer.index, "upsert", busy)
+    first = writer.add(make_incoming(b"same bytes")).recording
+    held = writer.archive.path_for(first.id) / "recording.json"
+    real_read = Path.read_bytes
+
+    def failing_read(self):
+        if self == held:
+            raise OSError(errno.EIO, "Input/output error")
+        return real_read(self)
+
+    monkeypatch.setattr(writer, "_catch_up_index", lambda: None)  # its own read would fail first
+    monkeypatch.setattr(Path, "read_bytes", failing_read)
+    with pytest.raises(OSError):
+        writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    monkeypatch.undo()
+    assert [folder.name for folder in writer.archive.recording_dirs()] == [first.id]
+
+
+def test_a_stuck_index_costs_an_add_one_wait_not_one_per_pending_mark(
+        writer, make_incoming, monkeypatch):
+    # why: each add first retries every pending mark, and each retry can wait 30 s for the
+    # index lock. With the index stuck, an import's adds slowed by 30 s more each time.
+    tried = []
+
+    def busy(rec):
+        tried.append(rec.id)
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(writer.index, "upsert", busy)
+    for _ in range(3):
+        writer.add(make_incoming())
+    assert len(writer.state.index_pending()) == 3
+    tried.clear()
+    writer.add(make_incoming())
+    assert len(tried) == 2  # one catch-up try, then its own update
+    monkeypatch.undo()
+    writer.add(make_incoming())
+    assert writer.state.index_pending() == [] and writer.index.count() == 5
 
 
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(
@@ -5396,6 +5496,11 @@ class InvalidFile(WriterError):
     """The file on disk doesn't validate, so nothing is applied to it (§11)."""
 
 
+class IndexUnavailable(WriterError):
+    """The index can't answer now (busy past its timeout, an I/O error), so nothing was added:
+    "none" from it would make a second recording of bytes the archive holds (§6.4)."""
+
+
 class Op(Protocol):
     name: str
 
@@ -5579,16 +5684,18 @@ class Writer:
         self._catch_up_index()
         return count
 
-    def _index(self, rec: Recording) -> None:
+    def _index(self, rec: Recording) -> bool:
         """Bring the index up to date after a committed write. The write has landed, so a busy or
         damaged index never fails it: the pending mark stays, and the next add, or the next
-        Writer, finishes the update."""
+        Writer, finishes the update. True when the index took it."""
         try:
             with self.locks.hold(INDEX_LOCK):
                 self.index.upsert(rec)
                 self.state.clear_index_pending(rec.id)
         except (LockTimeout, sqlite3.DatabaseError) as exc:
             log.warning("index update for %s left pending (%s)", rec.id, type(exc).__name__)
+            return False
+        return True
 
     def _catch_up_index(self) -> None:
         """Finish the index updates a writer left pending: it crashed, or the index was busy.
@@ -5608,7 +5715,8 @@ class Writer:
                     # or every Writer start would rebuild for it again.
                     self.state.clear_index_pending(rid)
                     continue
-                self._index(rec)
+                if not self._index(rec):
+                    return  # the index can't take updates now; one wait per add, not one per mark
 
     # ---- mutate: every change to a recording.json -------------------------------------------
     @staticmethod
@@ -5697,16 +5805,16 @@ class Writer:
         # commits, so a recording missing from this snapshot is already in the index, and one in
         # it leads to its file. Another process's catch-up can't slip between the two reads.
         pending = self.state.index_pending()
-        existing = self.index.find_by_sha256(sha)
+        existing = self._find(sha)
         if existing is not None and not (self.root / self._rel(existing)).is_file():
             # The index names a folder that is gone (removed by hand): rebuild, then ask again.
             self.rebuild_index()
-            existing = self.index.find_by_sha256(sha)
+            existing = self._find(sha)
         if existing is None and self.index.archive_uuid() != self.identity.uuid:
             # An index that can't answer (gone, unreadable, not this archive's) says "none" to
             # everything: rebuild it before believing that no recording holds these bytes.
             self.rebuild_index()
-            existing = self.index.find_by_sha256(sha)
+            existing = self._find(sha)
         if existing is None:
             # An update the index couldn't take (busy, or read-only) leaves a pending mark and an
             # index that says "none" with a matching UUID. The marks name those recordings.
@@ -5715,14 +5823,26 @@ class Writer:
             existing = rid  # the index is behind (a crash after the rename): the folder wins
         return existing
 
+    def _find(self, sha: str) -> str | None:
+        """The index's answer. A sound index that can't answer now (busy past its timeout, an I/O
+        error) refuses the add instead of answering "none", which would make a second recording
+        of bytes the archive already holds (§6.4)."""
+        try:
+            return self.index.find_by_sha256(sha, strict=True)
+        except sqlite3.DatabaseError as exc:
+            code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
+            raise IndexUnavailable(f"the index at {self.index.path} can't answer now ({code}), "
+                                   "so nothing was written: try again") from None
+
     def _pending_holding(self, sha: str, pending: list[str]) -> str | None:
         """A recording among `pending` that holds these bytes. recording.json is replaced
         atomically, so it is read without the recording's lock."""
         for rid in pending:
             try:
                 rec = Recording.model_validate_json((self.root / self._rel(rid)).read_bytes())
-            except (OSError, ValidationError):
-                continue  # missing or invalid: nothing to merge into
+            except (FileNotFoundError, ValidationError):
+                continue  # gone or invalid: nothing to merge into. Any other OSError raises: a
+                # file that can't be read now never means no recording holds these bytes.
             if rec.media.sha256 == sha:
                 return rid
         return None
@@ -5924,7 +6044,7 @@ class Writer:
 - [ ] **Step 5: Run the writer tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_writer.py packages/core/tests/test_locks.py -v`
-Expected: 50 passed (`test_writer.py`'s 37 and `test_locks.py`'s 13).
+Expected: 53 passed (`test_writer.py`'s 40 and `test_locks.py`'s 13).
 
 - [ ] **Step 6: Retire the `test_archive.py` tests that `test_writer.py` now covers**
 
@@ -5945,7 +6065,7 @@ Leave the file's helpers and imports as they are: Task 5c replaces the whole fil
 - [ ] **Step 7: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 30 more than after Task 5a. Record the count in the ledger.
+Expected: every test passes, 33 more than after Task 5a. Record the count in the ledger.
 
 - [ ] **Step 8: Commit**
 
