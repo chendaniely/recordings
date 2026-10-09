@@ -756,7 +756,10 @@ through 1a, then:
    outside the app, and it rebuilds `index.db`. It exits 1 and names the file when a
    `recording.json` doesn't validate, or when a folder's name doesn't match its recording's ID
    (a copied or renamed folder): fix or move that folder, then run `reindex` again. A recording
-   it names is missing from the app until then.
+   it names is missing from the app until then. Do not import while `reindex` reports an invalid
+   file. It also refuses, exit 1, and leaves the index as it was, when `state.db` knows
+   recordings that are not in the archive now: a folder did not restore or is not mounted. Fix
+   that first, and pass `--allow-missing` only for recordings you removed on purpose.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex

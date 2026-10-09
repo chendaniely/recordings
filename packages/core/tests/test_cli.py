@@ -66,17 +66,46 @@ def test_reindex_exits_1_and_names_a_recording_the_rebuild_left_out(
     (problem,) = out["problems"]
     assert "does not match its folder" in problem["message"]
 
-def test_reindex_names_an_archive_it_cannot_write_docs_into(
+def test_reindex_writes_no_docs_so_a_read_only_archive_cannot_stop_it(
         writer, tmp_path, monkeypatch, capsys):
-    # why: a read-only archive mount or a full disk is an OSError out of write_docs; the command
-    # names it and exits, it does not print a traceback.
+    # why: reindex is the recovery command and writes nothing into the archive. A docs write
+    # failure (read-only mount, full disk) must not stop it before it adopts anything.
     def refuse(root):
         raise PermissionError(13, "Read-only file system", str(root))
 
     monkeypatch.setattr("recordings.writer.write_docs", refuse)
     _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
-    assert main(["reindex", "--json"]) == 78
+    assert main(["reindex", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["invalid"] == []
+
+
+def test_reindex_names_an_index_it_cannot_rebuild(writer, tmp_path, monkeypatch, capsys):
+    # why: a full disk or a bad mode is an OSError out of the rebuild; the command names it and
+    # exits 1, it does not print a traceback.
+    def refuse(self, **kwargs):
+        raise PermissionError(13, "Read-only file system", "index.db")
+
+    monkeypatch.setattr("recordings.writer.Writer.rebuild_index", refuse)
+    _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+    assert main(["reindex", "--json"]) == 1
     assert "Read-only file system" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_reindex_refuses_when_recordings_state_db_knows_are_gone(
+        writer, make_incoming, tmp_path, monkeypatch, capsys):
+    # why: a half-mounted or partly restored archive lists fewer recordings, not none, so the
+    # empty-index guard doesn't fire. Rebuilding would drop them from the index, and an import
+    # could then make a second copy of their bytes (§6.4).
+    keep = writer.add(make_incoming(sources=())).recording
+    gone = writer.add(make_incoming(sources=())).recording
+    shutil.move(writer.archive.path_for(gone.id), tmp_path / "aside")
+    _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+    assert main(["reindex", "--json"]) == 1
+    message = json.loads(capsys.readouterr().out)["error"]
+    assert gone.id in message and keep.id not in message
+    assert writer.index.count() == 2  # the index is untouched
+    assert main(["reindex", "--allow-missing", "--json"]) == 0
+    assert writer.index.count() == 1
 
 
 def test_validate_exits_1_on_problems(tmp_path, capsys):

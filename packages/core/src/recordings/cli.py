@@ -47,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("reindex", help="accept outside edits and rebuild the derived index.db")
     p.add_argument("--allow-empty", action="store_true",
                    help="let the index become empty (refused by default: is the archive mounted?)")
+    p.add_argument("--allow-missing", action="store_true",
+                   help="rebuild even though recordings state.db knows are gone from the archive "
+                        "(needed after a deliberate deletion, until stage 3 adds forget)")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("doctor", help="check config.toml, the archive and secrets (presence only)")
@@ -109,11 +112,11 @@ def _writer(as_json: bool, *, docs: bool = True) -> Writer | int:
 
 
 def cmd_reindex(args: argparse.Namespace) -> int:
-    writer = _writer(args.json)
+    writer = _writer(args.json, docs=False)  # the recovery command writes no docs
     if isinstance(writer, int):
         return writer
     try:
-        report = writer.reindex(allow_empty=args.allow_empty)
+        report = writer.reindex(allow_empty=args.allow_empty, allow_missing=args.allow_missing)
     except LockTimeout as exc:
         return _fail(str(exc), args.json, 75)
     except (IndexRefused, WriterError, OSError, sqlite3.Error) as exc:

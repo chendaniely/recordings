@@ -18,10 +18,10 @@
    `rev`:** only the app's `mutate` changes it.
 4. **Never edit, create or delete `archive.json`.** It is the archive's sentinel (see `FORMAT.md`).
 5. **Check edits** against `schemas/` (`recordings validate <archive>`).
-6. **After editing any file, run `recordings reindex`** on the homelab server. It accepts your
-   edits as the base for the app's next write. Until then, the app refuses to change a file you
-   edited, rather than overwrite your edit. Jobs that the edit would start wait for approval in
-   the app.
+6. **After editing any file, run `recordings reindex`** on the homelab server, or ask the
+   owner to run it. It accepts your edits as the base for the app's next write. Until then, the
+   app refuses to change a file you edited, rather than overwrite your edit. (From stage 3a, jobs
+   that the edit would start also wait for approval in the app.)
 7. **Prefer the `recordings` CLI with `--json`** to editing files by hand.
 8. **Never open, copy or index `.tmp/` or a file named `.*.tmp`.** They are writes in
    progress. A recording being assembled in `.tmp/` has its transcripts and source files before

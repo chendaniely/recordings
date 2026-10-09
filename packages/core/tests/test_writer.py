@@ -113,6 +113,26 @@ def test_after_init_adopt_the_next_write_takes_each_file_as_its_base(writer, mak
     assert done.rev == 2 and [t.tag for t in done.tags] == ["talks"]
 
 
+def test_a_writer_rechecks_its_archive_before_each_write(writer, make_incoming, tmp_path):
+    # why: §6.7. A long-lived writer (the import runs for hours) outlives its mount. With the
+    # archive gone, the empty mountpoint still exists; a write must stop, not grow a tree there.
+    rec = writer.add(make_incoming()).recording
+    before = sorted(p.relative_to(writer.root) for p in writer.root.rglob("*"))
+    (writer.root / SENTINEL).rename(tmp_path / "archive.json.away")
+    with pytest.raises(NotTheWriter, match="not mounted"):
+        writer.add(make_incoming())
+    with pytest.raises(NotTheWriter, match="not mounted"):
+        writer.mutate(rec.id, AddTags((TagRef(tag="talks"),)))
+    with pytest.raises(NotTheWriter, match="not mounted"):
+        writer.write_rendition(rec.id, notes())
+    with pytest.raises(NotTheWriter, match="not mounted"):
+        writer.reindex()
+    assert sorted(p.relative_to(writer.root) for p in writer.root.rglob("*")
+                  if p.name != SENTINEL) == [p for p in before if p.name != SENTINEL]
+    (tmp_path / "archive.json.away").rename(writer.root / SENTINEL)
+    assert writer.mutate(rec.id, AddTags((TagRef(tag="talks"),))).rev == 2  # back: writes again
+
+
 def test_a_writer_never_empties_the_index_when_it_starts(writer, make_incoming, tmp_path):
     # why: §6.7. A pending mark made the next Writer rebuild with allow_empty=True, so an archive
     # that reads as empty (not mounted, or unreadable after a UID change) emptied the index.

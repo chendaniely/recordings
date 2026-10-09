@@ -308,7 +308,19 @@ class Writer:
     def _rel(recording_id: str) -> str:
         return (relative_dir(recording_id) / "recording.json").as_posix()
 
+    def _check_sentinel(self) -> None:
+        """Re-read archive.json before a write: a long-lived writer outlives its mount (§6.7)."""
+        try:
+            found = read_sentinel(self.root)
+        except SentinelError:
+            raise NotTheWriter("archive.json is gone or unreadable: the archive is not mounted "
+                               "now. Refusing to write.") from None
+        if found.uuid != self.identity.uuid:
+            raise NotTheWriter("the archive's UUID changed since this writer opened it. "
+                               "Refusing to write.")
+
     def mutate(self, recording_id: str, op: Op) -> Recording:
+        self._check_sentinel()
         if not ID_RE.fullmatch(recording_id):
             raise KeyError(recording_id)
         rel = self._rel(recording_id)
@@ -375,6 +387,7 @@ class Writer:
 
     # ---- adding recordings -------------------------------------------------------------------
     def add(self, incoming: Incoming) -> Added:
+        self._check_sentinel()
         self._catch_up_index()
         sha = sha256_file(incoming.media)
         rid = make_id(incoming.recorded_at, sha)
@@ -522,6 +535,7 @@ class Writer:
     # ---- outputs and raw payloads (write-once) -------------------------------------------------
     def write_rendition(self, recording_id: str, rendition: Rendition) -> str | None:
         """Publish an output beside a recording. None when an identical file is already there."""
+        self._check_sentinel()
         folder = self.archive.path_for(recording_id)
         with self.locks.hold(recording_id):
             if not (folder / "recording.json").is_file():
@@ -585,18 +599,37 @@ class Writer:
             (self.root / ".tmp").rmdir()
 
     # ---- reindex: accept outside edits, rebuild the index (§6.4, §6.7, §11) -----------------
-    def reindex(self, *, allow_empty: bool = False) -> ReindexReport:
+    def reindex(self, *, allow_empty: bool = False,
+                allow_missing: bool = False) -> ReindexReport:
+        self._check_sentinel()
         adopted, invalid = [], []
         for folder in self.archive.recording_dirs():
             if not ID_RE.fullmatch(folder.name):
                 continue  # reported by iter_recordings as a mismatched folder
             rel = (folder / "recording.json").relative_to(self.root).as_posix()
             with self.locks.hold(folder.name):
-                outcome = self._accept(rel, (folder / "recording.json").read_bytes())
+                try:
+                    raw = (folder / "recording.json").read_bytes()
+                except OSError:
+                    continue  # unreadable or gone now: the missing check below names it
+                outcome = self._accept(rel, raw)
             if outcome == "adopted":
                 adopted.append(rel)
             elif outcome == "invalid":
                 invalid.append(rel)
+        # state.db knows every file the app committed. One that is no longer a file means a folder
+        # is unmounted, unreadable or deleted; rebuilding now would drop it from the index and let
+        # an import make a second copy of its bytes (§6.4). For a deletion Dan means: --allow-missing.
+        if not allow_missing:
+            missing = [Path(f).parent.name for f in self.state.committed_files()
+                       if not (self.root / f).is_file()]
+            if missing:
+                shown = ", ".join(missing[:5]) + (
+                    f" and {len(missing) - 5} more" if len(missing) > 5 else "")
+                raise IndexRefused(
+                    f"{len(missing)} recording(s) state.db knows are not in the archive now "
+                    f"({shown}). Is the archive fully mounted and readable? The index was left "
+                    "as it was. Pass --allow-missing if they were removed on purpose.")
         count = self.rebuild_index(allow_empty=allow_empty)
         problems = tuple({"path": str(p.path), "message": p.message} for p in self.archive.problems)
         return ReindexReport(recordings=count, adopted=tuple(adopted), invalid=tuple(invalid),

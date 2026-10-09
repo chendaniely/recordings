@@ -262,6 +262,12 @@ class State:
                 "SELECT file, kind, message, at FROM flags ORDER BY file, kind").fetchall()
         return [{"file": f, "kind": k, "message": m, "at": a} for f, k, m, a in rows]
 
+    def committed_files(self) -> list[str]:
+        """Every recording.json the app has committed a revision of."""
+        with self.db() as db:
+            return [r[0] for r in db.execute(
+                "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file")]
+
     # ---- index updates not yet made: a crash between a write and its index update ---------
     def mark_index_pending(self, recording_id: str) -> None:
         with self.db() as db:
