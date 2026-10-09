@@ -4,6 +4,7 @@ import pytest
 
 from recordings.archive import Archive, RawSource
 from recordings.models import Rendition
+from recordings.writer import Incoming
 from recordings_ui.views import library_view, recording_view, render_markdown
 
 
@@ -103,33 +104,32 @@ def test_unknown_or_malformed_id_is_none(demo_archive):
     assert recording_view(archive, "20261399T256199+0000_deadbeef") is None  # regex-valid, impossible date
 
 
-def test_a_recording_with_no_outputs_has_empty_tabs(tmp_path):
+def test_a_recording_with_no_outputs_has_empty_tabs(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    archive = Archive(tmp_path / "archive")
-    rec = archive.add_recording(
+    rec = writer.add(Incoming(
         media=media, recorded_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
         timezone_name="UTC", time_source="ingest", title="Fresh upload", kind="audio",
-        source=RawSource(kind="upload", ref="x.mp3", added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)))
-    view = recording_view(archive, rec.id)
+        sources=(RawSource(kind="upload", ref="x.mp3",
+                           added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)),))).recording
+    view = recording_view(writer.archive, rec.id)
     assert view["transcripts"] == [] and view["chosen_transcript"] is None
     assert view["notes"] == [] and view["plaud_notes"] == [] and view["my_notes_html"] is None
 
 
-def test_model_written_html_is_escaped(tmp_path):
+def test_model_written_html_is_escaped(tmp_path, writer):
     assert "<script>" not in render_markdown("hi <script>alert(1)</script>")
     assert "&lt;script&gt;" in render_markdown("hi <script>alert(1)</script>")
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    archive = Archive(tmp_path / "archive")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = archive.add_recording(
+    rec = writer.add(Incoming(
         media=media, recorded_at=t, timezone_name="UTC", time_source="ingest", title="x",
-        kind="audio", source=RawSource(kind="upload", ref="x", added_at=t),
-        renditions=[Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
+        kind="audio", sources=(RawSource(kind="upload", ref="x", added_at=t),),
+        renditions=(Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
                               version="m@1", created_at=t,
-                              payload={"markdown": "<img src=x onerror=alert(1)>"})])
-    html = recording_view(archive, rec.id)["notes"][0]["outputs"][0]["html"]
+                              payload={"markdown": "<img src=x onerror=alert(1)>"}),))).recording
+    html = recording_view(writer.archive, rec.id)["notes"][0]["outputs"][0]["html"]
     assert "<img" not in html
 
 
@@ -185,35 +185,34 @@ def test_library_reports_a_copied_folder_and_a_mistyped_id(demo_archive, demo_id
     assert all("does not match its folder" in p["message"] for p in view["problems"])
 
 
-def test_a_capitalised_private_tag_is_private_everywhere(tmp_path):
+def test_a_capitalised_private_tag_is_private_everywhere(tmp_path, writer):
     from recordings.models import TagRef
 
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    archive = Archive(tmp_path / "archive")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = archive.add_recording(
+    rec = writer.add(Incoming(
         media=media, recorded_at=t, timezone_name="UTC", time_source="ingest", title="x",
-        kind="audio", source=RawSource(kind="upload", ref="x", added_at=t),
-        tags=[TagRef(tag="Private/Health"), TagRef(tag="notes/private")])
-    view = library_view(archive)
+        kind="audio", sources=(RawSource(kind="upload", ref="x", added_at=t),),
+        tags=(TagRef(tag="Private/Health"), TagRef(tag="notes/private")))).recording
+    view = library_view(writer.archive)
     assert {t["tag"]: t["private"] for t in view["tags"]} == {"Private/Health": True}
     assert view["recordings"][0]["private"] is True
-    assert recording_view(archive, rec.id)["private"] is True
+    assert recording_view(writer.archive, rec.id)["private"] is True
 
 
-def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path):
+def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    archive = Archive(tmp_path / "archive")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = archive.add_recording(
+    rec = writer.add(Incoming(
         media=media, recorded_at=t, timezone_name="UTC", time_source="plaud", title="x",
-        kind="audio", source=RawSource(kind="plaud", ref="x", added_at=t),
-        renditions=[Rendition(kind="transcript", engine="plaud", model="plaud", version="plaud@1",
+        kind="audio", sources=(RawSource(kind="plaud", ref="x", added_at=t),),
+        renditions=(Rendition(kind="transcript", engine="plaud", model="plaud", version="plaud@1",
                               created_at=t, payload={"segments": [
                                   {"start": 0, "end": 1, "speaker": "Speaker 1",
                                    "speaker_name": "Ada", "text": "Hello."},
-                                  {"start": 1, "end": 2, "speaker": "Speaker 2", "text": "Hi."}]})])
-    turns = recording_view(archive, rec.id)["transcripts"][0]["turns"]
+                                  {"start": 1, "end": 2, "speaker": "Speaker 2",
+                                   "text": "Hi."}]}),))).recording
+    turns = recording_view(writer.archive, rec.id)["transcripts"][0]["turns"]
     assert [t["speaker"] for t in turns] == ["Ada", "Speaker 2"]

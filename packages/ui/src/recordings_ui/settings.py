@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from recordings.config import ConfigError, load_config
+from recordings.config import Config, ConfigError, load_config
 from recordings_ui.hosts import LOCAL_HOSTS
 
 
@@ -19,6 +19,7 @@ class Settings:
     demo: bool
     # The names the app answers to (recordings_ui.hosts.HostGuard); always the local ones.
     allowed_hosts: frozenset[str] = LOCAL_HOSTS
+    config: Config | None = None  # None in demo mode, which never reads config.toml
 
 
 def env_hosts(environ: Mapping[str, str]) -> frozenset[str]:
@@ -58,4 +59,4 @@ def from_env(environ: Mapping[str, str], *, demo: bool | None = None) -> Setting
     hosts = LOCAL_HOSTS | env_hosts(environ) | {h.lower() for h in cfg.allowed_hosts}
     if cfg.base_url and (name := urlsplit(cfg.base_url).hostname):
         hosts |= {name}
-    return Settings(archive=cfg.archive_path, demo=False, allowed_hosts=hosts)
+    return Settings(archive=cfg.archive_path, demo=False, allowed_hosts=hosts, config=cfg)

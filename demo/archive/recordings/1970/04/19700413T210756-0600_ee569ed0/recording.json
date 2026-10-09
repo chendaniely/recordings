@@ -2,6 +2,7 @@
   "$schema": "../../../../schemas/recording.schema.json",
   "format": "recordings-archive@1",
   "id": "19700413T210756-0600_ee569ed0",
+  "rev": 1,
   "title": "Apollo 13: Houston, we've had a problem",
   "recorded_at": "1970-04-13T21:07:56-06:00",
   "timezone": "America/Chicago",

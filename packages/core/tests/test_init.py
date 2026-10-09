@@ -267,11 +267,21 @@ def test_cli_init_says_what_is_missing(tmp_path, monkeypatch, capsys):
     assert "[state] path" in error and "[archive] writer_id" in error
 
 
-def test_docs_refuses_a_folder_without_a_sentinel(tmp_path, capsys):
+def test_docs_refuses_a_folder_without_a_sentinel(tmp_path, monkeypatch, capsys):
     # why: §6.7. Writing the docs into an unmounted, empty folder would make it look like an archive.
-    assert main(["docs", str(tmp_path), "--json"]) == 1
+    init_archive(tmp_path / "archive", tmp_path / "state", writer_id="test")
+    empty = tmp_path / "unmounted"
+    empty.mkdir()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        f'[archive]\npath = "{empty}"\nwriter_id = "test"\n[state]\npath = "{tmp_path / "state"}"\n'
+        f'[index]\npath = "{tmp_path / "index.db"}"\n', encoding="utf-8")
+    monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
+    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
+        monkeypatch.delenv(name, raising=False)
+    assert main(["docs", "--json"]) == 78
     assert "mounted" in json.loads(capsys.readouterr().out)["error"]
-    assert list(tmp_path.iterdir()) == []
+    assert list(empty.iterdir()) == []
 
 
 def test_validate_reports_a_missing_sentinel(tmp_path):

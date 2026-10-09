@@ -115,3 +115,28 @@ def test_unreadable_recording_json_is_404(client, demo_archive, demo_ids):
         assert client.get(f"/media/{demo_ids['jfk-rice']}").status_code == 404
     finally:
         rj.chmod(0o644)
+
+
+def test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write(tmp_path, caplog):
+    from recordings.config import load_config
+    from recordings.init import init_archive
+
+    init_archive(tmp_path / "archive", tmp_path / "state", writer_id="test")
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f'[archive]\npath = "{tmp_path / "archive"}"\nwriter_id = "test"\n'
+        f'[state]\npath = "{tmp_path / "state"}"\n[index]\npath = "{tmp_path / "index.db"}"\n',
+        encoding="utf-8")
+    cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+    (tmp_path / "archive" / "FORMAT.md").unlink()
+    create_app(Settings(archive=cfg.archive_path, demo=False, config=cfg))
+    assert (tmp_path / "archive" / "FORMAT.md").is_file()
+    runtime.configure(None)
+
+    bare = tmp_path / "bare"
+    (bare / "recordings").mkdir(parents=True)
+    other = load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_ARCHIVE": str(bare)})
+    with caplog.at_level("WARNING"):
+        create_app(Settings(archive=bare, demo=False, config=other))
+    assert not (bare / "FORMAT.md").exists() and "not writing the archive's docs" in caplog.text
+    runtime.configure(None)

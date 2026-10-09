@@ -82,8 +82,8 @@ records its snapshot in `inputs.source` and its part's hash in `inputs.part_sha2
   `tags.yaml` and the people files) only through `mutate`, under that file's lock. It only
   appends to `my-notes.md`, under the recording's lock: `my-notes.md` is free Markdown with no
   `rev`.
-- **Work in progress:** writers assemble a new recording in `.tmp/` at the archive root and
-  write temporary files named `.*.tmp`; readers and mirrors should ignore both.
+- **Work in progress:** writers assemble a new recording in `.tmp/<id>.<hex>/` at the archive root,
+  and write temporary files named `.*.tmp`. Readers and mirrors skip both.
 - **The sentinel.** `archive.json` holds the archive's `format` and UUID, and is written once,
   by `recordings init`. Every writer, the backups and the mirror refuse to run without it, or when
   its UUID has changed, so an unmounted, empty folder can never pass for the archive. Never edit

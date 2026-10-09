@@ -2,19 +2,43 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
+import sqlite3
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from recordings.archive import Archive
+from recordings.config import Config
 from recordings.ids import ID_RE
+from recordings.locks import LockTimeout
+from recordings.writer import Writer, WriterError
 from recordings_ui import runtime
 from recordings_ui.hosts import HostGuard
 from recordings_ui.settings import Settings
 
+log = logging.getLogger(__name__)
+
+
+def write_docs_at_startup(cfg: Config) -> None:
+    """§6.7: write the archive's docs at startup, but only into an archive this process may
+    write. Anywhere else (no sentinel, not the writer, an index it can't open) the app still
+    serves, read-only. sqlite3's errors are not OSErrors, so they are named here.
+
+    The Writer is dropped on return and holds no lock afterwards: re-entrancy is per Locks
+    instance, so a second instance on the same state folder is safe only because this one is
+    never in use while another is. A long-lived Writer in the app (stage 3) must be the one
+    instance every caller shares."""
+    try:
+        Writer.open(cfg)
+    except (WriterError, LockTimeout, OSError, sqlite3.Error) as exc:
+        log.warning("not writing the archive's docs: %s", exc)
+
 
 def create_app(settings: Settings) -> HostGuard:
+    if settings.config is not None:
+        write_docs_at_startup(settings.config)
     archive = Archive(settings.archive)
     runtime.configure(archive)
     from recordings_ui.shiny_app import app as shiny_app  # after configure()

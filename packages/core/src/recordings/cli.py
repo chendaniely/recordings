@@ -5,13 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
 from recordings import __version__, config, schemas, selfdoc
+from recordings.index import IndexRefused
 from recordings.init import InitError, adopt_archive, init_archive
+from recordings.locks import LockTimeout
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.state import StateError
+from recordings.writer import Writer, WriterError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,12 +35,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--check", action="store_true", help="exit 1 if they are stale")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("docs", help="write README/AGENTS/FORMAT and schemas into an archive")
-    p.add_argument("archive", type=Path)
+    p = sub.add_parser("docs", help="write README/AGENTS/FORMAT and schemas into the archive")
+    p.add_argument("archive", type=Path, nargs="?",
+                   help="optional: it must be this machine's archive, [archive] path")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("validate", help="check every recording.json and rendition")
     p.add_argument("archive", type=Path)
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("reindex", help="accept outside edits and rebuild the derived index.db")
+    p.add_argument("--allow-empty", action="store_true",
+                   help="let the index become empty (refused by default: is the archive mounted?)")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("doctor", help="check config.toml, the archive and secrets (presence only)")
@@ -86,6 +96,34 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _writer(as_json: bool, *, docs: bool = True) -> Writer | int:
+    cfg = _config(as_json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        return Writer.open(cfg, docs=docs)
+    except LockTimeout as exc:  # busy, not misconfigured: 75 (EX_TEMPFAIL), as the import uses
+        return _fail(str(exc), as_json, 75)
+    except (WriterError, OSError, sqlite3.Error) as exc:  # docs write: a read-only mount, a full disk
+        return _fail(str(exc), as_json, 78)
+
+
+def cmd_reindex(args: argparse.Namespace) -> int:
+    writer = _writer(args.json)
+    if isinstance(writer, int):
+        return writer
+    try:
+        report = writer.reindex(allow_empty=args.allow_empty)
+    except LockTimeout as exc:
+        return _fail(str(exc), args.json, 75)
+    except (IndexRefused, WriterError, OSError, sqlite3.Error) as exc:
+        return _fail(str(exc), args.json, 1)
+    _emit(report.to_dict(), args.json)
+    # A recording the rebuild left out (not valid, or its id doesn't match its folder) is
+    # dropped from the index: exit 1 so a script notices (§11).
+    return 1 if report.invalid or report.problems else 0
+
+
 def cmd_schemas(args: argparse.Namespace) -> int:
     target = schemas.package_dir()
     if args.write:
@@ -98,11 +136,25 @@ def cmd_schemas(args: argparse.Namespace) -> int:
 
 
 def cmd_docs(args: argparse.Namespace) -> int:
+    """§6.7: the docs go only into the archive this machine writes, through its Writer. The Mac's
+    mirror carries archive.json too, but it has no state.db, so it is refused."""
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    if args.archive is not None and (
+            cfg.archive_path is None or args.archive.resolve() != cfg.archive_path.resolve()):
+        return _fail(f"{args.archive} is not this machine's archive ([archive] path in "
+                     "config.toml): only the archive's writer writes its docs", args.json, 78)
+    writer = _writer(args.json, docs=False)
+    if isinstance(writer, int):
+        return writer
     try:
-        read_sentinel(args.archive)  # §6.7: docs go only into an archive with its sentinel
-    except SentinelError as exc:
+        written = writer.write_docs()
+    except LockTimeout as exc:
+        return _fail(str(exc), args.json, 75)
+    except OSError as exc:
         return _fail(str(exc), args.json, 1)
-    _emit({"written": selfdoc.write_docs(args.archive)}, args.json)
+    _emit({"written": written}, args.json)
     return 0
 
 
@@ -121,7 +173,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "validate": cmd_validate, "doctor": cmd_doctor}
+    commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "reindex": cmd_reindex, "validate": cmd_validate, "doctor": cmd_doctor}
     if args.command in commands:
         return commands[args.command](args)
     parser.print_help(sys.stdout)

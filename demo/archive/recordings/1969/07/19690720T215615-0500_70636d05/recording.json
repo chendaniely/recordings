@@ -2,6 +2,7 @@
   "$schema": "../../../../schemas/recording.schema.json",
   "format": "recordings-archive@1",
   "id": "19690720T215615-0500_70636d05",
+  "rev": 1,
   "title": "Apollo 11: first steps on the Moon",
   "recorded_at": "1969-07-20T21:56:15-05:00",
   "timezone": "America/Chicago",

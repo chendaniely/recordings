@@ -1,37 +1,41 @@
 from datetime import datetime, timezone
 
-from recordings.archive import Archive, RawSource
+from recordings.archive import RawSource
+from recordings.index import Index
 from recordings.init import init_archive
 from recordings.models import Rendition
 from recordings.selfdoc import layout_patterns, validate, write_docs
+from recordings.state import State
+from recordings.writer import Incoming, Writer
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 
 
-def build_one(tmp_path) -> Archive:
+def build_one(tmp_path):
     media = tmp_path / "clip.mp3"
     media.write_bytes(b"ID3 fake")
-    init_archive(tmp_path / "archive", tmp_path / "state", writer_id="test")
-    archive = Archive(tmp_path / "archive")
-    rec = archive.add_recording(
+    root, state = tmp_path / "archive", tmp_path / "state"
+    init_archive(root, state, writer_id="test")
+    writer = Writer(root, State.open(state), Index(tmp_path / "index.db"), writer_id="test")
+    rec = writer.add(Incoming(
         media=media,
         recorded_at=datetime.fromisoformat("2026-10-06T14:00:03-07:00"),
         timezone_name="America/Vancouver",
         time_source="plaud",
         title="Week 4",
         kind="audio",
-        source=RawSource(kind="plaud", ref="of_x", added_at=T0, payload=b"{}"),
+        sources=(RawSource(kind="plaud", ref="of_x", added_at=T0, payload=b"{}"),),
         my_notes="mine\n",
-        renditions=[
+        renditions=(
             Rendition(kind="transcript", engine="canned", model="whisper-large-v3-turbo",
                       version="large-v3-turbo@a4aaeec", created_at=T0,
                       payload={"segments": [{"start": 0, "end": 1, "text": "hi"}]}),
             Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
                       version="m@demo", created_at=T0, payload={"markdown": "x"}),
-        ],
-    )
-    write_docs(archive.root)
-    return archive, rec
+        ),
+    )).recording
+    write_docs(writer.root)
+    return writer.archive, rec
 
 
 def test_write_docs_installs_every_doc_and_schema(tmp_path):

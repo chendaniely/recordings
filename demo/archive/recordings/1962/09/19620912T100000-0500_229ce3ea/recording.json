@@ -2,6 +2,7 @@
   "$schema": "../../../../schemas/recording.schema.json",
   "format": "recordings-archive@1",
   "id": "19620912T100000-0500_229ce3ea",
+  "rev": 1,
   "title": "JFK at Rice University: We choose to go to the Moon (opening)",
   "recorded_at": "1962-09-12T10:00:00-05:00",
   "timezone": "America/Chicago",

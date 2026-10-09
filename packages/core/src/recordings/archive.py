@@ -1,40 +1,23 @@
-"""Reading and writing the archive (spec §6). The archive is the source of truth.
+"""Reading the archive (spec §6). The archive is the source of truth.
 
-Write rules: media, source/ and renditions/ are write-once; recording.json and
-my-notes.md are replaced atomically; a new recording is assembled under .tmp/ and
-renamed into place, so a reader never sees half a recording.
+Reading only. Every write goes through `recordings.writer.Writer`, which holds the locks and the
+merge bases (§6.4).
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
-import re
-import shutil
-import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
 
 from pydantic import ValidationError
 
-from recordings.files import copy_file_synced, fsync_dir, publish_exclusive, write_text_atomic
-from recordings.ids import make_id, relative_dir
-from recordings.models import (
-    SCHEMA_REF,
-    MediaInfo,
-    Recording,
-    Rendition,
-    SourceRef,
-    TagRef,
-    TimeSource,
-    dump_json,
-)
+from recordings.ids import relative_dir
+from recordings.models import Recording, Rendition
 
 _CHUNK = 1 << 20
-_UNSAFE = re.compile(r"[^A-Za-z0-9.@+_-]+")
 
 
 def sha256_file(path: Path) -> str:
@@ -47,10 +30,6 @@ def sha256_file(path: Path) -> str:
 
 def utc_stamp(t: datetime) -> str:
     return t.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-
-
-def _slug(value: str) -> str:
-    return _UNSAFE.sub("_", value).strip("_") or "x"
 
 
 @dataclass(frozen=True)
@@ -82,7 +61,6 @@ class Archive:
     def __post_init__(self) -> None:
         self.root = Path(self.root)
 
-    # ---- reading -------------------------------------------------------------------
     def recording_dirs(self) -> Iterator[Path]:
         base = self.root / "recordings"
         if not base.is_dir():
@@ -127,7 +105,8 @@ class Archive:
     def media_path(self, rid: str) -> Path:
         return self.path_for(rid) / self.load(rid).media.file
 
-    def renditions(self, rid: str, problems: list[Problem] | None = None) -> list[tuple[str, Rendition]]:
+    def renditions(self, rid: str, problems: list[Problem] | None = None
+                   ) -> list[tuple[str, Rendition]]:
         folder = self.path_for(rid)
         out = []
         for path in sorted((folder / "renditions").glob("*.json")):
@@ -144,109 +123,3 @@ class Archive:
     def read_my_notes(self, rid: str) -> str | None:
         path = self.path_for(rid) / "my-notes.md"
         return path.read_text(encoding="utf-8") if path.is_file() else None
-
-    def find_by_sha256(self, sha: str) -> Recording | None:
-        return next((r for r in self.iter_recordings() if r.media.sha256 == sha), None)
-
-    # ---- writing -------------------------------------------------------------------
-    def add_recording(
-        self,
-        *,
-        media: Path,
-        recorded_at: datetime,
-        timezone_name: str,
-        time_source: TimeSource,
-        title: str,
-        kind: Literal["audio", "video"],
-        source: RawSource,
-        duration_ms: int | None = None,
-        tags: Sequence[TagRef] = (),
-        renditions: Sequence[Rendition] = (),
-        my_notes: str | None = None,
-    ) -> Recording:
-        sha = sha256_file(media)
-        existing = self.find_by_sha256(sha)
-        if existing is not None:  # same bytes again: one recording, one more source (§6.4)
-            return self._merge_source(existing, source)
-
-        rid = make_id(recorded_at, sha)
-        final = self.path_for(rid)
-        if final.exists():
-            raise FileExistsError(f"{final} exists but holds different media")
-        tmp = self.root / ".tmp" / uuid.uuid4().hex
-        try:
-            (tmp / "source").mkdir(parents=True)
-            (tmp / "renditions").mkdir()
-            media_name = f"{rid}{media.suffix.lower()}"
-            copy_file_synced(media, tmp / media_name)
-            rec = Recording(
-                schema_ref=SCHEMA_REF,
-                id=rid,
-                title=title,
-                recorded_at=recorded_at,
-                timezone=timezone_name,
-                time_source=time_source,
-                media=MediaInfo(file=media_name, sha256=sha, kind=kind, duration_ms=duration_ms),
-                sources=[self._write_raw(tmp, source)],
-                tags=list(tags),
-            )
-            for rendition in renditions:
-                self._write_rendition_into(tmp, rendition)
-            if my_notes is not None:
-                write_text_atomic(tmp / "my-notes.md", my_notes)
-            write_text_atomic(tmp / "recording.json", dump_json(rec))
-            final.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(tmp, final)
-            # The recording's entry, and the month and year folders' entries when they are new.
-            for folder in (final.parent, final.parent.parent, final.parent.parent.parent):
-                fsync_dir(folder)
-            self._drop_empty_tmp()
-            return rec
-        except BaseException:
-            # Clean up failed assembly
-            shutil.rmtree(tmp, ignore_errors=True)
-            self._drop_empty_tmp()
-            raise
-
-    def write_rendition(self, rid: str, rendition: Rendition) -> str:
-        folder = self.path_for(rid)
-        if not (folder / "recording.json").is_file():
-            raise KeyError(rid)
-        return self._write_rendition_into(folder, rendition)
-
-    # ---- helpers -------------------------------------------------------------------
-    def _write_raw(self, folder: Path, source: RawSource) -> SourceRef:
-        raw = sha = None
-        if source.payload is not None:
-            when = source.fetched_at or source.added_at
-            target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(when)}.json"
-            path = publish_exclusive(source.payload, target)
-            raw = path.relative_to(folder).as_posix()
-            sha = hashlib.sha256(source.payload).hexdigest()
-        return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at,
-                         fetched_at=source.fetched_at, raw=raw, sha256=sha)
-
-    def _write_rendition_into(self, folder: Path, rendition: Rendition) -> str:
-        kind = f"notes-{rendition.note_type}" if rendition.kind == "notes" else rendition.kind
-        name = "-".join(
-            [_slug(kind), _slug(rendition.engine), _slug(rendition.version), utc_stamp(rendition.created_at)]
-        )
-        target = folder / "renditions" / f"{name}.json"
-        target.parent.mkdir(exist_ok=True)
-        # write-once: publish exclusively to prevent overwrites on collision
-        path = publish_exclusive(dump_json(rendition).encode("utf-8"), target)
-        return path.relative_to(folder).as_posix()
-
-    def _merge_source(self, rec: Recording, source: RawSource) -> Recording:
-        if any(s.kind == source.kind and s.ref == source.ref for s in rec.sources):
-            return rec
-        folder = self.path_for(rec.id)
-        updated = rec.model_copy(update={"sources": [*rec.sources, self._write_raw(folder, source)]})
-        write_text_atomic(folder / "recording.json", dump_json(updated))
-        return updated
-
-    def _drop_empty_tmp(self) -> None:
-        try:
-            (self.root / ".tmp").rmdir()
-        except OSError:
-            pass  # not empty (another assembly in flight) or already gone
