@@ -8400,6 +8400,19 @@ def test_names_reverting_wait_for_review_when_rows_have_no_original_speaker(plau
     assert [h.reason for h in result.held] == ["names removed"]
 
 
+def test_an_unknown_note_field_never_writes_a_notes_output(plaud_env):
+    # why: §9.1.1. A note field outside its own keys is "other", never a notes edit, and outputs
+    # are write-once: a volatile field must not leave a duplicate notes output per fetch.
+    snaps = []
+    for i in range(3):
+        env = plaud_env()
+        for block in env["note_list"]:
+            block["data_error_code"] = i
+        snaps.append(snap(env, i))
+    once = reconcile(rec(), snaps[:1], [])
+    assert kinds(reconcile(rec(), snaps, []).outputs) == kinds(once.outputs)
+
+
 def test_a_vanished_transcript_waits_for_review(plaud_env):
     env = plaud_env()
     gone = plaud_env()
@@ -9306,9 +9319,9 @@ PY
 uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 uv run pytest
 ```
-Expected: every test passes (500 in all, up from 462 after Task 6's council fixes: 37 in
+Expected: every test passes (501 in all, up from 462 after Task 6's council fixes: 38 in
 `test_reconcile.py` (34 as first written, 2 for reindex and locks, 1 for a revert without
-`original_speaker`), 1 in `test_cli.py`).
+`original_speaker`, 1 for an unknown note field), 1 in `test_cli.py`).
 `test_rebuilding_from_the_archives_own_media_is_byte_identical` fails if the demo archive is
 stale. The Apollo 13 recording's `source/plaud-20261008T120130Z.json` is
 now a Plaud-shaped envelope, and its Plaud outputs are
