@@ -1271,7 +1271,10 @@ be found by fetching again and comparing.
   version.
 - **Rename or re-segmentation?** Each Plaud transcript gets a diarization fingerprint: a hash
   of each segment's start and end, in Plaud's integer milliseconds, and its
-  `original_speaker` (or `speaker`, when `original_speaker` is empty).
+  `original_speaker`. A segment without one contributes no label, never its current `speaker`,
+  so naming "Speaker 1" as Ada, or reverting it, is never mistaken for a new diarization (Task
+  6's council, 2026-10-09). Without `original_speaker` a reassignment at unchanged boundaries
+  reads as names only, which holds a removal for review: the safe direction.
   - **The same fingerprint** means only names changed. `source` moves in place, and the
     Plaud-derived names follow.
   - **A different fingerprint** means a new diarization, so carry-over runs (§7.6).
