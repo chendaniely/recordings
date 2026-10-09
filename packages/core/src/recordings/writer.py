@@ -81,6 +81,10 @@ class InvalidFile(WriterError):
     """The file on disk doesn't validate, so nothing is applied to it (§11)."""
 
 
+class MissingRecordings(IndexRefused):
+    """state.db knows recordings the archive no longer lists: it is half mounted or restored."""
+
+
 class IndexUnavailable(WriterError):
     """The index can't answer now (busy past its timeout, an I/O error), so nothing was added:
     "none" from it would make a second recording of bytes the archive holds (§6.4)."""
@@ -161,10 +165,12 @@ class ReindexReport:
     adopted: tuple[str, ...]  # outside edits accepted as the new merge base
     invalid: tuple[str, ...]  # files that don't validate, flagged in state.db
     problems: tuple[dict, ...]
+    forgotten: tuple[str, ...] = ()  # --allow-missing: recordings state.db no longer remembers
 
     def to_dict(self) -> dict:
         return {"recordings": self.recordings, "adopted": list(self.adopted),
-                "invalid": list(self.invalid), "problems": list(self.problems)}
+                "invalid": list(self.invalid), "problems": list(self.problems),
+                "forgotten": list(self.forgotten)}
 
 
 def _slug(value: str) -> str:
@@ -225,7 +231,7 @@ class Writer:
                 # §6.7: only an index that isn't this archive's may start out empty.
                 self.rebuild_index(allow_empty=foreign)
             except IndexRefused as exc:
-                hint = "" if foreign else (
+                hint = "" if foreign or isinstance(exc, MissingRecordings) else (
                     f" A writer can't start with --allow-empty: if the archive really is empty, "
                     f"delete {index.path} (it is derived) and start again.")
                 raise NotTheWriter(f"{exc}{hint}") from None
@@ -259,7 +265,25 @@ class Writer:
         with self.locks.hold(DOCS_LOCK):
             return write_docs(self.root)
 
-    def rebuild_index(self, *, allow_empty: bool = False) -> int:
+    def _missing(self) -> list[str]:
+        """The recording.json files state.db committed that are no longer files in the archive."""
+        return [f for f in self.state.committed_files() if not (self.root / f).is_file()]
+
+    def rebuild_index(self, *, allow_empty: bool = False, allow_missing: bool = False) -> int:
+        # state.db knows every file the app committed. One that is no longer a file means a folder
+        # is unmounted, unreadable or deleted; rebuilding now would drop it from the index and let
+        # an import make a second copy of its bytes (§6.4). Every rebuild is guarded, not only
+        # `reindex`. For a deletion Dan means: `recordings reindex --allow-missing`.
+        if not allow_missing:
+            missing = [Path(f).parent.name for f in self._missing()]
+            if missing:
+                shown = ", ".join(missing[:5]) + (
+                    f" and {len(missing) - 5} more" if len(missing) > 5 else "")
+                raise MissingRecordings(
+                    f"{len(missing)} recording(s) state.db knows are not in the archive now "
+                    f"({shown}). Is the archive fully mounted and readable? The index was not "
+                    "rebuilt. If they were removed on purpose, run `recordings reindex "
+                    "--allow-missing`.")
         with self.locks.hold(INDEX_LOCK):
             count = self.index.rebuild(self.archive, archive_uuid=self.identity.uuid,
                                        allow_empty=allow_empty)
@@ -317,6 +341,9 @@ class Writer:
                                "now. Refusing to write.") from None
         if found.uuid != self.identity.uuid:
             raise NotTheWriter("the archive's UUID changed since this writer opened it. "
+                               "Refusing to write.")
+        if is_mirror(self.root):
+            raise NotTheWriter("this folder is now the NAS mirror's copy, not the archive. "
                                "Refusing to write.")
 
     def mutate(self, recording_id: str, op: Op) -> Recording:
@@ -406,12 +433,12 @@ class Writer:
         existing = self._find(sha)
         if existing is not None and not (self.root / self._rel(existing)).is_file():
             # The index names a folder that is gone (removed by hand): rebuild, then ask again.
-            self.rebuild_index()
+            self._rebuild_for_add()
             existing = self._find(sha)
         if existing is None and self.index.archive_uuid() != self.identity.uuid:
             # An index that can't answer (gone, unreadable, not this archive's) says "none" to
             # everything: rebuild it before believing that no recording holds these bytes.
-            self.rebuild_index()
+            self._rebuild_for_add()
             existing = self._find(sha)
         if existing is None:
             # An update the index couldn't take (busy, or read-only) leaves a pending mark and an
@@ -420,6 +447,12 @@ class Writer:
         if existing is None and (self.root / self._rel(rid)).is_file():
             existing = rid  # the index is behind (a crash after the rename): the folder wins
         return existing
+
+    def _rebuild_for_add(self) -> None:
+        try:
+            self.rebuild_index()
+        except MissingRecordings as exc:  # nothing was written: a second copy would be wrong
+            raise IndexUnavailable(f"{exc} Nothing was written.") from None
 
     def _find(self, sha: str) -> str | None:
         """The index's answer. A sound index that can't answer now (busy past its timeout, an I/O
@@ -478,6 +511,7 @@ class Writer:
                 rel = self._rel(rid)
                 self.state.mark_index_pending(rid)
                 revision = self.state.begin(rel, 1, _sha(data), data, "create")
+                self._check_sentinel()  # the mount may have dropped while the media was hashed
                 final.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(tmp, final)
             except BaseException:
@@ -606,34 +640,30 @@ class Writer:
         for folder in self.archive.recording_dirs():
             if not ID_RE.fullmatch(folder.name):
                 continue  # reported by iter_recordings as a mismatched folder
-            rel = (folder / "recording.json").relative_to(self.root).as_posix()
+            try:
+                rel = self._rel(folder.name)
+            except ValueError:
+                continue
+            if (folder / "recording.json").relative_to(self.root).as_posix() != rel:
+                continue  # a folder in the wrong month: iter_recordings reports it
             with self.locks.hold(folder.name):
                 try:
                     raw = (folder / "recording.json").read_bytes()
                 except OSError:
-                    continue  # unreadable or gone now: the missing check below names it
+                    continue  # unreadable or gone now: the missing check names it
                 outcome = self._accept(rel, raw)
             if outcome == "adopted":
                 adopted.append(rel)
             elif outcome == "invalid":
                 invalid.append(rel)
-        # state.db knows every file the app committed. One that is no longer a file means a folder
-        # is unmounted, unreadable or deleted; rebuilding now would drop it from the index and let
-        # an import make a second copy of its bytes (§6.4). For a deletion Dan means: --allow-missing.
-        if not allow_missing:
-            missing = [Path(f).parent.name for f in self.state.committed_files()
-                       if not (self.root / f).is_file()]
-            if missing:
-                shown = ", ".join(missing[:5]) + (
-                    f" and {len(missing) - 5} more" if len(missing) > 5 else "")
-                raise IndexRefused(
-                    f"{len(missing)} recording(s) state.db knows are not in the archive now "
-                    f"({shown}). Is the archive fully mounted and readable? The index was left "
-                    "as it was. Pass --allow-missing if they were removed on purpose.")
-        count = self.rebuild_index(allow_empty=allow_empty)
+        gone = self._missing() if allow_missing else []
+        count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
+        for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
+            self.state.forget(rel)
         problems = tuple({"path": str(p.path), "message": p.message} for p in self.archive.problems)
         return ReindexReport(recordings=count, adopted=tuple(adopted), invalid=tuple(invalid),
-                             problems=problems)
+                             problems=problems,
+                             forgotten=tuple(Path(f).parent.name for f in gone))
 
     def _accept(self, rel: str, raw: bytes) -> str:
         sha = _sha(raw)
@@ -653,6 +683,8 @@ class Writer:
         except ValidationError as exc:
             self.state.flag(rel, "invalid", str(exc).splitlines()[0])
             return "invalid"
+        if rec.id != Path(rel).parent.name:
+            return "skipped"  # a copied folder: iter_recordings reports it, nothing is adopted
         # The base keeps the highest rev seen, so a hand-lowered rev never makes rev go back.
         self.state.adopt(rel, max(rec.rev or 0, last.rev if last is not None else 0), sha, raw)
         self.state.clear_flags(rel)

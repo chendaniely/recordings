@@ -268,6 +268,12 @@ class State:
             return [r[0] for r in db.execute(
                 "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file")]
 
+    def forget(self, file: str) -> None:
+        """Drop everything state.db remembers about a file that was removed on purpose."""
+        with self.db() as db:
+            db.execute("DELETE FROM revisions WHERE file = ?", (file,))
+            db.execute("DELETE FROM flags WHERE file = ?", (file,))
+
     # ---- index updates not yet made: a crash between a write and its index update ---------
     def mark_index_pending(self, recording_id: str) -> None:
         with self.db() as db:

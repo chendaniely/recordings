@@ -2,6 +2,7 @@ import contextlib
 import errno
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -133,6 +134,123 @@ def test_a_writer_rechecks_its_archive_before_each_write(writer, make_incoming, 
     assert writer.mutate(rec.id, AddTags((TagRef(tag="talks"),))).rev == 2  # back: writes again
 
 
+def test_a_writer_refuses_when_the_archives_uuid_has_changed(writer, make_incoming):
+    # why: §6.7. A different archive mounted at the same place has its own UUID.
+    sentinel = writer.root / SENTINEL
+    data = json.loads(sentinel.read_text(encoding="utf-8"))
+    sentinel.write_text(json.dumps({**data, "uuid": "6f1c1c1e-5b0a-4a54-9d57-0c1c1c1c1c1c"}), encoding="utf-8")
+    with pytest.raises(NotTheWriter, match="UUID changed"):
+        writer.add(make_incoming())
+    assert list((writer.root / "recordings").glob("[0-9]*")) == []
+
+
+def test_a_writer_refuses_once_its_folder_turns_out_to_be_the_mirror(writer, make_incoming):
+    (writer.root / MIRROR).write_text("mirror\n", encoding="utf-8")
+    with pytest.raises(NotTheWriter, match="mirror"):
+        writer.add(make_incoming())
+
+
+def test_a_mount_that_drops_while_the_media_is_hashed_creates_nothing(
+        writer, make_incoming, tmp_path, monkeypatch):
+    # why: the check at the top of add is not enough: hashing a long file takes time. The check
+    # before the rename means the recording never lands on the bare mountpoint.
+    calls = []
+    real = writer_module.sha256_file
+
+    def hashing(path):
+        calls.append(path)
+        digest = real(path)
+        if len(calls) == 2:  # the hash of the copy under .tmp/
+            (writer.root / SENTINEL).rename(tmp_path / "archive.json.away")
+        return digest
+
+    monkeypatch.setattr(writer_module, "sha256_file", hashing)
+    with pytest.raises(NotTheWriter, match="not mounted"):
+        writer.add(make_incoming())
+    assert list((writer.root / "recordings").glob("[0-9]*")) == [] and not (writer.root / ".tmp").exists()
+    assert writer.state.committed_files() == []
+
+
+def test_a_killed_creates_uncommitted_revision_never_blocks_reindex(writer, make_incoming):
+    # why: only committed revisions say a file should exist. A _create killed before its rename
+    # leaves a begun, uncommitted revision for a file that never landed.
+    writer.add(make_incoming())
+    writer.state.begin(writer._rel("20261001T000000+0000_abcdef12"), 1, "x" * 64, b"{}", "create")
+    assert writer.reindex().recordings == 1
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
+def test_a_recording_json_that_cannot_be_read_does_not_abort_the_adoption(writer, make_incoming):
+    # why: an OSError out of read_bytes lost the report after earlier folders were adopted. The
+    # unreadable file is left to the rebuild, which reports it.
+    writer.add(make_incoming())
+    rec = writer.add(make_incoming()).recording
+    path = writer.archive.path_for(rec.id) / "recording.json"
+    path.chmod(0)
+    try:
+        report = writer.reindex()
+    finally:
+        path.chmod(0o644)
+    assert report.recordings == 1 and len(report.problems) == 1
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
+def test_no_index_rebuild_runs_over_an_unreadable_year_folder(writer, make_incoming):
+    # why: §6.4. A year folder that reads as empty made _holding rebuild a shrunken index, and
+    # the same bytes then looked new: a second recording. Every rebuild is guarded.
+    rec = writer.add(make_incoming(b"same bytes")).recording
+    year = writer.root / "recordings" / "2026"
+    before = sorted(p.relative_to(writer.root) for p in writer.root.rglob("*"))
+    year.chmod(0)
+    try:
+        with pytest.raises(IndexUnavailable, match="allow-missing"):
+            writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+        writer.state.mark_index_pending(rec.id)
+        with pytest.raises(NotTheWriter, match="not in the archive now") as caught:
+            Writer(writer.root, writer.state, writer.index, writer_id="test")
+        assert "--allow-empty" not in str(caught.value)
+        assert writer.index.count() == 1
+    finally:
+        year.chmod(0o755)
+    assert sorted(p.relative_to(writer.root) for p in writer.root.rglob("*")) == before
+
+
+def test_reindex_adopts_only_a_folder_in_its_own_place(writer, make_incoming, tmp_path):
+    # why: a folder moved to the wrong month, and a copy under another name, are reported by
+    # iter_recordings. Adopting them left a path in state.db that made every later reindex refuse.
+    writer.add(make_incoming())
+    rec = writer.add(make_incoming()).recording
+    folder = writer.archive.path_for(rec.id)
+    wrong = folder.parent.parent / "11" / rec.id
+    wrong.parent.mkdir()
+    folder.rename(wrong)
+    with pytest.raises(IndexRefused, match="not in the archive now"):  # it is not at its own path
+        writer.reindex()
+    wrong.rename(folder)
+    wrong.parent.rmdir()
+    assert writer.reindex().recordings == 2  # moved back: clean, not refused for good
+    copy = folder.parent / "20261031T090000-0700_deadbeef"
+    shutil.copytree(folder, copy)
+    report = writer.reindex()
+    assert report.adopted == () and report.invalid == () and len(report.problems) == 1
+    shutil.rmtree(copy)
+    assert writer.reindex().problems == ()  # the copy gone: clean, not refused
+
+
+def test_reindex_allow_missing_forgets_once(writer, make_incoming):
+    # why: --allow-missing says "removed on purpose", so state.db forgets those files and the next
+    # plain reindex is clean. The report names the IDs, never a title.
+    writer.add(make_incoming())
+    gone = writer.add(make_incoming()).recording
+    writer.state.flag(writer._rel(gone.id), "stale", "edited outside the app")
+    shutil.rmtree(writer.archive.path_for(gone.id))
+    report = writer.reindex(allow_missing=True)
+    assert report.forgotten == (gone.id,) and report.to_dict()["forgotten"] == [gone.id]
+    assert writer.state.committed_files() != [] and writer._rel(gone.id) not in \
+        writer.state.committed_files()
+    assert writer.state.flags() == [] and writer.reindex().forgotten == ()
+
+
 def test_a_writer_never_empties_the_index_when_it_starts(writer, make_incoming, tmp_path):
     # why: §6.7. A pending mark made the next Writer rebuild with allow_empty=True, so an archive
     # that reads as empty (not mounted, or unreadable after a UID change) emptied the index.
@@ -140,7 +258,7 @@ def test_a_writer_never_empties_the_index_when_it_starts(writer, make_incoming, 
     writer.state.mark_index_pending(rec.id)
     (writer.root / "recordings").rename(tmp_path / "moved-away")
     (writer.root / "recordings").mkdir()
-    with pytest.raises(NotTheWriter, match="refusing to empty"):
+    with pytest.raises(NotTheWriter, match="not in the archive now"):
         Writer(writer.root, writer.state, writer.index, writer_id="test")
     assert writer.index.count() == 1
 
@@ -611,11 +729,19 @@ def test_a_pending_mark_on_an_invalid_file_does_not_make_every_start_rebuild(wri
     assert writer.state.index_pending() == []
 
 
-def test_an_index_entry_whose_folder_was_deleted_by_hand_is_not_an_error(writer, make_incoming):
-    # A KeyError used to escape add() here, and the import doesn't catch KeyError.
+def test_an_index_entry_whose_folder_was_deleted_by_hand_asks_for_reindex_allow_missing(
+        writer, make_incoming):
+    # why: a KeyError used to escape add() here, and the import doesn't catch KeyError. Now add
+    # stops with IndexUnavailable, because a folder gone from the archive may be an unmounted
+    # disk: a second recording of the same bytes is the harm (§6.4). `reindex --allow-missing`
+    # is how Dan says the deletion was on purpose.
     writer.add(make_incoming(b"kept"))
     gone = writer.add(make_incoming(b"deleted")).recording
     shutil.rmtree(writer.archive.path_for(gone.id))
+    with pytest.raises(IndexUnavailable, match="allow-missing"):
+        writer.add(make_incoming(b"deleted", recorded_at=NEXT_DAY))
+    assert writer.index.count() == 2
+    writer.reindex(allow_missing=True)
     again = writer.add(make_incoming(b"deleted", recorded_at=NEXT_DAY))
     assert again.created and again.recording.id != gone.id
     assert writer.index.find_by_sha256(gone.media.sha256) == again.recording.id

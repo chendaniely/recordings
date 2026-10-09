@@ -105,7 +105,9 @@ def test_reindex_refuses_when_recordings_state_db_knows_are_gone(
     assert gone.id in message and keep.id not in message
     assert writer.index.count() == 2  # the index is untouched
     assert main(["reindex", "--allow-missing", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["forgotten"] == [gone.id]
     assert writer.index.count() == 1
+    assert main(["reindex", "--json"]) == 0  # forgotten once: the next plain reindex is clean
 
 
 def test_validate_exits_1_on_problems(tmp_path, capsys):
