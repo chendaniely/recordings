@@ -9757,7 +9757,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes:
   - from Task 8: `Plan`, `Item`, `IMPORTED`, `plan()`, `probe()`, `media_kind()`, `MediaProbe.method`
   - from Task 5 (5a): `Locks`, `LockTimeout`, `OPS_LOCK`
-  - from Task 5 (5b): `Writer.add`, `Writer.write_rendition`, `Writer.mutate`, `Writer._write_rendition_locked`, `Incoming`, `MergeIncoming`, `WriterError`, `State.commit`, and the `writer` and `make_writer` fixtures; (5c): the CLI's `_writer`
+  - from Task 5 (5b): `Writer.add`, `Writer.write_rendition`, `Writer.mutate`, `Writer._write_rendition_locked`, `Incoming`, `MergeIncoming`, `WriterError`, `IndexUnavailable` (a busy index; the run stops), `State.commit`, and the `writer` and `make_writer` fixtures; (5c): the CLI's `_writer`
   - from Task 7: `Writer.reconcile_plaud`, `Writer.auto_private`, and `recordings.plaud.reconcile.matches_auto_private(titles: Iterable[str], patterns: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> bool`
   - from Task 6: `sha256_of`, `canonical_json`, and `recordings.plaud.normalise.meta_fetched_at(envelope) -> datetime | None`
   - from Task 4: `canonical_plaud_id`, `Index`, `IndexRefused` (which `Writer.add` can raise); from Task 3: `TagRef`, `Rendition`
