@@ -412,6 +412,23 @@ def test_an_index_that_cannot_answer_is_rebuilt_before_an_add_believes_it(writer
     assert not again.created and again.recording.id == first.id
 
 
+def test_a_stuck_index_never_turns_the_same_bytes_into_a_second_recording(
+        writer, make_incoming, monkeypatch):
+    # why: the index answers "none" while it can't be updated, and its UUID still matches, so no
+    # rebuild runs. The pending marks name the recordings it has not heard of: ask them too.
+    def busy(rec):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(writer.index, "upsert", busy)
+    first = writer.add(make_incoming(b"same bytes")).recording
+    again = writer.add(make_incoming(
+        b"same bytes", recorded_at=NEXT_DAY,
+        sources=(RawSource(kind="upload", ref="u", added_at=T0),)))
+    assert not again.created and again.recording.id == first.id
+    assert len(list(writer.archive.recording_dirs())) == 1
+    assert [s.kind for s in writer.archive.load(first.id).sources] == ["plaud", "upload"]
+
+
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(
         writer, make_incoming, monkeypatch):
     # The write has landed, so a busy index must not report it as failed. The next add must

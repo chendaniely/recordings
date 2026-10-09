@@ -4557,8 +4557,8 @@ Three orderings matter here:
       `_write_recording`, `_write_rendition_locked`, `_publish_raw`, `_index`, `_catch_up_index`.
   - **Test fixtures** in core `conftest.py`: `make_writer(name="archive", writer_id="test") -> Writer`, `writer`, `make_incoming(content=None, *, name="clip.MP3", **over) -> Incoming`. `new_archive` stays.
 
-**Done when:** the full suite passes, with 28 more passed than after Task 5a: `test_writer.py`'s
-35, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
+**Done when:** the full suite passes, with 29 more passed than after Task 5a: `test_writer.py`'s
+36, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing writer tests**
 
@@ -5039,6 +5039,23 @@ def test_an_index_that_cannot_answer_is_rebuilt_before_an_add_believes_it(writer
     writer.index.path.unlink()
     again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
     assert not again.created and again.recording.id == first.id
+
+
+def test_a_stuck_index_never_turns_the_same_bytes_into_a_second_recording(
+        writer, make_incoming, monkeypatch):
+    # why: the index answers "none" while it can't be updated, and its UUID still matches, so no
+    # rebuild runs. The pending marks name the recordings it has not heard of: ask them too.
+    def busy(rec):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(writer.index, "upsert", busy)
+    first = writer.add(make_incoming(b"same bytes")).recording
+    again = writer.add(make_incoming(
+        b"same bytes", recorded_at=NEXT_DAY,
+        sources=(RawSource(kind="upload", ref="u", added_at=T0),)))
+    assert not again.created and again.recording.id == first.id
+    assert len(list(writer.archive.recording_dirs())) == 1
+    assert [s.kind for s in writer.archive.load(first.id).sources] == ["plaud", "upload"]
 
 
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(
@@ -5658,9 +5675,25 @@ class Writer:
             # everything: rebuild it before believing that no recording holds these bytes.
             self.rebuild_index()
             existing = self.index.find_by_sha256(sha)
+        if existing is None:
+            # An update the index couldn't take (busy, or read-only) leaves a pending mark and an
+            # index that says "none" with a matching UUID. The marks name those recordings.
+            existing = self._pending_holding(sha)
         if existing is None and (self.root / self._rel(rid)).is_file():
             existing = rid  # the index is behind (a crash after the rename): the folder wins
         return existing
+
+    def _pending_holding(self, sha: str) -> str | None:
+        """A recording with an index update pending that holds these bytes. recording.json is
+        replaced atomically, so it is read without the recording's lock."""
+        for pending in self.state.index_pending():
+            try:
+                rec = Recording.model_validate_json((self.root / self._rel(pending)).read_bytes())
+            except (OSError, ValidationError):
+                continue  # missing or invalid: nothing to merge into
+            if rec.media.sha256 == sha:
+                return pending
+        return None
 
     def _create(self, rid: str, sha: str, incoming: Incoming) -> Added:
         final = self.root / relative_dir(rid)
@@ -5859,7 +5892,7 @@ class Writer:
 - [ ] **Step 5: Run the writer tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_writer.py packages/core/tests/test_locks.py -v`
-Expected: 48 passed (`test_writer.py`'s 35 and `test_locks.py`'s 13).
+Expected: 49 passed (`test_writer.py`'s 36 and `test_locks.py`'s 13).
 
 - [ ] **Step 6: Retire the `test_archive.py` tests that `test_writer.py` now covers**
 
@@ -5880,7 +5913,7 @@ Leave the file's helpers and imports as they are: Task 5c replaces the whole fil
 - [ ] **Step 7: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 28 more than after Task 5a. Record the count in the ledger.
+Expected: every test passes, 29 more than after Task 5a. Record the count in the ledger.
 
 - [ ] **Step 8: Commit**
 

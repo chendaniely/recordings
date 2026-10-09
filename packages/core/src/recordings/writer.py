@@ -388,9 +388,25 @@ class Writer:
             # everything: rebuild it before believing that no recording holds these bytes.
             self.rebuild_index()
             existing = self.index.find_by_sha256(sha)
+        if existing is None:
+            # An update the index couldn't take (busy, or read-only) leaves a pending mark and an
+            # index that says "none" with a matching UUID. The marks name those recordings.
+            existing = self._pending_holding(sha)
         if existing is None and (self.root / self._rel(rid)).is_file():
             existing = rid  # the index is behind (a crash after the rename): the folder wins
         return existing
+
+    def _pending_holding(self, sha: str) -> str | None:
+        """A recording with an index update pending that holds these bytes. recording.json is
+        replaced atomically, so it is read without the recording's lock."""
+        for pending in self.state.index_pending():
+            try:
+                rec = Recording.model_validate_json((self.root / self._rel(pending)).read_bytes())
+            except (OSError, ValidationError):
+                continue  # missing or invalid: nothing to merge into
+            if rec.media.sha256 == sha:
+                return pending
+        return None
 
     def _create(self, rid: str, sha: str, incoming: Incoming) -> Added:
         final = self.root / relative_dir(rid)
