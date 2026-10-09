@@ -4171,7 +4171,7 @@ included) move onto the `Writer` in 5c.
   - `lock_order(key: str) -> tuple[int, int, str]`
   - `class Locks(folder: Path, *, timeout: float = 30.0)`, with `hold(*keys)`, a context manager
 
-**Done when:** the full suite passes, with 6 more passed than after Task 4. Record the count in
+**Done when:** the full suite passes, with 13 more passed than after Task 4. Record the count in
 the execution ledger.
 
 - [ ] **Step 1: Write the failing lock tests**
@@ -4180,6 +4180,8 @@ the execution ledger.
 ```python
 import subprocess
 import sys
+import os
+import select
 import threading
 import time
 
@@ -4243,9 +4245,9 @@ def test_lock_acquisition_follows_lock_order_regardless_of_argument_order(tmp_pa
 
     original_acquire = locks._acquire
 
-    def spy_acquire(key: str) -> int:
+    def spy_acquire(key: str, deadline: float) -> int:
         acquired.append(key)
-        return original_acquire(key)
+        return original_acquire(key, deadline)
 
     monkeypatch.setattr(locks, "_acquire", spy_acquire)
 
@@ -4258,16 +4260,79 @@ def test_lock_acquisition_follows_lock_order_regardless_of_argument_order(tmp_pa
 
 def test_a_lock_is_released_when_its_process_dies(tmp_path):
     # why: §6.8. flock is released by the kernel, so a crash never leaves a stale lock.
+def test_a_hold_of_several_contended_keys_waits_one_timeout_in_total(tmp_path):
+    # why: the timeout covers the whole hold(). Per key, N contended keys could wait N timeouts
+    # while the message claims one. A is free after 0.3 s; B stays held, so B's wait is what counts.
+    holder_b = Locks(tmp_path)
+    a_taken, a_free = threading.Event(), threading.Event()
+
+    def hold_a_briefly():
+        with Locks(tmp_path).hold(A):
+            a_taken.set()
+            a_free.wait(timeout=10)
+
+    thread = threading.Thread(target=hold_a_briefly)
+    thread.start()
+    assert a_taken.wait(timeout=10)
+    threading.Timer(0.3, a_free.set).start()
+    started = time.monotonic()
+    try:
+        with holder_b.hold(B), pytest.raises(LockTimeout):
+            with Locks(tmp_path, timeout=0.5).hold(A, B):
+                pass
+        elapsed = time.monotonic() - started
+    finally:
+        a_free.set()
+        thread.join(timeout=10)
+    assert elapsed < 0.7  # one deadline of 0.5 s; a fresh one for B after A would end near 0.8
+
+
+def test_a_timeout_on_a_later_key_releases_the_earlier_ones(tmp_path):
+    with Locks(tmp_path).hold(B), pytest.raises(LockTimeout):
+        with Locks(tmp_path, timeout=0.1).hold(A, B):
+            pass
+    with Locks(tmp_path, timeout=0).hold(A):  # A was taken first, then given back
+        pass
+
+
+def test_no_file_descriptor_leaks_when_the_wait_is_interrupted(tmp_path, monkeypatch):
+    # why: a KeyboardInterrupt (or any exception) while waiting must not leave the lock file open.
+    def interrupted(_seconds):
+        raise KeyboardInterrupt
+
+    before = set(os.listdir("/dev/fd"))
+    with Locks(tmp_path).hold(A):  # another holder, so the second one waits and sleeps
+        monkeypatch.setattr(time, "sleep", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            with Locks(tmp_path, timeout=10).hold(A):
+                pass
+        monkeypatch.undo()
+        assert len(set(os.listdir("/dev/fd")) - before) == 1  # only the holder's own lock file
+    assert set(os.listdir("/dev/fd")) == before
+
+
+@pytest.mark.parametrize("key", ["a/b", "a b", "", "../x"])
+def test_a_key_that_is_not_a_plain_file_name_is_refused(tmp_path, key):
+    # why: keys become file names. Substituting characters let "a/b" and "a b" share a lock file.
+    with pytest.raises(ValueError):
+        with Locks(tmp_path).hold(key):
+            pass
+
+
     script = ("import sys,time; from pathlib import Path; from recordings.locks import Locks\n"
               "with Locks(Path(sys.argv[1])).hold(sys.argv[2]):\n"
               "    print('held', flush=True); time.sleep(60)\n")
-    proc = subprocess.Popen([sys.executable, "-c", script, str(tmp_path), A],
-                            stdout=subprocess.PIPE, text=True)
-    assert proc.stdout.readline().strip() == "held"
-    with pytest.raises(LockTimeout), Locks(tmp_path, timeout=0.2).hold(A):
-        pass
-    proc.kill()
-    proc.wait(timeout=10)
+    with subprocess.Popen([sys.executable, "-c", script, str(tmp_path), A],
+                          stdout=subprocess.PIPE, text=True) as proc:
+        try:
+            assert select.select([proc.stdout], [], [], 10)[0], "the child never took the lock"
+            assert proc.stdout.readline().strip() == "held"
+            with pytest.raises(LockTimeout), Locks(tmp_path, timeout=0.2).hold(A):
+                pass
+            proc.kill()
+            proc.wait(timeout=10)
+        finally:
+            proc.kill()
     started = time.monotonic()
     with Locks(tmp_path, timeout=5).hold(A):
         assert time.monotonic() - started < 5
@@ -4289,9 +4354,11 @@ files live in the state folder, never in the archive, so backups and the mirror 
 
 Locks are taken in one fixed order, so two multi-file operations can never deadlock: the people
 files, then tags.yaml, then `sha-<hash>` keys, then recordings by sorted ID, then anything else
-(`index`, `docs`). Taking an earlier lock while holding a later one raises LockOrderError instead
+(`index`, `catalog`). Taking an earlier lock while holding a later one raises LockOrderError instead
 of risking a deadlock. Within one thread a Locks object is re-entrant: holding a key again only
-counts. Separate threads, and separate processes, exclude each other.
+counts. Separate threads, and separate processes, exclude each other. A hold() is synchronous:
+never `await` inside one, because re-entrancy is per thread and other tasks on it would share the
+lock. Keys become file names, so a key outside [A-Za-z0-9._+-] raises ValueError.
 """
 
 from __future__ import annotations
@@ -4310,7 +4377,7 @@ from recordings.ids import ID_RE
 
 PEOPLE_FILES = ("people.yaml", "people.private.yaml")
 OPS_LOCK = "ops"  # one bulk job at a time: the import (Task 9) and ops.run_job (Task 11)
-_SAFE = re.compile(r"[^A-Za-z0-9._+-]")
+_KEY = re.compile(r"[A-Za-z0-9._+-]+")
 
 
 class LockTimeout(RuntimeError):
@@ -4350,6 +4417,9 @@ class Locks:
     def hold(self, *keys: str) -> Iterator[None]:
         held = self._held()
         wanted = set(keys)
+        for key in keys:
+            if not _KEY.fullmatch(key):
+                raise ValueError(f"lock key {key!r} must match [A-Za-z0-9._+-]+")
         new = sorted((k for k in wanted if k not in held), key=lock_order)
         if new and held and lock_order(new[0]) < max(lock_order(k) for k in held):
             raise LockOrderError(
@@ -4358,7 +4428,8 @@ class Locks:
         counted: list[str] = []
         try:
             for key in new:
-                held[key] = [self._acquire(key), 0]
+        deadline = time.monotonic() + self.timeout  # one for the whole hold, not one per key
+                held[key] = [self._acquire(key, deadline), 0]
             for key in wanted:
                 held[key][1] += 1
                 counted.append(key)
@@ -4371,36 +4442,37 @@ class Locks:
                 fcntl.flock(fd, fcntl.LOCK_UN)
                 os.close(fd)
 
-    def _acquire(self, key: str) -> int:
+    def _acquire(self, key: str, deadline: float) -> int:
         self.folder.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.folder / f"{_SAFE.sub('_', key)}.lock", os.O_RDWR | os.O_CREAT, 0o600)
-        deadline = time.monotonic() + self.timeout
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return fd
-            except OSError as exc:
-                # fcntl docs: LOCK_NB failing sets errno to EAGAIN or EACCES, by platform.
-                if exc.errno not in (errno.EAGAIN, errno.EACCES):
-                    os.close(fd)
-                    raise
-                if time.monotonic() >= deadline:
-                    os.close(fd)
-                    raise LockTimeout(
-                        f"{key} is held by another writer; gave up after {self.timeout:g} s"
-                        ) from None
-                time.sleep(0.02)
+        fd = os.open(self.folder / f"{key}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return fd
+                except OSError as exc:
+                    # fcntl docs: LOCK_NB failing sets errno to EAGAIN or EACCES, by platform.
+                    if exc.errno not in (errno.EAGAIN, errno.EACCES):
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise LockTimeout(
+                            f"{key} is held by another writer; gave up after {self.timeout:g} s"
+                            ) from None
+                    time.sleep(0.02)
+        except BaseException:
+            os.close(fd)  # on any exception, even KeyboardInterrupt; closing drops a flock too
+            raise
 ```
 
 - [ ] **Step 4: Run the lock tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_locks.py -v`
-Expected: 6 passed.
+Expected: 13 passed.
 
 - [ ] **Step 5: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 6 more than after Task 4. Record the count in the ledger.
+Expected: every test passes, 13 more than after Task 4. Record the count in the ledger.
 
 - [ ] **Step 6: Commit**
 
