@@ -7392,6 +7392,8 @@ import copy
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 from recordings.plaud.normalise import (
     DROPPED_KEYS,
     diarization_fingerprint,
@@ -7503,9 +7505,54 @@ def test_changing_any_field_off_the_drop_list_changes_the_hash(plaud_env):
         assert envelope_sha256(_edited(env, path)) != base, path
 
 
-def test_normalising_twice_changes_nothing(plaud_env):
-    once = normalise(plaud_env(link_error=True))
+def _row(content):
+    return [{"content": content, "start_time": 0, "end_time": 900, "speaker": "Ada",
+             "original_speaker": "Speaker 1"}]
+
+
+def _reversed_blocks(env):
+    env = copy.deepcopy(env)
+    env["note_list"].reverse()
+    env["source_list"].reverse()
+    return env
+
+
+_URL = "http://a.example/b?X-Amz-S=1"
+_IDEMPOTENCE_CASES = {
+    "plain": lambda make: make(),
+    "link error": lambda make: make(link_error=True),
+    "url in text": lambda make: make(notes=[{
+        "data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
+        "data_content": "See [x](https://n.example/a.png?X-Amz-Signature=1) now."}]),
+    "polish": lambda make: make(polish=True),
+    "of_ id": lambda make: make("of_" + HEX),
+    "reversed blocks": lambda make: _reversed_blocks(make(polish=True)),
+    "url then newline": lambda make: make(segments=_row(f"{_URL}\nfirst")),
+    "url then quote": lambda make: make(segments=_row(f'{_URL}" q')),
+}
+
+
+@pytest.mark.parametrize("case", _IDEMPOTENCE_CASES)
+def test_normalising_twice_changes_nothing(plaud_env, case):
+    once = normalise(_IDEMPOTENCE_CASES[case](plaud_env))
     assert normalise(once) == once
+
+
+def test_a_presigned_url_inside_a_transcript_row_keeps_the_row_whole(plaud_env):
+    # why: the scrub once ran on the encoded JSON, where the URL is followed by `\n` or `\"`.
+    # It ate the backslash, so the row stopped parsing and its parts fell into "other", or two
+    # different texts hashed alike.
+    for tail in ("\nfirst", '" q'):
+        env = plaud_env(polish=True, segments=_row(_URL + tail))
+        parts = part_hashes(env)
+        assert {"transcript", "speakers"} <= set(parts), tail
+        (row,) = transcript_rows(normalise(env))
+        assert row["content"] == "http://a.example/b?<presigned>" + tail
+        edited = plaud_env(polish=True, segments=_row(_URL + tail + "x"))
+        assert _parts_changed(env, edited) == {"transcript"}, tail
+    first = plaud_env(segments=_row(_URL + "\nfirst"))
+    second = plaud_env(segments=_row(_URL + "\nsecond"))
+    assert part_hashes(first)["transcript"] != part_hashes(second)["transcript"]
 
 
 def test_a_snapshot_with_link_errors_is_incomplete(plaud_env):
@@ -7703,7 +7750,8 @@ OWN_NOTE_TYPES = frozenset({"high_light", "consumer_note", "mark_memo"})  # Dan'
 # What Plaud emits before it knows a person: "Speaker 1", "spk_2", bare numbers, "unknown".
 GENERIC_SPEAKER = re.compile(r"(?i)^\s*(speaker[\s_-]*\d+|spk[\s_-]*\d+|unknown|\d+)\s*$")
 PRESIGNED = "<presigned>"
-_PRESIGNED_QUERY = re.compile(r"(https?://[^\s?#\"']+)\?[^\s#\"']*X-Amz-[^\s#\"']*", re.I)
+_PRESIGNED_QUERY = re.compile(
+    r"(https?://[^\s?#\"'\\]+)\?[^\s#\"'\\]*X-Amz-[^\s#\"'\\]*", re.I)
 # A segment row's fields, by part: the text with its timing, and the names. A field outside both
 # counts as "other", so a field Plaud starts adding to every row still reaches the circuit breaker.
 _TEXT_KEYS = ("start_time", "end_time", "content", "original_speaker")
@@ -7721,7 +7769,17 @@ def sha256_of(obj: Any) -> str:
 
 def _scrub(obj: Any) -> Any:
     if isinstance(obj, dict):
-        return {k: _scrub(v) for k, v in obj.items() if k not in DROPPED_KEYS}
+        out = {k: _scrub(v) for k, v in obj.items() if k not in DROPPED_KEYS}
+        if out.get("data_type") in SEGMENT_TYPES and isinstance(obj.get("data_content"), str):
+            # A segment block's content is JSON inside a string. Scrub the parsed leaves, never
+            # the encoded text: there the URL is followed by an escape (`\\n`, `\\"`) that the
+            # scrub would eat, breaking the JSON or merging two different texts.
+            try:
+                inner = json.loads(obj["data_content"])
+            except json.JSONDecodeError:
+                return out
+            out["data_content"] = canonical_json(_scrub(inner))
+        return out
     if isinstance(obj, list):
         return [_scrub(v) for v in obj]
     if isinstance(obj, str) and "x-amz-" in obj.lower():

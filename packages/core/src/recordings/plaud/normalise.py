@@ -41,7 +41,8 @@ OWN_NOTE_TYPES = frozenset({"high_light", "consumer_note", "mark_memo"})  # Dan'
 # What Plaud emits before it knows a person: "Speaker 1", "spk_2", bare numbers, "unknown".
 GENERIC_SPEAKER = re.compile(r"(?i)^\s*(speaker[\s_-]*\d+|spk[\s_-]*\d+|unknown|\d+)\s*$")
 PRESIGNED = "<presigned>"
-_PRESIGNED_QUERY = re.compile(r"(https?://[^\s?#\"']+)\?[^\s#\"']*X-Amz-[^\s#\"']*", re.I)
+_PRESIGNED_QUERY = re.compile(
+    r"(https?://[^\s?#\"'\\]+)\?[^\s#\"'\\]*X-Amz-[^\s#\"'\\]*", re.I)
 # A segment row's fields, by part: the text with its timing, and the names. A field outside both
 # counts as "other", so a field Plaud starts adding to every row still reaches the circuit breaker.
 _TEXT_KEYS = ("start_time", "end_time", "content", "original_speaker")
@@ -59,7 +60,17 @@ def sha256_of(obj: Any) -> str:
 
 def _scrub(obj: Any) -> Any:
     if isinstance(obj, dict):
-        return {k: _scrub(v) for k, v in obj.items() if k not in DROPPED_KEYS}
+        out = {k: _scrub(v) for k, v in obj.items() if k not in DROPPED_KEYS}
+        if out.get("data_type") in SEGMENT_TYPES and isinstance(obj.get("data_content"), str):
+            # A segment block's content is JSON inside a string. Scrub the parsed leaves, never
+            # the encoded text: there the URL is followed by an escape (`\\n`, `\\"`) that the
+            # scrub would eat, breaking the JSON or merging two different texts.
+            try:
+                inner = json.loads(obj["data_content"])
+            except json.JSONDecodeError:
+                return out
+            out["data_content"] = canonical_json(_scrub(inner))
+        return out
     if isinstance(obj, list):
         return [_scrub(v) for v in obj]
     if isinstance(obj, str) and "x-amz-" in obj.lower():
