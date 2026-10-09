@@ -8816,7 +8816,7 @@ In `packages/core/src/recordings/writer.py`:
                              "problems": sum(r.problem is not None for r in self.reconciled)}}
    ```
 4. **Change** the `Writer.__init__` signature to
-   `def __init__(self, root: Path, state: State, index: Index, *, writer_id: str, auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> None:`,
+   `def __init__(self, root: Path, state: State, index: Index, *, writer_id: str, rebuild: bool = True, auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> None:`,
    and **add** `self.auto_private = tuple(auto_private)` beside `self.state, self.index, …`.
 5. In `Writer.open`, **replace** the `writer = cls(...)` line with:
    ```python
@@ -8825,7 +8825,7 @@ In `packages/core/src/recordings/writer.py`:
            except ConfigError as exc:  # a bad regex must not crash the CLI or stop the web app
                raise NotTheWriter(str(exc)) from None
            writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
-                        auto_private=patterns)
+                        rebuild=rebuild, auto_private=patterns)
    ```
    (The test for this is the last one in Step 1's `test_reconcile.py`.)
 6. **Add** this method after `_publish_raw`:
@@ -8863,10 +8863,12 @@ In `packages/core/src/recordings/writer.py`:
                return ReconcileReport(recording_id, written, result.held, result.skipped,
                                       result.title_difference is not None)
    ```
-7. In `reindex`, **replace** everything from `gone = self._missing() if allow_missing else []`
-   to the end of the method (the `return ReindexReport(...)` statement) with:
+7. In `reindex`, **replace** everything from
+   `count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)` to the end of
+   the method (the `return ReindexReport(...)` statement) with the code below. The
+   missing-files check at the top of `reindex` has already run, so a refused `reindex` has
+   reconciled nothing:
    ```python
-           gone = self._missing() if allow_missing else []
            reconciled = []
            for rec in list(self.archive.iter_recordings()):
                if not any(s.kind == "plaud" for s in rec.sources):
