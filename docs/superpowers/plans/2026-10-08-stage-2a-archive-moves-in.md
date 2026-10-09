@@ -19,7 +19,7 @@ Nothing in it calls Plaud.
 - **`index.db` is derived.** `recordings reindex` rebuilds it.
 - **The Plaud normaliser and reconcile are pure functions** over the raw snapshots in `source/`. The import feeds them `audio-router`'s snapshots now, and stage 2b's sync will feed them Plaud's.
 - **Operations run in a `backup` container,** through `recordings ops --loop`: the backup, mirror, check, restore test and disk check. Each run is recorded in `state.db`. Failures are pushed to ntfy, and each good backup pings a dead-man's switch. The UI's Status page reads those records.
-  - **A run holds the `ops` lock** (`Locks(…).hold("ops")`, separate from the Writer's lock order). The CLI waits up to 600 s for it, and the real import holds it too. The loop doesn't wait: a busy lock means "skipped: busy", which is not a failure and sends no alert on its own. But `flock` is released only when the holder dies, so a hung holder blocks every run: record each busy skip, and alert once `ops` has been busy for longer than a set number of consecutive runs (suggest 3 times the loop interval; Task 11).
+  - **A run holds the `ops` lock** (`Locks(…).hold("ops")`, separate from the Writer's lock order). The CLI waits up to 600 s for it, and the real import holds it too. The loop doesn't wait: a busy lock means "skipped: busy", which is not a failure and sends no alert. A holder that hangs (`flock` frees only when it dies) is caught by the dead-man's switch: no backup pings, so Healthchecks alerts after its grace (Task 13).
 
 **Tech Stack:**
 - **Python:** Python 3.14's standard library (`sqlite3`, `fcntl`, `wave`, `csv`, `urllib.request`), pydantic 2.13.5. **No new Python dependencies.**
@@ -11460,9 +11460,9 @@ NAS, so the template sets `[backup] prune = false`; SFTP stays as the fallback. 
 makes the jobs safe to run from the CLI and the loop alike:
 - **One job at a time.** `run_job` holds the ops lock (key `"ops"`), the same one the import
   takes (Task 9). It waits up to 600 s for it, as the CLI does; the loop (Task 13) passes
-  `lock_timeout=0`, and a busy turn is "skipped: busy", not a failure. But `flock` frees only
-  when the holder dies, so a hung holder would silently block every run: the loop records each
-  busy skip and alerts once `ops` has stayed busy for 3 times the loop interval.
+  `lock_timeout=0`, and a busy turn is "skipped: busy", not a failure. A holder that hangs
+  (`flock` frees only when it dies) stops the backups, so the dead-man's switch alerts after its
+  grace (Task 13).
 - **Stale restic locks.** restic never treats another process's lock as stale on its own; only
   `restic unlock` removes one. It runs before every backup, check, forget and restore. CLI runs
   also pass `--retry-lock 5m`.
