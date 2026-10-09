@@ -378,6 +378,10 @@ class Writer:
 
     def _holding(self, sha: str, rid: str) -> str | None:
         """The recording that already holds these bytes, if any."""
+        # Read the marks before the first index query: a mark is cleared only after its upsert
+        # commits, so a recording missing from this snapshot is already in the index, and one in
+        # it leads to its file. Another process's catch-up can't slip between the two reads.
+        pending = self.state.index_pending()
         existing = self.index.find_by_sha256(sha)
         if existing is not None and not (self.root / self._rel(existing)).is_file():
             # The index names a folder that is gone (removed by hand): rebuild, then ask again.
@@ -391,21 +395,21 @@ class Writer:
         if existing is None:
             # An update the index couldn't take (busy, or read-only) leaves a pending mark and an
             # index that says "none" with a matching UUID. The marks name those recordings.
-            existing = self._pending_holding(sha)
+            existing = self._pending_holding(sha, pending)
         if existing is None and (self.root / self._rel(rid)).is_file():
             existing = rid  # the index is behind (a crash after the rename): the folder wins
         return existing
 
-    def _pending_holding(self, sha: str) -> str | None:
-        """A recording with an index update pending that holds these bytes. recording.json is
-        replaced atomically, so it is read without the recording's lock."""
-        for pending in self.state.index_pending():
+    def _pending_holding(self, sha: str, pending: list[str]) -> str | None:
+        """A recording among `pending` that holds these bytes. recording.json is replaced
+        atomically, so it is read without the recording's lock."""
+        for rid in pending:
             try:
-                rec = Recording.model_validate_json((self.root / self._rel(pending)).read_bytes())
+                rec = Recording.model_validate_json((self.root / self._rel(rid)).read_bytes())
             except (OSError, ValidationError):
                 continue  # missing or invalid: nothing to merge into
             if rec.media.sha256 == sha:
-                return pending
+                return rid
         return None
 
     def _create(self, rid: str, sha: str, incoming: Incoming) -> Added:

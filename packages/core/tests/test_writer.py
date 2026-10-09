@@ -429,6 +429,34 @@ def test_a_stuck_index_never_turns_the_same_bytes_into_a_second_recording(
     assert [s.kind for s in writer.archive.load(first.id).sources] == ["plaud", "upload"]
 
 
+def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recording(
+        writer, make_incoming, monkeypatch):
+    # why: another process's catch-up can finish a recording's update after this add asked the
+    # index (which said none) and before it read the marks. The marks are read first.
+    real_upsert = writer.index.upsert
+
+    def busy(rec):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(writer.index, "upsert", busy)
+    first = writer.add(make_incoming(b"same bytes")).recording
+    real_find = writer.index.find_by_sha256
+    calls = []
+
+    def find_then_catch_up(sha):
+        found = real_find(sha)
+        if not calls:
+            calls.append(sha)
+            monkeypatch.setattr(writer.index, "upsert", real_upsert)
+            writer._catch_up_index()  # as another process: the update lands, the mark goes
+        return found
+
+    monkeypatch.setattr(writer.index, "find_by_sha256", find_then_catch_up)
+    again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    assert not again.created and again.recording.id == first.id
+    assert len(list(writer.archive.recording_dirs())) == 1
+
+
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(
         writer, make_incoming, monkeypatch):
     # The write has landed, so a busy index must not report it as failed. The next add must

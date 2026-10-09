@@ -4557,8 +4557,8 @@ Three orderings matter here:
       `_write_recording`, `_write_rendition_locked`, `_publish_raw`, `_index`, `_catch_up_index`.
   - **Test fixtures** in core `conftest.py`: `make_writer(name="archive", writer_id="test") -> Writer`, `writer`, `make_incoming(content=None, *, name="clip.MP3", **over) -> Incoming`. `new_archive` stays.
 
-**Done when:** the full suite passes, with 29 more passed than after Task 5a: `test_writer.py`'s
-36, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
+**Done when:** the full suite passes, with 30 more passed than after Task 5a: `test_writer.py`'s
+37, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing writer tests**
 
@@ -5056,6 +5056,34 @@ def test_a_stuck_index_never_turns_the_same_bytes_into_a_second_recording(
     assert not again.created and again.recording.id == first.id
     assert len(list(writer.archive.recording_dirs())) == 1
     assert [s.kind for s in writer.archive.load(first.id).sources] == ["plaud", "upload"]
+
+
+def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recording(
+        writer, make_incoming, monkeypatch):
+    # why: another process's catch-up can finish a recording's update after this add asked the
+    # index (which said none) and before it read the marks. The marks are read first.
+    real_upsert = writer.index.upsert
+
+    def busy(rec):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(writer.index, "upsert", busy)
+    first = writer.add(make_incoming(b"same bytes")).recording
+    real_find = writer.index.find_by_sha256
+    calls = []
+
+    def find_then_catch_up(sha):
+        found = real_find(sha)
+        if not calls:
+            calls.append(sha)
+            monkeypatch.setattr(writer.index, "upsert", real_upsert)
+            writer._catch_up_index()  # as another process: the update lands, the mark goes
+        return found
+
+    monkeypatch.setattr(writer.index, "find_by_sha256", find_then_catch_up)
+    again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY))
+    assert not again.created and again.recording.id == first.id
+    assert len(list(writer.archive.recording_dirs())) == 1
 
 
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(
@@ -5665,6 +5693,10 @@ class Writer:
 
     def _holding(self, sha: str, rid: str) -> str | None:
         """The recording that already holds these bytes, if any."""
+        # Read the marks before the first index query: a mark is cleared only after its upsert
+        # commits, so a recording missing from this snapshot is already in the index, and one in
+        # it leads to its file. Another process's catch-up can't slip between the two reads.
+        pending = self.state.index_pending()
         existing = self.index.find_by_sha256(sha)
         if existing is not None and not (self.root / self._rel(existing)).is_file():
             # The index names a folder that is gone (removed by hand): rebuild, then ask again.
@@ -5678,21 +5710,21 @@ class Writer:
         if existing is None:
             # An update the index couldn't take (busy, or read-only) leaves a pending mark and an
             # index that says "none" with a matching UUID. The marks name those recordings.
-            existing = self._pending_holding(sha)
+            existing = self._pending_holding(sha, pending)
         if existing is None and (self.root / self._rel(rid)).is_file():
             existing = rid  # the index is behind (a crash after the rename): the folder wins
         return existing
 
-    def _pending_holding(self, sha: str) -> str | None:
-        """A recording with an index update pending that holds these bytes. recording.json is
-        replaced atomically, so it is read without the recording's lock."""
-        for pending in self.state.index_pending():
+    def _pending_holding(self, sha: str, pending: list[str]) -> str | None:
+        """A recording among `pending` that holds these bytes. recording.json is replaced
+        atomically, so it is read without the recording's lock."""
+        for rid in pending:
             try:
-                rec = Recording.model_validate_json((self.root / self._rel(pending)).read_bytes())
+                rec = Recording.model_validate_json((self.root / self._rel(rid)).read_bytes())
             except (OSError, ValidationError):
                 continue  # missing or invalid: nothing to merge into
             if rec.media.sha256 == sha:
-                return pending
+                return rid
         return None
 
     def _create(self, rid: str, sha: str, incoming: Incoming) -> Added:
@@ -5892,7 +5924,7 @@ class Writer:
 - [ ] **Step 5: Run the writer tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_writer.py packages/core/tests/test_locks.py -v`
-Expected: 49 passed (`test_writer.py`'s 36 and `test_locks.py`'s 13).
+Expected: 50 passed (`test_writer.py`'s 37 and `test_locks.py`'s 13).
 
 - [ ] **Step 6: Retire the `test_archive.py` tests that `test_writer.py` now covers**
 
@@ -5913,7 +5945,7 @@ Leave the file's helpers and imports as they are: Task 5c replaces the whole fil
 - [ ] **Step 7: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 29 more than after Task 5a. Record the count in the ledger.
+Expected: every test passes, 30 more than after Task 5a. Record the count in the ledger.
 
 - [ ] **Step 8: Commit**
 
