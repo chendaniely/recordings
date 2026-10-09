@@ -11,6 +11,8 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -18,6 +20,15 @@ SCHEMA_VERSION = 1
 # CREATE ... IF NOT EXISTS, so opening a state.db made earlier in 2a adds what is missing.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS revisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, file TEXT NOT NULL, rev INTEGER NOT NULL,
+  sha256 TEXT NOT NULL, body BLOB NOT NULL, origin TEXT NOT NULL,
+  committed INTEGER NOT NULL, written_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS revisions_by_file ON revisions (file, id);
+CREATE TABLE IF NOT EXISTS flags (
+  file TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL,
+  PRIMARY KEY (file, kind));
+CREATE TABLE IF NOT EXISTS index_pending (recording_id TEXT PRIMARY KEY);
 """
 # Every change after version 1, keyed by the version it makes: MIGRATIONS[2] takes a state.db
 # from version 1 to 2. CREATE TABLE IF NOT EXISTS can't add a column, so a later stage that changes
@@ -55,6 +66,24 @@ class StateError(RuntimeError):
 
 def _already(db_path: Path) -> str:
     return f"{db_path} already exists: `recordings init` runs once per archive"
+
+
+KEEP_REVISIONS = 8  # merge bases kept per file (§6.4); stage 3's three-way merge reads them
+
+
+@dataclass(frozen=True)
+class Revision:
+    id: int
+    file: str
+    rev: int
+    sha256: str
+    body: bytes
+    origin: str  # the op's name, "create" or "adopted"
+    committed: bool
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class State:
@@ -174,3 +203,76 @@ class State:
             db.execute(
                 "INSERT INTO meta (key, value) VALUES (?, ?) "
                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value))
+
+    # ---- revisions: the merge bases (§6.4), in two phases so a crash is recognisable --------
+    def _revision(self, sql: str, args: tuple) -> Revision | None:
+        with self.db() as db:
+            row = db.execute(
+                "SELECT id, file, rev, sha256, body, origin, committed FROM revisions " + sql,
+                args).fetchone()
+        return Revision(*row[:6], committed=bool(row[6])) if row else None
+
+    def last_committed(self, file: str) -> Revision | None:
+        return self._revision("WHERE file = ? AND committed = 1 ORDER BY id DESC LIMIT 1",
+                              (file,))
+
+    def pending(self, file: str) -> Revision | None:
+        return self._revision("WHERE file = ? AND committed = 0 ORDER BY id DESC LIMIT 1",
+                              (file,))
+
+    def begin(self, file: str, rev: int, sha256: str, body: bytes, origin: str) -> int:
+        with self.db() as db:
+            cur = db.execute(
+                "INSERT INTO revisions (file, rev, sha256, body, origin, committed, written_at) "
+                "VALUES (?, ?, ?, ?, ?, 0, ?)", (file, rev, sha256, body, origin, _now()))
+            return int(cur.lastrowid)
+
+    def commit(self, revision_id: int) -> None:
+        with self.db() as db:
+            (file,) = db.execute("SELECT file FROM revisions WHERE id = ?",
+                                 (revision_id,)).fetchone()
+            db.execute("UPDATE revisions SET committed = 1 WHERE id = ?", (revision_id,))
+            db.execute(
+                "DELETE FROM revisions WHERE file = ? AND committed = 1 AND id NOT IN "
+                "(SELECT id FROM revisions WHERE file = ? AND committed = 1 "
+                " ORDER BY id DESC LIMIT ?)", (file, file, KEEP_REVISIONS))
+
+    def discard(self, revision_id: int) -> None:
+        with self.db() as db:
+            db.execute("DELETE FROM revisions WHERE id = ? AND committed = 0", (revision_id,))
+
+    def adopt(self, file: str, rev: int, sha256: str, body: bytes) -> int:
+        revision_id = self.begin(file, rev, sha256, body, "adopted")
+        self.commit(revision_id)
+        return revision_id
+
+    # ---- flags: files that need attention (until stage 3's UI shows them) -----------------
+    def flag(self, file: str, kind: str, message: str) -> None:
+        with self.db() as db:
+            db.execute("INSERT OR REPLACE INTO flags (file, kind, message, at) VALUES (?, ?, ?, ?)",
+                       (file, kind, message, _now()))
+
+    def clear_flags(self, file: str) -> None:
+        with self.db() as db:
+            db.execute("DELETE FROM flags WHERE file = ?", (file,))
+
+    def flags(self) -> list[dict]:
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT file, kind, message, at FROM flags ORDER BY file, kind").fetchall()
+        return [{"file": f, "kind": k, "message": m, "at": a} for f, k, m, a in rows]
+
+    # ---- index updates not yet made: a crash between a write and its index update ---------
+    def mark_index_pending(self, recording_id: str) -> None:
+        with self.db() as db:
+            db.execute("INSERT OR IGNORE INTO index_pending (recording_id) VALUES (?)",
+                       (recording_id,))
+
+    def clear_index_pending(self, recording_id: str) -> None:
+        with self.db() as db:
+            db.execute("DELETE FROM index_pending WHERE recording_id = ?", (recording_id,))
+
+    def index_pending(self) -> list[str]:
+        with self.db() as db:
+            return [r[0] for r in db.execute(
+                "SELECT recording_id FROM index_pending ORDER BY recording_id")]
