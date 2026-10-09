@@ -7720,7 +7720,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from recordings.archive import RawSource
-from recordings.config import ConfigError
+from recordings.config import Config, ConfigError
 from recordings.models import MediaInfo, PlaudState, Recording, TagRef, is_private
 from recordings.plaud.reconcile import (
     PLAUD_VERSION,
@@ -7731,7 +7731,7 @@ from recordings.plaud.reconcile import (
     strip_date_prefix,
     timing_check,
 )
-from recordings.writer import Writer, rendition_filename
+from recordings.writer import NotTheWriter, Writer, rendition_filename
 
 HEX = "0123456789abcdef0123456789abcdef"
 OTHER = "fedcba9876543210fedcba9876543210"
@@ -8053,6 +8053,18 @@ def test_reindex_finishes_an_update_interrupted_after_its_snapshot(writer, make_
     (rec_report,) = report.reconciled
     assert rec_report.written == 1
     assert report.to_dict()["plaud"] == {"written": 1, "held": 0, "skipped": 0, "problems": 0}
+
+
+def test_a_bad_pattern_in_config_refuses_the_writer_cleanly(new_archive, tmp_path):
+    # why: a typo in [plaud] auto_private_patterns must give the CLI exit 78 and let the web
+    # app start read-only, not a traceback: NotTheWriter is what both callers already handle.
+    root, state = new_archive
+    cfg = Config(path=None, archive_path=root, writer_id="test",
+                 default_timezone="America/Vancouver", base_url=None,
+                 data={"plaud": {"auto_private_patterns": ["("]}},
+                 state_path=state, index_path=tmp_path / "index" / "index.db")
+    with pytest.raises(NotTheWriter, match="auto_private_patterns"):
+        Writer.open(cfg)
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -8451,10 +8463,13 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
 - [ ] **Step 4: Reconcile through the `Writer`, and in `reindex`**
 
 In `packages/core/src/recordings/writer.py`:
-1. **Add** the imports (`Sequence` after `import uuid`, the rest with the `recordings` imports):
+1. **Add** the imports (`Sequence` after `import uuid`; the rest with the `recordings` imports).
+   **Merge** `PlaudState` and `is_private` into the existing parenthesised
+   `from recordings.models import (...)` block, keeping it sorted, and do not add a second
+   `from recordings.models import` statement. **Change** the existing
+   `from recordings.config import Config` to `from recordings.config import Config, ConfigError`.
    ```python
    from collections.abc import Sequence
-   from recordings.models import PlaudState, is_private
    from recordings.plaud.reconcile import (
        DEFAULT_AUTO_PRIVATE,
        Held,
@@ -8527,9 +8542,14 @@ In `packages/core/src/recordings/writer.py`:
    and **add** `self.auto_private = tuple(auto_private)` beside `self.state, self.index, …`.
 5. In `Writer.open`, **replace** the `writer = cls(...)` line with:
    ```python
+           try:
+               patterns = patterns_from_config(cfg.data)
+           except ConfigError as exc:  # a bad regex must not crash the CLI or stop the web app
+               raise NotTheWriter(str(exc)) from None
            writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
-                        auto_private=patterns_from_config(cfg.data))
+                        auto_private=patterns)
    ```
+   (The test for this is the last one in Step 1's `test_reconcile.py`.)
 6. **Add** this method after `_publish_raw`:
    ```python
        def reconcile_plaud(self, recording_id: str) -> ReconcileReport:
@@ -11761,8 +11781,10 @@ def _allowed_hosts(server: dict[str, Any]) -> tuple[str, ...]:
         raise ConfigError(f"[server] allowed_hosts: {exc}") from None
 ```
 
-In `packages/ui/src/recordings_ui/settings.py`, **add** `import atexit` and
-`from recordings.config import normalise_host`, **replace** `env_hosts` with:
+In `packages/ui/src/recordings_ui/settings.py`, **add** `import atexit`, **change** the existing
+`from recordings.config import Config, ConfigError, load_config` to
+`from recordings.config import Config, ConfigError, load_config, normalise_host`, and **replace**
+`env_hosts` with:
 ```python
 def env_hosts(environ: Mapping[str, str]) -> frozenset[str]:
     """RECORDINGS_ALLOWED_HOSTS: extra names, comma-separated, checked like [server] allowed_hosts."""
