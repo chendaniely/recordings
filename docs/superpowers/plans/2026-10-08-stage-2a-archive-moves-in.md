@@ -9620,11 +9620,12 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
       - `PRIVATE_TAGS`, each recognised label to its one tag: `private`, `personal` and `voiceprints` → `private`; `therapy`, `counselling` and `counseling` → `private/therapy`; `journal`, `medical` and `students` → `private/<label>`. `PRIVACY_LABELS = frozenset(PRIVATE_TAGS)`
     - `class CatalogError(RuntimeError)`
     - `@dataclass(frozen=True) Row(uri, source, file_id, recorded_at_local, timezone, time_source, audio_rel, audio_sha256, dup_of, tags: tuple[str, ...], access)`
-    - `@dataclass(frozen=True) Item(row: Row, disposition: str, reason: str = "", kind: str = "", audio: Path | None = None, sha256: str = "", recorded_at: datetime | None = None, timezone: str = "", time_source: str = "", snapshots: tuple[Path, ...] = (), renditions: tuple[Path, ...] = (), texts: tuple[Path, ...] = (), present_id: str | None = None, private: bool = False, tags: tuple[str, ...] = (), probed: MediaProbe | None = None)`
+    - `@dataclass(frozen=True) Item(row: Row, disposition: str, reason: str = "", kind: str = "", audio: Path | None = None, sha256: str = "", recorded_at: datetime | None = None, timezone: str = "", time_source: str = "", snapshots: tuple[Path, ...] = (), renditions: tuple[Path, ...] = (), texts: tuple[Path, ...] = (), present_id: str | None = None, private: bool = False, tags: tuple[str, ...] = (), probed: MediaProbe | None = None, snapshot_problems: tuple[tuple[str, ...], ...] = ())`
     - `@dataclass(frozen=True) Plan(root, items, ledger_only=(), unlisted=(), held_on_plaud=None, problems=())`, with:
       - `.counts() -> dict[str, int]` and `.unprobed() -> list[str]`
+      - `.incomplete_snapshots() -> dict`, the Plaud snapshots reconcile will skip, as `{"total": n, "by_reason": {reason: n}}` (a reason is `unreadable`, a block's data type, or `legacy`), and `.all_snapshots_incomplete() -> list[str]`, the URIs of rows to import whose every snapshot is incomplete
       - `.ok -> bool`: no problems, no unplaced row and nothing unprobed
-      - `.report() -> dict`, with the keys `catalog_rows`, `by_disposition`, `private`, `unplaced`, `no_audio`, `deferred_to_2b`, `unprobed`, `ledger_only`, `unlisted`, `held_on_plaud` and `problems`
+      - `.report() -> dict`, with the keys `catalog_rows`, `by_disposition`, `private`, `unplaced`, `no_audio`, `deferred_to_2b`, `unprobed`, `incomplete_snapshots`, `all_snapshots_incomplete`, `ledger_only`, `unlisted`, `held_on_plaud` and `problems`
     - `map_tags(labels: Iterable[str]) -> tuple[str, ...]`
     - `read_catalog(root: Path) -> list[Row]`
     - `snapshot_order(path: Path) -> tuple[str, str]`
@@ -10266,6 +10267,23 @@ def test_a_row_already_in_the_archive_is_present_by_either_plaud_id_form(ar_arch
     assert by_uri[f"plaud/{A}"].disposition == "present"
     assert by_uri[f"plaud/{B}"].disposition == "unplaced"
     assert "different audio" in by_uri[f"plaud/{B}"].reason
+
+
+def test_incomplete_snapshots_are_counted_by_reason_and_never_hidden(ar_archive, plaud_env):
+    # why: Task 6's review. reconcile builds nothing from a snapshot with link errors, and a
+    # legitimately empty block that kept its data_link looks the same: the dry run says how
+    # many, why, and which recordings would get no Plaud outputs at all.
+    ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True), "{not json"])
+    ar_archive.plaud(B, envelopes=[plaud_env(B, link_error=True)],
+                     recorded_at="2026-08-02T09:00:00-07:00")
+    ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent=NONE)
+    report = the_plan.report()
+    assert report["incomplete_snapshots"] == {
+        "total": 3, "by_reason": {"auto_sum_note": 2, "unreadable": 1}}
+    assert report["all_snapshots_incomplete"] == [f"plaud/{B}"]
+    assert the_plan.ok  # reported, not refused: an empty block may be real
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -10319,6 +10337,7 @@ from recordings.archive import sha256_file
 from recordings.index import Index
 from recordings.media import MEDIA_SUFFIXES, MediaProbe, probe
 from recordings.models import is_private_tag
+from recordings.plaud.normalise import link_errors
 from recordings.refs import canonical_plaud_id
 
 CATALOG = Path("catalog") / "catalog.csv"
@@ -10396,6 +10415,8 @@ class Item:
     private: bool = False
     tags: tuple[str, ...] = ()  # recordings tags, privacy labels already under private/
     probed: MediaProbe | None = None  # None: its duration couldn't be measured
+    snapshot_problems: tuple[tuple[str, ...], ...] = ()  # per Plaud snapshot, why reconcile
+    # will skip it; () when it is usable (§9.1.1: nothing is built from an incomplete one)
 
 
 @dataclass(frozen=True)
@@ -10415,6 +10436,19 @@ class Plan:
         """Rows to import whose media couldn't be measured: a real run refuses them all."""
         return [i.row.uri for i in self.items if i.disposition in IMPORTED and i.probed is None]
 
+    def incomplete_snapshots(self) -> dict:
+        """Plaud snapshots reconcile will skip, counted by reason (a snapshot with two reasons
+        counts under both), for rows a run imports."""
+        bad = [reasons for i in self.items if i.disposition in IMPORTED
+               for reasons in i.snapshot_problems if reasons]
+        by_reason = Counter(r for reasons in bad for r in set(reasons))
+        return {"total": len(bad), "by_reason": dict(sorted(by_reason.items()))}
+
+    def all_snapshots_incomplete(self) -> list[str]:
+        """Rows whose every snapshot is incomplete: they would get no Plaud outputs at all."""
+        return [i.row.uri for i in self.items if i.disposition in IMPORTED
+                and i.snapshot_problems and all(i.snapshot_problems)]
+
     @property
     def ok(self) -> bool:
         return (not self.problems and not self.unprobed()
@@ -10433,6 +10467,8 @@ class Plan:
             "deferred_to_2b": [i.row.file_id for i in self.items
                                if i.disposition == "deferred-to-2b"],
             "unprobed": self.unprobed(),
+            "incomplete_snapshots": self.incomplete_snapshots(),
+            "all_snapshots_incomplete": self.all_snapshots_incomplete(),
             "ledger_only": list(self.ledger_only),
             "unlisted": list(self.unlisted),
             "held_on_plaud": self.held_on_plaud,
@@ -10573,6 +10609,24 @@ def _find_private(root: Path, fid: str, media_by_sha: dict[str, list[Path]]):
     return kind, found, texts
 
 
+def _snapshot_problems(kind: str, snapshots: tuple[Path, ...]) -> tuple[tuple[str, ...], ...]:
+    """For a Plaud recording, per snapshot, the reasons reconcile will skip it: `unreadable` when
+    it isn't a JSON object, else the data type of each block whose content didn't arrive (and
+    `legacy`). Reasons are a fixed vocabulary: anything that isn't a short slug is `other`, so no
+    title can reach a report."""
+    if kind != "plaud":
+        return ()
+    out = []
+    for path in snapshots:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+            doc = None
+        reasons = ["unreadable"] if not isinstance(doc, dict) else link_errors(doc)
+        out.append(tuple(r if re.fullmatch(r"[a-z_]{1,40}", r) else "other" for r in reasons))
+    return tuple(out)
+
+
 def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | None, str]:
     """Already in this archive? By Plaud ID (either form) first, then audio-router's own
     reference, then the content hash (§9.3)."""
@@ -10641,7 +10695,8 @@ def _place(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | None,
     return Item(row, disposition, kind=kind, audio=audio, sha256=sha, recorded_at=when,
                 timezone=zone, time_source=time_source, snapshots=snapshots,
                 renditions=renditions, texts=texts, present_id=present, private=private,
-                tags=tags, probed=probe(audio))
+                tags=tags, probed=probe(audio),
+                snapshot_problems=_snapshot_problems(kind, snapshots))
 
 
 def _ids_on_disk(root: Path, source: str) -> set[str]:
@@ -10719,7 +10774,7 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
 - [ ] **Step 8: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_plan.py packages/core/tests/test_media.py -v && uv run pytest`
-Expected: 17 passed (12 and 5), and the full suite stays green, its count above Task 7's.
+Expected: 18 passed (13 and 5), and the full suite stays green, its count above Task 7's.
 
 - [ ] **Step 9: Commit**
 
@@ -10788,7 +10843,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - **Config:** `[plaud] consent_list`, and `[disk] warn_free_percent` and `stop_free_percent`.
 
 What the run guarantees:
-- **Privacy first (§7.4):** every private tag is in `Incoming.tags` when the recording is created. That covers the catalog's privacy labels and `access`, the private tier, and a Plaud title (any snapshot's, under either ID) that matches the auto-private patterns.
+- **Privacy first (§7.4):** every private tag is in `Incoming.tags` when the recording is created. That covers the catalog's privacy labels and `access`, the private tier, and a Plaud title (any snapshot's, under either ID) that matches the auto-private patterns. A duplicate's labels and titles count too: rows with the same audio are one recording, so each is created with its whole group's privacy, whichever row is added first.
 - **Measured media:** a real run refuses to start while any recording's media can't be measured. Without ffmpeg, that means any non-WAV file.
 - **The planned bytes:** each `Incoming` carries the plan's SHA-256, and `add` refuses other bytes.
 - **The ops lock:** the run holds it throughout, so a backup or the mirror never runs half-way through an import.
@@ -11107,6 +11162,22 @@ def test_a_degraded_or_unreadable_snapshot_is_kept_but_never_used(ar_archive, pl
     assert len(transcripts) == 1 and transcripts[0].inputs["source"].endswith("20260801T161000Z.json")
 
 
+def test_same_second_snapshots_keep_their_order_in_the_outputs(ar_archive, plaud_env, writer):
+    # why: audio-router suffixes same-second snapshots -01, -02, so their stamps tie. With tied
+    # fetch times the newest output falls to file names, where `x-2.json` sorts before
+    # `x.json`, and the older transcript would be the one shown (§6.5).
+    rows = json.loads(plaud_env(A)["source_list"][0]["data_content"])
+    edited = plaud_env(A, segments=[{**rows[0], "content": "Edited."}, *rows[1:]])
+    ar_archive.plaud(A, envelopes=[plaud_env(A), edited],
+                     stamps=["20260801T161000Z", "20260801T161000Z-01"])
+    ar_archive.write_catalog()
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    (rec,) = writer.archive.iter_recordings()
+    transcripts = [r for _, r in writer.archive.renditions(rec.id)
+                   if r.kind == "transcript" and r.engine == "plaud"]
+    assert [t.payload["segments"][0]["text"] for t in transcripts] == ["Hello there.", "Edited."]
+
+
 def test_the_import_stops_when_the_disk_guard_says_stop(ar_archive, plaud_env, writer):
     build(ar_archive, plaud_env)
     stop = DiskStatus(path="x", marker=True, free_bytes=1, total_bytes=100, level="stop",
@@ -11184,6 +11255,28 @@ def test_privacy_is_in_place_when_a_recording_is_created(ar_archive, plaud_env, 
     assert seen == {A: [("private", "you")], B: [("private", "auto")]}
 
 
+def test_privacy_covers_every_copy_of_the_audio_before_the_first_is_created(
+        ar_archive, plaud_env, writer, monkeypatch):
+    # why: §7.4. B is A's duplicate (the same audio, so one recording), and B's title is
+    # auto-private. A is added first. It must be created private, never made private by B's
+    # merge after A's content and outputs are already in the archive.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name="Interview: Grace")],
+                     same_audio_as=f"plaud/audio/2026/08/{A}.wav", dup_of=f"plaud/{A}")
+    ar_archive.write_catalog()
+    seen = []
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen.append((incoming.sources[0].ref, [(t.tag, t.by) for t in incoming.tags]))
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert report.failed == []
+    assert seen == [(A, [("private", "auto")]), (B, [("private", "auto")])]
+
+
 def test_audio_that_changed_after_the_plan_is_refused(ar_archive, plaud_env, writer):
     # why: the plan hashed the audio. The run passes that hash, and add refuses other bytes.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
@@ -11217,14 +11310,21 @@ def test_an_archive_that_reads_as_empty_stops_the_import(ar_archive, plaud_env, 
     # and the run stops there, in fixed words, rather than going on into it.
     build(ar_archive, plaud_env)
 
+    titles = []
+
     def unmounted(self, incoming):
-        raise IndexRefused(f"no recordings under the archive while adding {incoming.title!r}")
+        # Writer.add's real IndexRefused messages carry paths and counts, never a title. This
+        # stub is a canary: if the run ever repeated an exception's text, the title would show.
+        titles.append(incoming.title)
+        raise IndexRefused(f"no recordings under the archive (canary {incoming.title!r})")
 
     monkeypatch.setattr(Writer, "add", unmounted)
     with pytest.raises(ImportStopped, match="reads as empty") as caught:
         run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
         "IndexRefused: the archive reads as empty or unreadable"]
+    text = str(caught.value) + json.dumps(caught.value.report.to_dict(), ensure_ascii=False)
+    assert titles and all(title not in text and "canary" not in text for title in titles)
 
 
 def test_the_import_holds_the_ops_lock(ar_archive, plaud_env, writer):
@@ -11892,7 +11992,7 @@ import sqlite3
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -11921,6 +12021,9 @@ _FAILURES = (
     (NotTheWriter, "this process may not write the archive now"),
     (sqlite3.Error, "state.db or the index could not be used"),
     (WriterError, "the writer refused it"),
+    (RecursionError, "a payload is nested too deeply"),
+    (ArithmeticError, "a number was out of range"),
+    (TypeError, "a value had the wrong type"),
     (KeyError, "a recording folder is missing"),
     (OSError, "a file could not be read or written"),
     (ValueError, "a value did not validate"),
@@ -11969,21 +12072,26 @@ def _stops_the_run(exc: BaseException) -> bool:
 def _read_json(path: Path) -> object:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
         return None
 
 
 def _fetched_at(path: Path) -> datetime:
     """When audio-router fetched a snapshot: a legacy snapshot's own `_meta.fetched_at`, else the
-    file's stamp. Pocket's flat file and a private-tier `.txt` have only their mtime."""
+    file's stamp. Pocket's flat file and a private-tier `.txt` have only their mtime.
+
+    audio-router's same-second siblings (`x.json`, `x-01.json`, …) were written in counter
+    order. The counter goes in as microseconds, so that order is in the data: with tied times,
+    the newest output would fall to file names, where `x-2.json` sorts before `x.json`."""
     legacy = meta_fetched_at(_read_json(path)) if path.suffix == ".json" else None
     if legacy is not None:
         return legacy
+    stamp, _, counter = path.stem.partition("-")
     try:
-        return datetime.strptime(path.stem.partition("-")[0], "%Y%m%dT%H%M%SZ").replace(
-            tzinfo=timezone.utc)
+        when = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
     except ValueError:
         return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    return when + timedelta(microseconds=int(counter)) if counter.isdigit() else when
 
 
 def _titles(item: Item) -> list[str]:
@@ -12007,7 +12115,8 @@ def _title(item: Item) -> tuple[str, bool]:
     return "Untitled recording", False
 
 
-def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport) -> None:
+def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
+                group: list[Item]) -> None:
     sources = [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
                          fetched_at=_fetched_at(path), payload=path.read_bytes())
                for path in item.snapshots]
@@ -12030,9 +12139,11 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport)
             report.skipped_outputs[mapped.skipped] = report.skipped_outputs.get(mapped.skipped, 0) + 1
     # Privacy first (§7.4): every private tag is in place when the recording is created, never
     # a second write after its content.
-    tags = [TagRef(tag=tag, by="you") for tag in item.tags]
-    if (item.kind == "plaud" and not item.private
-            and matches_auto_private(_titles(item), writer.auto_private)):
+    tags = [TagRef(tag=tag, by="you")
+            for tag in dict.fromkeys(t for member in group for t in member.tags)]
+    titles = [t for member in group if member.kind == "plaud" for t in _titles(member)]
+    if (not any(is_private_tag(t.tag) for t in tags)
+            and matches_auto_private(titles, writer.auto_private)):
         tags.append(TagRef(tag="private", by="auto"))
     title, from_source = _title(item)
     probed = item.probed
@@ -12074,6 +12185,11 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
     which stops it."""
     report = RunReport()
     todo = [item for item in plan.items if item.disposition in IMPORTED]
+    # Rows with the same audio become one recording, whichever is added first. Each is added
+    # with its whole group's privacy, so a duplicate's label or title is never a late write.
+    by_sha: dict[str, list[Item]] = {}
+    for item in todo:
+        by_sha.setdefault(item.sha256, []).append(item)
     unmeasured = sum(item.probed is None for item in todo)
     if unmeasured:
         raise ImportStopped(
@@ -12086,13 +12202,14 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
                 if status.level == "stop":
                     raise ImportStopped(status.message, report)
             try:
-                _import_one(item, writer, now=now, report=report)
+                _import_one(item, writer, now=now, report=report, group=by_sha[item.sha256])
             except IndexRefused as exc:  # the archive reads as empty: unmounted, most likely
                 _log.debug("importing %s stopped the run", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
                 raise ImportStopped("the archive reads as empty or unreadable (is its disk "
                                     "mounted?): the import stopped", report) from None
-            except (WriterError, LockTimeout, KeyError, OSError, ValueError, sqlite3.Error) as exc:
+            except (WriterError, LockTimeout, KeyError, OSError, ValueError, TypeError,
+                    RecursionError, ArithmeticError, sqlite3.Error) as exc:
                 _log.debug("importing %s failed", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
                 if _stops_the_run(exc):
@@ -12193,7 +12310,7 @@ In `packages/core/src/recordings/cli.py`:
 - [ ] **Step 6: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_run.py packages/core/tests/test_disk.py -v && uv run pytest`
-Expected: 32 passed (27 and 5), and the full suite stays green, its count above Task 8's.
+Expected: 34 passed (29 and 5), and the full suite stays green, its count above Task 8's.
 
 - [ ] **Step 7: Commit**
 
@@ -18276,7 +18393,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - every command, through `recordings.cli.main` and `build_parser`
   - the readers: `load_config` (Task 2), `patterns_from_config` (Task 7), `disk_thresholds` and `consent_list_path` (Task 9), `backup.from_config` and `restic_env` (Task 11, with `BackupConfig.cacert`), `mirror.from_config` (Task 12, with `max_delete` and `no_perms`), `alerts.from_config` (Task 13, with `AlertConfig.token` from the optional `ntfy_token` secret), `status_settings` (Task 15), and `secret` and `secret_path`
   - from Task 8: the `ar_archive` fixture's `plaud(..., tags=())`, which fills the catalog's `tags` column, `private(*, name=…)` (the private tier, tagged `therapy`) and `orphan(fid)`
-  - from Task 9: the dry run's `by_disposition` (with `consent-excluded` and `new-private`), `deferred_to_2b` and `unprobed`; `[plaud] consent_list`, which the import requires, and its reader `recordings.plaud.consent.consent_list_path(data) -> Path`, whose parser takes `- <id>` lines
+  - from Task 9: the dry run's `by_disposition` (with `consent-excluded` and `new-private`), `deferred_to_2b`, `unprobed`, `incomplete_snapshots` and `all_snapshots_incomplete`; `[plaud] consent_list`, which the import requires, and its reader `recordings.plaud.consent.consent_list_path(data) -> Path`, whose parser takes `- <id>` lines
   - from Task 12: `MirrorConfig.max_delete` and `.no_perms`
   - from Task 11: CI's pinned restic step, with `RECORDINGS_REQUIRE_RESTIC=1`, and `test_backup.py`'s `restic_or_skip`, copied here (a test module can't import another)
   - from Task 14: the root conftest's `KEEP`, which leaves `RECORDINGS_REQUIRE_RESTIC` and `RECORDINGS_TEST_RESTIC` in place
