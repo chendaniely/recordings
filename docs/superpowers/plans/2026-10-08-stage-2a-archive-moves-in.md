@@ -19,7 +19,7 @@ Nothing in it calls Plaud.
 - **`index.db` is derived.** `recordings reindex` rebuilds it.
 - **The Plaud normaliser and reconcile are pure functions** over the raw snapshots in `source/`. The import feeds them `audio-router`'s snapshots now, and stage 2b's sync will feed them Plaud's.
 - **Operations run in a `backup` container,** through `recordings ops --loop`: the backup, mirror, check, restore test and disk check. Each run is recorded in `state.db`. Failures are pushed to ntfy, and each good backup pings a dead-man's switch. The UI's Status page reads those records.
-  - **A run holds the `ops` lock** (`Locks(…).hold("ops")`, separate from the Writer's lock order). The CLI waits up to 600 s for it, and the real import holds it too. The loop doesn't wait: a busy lock means "skipped: busy", which is not a failure and sends no alert.
+  - **A run holds the `ops` lock** (`Locks(…).hold("ops")`, separate from the Writer's lock order). The CLI waits up to 600 s for it, and the real import holds it too. The loop doesn't wait: a busy lock means "skipped: busy", which is not a failure and sends no alert on its own. But `flock` is released only when the holder dies, so a hung holder blocks every run: record each busy skip, and alert once `ops` has been busy for longer than a set number of consecutive runs (suggest 3 times the loop interval; Task 11).
 
 **Tech Stack:**
 - **Python:** Python 3.14's standard library (`sqlite3`, `fcntl`, `wave`, `csv`, `urllib.request`), pydantic 2.13.5. **No new Python dependencies.**
@@ -222,6 +222,8 @@ Nothing in it calls Plaud.
   5. everything else (`index`, `catalog`)
 
   Taking an earlier lock while holding a later one is an error, not a wait. The `ops` lock sits outside this order, in its own `Locks` instance.
+
+  **A lock is never held across an `await`.** Re-entrancy is per thread, so a coroutine that awaits inside `hold()` would share its locks with other tasks on the same thread. `Writer` methods are synchronous.
 - **Private:** a recording is private if any tag is `private` or under `private/`, in any capitalisation (`recordings.models.is_private_tag`).
   - **Privacy comes first.** A recording that will be private carries the tag when it is created (`Incoming.tags`). The duplicate merge and reconcile apply it with their first `mutate`, before they publish any source or rendition (Tasks 5b, 7 and 9).
   - The auto-private patterns are matched against every snapshot's title, with Plaud's `MM-DD ` prefix stripped first, and against both Plaud IDs (Task 7).
@@ -4178,10 +4180,10 @@ the execution ledger.
 
 `packages/core/tests/test_locks.py`:
 ```python
-import subprocess
-import sys
 import os
 import select
+import subprocess
+import sys
 import threading
 import time
 
@@ -4258,8 +4260,6 @@ def test_lock_acquisition_follows_lock_order_regardless_of_argument_order(tmp_pa
     assert acquired == sorted(keys, key=lock_order)
 
 
-def test_a_lock_is_released_when_its_process_dies(tmp_path):
-    # why: §6.8. flock is released by the kernel, so a crash never leaves a stale lock.
 def test_a_hold_of_several_contended_keys_waits_one_timeout_in_total(tmp_path):
     # why: the timeout covers the whole hold(). Per key, N contended keys could wait N timeouts
     # while the message claims one. A is free after 0.3 s; B stays held, so B's wait is what counts.
@@ -4319,6 +4319,8 @@ def test_a_key_that_is_not_a_plain_file_name_is_refused(tmp_path, key):
             pass
 
 
+def test_a_lock_is_released_when_its_process_dies(tmp_path):
+    # why: §6.8. flock is released by the kernel, so a crash never leaves a stale lock.
     script = ("import sys,time; from pathlib import Path; from recordings.locks import Locks\n"
               "with Locks(Path(sys.argv[1])).hold(sys.argv[2]):\n"
               "    print('held', flush=True); time.sleep(60)\n")
@@ -4415,20 +4417,20 @@ class Locks:
 
     @contextmanager
     def hold(self, *keys: str) -> Iterator[None]:
-        held = self._held()
-        wanted = set(keys)
         for key in keys:
             if not _KEY.fullmatch(key):
                 raise ValueError(f"lock key {key!r} must match [A-Za-z0-9._+-]+")
+        held = self._held()
+        wanted = set(keys)
         new = sorted((k for k in wanted if k not in held), key=lock_order)
         if new and held and lock_order(new[0]) < max(lock_order(k) for k in held):
             raise LockOrderError(
                 f"lock {new[0]!r} comes before one already held; take all of an operation's "
                 "locks together, in one hold()")
         counted: list[str] = []
+        deadline = time.monotonic() + self.timeout  # one for the whole hold, not one per key
         try:
             for key in new:
-        deadline = time.monotonic() + self.timeout  # one for the whole hold, not one per key
                 held[key] = [self._acquire(key, deadline), 0]
             for key in wanted:
                 held[key][1] += 1
@@ -4528,7 +4530,7 @@ Three orderings matter here:
     - `last_committed(file) -> Revision | None` and `pending(file) -> Revision | None`
     - `begin(file, rev, sha256, body, origin) -> int`, `commit(revision_id)`, `discard(revision_id)`, `adopt(file, rev, sha256, body) -> int`
     - `flag(file, kind, message)`, `clear_flags(file)`, `flags() -> list[dict]`
-    - `mark_index_pending(recording_id)`, `clear_index_pending(recording_id)`, `index_pending() -> list[str]`, `clear_all_index_pending()`
+    - `mark_index_pending(recording_id)`, `clear_index_pending(recording_id)`, `index_pending() -> list[str]`
     - `@dataclass(frozen=True) Revision(id, file, rev, sha256, body, origin, committed)`, and `KEEP_REVISIONS = 8`
   - **`recordings.writer`:**
     - errors: `class WriterError(RuntimeError)`, and its subclasses `NotTheWriter`, `StaleFile`, `InvalidFile`
@@ -4555,8 +4557,8 @@ Three orderings matter here:
       `_write_recording`, `_write_rendition_locked`, `_publish_raw`, `_index`, `_catch_up_index`.
   - **Test fixtures** in core `conftest.py`: `make_writer(name="archive", writer_id="test") -> Writer`, `writer`, `make_incoming(content=None, *, name="clip.MP3", **over) -> Incoming`. `new_archive` stays.
 
-**Done when:** the full suite passes, with 26 more passed than after Task 5a: `test_writer.py`'s
-33, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
+**Done when:** the full suite passes, with 28 more passed than after Task 5a: `test_writer.py`'s
+35, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing writer tests**
 
@@ -5055,6 +5057,36 @@ def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up
     assert writer.state.index_pending() == []
 
 
+def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(writer, make_incoming,
+                                                                   monkeypatch):
+    # why: a recording whose folder landed after the rebuild listed the archive still has its
+    # mark. Clearing every mark at once left it out of the index until the next reindex.
+    rec = writer.add(make_incoming(b"bytes")).recording
+    real = writer.index.rebuild
+
+    def rebuild_that_missed_it(*args, **kwargs):
+        count = real(*args, **kwargs)
+        Index(writer.index.path).rebuild(Archive(writer.root / "nowhere"),
+                                         archive_uuid=writer.identity.uuid, allow_empty=True)
+        return count
+
+    monkeypatch.setattr(writer.index, "rebuild", rebuild_that_missed_it)
+    writer.state.mark_index_pending(rec.id)
+    writer.rebuild_index()
+    assert writer.index.find_by_sha256(rec.media.sha256) == rec.id
+    assert writer.state.index_pending() == []
+
+
+def test_a_pending_mark_on_an_invalid_file_does_not_make_every_start_rebuild(writer,
+                                                                             make_incoming):
+    rec = writer.add(make_incoming()).recording
+    writer.add(make_incoming(recorded_at=NEXT_DAY))
+    (writer.archive.path_for(rec.id) / "recording.json").write_text("{", encoding="utf-8")
+    writer.state.mark_index_pending(rec.id)
+    writer.rebuild_index()
+    assert writer.state.index_pending() == []
+
+
 def test_an_index_entry_whose_folder_was_deleted_by_hand_is_not_an_error(writer, make_incoming):
     # A KeyError used to escape add() here, and the import doesn't catch KeyError.
     writer.add(make_incoming(b"kept"))
@@ -5230,10 +5262,6 @@ In `packages/core/src/recordings/state.py`:
            with self.db() as db:
                return [r[0] for r in db.execute(
                    "SELECT recording_id FROM index_pending ORDER BY recording_id")]
-
-       def clear_all_index_pending(self) -> None:
-           with self.db() as db:
-               db.execute("DELETE FROM index_pending")
    ```
 
 - [ ] **Step 4: Write the `Writer`**
@@ -5244,8 +5272,9 @@ In `packages/core/src/recordings/state.py`:
 
 A Writer refuses to exist unless the archive's sentinel, this machine's state.db and the configured
 writer ID all agree (§3, §6.7). Every change to a recording.json is an operation applied by
-`mutate` under that recording's lock. It checks the file's content hash against the revision the
-app last wrote (a merge base in state.db), applies the operation, bumps `rev`, and writes the file
+`mutate` under that recording's lock. `Locks` re-entrancy is per thread, so Writer methods are
+synchronous: never `await` inside `hold()`, or other tasks on the thread share the lock. It checks
+the file's content hash against the revision the app last wrote (a merge base in state.db), applies the operation, bumps `rev`, and writes the file
 durably. A file edited outside the app is refused until `recordings reindex` accepts the edit
 (three-way merges arrive in stage 3). New recordings are assembled under `.tmp/` and renamed into
 place whole. Identical bytes arriving again merge into the existing recording, keeping the second
@@ -5499,7 +5528,10 @@ class Writer:
         with self.locks.hold(INDEX_LOCK):
             count = self.index.rebuild(self.archive, archive_uuid=self.identity.uuid,
                                        allow_empty=allow_empty)
-            self.state.clear_all_index_pending()
+        # Not a bulk clear: a recording that landed after the rebuild listed the archive still has
+        # its mark. Each mark is finished, and cleared, under that recording's own lock, with
+        # INDEX_LOCK released first (lock order: recordings come before the index).
+        self._catch_up_index()
         return count
 
     def _index(self, rec: Recording) -> None:
@@ -5527,7 +5559,10 @@ class Writer:
                 try:
                     rec = Recording.model_validate_json(raw)
                 except ValidationError:
-                    continue  # edited into an invalid file: `recordings reindex` reports it
+                    # edited into an invalid file: `recordings reindex` reports it. The mark goes,
+                    # or every Writer start would rebuild for it again.
+                    self.state.clear_index_pending(rid)
+                    continue
                 self._index(rec)
 
     # ---- mutate: every change to a recording.json -------------------------------------------
@@ -5824,7 +5859,7 @@ class Writer:
 - [ ] **Step 5: Run the writer tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_writer.py packages/core/tests/test_locks.py -v`
-Expected: 38 passed.
+Expected: 48 passed (`test_writer.py`'s 35 and `test_locks.py`'s 13).
 
 - [ ] **Step 6: Retire the `test_archive.py` tests that `test_writer.py` now covers**
 
@@ -5845,7 +5880,7 @@ Leave the file's helpers and imports as they are: Task 5c replaces the whole fil
 - [ ] **Step 7: Run every test**
 
 Run: `uv run pytest`
-Expected: every test passes, 26 more than after Task 5a. Record the count in the ledger.
+Expected: every test passes, 28 more than after Task 5a. Record the count in the ledger.
 
 - [ ] **Step 8: Commit**
 
@@ -11425,7 +11460,9 @@ NAS, so the template sets `[backup] prune = false`; SFTP stays as the fallback. 
 makes the jobs safe to run from the CLI and the loop alike:
 - **One job at a time.** `run_job` holds the ops lock (key `"ops"`), the same one the import
   takes (Task 9). It waits up to 600 s for it, as the CLI does; the loop (Task 13) passes
-  `lock_timeout=0`, and a busy turn is "skipped: busy", not a failure.
+  `lock_timeout=0`, and a busy turn is "skipped: busy", not a failure. But `flock` frees only
+  when the holder dies, so a hung holder would silently block every run: the loop records each
+  busy skip and alerts once `ops` has stayed busy for 3 times the loop interval.
 - **Stale restic locks.** restic never treats another process's lock as stale on its own; only
   `restic unlock` removes one. It runs before every backup, check, forget and restore. CLI runs
   also pass `--retry-lock 5m`.
