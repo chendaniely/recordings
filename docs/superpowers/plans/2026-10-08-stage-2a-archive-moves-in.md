@@ -6111,7 +6111,7 @@ no `state.db`.
   - `Config` (Task 2)
 - Produces:
   - **CLI:**
-    - `recordings reindex [--allow-empty] [--json]`: exit 0, 1 when a file doesn't validate or the rebuild left a recording out (`invalid` or `problems` is non-empty), 78 when this process isn't the writer.
+    - `recordings reindex [--allow-empty] [--json]`: exit 0, 1 when a file doesn't validate or the rebuild left a recording out (`invalid` or `problems` is non-empty), 75 when a lock stayed busy, 78 when this process isn't the writer.
     - `recordings docs [ARCHIVE] [--json]` now opens the `Writer`. `ARCHIVE` is optional, and must be `[archive] path`. It exits 78 when this process isn't the writer.
     - the helper `_writer(as_json: bool, *, docs: bool = True) -> Writer | int`
   - **`recordings_ui.settings.Settings`** gains `config: Config | None = None`.
@@ -6119,7 +6119,7 @@ no `state.db`.
   - **Test fixture** in ui `conftest.py`: `writer`, in folders of its own (`written-archive`, `written-state`, `written-index/`), so a test can take `demo_archive` as well.
 - **Removed:** `Archive.add_recording`, `Archive.write_rendition`, `Archive.find_by_sha256`, and the private writing helpers in `archive.py` (`_write_raw`, `_write_rendition_into`, `_merge_source`, `_drop_empty_tmp`, `_slug`, `_UNSAFE`).
 
-**Done when:** the full suite passes, with 4 more passed than after Task 5b (three in
+**Done when:** the full suite passes, with 5 more passed than after Task 5b (four in
 `test_cli.py`, one in `test_app.py`), and the demo is rebuilt. Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing tests**
@@ -6189,6 +6189,18 @@ In `packages/core/tests/test_cli.py`:
        assert out["recordings"] == 1 and out["invalid"] == []
        (problem,) = out["problems"]
        assert "does not match its folder" in problem["message"]
+
+   def test_reindex_names_an_archive_it_cannot_write_docs_into(
+           writer, tmp_path, monkeypatch, capsys):
+       # why: a read-only archive mount or a full disk is an OSError out of write_docs; the command
+       # names it and exits, it does not print a traceback.
+       def refuse(root):
+           raise PermissionError(13, "Read-only file system", str(root))
+
+       monkeypatch.setattr("recordings.writer.write_docs", refuse)
+       _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
+       assert main(["reindex", "--json"]) == 78
+       assert "Read-only file system" in json.loads(capsys.readouterr().out)["error"]
    ```
 
 In `packages/core/tests/test_init.py`, **replace** `test_docs_refuses_a_folder_without_a_sentinel`
@@ -6241,22 +6253,26 @@ def test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write(tmp_p
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `uv run pytest packages/core/tests/test_cli.py packages/core/tests/test_init.py packages/ui/tests/test_app.py -v`
-Expected: 6 failures:
+Expected: 7 failures:
 - `test_docs_then_validate_on_a_new_archive` and `test_docs_refuses_a_folder_without_a_sentinel`: `SystemExit: 2` (argparse: "the following arguments are required: archive")
 - `test_docs_are_never_written_into_the_macs_mirror`: `assert 0 == 78`, because the sentinel check alone lets `docs` write into the mirror
 - `test_reindex_accepts_an_outside_edit`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
 - `test_reindex_exits_1_and_names_a_recording_the_rebuild_left_out`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
 - `test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write`: `TypeError: Settings.__init__() got an unexpected keyword argument 'config'`
+- `test_reindex_names_an_archive_it_cannot_write_docs_into`: `SystemExit: 2` (argparse: "invalid choice: 'reindex'")
 
 - [ ] **Step 3: Add `recordings reindex`, and write the docs through the `Writer`**
 
 In `packages/core/src/recordings/cli.py`:
 1. **Add** the imports, below Task 2's:
    ```python
+   import sqlite3
+
    from recordings.index import IndexRefused
    from recordings.locks import LockTimeout
    from recordings.writer import Writer, WriterError
    ```
+   (`import sqlite3` goes with the standard-library imports, above `from pathlib import Path`.)
    Keep Task 2's `read_sentinel` and `SentinelError` import: `docs` no longer uses it, but Task 9's
    `_matching_index` does.
 2. In `build_parser`, **replace**:
@@ -6285,7 +6301,9 @@ In `packages/core/src/recordings/cli.py`:
            return cfg
        try:
            return Writer.open(cfg, docs=docs)
-       except (WriterError, LockTimeout) as exc:
+       except LockTimeout as exc:  # busy, not misconfigured: 75 (EX_TEMPFAIL), as the import uses
+           return _fail(str(exc), as_json, 75)
+       except (WriterError, OSError, sqlite3.Error) as exc:  # docs write: a read-only mount, a full disk
            return _fail(str(exc), as_json, 78)
 
 
@@ -6295,7 +6313,9 @@ In `packages/core/src/recordings/cli.py`:
            return writer
        try:
            report = writer.reindex(allow_empty=args.allow_empty)
-       except (IndexRefused, WriterError, LockTimeout) as exc:
+       except LockTimeout as exc:
+           return _fail(str(exc), args.json, 75)
+       except (IndexRefused, WriterError, OSError, sqlite3.Error) as exc:
            return _fail(str(exc), args.json, 1)
        _emit(report.to_dict(), args.json)
        # A recording the rebuild left out (not valid, or its id doesn't match its folder) is
@@ -6320,6 +6340,8 @@ In `packages/core/src/recordings/cli.py`:
        try:
            written = writer.write_docs()
        except LockTimeout as exc:
+           return _fail(str(exc), args.json, 75)
+       except OSError as exc:
            return _fail(str(exc), args.json, 1)
        _emit({"written": written}, args.json)
        return 0
@@ -6348,7 +6370,12 @@ In `packages/ui/src/recordings_ui/app.py`:
    def write_docs_at_startup(cfg: Config) -> None:
        """§6.7: write the archive's docs at startup, but only into an archive this process may
        write. Anywhere else (no sentinel, not the writer, an index it can't open) the app still
-       serves, read-only. sqlite3's errors are not OSErrors, so they are named here."""
+       serves, read-only. sqlite3's errors are not OSErrors, so they are named here.
+
+       The Writer is dropped on return and holds no lock afterwards: re-entrancy is per Locks
+       instance, so a second instance on the same state folder is safe only because this one is
+       never in use while another is. A long-lived Writer in the app (stage 3) must be the one
+       instance every caller shares."""
        try:
            Writer.open(cfg)
        except (WriterError, LockTimeout, OSError, sqlite3.Error) as exc:
@@ -6834,6 +6861,19 @@ with:
   and write temporary files named `.*.tmp`. Readers and mirrors skip both.
 ```
 
+In `packages/core/src/recordings/format/AGENTS.md`, **replace**:
+```markdown
+7. **Prefer the `recordings` CLI with `--json`** to editing files by hand.
+```
+with:
+```markdown
+7. **Prefer the `recordings` CLI with `--json`** to editing files by hand.
+8. **Never open, copy or index `.tmp/` or a file named `.*.tmp`.** They are writes in
+   progress. A recording being assembled in `.tmp/` has its transcripts and source files before
+   its `recording.json`, so nothing there yet says whether it is private: treat all of it as
+   private.
+```
+
 - [ ] **Step 7: Rebuild the demo and run every test**
 
 If `demo/.cache/media` is missing, refill it from the committed archive first. It is the same
@@ -6847,7 +6887,7 @@ Run:
 uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 uv run pytest
 ```
-Expected: `built 4 recordings into demo/archive`, then every test passes, 4 more than after Task
+Expected: `built 4 recordings into demo/archive`, then every test passes, 5 more than after Task
 5b. The demo's `recording.json` files now carry `"rev": 1`, and its `AGENTS.md` and `FORMAT.md`
 change. Record the count in the ledger.
 
@@ -9744,7 +9784,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - it holds `recordings.locks.OPS_LOCK` (Task 5a) for a real run; Task 11's `ops.run_job` holds the same key
     - `class ImportStopped(RuntimeError)`, with `.report`
     - `@dataclass RunReport`, with `.to_dict()` and the keys `created`, `merged`, `sources_added`, `renditions_added`, `plaud_outputs`, `held_removals`, `skipped_snapshots`, `skipped_outputs`, `measured` and `failed`
-    - `run(plan: Plan, writer: Writer, *, now: datetime, disk: Callable[[], DiskStatus] | None = None, lock_timeout: float = 600) -> RunReport`. It holds `Locks(writer.state.locks_dir, timeout=lock_timeout).hold("ops")` throughout, and raises `LockTimeout` when the lock stays busy. It raises `ImportStopped` when the disk guard says stop, when any media can't be measured (before writing anything), and when `add` raises `IndexRefused`.
+    - `run(plan: Plan, writer: Writer, *, now: datetime, disk: Callable[[], DiskStatus] | None = None, lock_timeout: float = 600) -> RunReport`. It holds `Locks(writer.state.locks_dir, timeout=lock_timeout).hold("ops")` throughout, and raises `LockTimeout` when the lock stays busy. It raises `ImportStopped` when the disk guard says stop, when any media can't be measured (before writing anything), and when `add` raises `IndexRefused`. It also raises `ImportStopped`, keeping the report, when a row fails with ENOSPC or EDQUOT, any `sqlite3.Error` or `IndexUnavailable` (Task 5b): going on would only fail every later row.
   - **CLI:** `recordings import-audio-router PATH [--dry-run] [--allow-unplaced] [--json]`. It reads `[plaud] consent_list`, failing closed with exit 78.
   - **Config:** `[plaud] consent_list`, and `[disk] warn_free_percent` and `stop_free_percent`.
 
@@ -9807,6 +9847,7 @@ def test_the_thresholds_come_from_config(tmp_path):
 
 `packages/core/tests/test_import_run.py`:
 ```python
+import errno
 import json
 import subprocess
 import sys
@@ -10075,6 +10116,24 @@ def test_the_import_stops_when_the_disk_guard_says_stop(ar_archive, plaud_env, w
         run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW, disk=lambda: stop)
     assert caught.value.report.created == 0
     assert list(writer.archive.iter_recordings()) == []
+
+
+def test_a_full_disk_stops_the_import_instead_of_filling_it_again_for_every_row(
+        ar_archive, plaud_env, writer, monkeypatch):
+    # why: ENOSPC is an OSError, which the run reported per row before going on, so every later
+    # row copied its media until the disk filled again. state.db shares that disk.
+    build(ar_archive, plaud_env)
+
+    def full(src, dst):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr("recordings.writer.copy_file_synced", full)
+    with pytest.raises(ImportStopped, match="disk is full") as caught:
+        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert [f["reason"] for f in caught.value.report.failed] == [
+        "OSError: a file could not be read or written"]
+    assert list(writer.archive.iter_recordings()) == []
+    assert not (writer.root / ".tmp").exists()
 
 
 def test_a_real_run_refuses_media_it_cannot_measure(ar_archive, plaud_env, writer, monkeypatch):
@@ -10812,10 +10871,12 @@ In `packages/core/src/recordings/sources/audio_router.py`, **replace** the impor
 `import csv` to `from recordings.refs import canonical_plaud_id`) with:
 ```python
 import csv
+import errno
 import hashlib
 import json
 import logging
 import re
+import sqlite3
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import asdict, dataclass, field
@@ -10833,7 +10894,7 @@ from recordings.plaud.normalise import meta_fetched_at
 from recordings.plaud.reconcile import matches_auto_private
 from recordings.refs import canonical_plaud_id
 from recordings.sources.ar_outputs import ar_stamp, map_rendition, pocket_outputs
-from recordings.writer import Incoming, Writer, WriterError
+from recordings.writer import Incoming, IndexUnavailable, Writer, WriterError
 ```
 
 Then **append** to the same file:
@@ -10844,6 +10905,8 @@ _log = logging.getLogger(__name__)
 _FAILURES = (
     (IndexRefused, "the archive reads as empty or unreadable"),
     (LockTimeout, "a lock stayed busy"),
+    (IndexUnavailable, "the index could not answer"),
+    (sqlite3.Error, "state.db or the index could not be used"),
     (WriterError, "the writer refused it"),
     (KeyError, "a recording folder is missing"),
     (OSError, "a file could not be read or written"),
@@ -10880,6 +10943,14 @@ class ImportStopped(RuntimeError):
 def _failure(exc: BaseException) -> str:
     phrase = next((p for kind, p in _FAILURES if isinstance(exc, kind)), "it failed")
     return f"{type(exc).__name__}: {phrase}"
+
+
+def _stops_the_run(exc: BaseException) -> bool:
+    """A full disk, or state.db or the index unusable: going on would only fail every later row,
+    and fill the disk again for each one."""
+    if isinstance(exc, OSError):
+        return exc.errno in (errno.ENOSPC, errno.EDQUOT)
+    return isinstance(exc, (sqlite3.Error, IndexUnavailable))
 
 
 def _read_json(path: Path) -> object:
@@ -11008,9 +11079,12 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
                 raise ImportStopped("the archive reads as empty or unreadable (is its disk "
                                     "mounted?): the import stopped", report) from None
-            except (WriterError, LockTimeout, KeyError, OSError, ValueError) as exc:
+            except (WriterError, LockTimeout, KeyError, OSError, ValueError, sqlite3.Error) as exc:
                 _log.debug("importing %s failed", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
+                if _stops_the_run(exc):
+                    raise ImportStopped("the disk is full, or state.db or the index can't be "
+                                        "used now: the import stopped", report) from None
     return report
 ```
 
@@ -11105,7 +11179,7 @@ In `packages/core/src/recordings/cli.py`:
 - [ ] **Step 6: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_run.py packages/core/tests/test_disk.py -v && uv run pytest`
-Expected: 30 passed (25 and 5), and the full suite stays green, its count above Task 8's.
+Expected: 31 passed (26 and 5), and the full suite stays green, its count above Task 8's.
 
 - [ ] **Step 7: Commit**
 
@@ -15682,12 +15756,17 @@ def test_a_damaged_state_db_needs_attention_rather_than_breaking_the_page(writer
 
 def test_status_without_state_never_loads_sqlite(demo_archive):
     # why: the Pages demo runs on Pyodide, where sqlite3 is a separate module nobody has checked.
+    # Nor may the reading path load the writer, the locks (flock) or state.db: the Pages demo has
+    # no write path, so it needs no no-op lock (spec §6.8) as long as this holds. fcntl is not
+    # tested for: a third-party import loads it.
     code = ("import sys; from pathlib import Path; from recordings.archive import Archive; "
+            "import recordings_ui.settings, recordings_ui.runtime; "
             "import recordings_ui.views as v; "
             f"v.status_view(Archive(Path({str(demo_archive)!r})), None); "
-            "print('sqlite3' in sys.modules)")
+            "print(sorted(m for m in ('sqlite3', 'recordings.writer', 'recordings.locks', "
+            "'recordings.state') if m in sys.modules))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
-    assert out.stdout.strip() == "False"
+    assert out.stdout.strip() == "[]"
 ```
 
 Add to `packages/ui/tests/test_shiny_server.py`:
