@@ -4573,8 +4573,8 @@ Three orderings matter here:
       `_write_recording`, `_write_rendition_locked`, `_publish_raw`, `_index`, `_catch_up_index`.
   - **Test fixtures** in core `conftest.py`: `make_writer(name="archive", writer_id="test") -> Writer`, `writer`, `make_incoming(content=None, *, name="clip.MP3", **over) -> Incoming`. `new_archive` stays.
 
-**Done when:** the full suite passes, with 33 more passed than after Task 5a: `test_writer.py`'s
-40, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
+**Done when:** the full suite passes, with 42 more passed than after Task 5a: `test_writer.py`'s
+49, less the seven `test_archive.py` tests it replaces (Step 6). Record the count in the ledger.
 
 - [ ] **Step 1: Write the failing writer tests**
 
@@ -8692,11 +8692,13 @@ In `packages/core/src/recordings/writer.py`:
        adopted: tuple[str, ...]  # outside edits accepted as the new merge base
        invalid: tuple[str, ...]  # files that don't validate, flagged in state.db
        problems: tuple[dict, ...]
+       forgotten: tuple[str, ...] = ()  # --allow-missing: recordings state.db no longer remembers
        reconciled: tuple[ReconcileReport, ...] = ()
 
        def to_dict(self) -> dict:
            return {"recordings": self.recordings, "adopted": list(self.adopted),
                    "invalid": list(self.invalid), "problems": list(self.problems),
+                   "forgotten": list(self.forgotten),
                    "plaud": {"written": sum(r.written for r in self.reconciled),
                              "held": sum(len(r.held) for r in self.reconciled),
                              "skipped": sum(len(r.skipped) for r in self.reconciled),
@@ -8750,9 +8752,10 @@ In `packages/core/src/recordings/writer.py`:
                return ReconcileReport(recording_id, written, result.held, result.skipped,
                                       result.title_difference is not None)
    ```
-7. In `reindex`, **replace** everything from `count = self.rebuild_index(allow_empty=allow_empty)`
+7. In `reindex`, **replace** everything from `gone = self._missing() if allow_missing else []`
    to the end of the method (the `return ReindexReport(...)` statement) with:
    ```python
+           gone = self._missing() if allow_missing else []
            reconciled = []
            for rec in list(self.archive.iter_recordings()):
                if not any(s.kind == "plaud" for s in rec.sources):
@@ -8763,11 +8766,14 @@ In `packages/core/src/recordings/writer.py`:
                    # A fixed phrase, never the exception's text, which can carry a title.
                    problem = f"{type(exc).__name__}: not reconciled"
                    reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
-           count = self.rebuild_index(allow_empty=allow_empty)
+           count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
+           for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
+               self.state.forget(rel)
            problems = tuple({"path": str(p.path), "message": p.message}
                             for p in self.archive.problems)
            return ReindexReport(recordings=count, adopted=tuple(adopted), invalid=tuple(invalid),
-                                problems=problems, reconciled=tuple(reconciled))
+                                problems=problems, forgotten=tuple(Path(f).parent.name for f in gone),
+                                reconciled=tuple(reconciled))
    ```
 
 In `config.example.toml`, **replace** the line `auto_private_patterns = ["^private"] …` with:
@@ -10063,7 +10069,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - it holds `recordings.locks.OPS_LOCK` (Task 5a) for a real run; Task 11's `ops.run_job` holds the same key
     - `class ImportStopped(RuntimeError)`, with `.report`
     - `@dataclass RunReport`, with `.to_dict()` and the keys `created`, `merged`, `sources_added`, `renditions_added`, `plaud_outputs`, `held_removals`, `skipped_snapshots`, `skipped_outputs`, `measured` and `failed`
-    - `run(plan: Plan, writer: Writer, *, now: datetime, disk: Callable[[], DiskStatus] | None = None, lock_timeout: float = 600) -> RunReport`. It holds `Locks(writer.state.locks_dir, timeout=lock_timeout).hold("ops")` throughout, and raises `LockTimeout` when the lock stays busy. It raises `ImportStopped` when the disk guard says stop, when any media can't be measured (before writing anything), and when `add` raises `IndexRefused`. It also raises `ImportStopped`, keeping the report, when a row fails with ENOSPC or EDQUOT, any `sqlite3.Error` or `IndexUnavailable` (Task 5b): going on would only fail every later row.
+    - `run(plan: Plan, writer: Writer, *, now: datetime, disk: Callable[[], DiskStatus] | None = None, lock_timeout: float = 600) -> RunReport`. It holds `Locks(writer.state.locks_dir, timeout=lock_timeout).hold("ops")` throughout, and raises `LockTimeout` when the lock stays busy. It raises `ImportStopped` when the disk guard says stop, when any media can't be measured (before writing anything), and when `add` raises `IndexRefused`. It also raises `ImportStopped`, keeping the report, when a row fails with ENOSPC or EDQUOT, any `sqlite3.Error`, `IndexUnavailable` or `NotTheWriter` (Task 5b; the Writer re-checks `archive.json` before each write, so an archive that drops off mid-run stops the import): going on would only fail every later row.
   - **CLI:** `recordings import-audio-router PATH [--dry-run] [--allow-unplaced] [--json]`. It reads `[plaud] consent_list`, failing closed with exit 78.
   - **Config:** `[plaud] consent_list`, and `[disk] warn_free_percent` and `stop_free_percent`.
 
@@ -10413,6 +10419,19 @@ def test_a_full_disk_stops_the_import_instead_of_filling_it_again_for_every_row(
         "OSError: a file could not be read or written"]
     assert list(writer.archive.iter_recordings()) == []
     assert not (writer.root / ".tmp").exists()
+
+
+def test_an_archive_that_drops_off_stops_the_import_instead_of_failing_every_row(
+        ar_archive, plaud_env, writer, tmp_path):
+    # why: §6.7. The Writer re-checks archive.json before each write and raises NotTheWriter. That
+    # is not a per-row failure: going on would only fail every later row the same way.
+    build(ar_archive, plaud_env)
+    (writer.root / "archive.json").rename(tmp_path / "archive.json.away")
+    with pytest.raises(ImportStopped, match="archive has dropped off") as caught:
+        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert [f["reason"] for f in caught.value.report.failed] == [
+        "NotTheWriter: this process may not write the archive now"]
+    assert caught.value.report.created == 0
 
 
 def test_a_real_run_refuses_media_it_cannot_measure(ar_archive, plaud_env, writer, monkeypatch):
@@ -11173,7 +11192,7 @@ from recordings.plaud.normalise import meta_fetched_at
 from recordings.plaud.reconcile import matches_auto_private
 from recordings.refs import canonical_plaud_id
 from recordings.sources.ar_outputs import ar_stamp, map_rendition, pocket_outputs
-from recordings.writer import Incoming, IndexUnavailable, Writer, WriterError
+from recordings.writer import Incoming, IndexUnavailable, NotTheWriter, Writer, WriterError
 ```
 
 Then **append** to the same file:
@@ -11185,6 +11204,7 @@ _FAILURES = (
     (IndexRefused, "the archive reads as empty or unreadable"),
     (LockTimeout, "a lock stayed busy"),
     (IndexUnavailable, "the index could not answer"),
+    (NotTheWriter, "this process may not write the archive now"),
     (sqlite3.Error, "state.db or the index could not be used"),
     (WriterError, "the writer refused it"),
     (KeyError, "a recording folder is missing"),
@@ -11229,7 +11249,7 @@ def _stops_the_run(exc: BaseException) -> bool:
     and fill the disk again for each one."""
     if isinstance(exc, OSError):
         return exc.errno in (errno.ENOSPC, errno.EDQUOT)
-    return isinstance(exc, (sqlite3.Error, IndexUnavailable))
+    return isinstance(exc, (sqlite3.Error, IndexUnavailable, NotTheWriter))
 
 
 def _read_json(path: Path) -> object:
@@ -11362,8 +11382,9 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
                 _log.debug("importing %s failed", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
                 if _stops_the_run(exc):
-                    raise ImportStopped("the disk is full, or state.db or the index can't be "
-                                        "used now: the import stopped", report) from None
+                    raise ImportStopped("the disk is full, the archive has dropped off, or state.db "
+                                        "or the index can't be used now: the import stopped",
+                                        report) from None
     return report
 ```
 
@@ -11458,7 +11479,7 @@ In `packages/core/src/recordings/cli.py`:
 - [ ] **Step 6: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_run.py packages/core/tests/test_disk.py -v && uv run pytest`
-Expected: 31 passed (26 and 5), and the full suite stays green, its count above Task 8's.
+Expected: 32 passed (27 and 5), and the full suite stays green, its count above Task 8's.
 
 - [ ] **Step 7: Commit**
 
