@@ -758,10 +758,11 @@ through 1a, then:
    (a copied or renamed folder): fix or move that folder, then run `reindex` again. A recording
    it names is missing from the app until then. Do not import while `reindex` reports an invalid
    file. It also refuses, exit 1, and does not rebuild the index, when `state.db` knows
-   recordings that are not in the archive now: a folder did not restore or is not mounted. The
-   app then starts read-only, and an import stops with `IndexUnavailable` (the IDs are in the
-   debug log). Fix that first, and pass `--allow-missing` only for recordings you removed on
-   purpose: it rebuilds, and `state.db` forgets them.
+   recordings that are not in the archive now: a folder did not restore or is not mounted.
+   Until then a Writer that must rebuild the index refuses too: the app starts without writing
+   its docs, and an import exits 78 naming them (or, if `index.db` survived, stops with
+   `IndexUnavailable` when it reaches one of them). Fix that first, and pass `--allow-missing`
+   only for recordings you removed on purpose: it rebuilds, and `state.db` forgets them.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex

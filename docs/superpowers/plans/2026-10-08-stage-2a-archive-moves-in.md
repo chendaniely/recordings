@@ -1335,10 +1335,11 @@ through 1a, then:
    (a copied or renamed folder): fix or move that folder, then run `reindex` again. A recording
    it names is missing from the app until then. Do not import while `reindex` reports an invalid
    file. It also refuses, exit 1, and does not rebuild the index, when `state.db` knows
-   recordings that are not in the archive now: a folder did not restore or is not mounted. The
-   app then starts read-only, and an import stops with `IndexUnavailable` (the IDs are in the
-   debug log). Fix that first, and pass `--allow-missing` only for recordings you removed on
-   purpose: it rebuilds, and `state.db` forgets them.
+   recordings that are not in the archive now: a folder did not restore or is not mounted.
+   Until then a Writer that must rebuild the index refuses too: the app starts without writing
+   its docs, and an import exits 78 naming them (or, if `index.db` survived, stops with
+   `IndexUnavailable` when it reaches one of them). Fix that first, and pass `--allow-missing`
+   only for recordings you removed on purpose: it rebuilds, and `state.db` forgets them.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex
@@ -6433,7 +6434,8 @@ In `packages/core/tests/test_cli.py`:
        for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
            monkeypatch.delenv(name, raising=False)
    ```
-3. **Replace** `test_docs_then_validate_on_a_new_archive` with:
+3. **Replace** `test_docs_then_validate_on_a_new_archive`, and the existing
+   `test_validate_exits_1_on_problems` after it, with:
    ```python
    def test_docs_then_validate_on_a_new_archive(tmp_path, monkeypatch, capsys):
        init_archive(tmp_path / "a", tmp_path / "state", writer_id="test")
