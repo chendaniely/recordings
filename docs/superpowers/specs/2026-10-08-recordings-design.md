@@ -1216,11 +1216,13 @@ before any other source. It reuses `audio-router`'s Plaud client, copied in (§1
     only as a count. A listed row's own files are never opened. A private-tier file that is
     not named by a listed ID is hashed to learn whether it is that audio: the bytes are read
     and nothing is kept.
-  - **The one limit:** a listed row whose catalog SHA is empty (a row with no audio) has no
-    hash to match, and matching it would mean reading its file. Its same-audio copies in the
-    private tier are therefore not recognised; such a copy has no catalog row to import
-    under its listed ID and is held back as unplaced, never imported. `build_catalog` fills the
-    SHA for every main-tier row.
+  - **The one limit, and it fails closed:** a listed row whose catalog SHA is empty (a row with
+    no audio) has no hash to match, and matching it would mean reading its file, so its
+    same-audio copies in the private tier could not be recognised. The dry run therefore adds
+    one problem, as a count with no ID and no path ("N consent-listed rows have no catalog
+    audio hash"), so it is not ok and a real run stops, even with `--allow-unplaced`, until the
+    catalog is rebuilt. A private row whose file ID is its 64-hex hash counts as having one.
+    `build_catalog` fills the SHA for every main-tier row.
   - **The sync applies the rule per ID.** Plaud's listing carries no audio hash, so the sync
     cannot tell that two Plaud IDs hold the same audio before it downloads one. It never
     downloads a listed ID. A Plaud ID whose audio matches a listed recording is not stopped
@@ -1437,7 +1439,7 @@ later" until its build stage (§20):
   | Plaud, Google Recorder and Pocket recordings | one recording each, with a source reference that keeps `audio-router`'s source and ID |
   | rows with no audio | reported by the dry run and not imported. A Plaud one arrives later through the sync. |
   | the `media/private/` tier | imported, tagged `private`. Its files are matched by SHA-256 (a 64-hex ID is the audio's hash), and a Recorder export's `.txt` comes too |
-  | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels become private tags, one per meaning (`therapy` and both spellings of counselling → `private/therapy`; `journal`, `medical` and `students` → `private/journal`, `private/medical` and `private/students`; `personal`, `private` and `voiceprints` → `private`; matched in any capitalisation). A privacy label or a non-empty `access` makes the recording private. |
+  | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels become private tags, one per meaning (`therapy` and both spellings of counselling → `private/therapy`; `journal`, `medical` and `students` → `private/journal`, `private/medical` and `private/students`; `personal`, `private` and `voiceprints` → `private`; a catalog label is a lowercase slug, and a row with any other label is unplaced). A privacy label or a non-empty `access` makes the recording private. |
   | Plaud rows with audio but no snapshot and no time | deferred to 2b's sync, which matches them by Plaud ID; if Plaud no longer has them, 2b imports them timed by the file's mtime |
   | an ID on the consent list (§9.1), and every row that is the same recording: a `dup_of` link either way, the same catalog audio SHA-256, a private-tier file with that SHA-256 or named by the ID | not imported, and reported only as a count. If either ID of the byte-identical Plaud pair is listed, both go. Removing the ID from the list brings the whole group in on the next run. |
   | turns or segments with no time, and speaker names Dan typed | kept: untimed segments as reconcile keeps them, typed names verbatim in `source/` |
