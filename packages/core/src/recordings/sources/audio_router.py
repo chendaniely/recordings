@@ -634,6 +634,14 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
     if isinstance(provenance.get("rows"), int) and provenance["rows"] != len(rows):
         problems.append(f"catalog.csv has {len(rows)} rows but provenance.json says "
                         f"{provenance['rows']}: the copy may be incomplete")
+    # The list excludes a recording's copies by its audio hash (§9.1). A listed row with none
+    # (its private-tier file ID is its hash, so that one counts) can't have its copies
+    # recognised: the run stops, saying how many and never which.
+    blind = sum(1 for r in rows if canonical_plaud_id(r.file_id) in listed and not r.audio_sha256
+                and not (r.source == "private" and _HEX64.fullmatch(r.file_id)))
+    if blind:
+        problems.append(f"{blind} consent-listed rows have no catalog audio hash, so copies of "
+                        "them can't be recognised: rebuild the catalog")
     by_uri = {r.uri: r for r in rows}
     private_media, skipped = _private_media(root, listed)
     if skipped:

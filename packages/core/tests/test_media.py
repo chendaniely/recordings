@@ -121,12 +121,12 @@ def test_a_long_decode_that_keeps_going_is_never_cut_short(tmp_path, monkeypatch
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     steady = bin_dir / "ffmpeg"
-    steady.write_text("#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 32000 /dev/zero; sleep 0.3; "
+    steady.write_text("#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 65536 /dev/zero; sleep 0.3; "
                       "done\n", encoding="utf-8")
     steady.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     (tmp_path / "a.m4a").write_bytes(b"not really")
-    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 6000  # 1.8 s in all
+    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 12288  # 1.8 s in all, a 64 KiB read each step
     steady.write_text("#!/bin/sh\nhead -c 32000 /dev/zero\nexec sleep 30\n", encoding="utf-8")
     started = time.monotonic()
     assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) is None  # stalled: killed

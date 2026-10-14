@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 
 import pytest
@@ -372,6 +373,7 @@ def test_the_pocket_listing_honours_the_consent_list(ar_archive):
     assert plan(ar_archive.root, consent={surrogate}).unlisted == ()
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root lists every folder")
 def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_env):
     # why: Task 8's council. Path.glob skips a folder it can't list without a word (Python
     # 3.13+), so a locked raw/<id>/ read as "no snapshots", and the recording would be created
@@ -404,6 +406,7 @@ def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_e
     assert not the_plan.ok and str(ar_archive.root) not in json.dumps(the_plan.report())
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root lists every folder")
 def test_a_source_folder_that_cant_be_listed_is_a_problem_not_a_crash(ar_archive, plaud_env):
     # why: Task 8's council. A store folder that can't be listed (traversable, not readable) made
     # plan() raise from its listing of what's on disk; an audio shard or a private-tier folder
@@ -519,3 +522,24 @@ def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(ar_archi
         RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),)))
     (item,) = plan(ar_archive.root, writer.index, consent=NONE).items
     assert item.disposition == "unplaced" and "different audio" in item.reason
+
+
+def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud_env):
+    # why: §9.1, Task 8's council. The list excludes a recording's copies by its audio hash. A
+    # listed row whose catalog hash is empty has none to match, so a private-tier copy of it
+    # would import: the dry run says so, with no ID and no path, and is not ok.
+    ar_archive.plaud(X, envelopes=[plaud_env(X)])
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    assert ar_archive.rows[0]["uri"] == f"plaud/{X}"
+    ar_archive.rows[0]["audio_sha256"] = ""
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent={X})
+    assert [p for p in the_plan.problems if "consent-listed" in p] == [
+        "1 consent-listed rows have no catalog audio hash, so copies of them can't be "
+        "recognised: rebuild the catalog"]
+    text = json.dumps(the_plan.report(), ensure_ascii=False)
+    assert X not in text and str(ar_archive.root) not in text and not the_plan.ok
+    assert the_plan.counts()["consent-excluded"] == 1 and the_plan.counts()["new"] == 1
+    ar_archive.rows[0]["audio_sha256"] = hashlib.sha256(b"x").hexdigest()
+    ar_archive.write_catalog()
+    assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}).problems)

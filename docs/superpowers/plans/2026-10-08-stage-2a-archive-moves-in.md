@@ -9605,6 +9605,10 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
   listed is `unplaced`, and so is a main-tier row whose copy has no snapshot, since build_catalog
   built every such row from one. A store or private-tier folder that can't be listed is a
   problem: the copy can't be checked against the catalog.
+- **The consent list fails closed on a missing hash** (Task 8's council): the list excludes a
+  recording's copies by the catalog's audio hash. When a consent-listed row has none (a private
+  row's 64-hex file ID counts as its hash), the dry run adds one problem, with a count and no
+  ID or path, so `ok` is false and a real run stops even with `--allow-unplaced`.
 - **Rows with the same audio wait for each other** (Task 8's council): when one row of a
   same-audio group (by `dup_of`, the catalog's hash or the file's) can't be placed, the rest are
   `unplaced` too, so the recording is never created without that row's labels, titles and
@@ -9794,12 +9798,12 @@ def test_a_long_decode_that_keeps_going_is_never_cut_short(tmp_path, monkeypatch
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     steady = bin_dir / "ffmpeg"
-    steady.write_text("#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 32000 /dev/zero; sleep 0.3; "
+    steady.write_text("#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 65536 /dev/zero; sleep 0.3; "
                       "done\n", encoding="utf-8")
     steady.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     (tmp_path / "a.m4a").write_bytes(b"not really")
-    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 6000  # 1.8 s in all
+    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 12288  # 1.8 s in all, a 64 KiB read each step
     steady.write_text("#!/bin/sh\nhead -c 32000 /dev/zero\nexec sleep 30\n", encoding="utf-8")
     started = time.monotonic()
     assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) is None  # stalled: killed
@@ -10152,6 +10156,7 @@ def ar_archive(tmp_path) -> ARArchive:
 ```python
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 
 import pytest
@@ -10524,6 +10529,7 @@ def test_the_pocket_listing_honours_the_consent_list(ar_archive):
     assert plan(ar_archive.root, consent={surrogate}).unlisted == ()
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root lists every folder")
 def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_env):
     # why: Task 8's council. Path.glob skips a folder it can't list without a word (Python
     # 3.13+), so a locked raw/<id>/ read as "no snapshots", and the recording would be created
@@ -10556,6 +10562,7 @@ def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_e
     assert not the_plan.ok and str(ar_archive.root) not in json.dumps(the_plan.report())
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root lists every folder")
 def test_a_source_folder_that_cant_be_listed_is_a_problem_not_a_crash(ar_archive, plaud_env):
     # why: Task 8's council. A store folder that can't be listed (traversable, not readable) made
     # plan() raise from its listing of what's on disk; an audio shard or a private-tier folder
@@ -10671,6 +10678,27 @@ def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(ar_archi
         RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),)))
     (item,) = plan(ar_archive.root, writer.index, consent=NONE).items
     assert item.disposition == "unplaced" and "different audio" in item.reason
+
+
+def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud_env):
+    # why: §9.1, Task 8's council. The list excludes a recording's copies by its audio hash. A
+    # listed row whose catalog hash is empty has none to match, so a private-tier copy of it
+    # would import: the dry run says so, with no ID and no path, and is not ok.
+    ar_archive.plaud(X, envelopes=[plaud_env(X)])
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    assert ar_archive.rows[0]["uri"] == f"plaud/{X}"
+    ar_archive.rows[0]["audio_sha256"] = ""
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent={X})
+    assert [p for p in the_plan.problems if "consent-listed" in p] == [
+        "1 consent-listed rows have no catalog audio hash, so copies of them can't be "
+        "recognised: rebuild the catalog"]
+    text = json.dumps(the_plan.report(), ensure_ascii=False)
+    assert X not in text and str(ar_archive.root) not in text and not the_plan.ok
+    assert the_plan.counts()["consent-excluded"] == 1 and the_plan.counts()["new"] == 1
+    ar_archive.rows[0]["audio_sha256"] = hashlib.sha256(b"x").hexdigest()
+    ar_archive.write_catalog()
+    assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}).problems)
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -11323,6 +11351,14 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
     if isinstance(provenance.get("rows"), int) and provenance["rows"] != len(rows):
         problems.append(f"catalog.csv has {len(rows)} rows but provenance.json says "
                         f"{provenance['rows']}: the copy may be incomplete")
+    # The list excludes a recording's copies by its audio hash (§9.1). A listed row with none
+    # (its private-tier file ID is its hash, so that one counts) can't have its copies
+    # recognised: the run stops, saying how many and never which.
+    blind = sum(1 for r in rows if canonical_plaud_id(r.file_id) in listed and not r.audio_sha256
+                and not (r.source == "private" and _HEX64.fullmatch(r.file_id)))
+    if blind:
+        problems.append(f"{blind} consent-listed rows have no catalog audio hash, so copies of "
+                        "them can't be recognised: rebuild the catalog")
     by_uri = {r.uri: r for r in rows}
     private_media, skipped = _private_media(root, listed)
     if skipped:
@@ -11352,7 +11388,7 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
 - [ ] **Step 8: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_plan.py packages/core/tests/test_media.py -v && uv run pytest`
-Expected: 43 passed (35 and 8), and the full suite stays green, its count above Task 7's.
+Expected: 44 passed (36 and 8), and the full suite stays green, its count above Task 7's.
 
 - [ ] **Step 9: Commit**
 
