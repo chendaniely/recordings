@@ -21,6 +21,8 @@ from source/ as reconcile builds Plaud's.
 
 from __future__ import annotations
 
+import re
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,8 +90,10 @@ def _words(items: Any, start: float) -> tuple[list[dict], int]:
 
 
 def _words_transcript(payload: dict) -> tuple[dict, int] | None:
-    """whisper's segments, each with the timed words whose middle falls inside it. An untimed
-    word can't be placed by time; its text is still in its segment's text."""
+    """whisper's segments, each with the timed words nearest to it: a word whose middle falls
+    inside a segment goes there, and one in a gap between two segments goes to the nearer one (the
+    earlier on a tie), so no timed word is dropped. An untimed word can't be placed by time; its
+    text is still in its segment's text."""
     rows = [s for s in payload.get("segments") or [] if isinstance(s, dict)]
     if not rows:
         return None
@@ -97,20 +101,18 @@ def _words_transcript(payload: dict) -> tuple[dict, int] | None:
     words = sorted(({"word": str(w.get("word") or ""), "start": float(w["start"]),
                      "end": float(w["end"])} for w in payload.get("words") or [] if _timed(w)),
                    key=lambda w: (w["start"] + w["end"]) / 2)
-    out, i = [], 0
-    for n, (seg, (start, end)) in enumerate(zip(rows, times)):
-        last = n == len(rows) - 1
-        inside = []
-        while i < len(words):
-            middle = (words[i]["start"] + words[i]["end"]) / 2
-            if middle < end or last:
-                if middle >= start or n == 0:
-                    inside.append(words[i])
-                i += 1
-            else:
-                break
-        out.append({"start": start, "end": end, "text": str(seg.get("text") or "").strip(),
-                    "words": inside})
+    starts, ends = [start for start, _ in times], [end for _, end in times]
+    inside: list[list[dict]] = [[] for _ in rows]
+    for word in words:
+        middle = (word["start"] + word["end"]) / 2
+        n = bisect_left(ends, middle)  # the first segment that ends at or after the word's middle
+        if n == len(rows):
+            n -= 1
+        elif n and middle - ends[n - 1] <= max(0.0, starts[n] - middle):
+            n -= 1  # in the gap, and no nearer to the next segment than to the one before
+        inside[n].append(word)
+    out = [{"start": start, "end": end, "text": str(seg.get("text") or "").strip(),
+            "words": found} for seg, (start, end), found in zip(rows, times, inside)]
     return {"segments": out}, untimed
 
 
@@ -202,7 +204,8 @@ def map_rendition(path: Path, doc: object) -> Mapped:
                     if markdown else Mapped(skipped="an empty summary"))
     except ValidationError:
         return Mapped(skipped="does not fit the output schema")
-    return Mapped(skipped=f"an output kind recordings has no place for ({kind})")
+    shown = kind if re.fullmatch(r"[a-z_]{1,40}", kind) else "other"  # a file's text is never shown
+    return Mapped(skipped=f"an output kind recordings has no place for ({shown})")
 
 
 def pocket_outputs(doc: dict, raw: str, fetched_at: datetime) -> list[Rendition]:

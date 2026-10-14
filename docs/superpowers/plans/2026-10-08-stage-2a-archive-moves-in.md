@@ -11452,7 +11452,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - it holds `recordings.locks.OPS_LOCK` (Task 5a) for a real run; Task 11's `ops.run_job` holds the same key
     - `class ImportStopped(RuntimeError)`, with `.report`
     - `@dataclass RunReport`, with `.to_dict()` and the keys `created`, `merged`, `sources_added`, `renditions_added`, `plaud_outputs`, `held_removals`, `skipped_snapshots`, `skipped_outputs`, `measured` and `failed`
-    - `run(plan: Plan, writer: Writer, *, now: datetime, disk: Callable[[], DiskStatus] | None = None, lock_timeout: float = 600) -> RunReport`. It holds `Locks(writer.state.locks_dir, timeout=lock_timeout).hold("ops")` throughout, and raises `LockTimeout` when the lock stays busy. It raises `ImportStopped` when the disk guard says stop, when any media can't be measured (before writing anything), and when `add` raises `IndexRefused`. It also raises `ImportStopped`, keeping the report, when a row fails with ENOSPC or EDQUOT, any `sqlite3.Error`, `IndexUnavailable` or `NotTheWriter` (Task 5b; the Writer re-checks `archive.json` before each write, so an archive that drops off mid-run stops the import): going on would only fail every later row.
+    - `run(plan: Plan, writer: Writer, *, now: datetime, disk: Callable[[], DiskStatus] | None = None, stop_free_percent: float = STOP_FREE_PERCENT, lock_timeout: float = 600) -> RunReport`. It holds `Locks(writer.state.locks_dir, timeout=lock_timeout).hold("ops")` throughout, and raises `LockTimeout` when the lock stays busy. It raises `ImportStopped` before it takes the lock or writes anything when the plan has problems or any media can't be measured, when the disk guard says stop or the next new recording would leave less than `stop_free_percent` free, and when `add` raises `IndexRefused`. It also raises `ImportStopped`, keeping the report, when a row fails with ENOSPC or EDQUOT, any `sqlite3.Error`, `IndexUnavailable` or `NotTheWriter` (Task 5b; the Writer re-checks `archive.json` before each write, so an archive that drops off mid-run stops the import): going on would only fail every later row.
   - **CLI:** `recordings import-audio-router PATH [--dry-run] [--allow-unplaced] [--json]`. It reads `[plaud] consent_list`, failing closed with exit 78.
   - **Config:** `[plaud] consent_list`, and `[disk] warn_free_percent` and `stop_free_percent`.
 
@@ -11460,6 +11460,7 @@ What the run guarantees:
 - **Privacy first (§7.4):** every private tag is in `Incoming.tags` when the recording is created. That covers the catalog's privacy labels and `access`, the private tier, and a Plaud title (any snapshot's, under either ID) that matches the auto-private patterns. A duplicate's labels and titles count too: rows with the same audio are one recording, so each is created with its whole group's privacy, whichever row is added first.
 - **Measured media:** a real run refuses to start while any recording's media can't be measured. Without ffmpeg, that means any non-WAV file.
 - **The planned bytes:** each `Incoming` carries the plan's SHA-256, and `add` refuses other bytes.
+- **Counts that agree with the dry run:** `skipped_snapshots` and `held_removals` count each snapshot (and each held slot) once per recording, so a same-audio group is not counted once per row. A degraded snapshot never supplies the title a recording is created with; the auto-private check still reads every snapshot's title, erring private.
 - **The ops lock:** the run holds it throughout, so a backup or the mirror never runs half-way through an import.
 - **Fixed failure text:** `failed[].reason` is the exception's type plus a fixed phrase, never its message, which can carry a title. The full exception goes only to the debug log.
 - **An archive that reads as empty stops the run:** `add` raises `IndexRefused` when its index rebuild finds no recordings, most likely an unmounted disk. The run reports that item in fixed words and stops, rather than going on.
@@ -11515,11 +11516,13 @@ def test_the_thresholds_come_from_config(tmp_path):
 
 `packages/core/tests/test_import_run.py`:
 ```python
+import dataclasses
 import errno
 import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -11530,6 +11533,7 @@ from recordings.disk import DiskStatus
 from recordings.index import Index, IndexRefused
 from recordings.locks import Locks, LockTimeout
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
+from recordings.plaud.reconcile import Held
 from recordings.selfdoc import validate
 from recordings.sources import audio_router
 from recordings.sources.ar_outputs import map_rendition, pocket_outputs
@@ -12151,6 +12155,159 @@ def test_the_run_module_reports_counts_only():
     assert set(audio_router.RunReport().to_dict()) == {
         "created", "merged", "sources_added", "renditions_added", "plaud_outputs",
         "held_removals", "skipped_snapshots", "skipped_outputs", "measured", "failed"}
+
+
+def _group(ar, plaud_env, *, b_tags=()):
+    """A with a good and a degraded snapshot, and B, A's byte-identical duplicate."""
+    ar.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True)])
+    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+             dup_of=f"plaud/{A}", tags=b_tags)
+    ar.write_catalog()
+
+
+def test_a_same_audio_group_counts_each_skipped_snapshot_once(ar_archive, plaud_env, writer):
+    # why: reconcile rebuilds its skipped snapshots from all of a recording's snapshots on every
+    # call, so B's merge into A counted A's again, and the report disagreed with the dry run.
+    _group(ar_archive, plaud_env)
+    the_plan = plan(ar_archive.root, writer.index, consent=())
+    assert the_plan.incomplete_snapshots()["total"] == 1
+    first = run(the_plan, writer, now=NOW)
+    assert (first.created, first.merged, first.skipped_snapshots) == (1, 1, 1)
+    again_plan = plan(ar_archive.root, writer.index, consent=())
+    assert again_plan.incomplete_snapshots()["total"] == 1
+    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    assert again.skipped_snapshots == again_plan.incomplete_snapshots()["total"] == 1
+
+
+def test_held_removals_are_counted_once_per_recording(ar_archive, plaud_env, writer, monkeypatch):
+    _group(ar_archive, plaud_env)
+    held = (Held("source/plaud-20260801T161000Z.json", "transcript", "transcript removed"),)
+    monkeypatch.setattr(Writer, "reconcile_plaud",
+                        lambda self, rid: SimpleNamespace(written=0, held=held, skipped=()))
+    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert (report.merged, report.held_removals) == (1, 1)
+
+
+def test_a_degraded_snapshot_never_names_the_recording(ar_archive, plaud_env, writer,
+                                                       monkeypatch):
+    # why: §9.1.1. Reconcile names a recording from complete snapshots only, so the import
+    # must not feed a Plaud field from a degraded one, even for a moment.
+    ar_archive.plaud(A, envelopes=[plaud_env(A, name="Good title"),
+                                   plaud_env(A, name="Degraded title", link_error=True)])
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name="Only degraded", link_error=True)],
+                     recorded_at="2026-08-02T09:00:00-07:00")
+    ar_archive.write_catalog()
+    seen = {}
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen[incoming.sources[0].ref] = (incoming.title, incoming.title_by)
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert report.failed == []
+    assert seen == {A: ("Good title", "plaud"), B: ("Untitled recording", None)}
+
+
+def test_a_skipped_outputs_reason_never_carries_text_from_the_file(tmp_path):
+    # why: Review Focus 4. The reasons are --json keys, so a kind read from a file is shown
+    # only when it is a short slug.
+    path = tmp_path / "x-20260801T170000Z.json"
+    assert map_rendition(path, {**WORDS, "kind": "Week 4 secret"}).skipped == (
+        "an output kind recordings has no place for (other)")
+    assert map_rendition(path, {**WORDS, "kind": "novel"}).skipped == (
+        "an output kind recordings has no place for (novel)")
+
+
+def test_a_word_in_a_gap_between_segments_goes_to_the_nearest_one(tmp_path):
+    # why: a timed word between two whisper segments is kept, never dropped: with the nearer
+    # segment, and the earlier one on a tie.
+    words = [{"word": "One", "start": 0.1, "end": 0.9}, {"word": "gap", "start": 1.1, "end": 1.3},
+             {"word": "tie", "start": 1.25, "end": 1.75}, {"word": "near", "start": 1.6, "end": 1.8},
+             {"word": "Two", "start": 2.1, "end": 2.9}]
+    doc = {**WORDS, "payload": {"words": words, "segments": [
+        {"id": 0, "start": 0.0, "end": 1.0, "text": " One"},
+        {"id": 1, "start": 2.0, "end": 3.0, "text": " Two"}]}}
+    out = map_rendition(tmp_path / "words-x-v-20260801T170000Z.json", doc).rendition
+    assert [[w["word"] for w in s["words"]] for s in out.payload["segments"]] == [
+        ["One", "gap", "tie"], ["near", "Two"]]
+
+
+def test_run_itself_refuses_a_plan_with_problems(ar_archive, plaud_env, writer):
+    # why: §9.1. A plan with problems includes the rows the consent list can't be applied to,
+    # so the guarantee must not depend on the caller having checked. It stops before the lock.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    the_plan = dataclasses.replace(plan(ar_archive.root, writer.index, consent=()),
+                                   problems=("a problem naming Week 4",))
+    with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
+        with pytest.raises(ImportStopped, match="the plan has 1 problem") as caught:
+            run(the_plan, writer, now=NOW, lock_timeout=0.1)
+    assert "Week 4" not in str(caught.value) and caught.value.report.created == 0
+    assert list(writer.archive.iter_recordings()) == []
+
+
+def test_the_disk_guard_counts_the_size_of_the_recording_about_to_be_copied(
+        ar_archive, plaud_env, writer):
+    # why: §12.5. Free space is judged after the copy, not before it.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    size = (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").stat().st_size
+    tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
+                       level="ok", message="5.5% free")  # 4.5% free once the copy is in
+    the_plan = plan(ar_archive.root, writer.index, consent=())
+    with pytest.raises(ImportStopped, match="would leave less than 5% free") as caught:
+        run(the_plan, writer, now=NOW, disk=lambda: tight)
+    assert caught.value.report.created == 0
+    assert list(writer.archive.iter_recordings()) == []
+    roomy = dataclasses.replace(tight, free_bytes=size * 50)
+    assert run(the_plan, writer, now=NOW, disk=lambda: roomy).created == 1
+
+
+def test_a_bad_disk_config_exits_78_like_every_config_error(ar_archive, plaud_env, tmp_path,
+                                                            monkeypatch, capsys):
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    _cli_config(tmp_path, monkeypatch)
+    assert main(["init", "--json"]) == 0
+    capsys.readouterr()
+    with (tmp_path / "config.toml").open("a", encoding="utf-8") as handle:
+        handle.write("[disk]\nwarn_free_percent = 5\nstop_free_percent = 10\n")
+    assert main(["import-audio-router", str(ar_archive.root), "--json"]) == 78
+    assert "stop_free_percent" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_the_cli_stops_on_plan_problems_even_with_allow_unplaced(ar_archive, plaud_env, tmp_path,
+                                                                 monkeypatch, capsys):
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    _cli_config(tmp_path, monkeypatch)
+    assert main(["init", "--json"]) == 0
+    capsys.readouterr()
+    real_plan = audio_router.plan
+    monkeypatch.setattr("recordings.cli.plan", lambda *args, **kwargs: dataclasses.replace(
+        real_plan(*args, **kwargs), problems=("a plan problem",)))
+    assert main(["import-audio-router", str(ar_archive.root), "--allow-unplaced", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["error"] == "a plan problem"
+    assert list(Archive(tmp_path / "archive").iter_recordings()) == []
+
+
+def test_a_duplicates_catalog_label_is_on_the_recording_when_it_is_created(
+        ar_archive, plaud_env, writer, monkeypatch):
+    # why: §7.4. B carries the label, A is added first, and A is created with it.
+    _group(ar_archive, plaud_env, b_tags=("private",))
+    seen = []
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen.append((incoming.sources[0].ref, [(t.tag, t.by) for t in incoming.tags]))
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert report.failed == []
+    assert seen == [(A, [("private", "you")]), (B, [("private", "you")])]
 ```
 
 The kill-point test runs the import in a child process, which dies with `os._exit(137)` at one of
@@ -12424,6 +12581,8 @@ from source/ as reconcile builds Plaud's.
 
 from __future__ import annotations
 
+import re
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12491,8 +12650,10 @@ def _words(items: Any, start: float) -> tuple[list[dict], int]:
 
 
 def _words_transcript(payload: dict) -> tuple[dict, int] | None:
-    """whisper's segments, each with the timed words whose middle falls inside it. An untimed
-    word can't be placed by time; its text is still in its segment's text."""
+    """whisper's segments, each with the timed words nearest to it: a word whose middle falls
+    inside a segment goes there, and one in a gap between two segments goes to the nearer one (the
+    earlier on a tie), so no timed word is dropped. An untimed word can't be placed by time; its
+    text is still in its segment's text."""
     rows = [s for s in payload.get("segments") or [] if isinstance(s, dict)]
     if not rows:
         return None
@@ -12500,20 +12661,18 @@ def _words_transcript(payload: dict) -> tuple[dict, int] | None:
     words = sorted(({"word": str(w.get("word") or ""), "start": float(w["start"]),
                      "end": float(w["end"])} for w in payload.get("words") or [] if _timed(w)),
                    key=lambda w: (w["start"] + w["end"]) / 2)
-    out, i = [], 0
-    for n, (seg, (start, end)) in enumerate(zip(rows, times)):
-        last = n == len(rows) - 1
-        inside = []
-        while i < len(words):
-            middle = (words[i]["start"] + words[i]["end"]) / 2
-            if middle < end or last:
-                if middle >= start or n == 0:
-                    inside.append(words[i])
-                i += 1
-            else:
-                break
-        out.append({"start": start, "end": end, "text": str(seg.get("text") or "").strip(),
-                    "words": inside})
+    starts, ends = [start for start, _ in times], [end for _, end in times]
+    inside: list[list[dict]] = [[] for _ in rows]
+    for word in words:
+        middle = (word["start"] + word["end"]) / 2
+        n = bisect_left(ends, middle)  # the first segment that ends at or after the word's middle
+        if n == len(rows):
+            n -= 1
+        elif n and middle - ends[n - 1] <= max(0.0, starts[n] - middle):
+            n -= 1  # in the gap, and no nearer to the next segment than to the one before
+        inside[n].append(word)
+    out = [{"start": start, "end": end, "text": str(seg.get("text") or "").strip(),
+            "words": found} for seg, (start, end), found in zip(rows, times, inside)]
     return {"segments": out}, untimed
 
 
@@ -12605,7 +12764,8 @@ def map_rendition(path: Path, doc: object) -> Mapped:
                     if markdown else Mapped(skipped="an empty summary"))
     except ValidationError:
         return Mapped(skipped="does not fit the output schema")
-    return Mapped(skipped=f"an output kind recordings has no place for ({kind})")
+    shown = kind if re.fullmatch(r"[a-z_]{1,40}", kind) else "other"  # a file's text is never shown
+    return Mapped(skipped=f"an output kind recordings has no place for ({shown})")
 
 
 def pocket_outputs(doc: dict, raw: str, fetched_at: datetime) -> list[Rendition]:
@@ -12670,7 +12830,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from recordings.archive import RawSource, sha256_file
-from recordings.disk import DiskStatus
+from recordings.disk import STOP_FREE_PERCENT, DiskStatus
 from recordings.index import Index, IndexRefused
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
 from recordings.media import MEDIA_SUFFIXES, MediaProbe, media_kind, probe
@@ -12721,8 +12881,14 @@ class RunReport:
 
 
 class ImportStopped(RuntimeError):
-    """The run stopped: the disk guard said stop, or media couldn't be measured. `.report` is
-    what was done before it did."""
+    """The run stopped, and `.report` is what was done before it did. It stops, in fixed words:
+    - before it writes anything, when the plan has problems or any media can't be measured;
+    - when the disk guard says stop, or the next new recording would leave less than the stop
+      margin free;
+    - when `add` finds the archive reads as empty (its disk is unmounted, most likely);
+    - when a row fails with a full disk (ENOSPC, EDQUOT), any sqlite3 error, an index that can't
+      answer, or an archive that has dropped off: going on would only fail every later row.
+    The lock timing out is a LockTimeout, not this."""
 
     def __init__(self, message: str, report: RunReport) -> None:
         super().__init__(message)
@@ -12767,19 +12933,23 @@ def _fetched_at(path: Path) -> datetime:
     return when + timedelta(microseconds=int(counter)) if counter.isdigit() else when
 
 
-def _titles(item: Item) -> list[str]:
-    """Every title the item's snapshots carry, oldest first. They go only into recording.json and
-    the auto-private check, never into a report."""
+def _titles(item: Item, *, complete_only: bool = False) -> list[str]:
+    """Every title the item's snapshots carry, oldest first; with `complete_only`, only those of
+    snapshots reconcile will use. They go only into recording.json and the auto-private check
+    (which uses them all, erring private), never into a report."""
     key = "title" if item.kind == "pocket" else "name"
-    docs = [_read_json(path) for path in item.snapshots]
+    problems = item.snapshot_problems or ((),) * len(item.snapshots)
+    docs = [_read_json(path) for path, bad in zip(item.snapshots, problems)
+            if not (complete_only and bad)]
     return [d[key].strip() for d in docs
             if isinstance(d, dict) and isinstance(d.get(key), str) and d[key].strip()]
 
 
 def _title(item: Item) -> tuple[str, bool]:
-    """(the title, whether the source supplied it): the newest snapshot's, else a private-tier
-    export's own name, which is how Recorder titles a recording."""
-    titles = _titles(item)
+    """(the title, whether the source supplied it): the newest complete snapshot's, never a
+    degraded one's (§9.1.1), else a private-tier export's own name, which is how Recorder titles
+    a recording."""
+    titles = _titles(item, complete_only=True)
     if titles:
         return titles[-1], True
     audio = item.audio
@@ -12789,7 +12959,7 @@ def _title(item: Item) -> tuple[str, bool]:
 
 
 def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
-                group: list[Item]) -> None:
+                group: list[Item], counted: set[tuple]) -> None:
     sources = [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
                          fetched_at=_fetched_at(path), payload=path.read_bytes())
                for path in item.snapshots]
@@ -12835,8 +13005,16 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
     if item.kind == "plaud":
         reconciled = writer.reconcile_plaud(rid)
         report.plaud_outputs += reconciled.written
-        report.held_removals += len(reconciled.held)
-        report.skipped_snapshots += len(reconciled.skipped)
+        # Reconcile rebuilds these from all of the recording's snapshots on every call, so a
+        # same-audio group would count each once per row: count each once per recording.
+        for path in reconciled.skipped:
+            if ("skipped", rid, path) not in counted:
+                counted.add(("skipped", rid, path))
+                report.skipped_snapshots += 1
+        for held in reconciled.held:
+            if ("held", rid, held.snapshot, held.slot) not in counted:
+                counted.add(("held", rid, held.snapshot, held.slot))
+                report.held_removals += 1
     elif item.kind == "pocket":
         rec = writer.archive.load(rid)
         folder = writer.archive.path_for(rid)
@@ -12853,15 +13031,37 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
                         report.renditions_added += 1
 
 
+def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float) -> bool:
+    """Whether copying the item's media would leave less than the stop margin free. Only a new
+    recording copies media: a duplicate or a re-run merges into what is there."""
+    if (item.disposition not in ("new", "new-private") or item.audio is None
+            or status.free_bytes is None or not status.total_bytes):
+        return False
+    try:
+        size = item.audio.stat().st_size
+    except OSError:
+        return False  # add will fail on it and say so
+    return (status.free_bytes - size) * 100 / status.total_bytes < stop_free_percent
+
+
 def run(plan: Plan, writer: Writer, *, now: datetime,
-        disk: Callable[[], DiskStatus] | None = None, lock_timeout: float = 600) -> RunReport:
+        disk: Callable[[], DiskStatus] | None = None, stop_free_percent: float = STOP_FREE_PERCENT,
+        lock_timeout: float = 600) -> RunReport:
     """Import every placeable row. Re-runnable: what is already there is matched and skipped.
 
-    It holds the ops lock throughout, so a backup or the mirror never runs half-way through it,
-    and it refuses to start while any recording's media can't be measured (§9.1.1). One
-    recording's failure is reported and the run goes on, except an archive that reads as empty,
-    which stops it."""
+    It holds the ops lock throughout, so a backup or the mirror never runs half-way through it.
+    Before it takes the lock or writes anything it refuses a plan with problems (§9.1: that
+    includes the rows the consent list can't be applied to) and any recording whose media can't
+    be measured (§9.1.1). One recording's failure is reported and the run goes on. It raises
+    ImportStopped, keeping the report, when the disk guard says stop or the next new recording
+    would leave less than `stop_free_percent` free, when the archive reads as empty, and when a
+    row fails with a full disk, a sqlite3 error, an index that can't answer or an archive that
+    has dropped off: going on would only fail every later row."""
     report = RunReport()
+    if plan.problems:
+        raise ImportStopped(
+            f"the plan has {len(plan.problems)} problem{'s' if len(plan.problems) != 1 else ''} "
+            "(see --dry-run): nothing was imported", report)
     todo = [item for item in plan.items if item.disposition in IMPORTED]
     # Rows with the same audio become one recording, whichever is added first. Each is added
     # with its whole group's privacy, so a duplicate's label or title is never a late write.
@@ -12873,14 +13073,19 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
         raise ImportStopped(
             f"media can't be measured for {unmeasured} of {len(todo)} recordings: anything but "
             "WAV needs ffprobe and ffmpeg (spec §9.1.1). Nothing was imported.", report)
+    counted: set[tuple] = set()
     with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):
         for item in todo:
             if disk is not None:
                 status = disk()
                 if status.level == "stop":
                     raise ImportStopped(status.message, report)
+                if _would_fill(status, item, stop_free_percent):
+                    raise ImportStopped(f"the next recording would leave less than "
+                                        f"{stop_free_percent:g}% free: new imports stop", report)
             try:
-                _import_one(item, writer, now=now, report=report, group=by_sha[item.sha256])
+                _import_one(item, writer, now=now, report=report, group=by_sha[item.sha256],
+                            counted=counted)
             except IndexRefused as exc:  # the archive reads as empty: unmounted, most likely
                 _log.debug("importing %s stopped the run", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
@@ -12952,14 +13157,17 @@ In `packages/core/src/recordings/cli.py`:
            _emit({**the_plan.report(), "dry_run": True,
                   "matched_against_archive": index is not None}, args.json)
            return 0 if the_plan.ok else 1
+       try:
+           thresholds = disk_thresholds(cfg)
+       except config.ConfigError as exc:
+           return _fail(str(exc), args.json, 78)
        writer = _writer(args.json)
        if isinstance(writer, int):
            return writer
        try:
-           thresholds = disk_thresholds(cfg)
            the_plan = plan(args.path, writer.index, consent=consent,
                            default_timezone=cfg.default_timezone)
-       except (CatalogError, config.ConfigError) as exc:
+       except CatalogError as exc:
            return _fail(str(exc), args.json, 1)
        if the_plan.problems:
            return _fail("; ".join(the_plan.problems), args.json, 1)
@@ -12972,7 +13180,8 @@ In `packages/core/src/recordings/cli.py`:
            return disk_status(writer.root, expected_uuid=writer.identity.uuid, **thresholds)
 
        try:
-           result = run(the_plan, writer, now=datetime.now(timezone.utc), disk=guard)
+           result = run(the_plan, writer, now=datetime.now(timezone.utc), disk=guard,
+                        stop_free_percent=thresholds["stop"])
        except ImportStopped as exc:
            _emit({**the_plan.report(), "imported": exc.report.to_dict(), "stopped": str(exc)},
                  args.json)
@@ -12988,7 +13197,7 @@ In `packages/core/src/recordings/cli.py`:
 - [ ] **Step 6: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_run.py packages/core/tests/test_disk.py -v && uv run pytest`
-Expected: 37 passed (32 and 5), and the full suite stays green, its count above Task 8's.
+Expected: 47 passed (42 and 5), and the full suite stays green, its count above Task 8's.
 
 - [ ] **Step 7: Commit**
 

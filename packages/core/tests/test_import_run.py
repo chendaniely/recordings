@@ -1,8 +1,10 @@
+import dataclasses
 import errno
 import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +15,7 @@ from recordings.disk import DiskStatus
 from recordings.index import Index, IndexRefused
 from recordings.locks import Locks, LockTimeout
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
+from recordings.plaud.reconcile import Held
 from recordings.selfdoc import validate
 from recordings.sources import audio_router
 from recordings.sources.ar_outputs import map_rendition, pocket_outputs
@@ -634,3 +637,156 @@ def test_the_run_module_reports_counts_only():
     assert set(audio_router.RunReport().to_dict()) == {
         "created", "merged", "sources_added", "renditions_added", "plaud_outputs",
         "held_removals", "skipped_snapshots", "skipped_outputs", "measured", "failed"}
+
+
+def _group(ar, plaud_env, *, b_tags=()):
+    """A with a good and a degraded snapshot, and B, A's byte-identical duplicate."""
+    ar.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True)])
+    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+             dup_of=f"plaud/{A}", tags=b_tags)
+    ar.write_catalog()
+
+
+def test_a_same_audio_group_counts_each_skipped_snapshot_once(ar_archive, plaud_env, writer):
+    # why: reconcile rebuilds its skipped snapshots from all of a recording's snapshots on every
+    # call, so B's merge into A counted A's again, and the report disagreed with the dry run.
+    _group(ar_archive, plaud_env)
+    the_plan = plan(ar_archive.root, writer.index, consent=())
+    assert the_plan.incomplete_snapshots()["total"] == 1
+    first = run(the_plan, writer, now=NOW)
+    assert (first.created, first.merged, first.skipped_snapshots) == (1, 1, 1)
+    again_plan = plan(ar_archive.root, writer.index, consent=())
+    assert again_plan.incomplete_snapshots()["total"] == 1
+    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    assert again.skipped_snapshots == again_plan.incomplete_snapshots()["total"] == 1
+
+
+def test_held_removals_are_counted_once_per_recording(ar_archive, plaud_env, writer, monkeypatch):
+    _group(ar_archive, plaud_env)
+    held = (Held("source/plaud-20260801T161000Z.json", "transcript", "transcript removed"),)
+    monkeypatch.setattr(Writer, "reconcile_plaud",
+                        lambda self, rid: SimpleNamespace(written=0, held=held, skipped=()))
+    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert (report.merged, report.held_removals) == (1, 1)
+
+
+def test_a_degraded_snapshot_never_names_the_recording(ar_archive, plaud_env, writer,
+                                                       monkeypatch):
+    # why: §9.1.1. Reconcile names a recording from complete snapshots only, so the import
+    # must not feed a Plaud field from a degraded one, even for a moment.
+    ar_archive.plaud(A, envelopes=[plaud_env(A, name="Good title"),
+                                   plaud_env(A, name="Degraded title", link_error=True)])
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name="Only degraded", link_error=True)],
+                     recorded_at="2026-08-02T09:00:00-07:00")
+    ar_archive.write_catalog()
+    seen = {}
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen[incoming.sources[0].ref] = (incoming.title, incoming.title_by)
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert report.failed == []
+    assert seen == {A: ("Good title", "plaud"), B: ("Untitled recording", None)}
+
+
+def test_a_skipped_outputs_reason_never_carries_text_from_the_file(tmp_path):
+    # why: Review Focus 4. The reasons are --json keys, so a kind read from a file is shown
+    # only when it is a short slug.
+    path = tmp_path / "x-20260801T170000Z.json"
+    assert map_rendition(path, {**WORDS, "kind": "Week 4 secret"}).skipped == (
+        "an output kind recordings has no place for (other)")
+    assert map_rendition(path, {**WORDS, "kind": "novel"}).skipped == (
+        "an output kind recordings has no place for (novel)")
+
+
+def test_a_word_in_a_gap_between_segments_goes_to_the_nearest_one(tmp_path):
+    # why: a timed word between two whisper segments is kept, never dropped: with the nearer
+    # segment, and the earlier one on a tie.
+    words = [{"word": "One", "start": 0.1, "end": 0.9}, {"word": "gap", "start": 1.1, "end": 1.3},
+             {"word": "tie", "start": 1.25, "end": 1.75}, {"word": "near", "start": 1.6, "end": 1.8},
+             {"word": "Two", "start": 2.1, "end": 2.9}]
+    doc = {**WORDS, "payload": {"words": words, "segments": [
+        {"id": 0, "start": 0.0, "end": 1.0, "text": " One"},
+        {"id": 1, "start": 2.0, "end": 3.0, "text": " Two"}]}}
+    out = map_rendition(tmp_path / "words-x-v-20260801T170000Z.json", doc).rendition
+    assert [[w["word"] for w in s["words"]] for s in out.payload["segments"]] == [
+        ["One", "gap", "tie"], ["near", "Two"]]
+
+
+def test_run_itself_refuses_a_plan_with_problems(ar_archive, plaud_env, writer):
+    # why: §9.1. A plan with problems includes the rows the consent list can't be applied to,
+    # so the guarantee must not depend on the caller having checked. It stops before the lock.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    the_plan = dataclasses.replace(plan(ar_archive.root, writer.index, consent=()),
+                                   problems=("a problem naming Week 4",))
+    with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
+        with pytest.raises(ImportStopped, match="the plan has 1 problem") as caught:
+            run(the_plan, writer, now=NOW, lock_timeout=0.1)
+    assert "Week 4" not in str(caught.value) and caught.value.report.created == 0
+    assert list(writer.archive.iter_recordings()) == []
+
+
+def test_the_disk_guard_counts_the_size_of_the_recording_about_to_be_copied(
+        ar_archive, plaud_env, writer):
+    # why: §12.5. Free space is judged after the copy, not before it.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    size = (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").stat().st_size
+    tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
+                       level="ok", message="5.5% free")  # 4.5% free once the copy is in
+    the_plan = plan(ar_archive.root, writer.index, consent=())
+    with pytest.raises(ImportStopped, match="would leave less than 5% free") as caught:
+        run(the_plan, writer, now=NOW, disk=lambda: tight)
+    assert caught.value.report.created == 0
+    assert list(writer.archive.iter_recordings()) == []
+    roomy = dataclasses.replace(tight, free_bytes=size * 50)
+    assert run(the_plan, writer, now=NOW, disk=lambda: roomy).created == 1
+
+
+def test_a_bad_disk_config_exits_78_like_every_config_error(ar_archive, plaud_env, tmp_path,
+                                                            monkeypatch, capsys):
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    _cli_config(tmp_path, monkeypatch)
+    assert main(["init", "--json"]) == 0
+    capsys.readouterr()
+    with (tmp_path / "config.toml").open("a", encoding="utf-8") as handle:
+        handle.write("[disk]\nwarn_free_percent = 5\nstop_free_percent = 10\n")
+    assert main(["import-audio-router", str(ar_archive.root), "--json"]) == 78
+    assert "stop_free_percent" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_the_cli_stops_on_plan_problems_even_with_allow_unplaced(ar_archive, plaud_env, tmp_path,
+                                                                 monkeypatch, capsys):
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    _cli_config(tmp_path, monkeypatch)
+    assert main(["init", "--json"]) == 0
+    capsys.readouterr()
+    real_plan = audio_router.plan
+    monkeypatch.setattr("recordings.cli.plan", lambda *args, **kwargs: dataclasses.replace(
+        real_plan(*args, **kwargs), problems=("a plan problem",)))
+    assert main(["import-audio-router", str(ar_archive.root), "--allow-unplaced", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["error"] == "a plan problem"
+    assert list(Archive(tmp_path / "archive").iter_recordings()) == []
+
+
+def test_a_duplicates_catalog_label_is_on_the_recording_when_it_is_created(
+        ar_archive, plaud_env, writer, monkeypatch):
+    # why: §7.4. B carries the label, A is added first, and A is created with it.
+    _group(ar_archive, plaud_env, b_tags=("private",))
+    seen = []
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen.append((incoming.sources[0].ref, [(t.tag, t.by) for t in incoming.tags]))
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert report.failed == []
+    assert seen == [(A, [("private", "you")]), (B, [("private", "you")])]

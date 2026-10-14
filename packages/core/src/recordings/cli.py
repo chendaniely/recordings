@@ -219,14 +219,17 @@ def cmd_import_audio_router(args: argparse.Namespace) -> int:
         _emit({**the_plan.report(), "dry_run": True,
                "matched_against_archive": index is not None}, args.json)
         return 0 if the_plan.ok else 1
+    try:
+        thresholds = disk_thresholds(cfg)
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, 78)
     writer = _writer(args.json)
     if isinstance(writer, int):
         return writer
     try:
-        thresholds = disk_thresholds(cfg)
         the_plan = plan(args.path, writer.index, consent=consent,
                         default_timezone=cfg.default_timezone)
-    except (CatalogError, config.ConfigError) as exc:
+    except CatalogError as exc:
         return _fail(str(exc), args.json, 1)
     if the_plan.problems:
         return _fail("; ".join(the_plan.problems), args.json, 1)
@@ -239,7 +242,8 @@ def cmd_import_audio_router(args: argparse.Namespace) -> int:
         return disk_status(writer.root, expected_uuid=writer.identity.uuid, **thresholds)
 
     try:
-        result = run(the_plan, writer, now=datetime.now(timezone.utc), disk=guard)
+        result = run(the_plan, writer, now=datetime.now(timezone.utc), disk=guard,
+                     stop_free_percent=thresholds["stop"])
     except ImportStopped as exc:
         _emit({**the_plan.report(), "imported": exc.report.to_dict(), "stopped": str(exc)},
               args.json)

@@ -36,7 +36,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from recordings.archive import RawSource, sha256_file
-from recordings.disk import DiskStatus
+from recordings.disk import STOP_FREE_PERCENT, DiskStatus
 from recordings.index import Index, IndexRefused
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
 from recordings.media import MEDIA_SUFFIXES, MediaProbe, media_kind, probe
@@ -713,8 +713,14 @@ class RunReport:
 
 
 class ImportStopped(RuntimeError):
-    """The run stopped: the disk guard said stop, or media couldn't be measured. `.report` is
-    what was done before it did."""
+    """The run stopped, and `.report` is what was done before it did. It stops, in fixed words:
+    - before it writes anything, when the plan has problems or any media can't be measured;
+    - when the disk guard says stop, or the next new recording would leave less than the stop
+      margin free;
+    - when `add` finds the archive reads as empty (its disk is unmounted, most likely);
+    - when a row fails with a full disk (ENOSPC, EDQUOT), any sqlite3 error, an index that can't
+      answer, or an archive that has dropped off: going on would only fail every later row.
+    The lock timing out is a LockTimeout, not this."""
 
     def __init__(self, message: str, report: RunReport) -> None:
         super().__init__(message)
@@ -759,19 +765,23 @@ def _fetched_at(path: Path) -> datetime:
     return when + timedelta(microseconds=int(counter)) if counter.isdigit() else when
 
 
-def _titles(item: Item) -> list[str]:
-    """Every title the item's snapshots carry, oldest first. They go only into recording.json and
-    the auto-private check, never into a report."""
+def _titles(item: Item, *, complete_only: bool = False) -> list[str]:
+    """Every title the item's snapshots carry, oldest first; with `complete_only`, only those of
+    snapshots reconcile will use. They go only into recording.json and the auto-private check
+    (which uses them all, erring private), never into a report."""
     key = "title" if item.kind == "pocket" else "name"
-    docs = [_read_json(path) for path in item.snapshots]
+    problems = item.snapshot_problems or ((),) * len(item.snapshots)
+    docs = [_read_json(path) for path, bad in zip(item.snapshots, problems)
+            if not (complete_only and bad)]
     return [d[key].strip() for d in docs
             if isinstance(d, dict) and isinstance(d.get(key), str) and d[key].strip()]
 
 
 def _title(item: Item) -> tuple[str, bool]:
-    """(the title, whether the source supplied it): the newest snapshot's, else a private-tier
-    export's own name, which is how Recorder titles a recording."""
-    titles = _titles(item)
+    """(the title, whether the source supplied it): the newest complete snapshot's, never a
+    degraded one's (§9.1.1), else a private-tier export's own name, which is how Recorder titles
+    a recording."""
+    titles = _titles(item, complete_only=True)
     if titles:
         return titles[-1], True
     audio = item.audio
@@ -781,7 +791,7 @@ def _title(item: Item) -> tuple[str, bool]:
 
 
 def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
-                group: list[Item]) -> None:
+                group: list[Item], counted: set[tuple]) -> None:
     sources = [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
                          fetched_at=_fetched_at(path), payload=path.read_bytes())
                for path in item.snapshots]
@@ -827,8 +837,16 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
     if item.kind == "plaud":
         reconciled = writer.reconcile_plaud(rid)
         report.plaud_outputs += reconciled.written
-        report.held_removals += len(reconciled.held)
-        report.skipped_snapshots += len(reconciled.skipped)
+        # Reconcile rebuilds these from all of the recording's snapshots on every call, so a
+        # same-audio group would count each once per row: count each once per recording.
+        for path in reconciled.skipped:
+            if ("skipped", rid, path) not in counted:
+                counted.add(("skipped", rid, path))
+                report.skipped_snapshots += 1
+        for held in reconciled.held:
+            if ("held", rid, held.snapshot, held.slot) not in counted:
+                counted.add(("held", rid, held.snapshot, held.slot))
+                report.held_removals += 1
     elif item.kind == "pocket":
         rec = writer.archive.load(rid)
         folder = writer.archive.path_for(rid)
@@ -845,15 +863,37 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
                         report.renditions_added += 1
 
 
+def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float) -> bool:
+    """Whether copying the item's media would leave less than the stop margin free. Only a new
+    recording copies media: a duplicate or a re-run merges into what is there."""
+    if (item.disposition not in ("new", "new-private") or item.audio is None
+            or status.free_bytes is None or not status.total_bytes):
+        return False
+    try:
+        size = item.audio.stat().st_size
+    except OSError:
+        return False  # add will fail on it and say so
+    return (status.free_bytes - size) * 100 / status.total_bytes < stop_free_percent
+
+
 def run(plan: Plan, writer: Writer, *, now: datetime,
-        disk: Callable[[], DiskStatus] | None = None, lock_timeout: float = 600) -> RunReport:
+        disk: Callable[[], DiskStatus] | None = None, stop_free_percent: float = STOP_FREE_PERCENT,
+        lock_timeout: float = 600) -> RunReport:
     """Import every placeable row. Re-runnable: what is already there is matched and skipped.
 
-    It holds the ops lock throughout, so a backup or the mirror never runs half-way through it,
-    and it refuses to start while any recording's media can't be measured (§9.1.1). One
-    recording's failure is reported and the run goes on, except an archive that reads as empty,
-    which stops it."""
+    It holds the ops lock throughout, so a backup or the mirror never runs half-way through it.
+    Before it takes the lock or writes anything it refuses a plan with problems (§9.1: that
+    includes the rows the consent list can't be applied to) and any recording whose media can't
+    be measured (§9.1.1). One recording's failure is reported and the run goes on. It raises
+    ImportStopped, keeping the report, when the disk guard says stop or the next new recording
+    would leave less than `stop_free_percent` free, when the archive reads as empty, and when a
+    row fails with a full disk, a sqlite3 error, an index that can't answer or an archive that
+    has dropped off: going on would only fail every later row."""
     report = RunReport()
+    if plan.problems:
+        raise ImportStopped(
+            f"the plan has {len(plan.problems)} problem{'s' if len(plan.problems) != 1 else ''} "
+            "(see --dry-run): nothing was imported", report)
     todo = [item for item in plan.items if item.disposition in IMPORTED]
     # Rows with the same audio become one recording, whichever is added first. Each is added
     # with its whole group's privacy, so a duplicate's label or title is never a late write.
@@ -865,14 +905,19 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
         raise ImportStopped(
             f"media can't be measured for {unmeasured} of {len(todo)} recordings: anything but "
             "WAV needs ffprobe and ffmpeg (spec §9.1.1). Nothing was imported.", report)
+    counted: set[tuple] = set()
     with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):
         for item in todo:
             if disk is not None:
                 status = disk()
                 if status.level == "stop":
                     raise ImportStopped(status.message, report)
+                if _would_fill(status, item, stop_free_percent):
+                    raise ImportStopped(f"the next recording would leave less than "
+                                        f"{stop_free_percent:g}% free: new imports stop", report)
             try:
-                _import_one(item, writer, now=now, report=report, group=by_sha[item.sha256])
+                _import_one(item, writer, now=now, report=report, group=by_sha[item.sha256],
+                            counted=counted)
             except IndexRefused as exc:  # the archive reads as empty: unmounted, most likely
                 _log.debug("importing %s stopped the run", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
