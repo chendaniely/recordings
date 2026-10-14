@@ -106,6 +106,8 @@ def test_audio_routers_privacy_labels_make_a_recording_private(ar_archive, plaud
     # `private`.
     folded = ["counseling", "therapy", "counselling", "personal", "voiceprints", "private"]
     assert map_tags(folded) == ("private/therapy", "private")
+    # Labels match in any capitalisation, as is_private_tag does.
+    assert map_tags(["Therapy", "PRIVATE", "Lecture"]) == ("private/therapy", "private", "Lecture")
 
 
 def test_the_private_tier_is_found_by_hash_whatever_its_files_are_called(ar_archive):
@@ -235,3 +237,136 @@ def test_incomplete_snapshots_are_counted_by_reason_and_never_hidden(ar_archive,
         "total": 3, "by_reason": {"auto_sum_note": 2, "unreadable": 1}}
     assert report["all_snapshots_incomplete"] == [f"plaud/{B}"]
     assert the_plan.ok  # reported, not refused: an empty block may be real
+
+
+def _wav_of(ar, fid):
+    return (ar.root / f"plaud/audio/2026/08/{fid}.wav").read_bytes()
+
+
+def _consent_family(ar, plaud_env):
+    """X, and every kind of row that carries X's recording: a copy that duplicates it, the
+    original it duplicates, a Recorder copy, and a private-tier copy found by hash."""
+    ar.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00",
+             dup_of=f"plaud/{A}")
+    ar.plaud(A, envelopes=[plaud_env(A)], same_audio_as=f"plaud/audio/2026/08/{X}.wav")
+    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{X}.wav",
+             dup_of=f"plaud/{X}", recorded_at="2026-08-06T11:00:00-07:00")
+    x_sha = next(r["audio_sha256"] for r in ar.rows if r["file_id"] == X)
+    rec = ar.recorder()
+    (ar.root / rec["audio_rel"]).write_bytes(_wav_of(ar, X))
+    rec["audio_sha256"], rec["dup_of"] = x_sha, f"plaud/{X}"
+    priv = ar.private()
+    (ar.root / "private/recorder-exports/Aug 3 at 10-00.wav").write_bytes(_wav_of(ar, X))
+    priv["file_id"], priv["uri"] = x_sha, f"private/{x_sha}"
+    ar.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-07T11:00:00-07:00")  # unrelated
+    ar.write_catalog()
+    return rec["uri"], priv["uri"]
+
+
+def test_a_consent_listed_recording_excludes_every_row_that_carries_it(ar_archive, plaud_env):
+    # why: §9.1, §9.3 (Dan's ruling, 2026-10-14). The list excludes the recording, not only its
+    # ID: a row that duplicates it, the row it duplicates, a copy with the same audio and a
+    # private-tier copy found by hash would import the listed recording's audio and transcript.
+    rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
+    the_plan = plan(ar_archive.root, consent={X})
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    for uri in (f"plaud/{X}", f"plaud/{A}", f"plaud/{B}", rec_uri, priv_uri):
+        item = by_uri[uri]
+        assert item.disposition == "consent-excluded", uri
+        assert item.audio is None and item.sha256 == "" and item.snapshots == ()
+    assert by_uri[f"plaud/{C}"].disposition == "new"
+    assert the_plan.counts()["consent-excluded"] == 5 and the_plan.ok
+    text = json.dumps(the_plan.report(), ensure_ascii=False)
+    assert X not in text and priv_uri not in text
+
+
+def test_without_the_id_on_the_consent_list_the_same_rows_import(ar_archive, plaud_env):
+    # The control for the test above: the exclusion comes from the list, nothing else.
+    rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
+    by_uri = {i.row.uri: i for i in plan(ar_archive.root, consent=NONE).items}
+    assert by_uri[f"plaud/{B}"].disposition == "duplicate"
+    assert by_uri[rec_uri].disposition == "duplicate"
+    assert by_uri[priv_uri].disposition == "new-private"
+    assert by_uri[f"plaud/{A}"].disposition == "new"
+    assert by_uri[f"plaud/{X}"].disposition == "duplicate"
+
+
+def test_a_private_file_named_by_a_listed_id_is_never_read(ar_archive, monkeypatch):
+    from recordings.sources import audio_router
+    ar_archive.private()
+    ar_archive._write(f"private/recorder-exports/of_{X}.wav", b"never to be read")
+    ar_archive._write(f"private/recorder-exports/{X2}.wav", b"never to be read either")
+    ar_archive.write_catalog()
+    hashed = []
+    real = audio_router.sha256_file
+    monkeypatch.setattr(audio_router, "sha256_file", lambda p: (hashed.append(p.name), real(p))[1])
+    the_plan = plan(ar_archive.root, consent={X, X2})
+    assert hashed and not any(X in n or X2 in n for n in hashed)
+    assert the_plan.report()["unlisted_private"] == 0
+
+
+def test_one_unreadable_file_does_not_stop_the_dry_run(ar_archive, plaud_env):
+    # why: §9.3. The dry run accounts for every row, and no reason carries a path (a private-tier
+    # file name is an export title).
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], recorded_at="2026-08-02T09:00:00-07:00")
+    ar_archive.private()
+    stray = ar_archive._write("private/recorder-exports/A Stray Title.wav", b"unreadable")
+    locked = ar_archive.root / f"plaud/audio/2026/08/{A}.wav"
+    ar_archive.write_catalog()
+    stray.chmod(0)
+    locked.chmod(0)
+    try:
+        the_plan = plan(ar_archive.root, consent=NONE)
+    finally:
+        stray.chmod(0o644)
+        locked.chmod(0o644)
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    assert by_uri[f"plaud/{A}"].disposition == "unplaced"
+    assert "PermissionError" in by_uri[f"plaud/{A}"].reason
+    assert by_uri[f"plaud/{B}"].disposition == "new"
+    assert len(the_plan.problems) == 1 and "1 private-tier file" in the_plan.problems[0]
+    text = json.dumps(the_plan.report(), ensure_ascii=False)
+    assert "A Stray Title" not in text and str(ar_archive.root) not in text and not the_plan.ok
+
+
+def test_a_malformed_wav_is_unprobed_not_fatal(ar_archive, plaud_env, monkeypatch):
+    import struct
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(
+        b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6) + b"abc")
+    ar_archive.rows[0]["audio_sha256"] = ""
+    ar_archive.write_catalog()
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    the_plan = plan(ar_archive.root, consent=NONE)
+    assert the_plan.report()["unprobed"] == [f"plaud/{A}"] and not the_plan.ok
+
+
+def test_every_path_the_plan_returns_is_inside_the_source(ar_archive, plaud_env, tmp_path):
+    import shutil
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    shutil.move(str(ar_archive.root / "plaud" / "raw" / A), str(outside / A))
+    (ar_archive.root / "plaud" / "raw" / A).symlink_to(outside / A, target_is_directory=True)
+    (item,) = plan(ar_archive.root, consent=NONE).items
+    assert item.disposition == "unplaced" and "outside the source" in item.reason
+
+
+def test_private_media_with_no_catalog_row_is_counted_never_named(ar_archive):
+    ar_archive.private()
+    ar_archive._write("private/recorder-exports/Unlisted Title.wav", b"RIFFnot a row")
+    ar_archive.write_catalog()
+    report = plan(ar_archive.root, consent=NONE).report()
+    assert report["unlisted_private"] == 1
+    assert "Unlisted Title" not in json.dumps(report, ensure_ascii=False)
+
+
+def test_the_pocket_listing_honours_the_consent_list(ar_archive):
+    ar_archive.pocket_without_audio("my_secret_slug")
+    ar_archive.rows.clear()
+    ar_archive.write_catalog()
+    surrogate = hashlib.sha256(b"my_secret_slug").hexdigest()[:32]
+    assert plan(ar_archive.root, consent=NONE).unlisted == (f"pocket/{surrogate}",)
+    assert plan(ar_archive.root, consent={surrogate}).unlisted == ()

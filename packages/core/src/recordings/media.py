@@ -49,12 +49,18 @@ def _int(value: object) -> int | None:
 
 
 def _wave(path: Path) -> MediaProbe | None:
+    """Count the frames actually there, never the header's claim (§9.1.1): a file that holds
+    less than it declares, or nothing at all, isn't measured here and falls back to the decode."""
     try:
         with wave.open(str(path), "rb") as w:
-            rate, frames, channels = w.getframerate(), w.getnframes(), w.getnchannels()
-    except (wave.Error, EOFError, OSError):
-        return None
-    if not rate:
+            rate, declared, channels = w.getframerate(), w.getnframes(), w.getnchannels()
+            frame_size = channels * w.getsampwidth()
+            frames = 0
+            while chunk := w.readframes(1 << 14):
+                frames += len(chunk) // frame_size
+    except (wave.Error, EOFError, OSError, RuntimeError, ValueError, ZeroDivisionError):
+        return None  # wave raises RuntimeError for a chunk that overruns the file
+    if not rate or not frame_size or frames == 0 or frames != declared:
         return None
     return MediaProbe(duration_ms=round(frames * 1000 / rate), sample_rate=rate,
                       channels=channels or None, method="wave")
@@ -67,7 +73,7 @@ def _streams(exe: str, path: Path, timeout: float) -> list[dict] | None:
              "-of", "json", str(path)],
             capture_output=True, text=True, timeout=timeout)
         data = json.loads(proc.stdout) if proc.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+    except (OSError, subprocess.TimeoutExpired, ValueError):  # ValueError: bad JSON or bad UTF-8
         return None
     if not isinstance(data, dict):
         return None

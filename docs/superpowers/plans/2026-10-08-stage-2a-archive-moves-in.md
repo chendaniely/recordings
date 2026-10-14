@@ -9590,9 +9590,16 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
 - **Orphan Plaud rows:** a Plaud row with audio but no snapshot and no time is `deferred-to-2b`. It
   is reported by its Plaud ID, and never `unplaced`.
 - **The private tier:** it is matched by SHA-256, and a `.txt` with the same stem comes with it.
-- **The consent list:** an ID on Dan's consent list is `consent-excluded`. It is never read past
-  its ID, and only counted. `plan()` takes the list as a required argument, and Task 9 reads it
-  from config, failing closed.
+- **The consent list:** it excludes the recording, not only its ID (Dan, 2026-10-14). A row is
+  `consent-excluded` when its own ID is listed, when its `dup_of` names an excluded row, when an
+  excluded row's `dup_of` names it, or when its audio is an excluded row's (by the catalog's
+  `audio_sha256`, or for the private tier by its file's SHA-256). A private-tier file named by a
+  listed ID is skipped before it is opened. Excluded rows are never read past their ID, and only
+  counted. `plan()` takes the list as a required argument, and Task 9 reads it from config,
+  failing closed.
+- **One bad file never stops the dry run:** a row whose files can't be read is `unplaced`, with a
+  reason that names only the exception's type; every path the plan returns resolves inside the
+  source root; and a WAV's duration is its frames counted, never its header's claim (§9.1.1).
 
 **Files:**
 - Create: `packages/core/src/recordings/media.py`, `packages/core/src/recordings/sources/__init__.py`, `packages/core/src/recordings/sources/audio_router.py`
@@ -9621,11 +9628,11 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
     - `class CatalogError(RuntimeError)`
     - `@dataclass(frozen=True) Row(uri, source, file_id, recorded_at_local, timezone, time_source, audio_rel, audio_sha256, dup_of, tags: tuple[str, ...], access)`
     - `@dataclass(frozen=True) Item(row: Row, disposition: str, reason: str = "", kind: str = "", audio: Path | None = None, sha256: str = "", recorded_at: datetime | None = None, timezone: str = "", time_source: str = "", snapshots: tuple[Path, ...] = (), renditions: tuple[Path, ...] = (), texts: tuple[Path, ...] = (), present_id: str | None = None, private: bool = False, tags: tuple[str, ...] = (), probed: MediaProbe | None = None, snapshot_problems: tuple[tuple[str, ...], ...] = ())`
-    - `@dataclass(frozen=True) Plan(root, items, ledger_only=(), unlisted=(), held_on_plaud=None, problems=())`, with:
+    - `@dataclass(frozen=True) Plan(root, items, ledger_only=(), unlisted=(), held_on_plaud=None, problems=(), unlisted_private=0)`, with:
       - `.counts() -> dict[str, int]` and `.unprobed() -> list[str]`
       - `.incomplete_snapshots() -> dict`, the Plaud snapshots reconcile will skip, as `{"total": n, "by_reason": {reason: n}}` (a reason is `unreadable`, a block's data type, or `legacy`), and `.all_snapshots_incomplete() -> list[str]`, the URIs of rows to import whose every snapshot is incomplete
       - `.ok -> bool`: no problems, no unplaced row and nothing unprobed
-      - `.report() -> dict`, with the keys `catalog_rows`, `by_disposition`, `private`, `unplaced`, `no_audio`, `deferred_to_2b`, `unprobed`, `incomplete_snapshots`, `all_snapshots_incomplete`, `ledger_only`, `unlisted`, `held_on_plaud` and `problems`
+      - `.report() -> dict`, with the keys `catalog_rows`, `by_disposition`, `private`, `unplaced`, `no_audio`, `deferred_to_2b`, `unprobed`, `incomplete_snapshots`, `all_snapshots_incomplete`, `ledger_only`, `unlisted`, `unlisted_private` (a count of private-tier media no row names), `held_on_plaud` and `problems`
     - `map_tags(labels: Iterable[str]) -> tuple[str, ...]`
     - `read_catalog(root: Path) -> list[Row]`
     - `snapshot_order(path: Path) -> tuple[str, str]`
@@ -9718,6 +9725,46 @@ def test_the_kind_comes_from_the_suffix_and_for_mp4_from_the_streams(tmp_path):
     assert media_kind(tmp_path / "a.mp4", MediaProbe(1, 1, 1, has_video=True)) == "video"
     assert media_kind(tmp_path / "a.mp4", MediaProbe(1, 1, 1)) == "audio"
     assert media_kind(tmp_path / "a.txt", None) is None
+
+
+def _wav_declaring(path, declared_seconds, actual_seconds, rate=16000):
+    """A WAV whose data chunk declares more audio than the file holds."""
+    import struct
+    body = b"\x01\x00" * int(actual_seconds * rate)
+    fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 2, 2, 16)
+    data = (b"RIFF" + struct.pack("<I", 36 + len(body)) + b"WAVE" + b"fmt " + struct.pack("<I", 16)
+            + fmt + b"data" + struct.pack("<I", int(declared_seconds * rate) * 2) + body)
+    path.write_bytes(data)
+    return path
+
+
+def test_a_wavs_duration_is_the_frames_read_never_its_headers_claim(tmp_path, monkeypatch):
+    # why: §9.1.1. A file holding 2 s that declares 60 s is decoded instead, and a WAV with no
+    # frames at all is not measured.
+    _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000,
+               streams=[{"codec_type": "audio", "sample_rate": "16000", "channels": 1}])
+    liar = _wav_declaring(tmp_path / "liar.wav", declared_seconds=60, actual_seconds=2)
+    assert probe(liar) == MediaProbe(duration_ms=2000, sample_rate=16000, channels=1,
+                                     has_video=False, method="decoded")
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    assert probe(liar) is None
+    assert probe(_wav_declaring(tmp_path / "empty.wav", 0, 0)) is None
+
+
+def test_a_malformed_wav_or_non_utf8_ffprobe_output_is_not_measured_never_raised(tmp_path,
+                                                                                 monkeypatch):
+    import struct
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    # A chunk that runs past the end of the file: wave raises RuntimeError, not wave.Error.
+    bad = tmp_path / "bad.wav"
+    bad.write_bytes(b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6)
+                    + b"abc")
+    assert probe(bad) is None
+    monkeypatch.undo()
+    _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000, streams=[])
+    (tmp_path / "bin" / "ffprobe").write_bytes(b"#!/bin/sh\nprintf '\\377\\376'\n")
+    (tmp_path / "a.m4a").write_bytes(b"not really")
+    assert probe(tmp_path / "a.m4a") is None
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -9780,12 +9827,18 @@ def _int(value: object) -> int | None:
 
 
 def _wave(path: Path) -> MediaProbe | None:
+    """Count the frames actually there, never the header's claim (§9.1.1): a file that holds
+    less than it declares, or nothing at all, isn't measured here and falls back to the decode."""
     try:
         with wave.open(str(path), "rb") as w:
-            rate, frames, channels = w.getframerate(), w.getnframes(), w.getnchannels()
-    except (wave.Error, EOFError, OSError):
-        return None
-    if not rate:
+            rate, declared, channels = w.getframerate(), w.getnframes(), w.getnchannels()
+            frame_size = channels * w.getsampwidth()
+            frames = 0
+            while chunk := w.readframes(1 << 14):
+                frames += len(chunk) // frame_size
+    except (wave.Error, EOFError, OSError, RuntimeError, ValueError, ZeroDivisionError):
+        return None  # wave raises RuntimeError for a chunk that overruns the file
+    if not rate or not frame_size or frames == 0 or frames != declared:
         return None
     return MediaProbe(duration_ms=round(frames * 1000 / rate), sample_rate=rate,
                       channels=channels or None, method="wave")
@@ -9798,7 +9851,7 @@ def _streams(exe: str, path: Path, timeout: float) -> list[dict] | None:
              "-of", "json", str(path)],
             capture_output=True, text=True, timeout=timeout)
         data = json.loads(proc.stdout) if proc.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+    except (OSError, subprocess.TimeoutExpired, ValueError):  # ValueError: bad JSON or bad UTF-8
         return None
     if not isinstance(data, dict):
         return None
@@ -10155,6 +10208,8 @@ def test_audio_routers_privacy_labels_make_a_recording_private(ar_archive, plaud
     # `private`.
     folded = ["counseling", "therapy", "counselling", "personal", "voiceprints", "private"]
     assert map_tags(folded) == ("private/therapy", "private")
+    # Labels match in any capitalisation, as is_private_tag does.
+    assert map_tags(["Therapy", "PRIVATE", "Lecture"]) == ("private/therapy", "private", "Lecture")
 
 
 def test_the_private_tier_is_found_by_hash_whatever_its_files_are_called(ar_archive):
@@ -10284,6 +10339,139 @@ def test_incomplete_snapshots_are_counted_by_reason_and_never_hidden(ar_archive,
         "total": 3, "by_reason": {"auto_sum_note": 2, "unreadable": 1}}
     assert report["all_snapshots_incomplete"] == [f"plaud/{B}"]
     assert the_plan.ok  # reported, not refused: an empty block may be real
+
+
+def _wav_of(ar, fid):
+    return (ar.root / f"plaud/audio/2026/08/{fid}.wav").read_bytes()
+
+
+def _consent_family(ar, plaud_env):
+    """X, and every kind of row that carries X's recording: a copy that duplicates it, the
+    original it duplicates, a Recorder copy, and a private-tier copy found by hash."""
+    ar.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00",
+             dup_of=f"plaud/{A}")
+    ar.plaud(A, envelopes=[plaud_env(A)], same_audio_as=f"plaud/audio/2026/08/{X}.wav")
+    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{X}.wav",
+             dup_of=f"plaud/{X}", recorded_at="2026-08-06T11:00:00-07:00")
+    x_sha = next(r["audio_sha256"] for r in ar.rows if r["file_id"] == X)
+    rec = ar.recorder()
+    (ar.root / rec["audio_rel"]).write_bytes(_wav_of(ar, X))
+    rec["audio_sha256"], rec["dup_of"] = x_sha, f"plaud/{X}"
+    priv = ar.private()
+    (ar.root / "private/recorder-exports/Aug 3 at 10-00.wav").write_bytes(_wav_of(ar, X))
+    priv["file_id"], priv["uri"] = x_sha, f"private/{x_sha}"
+    ar.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-07T11:00:00-07:00")  # unrelated
+    ar.write_catalog()
+    return rec["uri"], priv["uri"]
+
+
+def test_a_consent_listed_recording_excludes_every_row_that_carries_it(ar_archive, plaud_env):
+    # why: §9.1, §9.3 (Dan's ruling, 2026-10-14). The list excludes the recording, not only its
+    # ID: a row that duplicates it, the row it duplicates, a copy with the same audio and a
+    # private-tier copy found by hash would import the listed recording's audio and transcript.
+    rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
+    the_plan = plan(ar_archive.root, consent={X})
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    for uri in (f"plaud/{X}", f"plaud/{A}", f"plaud/{B}", rec_uri, priv_uri):
+        item = by_uri[uri]
+        assert item.disposition == "consent-excluded", uri
+        assert item.audio is None and item.sha256 == "" and item.snapshots == ()
+    assert by_uri[f"plaud/{C}"].disposition == "new"
+    assert the_plan.counts()["consent-excluded"] == 5 and the_plan.ok
+    text = json.dumps(the_plan.report(), ensure_ascii=False)
+    assert X not in text and priv_uri not in text
+
+
+def test_without_the_id_on_the_consent_list_the_same_rows_import(ar_archive, plaud_env):
+    # The control for the test above: the exclusion comes from the list, nothing else.
+    rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
+    by_uri = {i.row.uri: i for i in plan(ar_archive.root, consent=NONE).items}
+    assert by_uri[f"plaud/{B}"].disposition == "duplicate"
+    assert by_uri[rec_uri].disposition == "duplicate"
+    assert by_uri[priv_uri].disposition == "new-private"
+    assert by_uri[f"plaud/{A}"].disposition == "new"
+    assert by_uri[f"plaud/{X}"].disposition == "duplicate"
+
+
+def test_a_private_file_named_by_a_listed_id_is_never_read(ar_archive, monkeypatch):
+    from recordings.sources import audio_router
+    ar_archive.private()
+    ar_archive._write(f"private/recorder-exports/of_{X}.wav", b"never to be read")
+    ar_archive._write(f"private/recorder-exports/{X2}.wav", b"never to be read either")
+    ar_archive.write_catalog()
+    hashed = []
+    real = audio_router.sha256_file
+    monkeypatch.setattr(audio_router, "sha256_file", lambda p: (hashed.append(p.name), real(p))[1])
+    the_plan = plan(ar_archive.root, consent={X, X2})
+    assert hashed and not any(X in n or X2 in n for n in hashed)
+    assert the_plan.report()["unlisted_private"] == 0
+
+
+def test_one_unreadable_file_does_not_stop_the_dry_run(ar_archive, plaud_env):
+    # why: §9.3. The dry run accounts for every row, and no reason carries a path (a private-tier
+    # file name is an export title).
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], recorded_at="2026-08-02T09:00:00-07:00")
+    ar_archive.private()
+    stray = ar_archive._write("private/recorder-exports/A Stray Title.wav", b"unreadable")
+    locked = ar_archive.root / f"plaud/audio/2026/08/{A}.wav"
+    ar_archive.write_catalog()
+    stray.chmod(0)
+    locked.chmod(0)
+    try:
+        the_plan = plan(ar_archive.root, consent=NONE)
+    finally:
+        stray.chmod(0o644)
+        locked.chmod(0o644)
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    assert by_uri[f"plaud/{A}"].disposition == "unplaced"
+    assert "PermissionError" in by_uri[f"plaud/{A}"].reason
+    assert by_uri[f"plaud/{B}"].disposition == "new"
+    assert len(the_plan.problems) == 1 and "1 private-tier file" in the_plan.problems[0]
+    text = json.dumps(the_plan.report(), ensure_ascii=False)
+    assert "A Stray Title" not in text and str(ar_archive.root) not in text and not the_plan.ok
+
+
+def test_a_malformed_wav_is_unprobed_not_fatal(ar_archive, plaud_env, monkeypatch):
+    import struct
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(
+        b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6) + b"abc")
+    ar_archive.rows[0]["audio_sha256"] = ""
+    ar_archive.write_catalog()
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    the_plan = plan(ar_archive.root, consent=NONE)
+    assert the_plan.report()["unprobed"] == [f"plaud/{A}"] and not the_plan.ok
+
+
+def test_every_path_the_plan_returns_is_inside_the_source(ar_archive, plaud_env, tmp_path):
+    import shutil
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    shutil.move(str(ar_archive.root / "plaud" / "raw" / A), str(outside / A))
+    (ar_archive.root / "plaud" / "raw" / A).symlink_to(outside / A, target_is_directory=True)
+    (item,) = plan(ar_archive.root, consent=NONE).items
+    assert item.disposition == "unplaced" and "outside the source" in item.reason
+
+
+def test_private_media_with_no_catalog_row_is_counted_never_named(ar_archive):
+    ar_archive.private()
+    ar_archive._write("private/recorder-exports/Unlisted Title.wav", b"RIFFnot a row")
+    ar_archive.write_catalog()
+    report = plan(ar_archive.root, consent=NONE).report()
+    assert report["unlisted_private"] == 1
+    assert "Unlisted Title" not in json.dumps(report, ensure_ascii=False)
+
+
+def test_the_pocket_listing_honours_the_consent_list(ar_archive):
+    ar_archive.pocket_without_audio("my_secret_slug")
+    ar_archive.rows.clear()
+    ar_archive.write_catalog()
+    surrogate = hashlib.sha256(b"my_secret_slug").hexdigest()[:32]
+    assert plan(ar_archive.root, consent=NONE).unlisted == (f"pocket/{surrogate}",)
+    assert plan(ar_archive.root, consent={surrogate}).unlisted == ()
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -10316,8 +10504,9 @@ archive/store.py and scripts/build_catalog.py describe (at commit 64612df):
 
 `catalog/catalog.csv` is the checklist: every row gets exactly one disposition, so the dry run
 accounts for every row. Nothing here writes to the source, and no report names a title: the
-catalog holds none, and this module never puts one in a reason. A row on Dan's consent list
-(§9.1) is never read past its ID, and is reported only as a count.
+catalog holds none, and this module never puts one in a reason. Dan's consent list (§9.1)
+excludes the recording, not only its ID: a row on it, and every row that duplicates it or carries
+its audio, is never read past its ID and is reported only as a count.
 """
 
 from __future__ import annotations
@@ -10427,6 +10616,7 @@ class Plan:
     unlisted: tuple[str, ...] = ()
     held_on_plaud: int | None = None
     problems: tuple[str, ...] = ()
+    unlisted_private: int = 0  # private-tier media no catalog row names: a count, never a name
 
     def counts(self) -> dict[str, int]:
         found = Counter(i.disposition for i in self.items)
@@ -10471,6 +10661,7 @@ class Plan:
             "all_snapshots_incomplete": self.all_snapshots_incomplete(),
             "ledger_only": list(self.ledger_only),
             "unlisted": list(self.unlisted),
+            "unlisted_private": self.unlisted_private,
             "held_on_plaud": self.held_on_plaud,
             "problems": list(self.problems),
         }
@@ -10482,7 +10673,7 @@ def map_tags(labels: Iterable[str]) -> tuple[str, ...]:
     counselling become `private/therapy`, and `personal` becomes `private`."""
     out: list[str] = []
     for label in labels:
-        tag = PRIVATE_TAGS.get(label, label)
+        tag = PRIVATE_TAGS.get(label.lower(), label)  # any capitalisation, as is_private_tag
         if tag not in out:
             out.append(tag)
     return tuple(out)
@@ -10538,6 +10729,16 @@ def _inside(root: Path, rel: str) -> Path | None:
         return None
 
 
+def _all_inside(root: Path, paths: Iterable[Path]) -> bool:
+    """Every path resolves inside the source: the plan never returns a file from outside it,
+    because the import publishes those bytes into write-once `source/`."""
+    try:
+        base = root.resolve()
+        return all(p.resolve().is_relative_to(base) for p in paths)
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def _when(row: Row, default_tz: str) -> tuple[datetime | None, str, str, str]:
     """(recorded_at, its zone's name, recordings' time_source, a reason when unplaced)."""
     time_source = TIME_SOURCES.get((row.source, row.time_source))
@@ -10577,17 +10778,30 @@ def _kind_from_id(fid: str) -> str:
     return ""
 
 
-def _private_media(root: Path) -> dict[str, list[Path]]:
-    """The private tier's media files by SHA-256, hashed once per plan. Its files keep their
-    export names, so a hash is the reliable way to find one."""
+def _private_media(root: Path, consent: frozenset[str]) -> tuple[dict[str, list[Path]], int]:
+    """The private tier's media files by SHA-256, hashed once per plan, and how many couldn't be
+    read or sit outside the source. Its files keep their export names, so a hash is the reliable
+    way to find one. A file named by a consent-listed ID is skipped before it is opened (§9.1)."""
     found: dict[str, list[Path]] = {}
+    skipped = 0
     tier = root / "private"
     if tier.is_dir():
-        for path in sorted(tier.rglob("*")):
+        try:
+            paths = sorted(tier.rglob("*"))
+        except OSError:
+            return found, 1
+        for path in paths:
             if (path.is_file() and not path.name.startswith(".")
-                    and path.suffix.lower() in MEDIA_SUFFIXES):
-                found.setdefault(sha256_file(path), []).append(path)
-    return found
+                    and path.suffix.lower() in MEDIA_SUFFIXES
+                    and canonical_plaud_id(path.stem) not in consent):
+                try:
+                    if not _all_inside(root, [path]):
+                        skipped += 1
+                        continue
+                    found.setdefault(sha256_file(path), []).append(path)
+                except OSError:
+                    skipped += 1  # counted, never named: a file name here is an export title
+    return found, skipped
 
 
 def _find_private(root: Path, fid: str, media_by_sha: dict[str, list[Path]]):
@@ -10643,11 +10857,51 @@ def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | 
     return index.find_by_sha256(sha), ""
 
 
-def _place(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | None,
-           default_tz: str, consent: frozenset[str],
+def _consent_closure(rows: list[Row], consent: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
+    """The recordings Dan's consent list excludes (§9.1, §9.3): the list excludes the recording,
+    not only its ID. Returns (URIs, audio SHA-256s), closed over catalog data alone, so no
+    excluded row's files are read. A row is excluded when its own ID is listed, when its `dup_of`
+    names an excluded row, when an excluded row's `dup_of` names it, or when its audio is an
+    excluded row's (a private row's file ID is its audio's SHA-256)."""
+    by_uri = {r.uri: r for r in rows}
+    uris = {r.uri for r in rows if canonical_plaud_id(r.file_id) in consent}
+    shas: set[str] = set()
+
+    def audio_of(r: Row) -> set[str]:
+        return {r.audio_sha256} - {""} | ({r.file_id} if r.source == "private" else set())
+
+    changed = True
+    while changed:
+        changed = False
+        shas |= {s for u in uris for s in audio_of(by_uri[u])}
+        named = {by_uri[u].dup_of for u in uris}
+        for r in rows:
+            if r.uri not in uris and (r.dup_of in uris or r.uri in named or audio_of(r) & shas):
+                uris.add(r.uri)
+                changed = True
+    return frozenset(uris), frozenset(shas)
+
+
+def _place(root: Path, row: Row, *, excluded: tuple[frozenset[str], frozenset[str]],
+           by_uri: dict[str, Row], index: Index | None, default_tz: str,
            private_media: dict[str, list[Path]]) -> Item:
-    if canonical_plaud_id(row.file_id) in consent:
-        return Item(row, "consent-excluded")  # never read past its ID (§9.1)
+    """One row, one disposition. An excluded row is never read; any other row whose files can't
+    be read is `unplaced`, naming the exception's type and never a path (a private-tier file
+    name is an export title)."""
+    if row.uri in excluded[0]:
+        return Item(row, "consent-excluded")
+    try:
+        item = _place_row(root, row, by_uri=by_uri, index=index, default_tz=default_tz,
+                          private_media=private_media)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return Item(row, "unplaced", f"its files can't be read ({type(exc).__name__})")
+    if item.sha256 and item.sha256 in excluded[1]:  # the same audio as an excluded recording
+        return Item(row, "consent-excluded")
+    return item
+
+
+def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | None,
+               default_tz: str, private_media: dict[str, list[Path]]) -> Item:
     if row.source not in (*SOURCES, "private"):
         return Item(row, "unplaced", f"unknown source {row.source!r}")
     if not all(_TAG.fullmatch(label) for label in row.tags):
@@ -10681,6 +10935,8 @@ def _place(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | None,
         if audio is None or not audio.is_file():
             return Item(row, "unplaced", f"audio {row.audio_rel} is missing from the copy")
         snapshots, renditions = _store_files(root, kind, row.file_id)
+    if not _all_inside(root, [audio, *snapshots, *renditions, *texts]):
+        return Item(row, "unplaced", "a file resolves outside the source root")
     sha = sha256_file(audio)
     if row.audio_sha256 and sha != row.audio_sha256:
         return Item(row, "unplaced",
@@ -10738,7 +10994,7 @@ def _unlisted(root: Path, rows: list[Row], consent: frozenset[str]) -> list[str]
             if path.stem.startswith("_"):
                 continue
             fid = _report_id(path.stem)
-            if ("pocket", fid) not in listed:
+            if ("pocket", fid) not in listed and canonical_plaud_id(fid) not in consent:
                 out.add(f"pocket/{fid}")
     return sorted(out)
 
@@ -10748,33 +11004,39 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
     """The dry run (§9.3). `consent` is Dan's consent list (§9.1), which the caller reads
     fail-closed with `recordings.plaud.consent`. It has no default, so no caller forgets it."""
     root = Path(root)
-    excluded = frozenset(canonical_plaud_id(c) for c in consent)
+    listed = frozenset(canonical_plaud_id(c) for c in consent)
     rows = read_catalog(root)
+    excluded = _consent_closure(rows, listed)
     provenance, problems = _provenance(root)
     if isinstance(provenance.get("rows"), int) and provenance["rows"] != len(rows):
         problems.append(f"catalog.csv has {len(rows)} rows but provenance.json says "
                         f"{provenance['rows']}: the copy may be incomplete")
     by_uri = {r.uri: r for r in rows}
-    wanted = any(r.source == "private" and canonical_plaud_id(r.file_id) not in excluded
-                 for r in rows)
-    private_media = _private_media(root) if wanted else {}
+    private_media, skipped = _private_media(root, listed)
+    if skipped:
+        problems.append(f"{skipped} private-tier files couldn't be read or sit outside the "
+                        "source: they are not matched to any row")
+    named = {r.file_id for r in rows if r.source == "private"}
+    unlisted_private = sum(1 for sha, paths in private_media.items() for p in paths
+                           if sha not in named and p.stem not in named)
     # Rows that are nobody's duplicate first, so a duplicate always merges into its original.
-    items = [_place(root, row, by_uri=by_uri, index=index, default_tz=default_timezone,
-                    consent=excluded, private_media=private_media)
+    items = [_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
+                    default_tz=default_timezone, private_media=private_media)
              for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))]
     ledger = [str(x) for x in provenance.get("ledger_only_no_media") or []]
     held = ((provenance.get("per_source") or {}).get("plaud") or {}).get("held_count")
     return Plan(root=root, items=tuple(items),
                 ledger_only=tuple(sorted(x for x in ledger
-                                         if canonical_plaud_id(x) not in excluded)),
-                unlisted=tuple(_unlisted(root, rows, excluded)),
-                held_on_plaud=held if isinstance(held, int) else None, problems=tuple(problems))
+                                         if canonical_plaud_id(x) not in listed)),
+                unlisted=tuple(_unlisted(root, rows, listed)),
+                held_on_plaud=held if isinstance(held, int) else None, problems=tuple(problems),
+                unlisted_private=unlisted_private)
 ```
 
 - [ ] **Step 8: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_plan.py packages/core/tests/test_media.py -v && uv run pytest`
-Expected: 18 passed (13 and 5), and the full suite stays green, its count above Task 7's.
+Expected: 28 passed (21 and 7), and the full suite stays green, its count above Task 7's.
 
 - [ ] **Step 9: Commit**
 

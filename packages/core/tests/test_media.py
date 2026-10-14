@@ -72,3 +72,43 @@ def test_the_kind_comes_from_the_suffix_and_for_mp4_from_the_streams(tmp_path):
     assert media_kind(tmp_path / "a.mp4", MediaProbe(1, 1, 1, has_video=True)) == "video"
     assert media_kind(tmp_path / "a.mp4", MediaProbe(1, 1, 1)) == "audio"
     assert media_kind(tmp_path / "a.txt", None) is None
+
+
+def _wav_declaring(path, declared_seconds, actual_seconds, rate=16000):
+    """A WAV whose data chunk declares more audio than the file holds."""
+    import struct
+    body = b"\x01\x00" * int(actual_seconds * rate)
+    fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 2, 2, 16)
+    data = (b"RIFF" + struct.pack("<I", 36 + len(body)) + b"WAVE" + b"fmt " + struct.pack("<I", 16)
+            + fmt + b"data" + struct.pack("<I", int(declared_seconds * rate) * 2) + body)
+    path.write_bytes(data)
+    return path
+
+
+def test_a_wavs_duration_is_the_frames_read_never_its_headers_claim(tmp_path, monkeypatch):
+    # why: §9.1.1. A file holding 2 s that declares 60 s is decoded instead, and a WAV with no
+    # frames at all is not measured.
+    _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000,
+               streams=[{"codec_type": "audio", "sample_rate": "16000", "channels": 1}])
+    liar = _wav_declaring(tmp_path / "liar.wav", declared_seconds=60, actual_seconds=2)
+    assert probe(liar) == MediaProbe(duration_ms=2000, sample_rate=16000, channels=1,
+                                     has_video=False, method="decoded")
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    assert probe(liar) is None
+    assert probe(_wav_declaring(tmp_path / "empty.wav", 0, 0)) is None
+
+
+def test_a_malformed_wav_or_non_utf8_ffprobe_output_is_not_measured_never_raised(tmp_path,
+                                                                                 monkeypatch):
+    import struct
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    # A chunk that runs past the end of the file: wave raises RuntimeError, not wave.Error.
+    bad = tmp_path / "bad.wav"
+    bad.write_bytes(b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6)
+                    + b"abc")
+    assert probe(bad) is None
+    monkeypatch.undo()
+    _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000, streams=[])
+    (tmp_path / "bin" / "ffprobe").write_bytes(b"#!/bin/sh\nprintf '\\377\\376'\n")
+    (tmp_path / "a.m4a").write_bytes(b"not really")
+    assert probe(tmp_path / "a.m4a") is None
