@@ -33,24 +33,30 @@ def mirror_config(tmp_path, writer, target, extra=""):
 
 class FakeRsync:
     """rsync against a local folder standing in for the target: it answers --list-only and the
-    archive.json fetch from that folder, and records the mirror runs themselves."""
+    MIRROR.md fetch from that folder, answers a dry run with no changes, and records the mirror
+    runs themselves (and whether the mark was on the target by then)."""
 
     def __init__(self, target: Path, returncode=0, stderr=""):
-        self.target, self.returncode, self.stderr, self.mirrored = target, returncode, stderr, []
+        self.target, self.returncode, self.stderr = target, returncode, stderr
+        self.mirrored, self.marked_before_run, self.calls = [], [], []
 
     def __call__(self, cmd, **kwargs):
+        self.calls.append(cmd)
         if "--list-only" in cmd:
             if not self.target.is_dir():
                 return subprocess.CompletedProcess(cmd, 23, "", "change_dir failed\n")
             names = [".", *sorted(p.name for p in self.target.iterdir())]
             listing = "".join(f"drwxr-xr-x          4,096 2026/10/09 08:00:00 {n}\n" for n in names)
             return subprocess.CompletedProcess(cmd, 0, listing, "")
-        if cmd[-2].endswith("/" + SENTINEL):
-            shutil.copy(self.target / SENTINEL, cmd[-1])
+        if cmd[-2] == f"{self.target}/{MIRROR}":  # the target's mark, fetched
+            shutil.copy(self.target / MIRROR, cmd[-1])
             return subprocess.CompletedProcess(cmd, 0, "", "")
         if cmd[-2].endswith("/" + MIRROR):  # the mark, which goes on before anything else
             shutil.copy(cmd[-2], self.target / MIRROR)
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        if "--dry-run" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        self.marked_before_run.append((self.target / MIRROR).is_file())
         self.mirrored.append(cmd)
         return subprocess.CompletedProcess(cmd, self.returncode, "", self.stderr)
 
@@ -60,8 +66,8 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
     mc = mirror_config(tmp_path, writer, "recordings-mirror@nas:/volume1/recordings-mirror/")
     cmd = rsync_command(mc)
     for flag in ("-a", "--delete", "--delete-delay", "--delay-updates", "--max-delete=50",
-                 "--exclude=/.tmp/", "--exclude=.*.tmp", "--exclude=.~tmp~/",
-                 "--exclude=/#recycle/", "--exclude=@eaDir/", f"--exclude=/{MIRROR}"):
+                 "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
+                 "--exclude=/#recycle/", "--filter=-p @eaDir/", f"--exclude=/{MIRROR}"):
         assert flag in cmd, flag
     assert "--no-perms" not in cmd
     assert cmd[-2:] == [f"{writer.root}/", "recordings-mirror@nas:/volume1/recordings-mirror/"]
@@ -69,6 +75,9 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
     assert ssh.startswith("ssh -o BatchMode=yes") and "StrictHostKeyChecking=yes" in ssh
     assert f"UserKnownHostsFile={tmp_path / 'known_hosts'}" in ssh
     assert "GlobalKnownHostsFile=/dev/null" in ssh  # only the pinned file is trusted
+    dry = rsync_command(mc, dry_run=True)  # counts the deletions: --max-delete would cap the count
+    assert "--dry-run" in dry and "--itemize-changes" in dry and "--max-delete=50" not in dry
+    assert dry[-2:] == cmd[-2:] and "--delete-delay" in dry
     local = rsync_command(mirror_config(tmp_path, writer, str(tmp_path / "mirror")))
     assert "-e" not in local
 
@@ -112,25 +121,35 @@ def test_the_mirror_refuses_without_the_sentinel_or_with_another_archive(tmp_pat
 
 def test_the_mirror_runs_only_into_an_empty_target_or_its_own_mirror(tmp_path, writer):
     # why: §15.1. --delete would empty a wrong folder, or a mirror made before a rollback to a fresh
-    # `init` (a new UUID), and Synology Drive would then delete it on the Mac too.
+    # `init` (a new UUID), and Synology Drive would then delete it on the Mac too. The mark says
+    # whose mirror it is: archive.json arrives last, and a copy of the archive carries it too.
     target = tmp_path / "mirror"
     mc = mirror_config(tmp_path, writer, str(target))
     fake = FakeRsync(target)
-    with pytest.raises(MirrorRefused, match="create its folder"):
+    with pytest.raises(MirrorRefused, match="can't be listed"):
         run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
     (target / "#recycle").mkdir(parents=True)  # DSM's own folders don't count
     (target / "@eaDir").mkdir()
     assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
+    assert fake.marked_before_run == [True]  # the mark went on before the main run
+    assert any("-c" in call for call in fake.calls if call[-2].endswith("/" + MIRROR))
+    (target / MIRROR).unlink()
     (target / "photos").mkdir()
     with pytest.raises(MirrorRefused, match="other files"):
         run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
     sentinel = (writer.root / SENTINEL).read_text(encoding="utf-8")
-    (target / SENTINEL).write_text(sentinel.replace(writer.identity.uuid, OTHER_UUID),
-                                   encoding="utf-8")
+    (target / SENTINEL).write_text(sentinel, encoding="utf-8")  # an archive.json is not a mark
+    with pytest.raises(MirrorRefused, match="other files"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
+    (target / MIRROR).write_text(mirror.mark_text(OTHER_UUID), encoding="utf-8")
     with pytest.raises(MirrorRefused, match="another archive's mirror"):
         run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
+    for bad in ("hello\n", f"archive-uuid: {OTHER_UUID}\narchive-uuid: {OTHER_UUID}\n"):
+        (target / MIRROR).write_text(bad, encoding="utf-8")
+        with pytest.raises(MirrorRefused, match="not valid"):
+            run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
     assert len(fake.mirrored) == 1  # rsync --delete ran only into the empty target
-    (target / SENTINEL).write_text(sentinel, encoding="utf-8")
+    (target / MIRROR).write_text(mirror.mark_text(writer.identity.uuid), encoding="utf-8")
     assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
     assert len(fake.mirrored) == 2
 
@@ -145,8 +164,39 @@ def test_the_mirror_marks_its_copy_first_and_the_mark_alone_is_still_empty(tmp_p
     mc = mirror_config(tmp_path, writer, str(target))
     assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
     assert (target / MIRROR).is_file() and not (writer.root / MIRROR).exists()
+    assert writer.identity.uuid in (target / MIRROR).read_text(encoding="utf-8")
     assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
     assert len(fake.mirrored) == 2
+
+
+def test_a_listing_it_cannot_read_is_not_an_empty_target(tmp_path, writer):
+    # why: a line the parser doesn't know could be anything; --delete must not take it for nothing.
+    mc = mirror_config(tmp_path, writer, str(tmp_path / "mirror"))
+    calls = []
+
+    def runner(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "an unexpected listing format\n", "")
+
+    with pytest.raises(MirrorRefused, match="other files"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid, runner=runner)
+    assert len(calls) == 1  # the listing; no mark, no dry run, no rsync --delete
+
+
+def test_a_dry_run_it_cannot_read_stops_the_mirror(tmp_path, writer):
+    target = tmp_path / "mirror"
+    target.mkdir()
+    fake = FakeRsync(target)
+    mc = mirror_config(tmp_path, writer, str(target))
+    for dry in (subprocess.CompletedProcess([], 0, "what is this\n", ""),
+                subprocess.CompletedProcess([], 23, "", "rsync: some error\n")):
+        def runner(cmd, dry=dry, **kwargs):
+            return dry if "--dry-run" in cmd else fake(cmd, **kwargs)
+
+        with pytest.raises(MirrorError, match="dry run") as caught:
+            run_mirror(mc, expected_uuid=writer.identity.uuid, runner=runner)
+        assert caught.value.returncode == dry.returncode or dry.returncode == 0
+    assert fake.mirrored == []  # rsync --delete never ran
 
 
 def test_a_failed_rsync_is_an_error(tmp_path, writer):
@@ -181,7 +231,7 @@ def _rsync_with_delay_updates() -> str | None:
 
 def test_a_real_local_mirror(tmp_path, writer, make_incoming):
     if _rsync_with_delay_updates() is None:
-        pytest.skip("this rsync has no --delay-updates (macOS ships openrsync); CI's has")
+        pytest.skip("this rsync has no --delay-updates (macOS before 26's openrsync; 26's has it)")
     rec = writer.add(make_incoming()).recording
     target = tmp_path / "mirror"
     target.mkdir()
@@ -196,3 +246,65 @@ def test_a_real_local_mirror(tmp_path, writer, make_incoming):
     assert not (target / "stale-file").exists()
     assert not list(target.rglob(".~tmp~"))
     assert (target / MIRROR).is_file() and not (writer.root / MIRROR).exists()  # --delete kept it
+
+
+def _real_rsync_mirror(tmp_path, writer, extra=""):
+    if _rsync_with_delay_updates() is None:
+        pytest.skip("this rsync has no --delay-updates (macOS before 26's openrsync; 26's has it)")
+    target = tmp_path / "mirror"
+    target.mkdir()
+    return target, mirror_config(tmp_path, writer, f"{target}/", extra)
+
+
+def test_a_first_mirror_cut_short_is_resumed(tmp_path, writer):
+    # why: --delay-updates holds archive.json in .~tmp~/ until the end, so an interrupted first run
+    # leaves a mark, folders and no archive.json. The next run must still fill the mirror.
+    target, mc = _real_rsync_mirror(tmp_path, writer)
+    (target / MIRROR).write_text(mirror.mark_text(writer.identity.uuid), encoding="utf-8")
+    (target / ".~tmp~").mkdir()
+    (target / ".~tmp~" / SENTINEL).write_text("{}", encoding="utf-8")
+    (target / "recordings").mkdir()
+    assert run_mirror(mc, expected_uuid=writer.identity.uuid) == "mirrored"
+    assert (target / SENTINEL).read_text(encoding="utf-8") == (writer.root / SENTINEL).read_text(
+        encoding="utf-8")
+
+
+def test_real_rsync_refuses_another_archives_mark_a_foreign_folder_and_the_archive_itself(
+        tmp_path, writer):
+    target, mc = _real_rsync_mirror(tmp_path, writer)
+    (target / MIRROR).write_text(mirror.mark_text(OTHER_UUID), encoding="utf-8")
+    with pytest.raises(MirrorRefused, match="another archive's mirror"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid)
+    (target / MIRROR).unlink()
+    (target / "photos").mkdir()  # the listing is rsync's own, not the fake's
+    with pytest.raises(MirrorRefused, match="other files"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid)
+    assert (target / "photos").is_dir()
+    own = mirror_config(tmp_path, writer, f"{writer.root}/")  # archive.json, but no mark
+    with pytest.raises(MirrorRefused, match="other files"):
+        run_mirror(own, expected_uuid=writer.identity.uuid)
+    assert not (writer.root / MIRROR).exists()
+
+
+def test_more_deletions_than_the_limit_are_refused_before_any_is_made(tmp_path, writer):
+    # why: §15.1. --max-delete alone caps each run: rsync deletes up to N and carries on, so an
+    # hourly mirror of a damaged archive would drain the NAS (and the Mac) N entries an hour.
+    target, mc = _real_rsync_mirror(tmp_path, writer, "max_delete = 5\n")
+    (target / MIRROR).write_text(mirror.mark_text(writer.identity.uuid), encoding="utf-8")
+    for n in range(20):
+        (target / f"stale-{n}").write_text("from before", encoding="utf-8")
+    with pytest.raises(MirrorRefused, match="would delete 20 files and folders") as caught:
+        run_mirror(mc, expected_uuid=writer.identity.uuid)
+    assert "stale-" not in str(caught.value)  # counts only, never a path
+    assert len(list(target.glob("stale-*"))) == 20
+    assert not (target / SENTINEL).exists()  # and nothing was copied either
+
+
+def test_a_dropped_recording_goes_even_when_an_eadir_sits_in_its_folder(tmp_path, writer):
+    target, mc = _real_rsync_mirror(tmp_path, writer)
+    (target / MIRROR).write_text(mirror.mark_text(writer.identity.uuid), encoding="utf-8")
+    gone = target / "recordings" / "2026" / "10" / "dropped"
+    (gone / "@eaDir").mkdir(parents=True)
+    (gone / "@eaDir" / "thumb").write_text("x", encoding="utf-8")
+    assert run_mirror(mc, expected_uuid=writer.identity.uuid) == "mirrored"
+    assert not gone.exists()

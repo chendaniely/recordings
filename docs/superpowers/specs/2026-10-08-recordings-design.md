@@ -2189,8 +2189,9 @@ come from that frame.
   - **Its own account:** a separate non-admin NAS account whose SSH key is restricted to the
     server's address and whose share permissions reach only the mirror share. A compromised
     server could wipe the mirror, which is derived, but not the append-only backups.
-    `--max-delete` bounds an accident, and the target must be empty or carry the same
-    archive UUID.
+    A dry run counts the deletions first, and the mirror refuses, deleting nothing, past
+    `max_delete`. The target must be empty or carry a `MIRROR.md` mark with this archive's
+    UUID.
 - **Capacity:** The NAS's free space is checked before backups start, over ssh `df`, or
   sftp's `df` for an SFTP-only account; otherwise it is unknown, and Status and `doctor`
   say so. The backup repository grows with the archive, and deduplication plus the

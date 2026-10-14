@@ -75,13 +75,14 @@ cache_dir = "/state/cache/restic"
 
 [mirror]                                # stage 2a: the read-only mirror the Mac reads (spec §15.1)
 # An rsync destination, through [nas] ssh's account and key. The folder must exist, and be empty
-# or already this archive's mirror (an archive.json with the same UUID): anything else is refused,
-# so --delete can't empty a wrong folder. DSM's #recycle and @eaDir folders are ignored. Over ssh,
-# rsync on Synology sees /volume1/...; the runbook's spike confirms the form.
+# or already this archive's mirror (a MIRROR.md with this archive's UUID, which the mirror puts
+# there itself): anything else is refused, so --delete can't empty a wrong folder. DSM's #recycle
+# and @eaDir folders are ignored. Over ssh, rsync on Synology sees /volume1/...; the runbook's
+# spike confirms the form.
 target = "recordings-mirror@nas:/volume1/recordings-mirror/"
 rsync = "rsync"
-max_delete = 50                         # more deletions in one run stop it (rsync exit 25); raise
-                                        # it for one run when they are meant
+max_delete = 50                         # a run that would delete more is refused before it deletes
+                                        # anything; raise it for one run when they are meant
 no_perms = false                        # true adds --no-perms: for a share with Windows ACLs, when
                                         # the spike's rsync reports chmod errors
 # An interrupted run can leave a `.~tmp~` folder behind (rsync --delay-updates). The mirror never

@@ -16552,8 +16552,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 The mirror runs through its own non-admin NAS account, `[nas] ssh`, which Task 11's free-space
 check also uses, through sftp's `df` (spec §15.1; Dan, 2026-10-09). A compromised server could wipe
-the mirror, which is derived, but not the append-only backups; `--max-delete` bounds an accident.
-On top of the sentinel check, the target must be empty or already this archive's mirror.
+the mirror, which is derived, but not the append-only backups; a dry run counts the deletions first,
+and `--max-delete` refuses past the limit before anything is deleted. On top of the sentinel check, the
+target must be empty or already this archive's mirror: it holds a `MIRROR.md` carrying this archive's
+UUID (`archive.json` arrives last under `--delay-updates`, so it can't be the proof).
 
 **Files:**
 - Create: `packages/core/src/recordings/mirror.py`
@@ -16569,8 +16571,8 @@ On top of the sentinel check, the target must be empty or already this archive's
     - `@dataclass(frozen=True) MirrorConfig(target: str, archive: Path, rsync: str, nas: Nas, max_delete: int = 50, no_perms: bool = False)`
     - `from_config(cfg, environ) -> MirrorConfig`, reading `[mirror] target`, `rsync`, `max_delete` and `no_perms`; a remote target raises `ConfigError` unless `RECORDINGS_NAS_KNOWN_HOSTS_FILE` is given, with or without `[nas] ssh`
     - `is_remote(target: str) -> bool`
-    - `rsync_command(mc: MirrorConfig) -> list[str]`
-    - `run_mirror(mc, *, expected_uuid: str, runner=subprocess.run) -> str`, which refuses a target that is neither empty nor this archive's mirror
+    - `rsync_command(mc: MirrorConfig, *, dry_run: bool = False) -> list[str]`, and `mark_text(uuid: str) -> str`, the text of `MIRROR.md`, which carries `archive-uuid: <uuid>`
+    - `run_mirror(mc, *, expected_uuid: str, runner=subprocess.run) -> str`, which refuses a target that is neither empty nor this archive's mirror, and refuses before deleting anything when a dry run counts more deletions than `max_delete`
   - **`ops.JOBS["mirror"]`**, and `MirrorError` in `ops.FAILURES`.
   - **CLI:** `recordings mirror [--json] [--debug]`.
 
@@ -16613,24 +16615,30 @@ def mirror_config(tmp_path, writer, target, extra=""):
 
 class FakeRsync:
     """rsync against a local folder standing in for the target: it answers --list-only and the
-    archive.json fetch from that folder, and records the mirror runs themselves."""
+    MIRROR.md fetch from that folder, answers a dry run with no changes, and records the mirror
+    runs themselves (and whether the mark was on the target by then)."""
 
     def __init__(self, target: Path, returncode=0, stderr=""):
-        self.target, self.returncode, self.stderr, self.mirrored = target, returncode, stderr, []
+        self.target, self.returncode, self.stderr = target, returncode, stderr
+        self.mirrored, self.marked_before_run, self.calls = [], [], []
 
     def __call__(self, cmd, **kwargs):
+        self.calls.append(cmd)
         if "--list-only" in cmd:
             if not self.target.is_dir():
                 return subprocess.CompletedProcess(cmd, 23, "", "change_dir failed\n")
             names = [".", *sorted(p.name for p in self.target.iterdir())]
             listing = "".join(f"drwxr-xr-x          4,096 2026/10/09 08:00:00 {n}\n" for n in names)
             return subprocess.CompletedProcess(cmd, 0, listing, "")
-        if cmd[-2].endswith("/" + SENTINEL):
-            shutil.copy(self.target / SENTINEL, cmd[-1])
+        if cmd[-2] == f"{self.target}/{MIRROR}":  # the target's mark, fetched
+            shutil.copy(self.target / MIRROR, cmd[-1])
             return subprocess.CompletedProcess(cmd, 0, "", "")
         if cmd[-2].endswith("/" + MIRROR):  # the mark, which goes on before anything else
             shutil.copy(cmd[-2], self.target / MIRROR)
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        if "--dry-run" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        self.marked_before_run.append((self.target / MIRROR).is_file())
         self.mirrored.append(cmd)
         return subprocess.CompletedProcess(cmd, self.returncode, "", self.stderr)
 
@@ -16640,8 +16648,8 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
     mc = mirror_config(tmp_path, writer, "recordings-mirror@nas:/volume1/recordings-mirror/")
     cmd = rsync_command(mc)
     for flag in ("-a", "--delete", "--delete-delay", "--delay-updates", "--max-delete=50",
-                 "--exclude=/.tmp/", "--exclude=.*.tmp", "--exclude=.~tmp~/",
-                 "--exclude=/#recycle/", "--exclude=@eaDir/", f"--exclude=/{MIRROR}"):
+                 "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
+                 "--exclude=/#recycle/", "--filter=-p @eaDir/", f"--exclude=/{MIRROR}"):
         assert flag in cmd, flag
     assert "--no-perms" not in cmd
     assert cmd[-2:] == [f"{writer.root}/", "recordings-mirror@nas:/volume1/recordings-mirror/"]
@@ -16649,6 +16657,9 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
     assert ssh.startswith("ssh -o BatchMode=yes") and "StrictHostKeyChecking=yes" in ssh
     assert f"UserKnownHostsFile={tmp_path / 'known_hosts'}" in ssh
     assert "GlobalKnownHostsFile=/dev/null" in ssh  # only the pinned file is trusted
+    dry = rsync_command(mc, dry_run=True)  # counts the deletions: --max-delete would cap the count
+    assert "--dry-run" in dry and "--itemize-changes" in dry and "--max-delete=50" not in dry
+    assert dry[-2:] == cmd[-2:] and "--delete-delay" in dry
     local = rsync_command(mirror_config(tmp_path, writer, str(tmp_path / "mirror")))
     assert "-e" not in local
 
@@ -16692,25 +16703,35 @@ def test_the_mirror_refuses_without_the_sentinel_or_with_another_archive(tmp_pat
 
 def test_the_mirror_runs_only_into_an_empty_target_or_its_own_mirror(tmp_path, writer):
     # why: §15.1. --delete would empty a wrong folder, or a mirror made before a rollback to a fresh
-    # `init` (a new UUID), and Synology Drive would then delete it on the Mac too.
+    # `init` (a new UUID), and Synology Drive would then delete it on the Mac too. The mark says
+    # whose mirror it is: archive.json arrives last, and a copy of the archive carries it too.
     target = tmp_path / "mirror"
     mc = mirror_config(tmp_path, writer, str(target))
     fake = FakeRsync(target)
-    with pytest.raises(MirrorRefused, match="create its folder"):
+    with pytest.raises(MirrorRefused, match="can't be listed"):
         run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
     (target / "#recycle").mkdir(parents=True)  # DSM's own folders don't count
     (target / "@eaDir").mkdir()
     assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
+    assert fake.marked_before_run == [True]  # the mark went on before the main run
+    assert any("-c" in call for call in fake.calls if call[-2].endswith("/" + MIRROR))
+    (target / MIRROR).unlink()
     (target / "photos").mkdir()
     with pytest.raises(MirrorRefused, match="other files"):
         run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
     sentinel = (writer.root / SENTINEL).read_text(encoding="utf-8")
-    (target / SENTINEL).write_text(sentinel.replace(writer.identity.uuid, OTHER_UUID),
-                                   encoding="utf-8")
+    (target / SENTINEL).write_text(sentinel, encoding="utf-8")  # an archive.json is not a mark
+    with pytest.raises(MirrorRefused, match="other files"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
+    (target / MIRROR).write_text(mirror.mark_text(OTHER_UUID), encoding="utf-8")
     with pytest.raises(MirrorRefused, match="another archive's mirror"):
         run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
+    for bad in ("hello\n", f"archive-uuid: {OTHER_UUID}\narchive-uuid: {OTHER_UUID}\n"):
+        (target / MIRROR).write_text(bad, encoding="utf-8")
+        with pytest.raises(MirrorRefused, match="not valid"):
+            run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
     assert len(fake.mirrored) == 1  # rsync --delete ran only into the empty target
-    (target / SENTINEL).write_text(sentinel, encoding="utf-8")
+    (target / MIRROR).write_text(mirror.mark_text(writer.identity.uuid), encoding="utf-8")
     assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
     assert len(fake.mirrored) == 2
 
@@ -16725,8 +16746,39 @@ def test_the_mirror_marks_its_copy_first_and_the_mark_alone_is_still_empty(tmp_p
     mc = mirror_config(tmp_path, writer, str(target))
     assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
     assert (target / MIRROR).is_file() and not (writer.root / MIRROR).exists()
+    assert writer.identity.uuid in (target / MIRROR).read_text(encoding="utf-8")
     assert run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake) == "mirrored"
     assert len(fake.mirrored) == 2
+
+
+def test_a_listing_it_cannot_read_is_not_an_empty_target(tmp_path, writer):
+    # why: a line the parser doesn't know could be anything; --delete must not take it for nothing.
+    mc = mirror_config(tmp_path, writer, str(tmp_path / "mirror"))
+    calls = []
+
+    def runner(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "an unexpected listing format\n", "")
+
+    with pytest.raises(MirrorRefused, match="other files"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid, runner=runner)
+    assert len(calls) == 1  # the listing; no mark, no dry run, no rsync --delete
+
+
+def test_a_dry_run_it_cannot_read_stops_the_mirror(tmp_path, writer):
+    target = tmp_path / "mirror"
+    target.mkdir()
+    fake = FakeRsync(target)
+    mc = mirror_config(tmp_path, writer, str(target))
+    for dry in (subprocess.CompletedProcess([], 0, "what is this\n", ""),
+                subprocess.CompletedProcess([], 23, "", "rsync: some error\n")):
+        def runner(cmd, dry=dry, **kwargs):
+            return dry if "--dry-run" in cmd else fake(cmd, **kwargs)
+
+        with pytest.raises(MirrorError, match="dry run") as caught:
+            run_mirror(mc, expected_uuid=writer.identity.uuid, runner=runner)
+        assert caught.value.returncode == dry.returncode or dry.returncode == 0
+    assert fake.mirrored == []  # rsync --delete never ran
 
 
 def test_a_failed_rsync_is_an_error(tmp_path, writer):
@@ -16761,7 +16813,7 @@ def _rsync_with_delay_updates() -> str | None:
 
 def test_a_real_local_mirror(tmp_path, writer, make_incoming):
     if _rsync_with_delay_updates() is None:
-        pytest.skip("this rsync has no --delay-updates (macOS ships openrsync); CI's has")
+        pytest.skip("this rsync has no --delay-updates (macOS before 26's openrsync; 26's has it)")
     rec = writer.add(make_incoming()).recording
     target = tmp_path / "mirror"
     target.mkdir()
@@ -16776,6 +16828,68 @@ def test_a_real_local_mirror(tmp_path, writer, make_incoming):
     assert not (target / "stale-file").exists()
     assert not list(target.rglob(".~tmp~"))
     assert (target / MIRROR).is_file() and not (writer.root / MIRROR).exists()  # --delete kept it
+
+
+def _real_rsync_mirror(tmp_path, writer, extra=""):
+    if _rsync_with_delay_updates() is None:
+        pytest.skip("this rsync has no --delay-updates (macOS before 26's openrsync; 26's has it)")
+    target = tmp_path / "mirror"
+    target.mkdir()
+    return target, mirror_config(tmp_path, writer, f"{target}/", extra)
+
+
+def test_a_first_mirror_cut_short_is_resumed(tmp_path, writer):
+    # why: --delay-updates holds archive.json in .~tmp~/ until the end, so an interrupted first run
+    # leaves a mark, folders and no archive.json. The next run must still fill the mirror.
+    target, mc = _real_rsync_mirror(tmp_path, writer)
+    (target / MIRROR).write_text(mirror.mark_text(writer.identity.uuid), encoding="utf-8")
+    (target / ".~tmp~").mkdir()
+    (target / ".~tmp~" / SENTINEL).write_text("{}", encoding="utf-8")
+    (target / "recordings").mkdir()
+    assert run_mirror(mc, expected_uuid=writer.identity.uuid) == "mirrored"
+    assert (target / SENTINEL).read_text(encoding="utf-8") == (writer.root / SENTINEL).read_text(
+        encoding="utf-8")
+
+
+def test_real_rsync_refuses_another_archives_mark_a_foreign_folder_and_the_archive_itself(
+        tmp_path, writer):
+    target, mc = _real_rsync_mirror(tmp_path, writer)
+    (target / MIRROR).write_text(mirror.mark_text(OTHER_UUID), encoding="utf-8")
+    with pytest.raises(MirrorRefused, match="another archive's mirror"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid)
+    (target / MIRROR).unlink()
+    (target / "photos").mkdir()  # the listing is rsync's own, not the fake's
+    with pytest.raises(MirrorRefused, match="other files"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid)
+    assert (target / "photos").is_dir()
+    own = mirror_config(tmp_path, writer, f"{writer.root}/")  # archive.json, but no mark
+    with pytest.raises(MirrorRefused, match="other files"):
+        run_mirror(own, expected_uuid=writer.identity.uuid)
+    assert not (writer.root / MIRROR).exists()
+
+
+def test_more_deletions_than_the_limit_are_refused_before_any_is_made(tmp_path, writer):
+    # why: §15.1. --max-delete alone caps each run: rsync deletes up to N and carries on, so an
+    # hourly mirror of a damaged archive would drain the NAS (and the Mac) N entries an hour.
+    target, mc = _real_rsync_mirror(tmp_path, writer, "max_delete = 5\n")
+    (target / MIRROR).write_text(mirror.mark_text(writer.identity.uuid), encoding="utf-8")
+    for n in range(20):
+        (target / f"stale-{n}").write_text("from before", encoding="utf-8")
+    with pytest.raises(MirrorRefused, match="would delete 20 files and folders") as caught:
+        run_mirror(mc, expected_uuid=writer.identity.uuid)
+    assert "stale-" not in str(caught.value)  # counts only, never a path
+    assert len(list(target.glob("stale-*"))) == 20
+    assert not (target / SENTINEL).exists()  # and nothing was copied either
+
+
+def test_a_dropped_recording_goes_even_when_an_eadir_sits_in_its_folder(tmp_path, writer):
+    target, mc = _real_rsync_mirror(tmp_path, writer)
+    (target / MIRROR).write_text(mirror.mark_text(writer.identity.uuid), encoding="utf-8")
+    gone = target / "recordings" / "2026" / "10" / "dropped"
+    (gone / "@eaDir").mkdir(parents=True)
+    (gone / "@eaDir" / "thumb").write_text("x", encoding="utf-8")
+    assert run_mirror(mc, expected_uuid=writer.identity.uuid) == "mirrored"
+    assert not gone.exists()
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -16792,22 +16906,29 @@ share on the NAS, through the mirror's own NAS account ([nas] ssh, with its key)
 
 - `--delay-updates` puts every changed file in place at the end, so a reader never sees half a
   copy.
-- `--delete --delete-delay` removes what the archive no longer holds, after the transfer, and
-  `--max-delete` bounds it: more deletions than [mirror] max_delete stop the run (rsync exit 25).
+- `--delete --delete-delay` removes what the archive no longer holds, after the transfer. A
+  dry run comes first and counts the deletions: more than [mirror] max_delete and the run is
+  refused before it deletes anything, every hour, until someone looks (--max-delete=N on the real
+  run stays as a backstop, rsync exit 25, for a change made between the two passes). --max-delete
+  alone would cap each run, not the accident: rsync deletes up to N and carries on.
 - `.tmp/` and `.*.tmp` (work in progress) are never copied. `.~tmp~/`, where `--delay-updates`
   stages files and which an interrupted run leaves behind, is excluded too; on the Mac, Synology
   Drive's sync filter must exclude it as well. DSM's own `#recycle` and `@eaDir` folders are left
-  alone.
+  alone. `@eaDir/` and `.~tmp~/` are perishable filters, so a folder the archive dropped can still
+  be removed from the mirror when one of them sits inside it.
 - It refuses to run when the archive's sentinel is missing or its UUID has changed (§6.7), so an
   unmounted archive can never empty the mirror through --delete.
 - A remote target needs RECORDINGS_NAS_KNOWN_HOSTS_FILE even when [nas] ssh is unset: only that
   pinned file is trusted for the host (ssh.ssh_options).
-- It refuses a target that is neither empty nor this archive's mirror (an `archive.json` with the
-  same UUID). So a wrong path, or a mirror made before a rollback to a fresh `init` (a new UUID),
-  is never emptied, and Synology Drive never deletes it on the Mac.
+- It refuses a target that is neither empty nor this archive's mirror: a `MIRROR.md` that carries
+  this archive's UUID. So a wrong path, a mirror made before a rollback to a fresh `init` (a new
+  UUID), or the archive itself is never emptied, and Synology Drive never deletes it on the Mac.
+  The mark, not `archive.json`, says whose mirror it is: with --delay-updates `archive.json` only
+  arrives at the end, so a first run cut short must still be recognised on the next one.
 - It puts `MIRROR.md` on the target before anything else, and `--delete` never removes it, so
   the copy says it is one: `recordings init --adopt` and every Writer refuse a folder holding it
   (§3), and it tells a person or an agent reading the copy to change nothing there.
+- A listing it can't read is not an empty target: a line it doesn't understand counts as a file.
 - `[mirror] no_perms = true` adds `--no-perms`, for a share with Windows ACLs where rsync's chmod
   fails (the runbook's spike).
 
@@ -16826,13 +16947,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from recordings.config import Config, ConfigError
-from recordings.sentinel import MIRROR, SENTINEL, SentinelError, read_sentinel
+from recordings.sentinel import MIRROR, SentinelError, read_sentinel
 from recordings.ssh import Nas, nas_from_config, require_known_hosts
 
 MAX_DELETE = 50
 DSM_FOLDERS = ("#recycle", "@eaDir")  # the NAS's recycle bin and its indexer's folders
 # One line of `rsync --list-only`: permissions, size, date, time, then the name.
 _LISTED = re.compile(r"^[-dlpscb][-rwxsStT]{9}\S*\s+[\d,.]+[KMGTP]?\s+\S+\s+\S+\s+(?P<name>.+)$")
+UNREADABLE = "<a listing line that could not be read>"
+# One line of `rsync --dry-run --itemize-changes`: `*deleting   name`, or the itemized changes of a
+# file (`>f+++++++++ name`; openrsync prints two characters fewer than rsync 3.x).
+_ITEMIZED = re.compile(r"^(?:\*deleting\s+(?P<gone>\S.*)|[<>ch.*][fdLDS][.+?a-zA-Z]{7,9}\s.+)$")
+_MARK_UUID = re.compile(r"archive-uuid: ([0-9a-f-]{36})")
 
 
 class MirrorError(RuntimeError):
@@ -16894,10 +17020,13 @@ def _folder(mc: MirrorConfig) -> str:
     return mc.target if mc.target.endswith("/") else mc.target + "/"
 
 
-def rsync_command(mc: MirrorConfig) -> list[str]:
+def rsync_command(mc: MirrorConfig, *, dry_run: bool = False) -> list[str]:
+    """The mirror run, or with `dry_run` its dry run: it lists what would change and what would be
+    deleted, and has no --max-delete, which would stop the count at the limit."""
     cmd = [mc.rsync, "-a", "--delete", "--delete-delay", "--delay-updates",
-           f"--max-delete={mc.max_delete}", "--exclude=/.tmp/", "--exclude=.*.tmp",
-           "--exclude=.~tmp~/", "--exclude=/#recycle/", "--exclude=@eaDir/",
+           *(["--dry-run", "--itemize-changes"] if dry_run else [f"--max-delete={mc.max_delete}"]),
+           "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
+           "--exclude=/#recycle/", "--filter=-p @eaDir/",
            f"--exclude=/{MIRROR}"]  # the mark: never copied over, never deleted by --delete
     if mc.no_perms:
         cmd.append("--no-perms")
@@ -16910,34 +17039,18 @@ def _target_names(mc: MirrorConfig, runner) -> list[str]:
                   text=True, timeout=600)
     if proc.returncode != 0:
         raise MirrorRefused(f"refusing to mirror: the target can't be listed (rsync exit "
-                            f"{proc.returncode}); create its folder first", returncode=proc.returncode)
+                            f"{proc.returncode}); check that its folder exists and that the "
+                            "account can reach it", returncode=proc.returncode)
     names = []
     for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
         match = _LISTED.match(line)
-        if match and match["name"] not in (".", MIRROR, *DSM_FOLDERS):
+        if match is None:
+            names.append(UNREADABLE)  # fails closed: a line it can't read is a file it can't see
+        elif match["name"] not in (".", *DSM_FOLDERS):
             names.append(match["name"])
     return names
-
-
-def _check_target(mc: MirrorConfig, expected_uuid: str, runner) -> None:
-    names = _target_names(mc, runner)
-    if not names:
-        return  # empty: the first mirror
-    if SENTINEL not in names:
-        raise MirrorRefused("refusing to mirror: the target holds other files and no archive.json")
-    with tempfile.TemporaryDirectory(prefix="recordings-mirror-") as tmp:
-        proc = runner([mc.rsync, *_ssh(mc), _folder(mc) + SENTINEL, f"{tmp}/"],
-                      capture_output=True, text=True, timeout=600)
-        if proc.returncode != 0:
-            raise MirrorRefused(f"refusing to mirror: the target's {SENTINEL} can't be read (rsync "
-                                f"exit {proc.returncode})", returncode=proc.returncode)
-        try:
-            uuid = read_sentinel(Path(tmp)).uuid
-        except SentinelError:
-            raise MirrorRefused(f"refusing to mirror: the target's {SENTINEL} is not valid") from None
-    if uuid != expected_uuid:
-        raise MirrorRefused("refusing to mirror: the target is another archive's mirror (its UUID "
-                            "differs). If that archive is gone for good, empty the target first")
 
 
 MIRROR_TEXT = """# A read-only copy of the archive
@@ -16948,16 +17061,77 @@ writer refuse a folder that holds this file. To change anything, use the app.
 """
 
 
-def _mark(mc: MirrorConfig, runner) -> None:
-    """MIRROR.md goes on first, so the copy says it is one before its archive.json arrives."""
+def mark_text(uuid: str) -> str:
+    """MIRROR.md's text: the notice, and the UUID of the archive this is the mirror of."""
+    return f"{MIRROR_TEXT}\narchive-uuid: {uuid}\n"
+
+
+def _mark_uuid(path: Path) -> str | None:
+    """The UUID in a fetched MIRROR.md, or None unless it is a small file with exactly one."""
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 4096:
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    found = [m[1] for line in lines if (m := _MARK_UUID.fullmatch(line))]
+    return found[0] if len(found) == 1 else None
+
+
+def _check_target(mc: MirrorConfig, expected_uuid: str, runner) -> None:
+    names = _target_names(mc, runner)
+    if MIRROR not in names:
+        if names:
+            raise MirrorRefused("refusing to mirror: the target holds other files and no "
+                                f"{MIRROR} of this archive")
+        return  # empty: the first mirror
+    with tempfile.TemporaryDirectory(prefix="recordings-mirror-") as tmp:
+        proc = runner([mc.rsync, *_ssh(mc), _folder(mc) + MIRROR, f"{tmp}/"],
+                      capture_output=True, text=True, timeout=600)
+        if proc.returncode != 0:
+            raise MirrorRefused(f"refusing to mirror: the target's {MIRROR} can't be read (rsync "
+                                f"exit {proc.returncode})", returncode=proc.returncode)
+        uuid = _mark_uuid(Path(tmp) / MIRROR)
+    if uuid is None:
+        raise MirrorRefused(f"refusing to mirror: the target's {MIRROR} is not valid")
+    if uuid != expected_uuid:
+        raise MirrorRefused("refusing to mirror: the target is another archive's mirror (its UUID "
+                            "differs). If that archive is gone for good, empty the target first")
+
+
+def _mark(mc: MirrorConfig, uuid: str, runner) -> None:
+    """MIRROR.md goes on first, so the copy says it is one, and whose, before its archive.json
+    arrives. -c: an unchanged mark isn't rewritten, so Synology Drive doesn't sync it every hour."""
     with tempfile.TemporaryDirectory(prefix="recordings-mirror-") as tmp:
         mark = Path(tmp) / MIRROR
-        mark.write_text(MIRROR_TEXT, encoding="utf-8")
-        proc = runner([mc.rsync, *_ssh(mc), str(mark), _folder(mc)], capture_output=True,
+        mark.write_text(mark_text(uuid), encoding="utf-8")
+        proc = runner([mc.rsync, "-c", *_ssh(mc), str(mark), _folder(mc)], capture_output=True,
                       text=True, timeout=600)
     if proc.returncode != 0:
         raise MirrorError(f"the target's {MIRROR} could not be written (rsync exit "
                           f"{proc.returncode})", returncode=proc.returncode)
+
+
+def _check_deletions(mc: MirrorConfig, runner) -> None:
+    """Count what the run would delete, and refuse, deleting nothing, past [mirror] max_delete.
+    A dry run it can't read stops the mirror too. Counts only: no path leaves this function."""
+    proc = runner(rsync_command(mc, dry_run=True), capture_output=True, text=True,
+                  timeout=6 * 3600)
+    if proc.returncode != 0:
+        raise MirrorError(f"the rsync dry run failed (exit {proc.returncode}); nothing was "
+                          "deleted", returncode=proc.returncode)
+    gone = 0
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        match = _ITEMIZED.match(line)
+        if match is None:
+            raise MirrorError("the rsync dry run's output could not be read; nothing was deleted")
+        gone += match["gone"] is not None
+    if gone > mc.max_delete:
+        raise MirrorRefused(f"the mirror would delete {gone} files and folders, over the limit of "
+                            f"{mc.max_delete} ([mirror] max_delete): nothing was deleted. If they "
+                            "are meant, raise it for one run")
 
 
 def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run) -> str:
@@ -16968,11 +17142,13 @@ def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run) -
     if identity.uuid != expected_uuid:
         raise MirrorRefused("refusing to mirror: the archive's UUID changed since `recordings init`")
     _check_target(mc, expected_uuid, runner)
-    _mark(mc, runner)
+    _mark(mc, identity.uuid, runner)
+    _check_deletions(mc, runner)
     proc = runner(rsync_command(mc), capture_output=True, text=True, timeout=6 * 3600)
     if proc.returncode == 25:
-        raise MirrorError(f"rsync stopped after {mc.max_delete} deletions ([mirror] max_delete). "
-                          "If they are meant, raise it for one run", returncode=25)
+        raise MirrorError(f"rsync stopped deleting at {mc.max_delete} ([mirror] max_delete): the "
+                          "archive changed since the dry run. The next run counts again",
+                          returncode=25)
     if proc.returncode != 0:
         last = (proc.stderr or "").strip().splitlines()[-1:] or ["no message"]
         raise MirrorError(f"rsync failed (exit {proc.returncode}): {last[0][:300]}",
@@ -17025,13 +17201,14 @@ In `config.example.toml`, **add** after `[backup]`:
 ```toml
 [mirror]                                # stage 2a: the read-only mirror the Mac reads (spec §15.1)
 # An rsync destination, through [nas] ssh's account and key. The folder must exist, and be empty
-# or already this archive's mirror (an archive.json with the same UUID): anything else is refused,
-# so --delete can't empty a wrong folder. DSM's #recycle and @eaDir folders are ignored. Over ssh,
-# rsync on Synology sees /volume1/...; the runbook's spike confirms the form.
+# or already this archive's mirror (a MIRROR.md with this archive's UUID, which the mirror puts
+# there itself): anything else is refused, so --delete can't empty a wrong folder. DSM's #recycle
+# and @eaDir folders are ignored. Over ssh, rsync on Synology sees /volume1/...; the runbook's
+# spike confirms the form.
 target = "recordings-mirror@nas:/volume1/recordings-mirror/"
 rsync = "rsync"
-max_delete = 50                         # more deletions in one run stop it (rsync exit 25); raise
-                                        # it for one run when they are meant
+max_delete = 50                         # a run that would delete more is refused before it deletes
+                                        # anything; raise it for one run when they are meant
 no_perms = false                        # true adds --no-perms: for a share with Windows ACLs, when
                                         # the spike's rsync reports chmod errors
 # An interrupted run can leave a `.~tmp~` folder behind (rsync --delay-updates). The mirror never
@@ -17041,7 +17218,7 @@ no_perms = false                        # true adds --no-perms: for a share with
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_mirror.py -v && uv run pytest`
-Expected: all pass (13 in `test_mirror.py`). `test_a_real_local_mirror` runs wherever rsync has `--delay-updates`: CI, and macOS 26's openrsync (checked 2026-10-09); an older Mac's openrsync skips it.
+Expected: all pass (19 in `test_mirror.py`). `test_a_real_local_mirror` runs wherever rsync has `--delay-updates`: CI, and macOS 26's openrsync (checked 2026-10-09); an older Mac's openrsync skips it.
 
 - [ ] **Step 5: Commit**
 
