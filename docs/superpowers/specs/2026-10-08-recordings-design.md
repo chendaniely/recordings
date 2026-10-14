@@ -231,6 +231,8 @@ recordings/                      (repo root, uv workspace, MIT)
   - auto-private title patterns
   - the Plaud schedule and `full_sweep_days` (§9.1.1)
   - `[plaud] consent_list`, the path to Dan's consent list (§9.1)
+  - `[disk] warn_free_percent` (20) and `stop_free_percent` (5), the disk guard's thresholds
+    (§12.5); stop must be below warn
   - `[speakers]`: `auto_threshold` and `suggest_threshold` (§7.6)
   - `[calendar] terms`, the term presets in the date control (§12.6a)
   - the ntfy server (§14)
@@ -412,7 +414,8 @@ compares them in one canonical form (§9.1.1).
     as new.
 - **Kinds** (the `kind` field):
   - `transcript`: segments with start and end times, speaker and text
-  - `speakers`: diarization: who spoke when, as segments only. Voice fingerprints never
+  - `speakers`: diarization: who spoke when, as turns only (`payload.turns`, and
+    `payload.overlap_turns` when the engine reports overlaps). Voice fingerprints never
     enter the archive (§7.6).
   - `speakers-compare`: Plaud's named speakers against the home-built result (§7.6). Its
     `inputs` pin both outputs and a hash of the assignments, so it goes stale when any of
@@ -1228,7 +1231,12 @@ before any other source. It reuses `audio-router`'s Plaud client, copied in (§1
     downloads a listed ID. A Plaud ID whose audio matches a listed recording is not stopped
     by the sync. Only the import's catalog can do that.
   - The list is configured as a path (`[plaud] consent_list`) and mounted read-only.
-  - It is read fail-closed: if it is missing or unreadable, the sync stops.
+  - It is read fail-closed: if it is unset, missing, unreadable, empty or holds no IDs, the sync
+    and the `audio-router` import (dry run included) stop, with exit 78.
+  - **An ID listed after its recording was imported** stops the next import until Dan takes
+    the recording out by hand (then `recordings reindex --allow-missing`). 2a can't remove a
+    recording, so the dry run adds one problem, as a count with no ID, and a real run stops,
+    even with `--allow-unplaced`.
   - Entries follow `audio-router`'s parser: an ID counts only when it opens a bullet or
     stands alone on a line.
   - The Sync screen shows those IDs as "excluded by consent list". Removing an ID from the
@@ -1424,10 +1432,23 @@ later" until its build stage (§20):
 
     The private count is by label, `access` and tier. A title that matches the auto-private
     patterns is tagged by the run (§7.4). A run also refuses unplaced rows unless told not to.
+
+    A real run holds the `ops` lock (§6.4), so it never overlaps a backup or the mirror. It
+    stops, and reports what it did first, when:
+    - the plan has a problem, or the media of a recording it would create can't be measured.
+      Both are checked before it writes.
+    - the disk guard says stop, or the next new recording would leave less than the stop margin
+      free (§12.5).
+    - the archive reads as empty, the disk is full, or state.db or the index can't be used.
+
+    One recording's own failure is reported and the run goes on.
   - It reads `audio-router`'s archive through `ARCHIVE.md` and **never changes it**. It
     reads a read-only copy brought over with rsync and a SHA manifest (§19).
   - It is re-runnable, and matches by Plaud ID (either form) before content hash. A match
-    adds a source reference to the existing recording instead of copying it again.
+    adds a source reference to the existing recording instead of copying it again. A re-run
+    adds only privacy tags to a recording that already exists, so a label Dan removed stays
+    removed. A re-run decodes only what it creates, and writes each imported output once,
+    whatever its bytes are by then.
   - **Held recordings were never fetched,** so they aren't in `audio-router`'s archive.
     They arrive later through the sync, tagged `private` (§7.4).
   - Most imports arrive untagged, so their existing outputs are visible while they wait in
