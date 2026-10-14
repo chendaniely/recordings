@@ -913,6 +913,9 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    ssh-keygen -lf "$K/nas_known_hosts"
    cat "$K/nas_ssh_key.pub"
    ```
+   If the NAS's SSH is not on port 22, scan that port, or the pinned key will not match what the
+   app connects to: `ssh-keyscan -t ed25519 -p <port> "$NAS_HOST"`, with the same number in
+   `[nas] port` and, below, as `-o Port=<port>` in `SSH_OPTS`.
    Compare that fingerprint with the NAS's own before trusting it
    (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, on the NAS).
 
@@ -934,7 +937,7 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    copy again.
    ```bash
    K="$RECORDINGS_HOME/secrets"
-   SSH_OPTS=(-i "$K/nas_ssh_key" -o "UserKnownHostsFile=$K/nas_known_hosts" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
+   SSH_OPTS=(-i "$K/nas_ssh_key" -o "UserKnownHostsFile=$K/nas_known_hosts" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
    PROBE="$RECORDINGS_HOME/restore-test/probe.bin"             # a real file, not a symlink
    [ -f "$PROBE" ] || head -c 5000000 /dev/urandom > "$PROBE"
    rsync -an -e "ssh ${SSH_OPTS[*]}" "$PROBE" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
@@ -1229,8 +1232,16 @@ rc start backup
 ```
 Expected: the import reports no failures, `validate` reports no problems, and both backups and the
 restore test print `ok: True`. The restore test now proves the imported data, not just an empty
-archive. Resume the Healthchecks check. The first full mirror of the imported archive runs next
+archive. Note how long the restore test took (Status shows when it started and finished): the
+loop runs it once a month with no backup in between, so if it took over 2 hours, raise the
+Healthchecks grace to that time plus 2 hours, or each month's restore test reads as an outage.
+Resume the Healthchecks check. The first full mirror of the imported archive runs next
 and can take hours; if Healthchecks alerts during it, the next backup's ping clears it.
+
+If the post-import backup is interrupted (a dropped link, a reboot), run the same line again.
+It may upload everything again: restic 0.19.1 kept nothing it could reuse from an interrupted
+12-minute test. What the first try sent stays on the NAS, unreferenced, until the retention
+task's next prune, so the NAS needs room for the archive twice over until then.
 
 Once the restore test has passed, and only then, delete the import copy. The archive and its
 backups hold everything, and `import/` is a plaintext copy nobody needs. Keep `consent-list.md`:
@@ -16556,7 +16567,7 @@ On top of the sentinel check, the target must be empty or already this archive's
     - errors: `class MirrorError(RuntimeError)`, with `.returncode: int | None` (a failed rsync raises it, with rsync's exit status), and its subclass `MirrorRefused`
     - constants `MAX_DELETE = 50` and `DSM_FOLDERS = ("#recycle", "@eaDir")`
     - `@dataclass(frozen=True) MirrorConfig(target: str, archive: Path, rsync: str, nas: Nas, max_delete: int = 50, no_perms: bool = False)`
-    - `from_config(cfg, environ) -> MirrorConfig`, reading `[mirror] target`, `rsync`, `max_delete` and `no_perms`
+    - `from_config(cfg, environ) -> MirrorConfig`, reading `[mirror] target`, `rsync`, `max_delete` and `no_perms`; a remote target raises `ConfigError` unless `RECORDINGS_NAS_KNOWN_HOSTS_FILE` is given, with or without `[nas] ssh`
     - `is_remote(target: str) -> bool`
     - `rsync_command(mc: MirrorConfig) -> list[str]`
     - `run_mirror(mc, *, expected_uuid: str, runner=subprocess.run) -> str`, which refuses a target that is neither empty nor this archive's mirror
@@ -16583,12 +16594,15 @@ from recordings.sentinel import MIRROR, SENTINEL
 OTHER_UUID = "00000000-0000-4000-8000-000000000000"
 
 
-def setup(tmp_path, writer, target, extra=""):
+def setup(tmp_path, writer, target, extra="", known_hosts=True):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
                         f'[state]\npath = "{writer.state.path}"\n'
                         f'[mirror]\ntarget = "{target}"\n{extra}', encoding="utf-8")
     environ = {"RECORDINGS_CONFIG": str(cfg_file), "PATH": os.environ["PATH"]}
+    if known_hosts:  # fixtures only: the real RECORDINGS_* and RESTIC_* never reach this module
+        (tmp_path / "known_hosts").write_text("nas ssh-ed25519 AAAAexample\n", encoding="utf-8")
+        environ["RECORDINGS_NAS_KNOWN_HOSTS_FILE"] = str(tmp_path / "known_hosts")
     return load_config(environ), environ
 
 
@@ -16631,7 +16645,10 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
         assert flag in cmd, flag
     assert "--no-perms" not in cmd
     assert cmd[-2:] == [f"{writer.root}/", "recordings-mirror@nas:/volume1/recordings-mirror/"]
-    assert cmd[cmd.index("-e") + 1].startswith("ssh -o BatchMode=yes")
+    ssh = cmd[cmd.index("-e") + 1]
+    assert ssh.startswith("ssh -o BatchMode=yes") and "StrictHostKeyChecking=yes" in ssh
+    assert f"UserKnownHostsFile={tmp_path / 'known_hosts'}" in ssh
+    assert "GlobalKnownHostsFile=/dev/null" in ssh  # only the pinned file is trusted
     local = rsync_command(mirror_config(tmp_path, writer, str(tmp_path / "mirror")))
     assert "-e" not in local
 
@@ -16643,6 +16660,16 @@ def test_the_deletion_limit_and_no_perms_come_from_config(tmp_path, writer):
     for bad in ("max_delete = -1\n", 'max_delete = "50"\n', 'no_perms = "yes"\n'):
         with pytest.raises(ConfigError, match=r"\[mirror\]"):
             mirror_config(tmp_path, writer, str(tmp_path / "mirror"), bad)
+
+
+def test_a_remote_target_needs_the_known_hosts_file_even_without_nas_ssh(tmp_path, writer):
+    # why: the mirror sends the plaintext archive over these options, [nas] ssh set or not.
+    cfg, environ = setup(tmp_path, writer, "recordings-mirror@nas:/m/", known_hosts=False)
+    assert "ssh" not in cfg.data.get("nas", {})
+    with pytest.raises(ConfigError, match="RECORDINGS_NAS_KNOWN_HOSTS_FILE"):
+        mirror.from_config(cfg, environ)
+    cfg, environ = setup(tmp_path, writer, str(tmp_path / "mirror"), known_hosts=False)
+    assert mirror.from_config(cfg, environ).target  # a local target needs none
 
 
 @pytest.mark.parametrize("target, remote", [("nas:/x", True), ("backup@nas:/x/", True),
@@ -16773,6 +16800,8 @@ share on the NAS, through the mirror's own NAS account ([nas] ssh, with its key)
   alone.
 - It refuses to run when the archive's sentinel is missing or its UUID has changed (§6.7), so an
   unmounted archive can never empty the mirror through --delete.
+- A remote target needs RECORDINGS_NAS_KNOWN_HOSTS_FILE even when [nas] ssh is unset: only that
+  pinned file is trusted for the host (ssh.ssh_options).
 - It refuses a target that is neither empty nor this archive's mirror (an `archive.json` with the
   same UUID). So a wrong path, or a mirror made before a rollback to a fresh `init` (a new UUID),
   is never emptied, and Synology Drive never deletes it on the Mac.
@@ -16798,7 +16827,7 @@ from pathlib import Path
 
 from recordings.config import Config, ConfigError
 from recordings.sentinel import MIRROR, SENTINEL, SentinelError, read_sentinel
-from recordings.ssh import Nas, nas_from_config
+from recordings.ssh import Nas, nas_from_config, require_known_hosts
 
 MAX_DELETE = 50
 DSM_FOLDERS = ("#recycle", "@eaDir")  # the NAS's recycle bin and its indexer's folders
@@ -16843,8 +16872,11 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> MirrorConfig:
     no_perms = section.get("no_perms", False)
     if not isinstance(no_perms, bool):
         raise ConfigError("[mirror] no_perms must be true or false")
+    nas = nas_from_config(cfg, environ)
+    if is_remote(target.strip()):
+        require_known_hosts(nas)  # also when [nas] ssh is unset: the plaintext archive goes over ssh
     return MirrorConfig(target=target.strip(), archive=cfg.archive_path,
-                        rsync=str(section.get("rsync", "rsync")), nas=nas_from_config(cfg, environ),
+                        rsync=str(section.get("rsync", "rsync")), nas=nas,
                         max_delete=max_delete, no_perms=no_perms)
 
 
@@ -16963,12 +16995,11 @@ In `packages/core/src/recordings/ops.py`:
        "mirror": _mirror,
    }
    ```
-4. **Replace**
-   `    BackupError, ConfigError, SentinelError, StateError, OSError, subprocess.TimeoutExpired)`
+4. **Replace** the first line of `FAILURES`
+   `    BackupError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,`
    with:
    ```python
-       BackupError, MirrorError, ConfigError, SentinelError, StateError, OSError,
-       subprocess.TimeoutExpired)
+       BackupError, MirrorError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
    ```
 
 In `packages/core/src/recordings/cli.py`, **add** to `build_parser`:
@@ -17010,7 +17041,7 @@ no_perms = false                        # true adds --no-perms: for a share with
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_mirror.py -v && uv run pytest`
-Expected: all pass. `test_a_real_local_mirror` runs wherever rsync has `--delay-updates`: CI, and macOS 26's openrsync (checked 2026-10-09); an older Mac's openrsync skips it.
+Expected: all pass (13 in `test_mirror.py`). `test_a_real_local_mirror` runs wherever rsync has `--delay-updates`: CI, and macOS 26's openrsync (checked 2026-10-09); an older Mac's openrsync skips it.
 
 - [ ] **Step 5: Commit**
 
@@ -17054,11 +17085,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - `ping_deadman(ac, kind: str = "success", *, message: str = "") -> bool`: a POST to the ping URL plus `PINGS[kind]`
   - **`recordings.state.State`:** `alert_state(key) -> tuple[bool, datetime | None]` and `set_alert_state(key, *, failing: bool, last_sent_at: datetime | None) -> None`.
   - **`recordings.ops`:**
-    - the schedule: `INTERVALS`, `ORDER`, `RETRY_AFTER = 15 min`, `REMIND_EVERY = 24 h`, `TITLES`
+    - the schedule: `INTERVALS`, `ORDER`, `RETRY_AFTER = 15 min`, `RETRY_HEAVY_AFTER` (a failed `check` or `restore-test` waits 24 h), `REMIND_EVERY = 24 h`, `TITLES`
     - `class DiskWarning(RuntimeError)`
     - `enabled_jobs(cfg) -> tuple[str, ...]`
     - `due(state, now, jobs) -> list[str]`
-    - `run_job(ctx, job, *, tags=(), lock_timeout: float = CLI_WAIT) -> JobResult`, replacing Task 11's with the same signature. It keeps the ops lock. A lock still held after `lock_timeout` gives `JobResult(job, False, BUSY)`, which is not recorded, alerted or pinged. A failure's `detail` is `failure_detail(exc)`, never `str(exc)`. A backup pings the dead-man's switch at `/start`, then at the base URL or `/fail`.
+    - `run_job(ctx, job, *, tags=(), lock_timeout: float = CLI_WAIT) -> JobResult`, replacing Task 11's with the same signature. It keeps the ops lock. A lock still held after `lock_timeout` gives `JobResult(job, False, BUSY)`, which is not recorded, alerted or pinged; a restic exit 11 (the repository is locked, as it is while the NAS's retention task runs) gives `JobResult(job, False, f"{BUSY} (repository locked)")`, handled the same way (callers test `startswith(BUSY)`). A lock file that can't be opened, or a `state.db` that can't record a run, is a failure that never escapes `run_job`. A failure's `detail` is `failure_detail(exc)`, never `str(exc)`. A backup pings the dead-man's switch at `/start`, then at the base URL or `/fail`.
     - `run_due(ctx) -> list[JobResult]`, which never waits for the lock (`lock_timeout=0`)
     - `loop(ctx, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: False) -> None`
     - `JOBS["disk"]`
@@ -17303,6 +17334,17 @@ def test_a_job_is_due_after_its_interval_and_a_failure_is_retried_after_15_minut
     state.record_run("backup", later, later, False, "failed")
     assert due(state, later + timedelta(minutes=14), ("backup",)) == []
     assert due(state, later + timedelta(minutes=15), ("backup",)) == ["backup"]
+    # why: a failed restore test restores the whole archive again, and a failed check reads a
+    # quarter of the repository: once a day, not every 15 minutes (Task 11's ops council)
+    state.record_run("restore-test", later, later, False, "RestoreTestFailed")
+    assert due(state, later + timedelta(hours=23), ("restore-test",)) == []
+    assert due(state, later + timedelta(hours=24), ("restore-test",)) == ["restore-test"]
+    # why: one run stamped in the future, by a clock that ran ahead, must not hold every job
+    # back until the clock catches up with it
+    ahead = T0 + timedelta(days=400)
+    state.record_run("backup", ahead, ahead, True, "ok")
+    state.record_run("check", ahead, ahead, False, "BackupError; exit 1")
+    assert due(state, later + timedelta(hours=1), ("backup", "check")) == ["backup", "check"]
 
 
 def test_a_good_backup_pings_the_dead_mans_switch(tmp_path, writer, make_incoming, ntfy):
@@ -17387,6 +17429,42 @@ def test_a_busy_ops_lock_skips_quietly(tmp_path, writer, make_incoming, ntfy):
         assert run_job(ctx, "backup", lock_timeout=0.2).detail == "skipped: busy"
     assert ntfy.requests == [] and writer.state.last_run("backup") is None
     assert "backup" in {r.job for r in run_due(ctx) if r.ok}  # free again: it runs
+
+
+def test_an_unopenable_lock_file_or_state_is_a_recorded_failure_not_a_crash(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: run_job replaces Task 11's, whose lock-file handling must survive: an OSError opening
+    # the lock (permissions, a full disk) escaping here would crash the backup service on a loop.
+    ctx = context(tmp_path, writer, ntfy)
+
+    class Unopenable:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def hold(self, key):
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(ops, "Locks", Unopenable)
+    assert run_job(ctx, "check") == ops.JobResult("check", False, "PermissionError")
+    assert writer.state.last_run("check").detail == "PermissionError"
+    assert all(not r.ok for r in run_due(ctx))  # and the loop's pass returns normally
+    monkeypatch.undo()
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(writer.state, "record_run", broken)
+    assert run_job(ctx, "check").ok  # a state disk that can't record must not turn into a crash
+
+
+def test_a_locked_repository_is_busy_not_a_failure(tmp_path, writer, ntfy):
+    # why: the NAS's weekly forget --prune holds restic's lock (exit 11). That is not an outage.
+    ctx = context(tmp_path, writer, ntfy,
+                  runner=restic(11, "Fatal: repository is already locked exclusively"))
+    result = run_job(ctx, "backup", lock_timeout=0)
+    assert result.detail == "skipped: busy (repository locked)" and not result.ok
+    assert writer.state.last_run("backup") is None and pushes(ntfy) == []
+    assert pings(ntfy) == ["/ping/start"]  # started, never finished: the dead-man's switch decides
 
 
 def test_the_loop_runs_until_told_to_stop(tmp_path, writer, ntfy):
@@ -17637,7 +17715,13 @@ In `packages/core/src/recordings/ops.py`:
                 "check": timedelta(days=7), "restore-test": timedelta(days=30)}
    ORDER = ("disk", "backup", "mirror", "prune", "check", "restore-test")
    RETRY_AFTER = timedelta(minutes=15)
+   # A failed check reads a quarter of the repository again, and a failed restore test all of it,
+   # for hours in which the loop does nothing else: once a day is enough, and the alert has said
+   # it failed. (Task 11's ops council)
+   RETRY_HEAVY_AFTER = {"check": timedelta(hours=24), "restore-test": timedelta(hours=24)}
    REMIND_EVERY = timedelta(hours=24)
+   REPO_LOCKED = 11  # restic's exit status for a repository another process holds (the NAS's retention)
+   LOCKED = f"{BUSY} (repository locked)"
    TITLES = {"disk": "disk space low", "backup": "backup failed", "mirror": "mirror failed",
              "prune": "backup retention failed", "check": "backup check failed",
              "restore-test": "restore test failed"}
@@ -17653,13 +17737,16 @@ In `packages/core/src/recordings/ops.py`:
 
 
    def due(state: State, now: datetime, jobs: tuple[str, ...]) -> list[str]:
+       """A run stamped in the future (a clock that ran ahead and was put right) counts as long
+       ago: otherwise every job, backups included, would wait for the clock to catch up."""
        out = []
        for job in jobs:
            last = state.last_run(job)
-           if last is not None and not last.ok and now - last.finished_at < RETRY_AFTER:
+           wait = RETRY_HEAVY_AFTER.get(job, RETRY_AFTER)
+           if last is not None and not last.ok and timedelta(0) <= now - last.finished_at < wait:
                continue
            good = state.last_run(job, ok=True)
-           if good is None or now - good.finished_at >= INTERVALS[job]:
+           if good is None or not timedelta(0) <= now - good.finished_at < INTERVALS[job]:
                out.append(job)
        return out
 
@@ -17701,9 +17788,18 @@ In `packages/core/src/recordings/ops.py`:
        try:
            detail, ok = JOBS[job](ctx, tags), True
        except FAILURES as exc:
+           if isinstance(exc, BackupError) and exc.returncode == REPO_LOCKED:
+               # The NAS's weekly forget --prune holds the repository for a while. Not a failure:
+               # not recorded, not alerted, no /fail ping. A backup that stays blocked leaves its
+               # /start unanswered, and the dead-man's switch alerts after its grace.
+               log.info("%s: %s", job, LOCKED)
+               return JobResult(job, False, LOCKED)
            log.debug("%s failed", job, exc_info=True)  # the full error, for --debug only
            detail, ok = failure_detail(exc), False
-       ctx.state.record_run(job, started, ctx.clock(), ok, detail)
+       try:
+           ctx.state.record_run(job, started, ctx.clock(), ok, detail)
+       except FAILURES:  # a broken state disk must not stop the loop or hide the alert below
+           log.warning("%s: could not record the run (%s)", job, detail)
        if ac is not None:
            _alert(ctx, ac, job, ok, detail)
            if heartbeat:
@@ -17725,6 +17821,15 @@ In `packages/core/src/recordings/ops.py`:
            except LockTimeout:
                log.info("%s: %s", job, BUSY)
                return JobResult(job, False, BUSY)
+           except FAILURES as exc:  # the lock file can't be opened: a failure, recorded as any is
+               log.debug("%s failed", job, exc_info=True)
+               now = ctx.clock()
+               detail = failure_detail(exc)
+               try:
+                   ctx.state.record_run(job, now, now, False, detail)
+               except FAILURES:  # state.db is broken too: the loop must not die of it
+                   log.warning("%s: could not record the failure (%s)", job, detail)
+               return JobResult(job, False, detail)
            return _run_held(ctx, job, tags)
 
 
@@ -17746,8 +17851,12 @@ In `packages/core/src/recordings/ops.py`:
            sleep(tick)
    ```
 
-In `packages/core/src/recordings/cli.py`, **change** `from recordings import backup, ops` (Task 11)
-to `from recordings import alerts, backup, ops`, then add the parsers:
+In `packages/core/src/recordings/cli.py`, **add** `alerts` to the `from recordings import …` line
+(it reads `from recordings import __version__, backup, config, ops, schemas, selfdoc`; make it
+`from recordings import __version__, alerts, backup, config, ops, schemas, selfdoc`). **Change** in
+`_job_result` (Task 11) `    if result.detail == ops.BUSY:` to
+`    if result.detail.startswith(ops.BUSY):  # also "skipped: busy (repository locked)"`, so a restic
+exit 11 gives the CLI exit 75 ("try again"), not a failure. Then add the parsers:
 ```python
     p = sub.add_parser("ops", help="run the scheduled jobs that are due (--loop: forever)")
     p.add_argument("--loop", action="store_true", help="the backup service's main loop")
@@ -17816,7 +17925,7 @@ and in the secrets comment block:
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_alerts.py packages/core/tests/test_ops.py -v && uv run pytest`
-Expected: 13 and 12 passed, then the whole suite passes, with a passed count above Task 12's.
+Expected: 13 and 14 passed, then the whole suite passes, with a passed count above Task 12's.
 
 - [ ] **Step 6: Commit**
 
@@ -17905,6 +18014,13 @@ def test_every_compose_variable_is_documented_in_the_template_or_set_by_make():
     documented = set(re.findall(r"^(\w+)=", TEMPLATE.read_text(encoding="utf-8"), re.M))
     assert used, "compose.yml uses no variables?"
     assert used <= documented | SET_BY_MAKE, f"undocumented: {sorted(used - documented - SET_BY_MAKE)}"
+
+
+def test_the_web_service_takes_its_trusted_proxy_from_the_deploy_variable():
+    web = compose()["services"]["web"]["environment"]
+    assert web["FORWARDED_ALLOW_IPS"] == "${RECORDINGS_FORWARDED_ALLOW_IPS:-127.0.0.1,::1}"
+    assert "*" not in web["FORWARDED_ALLOW_IPS"]
+    assert "FORWARDED_ALLOW_IPS" not in compose()["services"]["backup"]["environment"]
 
 
 def test_the_template_holds_no_secret_names():
@@ -18054,11 +18170,16 @@ def test_the_images_restic_is_the_one_fetch_restic_pins():
     spec.loader.exec_module(fetch_restic)
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     assert f"ARG RESTIC_VERSION={fetch_restic.VERSION}\n" in dockerfile
-    pinned = dict(re.findall(r"^\s+(amd64|arm64)\) sum=([0-9a-f]{64}) ;;", dockerfile, re.M))
-    assert pinned == {"amd64": fetch_restic.PINNED[("linux", "x86_64")][1],
-                      "arm64": fetch_restic.PINNED[("linux", "aarch64")][1]}
+    found = {arch: (sum_, bin_) for arch, sum_, bin_ in re.findall(
+        r"^\s+(amd64|arm64)\) sum=([0-9a-f]{64}); bin=([0-9a-f]{64}) ;;", dockerfile, re.M)}
+    assert found == {
+        "amd64": (fetch_restic.PINNED[("linux", "x86_64")][1],
+                  fetch_restic.BINARY_SHA256["linux_amd64"]),
+        "arm64": (fetch_restic.PINNED[("linux", "aarch64")][1],
+                  fetch_restic.BINARY_SHA256["linux_arm64"])}
     runbook = (REPO / "docs" / "runbooks" / "first-run.md").read_text(encoding="utf-8")
-    assert all(sha in runbook for sha in pinned.values()), "the runbook's spike checks other sums"
+    archive_sums = [sums[0] for sums in found.values()]
+    assert all(sha in runbook for sha in archive_sums), "the runbook's spike checks other sums"
 
 
 def test_the_runtime_image_has_the_time_zone_database():
@@ -18159,6 +18280,11 @@ RECORDINGS_DEPLOY_ENV_HOST=./deploy.env
 # 127.0.0.1 keeps it local while testing.
 RECORDINGS_BIND=127.0.0.1
 RECORDINGS_PORT=8000
+# Only behind a TLS-terminating reverse proxy: the one address the app sees the proxy connect from
+# (uvicorn's FORWARDED_ALLOW_IPS), so the proxy's X-Forwarded-Proto is believed. Under Docker that is
+# the Compose network's gateway, not the proxy's LAN address (the README says how to find it). Never
+# `*` or a range. The default trusts only the container's own loopback, so nothing is believed.
+RECORDINGS_FORWARDED_ALLOW_IPS=127.0.0.1,::1
 # The owner of /srv/recordings (`id -u` and `id -g` on the homelab server). The containers run as
 # it, and the image is built with a user of that UID and GID, because ssh refuses to run as a UID
 # with no /etc/passwd entry. After changing either, `make deploy` rebuilds the image.
@@ -18215,6 +18341,7 @@ services:
     environment:
       <<: *environment
       RECORDINGS_ROLE: web  # `recordings doctor` checks what this service needs, and no more
+      FORWARDED_ALLOW_IPS: "${RECORDINGS_FORWARDED_ALLOW_IPS:-127.0.0.1,::1}"  # uvicorn reads it
     volumes:
       - type: bind
         source: "${RECORDINGS_CONFIG_HOST:?set RECORDINGS_CONFIG_HOST in docker/deploy.env}"
@@ -18350,14 +18477,15 @@ RUN set -eu; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg rsync openssh-client tzdata ca-certificates curl bzip2; \
     case "$TARGETARCH" in \
-      amd64) sum=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c ;; \
-      arm64) sum=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465 ;; \
+      amd64) sum=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c; bin=20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639 ;; \
+      arm64) sum=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465; bin=2fb45ac6f9071b6f20eb883953a188f9e7c7cb6bbe43c67a2e47ada4e85ee7f0 ;; \
       *) echo "no pinned restic for $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     curl -fsSL --retry 3 -o /tmp/restic.bz2 \
       "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${TARGETARCH}.bz2"; \
     echo "$sum  /tmp/restic.bz2" | sha256sum -c -; \
     bunzip2 -c /tmp/restic.bz2 > /usr/local/bin/restic; \
+    echo "$bin  /usr/local/bin/restic" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/restic; \
     rm /tmp/restic.bz2; \
     apt-get purge -y curl bzip2; \
@@ -18691,8 +18819,13 @@ make deploy-smoke                                   # the real compose file, onc
   DNS-rebinding page past the Host check. The proxy must also set `X-Forwarded-Proto` itself
   and be trusted for it: set uvicorn's `FORWARDED_ALLOW_IPS` to the one address the app sees the
   proxy connect from (the client address in the app's access log; the default trusts only
-  localhost). Under Docker that is usually the Compose network's gateway, not the proxy's LAN
-  address. Never `*` or a range: every machine in it could then set the scheme, and the client
+  localhost). Under Docker the app does not see the proxy's LAN address: it sees the Compose
+  network's gateway, the address the bridge gives the host (the first address of the network's
+  subnet, for example `172.18.0.1`). Find it with
+  `docker network inspect recordings_default --format '{{(index .IPAM.Config 0).Gateway}}'`, or from
+  the client address in the web container's access log, and put it in `docker/deploy.env` as
+  `RECORDINGS_FORWARDED_ALLOW_IPS=<that address>`, then `make deploy`. The address can change when
+  the network is recreated, so check it after `docker compose down`. Never `*` or a range: every machine in it could then set the scheme, and the client
   address the app logs. The app compares a websocket's or write's `Origin` with the scheme and
   `Host` it sees. Without this, every websocket and every write is refused. Plain
   `http://my-homelab:8000` needs nothing.
@@ -18708,7 +18841,7 @@ file. Docker sets it to `/config/config.toml`.
 |---|---|---|
 | Archive, state and index paths, the writer ID, backups, mirror, alerts | `config.toml` (template: `config.example.toml`) | stage 1 / 2a |
 | The names the app answers to | `[server] allowed_hosts` in `config.toml`, plus `RECORDINGS_ALLOWED_HOSTS` (comma-separated) | stage 1 |
-| Host folders, config path, bind address and port, UID/GID | `docker/deploy.env` (template: `docker/deploy.example.conf`) | stage 1 |
+| Host folders, config path, bind address and port, the trusted proxy (`RECORDINGS_FORWARDED_ALLOW_IPS`), UID/GID | `docker/deploy.env` (template: `docker/deploy.example.conf`) | stage 1 |
 | `RESTIC_PASSWORD`; `RESTIC_REST_PASSWORD`, rest-server's; the NAS's SSH key and host key, `RECORDINGS_NAS_SSH_KEY` and `RECORDINGS_NAS_KNOWN_HOSTS` (files only); `RECORDINGS_NTFY_TOPIC`; `RECORDINGS_DEADMAN_URL`; and rest-server's certificate, the `nas_cacert` file that `[backup] cacert` names | secret files, as `…_FILE` (Docker secrets) | stage 2a |
 | `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | a secret file, as `…_FILE` | stage 2a |
 | `RECORDINGS_PLAUD_TOKEN` | a secret file, as `RECORDINGS_PLAUD_TOKEN_FILE` | stage 2b |
@@ -18738,7 +18871,7 @@ In `.github/workflows/ci.yml`, **add** this job after `docker`:
 - [ ] **Step 4: Run the tests and the smoke test**
 
 Run: `RECORDINGS_ARCHIVE=/nonexistent RESTIC_REPOSITORY=/nonexistent RECORDINGS_REQUIRE_RESTIC=1 uv run pytest packages/core/tests/test_deploy_template.py -v && uv run pytest && make deploy-smoke`
-Expected: 20 passed, then the whole suite passes. The smoke test builds the image with your own UID
+Expected: 21 passed, then the whole suite passes. The smoke test builds the image with your own UID
 and GID, runs `recordings init`, `ssh -G nas`, `backup init`, `backup run`,
 `backup restore-test` and `mirror`, and prints
 `compose smoke: init, ssh, backup, restore test and mirror ran, and web answered /healthz, as this machine's user`.
@@ -20784,7 +20917,10 @@ def test_every_template_setting_reaches_its_reader(tmp_path):
             if section not in LATER_SECTIONS for key in body}
     missing = sorted(keys - rows.keys() - LATER.keys())
     assert missing == [], "give each a row in table(), with its reader, or list it in LATER"
-    r = read_all(write_config(tmp_path, rows), {})
+    known_hosts = tmp_path / "known_hosts"  # [nas] ssh and a remote mirror need the pinned host key
+    known_hosts.write_text("nas-7 ssh-ed25519 AAAAexample\n", encoding="utf-8")
+    r = read_all(write_config(tmp_path, rows),
+                 {"RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(known_hosts)})
     wrong = {f"[{section}] {key}": read(r) for (section, key), (_value, read, want) in rows.items()
              if read(r) != want}
     assert wrong == {}
