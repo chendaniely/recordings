@@ -336,6 +336,9 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    ssh-keygen -lf "$K/nas_known_hosts"
    cat "$K/nas_ssh_key.pub"
    ```
+   If the NAS's SSH is not on port 22, scan that port, or the pinned key will not match what the
+   app connects to: `ssh-keyscan -t ed25519 -p <port> "$NAS_HOST"`, with the same number in
+   `[nas] port` and, below, as `-o Port=<port>` in `SSH_OPTS`.
    Compare that fingerprint with the NAS's own before trusting it
    (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, on the NAS).
 
@@ -357,7 +360,7 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    copy again.
    ```bash
    K="$RECORDINGS_HOME/secrets"
-   SSH_OPTS=(-i "$K/nas_ssh_key" -o "UserKnownHostsFile=$K/nas_known_hosts" -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
+   SSH_OPTS=(-i "$K/nas_ssh_key" -o "UserKnownHostsFile=$K/nas_known_hosts" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
    PROBE="$RECORDINGS_HOME/restore-test/probe.bin"             # a real file, not a symlink
    [ -f "$PROBE" ] || head -c 5000000 /dev/urandom > "$PROBE"
    rsync -an -e "ssh ${SSH_OPTS[*]}" "$PROBE" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
@@ -652,8 +655,16 @@ rc start backup
 ```
 Expected: the import reports no failures, `validate` reports no problems, and both backups and the
 restore test print `ok: True`. The restore test now proves the imported data, not just an empty
-archive. Resume the Healthchecks check. The first full mirror of the imported archive runs next
+archive. Note how long the restore test took (Status shows when it started and finished): the
+loop runs it once a month with no backup in between, so if it took over 2 hours, raise the
+Healthchecks grace to that time plus 2 hours, or each month's restore test reads as an outage.
+Resume the Healthchecks check. The first full mirror of the imported archive runs next
 and can take hours; if Healthchecks alerts during it, the next backup's ping clears it.
+
+If the post-import backup is interrupted (a dropped link, a reboot), run the same line again.
+It may upload everything again: restic 0.19.1 kept nothing it could reuse from an interrupted
+12-minute test. What the first try sent stays on the NAS, unreferenced, until the retention
+task's next prune, so the NAS needs room for the archive twice over until then.
 
 Once the restore test has passed, and only then, delete the import copy. The archive and its
 backups hold everything, and `import/` is a plaintext copy nobody needs. Keep `consent-list.md`:
