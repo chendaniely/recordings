@@ -74,12 +74,22 @@ def test_reads_are_not_affected(client):
     assert client.get("/api/thing", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
 
 
+KEPT_TO_THIS_ORIGIN = {"cross-origin-resource-policy": "same-origin",
+                       "content-security-policy": "frame-ancestors 'none'",
+                       "x-frame-options": "DENY",
+                       "cross-origin-opener-policy": "same-origin",
+                       "referrer-policy": "same-origin"}
+
+
 def test_every_response_keeps_its_resources_to_this_origin(client):
-    # why: §15. Without it, another site could embed /media in an <audio> tag, or load the API's
-    # answers with a no-cors request, by the app's real name.
+    # why: §15. Without CORP, another site could embed /media in an <audio> tag, or load the API's
+    # answers with a no-cors request, by the app's real name. Without the framing headers, any
+    # page could frame the app, whose own websocket passes every check, under a decoy. Without
+    # the opener and referrer policies, a page that opens the app shares its browsing context,
+    # and a link in a note sends the app's address to the site it opens.
     refused = client.post("/api/thing", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"})
     for response in (client.get("/api/thing"), refused):
-        assert response.headers["cross-origin-resource-policy"] == "same-origin"
+        assert {k: response.headers.get(k) for k in KEPT_TO_THIS_ORIGIN} == KEPT_TO_THIS_ORIGIN
 
 
 def test_the_real_app_is_wrapped(demo_archive, demo_ids):
@@ -92,6 +102,14 @@ def test_the_real_app_is_wrapped(demo_archive, demo_ids):
             media = c.get(f"/media/{demo_ids['fdr-fireside-1']}", headers={"Range": "bytes=0-9"})
             assert media.status_code == 206
             assert media.headers["cross-origin-resource-policy"] == "same-origin"
-            assert c.get("/healthz").headers["cross-origin-resource-policy"] == "same-origin"
+            # why: a private recording's audio would otherwise sit in the disk cache of every
+            # device that played it. Range requests still seek: the browser holds the bytes it
+            # needs while it plays.
+            assert media.headers["cache-control"] == "no-store"
+            health = c.get("/healthz")
+            assert health.headers["cross-origin-resource-policy"] == "same-origin"
+            assert "cache-control" not in health.headers  # only /media is kept off the disk
+            page = c.get("/")  # the Shiny page itself: no other page may frame it
+            assert {k: page.headers.get(k) for k in KEPT_TO_THIS_ORIGIN} == KEPT_TO_THIS_ORIGIN
     finally:
         runtime.configure(None)

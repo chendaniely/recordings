@@ -92,3 +92,42 @@ def test_recordings_allowed_hosts_entries_are_checked_too():
     assert env_hosts({"RECORDINGS_ALLOWED_HOSTS": "A.example, b.example"}) == {"a.example", "b.example"}
     with pytest.raises(SystemExit, match="RECORDINGS_ALLOWED_HOSTS"):
         env_hosts({"RECORDINGS_ALLOWED_HOSTS": "host:8000"})
+
+
+def test_demo_mode_serves_no_archive_but_the_demo(tmp_path, demo_archive):
+    import json
+    import shutil
+
+    import pytest
+
+    from recordings.sentinel import read_sentinel
+    from recordings_ui.settings import DEMO_UUID, from_env
+    # why: spec §17. RECORDINGS_DEMO_ARCHIVE could name the real archive, which demo mode would
+    # copy to the temp folder and serve.
+    assert read_sentinel(demo_archive).uuid == DEMO_UUID
+    other = tmp_path / "other"
+    shutil.copytree(demo_archive, other)
+    sentinel = json.loads((other / "archive.json").read_text(encoding="utf-8"))
+    sentinel["uuid"] = "11111111-2222-4333-8444-555555555555"
+    (other / "archive.json").write_text(json.dumps(sentinel), encoding="utf-8")
+    for path in (other, tmp_path):  # another archive's UUID, and no archive.json at all
+        with pytest.raises(SystemExit, match="not the demo archive"):
+            from_env({"RECORDINGS_DEMO_ARCHIVE": str(path)}, demo=True)
+    assert from_env({"RECORDINGS_DEMO_ARCHIVE": str(demo_archive)}, demo=True).demo is True
+
+
+def test_base_urls_host_is_checked_like_an_allowed_hosts_entry(tmp_path):
+    import pytest
+
+    from recordings_ui.settings import from_env
+    # why: browsers send the canonical form in Host, so that is what the allow-list must hold; and
+    # a name the other lists refuse (an underscore) should stop the app the same way.
+    def settings_for(url):
+        cfg = tmp_path / "config.toml"
+        cfg.write_text(f'[archive]\npath = "{tmp_path}"\n[server]\nbase_url = "{url}"\n',
+                       encoding="utf-8")
+        return from_env({"RECORDINGS_CONFIG": str(cfg)})
+
+    assert "fd7a::1" in settings_for("http://[fd7a:0:0::1]:8000").allowed_hosts
+    with pytest.raises(SystemExit, match="base_url"):
+        settings_for("http://my_host:8000")

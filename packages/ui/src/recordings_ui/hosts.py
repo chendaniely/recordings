@@ -11,10 +11,17 @@ HostGuard refuses both: an unknown `Host`, and a websocket whose `Origin` isn't 
 app's own (scheme, name and port), or that the browser marks as sent by another site. WriteGuard
 does the same for every request that could change data, and keeps every response to this origin.
 
+A framed app is this origin, so its own websocket would pass every check above: every response
+therefore forbids framing, and keeps the opener, the referrer and `/media`'s cache to this origin
+(`_keep_to_this_origin`).
+
 Behind a TLS-terminating reverse proxy the app sees `http` while the browser's `Origin` says
-`https`. The proxy must preserve the `Host` header and be trusted for `X-Forwarded-Proto`: listed
-in uvicorn's `FORWARDED_ALLOW_IPS` (default: 127.0.0.1 and ::1 only). Otherwise every websocket
-and every write is refused, which fails closed.
+`https`. The proxy must preserve the `Host` header and be trusted for `X-Forwarded-Proto`: its
+one address listed in uvicorn's `FORWARDED_ALLOW_IPS` (default: 127.0.0.1 and ::1 only), never
+`*` or a range. Otherwise every websocket and every write is refused, which fails closed. A
+proxy that rewrites `Host` to `127.0.0.1:8000` (nginx's default) fails open: HostGuard passes
+every request, and only the exact-origin websocket check holds. uvicorn takes the scheme and
+the client address from these headers, never `Host`, so nothing here trusts the client address.
 """
 
 from __future__ import annotations
@@ -80,7 +87,7 @@ class HostGuard:
         if scope["type"] == "http":
             if not host_ok:
                 await PlainTextResponse("unknown host", status_code=400)(
-                    scope, receive, _keep_to_this_origin(send))
+                    scope, receive, _keep_to_this_origin(scope, send))
                 return
         else:
             # A browser always sends Origin on a websocket. It must be the app's own, exactly,
@@ -98,14 +105,32 @@ class HostGuard:
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 CORP = (b"cross-origin-resource-policy", b"same-origin")
+# A framed app is this origin, so its websocket passes every check above: a page that framed it
+# under a decoy could steer Dan's clicks (clickjacking). CSP for current browsers, X-Frame-Options
+# for older ones.
+NO_FRAMING = ((b"content-security-policy", b"frame-ancestors 'none'"),
+              (b"x-frame-options", b"DENY"))
+# A page that opens the app in a window doesn't share its browsing context group (and so its
+# process); a link in a note doesn't send the app's address to the site it opens.
+NO_OPENER_OR_REFERRER = ((b"cross-origin-opener-policy", b"same-origin"),
+                         (b"referrer-policy", b"same-origin"))
+# /media only: a private recording's audio would otherwise sit in the disk cache of every device
+# that played it. Range requests still seek.
+NO_STORE = (b"cache-control", b"no-store")
 
 
-def _keep_to_this_origin(send: Send) -> Send:
-    """Every response says `Cross-Origin-Resource-Policy: same-origin`: another site can't embed
-    /media in an <audio> tag, or load the API's answers with a no-cors request (spec §15)."""
+def _keep_to_this_origin(scope: Scope, send: Send) -> Send:
+    """Every response keeps to this origin (spec §15). `Cross-Origin-Resource-Policy: same-origin`:
+    another site can't embed /media in an <audio> tag, or load the API's answers with a no-cors
+    request. `frame-ancestors 'none'` and `X-Frame-Options: DENY`: no page can frame the app.
+    `Cross-Origin-Opener-Policy` and `Referrer-Policy`: see above. `/media` is `no-store`."""
+    extra = [CORP, *NO_FRAMING, *NO_OPENER_OR_REFERRER]
+    if scope["path"].startswith("/media/"):
+        extra.append(NO_STORE)
+
     async def wrapped(message: Message) -> None:
         if message["type"] == "http.response.start":
-            message = {**message, "headers": [*message.get("headers", []), CORP]}
+            message = {**message, "headers": [*message.get("headers", []), *extra]}
         await send(message)
     return wrapped
 
@@ -134,7 +159,7 @@ class WriteGuard:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        send = _keep_to_this_origin(send)
+        send = _keep_to_this_origin(scope, send)
         if scope["method"] in SAFE_METHODS:
             await self.app(scope, receive, send)
             return

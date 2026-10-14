@@ -37,6 +37,10 @@ def test_the_unknown_host_answer_keeps_to_this_origin_too():
     # why: §15. "Every response" carries the policy, the 400 included.
     r = guarded().get("/", headers={"Host": "attacker.example"})
     assert r.headers["cross-origin-resource-policy"] == "same-origin"
+    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert r.headers["x-frame-options"] == "DENY"
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
+    assert r.headers["referrer-policy"] == "same-origin"
 
 
 @pytest.mark.parametrize("host", ["attacker.example", "attacker.example:8000",

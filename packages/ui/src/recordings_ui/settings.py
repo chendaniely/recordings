@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from recordings.config import Config, ConfigError, load_config, normalise_host
+from recordings.sentinel import SentinelError, read_sentinel
 from recordings_ui.hosts import LOCAL_HOSTS
 
 
@@ -32,15 +33,31 @@ def env_hosts(environ: Mapping[str, str]) -> frozenset[str]:
         raise SystemExit(f"RECORDINGS_ALLOWED_HOSTS: {exc}") from None
 
 
+# demo/build.py's DEMO_UUID. A real archive's archive.json carries its own, so demo mode serves
+# the demo or nothing, whatever RECORDINGS_DEMO_ARCHIVE names (spec §17).
+DEMO_UUID = "5f0c8e2a-3b1d-4c6e-9a7f-1d2e3f405162"
+
+
 def find_demo_archive(environ: Mapping[str, str]) -> Path:
     if environ.get("RECORDINGS_DEMO_ARCHIVE"):
-        return Path(environ["RECORDINGS_DEMO_ARCHIVE"])
+        return _only_the_demo(Path(environ["RECORDINGS_DEMO_ARCHIVE"]))
     # Running from the repo (editable install): walk up to demo/archive.
     for parent in Path(__file__).resolve().parents:
         candidate = parent / "demo" / "archive"
         if (candidate / "README.md").is_file():
-            return candidate
+            return _only_the_demo(candidate)
     raise SystemExit("demo archive not found; set RECORDINGS_DEMO_ARCHIVE")
+
+
+def _only_the_demo(path: Path) -> Path:
+    try:
+        ok = read_sentinel(path).uuid == DEMO_UUID
+    except SentinelError:
+        ok = False
+    if not ok:
+        raise SystemExit(f"{path} is not the demo archive (its archive.json lacks the demo's "
+                         "UUID); demo mode serves nothing else")
+    return path
 
 
 def from_env(environ: Mapping[str, str], *, demo: bool | None = None) -> Settings:
@@ -61,7 +78,10 @@ def from_env(environ: Mapping[str, str], *, demo: bool | None = None) -> Setting
         raise SystemExit(
             "no archive path: set [archive] path in config.toml (see config.example.toml), "
             "set RECORDINGS_ARCHIVE, or run with --demo")
-    hosts = LOCAL_HOSTS | env_hosts(environ) | {h.lower() for h in cfg.allowed_hosts}
+    hosts = LOCAL_HOSTS | env_hosts(environ) | set(cfg.allowed_hosts)  # already normalised
     if cfg.base_url and (name := urlsplit(cfg.base_url).hostname):
-        hosts |= {name}
+        try:  # the same rules as allowed_hosts, so the canonical form a browser sends matches
+            hosts |= {normalise_host(name)}
+        except ValueError as exc:
+            raise SystemExit(f"[server] base_url: {exc}") from None
     return Settings(archive=cfg.archive_path, demo=False, allowed_hosts=hosts, config=cfg)

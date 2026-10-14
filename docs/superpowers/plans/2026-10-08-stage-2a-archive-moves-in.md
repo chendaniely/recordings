@@ -13490,6 +13490,10 @@ app's real name (§15), or a page on the same host name at another port: stage 1
 - every request that could change data carries exactly `Content-Type: application/json`
 - every response carries `Cross-Origin-Resource-Policy: same-origin`, so another site can't embed
   `/media` or load the API's answers with a no-cors request
+- every response forbids framing (`Content-Security-Policy: frame-ancestors 'none'` and
+  `X-Frame-Options: DENY`), because a framed app is the app's own origin and its websocket would
+  pass every check above; it also carries `Cross-Origin-Opener-Policy: same-origin` and
+  `Referrer-Policy: same-origin`, and `/media` responses carry `Cache-Control: no-store`
 
 2a adds no write route to the UI, so the guard wraps the whole app, and every later route gets it
 without opting in. Shiny's own file-upload POST would be refused by it; the app uses none. Stage
@@ -13503,6 +13507,10 @@ This task also carries three stage-1 items:
   name lookups
 - demo mode's temporary folders are cleaned up
 
+And two items from the checkpoint council: demo mode serves only the demo archive (its
+`archive.json` must carry the demo's UUID, so `RECORDINGS_DEMO_ARCHIVE` can't name a real one), and
+`[server] base_url`'s host goes through `normalise_host` like the `allowed_hosts` entries.
+
 **Files:**
 - Modify: `packages/ui/src/recordings_ui/hosts.py` (`same_origin`, `sent_by_this_site`, `WriteGuard`; `HostGuard`'s websocket check), `app.py`, `settings.py`
 - Modify: `packages/ui/src/recordings_ui/__main__.py` (SIGTERM)
@@ -13515,7 +13523,7 @@ This task also carries three stage-1 items:
   - **`recordings_ui.hosts`:**
     - `same_origin(scope: Scope, origin: str) -> bool`: the origin equals the request's scheme plus its `Host` header
     - `sent_by_this_site(scope: Scope) -> bool`: `Sec-Fetch-Site` is absent, `same-origin` or `none`
-    - `SAFE_METHODS`, and `class WriteGuard(app: ASGIApp, allowed: frozenset[str])`, which answers 403 for a cross-site request and 415 for any content type that isn't JSON, and adds `Cross-Origin-Resource-Policy: same-origin` to every HTTP response
+    - `SAFE_METHODS`, and `class WriteGuard(app: ASGIApp, allowed: frozenset[str])`, which answers 403 for a cross-site request and 415 for any content type that isn't JSON, and adds `Cross-Origin-Resource-Policy: same-origin`, the two no-framing headers, `Cross-Origin-Opener-Policy: same-origin` and `Referrer-Policy: same-origin` to every HTTP response, and `Cache-Control: no-store` to `/media`'s
     - `HostGuard`'s websocket check now uses `same_origin` and `sent_by_this_site`. `origin_name` is removed.
   - **`recordings.config.normalise_host(value: str) -> str`**, raising `ValueError`.
   - **`create_app` returns** `HostGuard(WriteGuard(api, hosts), hosts)`.
@@ -13600,12 +13608,22 @@ def test_reads_are_not_affected(client):
     assert client.get("/api/thing", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
 
 
+KEPT_TO_THIS_ORIGIN = {"cross-origin-resource-policy": "same-origin",
+                       "content-security-policy": "frame-ancestors 'none'",
+                       "x-frame-options": "DENY",
+                       "cross-origin-opener-policy": "same-origin",
+                       "referrer-policy": "same-origin"}
+
+
 def test_every_response_keeps_its_resources_to_this_origin(client):
-    # why: §15. Without it, another site could embed /media in an <audio> tag, or load the API's
-    # answers with a no-cors request, by the app's real name.
+    # why: §15. Without CORP, another site could embed /media in an <audio> tag, or load the API's
+    # answers with a no-cors request, by the app's real name. Without the framing headers, any
+    # page could frame the app, whose own websocket passes every check, under a decoy. Without
+    # the opener and referrer policies, a page that opens the app shares its browsing context,
+    # and a link in a note sends the app's address to the site it opens.
     refused = client.post("/api/thing", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"})
     for response in (client.get("/api/thing"), refused):
-        assert response.headers["cross-origin-resource-policy"] == "same-origin"
+        assert {k: response.headers.get(k) for k in KEPT_TO_THIS_ORIGIN} == KEPT_TO_THIS_ORIGIN
 
 
 def test_the_real_app_is_wrapped(demo_archive, demo_ids):
@@ -13618,7 +13636,15 @@ def test_the_real_app_is_wrapped(demo_archive, demo_ids):
             media = c.get(f"/media/{demo_ids['fdr-fireside-1']}", headers={"Range": "bytes=0-9"})
             assert media.status_code == 206
             assert media.headers["cross-origin-resource-policy"] == "same-origin"
-            assert c.get("/healthz").headers["cross-origin-resource-policy"] == "same-origin"
+            # why: a private recording's audio would otherwise sit in the disk cache of every
+            # device that played it. Range requests still seek: the browser holds the bytes it
+            # needs while it plays.
+            assert media.headers["cache-control"] == "no-store"
+            health = c.get("/healthz")
+            assert health.headers["cross-origin-resource-policy"] == "same-origin"
+            assert "cache-control" not in health.headers  # only /media is kept off the disk
+            page = c.get("/")  # the Shiny page itself: no other page may frame it
+            assert {k: page.headers.get(k) for k in KEPT_TO_THIS_ORIGIN} == KEPT_TO_THIS_ORIGIN
     finally:
         runtime.configure(None)
 ```
@@ -13664,6 +13690,10 @@ def test_the_unknown_host_answer_keeps_to_this_origin_too():
     # why: §15. "Every response" carries the policy, the 400 included.
     r = guarded().get("/", headers={"Host": "attacker.example"})
     assert r.headers["cross-origin-resource-policy"] == "same-origin"
+    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert r.headers["x-frame-options"] == "DENY"
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
+    assert r.headers["referrer-policy"] == "same-origin"
 ```
 and **add** after `test_the_app_refuses_a_cross_site_websocket`:
 ```python
@@ -13885,6 +13915,47 @@ def test_recordings_allowed_hosts_entries_are_checked_too():
         env_hosts({"RECORDINGS_ALLOWED_HOSTS": "host:8000"})
 ```
 
+Add to the same file:
+```python
+def test_demo_mode_serves_no_archive_but_the_demo(tmp_path, demo_archive):
+    import json
+    import shutil
+
+    import pytest
+
+    from recordings.sentinel import read_sentinel
+    from recordings_ui.settings import DEMO_UUID, from_env
+    # why: spec §17. RECORDINGS_DEMO_ARCHIVE could name the real archive, which demo mode would
+    # copy to the temp folder and serve.
+    assert read_sentinel(demo_archive).uuid == DEMO_UUID
+    other = tmp_path / "other"
+    shutil.copytree(demo_archive, other)
+    sentinel = json.loads((other / "archive.json").read_text(encoding="utf-8"))
+    sentinel["uuid"] = "11111111-2222-4333-8444-555555555555"
+    (other / "archive.json").write_text(json.dumps(sentinel), encoding="utf-8")
+    for path in (other, tmp_path):  # another archive's UUID, and no archive.json at all
+        with pytest.raises(SystemExit, match="not the demo archive"):
+            from_env({"RECORDINGS_DEMO_ARCHIVE": str(path)}, demo=True)
+    assert from_env({"RECORDINGS_DEMO_ARCHIVE": str(demo_archive)}, demo=True).demo is True
+
+
+def test_base_urls_host_is_checked_like_an_allowed_hosts_entry(tmp_path):
+    import pytest
+
+    from recordings_ui.settings import from_env
+    # why: browsers send the canonical form in Host, so that is what the allow-list must hold; and
+    # a name the other lists refuse (an underscore) should stop the app the same way.
+    def settings_for(url):
+        cfg = tmp_path / "config.toml"
+        cfg.write_text(f'[archive]\npath = "{tmp_path}"\n[server]\nbase_url = "{url}"\n',
+                       encoding="utf-8")
+        return from_env({"RECORDINGS_CONFIG": str(cfg)})
+
+    assert "fd7a::1" in settings_for("http://[fd7a:0:0::1]:8000").allowed_hosts
+    with pytest.raises(SystemExit, match="base_url"):
+        settings_for("http://my_host:8000")
+```
+
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `uv run pytest packages/ui/tests/test_writeguard.py packages/ui/tests/test_hosts.py packages/ui/tests/test_demo_guard.py packages/ui/tests/test_settings.py packages/core/tests/test_config.py -v --continue-on-collection-errors`
@@ -13907,10 +13978,17 @@ In `packages/ui/src/recordings_ui/hosts.py`:
    app's own (scheme, name and port), or that the browser marks as sent by another site. WriteGuard
    does the same for every request that could change data, and keeps every response to this origin.
 
+   A framed app is this origin, so its own websocket would pass every check above: every response
+   therefore forbids framing, and keeps the opener, the referrer and `/media`'s cache to this origin
+   (`_keep_to_this_origin`).
+
    Behind a TLS-terminating reverse proxy the app sees `http` while the browser's `Origin` says
-   `https`. The proxy must preserve the `Host` header and be trusted for `X-Forwarded-Proto`: listed
-   in uvicorn's `FORWARDED_ALLOW_IPS` (default: 127.0.0.1 and ::1 only). Otherwise every websocket
-   and every write is refused, which fails closed.
+   `https`. The proxy must preserve the `Host` header and be trusted for `X-Forwarded-Proto`: its
+   one address listed in uvicorn's `FORWARDED_ALLOW_IPS` (default: 127.0.0.1 and ::1 only), never
+   `*` or a range. Otherwise every websocket and every write is refused, which fails closed. A
+   proxy that rewrites `Host` to `127.0.0.1:8000` (nginx's default) fails open: HostGuard passes
+   every request, and only the exact-origin websocket check holds. uvicorn takes the scheme and
+   the client address from these headers, never `Host`, so nothing here trusts the client address.
    ```
 2. **Delete** the line `from urllib.parse import urlsplit` and the blank line after it, and **replace**
    `from starlette.types import ASGIApp, Receive, Scope, Send` with
@@ -13942,7 +14020,7 @@ In `packages/ui/src/recordings_ui/hosts.py`:
 4. In `HostGuard.__call__`, **replace** `await PlainTextResponse("unknown host", status_code=400)(scope, receive, send)` with:
    ```python
                    await PlainTextResponse("unknown host", status_code=400)(
-                       scope, receive, _keep_to_this_origin(send))
+                       scope, receive, _keep_to_this_origin(scope, send))
    ```
    and **replace**:
    ```python
@@ -13962,14 +14040,32 @@ In `packages/ui/src/recordings_ui/hosts.py`:
    ```python
    SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
    CORP = (b"cross-origin-resource-policy", b"same-origin")
+   # A framed app is this origin, so its websocket passes every check above: a page that framed it
+   # under a decoy could steer Dan's clicks (clickjacking). CSP for current browsers, X-Frame-Options
+   # for older ones.
+   NO_FRAMING = ((b"content-security-policy", b"frame-ancestors 'none'"),
+                 (b"x-frame-options", b"DENY"))
+   # A page that opens the app in a window doesn't share its browsing context group (and so its
+   # process); a link in a note doesn't send the app's address to the site it opens.
+   NO_OPENER_OR_REFERRER = ((b"cross-origin-opener-policy", b"same-origin"),
+                            (b"referrer-policy", b"same-origin"))
+   # /media only: a private recording's audio would otherwise sit in the disk cache of every device
+   # that played it. Range requests still seek.
+   NO_STORE = (b"cache-control", b"no-store")
 
 
-   def _keep_to_this_origin(send: Send) -> Send:
-       """Every response says `Cross-Origin-Resource-Policy: same-origin`: another site can't embed
-       /media in an <audio> tag, or load the API's answers with a no-cors request (spec §15)."""
+   def _keep_to_this_origin(scope: Scope, send: Send) -> Send:
+       """Every response keeps to this origin (spec §15). `Cross-Origin-Resource-Policy: same-origin`:
+       another site can't embed /media in an <audio> tag, or load the API's answers with a no-cors
+       request. `frame-ancestors 'none'` and `X-Frame-Options: DENY`: no page can frame the app.
+       `Cross-Origin-Opener-Policy` and `Referrer-Policy`: see above. `/media` is `no-store`."""
+       extra = [CORP, *NO_FRAMING, *NO_OPENER_OR_REFERRER]
+       if scope["path"].startswith("/media/"):
+           extra.append(NO_STORE)
+
        async def wrapped(message: Message) -> None:
            if message["type"] == "http.response.start":
-               message = {**message, "headers": [*message.get("headers", []), CORP]}
+               message = {**message, "headers": [*message.get("headers", []), *extra]}
            await send(message)
        return wrapped
 
@@ -13998,7 +14094,7 @@ In `packages/ui/src/recordings_ui/hosts.py`:
            if scope["type"] != "http":
                await self.app(scope, receive, send)
                return
-           send = _keep_to_this_origin(send)
+           send = _keep_to_this_origin(scope, send)
            if scope["method"] in SAFE_METHODS:
                await self.app(scope, receive, send)
                return
@@ -14083,6 +14179,47 @@ and in `from_env`'s demo branch, **replace** the `copy = …` line with:
         atexit.register(shutil.rmtree, copy.parent, ignore_errors=True)  # stage-1 carry-over
 ```
 
+Also in `settings.py`, demo mode serves only the demo (§17). **Add**
+`from recordings.sentinel import SentinelError, read_sentinel` after the `recordings.config` import,
+and **replace** `find_demo_archive` with (the `DEMO_UUID` is `demo/build.py`'s):
+```python
+# demo/build.py's DEMO_UUID. A real archive's archive.json carries its own, so demo mode serves
+# the demo or nothing, whatever RECORDINGS_DEMO_ARCHIVE names (spec §17).
+DEMO_UUID = "5f0c8e2a-3b1d-4c6e-9a7f-1d2e3f405162"
+
+
+def find_demo_archive(environ: Mapping[str, str]) -> Path:
+    if environ.get("RECORDINGS_DEMO_ARCHIVE"):
+        return _only_the_demo(Path(environ["RECORDINGS_DEMO_ARCHIVE"]))
+    # Running from the repo (editable install): walk up to demo/archive.
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "demo" / "archive"
+        if (candidate / "README.md").is_file():
+            return _only_the_demo(candidate)
+    raise SystemExit("demo archive not found; set RECORDINGS_DEMO_ARCHIVE")
+
+
+def _only_the_demo(path: Path) -> Path:
+    try:
+        ok = read_sentinel(path).uuid == DEMO_UUID
+    except SentinelError:
+        ok = False
+    if not ok:
+        raise SystemExit(f"{path} is not the demo archive (its archive.json lacks the demo's "
+                         "UUID); demo mode serves nothing else")
+    return path
+```
+and in the non-demo branch, so `base_url`'s host follows the same rules as the other lists,
+**replace** the `hosts = …` line and the `if cfg.base_url …` block with:
+```python
+    hosts = LOCAL_HOSTS | env_hosts(environ) | set(cfg.allowed_hosts)  # already normalised
+    if cfg.base_url and (name := urlsplit(cfg.base_url).hostname):
+        try:  # the same rules as allowed_hosts, so the canonical form a browser sends matches
+            hosts |= {normalise_host(name)}
+        except ValueError as exc:
+            raise SystemExit(f"[server] base_url: {exc}") from None
+```
+
 In `packages/ui/src/recordings_ui/__main__.py`, **replace** `import os\n\nimport uvicorn` with
 `import os\nimport signal\nimport sys\n\nimport uvicorn`, and **add** before `uvicorn.run(`:
 ```python
@@ -14095,7 +14232,7 @@ In `packages/ui/src/recordings_ui/__main__.py`, **replace** `import os\n\nimport
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest packages/ui packages/core/tests/test_config.py -v`
-Expected: all pass (200 passed, 11 deselected).
+Expected: all pass (202 passed, 11 deselected).
 
 - [ ] **Step 5: Commit**
 
@@ -14111,6 +14248,11 @@ Cross-Origin-Resource-Policy: same-origin. allowed_hosts with a port or scheme a
 proves demo mode opens no real path, starts no SQLite on one, lists no real folder, runs no other
 program and looks up no name (spec §17; Python audit hooks), and the demo's temporary copy is
 removed at exit.
+
+No page can frame the app (frame-ancestors 'none', X-Frame-Options: DENY): the framed app is the
+app's own origin, and its websocket passed every check. COOP and Referrer-Policy are same-origin,
+/media is no-store, demo mode serves only the demo archive (its archive.json UUID), and
+base_url's host is normalised like allowed_hosts.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
