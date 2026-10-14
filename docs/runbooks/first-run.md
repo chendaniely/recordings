@@ -154,7 +154,12 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    - `backups`: read and write for administrators only.
    - `recordings-mirror`: read and write for the mirror account (1b.8), read-only for your own DSM
      account, no access for anyone else. Turn its recycle bin off and leave it out of indexing:
-     the mirror refuses a target that holds anything but its own archive.
+     the mirror refuses a target that is not empty and carries no `MIRROR.md` with this archive's
+     UUID. A recycle bin or `@eaDir` folder inside is ignored, but a recycle bin is wasted space.
+
+   Both sit on `volume1`, so it needs room for the archive about three times over: the repository,
+   twice over until the retention task's first prune if the first backup is interrupted (step 4),
+   and the mirror. Check it in Storage Manager.
 
    Then the folders the rest of 1b uses:
    ```bash
@@ -324,6 +329,10 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    - In DSM, create the user `recordings-mirror`. It is not an administrator. It can read and
      write `recordings-mirror` and nothing else, and its application permissions allow only
      rsync and SFTP.
+   - Give it a quota on `volume1` (the user's Quota tab): the archive's size plus a quarter. The
+     backups refuse to start when the NAS is low on space (`[backup] min_nas_free_gb`), so
+     without a quota a full mirror would stop them too. With one, only the mirror stops
+     (`MirrorError; exit 11` or `23`): raise the quota then, as the archive grows.
    - Turn on Control Panel → File Services → rsync → Enable rsync service, and File Services →
      FTP → SFTP. Turn on the user home service (User & Group → Advanced), because the account's
      key lives in its home.
@@ -364,9 +373,9 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    SSH_OPTS=(-i "$K/nas_ssh_key" -o "UserKnownHostsFile=$K/nas_known_hosts" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
    PROBE="$RECORDINGS_HOME/restore-test/probe"                 # a folder with a real file in it
    mkdir -p "$PROBE"
-   [ -f "$PROBE/probe.bin" ] || head -c 5000000 /dev/urandom > "$PROBE/probe.bin"
+   [ -f "$PROBE/probe.bin" ] || head -c 500000000 /dev/urandom > "$PROBE/probe.bin"
    rsync -an -e "ssh ${SSH_OPTS[*]}" "$PROBE/" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
-   rsync -a -e "ssh ${SSH_OPTS[*]}" "$PROBE/" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
+   time rsync -a -e "ssh ${SSH_OPTS[*]}" "$PROBE/" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
    printf -- '-df %s\nrm %s/probe.bin\nls %s\n' "$NAS_MIRROR_SFTP" "$NAS_MIRROR_SFTP" "$NAS_MIRROR_SFTP" | sftp -b - "${SSH_OPTS[@]}" "$NAS_MIRROR_USER@$NAS_HOST"
    rm -rf "$PROBE"
    ```
@@ -381,12 +390,26 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
      share's SFTP-style path: set `NAS_MIRROR` to `$NAS_MIRROR_SFTP` and try again.
    - If the real copy fails with "failed to set times" (exit 23), the share's top folder belongs
      to another account, and only its owner may set its times. The file itself copied. Create a
-     folder inside the share that the mirror account owns, such as `mirror`, and use that
-     (`$NAS_MIRROR/mirror`, with `NAS_MIRROR_SFTP` to match). Run the check again, and set
-     `[mirror] target` in step 2.1 to that folder, ending in `/`.
+     folder inside the share that the mirror account owns, such as `mirror`. The account has no
+     shell and `sudo` would make the folder root's, so it makes the folder itself, over sftp:
+     `printf 'mkdir %s/mirror\n' "$NAS_MIRROR_SFTP" | sftp -b - "${SSH_OPTS[@]}" "$NAS_MIRROR_USER@$NAS_HOST"`.
+     Use that folder (`$NAS_MIRROR/mirror`, with `NAS_MIRROR_SFTP` to match), and give your own
+     DSM account read on it (next bullet). Run the check again, and set `[mirror] target` in
+     step 2.1 to that folder, ending in `/`.
    - If the real copy fails with "failed to set permissions" (exit 23), the share's ACLs refuse
      rsync's permission changes. Run it again with `--no-perms` added, and write "`--no-perms`:
      yes" in the checklist, and set `[mirror] no_perms = true` in step 2.1.
+   - Check that your own account can read the copy. The copy's owner is the mirror account and its
+     modes come from the source's files, so as yourself (File Station, or the Mac mounting the
+     share read-only) open `probe.bin` and check its size. Do it after the real copy and before
+     the `sftp` line, which removes the file. If it can't be read, fix the share's permissions so
+     your DSM account has read on everything inside, or add
+     `--chmod=Du+rwx,Dg+rx,Do+rx,Fu+rw,Fg+r,Fo+r` to the mirror's rsync (a change to `[mirror]`;
+     decide that first), and write the result in the checklist.
+   - The real copy's time gives the mirror's rate: 500 MB divided by `real`'s seconds. Write it
+     in the checklist. The first full mirror (step 4) takes about the archive's size divided by
+     it. 1 GbE allows about 100 MB/s; much less means the path (often the tailnet) is the limit,
+     for the first backup too.
    - sftp prints a `df` table with an `Avail` column, removes the file, and lists nothing. The
      share is empty again, as the mirror requires. Both shares sit on `volume1`, so this `df`
      measures the backups' space too. If sftp says the server doesn't support
@@ -658,15 +681,24 @@ rc run --rm "${IMPORT_MOUNTS[@]}" web recordings import-audio-router /import
 rc run --rm web recordings validate /archive --deep
 rc run --rm backup recordings backup run --tag post-import
 rc run --rm backup recordings backup restore-test
+rc run --rm backup recordings mirror
 rc start backup
 ```
-Expected: the import reports no failures, `validate` reports no problems, and both backups and the
-restore test print `ok: True`. The restore test now proves the imported data, not just an empty
-archive. Note how long the restore test took (Status shows when it started and finished): the
-loop runs it once a month with no backup in between, so if it took over 2 hours, raise the
-Healthchecks grace to that time plus 2 hours, or each month's restore test reads as an outage.
-Resume the Healthchecks check. The first full mirror of the imported archive runs next
-and can take hours; if Healthchecks alerts during it, the next backup's ping clears it.
+Expected: the import reports no failures, `validate` reports no problems, and both backups, the
+restore test and the mirror print `ok: True`. The restore test now proves the imported data, not
+just an empty archive. Note how long the restore test took (Status shows when it started and
+finished): the loop runs it once a month with no backup in between, so if it took over 2 hours,
+raise the Healthchecks grace to that time plus 2 hours, or each month's restore test reads as an
+outage.
+
+The mirror line makes the first full mirror of the imported archive here, not in the loop. The
+loop stops a mirror run after 6 hours and starts it again, and no backup runs while one does, so
+a long first mirror would read as an outage every few hours. From this shell it runs as long as
+it needs, about the archive's size divided by 1b.8's rate; rsync still gives up on a link that
+moves nothing for 10 minutes. If it stops (`exit 12`, `30` or `255`: the link or the NAS
+dropped), run the same line again. rsync on the NAS keeps the files it finished in `.~tmp~`
+folders and builds on them, so they don't cross the network again, though the NAS reads and
+writes each one once more. Then resume the Healthchecks check.
 
 If the post-import backup is interrupted (a dropped link, a reboot), run the same line again.
 It may upload everything again: restic 0.19.1 kept nothing it could reuse from an interrupted
@@ -698,15 +730,53 @@ Then:
   is still there, with the old snapshots.
 - Run step 3 again if `import/` is already gone, then step 4.
 - `recordings init` gives the new archive a new UUID, so the mirror refuses its old copy. Once
-  you're sure, empty the `recordings-mirror` share on the NAS, and the next run fills it. Your
-  DSM account is read-only on that share (1b.4), so File Station can't do it. Do it in the NAS's
-  shell as an administrator:
+  you're sure, empty your `[mirror] target` folder on the NAS (the share itself, or the subfolder
+  1b.8 had you make in it) before step 4, whose mirror line fills it again. Your DSM account is
+  read-only on that share (1b.4), so File Station can't do it. Do it in the NAS's shell as an
+  administrator:
   ```bash
   # on the NAS
-  sudo find /volume1/recordings-mirror -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  TARGET=/volume1/recordings-mirror          # or /volume1/recordings-mirror/mirror, if that is the target
+  sudo find "$TARGET" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   ```
 - When the new import has passed step 4, delete the `.failed-` folders: they are plaintext
   copies too.
+
+## 5. The mirror on the Mac
+
+The Mac reads the archive from the NAS's mirror (spec §15.1): it mounts the share read-only, or
+syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
+
+1. **Synology Drive, if you use it.** In Synology Drive Admin Console, enable `recordings-mirror`
+   as a team folder with versioning off. The mirror is derived and the backups keep its history;
+   Drive's versions would keep every file the mirror replaces or deletes, private recordings
+   included, where neither the app nor forgetting a person (spec §7.6) can reach them. On the
+   Mac, sync that team folder as your own DSM account. If Drive Client's sync rules can leave out
+   a folder by name, leave out `.~tmp~`, where rsync holds a run's new files until its end.
+2. **Check that the Mac can read it and can't write it.** Open a `recording.json` in the Mac's
+   copy. Then make an empty file in its top folder: Drive Client must say it can't upload it (or
+   the mount refuse it), and File Station on the NAS must not show it. Delete it on the Mac. If
+   it reached the share, your account can write there: make it read-only (1b.4) and delete the
+   file in the NAS's shell. The next mirror run deletes whatever the Mac puts there, and more
+   than `[mirror] max_delete` such files stop the mirror until they're gone.
+3. **When the mirror's alert comes,** Status shows the error's type and exit code, and
+   `rc run --rm backup recordings mirror --debug` prints the whole message. Each case below
+   clears by itself once its cause is gone, and a "recovered" push follows.
+   - `MirrorRefused; exit 255` or `exit 23` (the run never started), or `MirrorError; exit 12`,
+     `24`, `30` or `255`: the NAS, its ssh, the link or the share wasn't there, or a file
+     vanished while it was copied. An `exit 255` that lasts while the NAS is up is ssh refusing:
+     `--debug` says whether the NAS's host key changed (compare it as in 1b.8) or the key was
+     refused.
+   - `MirrorError; exit 11`, or `exit 23` with "No space left" or "quota" in `--debug`: the share
+     or the account's quota (1b.8) is full. Raise the quota, or make room. Other `exit 23`
+     messages: 1b.8's notes on times and permissions.
+   - `TimeoutExpired`: a run outlasted the loop's 6 hours. Run it from the terminal, as in step 4.
+   - `MirrorRefused` alone: the archive's sentinel, the target's `MIRROR.md`, or more deletions
+     than `[mirror] max_delete`. `--debug` says which, and for deletions it lists the recordings
+     by ID. Only if they are meant, `rc run --rm backup recordings mirror --max-delete N` allows
+     N for that run; the config keeps its limit.
+   - `MirrorError` alone: the rsync dry run printed a line the mirror can't read, perhaps from a
+     new rsync on the NAS or in the image. Nothing was deleted.
 
 ## Restoring for real
 
@@ -844,6 +914,9 @@ through 1a, then:
 | The mirror account can run rsync over ssh (1b.8) | yes / no: stop and decide |
 | The mirror needs `--no-perms` (1b.8) | yes / no |
 | The NAS's free space over sftp's `df` (1b.8) | works / unknown |
+| The mirror's rate (1b.8); the first full mirror's estimate | MB/s; hours |
+| The mirror account's quota on `volume1` (1b.8) | GB |
+| My own account can read what the mirror account wrote (1b.8) | yes / no |
 | NAS transport (1b) | rest-server / SFTP fallback, risk accepted |
 | The tailnet ACL refuses another device (2.3) | yes / no |
 | Dead-man's switch: Healthchecks.io, period 1 h, grace 3 h (2.2) | |
@@ -852,3 +925,4 @@ through 1a, then:
 | The killed backup raised the alert (2.7) | yes / no |
 | The restore test passed on the imported data; `import/` deleted (4) | yes / no |
 | The Library's first load (4) | under 2 s / slower |
+| The Mac reads the mirror and can't write it (5.2) | yes / no |
