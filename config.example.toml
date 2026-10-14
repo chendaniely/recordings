@@ -33,6 +33,10 @@ path = "/srv/recordings/state"
 # Never inside [state] path: the config refuses it.
 path = "/srv/recordings/index/index.db"
 
+[disk]                                  # stage 2a: the disk guard (spec §12.5)
+warn_free_percent = 20                  # Status warns, and an alert goes out, below this
+stop_free_percent = 5                   # new imports stop below this
+
 [plaud]                                 # stage 2
 schedule_minutes = 20                   # scheduled sync interval; 0 turns it off
 auto_import = true                      # import missing recordings (safe: nothing runs until tagged)
@@ -42,6 +46,10 @@ recheck_days = 14                       # keep re-checking recent recordings for
 # date prefix stripped (as audio-router's normalize_title does). Read from stage 2a, by
 # reconcile and the import. They only ever add `private`.
 auto_private_patterns = ["^\\s*private", "interview:"]
+# Dan's consent list, "never mirror" (spec §9.1): Plaud IDs that never enter the archive, one per
+# bullet or line, as audio-router reads them. Read fail-closed from stage 2a by the import: an
+# unset, missing, empty or ID-less list stops it. In Docker it is mounted read-only (runbook 3).
+consent_list = "/consent/consent-list.md"
 
 [spark]                                 # stage 4
 base_url = "https://spark.your-tailnet.ts.net"   # llama-swap, reached over Tailscale

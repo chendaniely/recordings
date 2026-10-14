@@ -37,10 +37,14 @@ class RawSource:
     kind: str
     ref: str
     added_at: datetime
-    payload: bytes | None = None  # written verbatim as source/<kind>-<stamp>.json
+    payload: bytes | None = None  # written verbatim as source/<kind>-<stamp><suffix>
     fetched_at: datetime | None = None  # when the source returned it; names the file
+    suffix: str = ".json"  # ".txt" keeps a prose export as it came (spec §9.3)
 
     def __post_init__(self) -> None:
+        ext = self.suffix[1:]
+        if not (self.suffix.startswith(".") and ext.isascii() and ext.isalnum()):
+            raise ValueError(f"RawSource.suffix {self.suffix!r} must look like .json or .txt")
         for name in ("added_at", "fetched_at"):
             value = getattr(self, name)
             if value is not None and value.utcoffset() is None:

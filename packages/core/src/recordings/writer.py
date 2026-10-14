@@ -198,6 +198,7 @@ class Incoming:
     renditions: tuple[Rendition, ...] = ()
     my_notes: str | None = None
     excluded_note_types: tuple[str, ...] = ()
+    sha256: str | None = None  # what the caller hashed (the import's plan); add refuses others
 
 
 @dataclass(frozen=True)
@@ -500,6 +501,8 @@ class Writer:
         self._check_sentinel()
         self._catch_up_index()
         sha = sha256_file(incoming.media)
+        if incoming.sha256 is not None and sha != incoming.sha256:
+            raise WriterError("the media changed after it was planned: its SHA-256 differs")
         rid = make_id(incoming.recorded_at, sha)
         with self.locks.hold(f"sha-{sha}"):
             existing = self._holding(sha, rid)
@@ -681,11 +684,11 @@ class Writer:
         if source.payload is not None:
             when = source.fetched_at or source.added_at
             (folder / "source").mkdir(exist_ok=True)
-            target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(when)}.json"
+            target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(when)}{source.suffix}"
             digest = _sha(source.payload)
             # A file with these bytes already there is reused: a merge killed between publishing
             # and recording its snapshot never leaves a duplicate (Review Focus 2).
-            same = next((p for p in sorted(target.parent.glob(f"{target.stem}*.json"))
+            same = next((p for p in sorted(target.parent.glob(f"{target.stem}*{target.suffix}"))
                          if _sha(p.read_bytes()) == digest), None)
             path = same or publish_exclusive(source.payload, target)
             raw = path.relative_to(folder).as_posix()

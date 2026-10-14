@@ -7,13 +7,17 @@ import json
 import os
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from recordings import __version__, config, schemas, selfdoc
-from recordings.index import IndexRefused
+from recordings.disk import disk_status, disk_thresholds
+from recordings.index import Index, IndexRefused
 from recordings.init import InitError, adopt_archive, init_archive
 from recordings.locks import LockTimeout
+from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
 from recordings.sentinel import SentinelError, read_sentinel
+from recordings.sources.audio_router import CatalogError, ImportStopped, plan, run
 from recordings.state import StateError
 from recordings.writer import Writer, WriterError
 
@@ -54,6 +58,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("doctor", help="check config.toml, the archive and secrets (presence only)")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("import-audio-router",
+                       help="import a read-only copy of audio-router's archive (dry run first)")
+    p.add_argument("path", type=Path, help="the copy of audio-router's media root")
+    p.add_argument("--dry-run", action="store_true", help="report what would happen; write nothing")
+    p.add_argument("--allow-unplaced", action="store_true",
+                   help="import what can be placed even when some rows can't")
     p.add_argument("--json", action="store_true")
     return parser
 
@@ -177,10 +189,73 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 78 if report["problems"] else 0  # 78 = EX_CONFIG, as audio-router's doctor uses
 
 
+def _matching_index(cfg: config.Config) -> Index | None:
+    """The archive's index, for a dry run's matches, when it is this archive's."""
+    if cfg.index_path is None or cfg.archive_path is None:
+        return None
+    try:
+        identity = read_sentinel(cfg.archive_path)
+    except SentinelError:
+        return None
+    index = Index(cfg.index_path)
+    return index if index.archive_uuid() == identity.uuid else None
+
+
+def cmd_import_audio_router(args: argparse.Namespace) -> int:
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:  # fail-closed (§9.1): no list, an unreadable one or an empty one stops both runs
+        consent = load_consent_list(consent_list_path(cfg.data))
+    except ConsentListError as exc:
+        return _fail(str(exc), args.json, 78)
+    if args.dry_run:
+        index = _matching_index(cfg)
+        try:
+            the_plan = plan(args.path, index, consent=consent,
+                            default_timezone=cfg.default_timezone)
+        except CatalogError as exc:
+            return _fail(str(exc), args.json, 1)
+        _emit({**the_plan.report(), "dry_run": True,
+               "matched_against_archive": index is not None}, args.json)
+        return 0 if the_plan.ok else 1
+    writer = _writer(args.json)
+    if isinstance(writer, int):
+        return writer
+    try:
+        thresholds = disk_thresholds(cfg)
+        the_plan = plan(args.path, writer.index, consent=consent,
+                        default_timezone=cfg.default_timezone)
+    except (CatalogError, config.ConfigError) as exc:
+        return _fail(str(exc), args.json, 1)
+    if the_plan.problems:
+        return _fail("; ".join(the_plan.problems), args.json, 1)
+    unplaced = the_plan.counts()["unplaced"]
+    if unplaced and not args.allow_unplaced:
+        return _fail(f"{unplaced} catalog rows can't be placed (see --dry-run): fix them, or "
+                     "pass --allow-unplaced to import the rest", args.json, 1)
+
+    def guard():
+        return disk_status(writer.root, expected_uuid=writer.identity.uuid, **thresholds)
+
+    try:
+        result = run(the_plan, writer, now=datetime.now(timezone.utc), disk=guard)
+    except ImportStopped as exc:
+        _emit({**the_plan.report(), "imported": exc.report.to_dict(), "stopped": str(exc)},
+              args.json)
+        return 1
+    except LockTimeout:
+        return _fail("another job holds the ops lock (a backup, the mirror or a check): run "
+                     "the import again when it finishes", args.json, 75)
+    _emit({**the_plan.report(), "imported": result.to_dict()}, args.json)
+    return 1 if result.failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "reindex": cmd_reindex, "validate": cmd_validate, "doctor": cmd_doctor}
+    commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "reindex": cmd_reindex, "validate": cmd_validate, "doctor": cmd_doctor,
+                "import-audio-router": cmd_import_audio_router}
     if args.command in commands:
         return commands[args.command](args)
     parser.print_help(sys.stdout)

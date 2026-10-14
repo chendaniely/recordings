@@ -22,22 +22,30 @@ its audio, is never read past its ID and is reported only as a count.
 from __future__ import annotations
 
 import csv
+import errno
 import hashlib
 import json
+import logging
 import re
+import sqlite3
 from collections import Counter
-from collections.abc import Collection, Iterable
-from dataclasses import dataclass
-from datetime import datetime
+from collections.abc import Callable, Collection, Iterable
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from recordings.archive import sha256_file
-from recordings.index import Index
-from recordings.media import MEDIA_SUFFIXES, MediaProbe, probe
-from recordings.models import is_private_tag
-from recordings.plaud.normalise import link_errors
+from recordings.archive import RawSource, sha256_file
+from recordings.disk import DiskStatus
+from recordings.index import Index, IndexRefused
+from recordings.locks import OPS_LOCK, Locks, LockTimeout
+from recordings.media import MEDIA_SUFFIXES, MediaProbe, media_kind, probe
+from recordings.models import TagRef, is_private_tag
+from recordings.plaud.normalise import link_errors, meta_fetched_at
+from recordings.plaud.reconcile import matches_auto_private
 from recordings.refs import canonical_plaud_id
+from recordings.sources.ar_outputs import ar_stamp, map_rendition, pocket_outputs
+from recordings.writer import Incoming, IndexUnavailable, NotTheWriter, Writer, WriterError
 
 CATALOG = Path("catalog") / "catalog.csv"
 PROVENANCE = Path("catalog") / "provenance.json"
@@ -666,3 +674,216 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
                 unlisted=tuple(unlisted),
                 held_on_plaud=held if isinstance(held, int) else None, problems=tuple(problems),
                 unlisted_private=unlisted_private)
+
+
+_log = logging.getLogger(__name__)
+# A fixed phrase per kind of failure. An exception's own text can carry a title (pydantic's
+# input_value, a path built from a tab name), so a report never shows it (Review Focus 4).
+_FAILURES = (
+    (IndexRefused, "the archive reads as empty or unreadable"),
+    (LockTimeout, "a lock stayed busy"),
+    (IndexUnavailable, "the index could not answer"),
+    (NotTheWriter, "this process may not write the archive now"),
+    (sqlite3.Error, "state.db or the index could not be used"),
+    (WriterError, "the writer refused it"),
+    (RecursionError, "a payload is nested too deeply"),
+    (ArithmeticError, "a number was out of range"),
+    (TypeError, "a value had the wrong type"),
+    (KeyError, "a recording folder is missing"),
+    (OSError, "a file could not be read or written"),
+    (ValueError, "a value did not validate"),
+)
+
+
+@dataclass
+class RunReport:
+    created: int = 0
+    merged: int = 0
+    sources_added: int = 0
+    renditions_added: int = 0
+    plaud_outputs: int = 0
+    held_removals: int = 0
+    skipped_snapshots: int = 0
+    skipped_outputs: dict[str, int] = field(default_factory=dict)
+    measured: dict[str, int] = field(default_factory=dict)  # durations, by how they were measured
+    failed: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+class ImportStopped(RuntimeError):
+    """The run stopped: the disk guard said stop, or media couldn't be measured. `.report` is
+    what was done before it did."""
+
+    def __init__(self, message: str, report: RunReport) -> None:
+        super().__init__(message)
+        self.report = report
+
+
+def _failure(exc: BaseException) -> str:
+    phrase = next((p for kind, p in _FAILURES if isinstance(exc, kind)), "it failed")
+    return f"{type(exc).__name__}: {phrase}"
+
+
+def _stops_the_run(exc: BaseException) -> bool:
+    """A full disk, or state.db or the index unusable: going on would only fail every later row,
+    and fill the disk again for each one."""
+    if isinstance(exc, OSError):
+        return exc.errno in (errno.ENOSPC, errno.EDQUOT)
+    return isinstance(exc, (sqlite3.Error, IndexUnavailable, NotTheWriter))
+
+
+def _read_json(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        return None
+
+
+def _fetched_at(path: Path) -> datetime:
+    """When audio-router fetched a snapshot: a legacy snapshot's own `_meta.fetched_at`, else the
+    file's stamp. Pocket's flat file and a private-tier `.txt` have only their mtime.
+
+    audio-router's same-second siblings (`x.json`, `x-01.json`, …) were written in counter
+    order. The counter goes in as microseconds, so that order is in the data: with tied times,
+    the newest output would fall to file names, where `x-2.json` sorts before `x.json`."""
+    legacy = meta_fetched_at(_read_json(path)) if path.suffix == ".json" else None
+    if legacy is not None:
+        return legacy
+    stamp, _, counter = path.stem.partition("-")
+    try:
+        when = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    return when + timedelta(microseconds=int(counter)) if counter.isdigit() else when
+
+
+def _titles(item: Item) -> list[str]:
+    """Every title the item's snapshots carry, oldest first. They go only into recording.json and
+    the auto-private check, never into a report."""
+    key = "title" if item.kind == "pocket" else "name"
+    docs = [_read_json(path) for path in item.snapshots]
+    return [d[key].strip() for d in docs
+            if isinstance(d, dict) and isinstance(d.get(key), str) and d[key].strip()]
+
+
+def _title(item: Item) -> tuple[str, bool]:
+    """(the title, whether the source supplied it): the newest snapshot's, else a private-tier
+    export's own name, which is how Recorder titles a recording."""
+    titles = _titles(item)
+    if titles:
+        return titles[-1], True
+    audio = item.audio
+    if item.row.source == "private" and audio is not None and audio.stem != item.row.file_id:
+        return audio.stem, True
+    return "Untitled recording", False
+
+
+def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
+                group: list[Item]) -> None:
+    sources = [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
+                         fetched_at=_fetched_at(path), payload=path.read_bytes())
+               for path in item.snapshots]
+    sources += [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
+                          fetched_at=_fetched_at(path), payload=path.read_bytes(),
+                          suffix=path.suffix.lower())
+                for path in item.texts]  # Recorder's prose transcript, kept as it came (§9.3)
+    if not sources:  # the source's own ID is always kept, so a later sync can match it
+        sources.append(RawSource(kind=item.kind, ref=item.row.file_id, added_at=now))
+    sources.append(RawSource(kind="audio_router", ref=item.row.uri, added_at=now))
+    renditions = []
+    for path in item.renditions:
+        mapped = map_rendition(path, _read_json(path))
+        if mapped.rendition is not None:
+            renditions.append(mapped.rendition)
+        elif mapped.keep_raw:  # the speaker names Dan typed: verbatim in source/ (§9.3)
+            sources.append(RawSource(kind="audio_router", ref=item.row.uri, added_at=now,
+                                     fetched_at=ar_stamp(path), payload=path.read_bytes()))
+        else:
+            report.skipped_outputs[mapped.skipped] = report.skipped_outputs.get(mapped.skipped, 0) + 1
+    # Privacy first (§7.4): every private tag is in place when the recording is created, never
+    # a second write after its content.
+    tags = [TagRef(tag=tag, by="you")
+            for tag in dict.fromkeys(t for member in group for t in member.tags)]
+    titles = [t for member in group if member.kind == "plaud" for t in _titles(member)]
+    if (not any(is_private_tag(t.tag) for t in tags)
+            and matches_auto_private(titles, writer.auto_private)):
+        tags.append(TagRef(tag="private", by="auto"))
+    title, from_source = _title(item)
+    probed = item.probed
+    added = writer.add(Incoming(
+        media=item.audio, recorded_at=item.recorded_at, timezone_name=item.timezone,
+        time_source=item.time_source, title=title, title_by=item.kind if from_source else None,
+        kind=media_kind(item.audio, probed) or "audio", sources=tuple(sources),
+        duration_ms=probed.duration_ms, sample_rate=probed.sample_rate, channels=probed.channels,
+        tags=tuple(tags), renditions=tuple(renditions), sha256=item.sha256))
+    report.measured[probed.method] = report.measured.get(probed.method, 0) + 1
+    report.created += added.created
+    report.merged += not added.created
+    report.sources_added += added.sources_added
+    report.renditions_added += added.renditions_added
+    rid = added.recording.id
+    if item.kind == "plaud":
+        reconciled = writer.reconcile_plaud(rid)
+        report.plaud_outputs += reconciled.written
+        report.held_removals += len(reconciled.held)
+        report.skipped_snapshots += len(reconciled.skipped)
+    elif item.kind == "pocket":
+        rec = writer.archive.load(rid)
+        folder = writer.archive.path_for(rid)
+        last: dict[tuple, str] = {}  # each slot's part hash at the previous snapshot, as reconcile's `applied`
+        for source in rec.sources:
+            doc = _read_json(folder / source.raw) if source.kind == "pocket" and source.raw else None
+            if isinstance(doc, dict):
+                for rendition in pocket_outputs(doc, source.raw, source.fetched_at or source.added_at):
+                    slot, part = (rendition.kind, rendition.note_type), rendition.inputs["part_sha256"]
+                    if last.get(slot) == part:  # the same output as the last snapshot's: no new file
+                        continue
+                    last[slot] = part
+                    if writer.write_rendition(rid, rendition) is not None:
+                        report.renditions_added += 1
+
+
+def run(plan: Plan, writer: Writer, *, now: datetime,
+        disk: Callable[[], DiskStatus] | None = None, lock_timeout: float = 600) -> RunReport:
+    """Import every placeable row. Re-runnable: what is already there is matched and skipped.
+
+    It holds the ops lock throughout, so a backup or the mirror never runs half-way through it,
+    and it refuses to start while any recording's media can't be measured (§9.1.1). One
+    recording's failure is reported and the run goes on, except an archive that reads as empty,
+    which stops it."""
+    report = RunReport()
+    todo = [item for item in plan.items if item.disposition in IMPORTED]
+    # Rows with the same audio become one recording, whichever is added first. Each is added
+    # with its whole group's privacy, so a duplicate's label or title is never a late write.
+    by_sha: dict[str, list[Item]] = {}
+    for item in todo:
+        by_sha.setdefault(item.sha256, []).append(item)
+    unmeasured = sum(item.probed is None for item in todo)
+    if unmeasured:
+        raise ImportStopped(
+            f"media can't be measured for {unmeasured} of {len(todo)} recordings: anything but "
+            "WAV needs ffprobe and ffmpeg (spec §9.1.1). Nothing was imported.", report)
+    with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):
+        for item in todo:
+            if disk is not None:
+                status = disk()
+                if status.level == "stop":
+                    raise ImportStopped(status.message, report)
+            try:
+                _import_one(item, writer, now=now, report=report, group=by_sha[item.sha256])
+            except IndexRefused as exc:  # the archive reads as empty: unmounted, most likely
+                _log.debug("importing %s stopped the run", item.row.uri, exc_info=True)
+                report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
+                raise ImportStopped("the archive reads as empty or unreadable (is its disk "
+                                    "mounted?): the import stopped", report) from None
+            except (WriterError, LockTimeout, KeyError, OSError, ValueError, TypeError,
+                    RecursionError, ArithmeticError, sqlite3.Error) as exc:
+                _log.debug("importing %s failed", item.row.uri, exc_info=True)
+                report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
+                if _stops_the_run(exc):
+                    raise ImportStopped("the disk is full, the archive has dropped off, or state.db "
+                                        "or the index can't be used now: the import stopped",
+                                        report) from None
+    return report
