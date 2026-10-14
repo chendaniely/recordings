@@ -312,12 +312,16 @@ recordings/                      (repo root, uv workspace, MIT)
   - **Why the offset:** Dan records in several time zones.
   - **No time zone from the source:** Plaud gives none, so the configured default time zone
     applies (§5).
+  - **A zone that contradicts the offset** (audio-router stamps each private-register row with
+    its configured zone): the offset is kept, the zone is left empty, and the import's dry run
+    lists the recording.
 - **The folder name and the media file name are both the ID**, so a copied file still
   describes itself. Folders sit under `YYYY/MM/` by local date.
 - **IDs never change.** If the recorded time is corrected later, `recording.json` changes
   and the folder name does not.
 - **Where the time comes from** is recorded as `time_source`, one of: `plaud`, `metadata`
-  (from the container), `published` (the URL's publish date), `mtime` or `ingest`.
+  (from the container, or parsed from the file's name), `published` (the URL's publish date),
+  `mtime` or `ingest` (when nothing else is known, including a source record's creation time).
 - **Output file stamps** use ISO 8601 basic UTC, for example `20261008T143512Z`.
 
 ### 6.3 `recording.json` (sketch; the schema is authoritative)
@@ -1202,6 +1206,25 @@ before any other source. It reuses `audio-router`'s Plaud client, copied in (§1
   `source/`. Plaud IDs are opaque strings, and the `of_` form is accepted.
 - **The consent list ("never mirror") carries over as a hard rule** (Dan, 2026-10-08):
   - Plaud IDs on Dan's consent list are never downloaded.
+  - **The list excludes the recording, not only its ID** (Dan, 2026-10-14). A recording that
+    is the same as a listed one would mirror it, so the `audio-router` import also leaves out:
+    - a row whose `dup_of` names a listed row, and a row a listed row's `dup_of` names
+    - a row whose catalog `audio_sha256` is a listed row's
+    - a private-tier file whose SHA-256 is a listed row's, or whose file name is a listed ID
+
+    These are found from the catalog alone, closed over `dup_of` and the hashes, and reported
+    only as a count. A listed row's own files are never opened. A private-tier file that is
+    not named by a listed ID is hashed to learn whether it is that audio: the bytes are read
+    and nothing is kept.
+  - **The one limit:** a listed row whose catalog SHA is empty (a row with no audio) has no
+    hash to match, and matching it would mean reading its file. Its same-audio copies in the
+    private tier are therefore not recognised; such a copy has no catalog row to import
+    under its listed ID and is held back as unplaced, never imported. `build_catalog` fills the
+    SHA for every main-tier row.
+  - **The sync applies the rule per ID.** Plaud's listing carries no audio hash, so the sync
+    cannot tell that two Plaud IDs hold the same audio before it downloads one. It never
+    downloads a listed ID. A Plaud ID whose audio matches a listed recording is not stopped
+    by the sync. Only the import's catalog can do that.
   - The list is configured as a path (`[plaud] consent_list`) and mounted read-only.
   - It is read fail-closed: if it is missing or unreadable, the sync stops.
   - Entries follow `audio-router`'s parser: an ID counts only when it opens a bullet or
@@ -1297,6 +1320,8 @@ be found by fetching again and comparing.
   - A snapshot with link errors is never used as the baseline, and nothing is built from it.
     The whole envelope is fetched again (links expire within 300 s), or the check is marked
     failed.
+    A block that arrived empty behind a link counts as a link error, and so does a failure a
+    legacy snapshot lists in its `_meta` (`data_link_errors`).
   - **A circuit breaker:** if more than about 5% of a sweep, and at least 10 recordings,
     report changes, snapshot writing stops and an alert is raised (§14). It counts only
     changes to "everything else" or to unknown fields, never title, transcript, speaker or
@@ -1388,7 +1413,15 @@ later" until its build stage (§20):
 
 - **`recordings import-audio-router`** (stage 2a):
   - It runs as a dry run first. It reports counts, private recordings, and anything it
-    can't place. **The dry run accounts for every catalog row.**
+    can't place. **The dry run accounts for every catalog row.** It also reports:
+    - files on disk with no catalog row (by ID only, and a private-tier count with no names)
+    - rows whose media couldn't be measured (§9.1.1). A real run refuses them, and
+      `recordings doctor` reports a missing ffmpeg.
+    - Plaud snapshots reconcile will skip, by reason, and rows whose every snapshot is
+      skipped, which would get no Plaud outputs (§9.1.1)
+
+    The private count is by label, `access` and tier. A title that matches the auto-private
+    patterns is tagged by the run (§7.4). A run also refuses unplaced rows unless told not to.
   - It reads `audio-router`'s archive through `ARCHIVE.md` and **never changes it**. It
     reads a read-only copy brought over with rsync and a SHA manifest (§19).
   - It is re-runnable, and matches by Plaud ID (either form) before content hash. A match
@@ -1404,15 +1437,17 @@ later" until its build stage (§20):
   | Plaud, Google Recorder and Pocket recordings | one recording each, with a source reference that keeps `audio-router`'s source and ID |
   | rows with no audio | reported by the dry run and not imported. A Plaud one arrives later through the sync. |
   | the `media/private/` tier | imported, tagged `private`. Its files are matched by SHA-256 (a 64-hex ID is the audio's hash), and a Recorder export's `.txt` comes too |
-  | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels become private tags, one per meaning (`therapy` and both spellings of counselling → `private/therapy`; `personal` → `private`). A privacy label or a non-empty `access` makes the recording private. |
+  | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels become private tags, one per meaning (`therapy` and both spellings of counselling → `private/therapy`; `journal`, `medical` and `students` → `private/journal`, `private/medical` and `private/students`; `personal`, `private` and `voiceprints` → `private`; matched in any capitalisation). A privacy label or a non-empty `access` makes the recording private. |
   | Plaud rows with audio but no snapshot and no time | deferred to 2b's sync, which matches them by Plaud ID; if Plaud no longer has them, 2b imports them timed by the file's mtime |
-  | an ID on the consent list (§9.1) | not imported, and reported only as a count |
+  | an ID on the consent list (§9.1), and every row that is the same recording: a `dup_of` link either way, the same catalog audio SHA-256, a private-tier file with that SHA-256 or named by the ID | not imported, and reported only as a count. If either ID of the byte-identical Plaud pair is listed, both go. Removing the ID from the list brings the whole group in on the next run. |
   | turns or segments with no time, and speaker names Dan typed | kept: untimed segments as reconcile keeps them, typed names verbatim in `source/` |
   | several raw snapshots for one recording | all kept, in `source/` |
   | `words`, `turns`, `merged` and `summary` renditions | outputs, keeping their engine names |
   | `audio-router`'s Plaud renditions | **not copied.** Reconcile rebuilds them from the snapshots, so they can't be duplicated (§9.1.1). |
   | the ledger entry with no media | reported by the dry run and not imported |
   | the one byte-identical Plaud pair (two IDs, one audio blob) | one recording with both Plaud source references (§6.4) |
+  | rows with the same audio when one of them can't be placed | none imported until it can: they are one recording, created with every row's labels (§7.4) |
+  | a folder in the copy that can't be listed | never read as empty: its rows are unplaced, and a store folder is a problem the run stops on |
 
 ## 10. How other tools read the archive
 
