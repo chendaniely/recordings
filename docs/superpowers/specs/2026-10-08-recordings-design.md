@@ -1039,7 +1039,8 @@ six things.
      rewrite` can't run from it: it prints the steps to run on the NAS, with the NAS's own
      copy of the password. It says plainly that otherwise the monthly snapshots age out
      within 12 months, and that the `pre-import` and `post-import` snapshots never do (§15.1).
-   - the NAS mirror (cleared on its next `rsync --delete`), and the Mac's copy of it
+   - the NAS mirror (cleared on its next `rsync --delete`, unless the dry run refuses the run,
+     which Status and the alert show), and the Mac's copy of it
    - Synology Drive versions and Time Machine
    - Pixeltable's database
    - vault notes, from the paths the vault listener recorded (§7.4)
@@ -2189,9 +2190,10 @@ come from that frame.
   - **Its own account:** a separate non-admin NAS account whose SSH key is restricted to the
     server's address and whose share permissions reach only the mirror share. A compromised
     server could wipe the mirror, which is derived, but not the append-only backups.
-    A dry run counts the deletions first, and the mirror refuses, deleting nothing, past
-    `max_delete`. The target must be empty or carry a `MIRROR.md` mark with this archive's
-    UUID.
+    A dry run counts the deletions first (one extra metadata-only pass an hour), and the mirror
+    refuses, deleting nothing, past `max_delete`; the real run keeps rsync's `--max-delete` as a
+    backstop for a change made between the two passes. The target must be empty or carry a
+    `MIRROR.md` mark with this archive's UUID, so an interrupted first run resumes.
 - **Capacity:** The NAS's free space is checked before backups start, over ssh `df`, or
   sftp's `df` for an SFTP-only account; otherwise it is unknown, and Status and `doctor`
   say so. The backup repository grows with the archive, and deduplication plus the
