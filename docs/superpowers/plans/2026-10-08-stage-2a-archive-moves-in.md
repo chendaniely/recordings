@@ -11960,6 +11960,62 @@ def test_pocket_segments_in_milliseconds_are_recognised():
     assert transcript.payload["segments"][0]["end"] == 1.5 and transcript.meta["time_unit"] == "ms"
 
 
+def test_a_pocket_outputs_identity_hashes_what_it_carries():
+    # why: Task 7's ruling. part_sha256 is the hash of what the output carries, so a difference
+    # it can't show (a number spelled 1500.0, a trailing space, an unknown field, a summary's
+    # model) is never a new write-once output.
+    doc = {"duration": 2.0,
+           "transcript": {"segments": [{"start": 0, "end": 1500, "text": "Hi", "id": 1}]},
+           "summarizations": {"a": {"text": " A chat. ", "model": "x"}}}
+    same = {"duration": 2.0,
+            "transcript": {"segments": [{"start": 0.0, "end": 1500.0, "text": "Hi ", "id": 2,
+                                         "extra": True}]},
+            "summarizations": {"a": {"text": "A chat.", "model": "y"}}}
+    other = {**doc, "summarizations": {"a": {"text": "A different chat."}}}
+    one = pocket_outputs(doc, "source/pocket-1.json", NOW)
+    two = pocket_outputs(same, "source/pocket-2.json", NOW)
+    assert [r.kind for r in one] == ["transcript", "notes"]
+    assert [r.inputs["part_sha256"] for r in one] == [r.inputs["part_sha256"] for r in two]
+    changed = pocket_outputs(other, "source/pocket-3.json", NOW)
+    assert changed[0].inputs["part_sha256"] == one[0].inputs["part_sha256"]
+    assert changed[1].inputs["part_sha256"] != one[1].inputs["part_sha256"]
+
+
+def test_two_pocket_snapshots_that_carry_the_same_output_give_one(ar_archive, writer):
+    ar_archive.pocket(UUID)
+    ar_archive.write_catalog()
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    raw = ar_archive.root / "pocket" / "raw" / f"{UUID}.json"
+    doc = json.loads(raw.read_text(encoding="utf-8"))
+    doc["state"] = "processed"  # nothing an output carries
+    doc["transcript"]["segments"][0]["end"] = 1.0  # spelled as a float, as it was an int
+    raw.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+                now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    assert (again.sources_added, again.renditions_added, again.failed) == (1, 0, [])
+    (rec,) = writer.archive.iter_recordings()
+    assert sum(s.kind == "pocket" for s in rec.sources) == 2  # raw is raw: both are kept
+    assert len(writer.archive.renditions(rec.id)) == 2  # one transcript, one summary
+
+
+def test_a_consent_listed_recording_is_never_imported_through_its_copy_either(
+        ar_archive, plaud_env, writer):
+    # why: §9.1. The list excludes the recording, not only its ID: B's catalog row says it is
+    # X's duplicate, and it carries X's audio. The run imports neither, and B's title, which
+    # would be auto-private, never reaches a group's tags.
+    ar_archive.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T09:00:00-07:00")
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name="Interview: Grace")],
+                     same_audio_as=f"plaud/audio/2026/08/{X}.wav", dup_of=f"plaud/{X}")
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, writer.index, consent={X})
+    assert the_plan.counts()["consent-excluded"] == 2
+    report = run(the_plan, writer, now=NOW)
+    assert (report.created, report.failed) == (1, [])
+    refs = {s.ref for r in writer.archive.iter_recordings() for s in r.sources}
+    assert refs == {A, f"plaud/{A}"}
+
+
 def test_the_consent_list_is_read_as_audio_router_reads_it(tmp_path):
     path = tmp_path / "consent.md"
     path.write_text("# Never mirror\n"
@@ -12042,7 +12098,9 @@ def test_the_cli_reads_the_consent_list_and_fails_closed(ar_archive, plaud_env, 
 def test_the_cli_refuses_unplaced_rows_unless_told(ar_archive, plaud_env, tmp_path, monkeypatch,
                                                     capsys):
     build(ar_archive, plaud_env)
-    ar_archive.rows.append({**ar_archive.rows[0], "uri": "zoom/z1", "source": "zoom"})
+    # A row of no known source, with no audio: it shares nothing with A, so A still imports.
+    ar_archive.rows.append({**ar_archive.rows[0], "uri": "zoom/z1", "source": "zoom",
+                            "audio_sha256": ""})
     ar_archive.write_catalog()
     _cli_config(tmp_path, monkeypatch)
     main(["init", "--json"])
@@ -12537,7 +12595,8 @@ def pocket_outputs(doc: dict, raw: str, fetched_at: datetime) -> list[Rendition]
             meta["untimed_segments"] = untimed
         out.append(Rendition(kind="transcript", engine="pocket", model="pocket", version=version,
                              created_at=fetched_at,
-                             inputs={"source": raw, "part_sha256": sha256_of(rows)},
+                             inputs={"source": raw, "part_sha256": sha256_of(
+                                 [segments, untimed, meta["time_unit"]])},
                              meta=meta, payload={"segments": segments}))
     summaries = doc.get("summarizations") if isinstance(doc.get("summarizations"), dict) else {}
     n = 0
@@ -12552,7 +12611,7 @@ def pocket_outputs(doc: dict, raw: str, fetched_at: datetime) -> list[Rendition]
                              note_type="pocket-summary" if n == 1 else f"pocket-summary-{n}",
                              engine="pocket", model="pocket", version=version,
                              created_at=fetched_at,
-                             inputs={"source": raw, "part_sha256": sha256_of(value)},
+                             inputs={"source": raw, "part_sha256": sha256_of(text.strip())},
                              payload={"markdown": text.strip()}))
     return out
 ```
@@ -12745,10 +12804,15 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
     elif item.kind == "pocket":
         rec = writer.archive.load(rid)
         folder = writer.archive.path_for(rid)
+        last: dict[tuple, str] = {}  # each slot's part hash at the previous snapshot, as reconcile's `applied`
         for source in rec.sources:
             doc = _read_json(folder / source.raw) if source.kind == "pocket" and source.raw else None
             if isinstance(doc, dict):
                 for rendition in pocket_outputs(doc, source.raw, source.fetched_at or source.added_at):
+                    slot, part = (rendition.kind, rendition.note_type), rendition.inputs["part_sha256"]
+                    if last.get(slot) == part:  # the same output as the last snapshot's: no new file
+                        continue
+                    last[slot] = part
                     if writer.write_rendition(rid, rendition) is not None:
                         report.renditions_added += 1
 
@@ -12888,7 +12952,7 @@ In `packages/core/src/recordings/cli.py`:
 - [ ] **Step 6: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_run.py packages/core/tests/test_disk.py -v && uv run pytest`
-Expected: 34 passed (29 and 5), and the full suite stays green, its count above Task 8's.
+Expected: 37 passed (32 and 5), and the full suite stays green, its count above Task 8's.
 
 - [ ] **Step 7: Commit**
 
