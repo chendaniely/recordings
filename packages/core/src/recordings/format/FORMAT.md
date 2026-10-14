@@ -25,6 +25,7 @@ recording.json
 <id>.audio.<ext>
 my-notes.md
 source/<name>-<utc-stamp>.json
+source/<name>-<utc-stamp>.txt
 renditions/<name>-<utc-stamp>.json
 <!-- layout:end -->
 
@@ -32,7 +33,10 @@ renditions/<name>-<utc-stamp>.json
 - `<id>.<ext>`: the original media, never modified.
 - `<id>.audio.<ext>`: the audio track extracted from a video.
 - `my-notes.md`: your own notes.
-- `source/`: raw payloads exactly as each source returned them. Write-once.
+- `source/`: raw payloads exactly as each source returned them. Write-once. A `.json` file is a
+  JSON payload (a Plaud snapshot, a Pocket payload, or speaker names typed in `audio-router`). A
+  `.txt` file is a prose transcript kept as the source gave it (a Google Recorder export). Both
+  hold what was said, so the privacy rule below covers them.
 - `renditions/`: outputs (transcripts, speakers, note-type picks, notes). Write-once.
   Re-running a step adds a file. The name is `<kind>-<engine>-<version>-<UTC stamp>.json`,
   where `<kind>` is `notes-<note type>` for notes. The schema is
@@ -58,9 +62,13 @@ files read unchanged.
   because a Plaud title matched the auto-private patterns. The patterns run on a recording's
   first Plaud snapshot, and again whenever a Plaud title isn't the one in `plaud.title_seen`.
   They only ever add the tag: one you remove stays removed until then.
-- `sources`: one entry per raw payload in `source/`, with the source's own `ref`, `added_at`,
-  `fetched_at` (when the source returned it) and the file's `sha256`. Snapshots are ordered by
-  `fetched_at`, then by their place in this list, never by file name.
+- `sources`: one entry per raw payload in `source/`, and one per ID the recording is known by (an
+  entry with no `raw` is only a reference). `kind` is `plaud`, `recorder`, `pocket` or
+  `audio_router`. An `audio_router` entry's `ref` is the row's `audio-router` URI, such as
+  `plaud/<id>`, which is how a re-run of the import recognises the recording. Each entry has the
+  source's own `ref`, `added_at`, `fetched_at` (when the source returned it) and the file's
+  `sha256`. Snapshots are ordered by `fetched_at`, then by their place in this list, never by
+  file name.
 - `speakers`: decisions only, never inferences. `source` is the output the labels belong to.
   `labels` maps a label to `{"person": "<slug>", "by": "you"}`, optionally with
   `plaud_name_seen`, or to `{"not": ["<slug>", …]}`. `spans` are `{start, end, person, by}` in
@@ -98,6 +106,25 @@ records its snapshot in `inputs.source` and the hash of what it carries in
 - On a notes output, `meta.data_type` is Plaud's block type, and `payload.markdown` is
   rendered from the block as Plaud delivered it, so its links stay as Plaud wrote them. A
   highlight's picture link is presigned, and expires within minutes.
+
+## Outputs imported from `audio-router`, and Pocket's
+
+- An output imported from `audio-router` keeps its engine and version. Its `meta` carries
+  `imported_from` (`audio-router`), `file` (its original file name) and `audio_router_meta`
+  (its original `meta`, as it was). Its `inputs` keep the original values, as strings.
+  `meta.untimed_segments` and `meta.untimed_words` count rows that had no time; each is kept
+  at the previous row's end, as Plaud's untimed segments are. Each file is imported once.
+- `audio-router`'s `words` and `merged` are `transcript` outputs, `turns` is a `speakers` output
+  (`payload.turns`, and `payload.overlap_turns`), and `summary` is a `notes` output with note
+  type `audio-router-summary`. Its Plaud outputs are not copied: reconcile rebuilds them. The
+  speaker names you typed in `audio-router` are kept as they were in
+  `source/audio_router-<stamp>.json`, never as an output. Voice fingerprints and embeddings are never kept.
+- Pocket's transcript and summaries are outputs with engine `pocket` and `version`
+  `pocket@<n>`, built from `source/`. Each records its snapshot in `inputs.source` and the hash
+  of what it carries in `inputs.part_sha256`, so an unchanged output is not written again. A
+  transcript's `meta.time_unit` is `s` or `ms`: the times in `source/` were read as that, and
+  `payload` is always in seconds. The note types are `pocket-summary`, then `pocket-summary-2`,
+  and so on.
 
 ## Rules
 

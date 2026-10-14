@@ -129,6 +129,16 @@ def test_layout_patterns_reject_bogus_paths():
         )
 
 
+def test_the_layout_accepts_a_prose_source_and_rejects_a_stray_text_file():
+    # why: the Recorder import keeps its prose transcript as source/<name>-<stamp>.txt, and the
+    # layout block is what a reader trusts (spec §6.7).
+    patterns = layout_patterns()
+    assert any(p.fullmatch("source/recorder-20261008T120000Z.txt") for p in patterns)
+    assert any(p.fullmatch("source/recorder-20261008T120000Z-2.txt") for p in patterns)
+    assert not any(p.fullmatch("source/x.txt") for p in patterns)
+    assert not any(p.fullmatch("renditions/x-20261008T120000Z.txt") for p in patterns)
+
+
 def test_validate_reports_a_copied_folder_and_a_mismatched_id(tmp_path, capsys):
     import json
     import shutil
