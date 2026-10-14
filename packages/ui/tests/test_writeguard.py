@@ -51,13 +51,22 @@ def test_a_cross_site_write_is_refused(client, headers):
     assert response.status_code == 403
 
 
+def test_a_write_to_an_unknown_host_is_refused_even_from_that_origin(client):
+    # why: DNS rebinding. Host and Origin both name the attacker's site, so they agree.
+    response = client.post("/api/thing", content=b"{}", headers={
+        **JSON, "Host": "evil.example", "Origin": "http://evil.example"})
+    assert response.status_code == 403
+
+
 @pytest.mark.parametrize("ctype", ["text/plain", "application/x-www-form-urlencoded",
                                    "multipart/form-data; boundary=x",
                                    "application/json; charset=utf-8", ""])
 def test_anything_but_exactly_json_is_refused(client, ctype):
     # why: §15. A browser sends text/plain or a form cross-site without a CORS preflight.
     headers = {"Content-Type": ctype} if ctype else {}
-    assert client.post("/api/thing", content=b"{}", headers=headers).status_code == 415
+    refused = client.post("/api/thing", content=b"{}", headers=headers)
+    assert refused.status_code == 415
+    assert "exactly application/json" in refused.text  # says why a charset is refused too
     assert client.delete("/api/thing", headers=headers).status_code == 415
 
 
@@ -75,12 +84,14 @@ def test_every_response_keeps_its_resources_to_this_origin(client):
 
 def test_the_real_app_is_wrapped(demo_archive, demo_ids):
     app = create_app(Settings(archive=demo_archive, demo=True))
-    with TestClient(app, base_url="http://localhost:8000") as c:
-        assert c.post("/", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"}).status_code == 403
-        assert c.post("/healthz", json={}, headers={"Origin": "http://localhost:9999"}).status_code == 403
-        assert c.post("/healthz", content=b"x", headers={"Content-Type": "text/plain"}).status_code == 415
-        media = c.get(f"/media/{demo_ids['fdr-fireside-1']}", headers={"Range": "bytes=0-9"})
-        assert media.status_code == 206
-        assert media.headers["cross-origin-resource-policy"] == "same-origin"
-        assert c.get("/healthz").headers["cross-origin-resource-policy"] == "same-origin"
-    runtime.configure(None)
+    try:
+        with TestClient(app, base_url="http://localhost:8000") as c:
+            assert c.post("/", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"}).status_code == 403
+            assert c.post("/healthz", json={}, headers={"Origin": "http://localhost:9999"}).status_code == 403
+            assert c.post("/healthz", content=b"x", headers={"Content-Type": "text/plain"}).status_code == 415
+            media = c.get(f"/media/{demo_ids['fdr-fireside-1']}", headers={"Range": "bytes=0-9"})
+            assert media.status_code == 206
+            assert media.headers["cross-origin-resource-policy"] == "same-origin"
+            assert c.get("/healthz").headers["cross-origin-resource-policy"] == "same-origin"
+    finally:
+        runtime.configure(None)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
+import sys
 
 import uvicorn
 
@@ -18,6 +20,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args(argv)
     settings = from_env(os.environ, demo=True if args.demo else None)
+    # docker stop, kill and systemd send SIGTERM. uvicorn puts the default handler back and
+    # re-raises it, which skips atexit and leaks the demo's temporary copy. A normal exit with the
+    # same status (143) runs atexit.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))
     uvicorn.run(create_app(settings), host=args.host, port=args.port)
 
 

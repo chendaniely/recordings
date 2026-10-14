@@ -3,23 +3,32 @@ opened, no other program runs, and nothing looks up or connects to another machi
 audit hooks see these whoever does them. SQLite opens its files from C, which the "open" event
 never sees, so "sqlite3.connect" is watched too."""
 
+import mimetypes
 import os
+import signal
 import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.request
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from recordings.archive import Archive
 from recordings_ui import runtime, settings as settings_module, views
 from recordings_ui.app import create_app
-from recordings_ui.settings import from_env
+from recordings_ui.settings import find_demo_archive, from_env
 
 PATH_EVENTS = ("open", "sqlite3.connect", "os.scandir", "os.listdir")
-ANY_EVENTS = ("socket.connect", "socket.getaddrinfo", "subprocess.Popen")
+ANY_EVENTS = ("socket.connect", "socket.getaddrinfo", "socket.gethostbyname",
+              "socket.gethostbyname_ex", "socket.gethostbyaddr", "socket.getnameinfo",
+              "subprocess.Popen", "_posixsubprocess.fork_exec", "os.exec", "os.posix_spawn",
+              "os.spawn", "os.system", "os.fork")
 _events: list[tuple[str, str]] | None = None
 
 
@@ -54,12 +63,29 @@ def test_the_hook_sees_sqlite_listings_other_programs_and_name_lookups(tmp_path)
         list(os.scandir(tmp_path))
         subprocess.run([sys.executable, "-c", "pass"], check=True)
         socket.getaddrinfo("localhost", 80)
+        socket.gethostbyname("localhost")
+        socket.gethostbyname_ex("localhost")
+        socket.gethostbyaddr("127.0.0.1")
+        socket.getnameinfo(("127.0.0.1", 80), 0)
+        os.system("true")
+        os.waitpid(os.posix_spawn(sys.executable, [sys.executable, "-c", "pass"], os.environ), 0)
+        try:
+            os.execv(str(tmp_path / "none"), ["none"])  # the event comes first; the call fails
+        except OSError:
+            pass
+        if os.fork() == 0:
+            os._exit(0)
+        os.wait()
     assert ("sqlite3.connect", str(tmp_path / "x.db")) in events
-    assert {e[0] for e in events} >= {"os.listdir", "os.scandir", "subprocess.Popen",
-                                      "socket.getaddrinfo"}
+    # os.spawn is Windows-only (POSIX spawnv forks and execs); gethostbyname_ex raises
+    # socket.gethostbyname. Both stay watched.
+    assert {e[0] for e in events} >= {
+        "os.listdir", "os.scandir", "subprocess.Popen", "_posixsubprocess.fork_exec",
+        "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr",
+        "socket.getnameinfo", "os.system", "os.posix_spawn", "os.exec", "os.fork"}
 
 
-def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids):
+def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, monkeypatch):
     real = tmp_path / "real"
     real.mkdir()
     for name in ("config.toml", "secret"):
@@ -70,6 +96,8 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids):
         "RESTIC_PASSWORD_FILE": str(real / "secret"), "RECORDINGS_NTFY_TOPIC_FILE": str(real / "secret"),
         "RECORDINGS_DEADMAN_URL_FILE": str(real / "secret"),
     }
+    for name, value in environ.items():  # code reading os.environ itself must find them too
+        monkeypatch.setenv(name, value)
     with _watching() as events:
         try:
             settings = from_env(environ, demo=True)
@@ -79,7 +107,8 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids):
                     assert client.get(f"/media/{rid}", headers={"Range": "bytes=0-9"}).status_code == 206
                 with client.websocket_connect("ws://localhost/websocket/",
                                               headers={"Origin": "http://localhost"}):
-                    pass  # a Shiny session starts
+                    pass  # connects only: Shiny runs the server function after the client's
+                    # `init` message, which Task 15 sends once Status joins the server function
             archive = Archive(settings.archive)
             views.library_view(archive)
             for rid in demo_ids.values():
@@ -87,7 +116,24 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids):
         finally:
             runtime.configure(None)
     assert [e for e in events if e[0] in PATH_EVENTS and str(real) in e[1]] == []
-    assert [e for e in events if e[0] in ANY_EVENTS] == []
+    # Nothing else either: every path opened is in the demo's copy, the committed demo, the
+    # Python install or the UI's own folder (code, and its built front end in www/). This also
+    # catches the relative default config.toml and any reading of os.environ that the lines above
+    # don't know about. Three kinds of path are allowed by name, found when this was written:
+    # the system's MIME tables (mimetypes, for /media), and Shiny's per-session upload folder in
+    # the system temp folder (created when a session starts, never written to).
+    roots = [os.path.realpath(p) for p in (
+        settings.archive.parent, find_demo_archive({}), sys.prefix, sys.base_prefix,
+        Path(views.__file__).parent)]
+    mime_tables = {os.path.realpath(p) for p in mimetypes.knownfiles}
+    temp = os.path.realpath(tempfile.gettempdir())
+
+    def allowed(path: str) -> bool:
+        path = os.path.realpath(path)
+        return (any(os.path.commonpath([path, r]) == r for r in roots) or path in mime_tables
+                or (os.path.dirname(path) == temp and os.path.basename(path).startswith("fileupload-")))
+
+    assert [e for e in events if e[0] in PATH_EVENTS and not allowed(e[1])] == []
 
 
 def test_demo_mode_removes_its_temporary_copy_at_exit(monkeypatch):
@@ -99,3 +145,33 @@ def test_demo_mode_removes_its_temporary_copy_at_exit(monkeypatch):
     for fn, args, kwargs in registered:
         fn(*args, **kwargs)
     assert not settings.archive.parent.exists()
+
+
+def test_demo_mode_removes_its_temporary_copy_on_sigterm(tmp_path):
+    # why: docker stop, kill and systemd send SIGTERM. uvicorn puts back the default handler and
+    # re-raises, which skips atexit, unless __main__ turns SIGTERM into a normal exit.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    log = tmp_path / "server.log"
+    with log.open("wb") as out:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "recordings_ui", "--demo", "--port", str(port)],
+            env={**os.environ, "TMPDIR": str(scratch)}, stdout=out, stderr=out)
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=1):
+                    break
+            except OSError:
+                assert proc.poll() is None and time.monotonic() < deadline, log.read_text()
+                time.sleep(0.2)
+        assert list(scratch.glob("recordings-demo-*"))  # the copy exists while it runs
+    finally:
+        proc.terminate()
+        proc.wait(timeout=30)
+    assert proc.returncode == 128 + signal.SIGTERM
+    assert list(scratch.glob("recordings-demo-*")) == []

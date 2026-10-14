@@ -348,13 +348,15 @@ def test_an_index_beside_the_state_folder_is_fine(tmp_path):
 
 @pytest.mark.parametrize("value, expected", [
     ("My-Homelab", "my-homelab"), (" 100.64.0.1 ", "100.64.0.1"), ("[fd7a::1]", "fd7a::1"),
-    ("fd7a::1", "fd7a::1")])
+    ("fd7a::1", "fd7a::1"), ("fd7a:0:0::1", "fd7a::1"), ("My.Home-lab.example", "my.home-lab.example")])
 def test_host_names_are_normalised(value, expected):
     from recordings.config import normalise_host
     assert normalise_host(value) == expected
 
 
-@pytest.mark.parametrize("value", ["my-homelab:8000", "http://my-homelab", "my-homelab/x", "", "a b"])
+@pytest.mark.parametrize("value", ["my-homelab:8000", "http://my-homelab", "my-homelab/x", "", "a b",
+                                   "a\\tb", "user@my-homelab", "my-homelab?x", "my-homelab.",
+                                   "-my-homelab", "my-homelab-", "my..homelab"])
 def test_allowed_hosts_with_a_port_scheme_or_path_are_refused(tmp_path, value):
     # why: stage-1 carry-over. They passed validation, never matched, and gave a bare 400.
     cfg_file = write(tmp_path, f'[server]\nallowed_hosts = ["{value}"]\n')

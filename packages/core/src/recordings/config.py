@@ -58,19 +58,27 @@ def config_path(environ: Mapping[str, str]) -> Path:
     return Path(environ.get("RECORDINGS_CONFIG") or DEFAULT_PATH)
 
 
+_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
+
+
 def normalise_host(value: str) -> str:
-    """A bare host name or address, lowercased: no scheme, path or port. Entries like
-    `my-homelab:8000` used to pass validation and then never match (stage-1 carry-over)."""
+    """A bare host name or address as a browser sends it in `Host`: lowercased, no scheme, path
+    or port; IP literals in canonical form (`fd7a:0:0::1` becomes `fd7a::1`); a name is dot-
+    separated labels of letters, digits and hyphens. Entries like `my-homelab:8000` used to pass
+    validation and then never match (stage-1 carry-over)."""
     host = value.strip().lower()
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]
-    if not host or "://" in host or "/" in host or " " in host:
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    if "://" in host or "/" in host:
         raise ValueError(f"{value!r} is not a host name: give the name or address alone")
     if ":" in host:
-        try:
-            ipaddress.IPv6Address(host)
-        except ValueError:
-            raise ValueError(f"{value!r} has a port: give the host name alone") from None
+        raise ValueError(f"{value!r} has a port: give the host name alone")
+    if not all(_LABEL.fullmatch(label) for label in host.split(".")):
+        raise ValueError(f"{value!r} is not a host name: use letters, digits, hyphens and dots")
     return host
 
 

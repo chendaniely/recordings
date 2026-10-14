@@ -10,6 +10,11 @@ Two attacks come from websites open in your own browser, which can reach the app
 HostGuard refuses both: an unknown `Host`, and a websocket whose `Origin` isn't exactly the
 app's own (scheme, name and port), or that the browser marks as sent by another site. WriteGuard
 does the same for every request that could change data, and keeps every response to this origin.
+
+Behind a TLS-terminating reverse proxy the app sees `http` while the browser's `Origin` says
+`https`. The proxy must preserve the `Host` header and be trusted for `X-Forwarded-Proto`: listed
+in uvicorn's `FORWARDED_ALLOW_IPS` (default: 127.0.0.1 and ::1 only). Otherwise every websocket
+and every write is refused, which fails closed.
 """
 
 from __future__ import annotations
@@ -36,6 +41,8 @@ def same_origin(scope: Scope, origin: str) -> bool:
     An origin is a scheme, a host name and a port (RFC 6454). A page at http://localhost:9999 is
     another origin than the app at http://localhost:8000, and may be another program, though its
     host name is allowed. Browsers leave a default port out of both headers, so those still match.
+    Behind a TLS proxy, `scheme` is `https` only if uvicorn trusts the proxy's `X-Forwarded-Proto`
+    (`FORWARDED_ALLOW_IPS`); see the module docstring.
     """
     host = (_header(scope, b"host") or "").strip().lower()
     scheme = scope.get("scheme", "http")
@@ -72,7 +79,8 @@ class HostGuard:
         host_ok = host_name(_header(scope, b"host") or "") in self.allowed
         if scope["type"] == "http":
             if not host_ok:
-                await PlainTextResponse("unknown host", status_code=400)(scope, receive, send)
+                await PlainTextResponse("unknown host", status_code=400)(
+                    scope, receive, _keep_to_this_origin(send))
                 return
         else:
             # A browser always sends Origin on a websocket. It must be the app's own, exactly,
@@ -137,7 +145,7 @@ class WriteGuard:
             await PlainTextResponse("cross-site request refused", status_code=403)(scope, receive, send)
             return
         if (_header(scope, b"content-type") or "").strip().lower() != "application/json":
-            await PlainTextResponse("send Content-Type: application/json",
+            await PlainTextResponse("send Content-Type exactly application/json",
                                     status_code=415)(scope, receive, send)
             return
         await self.app(scope, receive, send)

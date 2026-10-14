@@ -13505,6 +13505,7 @@ This task also carries three stage-1 items:
 
 **Files:**
 - Modify: `packages/ui/src/recordings_ui/hosts.py` (`same_origin`, `sent_by_this_site`, `WriteGuard`; `HostGuard`'s websocket check), `app.py`, `settings.py`
+- Modify: `packages/ui/src/recordings_ui/__main__.py` (SIGTERM)
 - Modify: `packages/core/src/recordings/config.py` (`normalise_host`)
 - Test: `packages/ui/tests/test_writeguard.py`, `packages/ui/tests/test_demo_guard.py`, `packages/ui/tests/test_hosts.py`, `packages/core/tests/test_config.py`, `packages/ui/tests/test_settings.py`
 
@@ -13576,13 +13577,22 @@ def test_a_cross_site_write_is_refused(client, headers):
     assert response.status_code == 403
 
 
+def test_a_write_to_an_unknown_host_is_refused_even_from_that_origin(client):
+    # why: DNS rebinding. Host and Origin both name the attacker's site, so they agree.
+    response = client.post("/api/thing", content=b"{}", headers={
+        **JSON, "Host": "evil.example", "Origin": "http://evil.example"})
+    assert response.status_code == 403
+
+
 @pytest.mark.parametrize("ctype", ["text/plain", "application/x-www-form-urlencoded",
                                    "multipart/form-data; boundary=x",
                                    "application/json; charset=utf-8", ""])
 def test_anything_but_exactly_json_is_refused(client, ctype):
     # why: §15. A browser sends text/plain or a form cross-site without a CORS preflight.
     headers = {"Content-Type": ctype} if ctype else {}
-    assert client.post("/api/thing", content=b"{}", headers=headers).status_code == 415
+    refused = client.post("/api/thing", content=b"{}", headers=headers)
+    assert refused.status_code == 415
+    assert "exactly application/json" in refused.text  # says why a charset is refused too
     assert client.delete("/api/thing", headers=headers).status_code == 415
 
 
@@ -13600,15 +13610,17 @@ def test_every_response_keeps_its_resources_to_this_origin(client):
 
 def test_the_real_app_is_wrapped(demo_archive, demo_ids):
     app = create_app(Settings(archive=demo_archive, demo=True))
-    with TestClient(app, base_url="http://localhost:8000") as c:
-        assert c.post("/", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"}).status_code == 403
-        assert c.post("/healthz", json={}, headers={"Origin": "http://localhost:9999"}).status_code == 403
-        assert c.post("/healthz", content=b"x", headers={"Content-Type": "text/plain"}).status_code == 415
-        media = c.get(f"/media/{demo_ids['fdr-fireside-1']}", headers={"Range": "bytes=0-9"})
-        assert media.status_code == 206
-        assert media.headers["cross-origin-resource-policy"] == "same-origin"
-        assert c.get("/healthz").headers["cross-origin-resource-policy"] == "same-origin"
-    runtime.configure(None)
+    try:
+        with TestClient(app, base_url="http://localhost:8000") as c:
+            assert c.post("/", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"}).status_code == 403
+            assert c.post("/healthz", json={}, headers={"Origin": "http://localhost:9999"}).status_code == 403
+            assert c.post("/healthz", content=b"x", headers={"Content-Type": "text/plain"}).status_code == 415
+            media = c.get(f"/media/{demo_ids['fdr-fireside-1']}", headers={"Range": "bytes=0-9"})
+            assert media.status_code == 206
+            assert media.headers["cross-origin-resource-policy"] == "same-origin"
+            assert c.get("/healthz").headers["cross-origin-resource-policy"] == "same-origin"
+    finally:
+        runtime.configure(None)
 ```
 
 In `packages/ui/tests/test_hosts.py`, **replace**:
@@ -13646,6 +13658,13 @@ def test_a_websocket_the_browser_marks_as_another_sites_is_refused(site):
     assert _refused(guarded(), "ws://localhost:8000/ws",
                     {"Origin": "http://localhost:8000", "Sec-Fetch-Site": site}) == 1008
 ```
+**add** before `test_an_unknown_host_is_400`'s `@pytest.mark.parametrize`:
+```python
+def test_the_unknown_host_answer_keeps_to_this_origin_too():
+    # why: §15. "Every response" carries the policy, the 400 included.
+    r = guarded().get("/", headers={"Host": "attacker.example"})
+    assert r.headers["cross-origin-resource-policy"] == "same-origin"
+```
 and **add** after `test_the_app_refuses_a_cross_site_websocket`:
 ```python
 def test_the_app_refuses_a_websocket_from_another_port_of_this_host(app_client):
@@ -13661,23 +13680,32 @@ opened, no other program runs, and nothing looks up or connects to another machi
 audit hooks see these whoever does them. SQLite opens its files from C, which the "open" event
 never sees, so "sqlite3.connect" is watched too."""
 
+import mimetypes
 import os
+import signal
 import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.request
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from recordings.archive import Archive
 from recordings_ui import runtime, settings as settings_module, views
 from recordings_ui.app import create_app
-from recordings_ui.settings import from_env
+from recordings_ui.settings import find_demo_archive, from_env
 
 PATH_EVENTS = ("open", "sqlite3.connect", "os.scandir", "os.listdir")
-ANY_EVENTS = ("socket.connect", "socket.getaddrinfo", "subprocess.Popen")
+ANY_EVENTS = ("socket.connect", "socket.getaddrinfo", "socket.gethostbyname",
+              "socket.gethostbyname_ex", "socket.gethostbyaddr", "socket.getnameinfo",
+              "subprocess.Popen", "_posixsubprocess.fork_exec", "os.exec", "os.posix_spawn",
+              "os.spawn", "os.system", "os.fork")
 _events: list[tuple[str, str]] | None = None
 
 
@@ -13712,12 +13740,29 @@ def test_the_hook_sees_sqlite_listings_other_programs_and_name_lookups(tmp_path)
         list(os.scandir(tmp_path))
         subprocess.run([sys.executable, "-c", "pass"], check=True)
         socket.getaddrinfo("localhost", 80)
+        socket.gethostbyname("localhost")
+        socket.gethostbyname_ex("localhost")
+        socket.gethostbyaddr("127.0.0.1")
+        socket.getnameinfo(("127.0.0.1", 80), 0)
+        os.system("true")
+        os.waitpid(os.posix_spawn(sys.executable, [sys.executable, "-c", "pass"], os.environ), 0)
+        try:
+            os.execv(str(tmp_path / "none"), ["none"])  # the event comes first; the call fails
+        except OSError:
+            pass
+        if os.fork() == 0:
+            os._exit(0)
+        os.wait()
     assert ("sqlite3.connect", str(tmp_path / "x.db")) in events
-    assert {e[0] for e in events} >= {"os.listdir", "os.scandir", "subprocess.Popen",
-                                      "socket.getaddrinfo"}
+    # os.spawn is Windows-only (POSIX spawnv forks and execs); gethostbyname_ex raises
+    # socket.gethostbyname. Both stay watched.
+    assert {e[0] for e in events} >= {
+        "os.listdir", "os.scandir", "subprocess.Popen", "_posixsubprocess.fork_exec",
+        "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr",
+        "socket.getnameinfo", "os.system", "os.posix_spawn", "os.exec", "os.fork"}
 
 
-def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids):
+def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, monkeypatch):
     real = tmp_path / "real"
     real.mkdir()
     for name in ("config.toml", "secret"):
@@ -13728,6 +13773,8 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids):
         "RESTIC_PASSWORD_FILE": str(real / "secret"), "RECORDINGS_NTFY_TOPIC_FILE": str(real / "secret"),
         "RECORDINGS_DEADMAN_URL_FILE": str(real / "secret"),
     }
+    for name, value in environ.items():  # code reading os.environ itself must find them too
+        monkeypatch.setenv(name, value)
     with _watching() as events:
         try:
             settings = from_env(environ, demo=True)
@@ -13737,7 +13784,8 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids):
                     assert client.get(f"/media/{rid}", headers={"Range": "bytes=0-9"}).status_code == 206
                 with client.websocket_connect("ws://localhost/websocket/",
                                               headers={"Origin": "http://localhost"}):
-                    pass  # a Shiny session starts
+                    pass  # connects only: Shiny runs the server function after the client's
+                    # `init` message, which Task 15 sends once Status joins the server function
             archive = Archive(settings.archive)
             views.library_view(archive)
             for rid in demo_ids.values():
@@ -13745,7 +13793,24 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids):
         finally:
             runtime.configure(None)
     assert [e for e in events if e[0] in PATH_EVENTS and str(real) in e[1]] == []
-    assert [e for e in events if e[0] in ANY_EVENTS] == []
+    # Nothing else either: every path opened is in the demo's copy, the committed demo, the
+    # Python install or the UI's own folder (code, and its built front end in www/). This also
+    # catches the relative default config.toml and any reading of os.environ that the lines above
+    # don't know about. Three kinds of path are allowed by name, found when this was written:
+    # the system's MIME tables (mimetypes, for /media), and Shiny's per-session upload folder in
+    # the system temp folder (created when a session starts, never written to).
+    roots = [os.path.realpath(p) for p in (
+        settings.archive.parent, find_demo_archive({}), sys.prefix, sys.base_prefix,
+        Path(views.__file__).parent)]
+    mime_tables = {os.path.realpath(p) for p in mimetypes.knownfiles}
+    temp = os.path.realpath(tempfile.gettempdir())
+
+    def allowed(path: str) -> bool:
+        path = os.path.realpath(path)
+        return (any(os.path.commonpath([path, r]) == r for r in roots) or path in mime_tables
+                or (os.path.dirname(path) == temp and os.path.basename(path).startswith("fileupload-")))
+
+    assert [e for e in events if e[0] in PATH_EVENTS and not allowed(e[1])] == []
 
 
 def test_demo_mode_removes_its_temporary_copy_at_exit(monkeypatch):
@@ -13757,19 +13822,51 @@ def test_demo_mode_removes_its_temporary_copy_at_exit(monkeypatch):
     for fn, args, kwargs in registered:
         fn(*args, **kwargs)
     assert not settings.archive.parent.exists()
+
+
+def test_demo_mode_removes_its_temporary_copy_on_sigterm(tmp_path):
+    # why: docker stop, kill and systemd send SIGTERM. uvicorn puts back the default handler and
+    # re-raises, which skips atexit, unless __main__ turns SIGTERM into a normal exit.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    log = tmp_path / "server.log"
+    with log.open("wb") as out:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "recordings_ui", "--demo", "--port", str(port)],
+            env={**os.environ, "TMPDIR": str(scratch)}, stdout=out, stderr=out)
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=1):
+                    break
+            except OSError:
+                assert proc.poll() is None and time.monotonic() < deadline, log.read_text()
+                time.sleep(0.2)
+        assert list(scratch.glob("recordings-demo-*"))  # the copy exists while it runs
+    finally:
+        proc.terminate()
+        proc.wait(timeout=30)
+    assert proc.returncode == 128 + signal.SIGTERM
+    assert list(scratch.glob("recordings-demo-*")) == []
 ```
 
 Add to `packages/core/tests/test_config.py`:
 ```python
 @pytest.mark.parametrize("value, expected", [
     ("My-Homelab", "my-homelab"), (" 100.64.0.1 ", "100.64.0.1"), ("[fd7a::1]", "fd7a::1"),
-    ("fd7a::1", "fd7a::1")])
+    ("fd7a::1", "fd7a::1"), ("fd7a:0:0::1", "fd7a::1"), ("My.Home-lab.example", "my.home-lab.example")])
 def test_host_names_are_normalised(value, expected):
     from recordings.config import normalise_host
     assert normalise_host(value) == expected
 
 
-@pytest.mark.parametrize("value", ["my-homelab:8000", "http://my-homelab", "my-homelab/x", "", "a b"])
+@pytest.mark.parametrize("value", ["my-homelab:8000", "http://my-homelab", "my-homelab/x", "", "a b",
+                                   "a\\tb", "user@my-homelab", "my-homelab?x", "my-homelab.",
+                                   "-my-homelab", "my-homelab-", "my..homelab"])
 def test_allowed_hosts_with_a_port_scheme_or_path_are_refused(tmp_path, value):
     # why: stage-1 carry-over. They passed validation, never matched, and gave a bare 400.
     cfg_file = write(tmp_path, f'[server]\nallowed_hosts = ["{value}"]\n')
@@ -13809,6 +13906,11 @@ In `packages/ui/src/recordings_ui/hosts.py`:
    HostGuard refuses both: an unknown `Host`, and a websocket whose `Origin` isn't exactly the
    app's own (scheme, name and port), or that the browser marks as sent by another site. WriteGuard
    does the same for every request that could change data, and keeps every response to this origin.
+
+   Behind a TLS-terminating reverse proxy the app sees `http` while the browser's `Origin` says
+   `https`. The proxy must preserve the `Host` header and be trusted for `X-Forwarded-Proto`: listed
+   in uvicorn's `FORWARDED_ALLOW_IPS` (default: 127.0.0.1 and ::1 only). Otherwise every websocket
+   and every write is refused, which fails closed.
    ```
 2. **Delete** the line `from urllib.parse import urlsplit` and the blank line after it, and **replace**
    `from starlette.types import ASGIApp, Receive, Scope, Send` with
@@ -13821,6 +13923,8 @@ In `packages/ui/src/recordings_ui/hosts.py`:
        An origin is a scheme, a host name and a port (RFC 6454). A page at http://localhost:9999 is
        another origin than the app at http://localhost:8000, and may be another program, though its
        host name is allowed. Browsers leave a default port out of both headers, so those still match.
+       Behind a TLS proxy, `scheme` is `https` only if uvicorn trusts the proxy's `X-Forwarded-Proto`
+       (`FORWARDED_ALLOW_IPS`); see the module docstring.
        """
        host = (_header(scope, b"host") or "").strip().lower()
        scheme = scope.get("scheme", "http")
@@ -13835,7 +13939,12 @@ In `packages/ui/src/recordings_ui/hosts.py`:
        site = (_header(scope, b"sec-fetch-site") or "").strip().lower()
        return site in ("", "same-origin", "none")
    ```
-4. In `HostGuard.__call__`, **replace**:
+4. In `HostGuard.__call__`, **replace** `await PlainTextResponse("unknown host", status_code=400)(scope, receive, send)` with:
+   ```python
+                   await PlainTextResponse("unknown host", status_code=400)(
+                       scope, receive, _keep_to_this_origin(send))
+   ```
+   and **replace**:
    ```python
                # No Origin means no browser sent it, so no website is behind it.
                origin = _header(scope, b"origin")
@@ -13900,7 +14009,7 @@ In `packages/ui/src/recordings_ui/hosts.py`:
                await PlainTextResponse("cross-site request refused", status_code=403)(scope, receive, send)
                return
            if (_header(scope, b"content-type") or "").strip().lower() != "application/json":
-               await PlainTextResponse("send Content-Type: application/json",
+               await PlainTextResponse("send Content-Type exactly application/json",
                                        status_code=415)(scope, receive, send)
                return
            await self.app(scope, receive, send)
@@ -13918,19 +14027,27 @@ with `from recordings_ui.hosts import HostGuard, WriteGuard`, and **replace** th
 In `packages/core/src/recordings/config.py`, **add** `import ipaddress`, and before
 `_allowed_hosts`:
 ```python
+_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
+
+
 def normalise_host(value: str) -> str:
-    """A bare host name or address, lowercased: no scheme, path or port. Entries like
-    `my-homelab:8000` used to pass validation and then never match (stage-1 carry-over)."""
+    """A bare host name or address as a browser sends it in `Host`: lowercased, no scheme, path
+    or port; IP literals in canonical form (`fd7a:0:0::1` becomes `fd7a::1`); a name is dot-
+    separated labels of letters, digits and hyphens. Entries like `my-homelab:8000` used to pass
+    validation and then never match (stage-1 carry-over)."""
     host = value.strip().lower()
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]
-    if not host or "://" in host or "/" in host or " " in host:
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    if "://" in host or "/" in host:
         raise ValueError(f"{value!r} is not a host name: give the name or address alone")
     if ":" in host:
-        try:
-            ipaddress.IPv6Address(host)
-        except ValueError:
-            raise ValueError(f"{value!r} has a port: give the host name alone") from None
+        raise ValueError(f"{value!r} has a port: give the host name alone")
+    if not all(_LABEL.fullmatch(label) for label in host.split(".")):
+        raise ValueError(f"{value!r} is not a host name: use letters, digits, hyphens and dots")
     return host
 ```
 and **replace** `_allowed_hosts` with:
@@ -13966,10 +14083,19 @@ and in `from_env`'s demo branch, **replace** the `copy = …` line with:
         atexit.register(shutil.rmtree, copy.parent, ignore_errors=True)  # stage-1 carry-over
 ```
 
+In `packages/ui/src/recordings_ui/__main__.py`, **replace** `import os\n\nimport uvicorn` with
+`import os\nimport signal\nimport sys\n\nimport uvicorn`, and **add** before `uvicorn.run(`:
+```python
+    # docker stop, kill and systemd send SIGTERM. uvicorn puts the default handler back and
+    # re-raises it, which skips atexit and leaks the demo's temporary copy. A normal exit with the
+    # same status (143) runs atexit.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))
+```
+
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest packages/ui packages/core/tests/test_config.py -v`
-Expected: all pass.
+Expected: all pass (200 passed, 11 deselected).
 
 - [ ] **Step 5: Commit**
 
