@@ -422,8 +422,9 @@ compares them in one canonical form (§9.1.1).
   from `source/` by reconcile (§9.1.1):
   - Each Plaud note tab becomes a `notes` output with `note_type` `plaud-<tab>`, for
     example `plaud-summary`.
-  - Each records the snapshot it came from (`inputs.source`) and the hash of its part
-    (`inputs.part_sha256`).
+  - Each records the snapshot it came from (`inputs.source`) and the hash of what it carries
+    (`inputs.part_sha256`). That hash is the output's own content identity. It is not the Sync
+    screen's part hash (`part_hashes`), and the Sync screen never compares the two.
   - Its `version` is `plaud@<normaliser version>`, so the output names the normaliser that
     produced it.
 - **Which transcript is shown:** `chosen.transcript` if set, otherwise the newest
@@ -1242,8 +1243,10 @@ be found by fetching again and comparing.
     `x-2.json` sorts before `x.json`. It runs on every check and on `reindex`, so an update
     interrupted after the snapshot is finished next time.
   - **Reconcile is idempotent.** Each Plaud output records its snapshot (`inputs.source`)
-    and its part's hash (`inputs.part_sha256`), and its `version` includes the normaliser
-    version (§6.5). Reconcile skips a part that already has an output. The import (§9.3)
+    and the hash of what it carries (`inputs.part_sha256`), and its `version` includes the
+    normaliser version (§6.5). Reconcile skips a part whose content already has an output of
+    that version. The Sync screen (stage 2b) recomputes both sides when it compares and never
+    reads `part_sha256` as a part hash. The import (§9.3)
     and the sync share the normaliser and reconcile, so they give identical Plaud outputs.
   - **Fields Plaud owns:** only `title`, and only while `title_by` is `plaud` or absent (a file
     written before `title_by` existed has none, and follows Plaud). A Plaud title
