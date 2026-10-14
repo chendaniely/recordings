@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from recordings.archive import Archive
+from recordings.archive import Archive, sha256_file
 from recordings.files import write_text_atomic
 from recordings.models import Rendition
 from recordings.sentinel import SENTINEL, SentinelError, read_sentinel
@@ -62,7 +62,7 @@ def layout_patterns() -> list[re.Pattern]:
     return patterns
 
 
-def validate(root: Path) -> list[dict]:
+def validate(root: Path, *, deep: bool = False) -> list[dict]:
     root = Path(root)
     # Checking the wrong folder must not look like a clean archive.
     if not root.exists():
@@ -79,7 +79,7 @@ def validate(root: Path) -> list[dict]:
     recordings = list(archive.iter_recordings())
     problems += [{"path": str(p.path), "message": p.message} for p in archive.problems]
     for rec in recordings:
-        problems += _recording_problems(archive, rec)
+        problems += _recording_problems(archive, rec, deep=deep)
     # Every folder's outputs, a broken recording.json's included.
     for folder in archive.recording_dirs():
         for path in sorted((folder / "renditions").glob("*.json")):
@@ -90,7 +90,7 @@ def validate(root: Path) -> list[dict]:
     return problems
 
 
-def _recording_problems(archive: Archive, rec) -> list[dict]:
+def _recording_problems(archive: Archive, rec, *, deep: bool = False) -> list[dict]:
     folder = archive.path_for(rec.id)
     here = str(folder / "recording.json")
     problems = []
@@ -111,4 +111,14 @@ def _recording_problems(archive: Archive, rec) -> list[dict]:
                 problems.append({"path": here, "message":
                                  f"speakers span {span.start}-{span.end} s runs past the "
                                  f"media's end ({end} s)"})
+    if deep:  # every byte, as the restore test needs: a file that's there isn't proof enough
+        if present and sha256_file(media) != rec.media.sha256:
+            problems.append({"path": here, "message": f"media.file {rec.media.file!r} does not "
+                                                      "match its SHA-256"})
+        for source in rec.sources:
+            path = folder / source.raw if source.raw else None
+            if source.sha256 and path is not None and path.is_file() \
+                    and sha256_file(path) != source.sha256:
+                problems.append({"path": here, "message": f"source file {source.raw} does not "
+                                                          "match its SHA-256"})
     return problems

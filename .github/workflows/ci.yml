@@ -21,7 +21,11 @@ jobs:
         with: { node-version-file: packages/ui/frontend/.nvmrc, cache: npm, cache-dependency-path: packages/ui/frontend/package-lock.json }
       - run: npm ci && npm run build
         working-directory: packages/ui/frontend
+      # The pinned restic (scripts/fetch_restic.py checks its SHA-256), so the backup and
+      # restore-test tests run. With RECORDINGS_REQUIRE_RESTIC=1 they fail, never skip, without it.
+      - run: uv run --frozen python scripts/fetch_restic.py
       - run: uv run --frozen pytest
+        env: { RECORDINGS_REQUIRE_RESTIC: "1" }
       - run: uv run --frozen recordings schemas --check
       - run: uv run --frozen recordings validate demo/archive
 

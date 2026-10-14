@@ -38,7 +38,41 @@ path = "/srv/recordings/index/index.db"
 warn_free_percent = 20                  # Status warns, and an alert goes out, below this
 stop_free_percent = 5                   # new imports stop below this
 
-[plaud]                                 # stage 2
+[nas]                                   # stage 2a: the NAS over SSH (spec §15.1)
+# The mirror's own account, not an admin ([mirror] target uses it), with
+# RECORDINGS_NAS_SSH_KEY_FILE. It also answers the free-space check before each backup: `df` over
+# ssh, or sftp's own `df` when the account has no shell, as the NAS accounts don't.
+ssh = "recordings-mirror@nas"
+port = 22
+
+[backup]                                # stage 2a: restic to the NAS (spec §15.1)
+# rest-server with --append-only on the NAS (the runbook's spike). The user is rest_username, and
+# the password is the rest_password secret: a repository URL with a password in it is refused.
+repository = "rest:https://nas:8000/recordings/"
+rest_username = "recordings"
+# rest-server's self-signed certificate (restic --cacert), for an https: repository. Over the
+# tailnet with http:, the file is left empty, and no certificate is passed.
+cacert = "/run/secrets/nas_cacert"
+# The fallback, only if rest-server can't run: SFTP with [nas]'s key, and prune = true. Over SFTP
+# on Synology, paths start at the shared folder, not /volume1.
+# repository = "sftp:recordings-backup@nas:/backups/recordings"
+restic = "restic"
+# Besides the archive, config.toml and a copy of state.db. In Docker, deploy.env is mounted here.
+extra_paths = ["/backup-extra/deploy.env"]
+keep_hourly = 24
+keep_daily = 14
+keep_weekly = 8
+keep_monthly = 12
+# false with rest-server --append-only: it refuses forget --prune, so retention runs on the NAS,
+# as a weekly scheduled task (the runbook has it).
+prune = false
+# Any folder on the backups' NAS volume, as [nas] ssh's sftp sees it: the free-space check's path.
+nas_repo_path = "/recordings-mirror"
+min_nas_free_gb = 10
+restore_scratch = "/restore"            # the monthly restore test's scratch folder
+cache_dir = "/state/cache/restic"
+
+[plaud]                                # stage 2
 schedule_minutes = 20                   # scheduled sync interval; 0 turns it off
 auto_import = true                      # import missing recordings (safe: nothing runs until tagged)
 recheck_days = 14                       # keep re-checking recent recordings for Plaud's late notes
@@ -73,3 +107,7 @@ path = "/watch"
 #   RECORDINGS_PLAUD_TOKEN      Plaud API token                              (stage 2)
 #   RECORDINGS_SPARK_API_KEY    this app's llama-swap key (`spark keys create`)   (stage 4)
 #   CLAUDE_CODE_OAUTH_TOKEN     Claude subscription token (`claude setup-token`)  (stage 4)
+#   RESTIC_PASSWORD             the restic repository's password (keep a copy elsewhere)  (stage 2)
+#   RESTIC_REST_PASSWORD        rest-server's password, only if backups go there      (stage 2)
+#   RECORDINGS_NAS_SSH_KEY      the NAS account's SSH key: give RECORDINGS_NAS_SSH_KEY_FILE (stage 2)
+#   RECORDINGS_NAS_KNOWN_HOSTS  the NAS's host key: give RECORDINGS_NAS_KNOWN_HOSTS_FILE    (stage 2)

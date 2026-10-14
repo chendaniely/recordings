@@ -3,7 +3,7 @@
 FRONTEND := packages/ui/frontend
 NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --silent "$$(cat $(CURDIR)/$(FRONTEND)/.nvmrc)"; fi;
 
-.PHONY: setup skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy
+.PHONY: restic setup skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy
 
 setup:
 	uv sync
@@ -58,3 +58,6 @@ docker:
 
 deploy:
 	docker compose --env-file docker/deploy.env -f docker/compose.yml up -d --build
+
+restic:
+	uv run python scripts/fetch_restic.py

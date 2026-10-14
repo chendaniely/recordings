@@ -8,12 +8,15 @@ never need it: the Mac's read-only mirror has none.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from recordings.files import fsync_dir, temp_name
 
 SCHEMA_VERSION = 1
 # The version-1 tables. Later tasks in stage 2a append theirs here. Every statement is
@@ -29,6 +32,10 @@ CREATE TABLE IF NOT EXISTS flags (
   file TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL,
   PRIMARY KEY (file, kind));
 CREATE TABLE IF NOT EXISTS index_pending (recording_id TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS ops_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL, ok INTEGER NOT NULL, detail TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ops_runs_by_job ON ops_runs (job, id);
 """
 # Every change after version 1, keyed by the version it makes: MIGRATIONS[2] takes a state.db
 # from version 1 to 2. CREATE TABLE IF NOT EXISTS can't add a column, so a later stage that changes
@@ -80,6 +87,15 @@ class Revision:
     body: bytes
     origin: str  # the op's name, "create" or "adopted"
     committed: bool
+
+
+@dataclass(frozen=True)
+class Run:
+    job: str
+    started_at: datetime
+    finished_at: datetime
+    ok: bool
+    detail: str  # a fixed text (ops.failure_detail): never an error's message
 
 
 def _now() -> str:
@@ -288,3 +304,40 @@ class State:
         with self.db() as db:
             return [r[0] for r in db.execute(
                 "SELECT recording_id FROM index_pending ORDER BY recording_id")]
+
+    # ---- operations: each run of a scheduled job (§14, §15.1); Status reads these ----------
+    def record_run(self, job: str, started_at: datetime, finished_at: datetime, ok: bool,
+                   detail: str) -> None:
+        with self.db() as db:
+            db.execute("INSERT INTO ops_runs (job, started_at, finished_at, ok, detail) "
+                       "VALUES (?, ?, ?, ?, ?)",
+                       (job, started_at.isoformat(), finished_at.isoformat(), int(ok), detail))
+
+    def last_run(self, job: str, *, ok: bool | None = None) -> Run | None:
+        sql = "SELECT job, started_at, finished_at, ok, detail FROM ops_runs WHERE job = ?"
+        args: tuple = (job,)
+        if ok is not None:
+            sql, args = sql + " AND ok = ?", (job, int(ok))
+        with self.db() as db:
+            row = db.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
+        if row is None:
+            return None
+        return Run(row[0], datetime.fromisoformat(row[1]), datetime.fromisoformat(row[2]),
+                   bool(row[3]), row[4])
+
+    def backup_to(self, dest: Path) -> Path:
+        """A consistent copy of state.db, with SQLite's own backup command (§15.1), even while
+        another process writes it. Replaced atomically, so a half copy is never backed up. The
+        source opens with mode=rw (_connect), so a missing state.db is never created here."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = temp_name(dest)
+        try:
+            with closing(self._connect("rw")) as src, closing(sqlite3.connect(tmp)) as dst:
+                src.backup(dst)
+            os.replace(tmp, dest)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        fsync_dir(dest.parent)
+        return dest

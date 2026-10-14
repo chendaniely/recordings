@@ -4,21 +4,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from recordings import __version__, config, schemas, selfdoc
+from recordings import __version__, backup, config, ops, schemas, selfdoc
 from recordings.disk import disk_status, disk_thresholds
 from recordings.index import Index, IndexRefused
 from recordings.init import InitError, adopt_archive, init_archive
-from recordings.locks import LockTimeout
+from recordings.locks import OPS_LOCK, Locks, LockTimeout
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.sources.audio_router import CatalogError, ImportStopped, plan, run
-from recordings.state import StateError
+from recordings.state import State, StateError
 from recordings.writer import Writer, WriterError
 
 
@@ -46,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("validate", help="check every recording.json and rendition")
     p.add_argument("archive", type=Path)
+    p.add_argument("--deep", action="store_true", help="also check every file's SHA-256")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("reindex", help="accept outside edits, rebuild the derived index.db and build any "
@@ -67,6 +69,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-unplaced", action="store_true",
                    help="import what can be placed even when some rows can't")
     p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("backup", help="restic backups to the NAS (spec §15.1)")
+    p.add_argument("action", choices=["init", "run", "check", "prune", "restore-test"])
+    p.add_argument("--tag", action="append", default=[],
+                   help="an extra snapshot tag, such as pre-import (with run)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--debug", action="store_true",
+                   help="print a failed job's full error (Status and alerts carry its type only)")
     return parser
 
 
@@ -178,7 +188,7 @@ def cmd_docs(args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    problems = selfdoc.validate(args.archive)
+    problems = selfdoc.validate(args.archive, deep=args.deep)
     _emit({"problems": problems}, args.json)
     return 1 if problems else 0
 
@@ -199,6 +209,10 @@ def _matching_index(cfg: config.Config) -> Index | None:
         return None
     index = Index(cfg.index_path)
     return index if index.archive_uuid() == identity.uuid else None
+
+
+OPS_BUSY = ("another job holds the ops lock (a backup, the mirror or a check): run the import "
+            "again when it finishes")
 
 
 def cmd_import_audio_router(args: argparse.Namespace) -> int:
@@ -226,6 +240,12 @@ def cmd_import_audio_router(args: argparse.Namespace) -> int:
     writer = _writer(args.json)
     if isinstance(writer, int):
         return writer
+    try:  # a peek, never a hold: plan() can take hours, and run() takes the lock itself (a
+        # Locks is re-entrant only within one instance). A job that starts in between is run()'s.
+        with Locks(writer.state.locks_dir, timeout=0).hold(OPS_LOCK):
+            pass
+    except LockTimeout:
+        return _fail(OPS_BUSY, args.json, 75)
     try:
         the_plan = plan(args.path, writer.index, consent=consent,
                         default_timezone=cfg.default_timezone)
@@ -249,17 +269,62 @@ def cmd_import_audio_router(args: argparse.Namespace) -> int:
               args.json)
         return 1
     except LockTimeout:
-        return _fail("another job holds the ops lock (a backup, the mirror or a check): run "
-                     "the import again when it finishes", args.json, 75)
+        return _fail(OPS_BUSY, args.json, 75)
     _emit({**the_plan.report(), "imported": result.to_dict()}, args.json)
     return 1 if result.failed else 0
+
+
+def _ops_context(as_json: bool) -> ops.Context | int:
+    """The jobs' Context, with restic waiting up to ops.CLI_RETRY_LOCK for its own lock (the
+    NAS's weekly retention task may hold it). run_job waits ops.CLI_WAIT for the ops lock unless
+    told otherwise; the loop (Task 13) passes lock_timeout=0."""
+    cfg = _config(as_json)
+    if isinstance(cfg, int):
+        return cfg
+    if cfg.state_path is None:
+        return _fail("set [state] path in config.toml first", as_json, 78)
+    try:
+        state = State.open(cfg.state_path)
+    except StateError as exc:
+        return _fail(str(exc), as_json, 78)
+    return ops.Context(cfg=cfg, environ=os.environ, state=state, retry_lock=ops.CLI_RETRY_LOCK)
+
+
+def _debug_logging(on: bool) -> None:
+    """--debug: a failed job's full error, on stderr. Status and alerts never carry it."""
+    if on:
+        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
+
+
+def _job_result(result: ops.JobResult, as_json: bool) -> int:
+    _emit({"job": result.job, "ok": result.ok, "detail": result.detail}, as_json)
+    if result.detail == ops.BUSY:
+        return 75  # EX_TEMPFAIL: another job held the ops lock for ops.CLI_WAIT; try again
+    return 0 if result.ok else 1
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    _debug_logging(args.debug)
+    ctx = _ops_context(args.json)
+    if isinstance(ctx, int):
+        return ctx
+    with ops.sigterm_forwarded():
+        if args.action == "init":
+            try:
+                detail = backup.run_init(ops.backup_config(ctx), ctx.environ, runner=ctx.runner)
+            except (backup.BackupError, config.ConfigError) as exc:
+                return _fail(str(exc), args.json, 1)
+            _emit({"job": "backup init", "ok": True, "detail": detail}, args.json)
+            return 0
+        job = "backup" if args.action == "run" else args.action
+        return _job_result(ops.run_job(ctx, job, tags=tuple(args.tag)), args.json)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "reindex": cmd_reindex, "validate": cmd_validate, "doctor": cmd_doctor,
-                "import-audio-router": cmd_import_audio_router}
+                "import-audio-router": cmd_import_audio_router, "backup": cmd_backup}
     if args.command in commands:
         return commands[args.command](args)
     parser.print_help(sys.stdout)

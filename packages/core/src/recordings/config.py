@@ -25,6 +25,8 @@ class SecretSpec:
     env: str
     purpose: str
     stage: int  # the build stage that first needs it
+    file_only: bool = False  # only NAME_FILE makes sense: the program needs a path (an SSH key)
+    optional: bool = False  # needed only for some setups (rest-server's password)
 
 
 SECRETS: dict[str, SecretSpec] = {
@@ -33,6 +35,18 @@ SECRETS: dict[str, SecretSpec] = {
         "RECORDINGS_SPARK_API_KEY", "this app's llama-swap key on the Spark", 4),
     "claude_oauth_token": SecretSpec(
         "CLAUDE_CODE_OAUTH_TOKEN", "Claude subscription token from `claude setup-token`", 4),
+    "restic_password": SecretSpec(
+        "RESTIC_PASSWORD", "the restic repository's password; keep a copy in your password "
+        "manager", 2),
+    "rest_password": SecretSpec(
+        "RESTIC_REST_PASSWORD", "rest-server's password, when backups go there", 2,
+        optional=True),
+    "nas_ssh_key": SecretSpec(
+        "RECORDINGS_NAS_SSH_KEY", "the NAS account's SSH private key, as a file", 2,
+        file_only=True),
+    "nas_known_hosts": SecretSpec(
+        "RECORDINGS_NAS_KNOWN_HOSTS", "the NAS's SSH host key, as a known_hosts file", 2,
+        file_only=True),
 }
 
 
@@ -170,7 +184,28 @@ def load_config(environ: Mapping[str, str]) -> Config:
     )
 
 
+def secret_path(name: str, environ: Mapping[str, str]) -> Path | None:
+    """The file a NAME_FILE secret names, checked to exist and be readable, never read here."""
+    spec = SECRETS[name]
+    if spec.file_only and environ.get(spec.env):
+        raise ConfigError(f"give {spec.env}_FILE, the path to the file, not the value itself")
+    value = environ.get(f"{spec.env}_FILE")
+    if not value:
+        return None
+    path = Path(value)
+    if not path.is_file():
+        raise ConfigError(f"{spec.env}_FILE points at {path}, which is not a file")
+    try:
+        with path.open("rb") as fh:
+            fh.read(1)
+    except OSError:
+        raise ConfigError(f"{spec.env}_FILE at {path} could not be read") from None
+    return path
+
+
 def secret(name: str, environ: Mapping[str, str]) -> str | None:
+    if SECRETS[name].file_only:
+        return str(path) if (path := secret_path(name, environ)) else None
     spec = SECRETS[name]
     direct = environ.get(spec.env)
     file_var = environ.get(f"{spec.env}_FILE")

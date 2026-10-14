@@ -761,6 +761,28 @@ def test_a_bad_disk_config_exits_78_like_every_config_error(ar_archive, plaud_en
     assert "stop_free_percent" in json.loads(capsys.readouterr().out)["error"]
 
 
+def test_a_busy_ops_lock_stops_the_import_before_it_plans(ar_archive, plaud_env, tmp_path,
+                                                          monkeypatch, capsys):
+    # why: plan() decodes every file, which takes hours on the real archive. A backup holding
+    # "ops" must be found out at once (75), not after the plan, when run() would wait 600 s.
+    import os
+    for name in [n for n in os.environ if n.startswith(("RECORDINGS_", "RESTIC_"))]:
+        monkeypatch.delenv(name)  # nothing from this machine: its own secrets and settings included
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    _cli_config(tmp_path, monkeypatch)
+    assert main(["init", "--json"]) == 0
+    capsys.readouterr()
+
+    def no_plan(*args, **kwargs):
+        raise AssertionError("planned while a job held the ops lock")
+
+    monkeypatch.setattr("recordings.cli.plan", no_plan)
+    with Locks(tmp_path / "state" / "locks", timeout=0).hold("ops"):
+        assert main(["import-audio-router", str(ar_archive.root), "--json"]) == 75
+        assert "ops lock" in json.loads(capsys.readouterr().out)["error"]
+
+
 def test_the_cli_stops_on_plan_problems_even_with_allow_unplaced(ar_archive, plaud_env, tmp_path,
                                                                  monkeypatch, capsys):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])

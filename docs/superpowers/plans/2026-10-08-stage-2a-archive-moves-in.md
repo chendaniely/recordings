@@ -14896,6 +14896,9 @@ def test_a_busy_ops_lock_stops_the_import_before_it_plans(ar_archive, plaud_env,
                                                           monkeypatch, capsys):
     # why: plan() decodes every file, which takes hours on the real archive. A backup holding
     # "ops" must be found out at once (75), not after the plan, when run() would wait 600 s.
+    import os
+    for name in [n for n in os.environ if n.startswith(("RECORDINGS_", "RESTIC_"))]:
+        monkeypatch.delenv(name)  # nothing from this machine: its own secrets and settings included
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
     _cli_config(tmp_path, monkeypatch)
