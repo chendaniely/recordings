@@ -17457,8 +17457,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `packages/core/src/recordings/alerts.py`
-- Modify: `packages/core/src/recordings/ops.py` (the schedule, `disk` job, alerting, `run_job`, `run_due`, `loop`), `state.py` (alert state), `config.py` (the `ntfy_topic`, `deadman_url` and `ntfy_token` secrets), `cli.py` (`ops`, `alert-test`), `config.example.toml` (`[alerts]`)
-- Test: `packages/core/tests/test_alerts.py`, `packages/core/tests/test_ops.py`, `packages/core/tests/conftest.py` (the `ntfy` fixture)
+- Modify: `packages/core/src/recordings/ops.py` (the schedule, `disk` job, alerting, `run_job`, `run_due`, `loop`, and `run_child`'s Ctrl-C), `state.py` (alert state, `prune_runs`), `config.py` (the `ntfy_topic`, `deadman_url` and `ntfy_token` secrets), `cli.py` (`ops`, `alert-test`), `config.example.toml` (`[alerts]`)
+- Test: `packages/core/tests/test_alerts.py`, `packages/core/tests/test_ops.py`, `packages/core/tests/test_backup.py` (the Ctrl-C tests), `packages/core/tests/conftest.py` (the `ntfy` fixture)
 
 **Interfaces:**
 - Consumes:
@@ -17475,9 +17475,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - `from_config(cfg, environ) -> AlertConfig`
     - `send(ac, *, title: str, message: str, priority: int = 4, tags: Sequence[str] = ("warning",)) -> bool`, with `Authorization: Bearer` when `ac.token` is set
     - `ping_deadman(ac, kind: str = "success", *, message: str = "") -> bool`: a POST to the ping URL plus `PINGS[kind]`
-  - **`recordings.state.State`:** `alert_state(key) -> tuple[bool, datetime | None]` and `set_alert_state(key, *, failing: bool, last_sent_at: datetime | None) -> None`.
+  - **`recordings.state.State`:** `alert_state(key) -> tuple[bool, datetime | None]`, `set_alert_state(key, *, failing: bool, last_sent_at: datetime | None) -> None` and `prune_runs(before: datetime) -> int` (deletes `ops_runs` rows that finished before `before`, except each job's newest row and its newest good one; returns how many).
   - **`recordings.ops`:**
-    - the schedule: `INTERVALS`, `ORDER`, `RETRY_AFTER = 15 min`, `RETRY_HEAVY_AFTER` (a failed `check` or `restore-test` waits 24 h), `REMIND_EVERY = 24 h`, `TITLES`
+    - the schedule: `INTERVALS`, `ORDER`, `RETRY_AFTER = 15 min`, `RETRY_HEAVY_AFTER` (a failed `check` or `restore-test` waits 24 h, a failed `mirror` 1 h), `REMIND_EVERY = 24 h`, `TITLES`, and `KEEP_RUNS = 90 days` (`run_due` trims older `ops_runs` once a day, keeping each job's newest good run)
+    - `INTERRUPT_GRACE = 120.0`: after Ctrl-C, `run_child` sends the child SIGTERM and waits for it within the caller's remaining timeout (this long with none), then kills it
     - `class DiskWarning(RuntimeError)`
     - `enabled_jobs(cfg) -> tuple[str, ...]`
     - `due(state, now, jobs) -> list[str]`
@@ -17642,6 +17643,7 @@ def test_plain_http_credentials_in_a_url_and_odd_topics_are_refused(field, value
 `packages/core/tests/test_ops.py`:
 ```python
 import json
+import os
 import sqlite3
 import subprocess
 from contextlib import closing, contextmanager
@@ -17700,6 +17702,15 @@ def context(tmp_path, writer, ntfy, *, clock=None, runner=None, mirror=False):
                    clock=clock or Clock(), runner=runner or restic())
 
 
+def own_environment(ctx, monkeypatch):
+    """The process environment is the context's alone: a CLI command reads os.environ, and Dan's
+    real RECORDINGS_* and RESTIC_* settings (a topic file, a token, a ping URL) must not get in."""
+    for key in [k for k in os.environ if k.startswith(("RECORDINGS_", "RESTIC_"))]:
+        monkeypatch.delenv(key)
+    for key, value in ctx.environ.items():
+        monkeypatch.setenv(key, value)
+
+
 def pushes(ntfy):
     """The ntfy alerts: POSTs to the topic."""
     return [r for r in ntfy.requests if r["path"] == "/alerts-topic"]
@@ -17731,6 +17742,11 @@ def test_a_job_is_due_after_its_interval_and_a_failure_is_retried_after_15_minut
     state.record_run("restore-test", later, later, False, "RestoreTestFailed")
     assert due(state, later + timedelta(hours=23), ("restore-test",)) == []
     assert due(state, later + timedelta(hours=24), ("restore-test",)) == ["restore-test"]
+    # why: a failed mirror walks both trees twice to fail again, and one short of space first
+    # reads and rewrites all it staged: its own hour, not every 15 minutes (Task 12's ops council)
+    state.record_run("mirror", later, later, False, "MirrorError; exit 11")
+    assert due(state, later + timedelta(minutes=59), ("mirror",)) == []
+    assert due(state, later + timedelta(hours=1), ("mirror",)) == ["mirror"]
     # why: one run stamped in the future, by a clock that ran ahead, must not hold every job
     # back until the clock catches up with it
     ahead = T0 + timedelta(days=400)
@@ -17807,6 +17823,7 @@ def test_run_due_runs_what_is_due_and_beats_the_heart(tmp_path, writer, make_inc
     results = {r.job for r in run_due(ctx)}
     assert {"disk", "backup", "prune", "check"} <= results
     assert writer.state.meta("ops_heartbeat") == T0.isoformat()
+    assert writer.state.meta("ops_runs_trimmed") == T0.isoformat()  # the daily trim ran too
     assert {r.job for r in run_due(ctx)} <= {"restore-test"}  # the rest ran a moment ago
 
 
@@ -17849,6 +17866,79 @@ def test_an_unopenable_lock_file_or_state_is_a_recorded_failure_not_a_crash(
     assert run_job(ctx, "check").ok  # a state disk that can't record must not turn into a crash
 
 
+def test_a_state_disk_that_cannot_write_or_read_never_stops_a_job_an_alert_or_the_loop(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: a broken state.db reached the loop three more ways than record_run: the alert state's
+    # read and write, the heartbeat, and due()'s own reads. None may end the backup service.
+    ctx = context(tmp_path, writer, ntfy, runner=restic(returncode=1))
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    for name in ("record_run", "alert_state", "set_alert_state", "set_meta"):
+        monkeypatch.setattr(writer.state, name, broken)
+    result = run_job(ctx, "backup")
+    assert (result.ok, result.detail) == (False, "BackupError; exit 1")
+    assert len(pushes(ntfy)) == 1 and pings(ntfy) == ["/ping/start", "/ping/fail"]  # still said
+    ctx.runner = restic()
+    assert run_job(ctx, "backup").ok  # and a good run returns, with no recovery it can know of
+    assert all(isinstance(r, ops.JobResult) for r in run_due(ctx))  # the heartbeat write fails too
+    monkeypatch.setattr(writer.state, "last_run", broken)  # due() cannot read either
+    ticks = []
+    loop(ctx, tick=0, sleep=lambda s: ticks.append(s), stop=lambda: len(ticks) >= 2)
+    assert len(ticks) == 2
+
+
+def test_old_runs_are_trimmed_daily_but_each_jobs_newest_good_run_stays(tmp_path, writer, ntfy):
+    # why: ops_runs gets about 70,000 rows a year. Status must still know a job's last good run
+    # after a long failing streak, so that row is kept however old it is.
+    state = writer.state
+    old = T0 - timedelta(days=200)
+    state.record_run("backup", old, old, True, "snapshot a")                   # newest good: kept
+    state.record_run("check", old, old, True, "old good, superseded")           # dropped
+    state.record_run("check", old + timedelta(days=1), old + timedelta(days=1), True, "kept")
+    for day in range(2, 150):                                                  # a failing streak
+        at = old + timedelta(days=day)
+        state.record_run("backup", at, at, False, "BackupError; exit 1")
+    recent = T0 - timedelta(days=3)
+    state.record_run("disk", recent, recent, True, "ok")
+    ctx = context(tmp_path, writer, ntfy)
+    ops._trim_runs(ctx)
+    with closing(sqlite3.connect(state.db_path)) as db:
+        kept = db.execute("SELECT job, ok, detail FROM ops_runs ORDER BY id").fetchall()
+    assert ("backup", 1, "snapshot a") in kept and ("check", 1, "kept") in kept
+    assert ("check", 1, "old good, superseded") not in kept
+    # the streak's days 2 to 149 finished 198 to 51 days before T0: those inside 90 days stay
+    assert sum(1 for r in kept if r[0] == "backup" and r[1] == 0) == 40
+    assert state.last_run("backup", ok=True).detail == "snapshot a"
+    assert state.meta("ops_runs_trimmed") == T0.isoformat()
+    state.record_run("disk", old, old, True, "ancient")  # superseded below, so it may go
+    state.record_run("disk", recent, recent, True, "ok")
+    ctx.clock.now += timedelta(hours=1)
+    ops._trim_runs(ctx)  # not again within a day
+    with closing(sqlite3.connect(state.db_path)) as db:
+        assert db.execute("SELECT COUNT(*) FROM ops_runs WHERE detail = 'ancient'").fetchone()[0] == 1
+    ctx.clock.now += timedelta(days=1)
+    ops._trim_runs(ctx)
+    with closing(sqlite3.connect(state.db_path)) as db:
+        assert db.execute("SELECT COUNT(*) FROM ops_runs WHERE detail = 'ancient'").fetchone()[0] == 0
+
+
+def test_only_restics_exit_11_is_busy_rsyncs_is_a_failure(tmp_path, writer, ntfy, monkeypatch):
+    # why: rsync's exit 11 is a file I/O error. Only a BackupError with restic's 11 is "locked".
+    from recordings.mirror import MirrorError
+    ctx = context(tmp_path, writer, ntfy, mirror=True)
+
+    def rsync_io_error(ctx, tags):
+        raise MirrorError("rsync failed", returncode=11)
+
+    monkeypatch.setitem(ops.JOBS, "mirror", rsync_io_error)
+    result = run_job(ctx, "mirror", lock_timeout=0)
+    assert (result.ok, result.detail) == (False, "MirrorError; exit 11")
+    assert writer.state.last_run("mirror").detail == "MirrorError; exit 11"
+    assert [r["headers"]["Title"] for r in pushes(ntfy)] == ["recordings: mirror failed"]
+
+
 def test_a_locked_repository_is_busy_not_a_failure(tmp_path, writer, ntfy):
     # why: the NAS's weekly forget --prune holds restic's lock (exit 11). That is not an outage.
     ctx = context(tmp_path, writer, ntfy,
@@ -17871,8 +17961,7 @@ def test_the_loop_runs_with_sigterm_forwarded(tmp_path, writer, ntfy, monkeypatc
     # Docker would wait out stop_grace_period, then kill restic mid-run and leave its lock behind.
     # Inside sigterm_forwarded (Task 11), restic gets the SIGTERM, then the loop stops.
     ctx = context(tmp_path, writer, ntfy)
-    for key, value in ctx.environ.items():
-        monkeypatch.setenv(key, value)
+    own_environment(ctx, monkeypatch)
     events = []
 
     @contextmanager
@@ -17890,8 +17979,7 @@ def test_the_loop_runs_with_sigterm_forwarded(tmp_path, writer, ntfy, monkeypatc
 def test_alert_test_sends_one_logs_the_check_and_never_prints_the_topic(
         tmp_path, writer, ntfy, monkeypatch, capsys):
     ctx = context(tmp_path, writer, ntfy)
-    for key, value in ctx.environ.items():
-        monkeypatch.setenv(key, value)
+    own_environment(ctx, monkeypatch)
     assert main(["alert-test", "--json"]) == 0
     out = capsys.readouterr().out
     assert json.loads(out) == {"ntfy": True, "deadman": True}
@@ -18070,6 +18158,18 @@ and **add** to `State`:
         with self.db() as db:
             db.execute("INSERT OR REPLACE INTO alerts (key, failing, last_sent_at) VALUES (?, ?, ?)",
                        (key, int(failing), last_sent_at.isoformat() if last_sent_at else None))
+
+    # ---- ops_runs retention: the loop trims it once a day (ops._trim_runs) ---------------------
+    def prune_runs(self, before: datetime) -> int:
+        """Delete the runs that finished before `before`, except each job's newest run and its
+        newest good one (what Status and the schedule read, however long a job has been failing).
+        Returns how many rows went."""
+        with self.db() as db:
+            return db.execute(
+                "DELETE FROM ops_runs WHERE datetime(finished_at) < datetime(?) "
+                "AND id NOT IN (SELECT MAX(id) FROM ops_runs WHERE ok = 1 GROUP BY job) "
+                "AND id NOT IN (SELECT MAX(id) FROM ops_runs GROUP BY job)",
+                (before.isoformat(),)).rowcount
 ```
 
 - [ ] **Step 4: Add the schedule, the disk job, alerting and the loop to `ops.py`**
@@ -18109,9 +18209,14 @@ In `packages/core/src/recordings/ops.py`:
    RETRY_AFTER = timedelta(minutes=15)
    # A failed check reads a quarter of the repository again, and a failed restore test all of it,
    # for hours in which the loop does nothing else: once a day is enough, and the alert has said
-   # it failed. (Task 11's ops council)
-   RETRY_HEAVY_AFTER = {"check": timedelta(hours=24), "restore-test": timedelta(hours=24)}
+   # it failed. (Task 11's ops council.) A failed mirror walks both trees twice to fail again, and
+   # one short of space first reads and rewrites all it staged: its own hour is soon enough.
+   # (Task 12's ops council)
+   RETRY_HEAVY_AFTER = {"check": timedelta(hours=24), "restore-test": timedelta(hours=24),
+                        "mirror": timedelta(hours=1)}
    REMIND_EVERY = timedelta(hours=24)
+   KEEP_RUNS = timedelta(days=90)  # ops_runs gets about 70,000 rows a year; older ones go, daily
+   PRUNE_RUNS_EVERY = timedelta(days=1)
    REPO_LOCKED = 11  # restic's exit status for a repository another process holds (the NAS's retention)
    LOCKED = f"{BUSY} (repository locked)"
    TITLES = {"disk": "disk space low", "backup": "backup failed", "mirror": "mirror failed",
@@ -18154,21 +18259,34 @@ In `packages/core/src/recordings/ops.py`:
    def _alert(ctx: Context, ac: AlertConfig, job: str, ok: bool, detail: str) -> None:
        """One push when a job starts failing, a reminder every day while it fails, and one when it
        works again. The text is a fixed template: the job, the failure's fixed detail and "See
-       Status", never a path, a title or a tool's own output (Review Focus 4)."""
+       Status", never a path, a title or a tool's own output (Review Focus 4). A state.db that
+       can't be read or written never stops this: a failure is still said (at every retry, since
+       its last alert can't be known), and a recovery is skipped."""
        key, now = f"job:{job}", ctx.clock()
-       failing, last_sent = ctx.state.alert_state(key)
+       try:
+           failing, last_sent = ctx.state.alert_state(key)
+       except FAILURES:  # state.db unreadable: a failure is still said, a recovery can't be known
+           log.warning("%s: could not read the alert state", job)
+           failing, last_sent = not ok, None
        if ok:
            if failing:
                alerts.send(ac, title=f"recordings: {job} recovered",
                            message=f"{job} works again. See Status.", priority=3,
                            tags=("white_check_mark",))
-               ctx.state.set_alert_state(key, failing=False, last_sent_at=now)
+               _remember(ctx, key, failing=False, last_sent_at=now)
            return
        if not failing or last_sent is None or now - last_sent >= REMIND_EVERY:
            delivered = alerts.send(ac, title=f"recordings: {TITLES[job]}",
                                    message=f"{job} failed ({detail}). See Status.")
            last_sent = now if delivered else last_sent
-       ctx.state.set_alert_state(key, failing=True, last_sent_at=last_sent)
+       _remember(ctx, key, failing=True, last_sent_at=last_sent)
+
+
+   def _remember(ctx: Context, key: str, *, failing: bool, last_sent_at: datetime | None) -> None:
+       try:
+           ctx.state.set_alert_state(key, failing=failing, last_sent_at=last_sent_at)
+       except FAILURES:  # nothing to lose but the next reminder's timing
+           log.warning("%s: could not save the alert state", key)
 
 
    def _run_held(ctx: Context, job: str, tags: tuple[str, ...]) -> JobResult:
@@ -18190,7 +18308,7 @@ In `packages/core/src/recordings/ops.py`:
            detail, ok = failure_detail(exc), False
        try:
            ctx.state.record_run(job, started, ctx.clock(), ok, detail)
-       except FAILURES:  # a broken state disk must not stop the loop or hide the alert below
+       except FAILURES:  # a broken state disk must not hide the alert below (which guards its own)
            log.warning("%s: could not record the run (%s)", job, detail)
        if ac is not None:
            _alert(ctx, ac, job, ok, detail)
@@ -18205,8 +18323,10 @@ In `packages/core/src/recordings/ops.py`:
                lock_timeout: float = CLI_WAIT) -> JobResult:
        """Run one job under the ops lock, record it, alert, and for a backup ping the dead-man's
        switch: /start first, then the URL itself or /fail. The CLI waits for the lock (the default);
-       the loop passes 0. A lock still held means another run is busy: BUSY, which is neither
-       recorded nor alerted, and no ping is sent."""
+       the loop passes 0. A lock still held means another run is busy: BUSY. A restic exit 11 (the
+       repository is locked, as while the NAS's retention task runs) is busy too: LOCKED, which
+       starts with BUSY. Neither is recorded or alerted, and neither sends /fail (a backup has
+       sent /start before an exit 11, and its dead-man's switch decides)."""
        with ExitStack() as stack:
            try:
                stack.enter_context(Locks(ctx.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK))
@@ -18225,10 +18345,32 @@ In `packages/core/src/recordings/ops.py`:
            return _run_held(ctx, job, tags)
 
 
+   def _trim_runs(ctx: Context) -> None:
+       """Once a day: drop runs older than KEEP_RUNS, but never a job's newest run or its newest good
+       one, so Status never reads "never succeeded" after a long failing streak. A failure here is
+       only logged."""
+       now = ctx.clock()
+       try:
+           last = ctx.state.meta("ops_runs_trimmed")
+           if last and timedelta(0) <= now - datetime.fromisoformat(last) < PRUNE_RUNS_EVERY:
+               return
+           gone = ctx.state.prune_runs(now - KEEP_RUNS)
+           ctx.state.set_meta("ops_runs_trimmed", now.isoformat())
+       except (*FAILURES, ValueError):
+           log.warning("could not trim the old runs")
+           return
+       if gone:
+           log.info("trimmed %d old runs", gone)
+
+
    def run_due(ctx: Context) -> list[JobResult]:
        """One pass of the loop: each job that is due, in ORDER, never waiting for the ops lock. A
        busy job is BUSY, and the next pass tries it again."""
-       ctx.state.set_meta("ops_heartbeat", ctx.clock().isoformat())
+       try:
+           ctx.state.set_meta("ops_heartbeat", ctx.clock().isoformat())
+       except FAILURES:  # a broken state disk must not stop the pass: the jobs still run
+           log.warning("could not write the heartbeat")
+       _trim_runs(ctx)
        return [run_job(ctx, job, lock_timeout=0)
                for job in due(ctx.state, ctx.clock(), enabled_jobs(ctx.cfg))]
 
@@ -18238,10 +18380,146 @@ In `packages/core/src/recordings/ops.py`:
        `recordings ops --loop` runs it inside sigterm_forwarded: `docker stop` passes SIGTERM on to a
        running restic or rsync, and once that has stopped, the loop stops too."""
        while not stop():
-           for result in run_due(ctx):
-               log.info("%s: %s (%s)", result.job, "ok" if result.ok else "not ok", result.detail)
+           try:
+               for result in run_due(ctx):
+                   log.info("%s: %s (%s)", result.job, "ok" if result.ok else "not ok", result.detail)
+           except FAILURES:  # due() reading a broken state.db: wait a tick and try again
+               log.warning("a pass of the loop failed", exc_info=True)
            sleep(tick)
    ```
+
+6. **Change `run_child`** (Task 11's) so that Ctrl-C stops the child and waits within the caller's
+   timeout. restic handles INT then TERM cleanly (exit 130, no lock left).
+   - **Add** before `def run_child(`:
+     ```python
+     INTERRUPT_GRACE = 120.0  # seconds a child gets to clean up after Ctrl-C when the caller set no timeout
+
+
+     def _stop_child(proc: subprocess.Popen, deadline: float | None) -> None:
+         """After Ctrl-C: SIGTERM the child (restic and rsync stop cleanly on it, whatever signal the
+         terminal sent them), then wait for it within what is left of the caller's timeout, or
+         INTERRUPT_GRACE with none, and kill it when that runs out. A further Ctrl-C while it cleans up
+         is ignored: abandoning it there is what leaves restic's repository lock behind."""
+         proc.send_signal(signal.SIGTERM)
+         wait = INTERRUPT_GRACE if deadline is None else max(deadline - time.monotonic(), 0.0)
+         end = time.monotonic() + wait
+         while True:
+             try:
+                 proc.communicate(timeout=max(end - time.monotonic(), 0.0))
+                 return
+             except subprocess.TimeoutExpired:
+                 proc.kill()
+                 proc.communicate()
+                 return
+             except KeyboardInterrupt:
+                 continue  # the child is already stopping: let it finish
+     ```
+   - **Replace** in `run_child`:
+     ```python
+             with proc:
+                 try:
+                     if _stopping:
+     ```
+     with
+     ```python
+             deadline = None if timeout is None else time.monotonic() + timeout
+             with proc:
+                 try:
+                     if _stopping:
+     ```
+   - **Replace**
+     ```python
+                 except KeyboardInterrupt:
+                     # At a terminal, Ctrl-C reaches the child too. Leaving the block now would close
+                     # its pipes under it, as an early SIGTERM handler would: wait for it first.
+                     proc.communicate()
+                     raise
+     ```
+     with
+     ```python
+                 except KeyboardInterrupt:
+                     # At a terminal, Ctrl-C reaches the child too. Leaving the block now would close
+                     # its pipes under it, as an early SIGTERM handler would, so stop it and wait.
+                     _stop_child(proc, deadline)
+                     raise
+     ```
+     (`time` is already imported by item 1.)
+7. **Docstrings in `ops.py`** (Task 11's; they must say what the code now does):
+   - In the module docstring, **add** after the first bullet (the one ending
+     `then `--tag post-import`).`):
+     ```
+     - **Exit 11 is busy, not broken.** A restic exit 11 means another process holds the repository, as
+       the NAS's weekly retention task does. run_job gives BUSY + " (repository locked)" for it: not
+       recorded, not alerted, no /fail ping, and the CLI exits 75 like any busy turn. A backup that
+       stays blocked leaves its /start ping unanswered, and the dead-man's switch alerts after its
+       grace (spec §14). Only restic's exit 11 counts: rsync's 11 is a file I/O error and fails.
+     ```
+     and **replace** `Ctrl-C waits for the child the same way, and a SIGTERM still pending when run_child`
+     / `ends or raises (Popen failing, a timeout) is honoured then.` with
+     ```
+     its own. Ctrl-C stops the child with SIGTERM and waits for it, within the caller's timeout, the
+     same way, and a SIGTERM still pending when run_child ends or raises (Popen failing, a timeout)
+     is honoured then.
+     ```
+     (keeping the words before `Ctrl-C` on that line: `... sets no handler of` / `its own.`; only
+     the sentence about Ctrl-C changes).
+   - In `run_child`'s docstring, **replace** `Ctrl-C (KeyboardInterrupt)` / `waits for the child the same way`
+     with `Ctrl-C (KeyboardInterrupt)` / `sends the child SIGTERM and waits for it (within the timeout; _stop_child)`,
+     keeping the rest of that sentence.
+
+In `packages/core/tests/test_backup.py`, **replace** Task 11's
+`test_ctrl_c_waits_for_the_child_to_finish_its_cleanup_before_it_propagates` (its child has no
+SIGTERM handler, so it now dies before it can clean up) with these three, which come after
+`sigterm_when_ready` and `CLEANS_UP`:
+```python
+def test_ctrl_c_stops_the_child_with_sigterm_and_waits_for_its_cleanup(tmp_path):
+    # why: at a terminal, Ctrl-C reaches restic as well. KeyboardInterrupt inside communicate()
+    # closed the pipes before waiting, so restic could die of SIGPIPE in the middle of its
+    # cleanup and leave its repository lock behind. Now the child is sent SIGTERM (restic handles
+    # INT then TERM cleanly, exiting 130) and run_child waits for it before Ctrl-C goes on.
+    ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
+    sigterm_when_ready(ready, signal.SIGINT)
+    with pytest.raises(KeyboardInterrupt):
+        ops.run_child([sys.executable, "-c", CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}],
+                      capture_output=True, text=True, timeout=60)
+    assert cleaned.exists()  # run_child told it to stop, waited, and only then let Ctrl-C through
+
+
+def test_a_second_ctrl_c_does_not_abandon_a_child_that_is_cleaning_up(tmp_path):
+    # why: a second Ctrl-C used to leave the block, close the pipes and abandon restic mid-cleanup.
+    ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
+    sigterm_when_ready(ready, signal.SIGINT)  # the first, as soon as the child is up
+    main_thread = threading.main_thread().ident
+
+    def second():
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.25)  # the child's 0.5 s cleanup has begun
+        signal.pthread_kill(main_thread, signal.SIGINT)
+
+    threading.Thread(target=second, daemon=True).start()
+    with pytest.raises(KeyboardInterrupt):
+        ops.run_child([sys.executable, "-c", CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}],
+                      capture_output=True, text=True, timeout=60)
+    assert cleaned.exists()
+
+
+def test_ctrl_c_keeps_the_callers_timeout_and_kills_a_child_that_ignores_sigterm(tmp_path):
+    # why: the wait after Ctrl-C was unbounded and dropped the caller's timeout, so a hung child
+    # held the CLI for ever.
+    ready = tmp_path / "ready"
+    child = ("import pathlib, signal, time\n"
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(60)\n")
+    sigterm_when_ready(ready, signal.SIGINT)
+    began = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=2)
+    assert time.monotonic() - began < 8  # about the 2 s timeout, not the child's 60
+```
+(The first two use Task 11's `CLEANS_UP` and `sigterm_when_ready`.)
 
 In `packages/core/src/recordings/cli.py`, **add** `alerts` to the `from recordings import …` line
 (it reads `from recordings import __version__, backup, config, ops, schemas, selfdoc`; make it
@@ -18264,6 +18542,7 @@ def cmd_ops(args: argparse.Namespace) -> int:
     if isinstance(ctx, int):
         return ctx
     if args.loop:
+        ctx.retry_lock = None  # §15.1: the loop never waits for restic's lock; the CLI does
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
         # docker stop: SIGTERM goes on to a running restic or rsync, which stops cleanly and
         # drops its lock; then this process stops. The job it was in is neither recorded nor
@@ -18317,7 +18596,8 @@ and in the secrets comment block:
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_alerts.py packages/core/tests/test_ops.py -v && uv run pytest`
-Expected: 13 and 14 passed, then the whole suite passes, with a passed count above Task 12's.
+Expected: 13 and 17 passed, then the whole suite passes: 769 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 737, plus 13 + 17 new
+tests, plus two net in `test_backup.py`: 49 becomes 51).
 
 - [ ] **Step 6: Commit**
 
@@ -18328,7 +18608,9 @@ git commit -m "feat(core): ntfy alerts, the Healthchecks dead-man's switch and t
 One alert per failure, a daily reminder and a recovery message, all from fixed templates: an
 exception's text never reaches an alert or state.db. A backup pings /start, then the check or
 /fail; alert-test pings /log. Both URLs must be https, and ntfy topics are checked. The loop
-skips a job while the CLI holds the ops lock, and on SIGTERM stops restic cleanly first.
+skips a job while the CLI holds the ops lock, and on SIGTERM stops restic cleanly first. Ctrl-C
+now sends the child SIGTERM and waits for it within the caller's timeout; a broken state.db no
+longer stops the loop; ops_runs is trimmed to 90 days daily, keeping each job's newest good run.
 Checked: docs.ntfy.sh/publish (POST /<topic>, Title/Priority/Tags, Bearer tokens) and
 healthchecks.io/docs/http_api (/start, /fail, /log).
 
@@ -18478,6 +18760,7 @@ def test_each_service_names_its_role_and_backup_has_time_to_stop():
     assert services["web"]["environment"]["RECORDINGS_ROLE"] == "web"
     assert services["backup"]["environment"]["RECORDINGS_ROLE"] == "backup"
     assert services["backup"]["stop_grace_period"] == "2m"  # restic stops cleanly on SIGTERM
+    assert services["backup"]["init"] is True  # reaps the ssh a killed rsync leaves behind
 
 
 def test_images_are_tagged_by_commit_and_never_pulled():
@@ -18759,6 +19042,9 @@ services:
     image: "recordings:${RECORDINGS_IMAGE_TAG:?run make deploy, which tags the image by commit}"
     pull_policy: never
     hostname: recordings-backup
+    # An init as PID 1 reaps the ssh that rsync leaves behind when a timeout kills it (Python
+    # never waits for a child it didn't start), and passes SIGTERM on to the loop as before.
+    init: true
     user: "${RECORDINGS_UID:?}:${RECORDINGS_GID:?}"
     <<: *hardening
     command: ["recordings", "ops", "--loop"]
