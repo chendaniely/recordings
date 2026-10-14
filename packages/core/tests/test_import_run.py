@@ -1,6 +1,7 @@
 import dataclasses
 import errno
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ from recordings.locks import Locks, LockTimeout
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
 from recordings.plaud.reconcile import Held
 from recordings.selfdoc import validate
-from recordings.sources import audio_router
+from recordings.sources import ar_outputs, audio_router
 from recordings.sources.ar_outputs import map_rendition, pocket_outputs
 from recordings.sources.audio_router import ImportStopped, plan, run
 from recordings.state import State
@@ -790,3 +791,177 @@ def test_a_duplicates_catalog_label_is_on_the_recording_when_it_is_created(
     report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
     assert report.failed == []
     assert seen == [(A, [("private", "you")]), (B, [("private", "you")])]
+
+
+def test_a_re_run_never_decodes_what_the_archive_already_holds(ar_archive, plaud_env, writer,
+                                                              monkeypatch):
+    # why: §9.1.1, Task 9's council. A present row's recording holds the decoded duration of the
+    # same bytes, so a re-run measures only what it would create: decoding about 3,000
+    # recordings again on every re-run took hours.
+    build(ar_archive, plaud_env)
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    decoded = []
+    real_probe = audio_router.probe
+    monkeypatch.setattr(audio_router, "probe",
+                        lambda path, **kw: decoded.append(path) or real_probe(path, **kw))
+    again_plan = plan(ar_archive.root, writer.index, consent=())
+    assert again_plan.counts()["present"] == 6 and again_plan.unprobed() == []
+    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    assert (again.failed, again.measured, decoded) == ([], {}, [])
+
+
+def test_a_present_row_whose_recording_has_gone_fails_and_is_never_created_unmeasured(
+        ar_archive, plaud_env, writer):
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    the_plan = plan(ar_archive.root, writer.index, consent=())
+    (item,) = the_plan.items
+    assert item.disposition == "present" and item.probed is None
+    shutil.rmtree(writer.archive.path_for(item.present_id))  # removed by hand after the plan
+    report = run(the_plan, writer, now=NOW)
+    assert report.failed == [{"uri": f"plaud/{A}",
+                              "reason": "KeyError: a recording folder is missing"}]
+    assert list(writer.archive.iter_recordings()) == []
+
+
+def test_a_re_run_never_writes_an_imported_output_twice_whatever_its_bytes(
+        ar_archive, plaud_env, writer, monkeypatch):
+    # why: §6.4, Task 9's council. Outputs are write-once and each audio-router file is imported
+    # once. Compared by bytes, a later change to this mapping, or to how an output is written,
+    # would leave a second copy of every output on the next re-run, and the first, x.json,
+    # would stay the one shown (x-2.json sorts before it).
+    build(ar_archive, plaud_env)
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    files = _files(writer.root)
+    real_map, real_pocket = audio_router.map_rendition, audio_router.pocket_outputs
+
+    def changed(rendition):
+        return rendition.model_copy(update={"meta": {**rendition.meta, "changed": True}})
+
+    def mapped(path, doc):
+        found = real_map(path, doc)
+        if found.rendition is None:
+            return found
+        return dataclasses.replace(found, rendition=changed(found.rendition))
+
+    monkeypatch.setattr(audio_router, "map_rendition", mapped)
+    monkeypatch.setattr(audio_router, "pocket_outputs",
+                        lambda *args: [changed(r) for r in real_pocket(*args)])
+    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+                now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    assert (again.failed, again.renditions_added) == ([], 0)
+    assert _files(writer.root) == files
+
+
+def test_an_import_version_bump_writes_each_pocket_output_once_more(ar_archive, writer,
+                                                                    monkeypatch):
+    # why: §6.5, Task 9's council. A bump writes Pocket's outputs again as pocket@2, beside the
+    # old ones (write-once), the newer shown; the re-run after it writes nothing.
+    ar_archive.pocket(UUID)
+    ar_archive.write_catalog()
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    monkeypatch.setattr(ar_outputs, "IMPORT_VERSION", 2)
+    first = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    second = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    assert (first.renditions_added, second.renditions_added) == (2, 0)
+    (rec,) = writer.archive.iter_recordings()
+    versions = [(r.kind, r.version) for _, r in writer.archive.renditions(rec.id)]
+    assert sorted(versions) == [("notes", "pocket@1"), ("notes", "pocket@2"),
+                                ("transcript", "pocket@1"), ("transcript", "pocket@2")]
+    assert [v for k, v in versions if k == "transcript"][-1] == "pocket@2"
+
+
+def test_a_recording_imported_before_its_id_was_listed_stops_the_next_run(ar_archive, plaud_env,
+                                                                          writer):
+    # why: §9.1, Task 9's council. The consent list is a hard rule and 2a can't remove a
+    # recording: one imported before its ID was listed must not stay silently, counted among
+    # the rows the list kept out. Counted by recording, never named.
+    _group(ar_archive, plaud_env)
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    later = plan(ar_archive.root, writer.index, consent={B})
+    assert later.counts()["consent-excluded"] == 2 and not later.ok
+    (problem,) = later.problems
+    assert problem.startswith("1 recordings already in this archive")
+    assert A not in problem and B not in problem
+    with pytest.raises(ImportStopped, match="the plan has 1 problem"):
+        run(later, writer, now=NOW)
+
+
+def test_a_label_added_since_reaches_a_recording_here_even_when_the_run_stops(
+        ar_archive, plaud_env, writer):
+    # why: §7.4, Task 9's council. A privacy label added in audio-router after the import lands
+    # on the next run. Recordings already here go first, so a new recording that stops the run
+    # (here the disk guard) never leaves it public until the run after.
+    row = ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    row["tags"] = "therapy"
+    first = "1" * 32  # sorts before A
+    ar_archive.plaud(first, envelopes=[plaud_env(first)], recorded_at="2026-08-02T09:00:00-07:00")
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, writer.index, consent=())
+    assert [i.disposition for i in the_plan.items] == ["new", "present"]
+    size = (ar_archive.root / f"plaud/audio/2026/08/{first}.wav").stat().st_size
+    tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
+                       level="ok", message="5.5% free")
+    with pytest.raises(ImportStopped, match="would leave less than 5% free"):
+        run(the_plan, writer, now=NOW, disk=lambda: tight)
+    (rec,) = writer.archive.iter_recordings()
+    assert [(t.tag, t.by) for t in rec.tags] == [("private/therapy", "you")]
+
+
+def test_the_disk_guard_counts_a_duplicate_that_creates_the_recording(ar_archive, writer):
+    # why: §12.5, Task 9's council. build_catalog ranks Plaud first, so a Plaud orphan (deferred
+    # to 2b) can be the original of a Pocket row with the same audio. That row is a `duplicate`,
+    # yet it is the one that creates the recording and copies its media.
+    orphan = ar_archive.orphan(A)
+    pocket = ar_archive.pocket(UUID)
+    audio = ar_archive.root / pocket["audio_rel"]
+    audio.write_bytes((ar_archive.root / orphan["audio_rel"]).read_bytes())
+    pocket.update(audio_sha256=orphan["audio_sha256"], dup_of=orphan["uri"])
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, writer.index, consent=())
+    assert [i.disposition for i in the_plan.items] == ["deferred-to-2b", "duplicate"]
+    size = audio.stat().st_size
+    tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
+                       level="ok", message="5.5% free")
+    with pytest.raises(ImportStopped, match="would leave less than 5% free"):
+        run(the_plan, writer, now=NOW, disk=lambda: tight)
+    assert list(writer.archive.iter_recordings()) == []
+
+
+def test_a_word_stays_with_the_segment_that_holds_it_when_whisper_ends_go_backwards(tmp_path):
+    # why: Task 9's council. bisect needs ordered segment ends, and whisper's nearly always are.
+    # When one ends before an earlier one, a word inside the earlier segment still goes there.
+    doc = {**WORDS, "payload": {"words": [{"word": "mid", "start": 2.8, "end": 3.2}],
+                                "segments": [{"id": 0, "start": 0.0, "end": 5.0, "text": " a"},
+                                             {"id": 1, "start": 1.0, "end": 2.0, "text": " b"},
+                                             {"id": 2, "start": 5.0, "end": 8.0, "text": " c"}]}}
+    out = map_rendition(tmp_path / "words-x-v-20260801T170000Z.json", doc).rendition
+    assert [[w["word"] for w in s["words"]] for s in out.payload["segments"]] == [["mid"], [], []]
+
+
+def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_privacy(
+        ar_archive, plaud_env, writer):
+    # why: §7.4, Task 9's council. A recording that exists keeps the tags Dan left it: a catalog
+    # label he removed stays removed, and only a privacy label (which fails closed) merges again.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("lecture", "therapy"))
+    ar_archive.write_catalog()
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    (rec,) = writer.archive.iter_recordings()
+    assert {t.tag for t in rec.tags} == {"lecture", "private/therapy"}
+
+    @dataclasses.dataclass(frozen=True)
+    class RemoveTag:
+        tag: str
+        name: str = "remove-tag"
+
+        def apply(self, rec):
+            return rec.model_copy(update={"tags": [t for t in rec.tags if t.tag != self.tag]})
+
+    writer.mutate(rec.id, RemoveTag("lecture"))
+    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+                now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    assert again.failed == []
+    assert {t.tag for t in writer.archive.load(rec.id).tags} == {"private/therapy"}

@@ -25,6 +25,7 @@ import re
 from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import accumulate
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,9 @@ from pydantic import ValidationError
 from recordings.models import Rendition
 from recordings.plaud.normalise import canonical_json, sha256_of
 
+# Versions Pocket's outputs (pocket@N): a bump writes each once more, beside the old one, and
+# the newest is shown. An audio-router output is imported once per file, whatever this mapping
+# does later (audio_router._identity), so a change here never reaches one already imported.
 IMPORT_VERSION = 1
 SKIPPED = {
     "plaud": "audio-router's Plaud outputs are rebuilt by reconcile",
@@ -101,7 +105,9 @@ def _words_transcript(payload: dict) -> tuple[dict, int] | None:
     words = sorted(({"word": str(w.get("word") or ""), "start": float(w["start"]),
                      "end": float(w["end"])} for w in payload.get("words") or [] if _timed(w)),
                    key=lambda w: (w["start"] + w["end"]) / 2)
-    starts, ends = [start for start, _ in times], [end for _, end in times]
+    # bisect needs ordered ends. whisper's nearly always are; when one ends before an earlier
+    # one, the running maximum keeps a word with the segment that contains it.
+    starts, ends = [start for start, _ in times], list(accumulate((e for _, e in times), max))
     inside: list[list[dict]] = [[] for _ in rows]
     for word in words:
         middle = (word["start"] + word["end"]) / 2

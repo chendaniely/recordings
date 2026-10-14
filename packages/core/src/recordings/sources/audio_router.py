@@ -40,7 +40,7 @@ from recordings.disk import STOP_FREE_PERCENT, DiskStatus
 from recordings.index import Index, IndexRefused
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
 from recordings.media import MEDIA_SUFFIXES, MediaProbe, media_kind, probe
-from recordings.models import TagRef, is_private_tag
+from recordings.models import Rendition, TagRef, is_private_tag
 from recordings.plaud.normalise import link_errors, meta_fetched_at
 from recordings.plaud.reconcile import matches_auto_private
 from recordings.refs import canonical_plaud_id
@@ -121,7 +121,7 @@ class Item:
     present_id: str | None = None
     private: bool = False
     tags: tuple[str, ...] = ()  # recordings tags, privacy labels already under private/
-    probed: MediaProbe | None = None  # None: its duration couldn't be measured
+    probed: MediaProbe | None = None  # None: not measured (it can't be, or it is present)
     snapshot_problems: tuple[tuple[str, ...], ...] = ()  # per Plaud snapshot, why reconcile
     # will skip it; () when it is usable (§9.1.1: nothing is built from an incomplete one)
 
@@ -141,8 +141,11 @@ class Plan:
         return {d: found.get(d, 0) for d in DISPOSITIONS}
 
     def unprobed(self) -> list[str]:
-        """Rows to import whose media couldn't be measured: a real run refuses them all."""
-        return [i.row.uri for i in self.items if i.disposition in IMPORTED and i.probed is None]
+        """Rows to import whose media couldn't be measured: a real run refuses them all. A
+        `present` row isn't measured again: its recording holds the decoded duration of the same
+        bytes (§9.1.1), so a re-run decodes only what it would create."""
+        return [i.row.uri for i in self.items if i.disposition in IMPORTED
+                and i.disposition != "present" and i.probed is None]
 
     def incomplete_snapshots(self) -> dict:
         """Plaud snapshots reconcile will skip, counted by reason (a snapshot with two reasons
@@ -460,6 +463,23 @@ def _consent_closure(rows: list[Row], consent: frozenset[str]) -> tuple[frozense
     return frozenset(uris), frozenset(shas)
 
 
+def _consent_kept(index: Index | None, rows: list[Row],
+                  excluded: tuple[frozenset[str], frozenset[str]]) -> int:
+    """How many recordings this archive already holds that the consent list now excludes: an ID
+    listed after its import. Found by Plaud ID, audio-router's reference and audio hash, from
+    catalog data alone, so no file of theirs is opened."""
+    if index is None or not index.exists():
+        return 0
+    found: set[str] = set()
+    for row in rows:
+        if row.uri in excluded[0]:
+            if row.source == "plaud":
+                found.update(index.find_by_source("plaud", row.file_id))
+            found.update(index.find_by_source("audio_router", row.uri))
+    found.update(rid for sha in excluded[1] if (rid := index.find_by_sha256(sha)))
+    return len(found)
+
+
 def _place(root: Path, row: Row, *, excluded: tuple[frozenset[str], frozenset[str]],
            by_uri: dict[str, Row], index: Index | None, default_tz: str,
            private_media: dict[str, list[Path]]) -> Item:
@@ -535,7 +555,7 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
     return Item(row, disposition, kind=kind, audio=audio, sha256=sha, recorded_at=when,
                 timezone=zone, time_source=time_source, snapshots=snapshots,
                 renditions=renditions, texts=texts, present_id=present, private=private,
-                tags=tags, probed=probe(audio),
+                tags=tags, probed=None if present else probe(audio),
                 snapshot_problems=_snapshot_problems(kind, snapshots))
 
 
@@ -650,6 +670,13 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
     if blind:
         problems.append(f"{blind} consent-listed rows have no catalog audio hash, so copies of "
                         "them can't be recognised: rebuild the catalog")
+    # An ID listed after its recording was imported: 2a can't take the recording out, so the
+    # run stops until Dan does (§9.1). Counted, never named, and found from catalog data alone.
+    kept = _consent_kept(index, rows, excluded)
+    if kept:
+        problems.append(f"{kept} recordings already in this archive are now on the consent "
+                        "list: 2a can't remove them, so take them out by hand (then `recordings "
+                        "reindex --allow-missing`) before importing again")
     by_uri = {r.uri: r for r in rows}
     private_media, skipped = _private_media(root, listed)
     if skipped:
@@ -777,6 +804,25 @@ def _titles(item: Item, *, complete_only: bool = False) -> list[str]:
             if isinstance(d, dict) and isinstance(d.get(key), str) and d[key].strip()]
 
 
+def _identity(rendition: Rendition) -> tuple:
+    """An imported output's identity, as reconcile keys Plaud's: an audio-router file by its name
+    (each is imported once, whatever this mapping later makes of it), and a Pocket output by its
+    snapshot, the hash of what it carries and its `version`, which carries IMPORT_VERSION."""
+    if rendition.meta.get("imported_from") == "audio-router":
+        return ("audio-router", rendition.meta.get("file"))
+    return (rendition.kind, rendition.note_type, rendition.inputs.get("source"),
+            rendition.inputs.get("part_sha256"), rendition.version)
+
+
+def _imported(writer: Writer, rid: str) -> set[tuple]:
+    """The identities of the outputs the import already wrote to a recording. Bytes aren't
+    identity: compared by bytes, a change to the mapping, or to how an output is written, would
+    leave a second, permanent copy of each on the next re-run, and the first would stay the one
+    shown (`x-2.json` sorts before `x.json`)."""
+    return {_identity(r) for _, r in writer.archive.renditions(rid, problems=[])
+            if r.engine == "pocket" or r.meta.get("imported_from") == "audio-router"}
+
+
 def _title(item: Item) -> tuple[str, bool]:
     """(the title, whether the source supplied it): the newest complete snapshot's, never a
     degraded one's (§9.1.1), else a private-tier export's own name, which is how Recorder titles
@@ -788,6 +834,22 @@ def _title(item: Item) -> tuple[str, bool]:
     if item.row.source == "private" and audio is not None and audio.stem != item.row.file_id:
         return audio.stem, True
     return "Untitled recording", False
+
+
+def _recorded(writer: Writer, item: Item) -> MediaProbe:
+    """A present row's measurement, from its recording: the decoded duration of the same bytes,
+    taken when it was created (§9.1.1), so a re-run never decodes it again. The media is decoded
+    only when the recording holds none. A recording that has gone raises KeyError, so the row
+    fails and is never created unmeasured."""
+    media = writer.archive.load(item.present_id or "").media
+    if media.sha256 == item.sha256 and media.duration_ms is not None:
+        return MediaProbe(duration_ms=media.duration_ms, sample_rate=media.sample_rate,
+                          channels=media.channels, has_video=media.kind == "video",
+                          method="recorded")
+    measured = probe(item.audio) if item.audio is not None else None
+    if measured is None:
+        raise WriterError("its media can't be measured (spec §9.1.1)")
+    return measured
 
 
 def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
@@ -802,11 +864,13 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
     if not sources:  # the source's own ID is always kept, so a later sync can match it
         sources.append(RawSource(kind=item.kind, ref=item.row.file_id, added_at=now))
     sources.append(RawSource(kind="audio_router", ref=item.row.uri, added_at=now))
+    have = _imported(writer, item.present_id) if item.present_id else set()
     renditions = []
     for path in item.renditions:
         mapped = map_rendition(path, _read_json(path))
         if mapped.rendition is not None:
-            renditions.append(mapped.rendition)
+            if _identity(mapped.rendition) not in have:  # each audio-router file goes in once
+                renditions.append(mapped.rendition)
         elif mapped.keep_raw:  # the speaker names Dan typed: verbatim in source/ (§9.3)
             sources.append(RawSource(kind="audio_router", ref=item.row.uri, added_at=now,
                                      fetched_at=ar_stamp(path), payload=path.read_bytes()))
@@ -816,19 +880,22 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
     # a second write after its content.
     tags = [TagRef(tag=tag, by="you")
             for tag in dict.fromkeys(t for member in group for t in member.tags)]
+    if item.disposition == "present":  # its recording exists: a label Dan removed stays removed,
+        tags = [t for t in tags if is_private_tag(t.tag)]  # and only privacy is merged again
     titles = [t for member in group if member.kind == "plaud" for t in _titles(member)]
     if (not any(is_private_tag(t.tag) for t in tags)
             and matches_auto_private(titles, writer.auto_private)):
         tags.append(TagRef(tag="private", by="auto"))
     title, from_source = _title(item)
-    probed = item.probed
+    probed = item.probed if item.probed is not None else _recorded(writer, item)
     added = writer.add(Incoming(
         media=item.audio, recorded_at=item.recorded_at, timezone_name=item.timezone,
         time_source=item.time_source, title=title, title_by=item.kind if from_source else None,
         kind=media_kind(item.audio, probed) or "audio", sources=tuple(sources),
         duration_ms=probed.duration_ms, sample_rate=probed.sample_rate, channels=probed.channels,
         tags=tuple(tags), renditions=tuple(renditions), sha256=item.sha256))
-    report.measured[probed.method] = report.measured.get(probed.method, 0) + 1
+    if item.probed is not None:  # a present row was measured when its recording was created
+        report.measured[probed.method] = report.measured.get(probed.method, 0) + 1
     report.created += added.created
     report.merged += not added.created
     report.sources_added += added.sources_added
@@ -850,6 +917,7 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
     elif item.kind == "pocket":
         rec = writer.archive.load(rid)
         folder = writer.archive.path_for(rid)
+        have = _imported(writer, rid)
         last: dict[tuple, str] = {}  # each slot's part hash at the previous snapshot, as reconcile's `applied`
         for source in rec.sources:
             doc = _read_json(folder / source.raw) if source.kind == "pocket" and source.raw else None
@@ -859,14 +927,18 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
                     if last.get(slot) == part:  # the same output as the last snapshot's: no new file
                         continue
                     last[slot] = part
+                    if _identity(rendition) in have:  # written before, whatever its bytes now
+                        continue
                     if writer.write_rendition(rid, rendition) is not None:
                         report.renditions_added += 1
 
 
-def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float) -> bool:
-    """Whether copying the item's media would leave less than the stop margin free. Only a new
-    recording copies media: a duplicate or a re-run merges into what is there."""
-    if (item.disposition not in ("new", "new-private") or item.audio is None
+def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float, *,
+                creates: bool) -> bool:
+    """Whether copying the item's media would leave less than the stop margin free. Only the row
+    that creates a recording copies media: the first of its same-audio group not yet here, which
+    is a `duplicate` when its original is deferred to 2b. The rest merge into it."""
+    if (not creates or item.audio is None
             or status.free_bytes is None or not status.total_bytes):
         return False
     try:
@@ -894,13 +966,16 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
         raise ImportStopped(
             f"the plan has {len(plan.problems)} problem{'s' if len(plan.problems) != 1 else ''} "
             "(see --dry-run): nothing was imported", report)
-    todo = [item for item in plan.items if item.disposition in IMPORTED]
+    # Recordings already here go first: a label added in audio-router since (a privacy label
+    # among them) lands even when a later new recording stops the run.
+    todo = sorted((item for item in plan.items if item.disposition in IMPORTED),
+                  key=lambda item: item.disposition != "present")
     # Rows with the same audio become one recording, whichever is added first. Each is added
     # with its whole group's privacy, so a duplicate's label or title is never a late write.
     by_sha: dict[str, list[Item]] = {}
     for item in todo:
         by_sha.setdefault(item.sha256, []).append(item)
-    unmeasured = sum(item.probed is None for item in todo)
+    unmeasured = len(plan.unprobed())
     if unmeasured:
         raise ImportStopped(
             f"media can't be measured for {unmeasured} of {len(todo)} recordings: anything but "
@@ -912,7 +987,8 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
                 status = disk()
                 if status.level == "stop":
                     raise ImportStopped(status.message, report)
-                if _would_fill(status, item, stop_free_percent):
+                creates = item.disposition != "present" and by_sha[item.sha256][0] is item
+                if _would_fill(status, item, stop_free_percent, creates=creates):
                     raise ImportStopped(f"the next recording would leave less than "
                                         f"{stop_free_percent:g}% free: new imports stop", report)
             try:
