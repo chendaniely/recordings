@@ -1,10 +1,13 @@
+import hashlib
 import importlib.util
 import inspect
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -18,7 +21,7 @@ import pytest
 
 from recordings import backup, cli, ops
 from recordings.backup import BackupError, Keep
-from recordings.config import ConfigError, load_config
+from recordings.config import ConfigError, load_config, secret_path
 from recordings.locks import Locks, LockTimeout
 from recordings.ops import Context, JobResult, run_job
 from recordings.selfdoc import validate
@@ -57,8 +60,10 @@ def config(tmp_path, writer, **backup_keys) -> tuple:
         f'[state]\npath = "{writer.state.path}"\n[index]\npath = "{writer.index.path}"\n'
         f"[backup]\n{lines}\n", encoding="utf-8")
     (tmp_path / "pw").write_text("a test password\n", encoding="utf-8")
+    (tmp_path / "known_hosts").write_text("nas ssh-ed25519 AAAAexample\n", encoding="utf-8")
     environ = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "RECORDINGS_CONFIG": str(cfg_file),
-               "RESTIC_PASSWORD_FILE": str(tmp_path / "pw")}
+               "RESTIC_PASSWORD_FILE": str(tmp_path / "pw"),
+               "RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(tmp_path / "known_hosts")}
     return load_config(environ), environ
 
 
@@ -237,10 +242,8 @@ def test_the_runbook_downloads_the_restic_the_tests_pin():
 
 def test_sftp_takes_the_nas_key_and_host_key_from_secret_files(tmp_path, writer):
     (tmp_path / "key").write_text("not a real key\n", encoding="utf-8")
-    (tmp_path / "known_hosts").write_text("nas ssh-ed25519 AAAAexample\n", encoding="utf-8")
     cfg, environ = config(tmp_path, writer, repository="sftp:backup@nas:/backups/r")
-    environ |= {"RECORDINGS_NAS_SSH_KEY_FILE": str(tmp_path / "key"),
-                "RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(tmp_path / "known_hosts")}
+    environ |= {"RECORDINGS_NAS_SSH_KEY_FILE": str(tmp_path / "key")}
     base = backup.restic_base(backup.from_config(cfg, environ))
     (option,) = [a for a in base if a.startswith("sftp.args=")]
     assert f"-i {tmp_path / 'key'}" in option and "StrictHostKeyChecking=yes" in option
@@ -508,12 +511,16 @@ def test_sigterm_reaches_the_running_child_before_the_job_stops(tmp_path):
 def test_sigterm_still_reaches_the_handler_that_was_there_before():
     # why: a handler installed before ours (by a caller, or a test runner) must still run.
     earlier = []
-    before = signal.signal(signal.SIGTERM, lambda signum, frame: earlier.append(signum))
+
+    def handler(signum, frame):
+        earlier.append(signum)
+
+    before = signal.signal(signal.SIGTERM, handler)
     try:
         with ops.sigterm_forwarded():
             signal.raise_signal(signal.SIGTERM)  # no child running: the earlier handler decides
         assert earlier == [signal.SIGTERM]
-        assert signal.getsignal(signal.SIGTERM) is not ops._on_sigterm  # put back afterwards
+        assert signal.getsignal(signal.SIGTERM) is handler  # the earlier one is put back
     finally:
         signal.signal(signal.SIGTERM, before)
 
@@ -531,3 +538,210 @@ def test_with_a_real_restic_backup_check_forget_and_restore(tmp_path, writer, ma
     restored = backup.run_restore_test(bc, environ, expected_uuid=writer.identity.uuid, now=NOW)
     assert restored.ok and restored.recordings == 1
     assert not any((tmp_path / "scratch").iterdir())
+
+
+CLEANS_UP = ("import pathlib, signal, sys, time\n"
+             "def stop(*_):\n"
+             "    time.sleep(0.5)  # restic's cleanup: it reports on stderr, then removes its lock\n"
+             "    sys.stderr.write('cleaning up\\n'); sys.stderr.flush()  # BrokenPipeError if closed\n"
+             "    pathlib.Path(%(cleaned)r).touch()\n"
+             "    sys.exit(0)\n"
+             "signal.signal(signal.SIGTERM, stop)\n"
+             "pathlib.Path(%(ready)r).touch()\n"
+             "time.sleep(30)\n")
+
+
+def sigterm_when_ready(ready: Path) -> None:
+    main_thread = threading.main_thread().ident
+
+    def send():
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        signal.pthread_kill(main_thread, signal.SIGTERM)
+
+    threading.Thread(target=send, daemon=True).start()
+
+
+def test_a_raising_earlier_handler_runs_only_after_the_child_has_cleaned_up(tmp_path):
+    # why: an earlier handler that raises (sys.exit) used to run at once, which closed the child's
+    # pipes mid-cleanup: restic died of SIGPIPE and left its repository lock behind.
+    ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
+    child = CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}
+    seen = []
+
+    def earlier(signum, frame):
+        seen.append(cleaned.exists())
+        raise RuntimeError("the earlier handler")
+
+    before = signal.signal(signal.SIGTERM, earlier)
+    try:
+        sigterm_when_ready(ready)
+        with pytest.raises(RuntimeError, match="earlier handler"), ops.sigterm_forwarded():
+            ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=60)
+        assert signal.getsignal(signal.SIGTERM) is earlier
+    finally:
+        signal.signal(signal.SIGTERM, before)
+    assert cleaned.exists() and seen == [True]  # the child finished first, then the handler ran
+
+
+def test_a_sigterm_while_the_child_is_starting_still_reaches_it(monkeypatch):
+    # why: a SIGTERM between Popen() and the assignment of the child used to stop this process
+    # without ever signalling the child, which was left running.
+    real, children = subprocess.Popen, []
+
+    def popen_then_sigterm(*args, **kwargs):
+        proc = real(*args, **kwargs)
+        children.append(proc)
+        signal.raise_signal(signal.SIGTERM)  # arrives before run_child has the child
+        return proc
+
+    monkeypatch.setattr(ops.subprocess, "Popen", popen_then_sigterm)
+    with pytest.raises(SystemExit) as stopped, ops.sigterm_forwarded():
+        ops.run_child([sys.executable, "-c", "import time; time.sleep(30)"], capture_output=True,
+                      text=True, timeout=60)
+    assert stopped.value.code == 128 + signal.SIGTERM
+    try:
+        assert children[0].wait(timeout=10) != 0  # the child was told to stop, not left running
+    except subprocess.TimeoutExpired:
+        children[0].kill()
+        pytest.fail("the child was never signalled")
+
+
+def test_sigterm_forwarded_can_nest_and_copes_with_a_handler_python_cannot_see(monkeypatch):
+    # why: nested, it used to take its own handler for the "earlier" one and recurse on SIGTERM,
+    # and getsignal() returns None for a handler not installed from Python.
+    outer = signal.getsignal(signal.SIGTERM)
+    with ops.sigterm_forwarded():
+        with ops.sigterm_forwarded():
+            assert ops._previous is not ops._on_sigterm
+        assert signal.getsignal(signal.SIGTERM) is ops._on_sigterm  # the outer block's, still
+    assert signal.getsignal(signal.SIGTERM) is outer
+    monkeypatch.setattr(ops.signal, "getsignal", lambda signum: None)
+    with ops.sigterm_forwarded():
+        pass  # restoring None would raise TypeError
+    monkeypatch.undo()
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
+
+
+def test_errors_from_the_state_copy_or_the_ops_lock_are_recorded_not_raised(
+        tmp_path, writer, make_incoming, monkeypatch):
+    # why: a full state disk (sqlite3.OperationalError) or a lock file that can't be opened
+    # (OSError) used to escape run_job as a traceback, unrecorded.
+    writer.add(make_incoming())
+    cfg, environ = config(tmp_path, writer)
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, clock=lambda: NOW,
+                  runner=FakeRestic(stdout=SUMMARY))
+
+    def full(dest):
+        raise sqlite3.OperationalError("database or disk is full: /some/place/Q&A.db")
+
+    monkeypatch.setattr(writer.state, "backup_to", full)
+    assert run_job(ctx, "backup") == JobResult("backup", False, "OperationalError")
+    assert writer.state.last_run("backup").detail == "OperationalError"
+    monkeypatch.undo()
+
+    class Unopenable:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def hold(self, key):
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(ops, "Locks", Unopenable)
+    assert run_job(ctx, "check") == JobResult("check", False, "PermissionError")
+    assert writer.state.last_run("check").detail == "PermissionError"
+
+
+def test_host_keys_are_always_checked_and_a_nas_without_a_known_hosts_file_is_refused(
+        tmp_path, writer):
+    # why: without StrictHostKeyChecking=yes, a host's ssh_config (accept-new) or ~/.ssh/known_hosts
+    # decides, and the mirror sends the plaintext archive over these options.
+    options = ssh_options(None, None, None)
+    assert options[options.index("StrictHostKeyChecking=yes") - 1] == "-o"
+    assert not any(o.startswith("UserKnownHostsFile=") for o in options)
+    cfg, environ = config(tmp_path, writer, repository="sftp:backup@nas:/backups/r")
+    del environ["RECORDINGS_NAS_KNOWN_HOSTS_FILE"]
+    with pytest.raises(ConfigError, match="RECORDINGS_NAS_KNOWN_HOSTS_FILE"):
+        backup.from_config(cfg, environ)  # an sftp: repository
+    cfg, environ = config(tmp_path, writer)
+    del environ["RECORDINGS_NAS_KNOWN_HOSTS_FILE"]
+    cfg.data["nas"] = {"ssh": "mirror@nas"}
+    with pytest.raises(ConfigError, match="RECORDINGS_NAS_KNOWN_HOSTS_FILE"):
+        backup.from_config(cfg, environ)  # the mirror's and the free-space check's ssh
+    cfg.data["nas"] = {}
+    backup.from_config(cfg, environ)  # a rest-server on the tailnet needs no ssh at all
+
+
+def test_a_key_path_with_a_space_survives_restics_sftp_args(tmp_path, writer):
+    key = tmp_path / "my keys" / "nas key"
+    key.parent.mkdir()
+    key.write_text("not a real key\n", encoding="utf-8")
+    cfg, environ = config(tmp_path, writer, repository="sftp:backup@nas:/backups/r")
+    environ |= {"RECORDINGS_NAS_SSH_KEY_FILE": str(key)}
+    base = backup.restic_base(backup.from_config(cfg, environ))
+    (option,) = [a for a in base if a.startswith("sftp.args=")]
+    assert shlex.split(option.removeprefix("sftp.args=")) == backup.from_config(
+        cfg, environ).nas.options()  # restic splits the value like a shell does
+
+
+def test_a_direct_ssh_key_value_is_refused_and_a_stray_variable_never_reaches_restic(
+        tmp_path, writer):
+    cfg, environ = config(tmp_path, writer)
+    with pytest.raises(ConfigError, match="RECORDINGS_NAS_SSH_KEY_FILE"):
+        secret_path("nas_ssh_key", environ | {"RECORDINGS_NAS_SSH_KEY": "-----BEGIN fixture-----"})
+    env = backup.restic_env(backup.from_config(cfg, environ), environ | {
+        "RESTIC_PASSWORD_COMMAND": "echo hunter2", "RESTIC_PROGRESS_FPS": "1",
+        "RESTIC_REPOSITORY_FILE": "/elsewhere", "RECORDINGS_PLAUD_TOKEN": "token",
+        "AWS_SECRET_ACCESS_KEY": "aws"})
+    assert set(env) <= {"PATH", "HOME", "RESTIC_REPOSITORY", "RESTIC_PASSWORD_FILE",
+                        "RESTIC_CACHE_DIR"}
+
+
+def test_a_missing_sentinel_in_the_restored_copy_is_reported_once(tmp_path, writer, make_incoming):
+    writer.add(make_incoming())
+    cfg, environ = config(tmp_path, writer)
+
+    def restore(cmd):
+        if "restore" in cmd:
+            target = Path(cmd[cmd.index("--target") + 1])
+            copy = target / writer.root.relative_to(writer.root.anchor)
+            shutil.copytree(writer.root, copy)
+            (copy / SENTINEL).unlink()
+
+    result = backup.run_restore_test(backup.from_config(cfg, environ), environ,
+                                     expected_uuid=writer.identity.uuid, now=NOW,
+                                     runner=FakeRestic(on_call=restore))
+    assert len(result.problems) == 1
+
+
+def test_backup_init_prints_fixed_text_and_a_missing_restic_is_a_clean_error(
+        tmp_path, writer, monkeypatch, capsys):
+    # why: restic's own words can carry a path or a server's reply; and a restic that is not
+    # installed used to end in a traceback.
+    cfg, environ = config(tmp_path, writer)
+    fake = FakeRestic(returncode=1, stderr="Fatal: /archive/会議メモ.json: permission denied\n")
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, runner=fake)
+    monkeypatch.setattr(cli, "_ops_context", lambda as_json: ctx)
+    assert cli.main(["backup", "init", "--json"]) == 1
+    out = capsys.readouterr().out
+    assert "会議メモ" not in out and "BackupError; exit 1" in json.loads(out)["error"]
+    missing, _ = config(tmp_path, writer, restic=str(tmp_path / "no-restic-here"))
+    ctx = Context(cfg=missing, environ=environ, state=writer.state, runner=ops.run_child)
+    assert cli.main(["backup", "init", "--json"]) == 1
+    assert "FileNotFoundError" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_fetch_restic_checks_the_binary_it_has_not_just_its_version(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("fetch_restic", REPO / "scripts" / "fetch_restic.py")
+    fetch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetch)
+    assert set(fetch.BINARY_SHA256) == {name for name, _ in fetch.PINNED.values()}
+    assert all(re.fullmatch(r"[0-9a-f]{64}", sha) for sha in fetch.BINARY_SHA256.values())
+    monkeypatch.setattr(fetch, "TARGET", tmp_path / "restic")
+    fake = tmp_path / "restic"
+    fake.write_text("#!/bin/sh\necho 'restic 0.19.1 compiled with go'\n", encoding="utf-8")
+    fake.chmod(0o755)
+    name = next(iter(fetch.BINARY_SHA256))
+    assert not fetch.installed(fetch.BINARY_SHA256[name])  # it prints the version, but isn't restic
+    assert fetch.installed(hashlib.sha256(fake.read_bytes()).hexdigest())  # the hash is what counts

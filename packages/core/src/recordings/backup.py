@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -36,7 +37,7 @@ from recordings.config import Config, ConfigError, secret
 from recordings.disk import STOP_FREE_PERCENT, WARN_FREE_PERCENT
 from recordings.selfdoc import validate
 from recordings.sentinel import SentinelError, read_sentinel
-from recordings.ssh import Nas, nas_free_bytes, nas_from_config
+from recordings.ssh import Nas, nas_free_bytes, nas_from_config, require_known_hosts
 from recordings.state import State
 
 TAG = "recordings"
@@ -128,6 +129,9 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
     min_free_gb = section.get("min_nas_free_gb", 10)
     if not isinstance(min_free_gb, (int, float)) or isinstance(min_free_gb, bool) or min_free_gb < 0:
         raise ConfigError("[backup] min_nas_free_gb must be a number")
+    nas = nas_from_config(cfg, environ)
+    if repository.strip().startswith("sftp:"):
+        require_known_hosts(nas)
     cacert = section.get("cacert")
     if cacert is not None and (not isinstance(cacert, str) or not cacert.strip()):
         raise ConfigError("[backup] cacert must be the path to rest-server's certificate")
@@ -146,7 +150,7 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
         restic=str(section.get("restic", "restic")),
         cache_dir=Path(section["cache_dir"]) if section.get("cache_dir") else None,
         restore_scratch=Path(section["restore_scratch"]) if section.get("restore_scratch") else None,
-        nas=nas_from_config(cfg, environ),
+        nas=nas,
         nas_repo_path=section.get("nas_repo_path") or None,
         min_nas_free_bytes=int(min_free_gb * 1024 ** 3),
         rest_username=section.get("rest_username") or None,
@@ -177,7 +181,8 @@ def restic_env(bc: BackupConfig, environ: Mapping[str, str]) -> dict[str, str]:
 def restic_base(bc: BackupConfig) -> list[str]:
     base = [bc.restic]
     if bc.repository.startswith("sftp:"):
-        base += ["-o", "sftp.args=" + " ".join(bc.nas.options())]
+        # restic splits the value like a shell does, so a key path with a space needs quoting
+        base += ["-o", "sftp.args=" + shlex.join(bc.nas.options())]
     if bc.cacert is not None:
         base += ["--cacert", str(bc.cacert)]
     if bc.retry_lock:
@@ -371,8 +376,8 @@ def run_restore_test(bc: BackupConfig, environ: Mapping[str, str], *, expected_u
         try:
             if read_sentinel(restored).uuid != expected_uuid:
                 problems.append({"path": str(restored), "message": "a different archive's UUID"})
-        except SentinelError as exc:
-            problems.append({"path": str(restored), "message": str(exc)})
+        except SentinelError:
+            pass  # validate() has reported it already: once is enough
         count = sum(1 for _ in Archive(restored).recording_dirs())
     finally:
         shutil.rmtree(target, ignore_errors=True)

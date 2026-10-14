@@ -64,7 +64,8 @@ keep_daily = 14
 keep_weekly = 8
 keep_monthly = 12
 # false with rest-server --append-only: it refuses forget --prune, so retention runs on the NAS,
-# as a weekly scheduled task (the runbook has it).
+# as a weekly scheduled task (the runbook has it). Left out, prune defaults to true in code, so an
+# append-only server refuses it loudly (403) rather than letting a repository grow unnoticed.
 prune = false
 # Any folder on the backups' NAS volume, as [nas] ssh's sftp sees it: the free-space check's path.
 nas_repo_path = "/recordings-mirror"
@@ -72,7 +73,7 @@ min_nas_free_gb = 10
 restore_scratch = "/restore"            # the monthly restore test's scratch folder
 cache_dir = "/state/cache/restic"
 
-[plaud]                                # stage 2
+[plaud]                                 # stage 2
 schedule_minutes = 20                   # scheduled sync interval; 0 turns it off
 auto_import = true                      # import missing recordings (safe: nothing runs until tagged)
 recheck_days = 14                       # keep re-checking recent recordings for Plaud's late notes

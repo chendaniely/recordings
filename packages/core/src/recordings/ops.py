@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import signal
+import sqlite3
 import subprocess
 import threading
 from collections.abc import Callable, Iterator, Mapping
@@ -44,8 +45,10 @@ CLI_RETRY_LOCK = "5m"  # restic --retry-lock from the CLI: the NAS's retention t
 BUSY = "skipped: busy"
 
 _child: subprocess.Popen | None = None
-_stopping = False
+_spawning = False  # between starting a child and holding it: run_child forwards a SIGTERM then
+_stopping = False  # a SIGTERM arrived while a child ran: the earlier handler runs after it exits
 _previous: Callable[[int, object], object] | None = None  # the SIGTERM handler before ours
+_depth = 0  # how many sigterm_forwarded blocks are open: only the outermost sets the handler
 
 
 def _now() -> datetime:
@@ -54,16 +57,29 @@ def _now() -> datetime:
 
 def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: float | None = None,
               capture_output: bool = False, **popen_kwargs) -> subprocess.CompletedProcess:
-    """subprocess.run, except that a SIGTERM to this process, inside sigterm_forwarded, goes on to
-    the child, and this process stops only once the child has."""
-    global _child
+    """subprocess.run, except for SIGTERM inside sigterm_forwarded: it goes on to the child, and
+    this process stops only once the child has exited and its pipes are drained. Then the handler
+    that was there before runs (it may raise), or, with none, this process exits. Calling that
+    handler while the child still ran would close the pipes under it: restic would die of SIGPIPE
+    in the middle of its cleanup and leave its repository lock behind."""
+    global _child, _spawning, _stopping
     if capture_output:
         popen_kwargs["stdout"] = popen_kwargs["stderr"] = subprocess.PIPE
     if input is not None:
         popen_kwargs["stdin"] = subprocess.PIPE
-    with subprocess.Popen(cmd, **popen_kwargs) as proc:
+    # A SIGTERM handler runs between two bytecodes of this thread, so while _spawning is set it
+    # only records the signal; it is sent below, once the child is held. (Blocking SIGTERM with
+    # pthread_sigmask instead would hand the child a blocked signal across exec.)
+    _spawning = True
+    try:
+        proc = subprocess.Popen(cmd, **popen_kwargs)
         _child = proc
+    finally:
+        _spawning = False
+    with proc:
         try:
+            if _stopping:
+                proc.send_signal(signal.SIGTERM)
             stdout, stderr = proc.communicate(input, timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -71,19 +87,25 @@ def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: floa
             raise
         finally:
             _child = None
-    if _stopping and _previous is None:  # no one else decides when to stop: stop now
-        raise SystemExit(128 + signal.SIGTERM)
+    if _stopping:
+        _stopping = False
+        if _previous is not None:
+            _previous(signal.SIGTERM, None)  # the child is done: now the caller's handler decides
+        else:
+            raise SystemExit(128 + signal.SIGTERM)  # no one else decides when to stop: stop now
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def _on_sigterm(signum: int, frame) -> None:
     global _stopping
-    _stopping = True
-    if _child is not None:
-        _child.send_signal(signal.SIGTERM)  # restic and rsync stop cleanly, dropping their locks
+    if _child is not None or _spawning:
+        _stopping = True  # restic and rsync stop cleanly on SIGTERM, dropping their locks
+        if _child is not None:
+            _child.send_signal(signal.SIGTERM)
+        return  # run_child ends the job once the child has exited
     if _previous is not None:
-        _previous(signum, frame)  # chain to whatever Python handler was there before
-    elif _child is None:
+        _previous(signum, frame)  # no child running: whatever Python handler was there decides
+    else:
         raise SystemExit(128 + signum)
 
 
@@ -93,19 +115,26 @@ def sigterm_forwarded() -> Iterator[None]:
     to the handler that was there before, if it is a Python function. Without any handler, Python
     as a container's PID 1 ignores SIGTERM, and Docker kills both with SIGKILL after the grace
     period, leaving restic's lock behind. Only the main thread can set a handler, so elsewhere
-    this does nothing."""
-    global _stopping, _previous
+    this does nothing; and it nests: only the outermost block sets and puts back the handler."""
+    global _stopping, _previous, _depth
     if threading.current_thread() is not threading.main_thread():
         yield
         return
-    before = signal.getsignal(signal.SIGTERM)
-    _stopping, _previous = False, before if callable(before) else None
+    if _depth:
+        _depth += 1
+        try:
+            yield
+        finally:
+            _depth -= 1
+        return
+    before = signal.getsignal(signal.SIGTERM)  # None: a handler Python can't see or restore
+    _stopping, _previous, _depth = False, before if callable(before) else None, 1
     signal.signal(signal.SIGTERM, _on_sigterm)
     try:
         yield
     finally:
-        signal.signal(signal.SIGTERM, before)
-        _stopping, _previous = False, None
+        signal.signal(signal.SIGTERM, before if before is not None else signal.SIG_DFL)
+        _stopping, _previous, _depth = False, None, 0
 
 
 @dataclass
@@ -177,7 +206,8 @@ JOBS: dict[str, Callable[[Context, tuple[str, ...]], str]] = {
     "backup": _backup, "prune": _prune, "check": _check, "restore-test": _restore_test,
 }
 FAILURES: tuple[type[BaseException], ...] = (
-    BackupError, ConfigError, SentinelError, StateError, OSError, subprocess.TimeoutExpired)
+    BackupError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
+    subprocess.TimeoutExpired)
 
 
 def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
@@ -190,6 +220,11 @@ def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
         except LockTimeout:
             log.info("%s: %s", job, BUSY)
             return JobResult(job, False, BUSY)
+        except FAILURES as exc:  # the lock file can't be opened: a failure, recorded as any is
+            log.debug("%s failed", job, exc_info=True)
+            now = ctx.clock()
+            ctx.state.record_run(job, now, now, False, failure_detail(exc))
+            return JobResult(job, False, failure_detail(exc))
         started = ctx.clock()
         try:
             detail, ok = JOBS[job](ctx, tags), True

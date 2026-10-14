@@ -312,8 +312,14 @@ def cmd_backup(args: argparse.Namespace) -> int:
         if args.action == "init":
             try:
                 detail = backup.run_init(ops.backup_config(ctx), ctx.environ, runner=ctx.runner)
-            except (backup.BackupError, config.ConfigError) as exc:
+            except config.ConfigError as exc:  # our own text about config.toml: it names no secret
                 return _fail(str(exc), args.json, 1)
+            except (backup.BackupError, OSError) as exc:
+                # Fixed text, never restic's own words (a path, a server's reply); a restic that
+                # isn't installed is an OSError, not a traceback. --debug prints the full error.
+                logging.getLogger(__name__).debug("backup init failed", exc_info=True)
+                return _fail(f"backup init failed ({ops.failure_detail(exc)}); run with --debug "
+                             "for the full error", args.json, 1)
             _emit({"job": "backup init", "ok": True, "detail": detail}, args.json)
             return 0
         job = "backup" if args.action == "run" else args.action
