@@ -32,11 +32,12 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
-from recordings import backup
+from recordings import backup, mirror
 from recordings.backup import BackupError, RestoreTestFailed
 from recordings.config import Config, ConfigError
 from recordings.disk import disk_thresholds
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
+from recordings.mirror import MirrorError
 from recordings.sentinel import SentinelError
 from recordings.state import State, StateError
 
@@ -228,11 +229,17 @@ def _restore_test(ctx: Context, tags: tuple[str, ...]) -> str:
     return f"restored and validated {result.recordings} recordings"
 
 
+def _mirror(ctx: Context, tags: tuple[str, ...]) -> str:
+    return mirror.run_mirror(mirror.from_config(ctx.cfg, ctx.environ),
+                             expected_uuid=ctx.state.meta("archive_uuid") or "", runner=ctx.runner)
+
+
 JOBS: dict[str, Callable[[Context, tuple[str, ...]], str]] = {
     "backup": _backup, "prune": _prune, "check": _check, "restore-test": _restore_test,
+    "mirror": _mirror,
 }
 FAILURES: tuple[type[BaseException], ...] = (
-    BackupError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
+    BackupError, MirrorError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
     subprocess.TimeoutExpired)
 
 

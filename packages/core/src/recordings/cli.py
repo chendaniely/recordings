@@ -77,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.add_argument("--debug", action="store_true",
                    help="print a failed job's full error (Status and alerts carry its type only)")
+
+    p = sub.add_parser("mirror", help="rsync the archive to the NAS's read-only mirror, now")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--debug", action="store_true",
+                   help="print a failed run's full error (Status and alerts carry its type only)")
     return parser
 
 
@@ -326,11 +331,21 @@ def cmd_backup(args: argparse.Namespace) -> int:
         return _job_result(ops.run_job(ctx, job, tags=tuple(args.tag)), args.json)
 
 
+def cmd_mirror(args: argparse.Namespace) -> int:
+    _debug_logging(args.debug)
+    ctx = _ops_context(args.json)
+    if isinstance(ctx, int):
+        return ctx
+    with ops.sigterm_forwarded():
+        return _job_result(ops.run_job(ctx, "mirror"), args.json)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "reindex": cmd_reindex, "validate": cmd_validate, "doctor": cmd_doctor,
-                "import-audio-router": cmd_import_audio_router, "backup": cmd_backup}
+                "import-audio-router": cmd_import_audio_router, "backup": cmd_backup,
+                "mirror": cmd_mirror}
     if args.command in commands:
         return commands[args.command](args)
     parser.print_help(sys.stdout)
