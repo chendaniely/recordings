@@ -2041,6 +2041,11 @@ come from that frame.
 - **Your own browser is not a trust boundary.** Any website Dan visits runs in a browser that
   can reach the tailnet. So the app answers only to the host names it knows: localhost, the
   host in `[server] base_url`, `[server] allowed_hosts`, and `RECORDINGS_ALLOWED_HOSTS`.
+  Each `allowed_hosts` entry is one bare host name or IP address, with no scheme, port or path
+  (`my-homelab`, not `my-homelab:8000`). A name is dot-separated labels of letters, digits and
+  hyphens, so an underscore is refused. An IP is stored in canonical form, and compared
+  case-insensitively. A bad entry stops the app at start with the reason. `base_url`'s host
+  follows the same rules.
   Other Host headers get 400, which defeats DNS rebinding. A websocket whose `Origin` isn't
   exactly the app's own origin is closed before Shiny accepts it. "Exactly" means the
   scheme, host name and port of the request's own `Host` header, so a page at another port of
@@ -2049,9 +2054,14 @@ come from that frame.
   review showed a foreign page could read a private recording through the websocket; made
   exact in stage 2a, because stage 1 compared the host name only.)
 - **Behind a TLS-terminating reverse proxy,** the app sees `http` while the browser's `Origin`
-  says `https`. The proxy must preserve `Host` and be trusted for `X-Forwarded-Proto`, which
-  means listing it in uvicorn's `FORWARDED_ALLOW_IPS` (default: localhost only). Otherwise every
-  websocket and every write is refused. It fails closed, never open.
+  says `https`. The proxy must preserve `Host`, set `X-Forwarded-Proto` itself, and be trusted
+  for it: its one address in uvicorn's `FORWARDED_ALLOW_IPS` (default: localhost only), never
+  `*` or a range. Otherwise every websocket and every write is refused, which fails closed. One
+  mistake fails open: a proxy that rewrites `Host` to `127.0.0.1:8000` (nginx's default) passes
+  the Host allow-list for every request, a rebinding page's included, so only the exact-origin
+  websocket check still holds. uvicorn takes the scheme and the client address from these
+  headers, never `Host`; nothing in the app may trust the client address. Under Docker the app
+  sees the Compose network's gateway, not the proxy's LAN address.
 - **Before the app goes beyond Tailscale:** when the reverse proxy arrives, the proxy
   handles login and the app only accepts requests from the proxy. This is a requirement.
 - **Cross-site writes:** the Host allow-list stops DNS rebinding, but not a foreign page
@@ -2063,7 +2073,23 @@ come from that frame.
     `application/json`, or `application/octet-stream` on stage 5's upload route only,
     which also needs a custom header and `Sec-Fetch-Site: same-origin`
 
+  Every response, including the Host allow-list's 400, carries
+  `Cross-Origin-Resource-Policy: same-origin`, so another site can't embed `/media` or load
+  API answers with a no-cors request.
+
   A tailnet ACL limits the app's port to Dan's devices.
+- **No framing, and no write from a URL** (added 2026-10-14, Task 10's council). A framed app is
+  the app's own origin, so its websocket passes every check above: a page that framed it under
+  a decoy could steer Dan's clicks onto a write. So every response carries
+  `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. Writes through
+  Shiny inputs travel on the websocket, whose handshake check is their guard (the body-type rule
+  is for HTTP routes). That check is enough only while three things hold: the app can't be
+  framed, nothing on the app's origin runs foreign script (`/media` serves only audio and video;
+  no route may serve HTML, SVG, XML or PDF inline from this origin), and loading a URL never
+  writes. Shiny bookmarking stays off (it restores inputs from the query string), and the URL's
+  hash only chooses what to show. Every response also carries `Cross-Origin-Opener-Policy:
+  same-origin` and `Referrer-Policy: same-origin`, and `/media` is `Cache-Control: no-store`,
+  so private audio isn't kept in each device's disk cache.
 - **Slugs never reach logs** (added 2026-10-08). `/people/<slug>` paths would land in
   access logs, so the routes the app logs use person IDs, or the people pages keep their
   routes in the URL's hash part, which servers don't log.
@@ -2181,7 +2207,10 @@ come from that frame.
   in the demo "processes" the same way every time.
 - **Isolation:**
   - it ignores the real config and all secrets
-  - every start uses a fresh copy of the demo archive and a temporary state folder (§6.8)
+  - every start uses a fresh copy of the demo archive and a temporary state folder (§6.8),
+    removed again at exit, including on SIGTERM (`docker stop`)
+  - demo mode serves only the demo: it refuses an archive whose `archive.json` UUID isn't the
+    demo's, or a folder with none, whatever `RECORDINGS_DEMO_ARCHIVE` names
   - it makes no network calls
 
   A test enforces this.
