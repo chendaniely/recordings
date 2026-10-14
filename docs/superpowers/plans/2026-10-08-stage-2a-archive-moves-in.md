@@ -13790,8 +13790,9 @@ def test_recordings_allowed_hosts_entries_are_checked_too():
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `uv run pytest packages/ui/tests/test_writeguard.py packages/ui/tests/test_hosts.py packages/ui/tests/test_demo_guard.py packages/ui/tests/test_settings.py packages/core/tests/test_config.py -v`
-Expected: FAIL. `test_writeguard.py` stops at `ImportError: cannot import name 'WriteGuard'`. In
+Run: `uv run pytest packages/ui/tests/test_writeguard.py packages/ui/tests/test_hosts.py packages/ui/tests/test_demo_guard.py packages/ui/tests/test_settings.py packages/core/tests/test_config.py -v --continue-on-collection-errors`
+Expected: FAIL (without the flag, pytest stops at the first collection error and prints none of the
+rest). `test_writeguard.py` stops at `ImportError: cannot import name 'WriteGuard'`. In
 `test_hosts.py`, the three refused-origin cases and both `Sec-Fetch-Site` cases fail with
 `Failed: DID NOT RAISE WebSocketDisconnect`, and so does
 `test_the_app_refuses_a_websocket_from_another_port_of_this_host`. The host-name and demo cleanup
@@ -14002,7 +14003,9 @@ makes the jobs safe to run from the CLI and the loop alike:
   takes (Task 9). It waits up to 600 s for it, as the CLI does; the loop (Task 13) passes
   `lock_timeout=0`, and a busy turn is "skipped: busy", not a failure. A holder that hangs
   (`flock` frees only when it dies) stops the backups, so the dead-man's switch alerts after its
-  grace (Task 13).
+  grace (Task 13). `Locks` is re-entrant only within one instance, and the import builds its own,
+  so a job must never call the import while `run_job` holds "ops": it would wait 600 s, then
+  raise `LockTimeout`. Imports run from the CLI alone.
 - **Stale restic locks.** restic never treats another process's lock as stale on its own; only
   `restic unlock` removes one. It runs before every backup, check, forget and restore. CLI runs
   also pass `--retry-lock 5m`.
@@ -14103,7 +14106,7 @@ import pytest
 from recordings import backup, cli, ops
 from recordings.backup import BackupError, Keep
 from recordings.config import ConfigError, load_config
-from recordings.locks import Locks
+from recordings.locks import Locks, LockTimeout
 from recordings.ops import Context, JobResult, run_job
 from recordings.selfdoc import validate
 from recordings.sentinel import SENTINEL
@@ -14531,6 +14534,26 @@ def test_a_job_holds_the_ops_lock_and_the_loop_skips_a_busy_turn(tmp_path, write
     assert busy == JobResult("backup", False, "skipped: busy")
     assert fake.calls == [] and writer.state.last_run("backup") is None
     assert run_job(ctx, "backup").ok  # free again
+
+
+def test_a_job_cannot_take_the_ops_lock_again_so_none_may_call_the_import(
+        tmp_path, writer, monkeypatch):
+    # why: run_job holds "ops", and Locks is re-entrant only within one instance. The import
+    # builds its own, so a job that called it would wait lock_timeout (600 s) on this process's
+    # own hold, then raise LockTimeout, which is not in FAILURES. Imports run from the CLI alone.
+    cfg, environ = config(tmp_path, writer)
+    seen = []
+
+    def job(ctx, tags):
+        with pytest.raises(LockTimeout), Locks(ctx.state.locks_dir, timeout=0).hold("ops"):
+            pass
+        seen.append(True)
+        return "done"
+
+    monkeypatch.setitem(ops.JOBS, "backup", job)
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, clock=lambda: NOW)
+    assert run_job(ctx, "backup").ok and seen == [True]
+    assert "audio_router" not in inspect.getsource(ops)  # no job reaches the import
 
 
 def test_the_cli_waits_for_the_loop_and_for_restic_locks(tmp_path, writer, monkeypatch):
@@ -15215,7 +15238,11 @@ in state.db, so Status can show it and the schedule knows what is due.
 - **One job at a time.** run_job holds the ops lock, a flock in the state folder that the CLI,
   the backup service's loop and the import (Task 9) share. The CLI waits for it (CLI_WAIT, the
   default); the loop passes lock_timeout=0, and a busy turn is BUSY: not run, not recorded, not
-  a failure. It is also what makes `restic unlock` safe (recordings.backup).
+  a failure. It is also what makes `restic unlock` safe (recordings.backup). A job runs while this
+  process holds "ops", and Locks is re-entrant only within one instance, so no job may call the
+  import: it takes "ops" through a Locks of its own, would wait out its 600 s on this process's
+  hold, then raise LockTimeout, which is not in FAILURES. Imports run from the CLI alone; the
+  backups around one are two CLI runs (`backup run --tag pre-import`, then `--tag post-import`).
 - **A failure is a result, not a crash.** It is recorded as the error's type and exit code only
   (failure_detail). The message, which can name paths or carry a server's words, goes only to
   the debug log.
@@ -17178,6 +17205,15 @@ def test_the_images_restic_is_the_one_fetch_restic_pins():
     assert all(sha in runbook for sha in pinned.values()), "the runbook's spike checks other sums"
 
 
+def test_the_runtime_image_has_the_time_zone_database():
+    # why: zoneinfo reads the system's database and uv.lock has no tzdata wheel. Without it every
+    # ZoneInfo(...) fails: the import places no row, and Status shows no local time.
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    runtime = dockerfile[dockerfile.index("AS runtime"):]
+    install = re.search(r"apt-get install[^;]*;", runtime)
+    assert install and "tzdata" in install.group(0).split()
+
+
 def test_the_backup_service_reads_the_archive_and_takes_secrets_only_from_files():
     service = compose()["services"]["backup"]
     archive = next(v for v in service["volumes"] if v["target"] == "/archive")
@@ -17451,10 +17487,12 @@ ARG RESTIC_VERSION=0.19.1
 # Stage 2a (spec §15.1, §9.1.1): ffprobe (ffmpeg) measures imported media; rsync and ssh run the
 # NAS mirror and the NAS checks; restic makes the backups. restic comes from its GitHub release,
 # checked against that release's SHA256SUMS (2026-10-08), the same pins as
-# scripts/fetch_restic.py (a test keeps them equal); curl and bzip2 leave with the layer.
+# scripts/fetch_restic.py (a test keeps them equal); curl and bzip2 leave with the layer. tzdata
+# is for zoneinfo: uv.lock has no tzdata wheel, and without a system database every
+# ZoneInfo(...) fails, so the import places no row (Task 8) and Status has no local time.
 RUN set -eu; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ffmpeg rsync openssh-client ca-certificates curl bzip2; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg rsync openssh-client tzdata ca-certificates curl bzip2; \
     case "$TARGETARCH" in \
       amd64) sum=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c ;; \
       arm64) sum=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465 ;; \
@@ -18757,6 +18795,7 @@ else `all`. Two checks read config.toml alone, so every role reports them, as th
 ```python
 import json
 import subprocess
+from zoneinfo import ZoneInfoNotFoundError
 
 import pytest
 
@@ -18974,6 +19013,38 @@ def test_a_consent_list_mounted_only_for_imports_is_information(tmp_path):
     assert "d" * 32 not in json.dumps(report)  # its IDs are never read
 
 
+def test_an_unknown_default_timezone_is_a_problem_in_every_role(tmp_path, monkeypatch):
+    # why: zoneinfo reads the system's tzdata. A typo, or an image without it, leaves the import
+    # unable to place any recording (Task 8), and Status without a local time.
+    environ = server(tmp_path)
+    cfg = tmp_path / "config.toml"
+    good = cfg.read_text(encoding="utf-8")
+    assert doctor(environ, role="backup")["problems"] == []  # the default, America/Vancouver
+    cfg.write_text(good.replace('writer_id = "homelab"\n',
+                                'writer_id = "homelab"\ndefault_timezone = "Mars/Olympus"\n', 1),
+                   encoding="utf-8")
+    for role, env in (("web", web_only(environ)), ("backup", environ)):
+        (problem,) = doctor(env, role=role)["problems"]
+        assert "default_timezone" in problem and "Mars/Olympus" in problem, role
+    cfg.write_text(good, encoding="utf-8")
+
+    def no_database(name):
+        raise ZoneInfoNotFoundError(name)
+
+    monkeypatch.setattr(doctor_module, "ZoneInfo", no_database)  # a machine without tzdata
+    assert any("tzdata" in p for p in doctor(web_only(environ), role="web")["problems"])
+
+
+def test_a_bad_disk_threshold_pair_is_a_problem(tmp_path):
+    # why: the import exits 78 on it and Status quietly uses the defaults (Task 9, Task 15).
+    environ = server(tmp_path)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(cfg.read_text(encoding="utf-8")
+                   + "[disk]\nwarn_free_percent = 20\nstop_free_percent = 30\n", encoding="utf-8")
+    (problem,) = doctor(web_only(environ), role="web")["problems"]
+    assert "stop_free_percent" in problem
+
+
 def test_the_rest_server_setup_has_no_problems(tmp_path):
     # why: rest-server --append-only is the primary transport (council ruling, 2026-10-09).
     (tmp_path / "rest-server.crt").write_text("a test certificate\n", encoding="utf-8")
@@ -19137,7 +19208,8 @@ Each Compose service runs it in its own role (`--role`, else RECORDINGS_ROLE, el
   hard-link probe is skipped there, and ssh needs this user's passwd entry.
 - `all`, the default outside Docker, checks everything.
 Every role warns when retention is off here, and reports where the consent list is, as
-information: the import reads it and fails closed by itself.
+information: the import reads it and fails closed by itself. Every role also checks that
+`[archive] default_timezone` is a zone this machine knows, and that `[disk]` is a valid pair.
 """
 
 from __future__ import annotations
@@ -19151,9 +19223,11 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from recordings import alerts, backup, mirror
 from recordings.config import SECRETS, Config, ConfigError, load_config, secret, secret_path
+from recordings.disk import disk_thresholds
 from recordings.index import Index
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.ssh import nas_free_bytes
@@ -19382,10 +19456,31 @@ def _consent(cfg: Config, report: dict) -> None:
     path = cfg.data.get("plaud", {}).get("consent_list")
     if not isinstance(path, str) or not path:
         return
-    here = Path(path).is_file()
+    here = Path(path).expanduser().is_file()  # as consent_list_path reads it
     report["consent_list"] = {
         "path": path, "here": here,
         "note": None if here else "not mounted here; the import reads it and fails closed"}
+
+
+def _timezone(cfg: Config, problems: list[str]) -> None:
+    """[archive] default_timezone must name a zone this machine knows. zoneinfo reads the
+    system's database (the image installs tzdata; uv.lock has no wheel), so a typo, or a machine
+    without the database, leaves the import unable to place any recording."""
+    try:
+        ZoneInfo(cfg.default_timezone)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        problems.append(f"[archive] default_timezone {cfg.default_timezone!r} is not a time zone "
+                        "this machine knows: check the name, and that the system's tzdata is "
+                        "installed")
+
+
+def _disk(cfg: Config, problems: list[str]) -> None:
+    """[disk] thresholds, read as the import reads them: a bad pair stops the import (exit 78),
+    and Status falls back to the defaults without a word, so say it here."""
+    try:
+        disk_thresholds(cfg)
+    except ConfigError as exc:
+        problems.append(str(exc))
 
 
 def _alerts(cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str],
@@ -19430,6 +19525,8 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
         problems.append(str(exc))
         return report
     report["config"] = str(cfg.path) if cfg.path else None
+    _timezone(cfg, problems)
+    _disk(cfg, problems)
     archive_uuid = _archive(cfg, role, report, problems)
     _state(cfg, archive_uuid, report, problems, warnings)
     if role != "backup" and cfg.index_path is not None:  # the backup service has no index
