@@ -83,3 +83,12 @@ def _empty_config(tmp_path):
     path = tmp_path / "empty.toml"
     path.write_text("", encoding="utf-8")
     return path
+
+
+def test_recordings_allowed_hosts_entries_are_checked_too():
+    import pytest
+
+    from recordings_ui.settings import env_hosts
+    assert env_hosts({"RECORDINGS_ALLOWED_HOSTS": "A.example, b.example"}) == {"a.example", "b.example"}
+    with pytest.raises(SystemExit, match="RECORDINGS_ALLOWED_HOSTS"):
+        env_hosts({"RECORDINGS_ALLOWED_HOSTS": "host:8000"})

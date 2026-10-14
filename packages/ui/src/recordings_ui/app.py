@@ -15,7 +15,7 @@ from recordings.ids import ID_RE
 from recordings.locks import LockTimeout
 from recordings.writer import Writer, WriterError
 from recordings_ui import runtime
-from recordings_ui.hosts import HostGuard
+from recordings_ui.hosts import HostGuard, WriteGuard
 from recordings_ui.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -73,5 +73,6 @@ def create_app(settings: Settings) -> HostGuard:
                             headers={"X-Content-Type-Options": "nosniff"})
 
     api.mount("/", shiny_app)  # last, so the routes above win
-    # Around everything, the Shiny app and its websocket included (recordings_ui.hosts).
-    return HostGuard(api, settings.allowed_hosts)
+    # Around everything, the Shiny app and its websocket included (recordings_ui.hosts): first the
+    # host names, then the cross-site write check and the same-origin resource policy.
+    return HostGuard(WriteGuard(api, settings.allowed_hosts), settings.allowed_hosts)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import shutil
 import tempfile
 from collections.abc import Mapping
@@ -9,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from recordings.config import Config, ConfigError, load_config
+from recordings.config import Config, ConfigError, load_config, normalise_host
 from recordings_ui.hosts import LOCAL_HOSTS
 
 
@@ -23,9 +24,12 @@ class Settings:
 
 
 def env_hosts(environ: Mapping[str, str]) -> frozenset[str]:
-    """RECORDINGS_ALLOWED_HOSTS: extra names, comma-separated."""
-    names = environ.get("RECORDINGS_ALLOWED_HOSTS", "").split(",")
-    return frozenset(n.strip().lower() for n in names if n.strip())
+    """RECORDINGS_ALLOWED_HOSTS: extra names, comma-separated, checked like [server] allowed_hosts."""
+    names = [n for n in environ.get("RECORDINGS_ALLOWED_HOSTS", "").split(",") if n.strip()]
+    try:
+        return frozenset(normalise_host(n) for n in names)
+    except ValueError as exc:
+        raise SystemExit(f"RECORDINGS_ALLOWED_HOSTS: {exc}") from None
 
 
 def find_demo_archive(environ: Mapping[str, str]) -> Path:
@@ -46,6 +50,7 @@ def from_env(environ: Mapping[str, str], *, demo: bool | None = None) -> Setting
         # A fresh copy every start: the same state for every bug report, and the committed
         # demo is never modified. config.toml, RECORDINGS_ARCHIVE and secrets are never read.
         copy = Path(tempfile.mkdtemp(prefix="recordings-demo-")) / "archive"
+        atexit.register(shutil.rmtree, copy.parent, ignore_errors=True)  # stage-1 carry-over
         shutil.copytree(find_demo_archive(environ), copy)
         return Settings(archive=copy, demo=True, allowed_hosts=LOCAL_HOSTS | env_hosts(environ))
     try:

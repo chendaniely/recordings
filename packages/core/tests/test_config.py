@@ -344,3 +344,19 @@ def test_an_index_beside_the_state_folder_is_fine(tmp_path):
                                '[index]\npath = "/srv/r/state-index/index.db"\n')
     assert load_config({"RECORDINGS_CONFIG": str(cfg_file)}).index_path == Path(
         "/srv/r/state-index/index.db")
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("My-Homelab", "my-homelab"), (" 100.64.0.1 ", "100.64.0.1"), ("[fd7a::1]", "fd7a::1"),
+    ("fd7a::1", "fd7a::1")])
+def test_host_names_are_normalised(value, expected):
+    from recordings.config import normalise_host
+    assert normalise_host(value) == expected
+
+
+@pytest.mark.parametrize("value", ["my-homelab:8000", "http://my-homelab", "my-homelab/x", "", "a b"])
+def test_allowed_hosts_with_a_port_scheme_or_path_are_refused(tmp_path, value):
+    # why: stage-1 carry-over. They passed validation, never matched, and gave a bare 400.
+    cfg_file = write(tmp_path, f'[server]\nallowed_hosts = ["{value}"]\n')
+    with pytest.raises(ConfigError, match="allowed_hosts"):
+        load_config({"RECORDINGS_CONFIG": str(cfg_file)})

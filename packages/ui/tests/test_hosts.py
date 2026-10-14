@@ -69,11 +69,30 @@ def test_a_websocket_to_an_unknown_host_is_refused():
     assert _refused(guarded(), "ws://attacker.example/ws", {"Origin": "http://attacker.example"}) == 1008
 
 
-@pytest.mark.parametrize("origin", ["http://localhost:8000", "http://127.0.0.1:8000",
-                                    "http://[::1]:8000", "HTTP://LOCALHOST"])
-def test_a_websocket_from_an_allowed_origin_is_accepted(origin):
-    with guarded().websocket_connect("ws://localhost:8000/ws", headers={"Origin": origin}) as ws:
+@pytest.mark.parametrize("url, origin", [
+    ("ws://localhost:8000/ws", "http://localhost:8000"),
+    ("ws://127.0.0.1:8000/ws", "http://127.0.0.1:8000"),
+    ("ws://[::1]:8000/ws", "http://[::1]:8000"),
+    ("ws://localhost/ws", "HTTP://LOCALHOST"),
+])
+def test_a_websocket_from_its_own_origin_is_accepted(url, origin):
+    # The page's own origin: the scheme, host name and port of the Host it connects to.
+    with guarded().websocket_connect(url, headers={"Origin": origin}) as ws:
         assert ws.receive_text() == "hello"
+
+
+@pytest.mark.parametrize("origin", ["http://localhost:9999", "https://localhost:8000",
+                                    "http://127.0.0.1:8000"])
+def test_a_websocket_from_another_port_scheme_or_name_of_this_host_is_refused(origin):
+    # why: an origin is a scheme, a host name and a port (RFC 6454). A page at
+    # http://localhost:9999 is another program, though its host name is allowed.
+    assert _refused(guarded(), "ws://localhost:8000/ws", {"Origin": origin}) == 1008
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_a_websocket_the_browser_marks_as_another_sites_is_refused(site):
+    assert _refused(guarded(), "ws://localhost:8000/ws",
+                    {"Origin": "http://localhost:8000", "Sec-Fetch-Site": site}) == 1008
 
 
 def test_a_websocket_without_an_origin_is_accepted():
@@ -117,6 +136,12 @@ def test_the_app_refuses_a_cross_site_websocket(app_client):
     # The review's exploit: a page on another site opening Shiny's websocket.
     assert _refused(app_client, "ws://localhost:8000/websocket/",
                     {"Origin": "http://evil.example"}) == 1008
+
+
+def test_the_app_refuses_a_websocket_from_another_port_of_this_host(app_client):
+    # The council's finding: a page at http://localhost:9999 passed the host-name-only check.
+    assert _refused(app_client, "ws://localhost:8000/websocket/",
+                    {"Origin": "http://localhost:9999"}) == 1008
 
 
 def test_the_app_accepts_its_own_websocket(app_client):

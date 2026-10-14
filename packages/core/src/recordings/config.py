@@ -8,6 +8,7 @@ file (Docker secrets live in /run/secrets/). A secret's value is never printed o
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import tomllib
 from collections.abc import Mapping
@@ -57,13 +58,32 @@ def config_path(environ: Mapping[str, str]) -> Path:
     return Path(environ.get("RECORDINGS_CONFIG") or DEFAULT_PATH)
 
 
+def normalise_host(value: str) -> str:
+    """A bare host name or address, lowercased: no scheme, path or port. Entries like
+    `my-homelab:8000` used to pass validation and then never match (stage-1 carry-over)."""
+    host = value.strip().lower()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not host or "://" in host or "/" in host or " " in host:
+        raise ValueError(f"{value!r} is not a host name: give the name or address alone")
+    if ":" in host:
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError:
+            raise ValueError(f"{value!r} has a port: give the host name alone") from None
+    return host
+
+
 def _allowed_hosts(server: dict[str, Any]) -> tuple[str, ...]:
     value = server.get("allowed_hosts", [])
-    if not isinstance(value, list) or not all(isinstance(h, str) and h.strip() for h in value):
+    if not isinstance(value, list) or not all(isinstance(h, str) for h in value):
         raise ConfigError(
             "[server] allowed_hosts must be a list of host names, "
             'for example ["my-homelab", "100.64.0.1"]')
-    return tuple(h.strip() for h in value)
+    try:
+        return tuple(normalise_host(h) for h in value)
+    except ValueError as exc:
+        raise ConfigError(f"[server] allowed_hosts: {exc}") from None
 
 
 def _writer_id(archive: dict[str, Any]) -> str | None:
