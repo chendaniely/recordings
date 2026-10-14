@@ -20,7 +20,8 @@ default_timezone = "America/Vancouver"
 base_url = "http://my-homelab:8000"
 # Every name you reach the app by, besides localhost and base_url's host. The app answers only
 # to these names and refuses others, which protects it from websites open in your own browser.
-# RECORDINGS_ALLOWED_HOSTS adds more, comma-separated.
+# Each entry is a bare name or IP: no scheme or port, letters, digits, hyphens and dots only.
+# RECORDINGS_ALLOWED_HOSTS adds more, comma-separated, under the same rule.
 allowed_hosts = ["my-homelab", "my-homelab.your-tailnet.ts.net", "100.64.0.1"]
 
 [state]                                 # stage 2a: state.db and the lock files (spec §6.8)

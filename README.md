@@ -62,11 +62,17 @@ docker compose --env-file docker/deploy.env -f docker/compose.yml exec web recor
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
   always allowed; the app refuses any other name. Give each name alone, with no port or
-  scheme (`my-homelab`, not `my-homelab:8000`); the app refuses to start otherwise.
+  scheme (`my-homelab`, not `my-homelab:8000`), using letters, digits, hyphens and dots only (no
+  underscores); the app refuses to start otherwise.
 - **Behind a TLS-terminating reverse proxy** (for example one that serves `https://…`), the
-  proxy must pass the `Host` header through unchanged, and must be trusted for
-  `X-Forwarded-Proto`: set uvicorn's `FORWARDED_ALLOW_IPS` to the proxy's address (the default
-  trusts only localhost). The app compares a websocket's or write's `Origin` with the scheme and
+  proxy must pass the `Host` header through unchanged (nginx: `proxy_set_header Host $host;`).
+  nginx's default sends `127.0.0.1:8000`, a name the app always allows, which would let a
+  DNS-rebinding page past the Host check. The proxy must also set `X-Forwarded-Proto` itself
+  and be trusted for it: set uvicorn's `FORWARDED_ALLOW_IPS` to the one address the app sees the
+  proxy connect from (the client address in the app's access log; the default trusts only
+  localhost). Under Docker that is usually the Compose network's gateway, not the proxy's LAN
+  address. Never `*` or a range: every machine in it could then set the scheme, and the client
+  address the app logs. The app compares a websocket's or write's `Origin` with the scheme and
   `Host` it sees. Without this, every websocket and every write is refused. Plain
   `http://my-homelab:8000` needs nothing.
 - **The library starts empty.** A stage-1 deployment shows an empty library until stage 2
