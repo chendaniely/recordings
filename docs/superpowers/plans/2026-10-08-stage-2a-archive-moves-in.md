@@ -12002,7 +12002,7 @@ from recordings.index import Index, IndexRefused
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
 from recordings.media import MEDIA_SUFFIXES, MediaProbe, media_kind, probe
 from recordings.models import TagRef, is_private_tag
-from recordings.plaud.normalise import meta_fetched_at
+from recordings.plaud.normalise import link_errors, meta_fetched_at
 from recordings.plaud.reconcile import matches_auto_private
 from recordings.refs import canonical_plaud_id
 from recordings.sources.ar_outputs import ar_stamp, map_rendition, pocket_outputs
