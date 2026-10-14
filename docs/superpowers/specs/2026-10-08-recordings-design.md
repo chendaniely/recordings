@@ -233,6 +233,10 @@ recordings/                      (repo root, uv workspace, MIT)
   - `[plaud] consent_list`, the path to Dan's consent list (§9.1)
   - `[disk] warn_free_percent` (20) and `stop_free_percent` (5), the disk guard's thresholds
     (§12.5); stop must be below warn
+  - `[nas] ssh` and `port`: the NAS account over SSH (§15.1)
+  - `[backup]`: `repository`, `rest_username`, `cacert`, `restic`, `extra_paths`, `keep_hourly`
+    to `keep_monthly`, `prune`, `nas_repo_path`, `min_nas_free_gb` (the backup is refused
+    below it), `restore_scratch` and `cache_dir` (§15.1)
   - `[speakers]`: `auto_threshold` and `suggest_threshold` (§7.6)
   - `[calendar] terms`, the term presets in the date control (§12.6a)
   - the ntfy server (§14)
@@ -247,10 +251,16 @@ recordings/                      (repo root, uv workspace, MIT)
   - `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, lasting a year (stage 4)
   - `RESTIC_PASSWORD`, the backup repository key (stage 2a). Keep a copy in your password
     manager, because without it the backups can't be read.
-  - the NAS SSH key and its `known_hosts`, for restic and the mirror (stage 2a; §15.1)
+  - the NAS SSH key and its `known_hosts`, for the mirror, the free-space check and an SFTP
+    repository (stage 2a; §15.1). They are files only (`RECORDINGS_NAS_SSH_KEY_FILE`,
+    `RECORDINGS_NAS_KNOWN_HOSTS_FILE`): a value in the environment is refused. Host keys are
+    always checked (`StrictHostKeyChecking=yes`) against that `known_hosts` file, and ssh to
+    the NAS is refused without it, because the mirror sends the plaintext archive, private
+    recordings included, over it.
   - the ntfy topic (stage 2a; §14)
   - the dead-man's switch ping URL, which carries its own token (stage 2a; §14)
-  - the rest-server password, if that transport wins (stage 2a; §15.1)
+  - the rest-server password, `RESTIC_REST_PASSWORD`, with its user in `[backup]
+    rest_username` (stage 2a; §15.1). A repository URL with a password in it is refused.
   - the local-scope API token for the full view, held only on local machines (stage 3a;
     §10)
 - **Docker host settings** (`docker/deploy.env`):
@@ -497,8 +507,9 @@ Pixeltable and the vault then never re-implement overlap, precedence or merge re
   Otherwise, writing the docs at startup into an unmounted, empty folder would create a new
   archive, and the mirror's `rsync --delete` would then wipe the NAS copy (§15.1).
   - `recordings init` writes `archive.json`, holding the archive's UUID.
-  - Every writer, the sync and the mirror refuse to run when the sentinel is missing or its
-    UUID has changed.
+  - Every writer, the sync, the mirror and the backup refuse to run when the sentinel is
+    missing or its UUID has changed. (A backup of an unmounted, empty folder, taken hourly,
+    would age the real snapshots out.)
   - `recordings reindex` refuses to empty a non-empty index.
 
 ### 6.8 Where state lives (added 2026-10-08)
@@ -519,6 +530,8 @@ State has three homes:
   - recent revisions, as merge bases (§6.4)
   - the writer ID (§3)
   - the salted hashes that scrub forgotten names from new fetches (§7.6)
+  - the history of scheduled jobs (backups, checks, the restore test): when each ran and a
+    fixed result text, for Status (§12.5)
 
   The same folder holds the Plaud token store (`plaud/tokens.json`; §9.1), the voice store
   (`voice.db`; §7.6) and the lock files (§6.4).
@@ -1022,8 +1035,10 @@ six things.
 5. It deletes their rows from `state.db`, `index.db` (FTS5 included) and `voice.db`, then
    runs `VACUUM`.
 6. It reports what still holds the old data:
-   - restic backups (up to 12 monthly snapshots). It prints the `restic rewrite` steps for
-     older snapshots, and says plainly that otherwise they age out within 12 months.
+   - restic backups (up to 12 monthly snapshots). The server is append-only, so `restic
+     rewrite` can't run from it: it prints the steps to run on the NAS, with the NAS's own
+     copy of the password. It says plainly that otherwise the monthly snapshots age out
+     within 12 months, and that the `pre-import` and `post-import` snapshots never do (§15.1).
    - the NAS mirror (cleared on its next `rsync --delete`), and the Mac's copy of it
    - Synology Drive versions and Time Machine
    - Pixeltable's database
@@ -1657,7 +1672,10 @@ later" until its build stage (§20):
 - Spark and Claude reachability
 - the date the Claude token expires, with a warning 30 days before
 - **Backups** (§15.1): when the last backup finished, and the last restore test. Needs
-  attention if the last backup is more than 2 hours old.
+  attention if the last backup is more than 2 hours old, except while a check or the restore
+  test is running: each holds the `ops` lock (§6.4), so the hourly backup's turns are skipped
+  until it ends. Status then says that job is running and since when, and the dead-man's grace
+  (§14), not this line, decides when the silence is an outage.
 - **Disk space** on the homelab server: a warning below 20% free. Below 5% free, new imports stop,
   with the reason shown.
 - **Status is the pull view.** Alerts push the urgent problems to Dan's phone (§14).
@@ -2025,7 +2043,9 @@ come from that frame.
 - **Alerts** (Dan, 2026-10-08; services chosen 2026-10-09) are push notifications through
   ntfy.sh with a private topic, so they arrive even when the homelab server is down. The
   topic and the dead-man's ping URL are secrets (§5). Bodies are fixed templates (the job,
-  its exit code and counts, then "see Status"), never error text, titles or paths.
+  the kind of failure as an error class name, its exit code and counts, then "see Status"),
+  never error text, titles or paths. Status carries the same text; the full error is
+  printed only by re-running the job from the CLI with `--debug`.
   - **They fire on:** a Plaud 401, a circuit-breaker trip, a disk warning, a failed backup
     or restore test, and a failed `--full`.
   - **A dead-man's switch** on Healthchecks.io: each good sync and each good backup pings
@@ -2115,7 +2135,24 @@ come from that frame.
     runs restic directly on the repository's local path (`forget --prune`, with the keep
     rules below plus the `pre-import` and `post-import` tags), with its own root-only copy
     of the password. On the server, `[backup] prune = false`, and `doctor` says retention
-    must run on the NAS. `restic unlock` still works in append-only mode.
+    must run on the NAS. Left out, `prune` defaults to true in code, so an append-only server
+    refuses it loudly (403) rather than the repository growing unnoticed. The `pre-import` and
+    `post-import` snapshots are kept for good: they never age out, and forgetting a person
+    does not remove them (§7.6).
+  - **One job at a time, and locks.** Backups, retention, the check, the restore test and the
+    mirror each run under the `ops` lock (§6.4), so they never overlap on this server. A busy
+    turn of the loop is skipped, not failed, which means an hourly backup can be skipped while
+    the weekly check or the monthly restore test runs; the dead-man's grace (§14) allows for
+    that. `restic unlock` works in append-only mode, and every job that locks the repository
+    runs it first: it removes stale locks only, and is safe only because of the `ops` lock.
+    The CLI waits for the repository lock (`--retry-lock 5m`). The loop does not, because
+    waiting would hold up every other job: a job that meets the repository lock (restic exit
+    11), as it does while the NAS's weekly retention task holds it, is skipped as busy, not
+    recorded as failed, and raises no alert. A backup that stays blocked is caught by the
+    dead-man's switch (§14).
+- **restic is pinned** by version, release-archive SHA-256 and the unpacked binary's own SHA-256
+  (`scripts/fetch_restic.py`; the image and the runbook's spike use the same pin, and a test
+  checks all three agree). A downloaded binary is never run to find out what it is.
 - **What is backed up:**
   - the archive
   - `config.toml`
@@ -2126,9 +2163,18 @@ come from that frame.
 - **When, and for how long:** hourly. Keep 24 hourly, 14 daily, 8 weekly and 12 monthly
   snapshots.
 - **Checks:**
-  - a weekly `restic check`
-  - a monthly automatic restore of the newest snapshot into a scratch folder, which must
-    pass `recordings validate`, because a backup that has never been restored isn't proven
+  - a weekly `restic check` that also reads back a quarter of the data. It moves on to the
+    next quarter only when a check passes, so a failed check's retries read the same quarter
+    and all of the data is read every four weeks
+  - a monthly automatic restore of the newest snapshot into a scratch folder (`[backup]
+    restore_scratch`, dedicated to this: old `restore-*` copies in it are deleted), restored
+    with `--verify`, which must pass `recordings validate --deep` (every SHA-256 checked),
+    carry the same archive UUID and hold every recording its own copy of `state.db` knows, and
+    the config, extra paths and that copy themselves, because a backup that has never been
+    restored isn't proven. The test refuses to start if it would take the scratch disk below
+    the 20% or 5% thresholds (§12.5), and says so (`ScratchTooSmall`). The restored copy is a
+    full plaintext archive, private recordings included; it is always deleted, and a copy that
+    can't be deleted is a failure
   - the results appear on the Status page (§12.5)
   - a failed backup or restore test raises an alert, and each good backup pings the
     dead-man's switch (§14)
