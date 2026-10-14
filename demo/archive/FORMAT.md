@@ -139,7 +139,15 @@ records its snapshot in `inputs.source` and the hash of what it carries in
 - **The sentinel.** `archive.json` holds the archive's `format` and UUID, and is written once,
   by `recordings init`. Every writer, the backups and the mirror refuse to run without it, or when
   its UUID has changed, so an unmounted, empty folder can never pass for the archive. Never edit
-  or copy it into another archive.
+  or copy it into another archive. (The NAS mirror holds the one copy of it that exists: see the
+  next item.)
+- **The mirror.** A folder holding `MIRROR.md` is the read-only mirror of an archive, not the
+  archive. `MIRROR.md` names the source archive's UUID (`archive-uuid: <uuid>`), and the mirror
+  refuses a target that is not empty and carries no mark of this archive. Everything else in
+  it is a copy: the same files, including this one and `archive.json`, updated every hour and
+  emptied of anything the archive no longer holds. Read it freely; change nothing in it. Writers
+  and `recordings init --adopt` refuse it. The copy holds private recordings too, so the privacy
+  rule below applies to it unchanged. Work in the app, or on the homelab server's archive.
 - **Versions:** every `recording.json` names its format in `format`
   (`recordings-archive@1`, major version 1). A reader must refuse a major version it
   doesn't know.

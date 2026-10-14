@@ -1,5 +1,9 @@
 # Rules for agents working in this archive
 
+0. **If this folder holds `MIRROR.md`, it is a read-only copy of the archive.** Edit, create and
+   delete nothing here, and do not run `recordings reindex` or any writer on it: the next
+   hourly run overwrites it, and the tools refuse it. Everything else below, privacy included,
+   applies to the copy as to the archive.
 1. **Read `README.md` and `FORMAT.md` first.**
 2. **Privacy.** A recording is private when its `recording.json` has a
    `private` or `private/…` tag, in any capitalisation: any tag whose first folder is
