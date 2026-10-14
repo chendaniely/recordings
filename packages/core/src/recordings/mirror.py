@@ -28,6 +28,16 @@ share on the NAS, through the mirror's own NAS account ([nas] ssh, with its key)
 - A listing it can't read is not an empty target: a line it doesn't understand counts as a file.
 - `[mirror] no_perms = true` adds `--no-perms`, for a share with Windows ACLs where rsync's chmod
   fails (the runbook's spike).
+- Time: rsync's own `--timeout` ends a run that moves no data for IO_TIMEOUT (exit 30), so a
+  stalled NAS never holds the ops lock for long. The loop also stops a run (and its dry run)
+  after TIMEOUT, so the backups between them go on; `recordings mirror` from the CLI has no such
+  limit, so a first mirror bigger than TIMEOUT can be made in one run (the runbook, step 4). A
+  run cut short keeps its finished files in `.~tmp~/`, which rsync 3.x on the NAS uses as the
+  basis for the same files next time: they don't cross the network again, but the NAS reads and
+  writes each of them once more.
+- A refused run's deletions are logged at debug level, as recording IDs and counts, so
+  `recordings mirror --debug` shows which recordings would go; `recordings mirror --max-delete N`
+  then allows N for that one run, and the config keeps its limit.
 
 The mirror holds private recordings too: on the Mac, keeping external agents out of them is
 policy (§7.4).
@@ -35,26 +45,32 @@ policy (§7.4).
 
 from __future__ import annotations
 
+import logging
 import re
 import shlex
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from recordings.config import Config, ConfigError
+from recordings.ids import ID_RE
 from recordings.sentinel import MIRROR, SentinelError, read_sentinel
 from recordings.ssh import Nas, nas_from_config, require_known_hosts
 
+log = logging.getLogger(__name__)
 MAX_DELETE = 50
+TIMEOUT = 6 * 3600  # seconds the loop gives a run, and its dry run; a CLI run has no limit
+IO_TIMEOUT = 600  # rsync --timeout: a run that moves no data for this long stops (exit 30)
 DSM_FOLDERS = ("#recycle", "@eaDir")  # the NAS's recycle bin and its indexer's folders
 # One line of `rsync --list-only`: permissions, size, date, time, then the name.
 _LISTED = re.compile(r"^[-dlpscb][-rwxsStT]{9}\S*\s+[\d,.]+[KMGTP]?\s+\S+\s+\S+\s+(?P<name>.+)$")
 UNREADABLE = "<a listing line that could not be read>"
 # One line of `rsync --dry-run --itemize-changes`: `*deleting   name`, or the itemized changes of a
 # file (`>f+++++++++ name`; openrsync prints two characters fewer than rsync 3.x).
-_ITEMIZED = re.compile(r"^(?:\*deleting\s+(?P<gone>\S.*)|[<>ch.*][fdLDS][.+?a-zA-Z]{7,9}\s.+)$")
+_ITEMIZED = re.compile(r"^(?:\*deleting\s+(?P<gone>\S.*)|[<>ch.][fdLDS][.+?a-zA-Z]{7,9}\s.+)$")
 _MARK_UUID = re.compile(r"archive-uuid: ([0-9a-f-]{36})")
 
 
@@ -69,7 +85,8 @@ class MirrorError(RuntimeError):
 
 
 class MirrorRefused(MirrorError):
-    """Refused before rsync copied anything: the archive, or the target, isn't the right one."""
+    """Refused before rsync copied or deleted anything: the archive, or the target, isn't the right
+    one, or the run would delete more than [mirror] max_delete allows."""
 
 
 @dataclass(frozen=True)
@@ -121,6 +138,7 @@ def rsync_command(mc: MirrorConfig, *, dry_run: bool = False) -> list[str]:
     """The mirror run, or with `dry_run` its dry run: it lists what would change and what would be
     deleted, and has no --max-delete, which would stop the count at the limit."""
     cmd = [mc.rsync, "-a", "--delete", "--delete-delay", "--delay-updates",
+           f"--timeout={IO_TIMEOUT}",
            *(["--dry-run", "--itemize-changes"] if dry_run else [f"--max-delete={mc.max_delete}"]),
            "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
            "--exclude=/#recycle/", "--filter=-p @eaDir/",
@@ -209,29 +227,44 @@ def _mark(mc: MirrorConfig, uuid: str, runner) -> None:
                           f"{proc.returncode})", returncode=proc.returncode)
 
 
-def _check_deletions(mc: MirrorConfig, runner) -> None:
+def _where(path: str) -> str:
+    """The recording a deletion belongs to, by ID, and never a name: a file someone left in the
+    mirror could be called anything."""
+    rid = next((part for part in path.split("/") if ID_RE.fullmatch(part)), None)
+    return f"recording {rid}" if rid else "outside any recording"
+
+
+def _check_deletions(mc: MirrorConfig, runner, timeout: float | None) -> None:
     """Count what the run would delete, and refuse, deleting nothing, past [mirror] max_delete.
-    A dry run it can't read stops the mirror too. Counts only: no path leaves this function."""
+    A dry run it can't read stops the mirror too. No path leaves this function: the refusal
+    carries the count, and the debug log (`recordings mirror --debug`) recording IDs and counts."""
     proc = runner(rsync_command(mc, dry_run=True), capture_output=True, text=True,
-                  timeout=6 * 3600)
+                  timeout=timeout)
     if proc.returncode != 0:
         raise MirrorError(f"the rsync dry run failed (exit {proc.returncode}); nothing was "
                           "deleted", returncode=proc.returncode)
-    gone = 0
+    gone: Counter[str] = Counter()
     for line in proc.stdout.splitlines():
         if not line.strip():
             continue
         match = _ITEMIZED.match(line)
         if match is None:
             raise MirrorError("the rsync dry run's output could not be read; nothing was deleted")
-        gone += match["gone"] is not None
-    if gone > mc.max_delete:
-        raise MirrorRefused(f"the mirror would delete {gone} files and folders, over the limit of "
-                            f"{mc.max_delete} ([mirror] max_delete): nothing was deleted. If they "
-                            "are meant, raise it for one run")
+        if match["gone"] is not None:
+            gone[_where(match["gone"])] += 1
+    if gone.total() > mc.max_delete:
+        for where, count in sorted(gone.items()):  # the loop logs at INFO: --debug only
+            log.debug("the mirror would delete, %s: %d", where, count)
+        raise MirrorRefused(f"the mirror would delete {gone.total()} files and folders, over the "
+                            f"limit of {mc.max_delete} ([mirror] max_delete): nothing was deleted. "
+                            "`recordings mirror --debug` shows where; if they are meant, "
+                            "`recordings mirror --max-delete N` allows N for one run")
 
 
-def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run) -> str:
+def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run,
+               timeout: float | None = TIMEOUT) -> str:
+    """One mirror run. `timeout` caps the dry run and the run each (the loop's TIMEOUT); None, for
+    the CLI, lets a big first mirror finish, and rsync's --timeout still ends a stall."""
     try:
         identity = read_sentinel(mc.archive)
     except SentinelError as exc:
@@ -240,8 +273,8 @@ def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run) -
         raise MirrorRefused("refusing to mirror: the archive's UUID changed since `recordings init`")
     _check_target(mc, expected_uuid, runner)
     _mark(mc, identity.uuid, runner)
-    _check_deletions(mc, runner)
-    proc = runner(rsync_command(mc), capture_output=True, text=True, timeout=6 * 3600)
+    _check_deletions(mc, runner, timeout)
+    proc = runner(rsync_command(mc), capture_output=True, text=True, timeout=timeout)
     if proc.returncode == 25:
         raise MirrorError(f"rsync stopped deleting at {mc.max_delete} ([mirror] max_delete): the "
                           "archive changed since the dry run. The next run counts again",

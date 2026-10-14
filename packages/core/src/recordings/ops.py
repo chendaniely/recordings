@@ -161,6 +161,10 @@ class Context:
     # restic's --retry-lock: none by default, so restic fails at once on a held lock. The CLI's
     # Context (cli._ops_context) sets CLI_RETRY_LOCK.
     retry_lock: str | None = None
+    # The mirror: the loop caps each run at mirror.TIMEOUT; `recordings mirror` sets None, and
+    # may allow more deletions for its one run (--max-delete) than [mirror] max_delete.
+    mirror_timeout: float | None = mirror.TIMEOUT
+    mirror_max_delete: int | None = None
 
 
 @dataclass(frozen=True)
@@ -230,8 +234,11 @@ def _restore_test(ctx: Context, tags: tuple[str, ...]) -> str:
 
 
 def _mirror(ctx: Context, tags: tuple[str, ...]) -> str:
-    return mirror.run_mirror(mirror.from_config(ctx.cfg, ctx.environ),
-                             expected_uuid=ctx.state.meta("archive_uuid") or "", runner=ctx.runner)
+    mc = mirror.from_config(ctx.cfg, ctx.environ)
+    if ctx.mirror_max_delete is not None:
+        mc = replace(mc, max_delete=ctx.mirror_max_delete)
+    return mirror.run_mirror(mc, expected_uuid=ctx.state.meta("archive_uuid") or "",
+                             runner=ctx.runner, timeout=ctx.mirror_timeout)
 
 
 JOBS: dict[str, Callable[[Context, tuple[str, ...]], str]] = {

@@ -81,7 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("mirror", help="rsync the archive to the NAS's read-only mirror, now")
     p.add_argument("--json", action="store_true")
     p.add_argument("--debug", action="store_true",
-                   help="print a failed run's full error (Status and alerts carry its type only)")
+                   help="print a failed run's full error, and for a refused run the recordings it "
+                        "would delete from (Status and alerts carry the error's type only)")
+    p.add_argument("--max-delete", type=int, metavar="N",
+                   help="allow up to N deletions in this run only ([mirror] max_delete stays)")
     return parser
 
 
@@ -333,9 +336,14 @@ def cmd_backup(args: argparse.Namespace) -> int:
 
 def cmd_mirror(args: argparse.Namespace) -> int:
     _debug_logging(args.debug)
+    if args.max_delete is not None and args.max_delete < 0:
+        return _fail("--max-delete must be a whole number, 0 or more", args.json, 2)  # as argparse
     ctx = _ops_context(args.json)
     if isinstance(ctx, int):
         return ctx
+    # Run from a terminal, it may run as long as it needs: a first mirror can outlast the loop's
+    # cap (mirror.TIMEOUT), and rsync's own --timeout still ends a stalled one.
+    ctx.mirror_timeout, ctx.mirror_max_delete = None, args.max_delete
     with ops.sigterm_forwarded():
         return _job_result(ops.run_job(ctx, "mirror"), args.json)
 

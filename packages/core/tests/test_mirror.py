@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import subprocess
@@ -5,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from recordings import mirror
+from recordings import cli, mirror
 from recordings.config import ConfigError, load_config
 from recordings.mirror import MirrorError, MirrorRefused, is_remote, rsync_command, run_mirror
 from recordings.ops import Context, run_job
@@ -67,7 +68,8 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
     cmd = rsync_command(mc)
     for flag in ("-a", "--delete", "--delete-delay", "--delay-updates", "--max-delete=50",
                  "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
-                 "--exclude=/#recycle/", "--filter=-p @eaDir/", f"--exclude=/{MIRROR}"):
+                 "--exclude=/#recycle/", "--filter=-p @eaDir/", f"--exclude=/{MIRROR}",
+                 "--timeout=600"):  # a stalled NAS ends the run (exit 30), not the loop's cap
         assert flag in cmd, flag
     assert "--no-perms" not in cmd
     assert cmd[-2:] == [f"{writer.root}/", "recordings-mirror@nas:/volume1/recordings-mirror/"]
@@ -77,7 +79,7 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
     assert "GlobalKnownHostsFile=/dev/null" in ssh  # only the pinned file is trusted
     dry = rsync_command(mc, dry_run=True)  # counts the deletions: --max-delete would cap the count
     assert "--dry-run" in dry and "--itemize-changes" in dry and "--max-delete=50" not in dry
-    assert dry[-2:] == cmd[-2:] and "--delete-delay" in dry
+    assert dry[-2:] == cmd[-2:] and "--delete-delay" in dry and "--timeout=600" in dry
     local = rsync_command(mirror_config(tmp_path, writer, str(tmp_path / "mirror")))
     assert "-e" not in local
 
@@ -199,6 +201,24 @@ def test_a_dry_run_it_cannot_read_stops_the_mirror(tmp_path, writer):
     assert fake.mirrored == []  # rsync --delete never ran
 
 
+def test_a_deletion_whose_name_is_all_whitespace_is_not_passed_over(tmp_path, writer):
+    # why: `*deleting` followed by only spaces is a deletion, however odd its name. It must not
+    # read as an itemized file change and so go uncounted: the mirror stops, deleting nothing.
+    target = tmp_path / "mirror"
+    target.mkdir()
+    fake = FakeRsync(target)
+    mc = mirror_config(tmp_path, writer, str(target))
+
+    def runner(cmd, **kwargs):
+        if "--dry-run" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "*deleting   \n", "")
+        return fake(cmd, **kwargs)
+
+    with pytest.raises(MirrorError, match="could not be read"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid, runner=runner)
+    assert fake.mirrored == []
+
+
 def test_a_failed_rsync_is_an_error(tmp_path, writer):
     target = tmp_path / "mirror"
     target.mkdir()
@@ -210,7 +230,8 @@ def test_a_failed_rsync_is_an_error(tmp_path, writer):
 
 
 def test_more_deletions_than_the_limit_stop_the_mirror(tmp_path, writer):
-    # why: §15.1. --max-delete bounds an accident; rsync exits 25 when it is reached.
+    # why: §15.1. The dry run refuses before anything is deleted; --max-delete is the backstop if
+    # the archive changes after it, and rsync exits 25 when it is reached.
     target = tmp_path / "mirror"
     target.mkdir()
     cfg, environ = setup(tmp_path, writer, str(target))
@@ -219,6 +240,66 @@ def test_more_deletions_than_the_limit_stop_the_mirror(tmp_path, writer):
         run_mirror(mirror.from_config(cfg, environ), expected_uuid=writer.identity.uuid, runner=fake)
     ctx = Context(cfg=cfg, environ=environ, state=writer.state, runner=fake)
     assert run_job(ctx, "mirror").detail == "MirrorError; exit 25"
+
+
+def test_the_loop_caps_a_run_and_a_run_from_the_cli_may_finish_a_first_mirror(
+        tmp_path, writer, monkeypatch):
+    # why: a first mirror can outlast the loop's cap. Stopped and started again every 6 hours, it
+    # holds the backups off each time, and rsync 3.x on the NAS reads and rewrites every file
+    # staged in .~tmp~ before it moves on, so a big one over a slow link may never finish. From a
+    # terminal it runs to the end; rsync's own --timeout still ends a stall, there and in the loop.
+    target = tmp_path / "mirror"
+    target.mkdir()
+    cfg, environ = setup(tmp_path, writer, str(target))
+    fake, timeouts = FakeRsync(target), []
+
+    def runner(cmd, **kwargs):
+        if "--list-only" not in cmd and not cmd[-2].endswith("/" + MIRROR):
+            timeouts.append(kwargs["timeout"])  # the dry run, then the run
+        return fake(cmd, **kwargs)
+
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, runner=runner)
+    assert run_job(ctx, "mirror").ok and timeouts == [mirror.TIMEOUT, mirror.TIMEOUT]
+    monkeypatch.setattr(cli, "_ops_context", lambda as_json: ctx)
+    timeouts.clear()
+    assert cli.main(["mirror", "--json"]) == 0 and timeouts == [None, None]
+    assert all("--timeout=600" in run for run in fake.mirrored)
+
+
+def test_a_refusal_names_recordings_only_under_debug_and_the_cli_allows_more_for_one_run(
+        tmp_path, writer, monkeypatch, caplog):
+    # why: "if they are meant, raise it for one run" must not need a config edit that outlives
+    # the run, and Dan must first see what would go: recording IDs and counts, at debug level only
+    # (the loop logs at INFO), never a name, since a file left in the mirror could be called
+    # anything.
+    target = tmp_path / "mirror"
+    target.mkdir()
+    cfg, environ = setup(tmp_path, writer, str(target), "max_delete = 2\n")
+    rid = "20261008T143512+0200_0123abcd"
+    gone = "".join(f"*deleting   recordings/2026/10/{rid}/{name}\n"
+                   for name in ("audio.m4a", "recording.json", ""))  # "": the folder itself
+    gone += "*deleting   Grace and Ada.m4a\n"
+    fake = FakeRsync(target)
+
+    def runner(cmd, **kwargs):
+        if "--dry-run" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, gone, "")
+        return fake(cmd, **kwargs)
+
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, runner=runner)
+    with caplog.at_level(logging.INFO, logger="recordings"):
+        assert run_job(ctx, "mirror").detail == "MirrorRefused"
+    assert rid not in caplog.text
+    with caplog.at_level(logging.DEBUG, logger="recordings"):
+        assert run_job(ctx, "mirror").detail == "MirrorRefused"
+    assert f"would delete, recording {rid}: 3" in caplog.text
+    assert "would delete, outside any recording: 1" in caplog.text and "Ada" not in caplog.text
+    assert fake.mirrored == []
+    monkeypatch.setattr(cli, "_ops_context", lambda as_json: ctx)
+    assert cli.main(["mirror", "--json", "--max-delete", "4"]) == 0
+    assert "--max-delete=4" in fake.mirrored[-1] and len(fake.mirrored) == 1
+    assert mirror.from_config(cfg, environ).max_delete == 2  # the config keeps its limit
+    assert cli.main(["mirror", "--json", "--max-delete", "-1"]) == 2
 
 
 def _rsync_with_delay_updates() -> str | None:

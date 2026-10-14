@@ -82,7 +82,8 @@ cache_dir = "/state/cache/restic"
 target = "recordings-mirror@nas:/volume1/recordings-mirror/"
 rsync = "rsync"
 max_delete = 50                         # a run that would delete more is refused before it deletes
-                                        # anything; raise it for one run when they are meant
+                                        # anything. `recordings mirror --debug` lists the recordings
+                                        # by ID; `--max-delete N` allows N for that run only
 no_perms = false                        # true adds --no-perms: for a share with Windows ACLs, when
                                         # the spike's rsync reports chmod errors
 # An interrupted run can leave a `.~tmp~` folder behind (rsync --delay-updates). The mirror never
