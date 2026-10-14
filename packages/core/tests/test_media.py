@@ -112,3 +112,22 @@ def test_a_malformed_wav_or_non_utf8_ffprobe_output_is_not_measured_never_raised
     (tmp_path / "bin" / "ffprobe").write_bytes(b"#!/bin/sh\nprintf '\\377\\376'\n")
     (tmp_path / "a.m4a").write_bytes(b"not really")
     assert probe(tmp_path / "a.m4a") is None
+
+
+def test_a_long_decode_that_keeps_going_is_never_cut_short(tmp_path, monkeypatch):
+    # why: §9.1.1, Task 8's council. The timeout is for a decode that stalls: a multi-hour
+    # recording on a slow or busy host must not come back unmeasured, which stops the import.
+    import time
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    steady = bin_dir / "ffmpeg"
+    steady.write_text("#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 32000 /dev/zero; sleep 0.3; "
+                      "done\n", encoding="utf-8")
+    steady.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    (tmp_path / "a.m4a").write_bytes(b"not really")
+    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 6000  # 1.8 s in all
+    steady.write_text("#!/bin/sh\nhead -c 32000 /dev/zero\nexec sleep 30\n", encoding="utf-8")
+    started = time.monotonic()
+    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) is None  # stalled: killed
+    assert time.monotonic() - started < 5

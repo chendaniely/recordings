@@ -370,3 +370,152 @@ def test_the_pocket_listing_honours_the_consent_list(ar_archive):
     surrogate = hashlib.sha256(b"my_secret_slug").hexdigest()[:32]
     assert plan(ar_archive.root, consent=NONE).unlisted == (f"pocket/{surrogate}",)
     assert plan(ar_archive.root, consent={surrogate}).unlisted == ()
+
+
+def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_env):
+    # why: Task 8's council. Path.glob skips a folder it can't list without a word (Python
+    # 3.13+), so a locked raw/<id>/ read as "no snapshots", and the recording would be created
+    # without its transcript, or without its local outputs for a locked derived/<id>/, with
+    # `ok` True. A row whose time came from a snapshot but whose snapshots are gone is the same.
+    import shutil
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], recorded_at="2026-08-02T09:00:00-07:00",
+                     derived={"merged-whisper-1-20260802T170000Z.json": {"payload": {"text": "x"}}})
+    ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
+    ar_archive.plaud(D, envelopes=[plaud_env(D)], recorded_at="2026-08-04T09:00:00-07:00")
+    ar_archive.pocket(UUID)
+    ar_archive.write_catalog()
+    shutil.rmtree(ar_archive.root / "plaud" / "raw" / C)
+    locked = [ar_archive.root / "plaud" / "raw" / A, ar_archive.root / "plaud" / "derived" / B,
+              ar_archive.root / "pocket" / "raw"]
+    for folder in locked:
+        folder.chmod(0)
+    try:
+        the_plan = plan(ar_archive.root, consent=NONE)
+    finally:
+        for folder in locked:
+            folder.chmod(0o755)
+    by_id = {i.row.file_id: i for i in the_plan.items}
+    assert (by_id[A].disposition, by_id[B].disposition) == ("unplaced", "unplaced")
+    assert "PermissionError" in by_id[A].reason and "PermissionError" in by_id[B].reason
+    assert by_id[C].disposition == "unplaced" and "no snapshot" in by_id[C].reason
+    assert by_id[D].disposition == "new" and len(by_id[D].snapshots) == 1
+    assert by_id[UUID].disposition == "unplaced" and "PermissionError" in by_id[UUID].reason
+    assert not the_plan.ok and str(ar_archive.root) not in json.dumps(the_plan.report())
+
+
+def test_a_source_folder_that_cant_be_listed_is_a_problem_not_a_crash(ar_archive, plaud_env):
+    # why: Task 8's council. A store folder that can't be listed (traversable, not readable) made
+    # plan() raise from its listing of what's on disk; an audio shard or a private-tier folder
+    # was skipped without a word. Either way recordings in it can't be accounted for.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.private()
+    ar_archive._write("private/other/A Stray Title.wav", b"RIFF not a row")
+    ar_archive.write_catalog()
+    locked = [ar_archive.root / "plaud" / "raw", ar_archive.root / "plaud" / "audio" / "2026",
+              ar_archive.root / "private" / "other"]
+    for folder in locked:
+        folder.chmod(0o311)  # can be passed through, not listed
+    try:
+        the_plan = plan(ar_archive.root, consent=NONE)
+    finally:
+        for folder in locked:
+            folder.chmod(0o755)
+    assert the_plan.counts()["new"] == 1 and the_plan.counts()["new-private"] == 1
+    assert any("2 store folders couldn't be listed" in p for p in the_plan.problems)
+    assert any("1 private-tier file" in p for p in the_plan.problems)
+    text = json.dumps(the_plan.report(), ensure_ascii=False)
+    assert "A Stray Title" not in text and str(ar_archive.root) not in text and not the_plan.ok
+
+
+def test_rows_with_the_same_audio_wait_for_each_other(ar_archive, plaud_env):
+    # why: §9.3, §7.4, Task 8's council. Rows with the same audio are one recording, created
+    # with the whole group's privacy. Imported without a row that can't be placed, the
+    # recording would lack its private label (and --allow-unplaced would import it so).
+    ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("therapy",))
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+                     dup_of=f"plaud/{A}")
+    ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
+    ar_archive.plaud(D, envelopes=[plaud_env(D)], same_audio_as=f"plaud/audio/2026/08/{C}.wav",
+                     dup_of=f"plaud/{C}", tags=("private",))["time_source"] = ""
+    ar_archive.plaud(T, envelopes=[plaud_env(T)], recorded_at="2026-08-05T09:00:00-07:00")
+    ar_archive.write_catalog()
+    (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(b"damaged in the copy")
+    the_plan = plan(ar_archive.root, consent=NONE)
+    by_id = {i.row.file_id: i for i in the_plan.items}
+    assert by_id[A].disposition == by_id[D].disposition == "unplaced"
+    assert by_id[B].disposition == "unplaced" and f"plaud/{A} has the same audio" in by_id[B].reason
+    assert by_id[C].disposition == "unplaced" and f"plaud/{D} has the same audio" in by_id[C].reason
+    assert by_id[T].disposition == "new"
+
+
+@pytest.mark.parametrize("recorded_at, zone, default, expected", [
+    # Every main-tier row: its offset and zone agree, whatever zone audio-router's config named.
+    ("2026-08-01T09:00:00-07:00", "America/Vancouver", "America/Vancouver",
+     ("2026-08-01T09:00:00-07:00", "America/Vancouver")),
+    ("2026-08-02T01:00:00+09:00", "Asia/Seoul", "America/Vancouver",  # a trip: kept as it is
+     ("2026-08-02T01:00:00+09:00", "Asia/Seoul")),
+    ("2026-08-01T17:00:00+01:00", "", "Europe/London",  # no zone: the default, which agrees
+     ("2026-08-01T17:00:00+01:00", "Europe/London")),
+    # A naive time is wall-clock in the row's zone, or the default's.
+    ("2026-08-01T09:00:00", "", "Asia/Seoul", ("2026-08-01T09:00:00+09:00", "Asia/Seoul")),
+    ("2026-03-08T02:30:00", "America/Vancouver", "UTC",
+     ("2026-03-08T02:30:00-08:00", "America/Vancouver")),
+    # An offset the zone contradicts keeps the offset, the clock the source wrote, and no zone.
+    ("2026-08-02T10:00:00+09:00", "America/Vancouver", "America/Vancouver",
+     ("2026-08-02T10:00:00+09:00", "")),
+    ("2026-08-01T09:00:00-04:00", "", "Europe/London", ("2026-08-01T09:00:00-04:00", "")),
+])
+def test_a_recording_keeps_its_own_offset_and_a_zone_only_when_they_agree(
+        ar_archive, plaud_env, recorded_at, zone, default, expected):
+    # why: §6.2 (the ID is local time with its offset) and Task 8's council: Dan records in
+    # several zones, so no offset is ever changed and no trip is refused.
+    row = ar_archive.plaud(A, envelopes=[plaud_env(A)], recorded_at=recorded_at)
+    row["timezone"] = zone
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone=default)
+    (item,) = the_plan.items
+    assert (item.disposition, item.recorded_at.isoformat(), item.timezone) == ("new", *expected)
+    assert the_plan.report()["offset_only"] == ([] if expected[1] else [f"plaud/{A}"])
+    assert the_plan.report()["zones"] == {"plaud": {expected[1]: 1}} and the_plan.ok
+
+
+def test_a_private_rows_hand_written_time_keeps_its_offset(ar_archive):
+    # build_catalog gives every private.jsonl row its config's zone, whatever the time says.
+    row = ar_archive.private(recorded_at="2026-08-03T10:00:00+09:00")
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent=NONE)
+    (item,) = the_plan.items
+    assert (item.recorded_at.isoformat(), item.timezone) == ("2026-08-03T10:00:00+09:00", "")
+    assert the_plan.report()["offset_only"] == [row["uri"]]
+    assert the_plan.report()["zones"] == {"private": {"": 1}}
+
+
+def test_a_zone_or_offset_a_recording_cant_carry_is_unplaced(ar_archive, plaud_env):
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])["timezone"] = "Mars/Olympus"
+    ar_archive.plaud(B, envelopes=[plaud_env(B)],
+                     recorded_at="2026-08-02T09:00:00+05:30:15")
+    ar_archive.write_catalog()
+    reasons = {u["uri"]: u["reason"] for u in plan(ar_archive.root, consent=NONE).report()["unplaced"]}
+    assert "unknown time zone 'Mars/Olympus'" in reasons[f"plaud/{A}"]
+    assert "offset in seconds" in reasons[f"plaud/{B}"]
+
+
+def test_a_private_file_named_by_its_hash_must_have_that_hash(ar_archive):
+    row = ar_archive.private(name="placeholder")
+    tier = ar_archive.root / "private" / "recorder-exports"
+    (tier / "placeholder.wav").rename(tier / f"{row['file_id']}.wav")
+    (tier / f"{row['file_id']}.wav").write_bytes(b"RIFF damaged in the copy")
+    ar_archive.write_catalog()
+    (item,) = plan(ar_archive.root, consent=NONE).items
+    assert item.disposition == "unplaced" and "damaged" in item.reason
+
+
+def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(ar_archive, writer,
+                                                                      make_incoming):
+    ar_archive.pocket(UUID)
+    ar_archive.write_catalog()
+    writer.add(make_incoming(b"other audio", name="p.wav", sources=(
+        RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),)))
+    (item,) = plan(ar_archive.root, writer.index, consent=NONE).items
+    assert item.disposition == "unplaced" and "different audio" in item.reason

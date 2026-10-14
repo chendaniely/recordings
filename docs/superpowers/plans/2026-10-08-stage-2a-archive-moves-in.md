@@ -9600,6 +9600,25 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
 - **One bad file never stops the dry run:** a row whose files can't be read is `unplaced`, with a
   reason that names only the exception's type; every path the plan returns resolves inside the
   source root; and a WAV's duration is its frames counted, never its header's claim (§9.1.1).
+- **A folder that can't be listed is never read as empty** (Task 8's council): `Path.glob` and
+  `rglob` skip one without a word on Python 3.13+. A row whose snapshot or output folder can't be
+  listed is `unplaced`, and so is a main-tier row whose copy has no snapshot, since build_catalog
+  built every such row from one. A store or private-tier folder that can't be listed is a
+  problem: the copy can't be checked against the catalog.
+- **Rows with the same audio wait for each other** (Task 8's council): when one row of a
+  same-audio group (by `dup_of`, the catalog's hash or the file's) can't be placed, the rest are
+  `unplaced` too, so the recording is never created without that row's labels, titles and
+  snapshots, even with `--allow-unplaced`. A row already imported by its `audio_router` URI with
+  other audio is `unplaced`, as a Plaud ID is, and a private row's 64-hex ID must be its file's
+  hash.
+- **Time zones** (Task 8's council): an offset is never changed. A zone name is kept when it
+  agrees with the offset at that instant, as every main-tier row's does, a trip's included; a
+  naive time takes the row's zone, or the default; an offset the zone contradicts (a
+  hand-written `private.jsonl` time) is kept with no zone name, and listed in `offset_only`. An
+  unknown zone, or an offset in seconds, is `unplaced`. The report counts rows by source and
+  zone (`zones`): audio-router stamps a Recorder, Pocket or private row with the zone its
+  config named when its index or catalog was built, so a zone wrong for a whole source shows
+  before the run.
 
 **Files:**
 - Create: `packages/core/src/recordings/media.py`, `packages/core/src/recordings/sources/__init__.py`, `packages/core/src/recordings/sources/audio_router.py`
@@ -9631,8 +9650,9 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
     - `@dataclass(frozen=True) Plan(root, items, ledger_only=(), unlisted=(), held_on_plaud=None, problems=(), unlisted_private=0)`, with:
       - `.counts() -> dict[str, int]` and `.unprobed() -> list[str]`
       - `.incomplete_snapshots() -> dict`, the Plaud snapshots reconcile will skip, as `{"total": n, "by_reason": {reason: n}}` (a reason is `unreadable`, a block's data type, or `legacy`), and `.all_snapshots_incomplete() -> list[str]`, the URIs of rows to import whose every snapshot is incomplete
+      - `.offset_only() -> list[str]`, the URIs of rows to import whose time keeps its offset with no zone name, because the catalog's zone contradicts it, and `.zones() -> dict[str, dict[str, int]]`, rows to import counted by source and zone name (`""` for offset only)
       - `.ok -> bool`: no problems, no unplaced row and nothing unprobed
-      - `.report() -> dict`, with the keys `catalog_rows`, `by_disposition`, `private`, `unplaced`, `no_audio`, `deferred_to_2b`, `unprobed`, `incomplete_snapshots`, `all_snapshots_incomplete`, `ledger_only`, `unlisted`, `unlisted_private` (a count of private-tier media no row names), `held_on_plaud` and `problems`
+      - `.report() -> dict`, with the keys `catalog_rows`, `by_disposition`, `private`, `unplaced`, `no_audio`, `deferred_to_2b`, `unprobed`, `incomplete_snapshots`, `all_snapshots_incomplete`, `offset_only`, `zones`, `ledger_only`, `unlisted`, `unlisted_private` (a count of private-tier media no row names), `held_on_plaud` and `problems`
     - `map_tags(labels: Iterable[str]) -> tuple[str, ...]`
     - `read_catalog(root: Path) -> list[Row]`
     - `snapshot_order(path: Path) -> tuple[str, str]`
@@ -9765,6 +9785,25 @@ def test_a_malformed_wav_or_non_utf8_ffprobe_output_is_not_measured_never_raised
     (tmp_path / "bin" / "ffprobe").write_bytes(b"#!/bin/sh\nprintf '\\377\\376'\n")
     (tmp_path / "a.m4a").write_bytes(b"not really")
     assert probe(tmp_path / "a.m4a") is None
+
+
+def test_a_long_decode_that_keeps_going_is_never_cut_short(tmp_path, monkeypatch):
+    # why: §9.1.1, Task 8's council. The timeout is for a decode that stalls: a multi-hour
+    # recording on a slow or busy host must not come back unmeasured, which stops the import.
+    import time
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    steady = bin_dir / "ffmpeg"
+    steady.write_text("#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 32000 /dev/zero; sleep 0.3; "
+                      "done\n", encoding="utf-8")
+    steady.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    (tmp_path / "a.m4a").write_bytes(b"not really")
+    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 6000  # 1.8 s in all
+    steady.write_text("#!/bin/sh\nhead -c 32000 /dev/zero\nexec sleep 30\n", encoding="utf-8")
+    started = time.monotonic()
+    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) is None  # stalled: killed
+    assert time.monotonic() - started < 5
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -9797,6 +9836,7 @@ import json
 import shutil
 import subprocess
 import threading
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -9860,7 +9900,9 @@ def _streams(exe: str, path: Path, timeout: float) -> list[dict] | None:
 
 def decoded_ms(path: Path, *, ffmpeg: str = "ffmpeg", timeout: float = 600) -> int | None:
     """Decode the first audio stream to 16 kHz mono PCM and count its samples. The PCM streams
-    through a pipe and is only counted, so a long recording never sits in memory or on disk."""
+    through a pipe and is only counted, so a long recording never sits in memory or on disk.
+    `timeout` is how long the decode may go without producing any audio: one that stalls is
+    killed (None), and a long recording that keeps decoding is never cut short."""
     exe = shutil.which(ffmpeg)
     if exe is None:
         return None
@@ -9871,16 +9913,24 @@ def decoded_ms(path: Path, *, ffmpeg: str = "ffmpeg", timeout: float = 600) -> i
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except OSError:
         return None
-    timer = threading.Timer(timeout, proc.kill)  # a decode that hangs is killed: None
-    timer.daemon = True
-    timer.start()
+    last = time.monotonic()
+    done = threading.Event()
+
+    def watch() -> None:
+        while not done.wait(min(timeout, 1.0)):
+            if time.monotonic() - last > timeout:
+                proc.kill()
+                return
+
+    threading.Thread(target=watch, daemon=True).start()
     total = 0
     try:
         while chunk := proc.stdout.read(1 << 16):
             total += len(chunk)
+            last = time.monotonic()
         code = proc.wait()
     finally:
-        timer.cancel()
+        done.set()
         proc.stdout.close()
     if code != 0 or total < 2:
         return None
@@ -9924,7 +9974,7 @@ def media_kind(path: Path, probed: MediaProbe | None) -> Literal["audio", "video
 - [ ] **Step 4: Run them to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_media.py -v`
-Expected: 5 passed. The stand-in `ffprobe` and `ffmpeg` are shell scripts on `PATH`, so the tests
+Expected: 8 passed. The stand-in `ffprobe` and `ffmpeg` are shell scripts on `PATH`, so the tests
 need no real ffmpeg.
 
 - [ ] **Step 5: Write the synthetic `audio-router` archive and the failing plan tests**
@@ -10472,6 +10522,155 @@ def test_the_pocket_listing_honours_the_consent_list(ar_archive):
     surrogate = hashlib.sha256(b"my_secret_slug").hexdigest()[:32]
     assert plan(ar_archive.root, consent=NONE).unlisted == (f"pocket/{surrogate}",)
     assert plan(ar_archive.root, consent={surrogate}).unlisted == ()
+
+
+def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_env):
+    # why: Task 8's council. Path.glob skips a folder it can't list without a word (Python
+    # 3.13+), so a locked raw/<id>/ read as "no snapshots", and the recording would be created
+    # without its transcript, or without its local outputs for a locked derived/<id>/, with
+    # `ok` True. A row whose time came from a snapshot but whose snapshots are gone is the same.
+    import shutil
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], recorded_at="2026-08-02T09:00:00-07:00",
+                     derived={"merged-whisper-1-20260802T170000Z.json": {"payload": {"text": "x"}}})
+    ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
+    ar_archive.plaud(D, envelopes=[plaud_env(D)], recorded_at="2026-08-04T09:00:00-07:00")
+    ar_archive.pocket(UUID)
+    ar_archive.write_catalog()
+    shutil.rmtree(ar_archive.root / "plaud" / "raw" / C)
+    locked = [ar_archive.root / "plaud" / "raw" / A, ar_archive.root / "plaud" / "derived" / B,
+              ar_archive.root / "pocket" / "raw"]
+    for folder in locked:
+        folder.chmod(0)
+    try:
+        the_plan = plan(ar_archive.root, consent=NONE)
+    finally:
+        for folder in locked:
+            folder.chmod(0o755)
+    by_id = {i.row.file_id: i for i in the_plan.items}
+    assert (by_id[A].disposition, by_id[B].disposition) == ("unplaced", "unplaced")
+    assert "PermissionError" in by_id[A].reason and "PermissionError" in by_id[B].reason
+    assert by_id[C].disposition == "unplaced" and "no snapshot" in by_id[C].reason
+    assert by_id[D].disposition == "new" and len(by_id[D].snapshots) == 1
+    assert by_id[UUID].disposition == "unplaced" and "PermissionError" in by_id[UUID].reason
+    assert not the_plan.ok and str(ar_archive.root) not in json.dumps(the_plan.report())
+
+
+def test_a_source_folder_that_cant_be_listed_is_a_problem_not_a_crash(ar_archive, plaud_env):
+    # why: Task 8's council. A store folder that can't be listed (traversable, not readable) made
+    # plan() raise from its listing of what's on disk; an audio shard or a private-tier folder
+    # was skipped without a word. Either way recordings in it can't be accounted for.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.private()
+    ar_archive._write("private/other/A Stray Title.wav", b"RIFF not a row")
+    ar_archive.write_catalog()
+    locked = [ar_archive.root / "plaud" / "raw", ar_archive.root / "plaud" / "audio" / "2026",
+              ar_archive.root / "private" / "other"]
+    for folder in locked:
+        folder.chmod(0o311)  # can be passed through, not listed
+    try:
+        the_plan = plan(ar_archive.root, consent=NONE)
+    finally:
+        for folder in locked:
+            folder.chmod(0o755)
+    assert the_plan.counts()["new"] == 1 and the_plan.counts()["new-private"] == 1
+    assert any("2 store folders couldn't be listed" in p for p in the_plan.problems)
+    assert any("1 private-tier file" in p for p in the_plan.problems)
+    text = json.dumps(the_plan.report(), ensure_ascii=False)
+    assert "A Stray Title" not in text and str(ar_archive.root) not in text and not the_plan.ok
+
+
+def test_rows_with_the_same_audio_wait_for_each_other(ar_archive, plaud_env):
+    # why: §9.3, §7.4, Task 8's council. Rows with the same audio are one recording, created
+    # with the whole group's privacy. Imported without a row that can't be placed, the
+    # recording would lack its private label (and --allow-unplaced would import it so).
+    ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("therapy",))
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+                     dup_of=f"plaud/{A}")
+    ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
+    ar_archive.plaud(D, envelopes=[plaud_env(D)], same_audio_as=f"plaud/audio/2026/08/{C}.wav",
+                     dup_of=f"plaud/{C}", tags=("private",))["time_source"] = ""
+    ar_archive.plaud(T, envelopes=[plaud_env(T)], recorded_at="2026-08-05T09:00:00-07:00")
+    ar_archive.write_catalog()
+    (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(b"damaged in the copy")
+    the_plan = plan(ar_archive.root, consent=NONE)
+    by_id = {i.row.file_id: i for i in the_plan.items}
+    assert by_id[A].disposition == by_id[D].disposition == "unplaced"
+    assert by_id[B].disposition == "unplaced" and f"plaud/{A} has the same audio" in by_id[B].reason
+    assert by_id[C].disposition == "unplaced" and f"plaud/{D} has the same audio" in by_id[C].reason
+    assert by_id[T].disposition == "new"
+
+
+@pytest.mark.parametrize("recorded_at, zone, default, expected", [
+    # Every main-tier row: its offset and zone agree, whatever zone audio-router's config named.
+    ("2026-08-01T09:00:00-07:00", "America/Vancouver", "America/Vancouver",
+     ("2026-08-01T09:00:00-07:00", "America/Vancouver")),
+    ("2026-08-02T01:00:00+09:00", "Asia/Seoul", "America/Vancouver",  # a trip: kept as it is
+     ("2026-08-02T01:00:00+09:00", "Asia/Seoul")),
+    ("2026-08-01T17:00:00+01:00", "", "Europe/London",  # no zone: the default, which agrees
+     ("2026-08-01T17:00:00+01:00", "Europe/London")),
+    # A naive time is wall-clock in the row's zone, or the default's.
+    ("2026-08-01T09:00:00", "", "Asia/Seoul", ("2026-08-01T09:00:00+09:00", "Asia/Seoul")),
+    ("2026-03-08T02:30:00", "America/Vancouver", "UTC",
+     ("2026-03-08T02:30:00-08:00", "America/Vancouver")),
+    # An offset the zone contradicts keeps the offset, the clock the source wrote, and no zone.
+    ("2026-08-02T10:00:00+09:00", "America/Vancouver", "America/Vancouver",
+     ("2026-08-02T10:00:00+09:00", "")),
+    ("2026-08-01T09:00:00-04:00", "", "Europe/London", ("2026-08-01T09:00:00-04:00", "")),
+])
+def test_a_recording_keeps_its_own_offset_and_a_zone_only_when_they_agree(
+        ar_archive, plaud_env, recorded_at, zone, default, expected):
+    # why: §6.2 (the ID is local time with its offset) and Task 8's council: Dan records in
+    # several zones, so no offset is ever changed and no trip is refused.
+    row = ar_archive.plaud(A, envelopes=[plaud_env(A)], recorded_at=recorded_at)
+    row["timezone"] = zone
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone=default)
+    (item,) = the_plan.items
+    assert (item.disposition, item.recorded_at.isoformat(), item.timezone) == ("new", *expected)
+    assert the_plan.report()["offset_only"] == ([] if expected[1] else [f"plaud/{A}"])
+    assert the_plan.report()["zones"] == {"plaud": {expected[1]: 1}} and the_plan.ok
+
+
+def test_a_private_rows_hand_written_time_keeps_its_offset(ar_archive):
+    # build_catalog gives every private.jsonl row its config's zone, whatever the time says.
+    row = ar_archive.private(recorded_at="2026-08-03T10:00:00+09:00")
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent=NONE)
+    (item,) = the_plan.items
+    assert (item.recorded_at.isoformat(), item.timezone) == ("2026-08-03T10:00:00+09:00", "")
+    assert the_plan.report()["offset_only"] == [row["uri"]]
+    assert the_plan.report()["zones"] == {"private": {"": 1}}
+
+
+def test_a_zone_or_offset_a_recording_cant_carry_is_unplaced(ar_archive, plaud_env):
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])["timezone"] = "Mars/Olympus"
+    ar_archive.plaud(B, envelopes=[plaud_env(B)],
+                     recorded_at="2026-08-02T09:00:00+05:30:15")
+    ar_archive.write_catalog()
+    reasons = {u["uri"]: u["reason"] for u in plan(ar_archive.root, consent=NONE).report()["unplaced"]}
+    assert "unknown time zone 'Mars/Olympus'" in reasons[f"plaud/{A}"]
+    assert "offset in seconds" in reasons[f"plaud/{B}"]
+
+
+def test_a_private_file_named_by_its_hash_must_have_that_hash(ar_archive):
+    row = ar_archive.private(name="placeholder")
+    tier = ar_archive.root / "private" / "recorder-exports"
+    (tier / "placeholder.wav").rename(tier / f"{row['file_id']}.wav")
+    (tier / f"{row['file_id']}.wav").write_bytes(b"RIFF damaged in the copy")
+    ar_archive.write_catalog()
+    (item,) = plan(ar_archive.root, consent=NONE).items
+    assert item.disposition == "unplaced" and "damaged" in item.reason
+
+
+def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(ar_archive, writer,
+                                                                      make_incoming):
+    ar_archive.pocket(UUID)
+    ar_archive.write_catalog()
+    writer.add(make_incoming(b"other audio", name="p.wav", sources=(
+        RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),)))
+    (item,) = plan(ar_archive.root, writer.index, consent=NONE).items
+    assert item.disposition == "unplaced" and "different audio" in item.reason
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -10639,6 +10838,23 @@ class Plan:
         return [i.row.uri for i in self.items if i.disposition in IMPORTED
                 and i.snapshot_problems and all(i.snapshot_problems)]
 
+    def offset_only(self) -> list[str]:
+        """Rows to import whose time keeps its offset but no zone name, because the zone the
+        catalog gives contradicts it: reported, not refused, and fixable in recording.json."""
+        return [i.row.uri for i in self.items if i.disposition in IMPORTED
+                and i.recorded_at is not None and not i.timezone]
+
+    def zones(self) -> dict[str, dict[str, int]]:
+        """Rows to import by source and zone name ("" for offset only). audio-router stamps a
+        Recorder, Pocket or private row with the zone its config named when its index or catalog
+        was built, not where it was recorded: a zone wrong for a whole source shows here."""
+        found = Counter((i.row.source, i.timezone) for i in self.items
+                        if i.disposition in IMPORTED and i.recorded_at is not None)
+        out: dict[str, dict[str, int]] = {}
+        for (source, zone), n in sorted(found.items()):
+            out.setdefault(source, {})[zone] = n
+        return out
+
     @property
     def ok(self) -> bool:
         return (not self.problems and not self.unprobed()
@@ -10659,6 +10875,8 @@ class Plan:
             "unprobed": self.unprobed(),
             "incomplete_snapshots": self.incomplete_snapshots(),
             "all_snapshots_incomplete": self.all_snapshots_incomplete(),
+            "offset_only": self.offset_only(),
+            "zones": self.zones(),
             "ledger_only": list(self.ledger_only),
             "unlisted": list(self.unlisted),
             "unlisted_private": self.unlisted_private,
@@ -10740,7 +10958,15 @@ def _all_inside(root: Path, paths: Iterable[Path]) -> bool:
 
 
 def _when(row: Row, default_tz: str) -> tuple[datetime | None, str, str, str]:
-    """(recorded_at, its zone's name, recordings' time_source, a reason when unplaced)."""
+    """(recorded_at, its zone's name, recordings' time_source, a reason when unplaced).
+
+    audio-router writes a main-tier time in the zone its config named then, with that zone's
+    offset at that instant (plaud.stamp_meta, index._local_from_start_at, build_catalog's
+    _local_iso), so its offset and zone agree, a trip's included: both are kept as they are. A
+    naive time is wall-clock in the row's zone, or the default when the row names none. An
+    offset its zone contradicts keeps its offset, the clock the source wrote, and gets no zone
+    name: build_catalog gives every private.jsonl row its config's zone, whatever the
+    hand-written time says. `Plan.offset_only()` lists them."""
     time_source = TIME_SOURCES.get((row.source, row.time_source))
     if time_source is None:
         return None, "", "", f"unknown time source {row.time_source!r} for {row.source}"
@@ -10750,21 +10976,54 @@ def _when(row: Row, default_tz: str) -> tuple[datetime | None, str, str, str]:
         when = datetime.fromisoformat(row.recorded_at_local)
     except ValueError:
         return None, "", "", f"recording time {row.recorded_at_local!r} isn't ISO 8601"
-    zone = row.timezone or default_tz
+    name = row.timezone or default_tz
+    try:
+        zone = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None, "", "", f"unknown time zone {name!r}"
     if when.utcoffset() is None:
-        try:
-            when = when.replace(tzinfo=ZoneInfo(zone))
-        except (ZoneInfoNotFoundError, ValueError):
-            return None, "", "", f"unknown time zone {zone!r}"
-    return when, zone, time_source, ""
+        when = when.replace(tzinfo=zone)
+    elif when.utcoffset() != when.astimezone(zone).utcoffset():
+        name = ""
+    if when.utcoffset().total_seconds() % 60:
+        return None, "", "", (f"recording time {row.recorded_at_local!r} has an offset in "
+                              "seconds, which a recording ID can't carry")
+    return when, name, time_source, ""
+
+
+def _json_files(folder: Path) -> list[Path]:
+    """The `.json` files in one store folder, as audio-router's `glob("*.json")` finds them. A
+    folder that isn't there has none. One that is there but can't be listed raises, so its row is
+    unplaced instead of imported without its snapshots or outputs: on Python 3.13+ `Path.glob`
+    skips a folder it can't list without a word, and an empty answer looks like a recording
+    with no transcript."""
+    try:
+        entries = list(folder.iterdir())
+    except FileNotFoundError:
+        return []
+    return [p for p in entries if p.name.endswith(".json")]
+
+
+def _walk(top: Path) -> tuple[list[Path], int]:
+    """Every file under `top`, sorted, and how many folders couldn't be listed. `Path.rglob`
+    skips those without a word on Python 3.13+, so a recording in one would look absent instead
+    of unreadable. Symlinked folders aren't followed, as `rglob` doesn't follow them."""
+    errors: list[OSError] = []
+    files = [folder / name for folder, _, names in top.walk(on_error=errors.append)
+             for name in names]
+    return sorted(files), len(errors)
 
 
 def _store_files(root: Path, source: str, fid: str) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     if source == "pocket":
         flat = root / "pocket" / "raw" / f"{fid}.json"
-        return ((flat,) if flat.is_file() else ()), ()
-    raw = sorted((root / source / "raw" / fid).glob("*.json"), key=snapshot_order)
-    derived = sorted((root / source / "derived" / fid).glob("*.json"))
+        try:
+            flat.stat()  # raises when it can't be reached; is_file() would answer False
+        except FileNotFoundError:
+            return (), ()
+        return (flat,), ()
+    raw = sorted(_json_files(root / source / "raw" / fid), key=snapshot_order)
+    derived = sorted(_json_files(root / source / "derived" / fid))
     return tuple(raw), tuple(derived)
 
 
@@ -10779,17 +11038,15 @@ def _kind_from_id(fid: str) -> str:
 
 
 def _private_media(root: Path, consent: frozenset[str]) -> tuple[dict[str, list[Path]], int]:
-    """The private tier's media files by SHA-256, hashed once per plan, and how many couldn't be
-    read or sit outside the source. Its files keep their export names, so a hash is the reliable
-    way to find one. A file named by a consent-listed ID is skipped before it is opened (§9.1)."""
+    """The private tier's media files by SHA-256, hashed once per plan, and how many files or
+    folders couldn't be read or sit outside the source. Its files keep their export names, so a
+    hash is the reliable way to find one. A file named by a consent-listed ID is skipped before
+    it is opened (§9.1)."""
     found: dict[str, list[Path]] = {}
     skipped = 0
     tier = root / "private"
     if tier.is_dir():
-        try:
-            paths = sorted(tier.rglob("*"))
-        except OSError:
-            return found, 1
+        paths, skipped = _walk(tier)  # a folder that can't be listed counts as one
         for path in paths:
             if (path.is_file() and not path.name.startswith(".")
                     and path.suffix.lower() in MEDIA_SUFFIXES
@@ -10853,6 +11110,8 @@ def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | 
                               "with different audio")
             return rid, ""
     for rid in index.find_by_source("audio_router", row.uri):
+        if index.sha256_of(rid) != sha:  # the same source row, other bytes: never a second copy
+            return None, f"{row.uri} is already in this archive ({rid}) with different audio"
         return rid, ""
     return index.find_by_sha256(sha), ""
 
@@ -10935,10 +11194,16 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
         if audio is None or not audio.is_file():
             return Item(row, "unplaced", f"audio {row.audio_rel} is missing from the copy")
         snapshots, renditions = _store_files(root, kind, row.file_id)
+        if not snapshots:  # build_catalog built this row from one: its time, or pocket/raw/
+            return Item(row, "unplaced", "the copy has no snapshot of it, though the catalog "
+                        "was built from one: the copy is incomplete")
     if not _all_inside(root, [audio, *snapshots, *renditions, *texts]):
         return Item(row, "unplaced", "a file resolves outside the source root")
     sha = sha256_file(audio)
-    if row.audio_sha256 and sha != row.audio_sha256:
+    # A private row's 64-hex ID is its audio's hash, as the catalog's column is a main-tier row's.
+    expected = row.audio_sha256 or (row.file_id if row.source == "private"
+                                    and _HEX64.fullmatch(row.file_id) else "")
+    if expected and sha != expected:
         return Item(row, "unplaced",
                     "the audio's SHA-256 differs from the catalog's: the copy is damaged")
     if row.dup_of and row.dup_of not in by_uri:
@@ -10955,20 +11220,28 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
                 snapshot_problems=_snapshot_problems(kind, snapshots))
 
 
-def _ids_on_disk(root: Path, source: str) -> set[str]:
+def _ids_on_disk(root: Path, source: str) -> tuple[set[str], int]:
     """Every name with something on disk, as audio-router's store.archived_ids reads them:
-    audio/…/<id>.<ext>, and the folders raw/<id>/ and derived/<id>/."""
+    audio/…/<id>.<ext>, and the folders raw/<id>/ and derived/<id>/. Also how many folders
+    couldn't be listed: a recording in one would look absent, so plan() reports them."""
     names: set[str] = set()
+    unlistable = 0
     audio = root / source / "audio"
     if audio.is_dir():
-        names |= {p.stem for p in audio.rglob("*") if p.is_file()
+        files, unlistable = _walk(audio)
+        names |= {p.stem for p in files if p.is_file()
                   and not p.name.startswith(".") and p.suffix not in (".part", ".tmp")}
     for folder in ("raw", "derived"):
         base = root / source / folder
-        if base.is_dir():
-            names |= {p.name for p in base.iterdir()
-                      if p.is_dir() and not p.name.startswith((".", "_"))}
-    return names
+        try:
+            entries = list(base.iterdir())
+        except FileNotFoundError:
+            continue
+        except OSError:
+            unlistable += 1
+            continue
+        names |= {p.name for p in entries if p.is_dir() and not p.name.startswith((".", "_"))}
+    return names, unlistable
 
 
 def _report_id(name: str) -> str:
@@ -10979,24 +11252,63 @@ def _report_id(name: str) -> str:
     return hashlib.sha256(name.encode("utf-8")).hexdigest()[:32]
 
 
-def _unlisted(root: Path, rows: list[Row], consent: frozenset[str]) -> list[str]:
-    """Recordings on disk with no catalog row, by ID only, leaving out consent-listed IDs."""
+def _unlisted(root: Path, rows: list[Row], consent: frozenset[str]) -> tuple[list[str], int]:
+    """Recordings on disk with no catalog row, by ID only, leaving out consent-listed IDs, and
+    how many store folders couldn't be listed to look for them."""
     listed = {(r.source, r.file_id) for r in rows}
     out: set[str] = set()
+    unlistable = 0
     for source in ("plaud", "recorder"):
-        for name in _ids_on_disk(root, source):
+        names, missed = _ids_on_disk(root, source)
+        unlistable += missed
+        for name in names:
             fid = _report_id(name)
             if (source, fid) not in listed and canonical_plaud_id(fid) not in consent:
                 out.add(f"{source}/{fid}")
-    pocket_raw = root / "pocket" / "raw"
-    if pocket_raw.is_dir():
-        for path in pocket_raw.glob("*.json"):
-            if path.stem.startswith("_"):
+    try:
+        pocket = _json_files(root / "pocket" / "raw")
+    except OSError:
+        pocket, unlistable = [], unlistable + 1
+    for path in pocket:
+        if path.stem.startswith("_"):
+            continue
+        fid = _report_id(path.stem)
+        if ("pocket", fid) not in listed and canonical_plaud_id(fid) not in consent:
+            out.add(f"pocket/{fid}")
+    return sorted(out), unlistable
+
+
+def _hold_groups(items: list[Item]) -> list[Item]:
+    """Rows with the same audio are one recording, created with the whole group's privacy (§9.3,
+    §7.4). When one of them can't be placed, the rest wait too: imported alone, the recording
+    would lack that row's labels, titles and snapshots, and a later run could add its private
+    tag only after the content was already in. Rows are grouped by `dup_of`, by the catalog's
+    audio hash (a private row's 64-hex ID is one), and by the hash of the file read."""
+    def keys(item: Item) -> set[str]:
+        row = item.row
+        out = {row.uri, *(f"sha:{s}" for s in (row.audio_sha256, item.sha256) if s)}
+        if row.dup_of:
+            out.add(row.dup_of)
+        if row.source == "private" and _HEX64.fullmatch(row.file_id):
+            out.add(f"sha:{row.file_id}")
+        return out
+
+    blocked = {k: i.row.uri for i in items if i.disposition == "unplaced" for k in keys(i)}
+    items = list(items)
+    changed = True
+    while changed:
+        changed = False
+        for n, item in enumerate(items):
+            if item.disposition not in IMPORTED:
                 continue
-            fid = _report_id(path.stem)
-            if ("pocket", fid) not in listed and canonical_plaud_id(fid) not in consent:
-                out.add(f"pocket/{fid}")
-    return sorted(out)
+            hit = next((blocked[k] for k in sorted(keys(item)) if k in blocked), None)
+            if hit is None:
+                continue
+            items[n] = Item(item.row, "unplaced", f"{hit} has the same audio and can't be "
+                            "placed: the recording waits for it")
+            blocked.update({k: hit for k in keys(item)})
+            changed = True
+    return items
 
 
 def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
@@ -11014,21 +11326,25 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
     by_uri = {r.uri: r for r in rows}
     private_media, skipped = _private_media(root, listed)
     if skipped:
-        problems.append(f"{skipped} private-tier files couldn't be read or sit outside the "
-                        "source: they are not matched to any row")
+        problems.append(f"{skipped} private-tier files or folders couldn't be read or sit "
+                        "outside the source: they are not matched to any row")
     named = {r.file_id for r in rows if r.source == "private"}
     unlisted_private = sum(1 for sha, paths in private_media.items() for p in paths
                            if sha not in named and p.stem not in named)
     # Rows that are nobody's duplicate first, so a duplicate always merges into its original.
-    items = [_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
-                    default_tz=default_timezone, private_media=private_media)
-             for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))]
+    items = _hold_groups([_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
+                                 default_tz=default_timezone, private_media=private_media)
+                          for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))])
+    unlisted, unlistable = _unlisted(root, rows, listed)
+    if unlistable:
+        problems.append(f"{unlistable} store folders couldn't be listed: recordings in them can't "
+                        "be found, so the copy can't be checked against the catalog")
     ledger = [str(x) for x in provenance.get("ledger_only_no_media") or []]
     held = ((provenance.get("per_source") or {}).get("plaud") or {}).get("held_count")
     return Plan(root=root, items=tuple(items),
                 ledger_only=tuple(sorted(x for x in ledger
                                          if canonical_plaud_id(x) not in listed)),
-                unlisted=tuple(_unlisted(root, rows, listed)),
+                unlisted=tuple(unlisted),
                 held_on_plaud=held if isinstance(held, int) else None, problems=tuple(problems),
                 unlisted_private=unlisted_private)
 ```
@@ -11036,7 +11352,7 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
 - [ ] **Step 8: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_plan.py packages/core/tests/test_media.py -v && uv run pytest`
-Expected: 28 passed (21 and 7), and the full suite stays green, its count above Task 7's.
+Expected: 43 passed (35 and 8), and the full suite stays green, its count above Task 7's.
 
 - [ ] **Step 9: Commit**
 

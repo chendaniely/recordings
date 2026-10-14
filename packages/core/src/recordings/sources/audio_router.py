@@ -149,6 +149,23 @@ class Plan:
         return [i.row.uri for i in self.items if i.disposition in IMPORTED
                 and i.snapshot_problems and all(i.snapshot_problems)]
 
+    def offset_only(self) -> list[str]:
+        """Rows to import whose time keeps its offset but no zone name, because the zone the
+        catalog gives contradicts it: reported, not refused, and fixable in recording.json."""
+        return [i.row.uri for i in self.items if i.disposition in IMPORTED
+                and i.recorded_at is not None and not i.timezone]
+
+    def zones(self) -> dict[str, dict[str, int]]:
+        """Rows to import by source and zone name ("" for offset only). audio-router stamps a
+        Recorder, Pocket or private row with the zone its config named when its index or catalog
+        was built, not where it was recorded: a zone wrong for a whole source shows here."""
+        found = Counter((i.row.source, i.timezone) for i in self.items
+                        if i.disposition in IMPORTED and i.recorded_at is not None)
+        out: dict[str, dict[str, int]] = {}
+        for (source, zone), n in sorted(found.items()):
+            out.setdefault(source, {})[zone] = n
+        return out
+
     @property
     def ok(self) -> bool:
         return (not self.problems and not self.unprobed()
@@ -169,6 +186,8 @@ class Plan:
             "unprobed": self.unprobed(),
             "incomplete_snapshots": self.incomplete_snapshots(),
             "all_snapshots_incomplete": self.all_snapshots_incomplete(),
+            "offset_only": self.offset_only(),
+            "zones": self.zones(),
             "ledger_only": list(self.ledger_only),
             "unlisted": list(self.unlisted),
             "unlisted_private": self.unlisted_private,
@@ -250,7 +269,15 @@ def _all_inside(root: Path, paths: Iterable[Path]) -> bool:
 
 
 def _when(row: Row, default_tz: str) -> tuple[datetime | None, str, str, str]:
-    """(recorded_at, its zone's name, recordings' time_source, a reason when unplaced)."""
+    """(recorded_at, its zone's name, recordings' time_source, a reason when unplaced).
+
+    audio-router writes a main-tier time in the zone its config named then, with that zone's
+    offset at that instant (plaud.stamp_meta, index._local_from_start_at, build_catalog's
+    _local_iso), so its offset and zone agree, a trip's included: both are kept as they are. A
+    naive time is wall-clock in the row's zone, or the default when the row names none. An
+    offset its zone contradicts keeps its offset, the clock the source wrote, and gets no zone
+    name: build_catalog gives every private.jsonl row its config's zone, whatever the
+    hand-written time says. `Plan.offset_only()` lists them."""
     time_source = TIME_SOURCES.get((row.source, row.time_source))
     if time_source is None:
         return None, "", "", f"unknown time source {row.time_source!r} for {row.source}"
@@ -260,21 +287,54 @@ def _when(row: Row, default_tz: str) -> tuple[datetime | None, str, str, str]:
         when = datetime.fromisoformat(row.recorded_at_local)
     except ValueError:
         return None, "", "", f"recording time {row.recorded_at_local!r} isn't ISO 8601"
-    zone = row.timezone or default_tz
+    name = row.timezone or default_tz
+    try:
+        zone = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None, "", "", f"unknown time zone {name!r}"
     if when.utcoffset() is None:
-        try:
-            when = when.replace(tzinfo=ZoneInfo(zone))
-        except (ZoneInfoNotFoundError, ValueError):
-            return None, "", "", f"unknown time zone {zone!r}"
-    return when, zone, time_source, ""
+        when = when.replace(tzinfo=zone)
+    elif when.utcoffset() != when.astimezone(zone).utcoffset():
+        name = ""
+    if when.utcoffset().total_seconds() % 60:
+        return None, "", "", (f"recording time {row.recorded_at_local!r} has an offset in "
+                              "seconds, which a recording ID can't carry")
+    return when, name, time_source, ""
+
+
+def _json_files(folder: Path) -> list[Path]:
+    """The `.json` files in one store folder, as audio-router's `glob("*.json")` finds them. A
+    folder that isn't there has none. One that is there but can't be listed raises, so its row is
+    unplaced instead of imported without its snapshots or outputs: on Python 3.13+ `Path.glob`
+    skips a folder it can't list without a word, and an empty answer looks like a recording
+    with no transcript."""
+    try:
+        entries = list(folder.iterdir())
+    except FileNotFoundError:
+        return []
+    return [p for p in entries if p.name.endswith(".json")]
+
+
+def _walk(top: Path) -> tuple[list[Path], int]:
+    """Every file under `top`, sorted, and how many folders couldn't be listed. `Path.rglob`
+    skips those without a word on Python 3.13+, so a recording in one would look absent instead
+    of unreadable. Symlinked folders aren't followed, as `rglob` doesn't follow them."""
+    errors: list[OSError] = []
+    files = [folder / name for folder, _, names in top.walk(on_error=errors.append)
+             for name in names]
+    return sorted(files), len(errors)
 
 
 def _store_files(root: Path, source: str, fid: str) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     if source == "pocket":
         flat = root / "pocket" / "raw" / f"{fid}.json"
-        return ((flat,) if flat.is_file() else ()), ()
-    raw = sorted((root / source / "raw" / fid).glob("*.json"), key=snapshot_order)
-    derived = sorted((root / source / "derived" / fid).glob("*.json"))
+        try:
+            flat.stat()  # raises when it can't be reached; is_file() would answer False
+        except FileNotFoundError:
+            return (), ()
+        return (flat,), ()
+    raw = sorted(_json_files(root / source / "raw" / fid), key=snapshot_order)
+    derived = sorted(_json_files(root / source / "derived" / fid))
     return tuple(raw), tuple(derived)
 
 
@@ -289,17 +349,15 @@ def _kind_from_id(fid: str) -> str:
 
 
 def _private_media(root: Path, consent: frozenset[str]) -> tuple[dict[str, list[Path]], int]:
-    """The private tier's media files by SHA-256, hashed once per plan, and how many couldn't be
-    read or sit outside the source. Its files keep their export names, so a hash is the reliable
-    way to find one. A file named by a consent-listed ID is skipped before it is opened (§9.1)."""
+    """The private tier's media files by SHA-256, hashed once per plan, and how many files or
+    folders couldn't be read or sit outside the source. Its files keep their export names, so a
+    hash is the reliable way to find one. A file named by a consent-listed ID is skipped before
+    it is opened (§9.1)."""
     found: dict[str, list[Path]] = {}
     skipped = 0
     tier = root / "private"
     if tier.is_dir():
-        try:
-            paths = sorted(tier.rglob("*"))
-        except OSError:
-            return found, 1
+        paths, skipped = _walk(tier)  # a folder that can't be listed counts as one
         for path in paths:
             if (path.is_file() and not path.name.startswith(".")
                     and path.suffix.lower() in MEDIA_SUFFIXES
@@ -363,6 +421,8 @@ def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | 
                               "with different audio")
             return rid, ""
     for rid in index.find_by_source("audio_router", row.uri):
+        if index.sha256_of(rid) != sha:  # the same source row, other bytes: never a second copy
+            return None, f"{row.uri} is already in this archive ({rid}) with different audio"
         return rid, ""
     return index.find_by_sha256(sha), ""
 
@@ -445,10 +505,16 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
         if audio is None or not audio.is_file():
             return Item(row, "unplaced", f"audio {row.audio_rel} is missing from the copy")
         snapshots, renditions = _store_files(root, kind, row.file_id)
+        if not snapshots:  # build_catalog built this row from one: its time, or pocket/raw/
+            return Item(row, "unplaced", "the copy has no snapshot of it, though the catalog "
+                        "was built from one: the copy is incomplete")
     if not _all_inside(root, [audio, *snapshots, *renditions, *texts]):
         return Item(row, "unplaced", "a file resolves outside the source root")
     sha = sha256_file(audio)
-    if row.audio_sha256 and sha != row.audio_sha256:
+    # A private row's 64-hex ID is its audio's hash, as the catalog's column is a main-tier row's.
+    expected = row.audio_sha256 or (row.file_id if row.source == "private"
+                                    and _HEX64.fullmatch(row.file_id) else "")
+    if expected and sha != expected:
         return Item(row, "unplaced",
                     "the audio's SHA-256 differs from the catalog's: the copy is damaged")
     if row.dup_of and row.dup_of not in by_uri:
@@ -465,20 +531,28 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
                 snapshot_problems=_snapshot_problems(kind, snapshots))
 
 
-def _ids_on_disk(root: Path, source: str) -> set[str]:
+def _ids_on_disk(root: Path, source: str) -> tuple[set[str], int]:
     """Every name with something on disk, as audio-router's store.archived_ids reads them:
-    audio/…/<id>.<ext>, and the folders raw/<id>/ and derived/<id>/."""
+    audio/…/<id>.<ext>, and the folders raw/<id>/ and derived/<id>/. Also how many folders
+    couldn't be listed: a recording in one would look absent, so plan() reports them."""
     names: set[str] = set()
+    unlistable = 0
     audio = root / source / "audio"
     if audio.is_dir():
-        names |= {p.stem for p in audio.rglob("*") if p.is_file()
+        files, unlistable = _walk(audio)
+        names |= {p.stem for p in files if p.is_file()
                   and not p.name.startswith(".") and p.suffix not in (".part", ".tmp")}
     for folder in ("raw", "derived"):
         base = root / source / folder
-        if base.is_dir():
-            names |= {p.name for p in base.iterdir()
-                      if p.is_dir() and not p.name.startswith((".", "_"))}
-    return names
+        try:
+            entries = list(base.iterdir())
+        except FileNotFoundError:
+            continue
+        except OSError:
+            unlistable += 1
+            continue
+        names |= {p.name for p in entries if p.is_dir() and not p.name.startswith((".", "_"))}
+    return names, unlistable
 
 
 def _report_id(name: str) -> str:
@@ -489,24 +563,63 @@ def _report_id(name: str) -> str:
     return hashlib.sha256(name.encode("utf-8")).hexdigest()[:32]
 
 
-def _unlisted(root: Path, rows: list[Row], consent: frozenset[str]) -> list[str]:
-    """Recordings on disk with no catalog row, by ID only, leaving out consent-listed IDs."""
+def _unlisted(root: Path, rows: list[Row], consent: frozenset[str]) -> tuple[list[str], int]:
+    """Recordings on disk with no catalog row, by ID only, leaving out consent-listed IDs, and
+    how many store folders couldn't be listed to look for them."""
     listed = {(r.source, r.file_id) for r in rows}
     out: set[str] = set()
+    unlistable = 0
     for source in ("plaud", "recorder"):
-        for name in _ids_on_disk(root, source):
+        names, missed = _ids_on_disk(root, source)
+        unlistable += missed
+        for name in names:
             fid = _report_id(name)
             if (source, fid) not in listed and canonical_plaud_id(fid) not in consent:
                 out.add(f"{source}/{fid}")
-    pocket_raw = root / "pocket" / "raw"
-    if pocket_raw.is_dir():
-        for path in pocket_raw.glob("*.json"):
-            if path.stem.startswith("_"):
+    try:
+        pocket = _json_files(root / "pocket" / "raw")
+    except OSError:
+        pocket, unlistable = [], unlistable + 1
+    for path in pocket:
+        if path.stem.startswith("_"):
+            continue
+        fid = _report_id(path.stem)
+        if ("pocket", fid) not in listed and canonical_plaud_id(fid) not in consent:
+            out.add(f"pocket/{fid}")
+    return sorted(out), unlistable
+
+
+def _hold_groups(items: list[Item]) -> list[Item]:
+    """Rows with the same audio are one recording, created with the whole group's privacy (§9.3,
+    §7.4). When one of them can't be placed, the rest wait too: imported alone, the recording
+    would lack that row's labels, titles and snapshots, and a later run could add its private
+    tag only after the content was already in. Rows are grouped by `dup_of`, by the catalog's
+    audio hash (a private row's 64-hex ID is one), and by the hash of the file read."""
+    def keys(item: Item) -> set[str]:
+        row = item.row
+        out = {row.uri, *(f"sha:{s}" for s in (row.audio_sha256, item.sha256) if s)}
+        if row.dup_of:
+            out.add(row.dup_of)
+        if row.source == "private" and _HEX64.fullmatch(row.file_id):
+            out.add(f"sha:{row.file_id}")
+        return out
+
+    blocked = {k: i.row.uri for i in items if i.disposition == "unplaced" for k in keys(i)}
+    items = list(items)
+    changed = True
+    while changed:
+        changed = False
+        for n, item in enumerate(items):
+            if item.disposition not in IMPORTED:
                 continue
-            fid = _report_id(path.stem)
-            if ("pocket", fid) not in listed and canonical_plaud_id(fid) not in consent:
-                out.add(f"pocket/{fid}")
-    return sorted(out)
+            hit = next((blocked[k] for k in sorted(keys(item)) if k in blocked), None)
+            if hit is None:
+                continue
+            items[n] = Item(item.row, "unplaced", f"{hit} has the same audio and can't be "
+                            "placed: the recording waits for it")
+            blocked.update({k: hit for k in keys(item)})
+            changed = True
+    return items
 
 
 def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
@@ -524,20 +637,24 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
     by_uri = {r.uri: r for r in rows}
     private_media, skipped = _private_media(root, listed)
     if skipped:
-        problems.append(f"{skipped} private-tier files couldn't be read or sit outside the "
-                        "source: they are not matched to any row")
+        problems.append(f"{skipped} private-tier files or folders couldn't be read or sit "
+                        "outside the source: they are not matched to any row")
     named = {r.file_id for r in rows if r.source == "private"}
     unlisted_private = sum(1 for sha, paths in private_media.items() for p in paths
                            if sha not in named and p.stem not in named)
     # Rows that are nobody's duplicate first, so a duplicate always merges into its original.
-    items = [_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
-                    default_tz=default_timezone, private_media=private_media)
-             for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))]
+    items = _hold_groups([_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
+                                 default_tz=default_timezone, private_media=private_media)
+                          for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))])
+    unlisted, unlistable = _unlisted(root, rows, listed)
+    if unlistable:
+        problems.append(f"{unlistable} store folders couldn't be listed: recordings in them can't "
+                        "be found, so the copy can't be checked against the catalog")
     ledger = [str(x) for x in provenance.get("ledger_only_no_media") or []]
     held = ((provenance.get("per_source") or {}).get("plaud") or {}).get("held_count")
     return Plan(root=root, items=tuple(items),
                 ledger_only=tuple(sorted(x for x in ledger
                                          if canonical_plaud_id(x) not in listed)),
-                unlisted=tuple(_unlisted(root, rows, listed)),
+                unlisted=tuple(unlisted),
                 held_on_plaud=held if isinstance(held, int) else None, problems=tuple(problems),
                 unlisted_private=unlisted_private)

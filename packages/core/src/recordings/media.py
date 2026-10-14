@@ -19,6 +19,7 @@ import json
 import shutil
 import subprocess
 import threading
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,7 +83,9 @@ def _streams(exe: str, path: Path, timeout: float) -> list[dict] | None:
 
 def decoded_ms(path: Path, *, ffmpeg: str = "ffmpeg", timeout: float = 600) -> int | None:
     """Decode the first audio stream to 16 kHz mono PCM and count its samples. The PCM streams
-    through a pipe and is only counted, so a long recording never sits in memory or on disk."""
+    through a pipe and is only counted, so a long recording never sits in memory or on disk.
+    `timeout` is how long the decode may go without producing any audio: one that stalls is
+    killed (None), and a long recording that keeps decoding is never cut short."""
     exe = shutil.which(ffmpeg)
     if exe is None:
         return None
@@ -93,16 +96,24 @@ def decoded_ms(path: Path, *, ffmpeg: str = "ffmpeg", timeout: float = 600) -> i
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except OSError:
         return None
-    timer = threading.Timer(timeout, proc.kill)  # a decode that hangs is killed: None
-    timer.daemon = True
-    timer.start()
+    last = time.monotonic()
+    done = threading.Event()
+
+    def watch() -> None:
+        while not done.wait(min(timeout, 1.0)):
+            if time.monotonic() - last > timeout:
+                proc.kill()
+                return
+
+    threading.Thread(target=watch, daemon=True).start()
     total = 0
     try:
         while chunk := proc.stdout.read(1 << 16):
             total += len(chunk)
+            last = time.monotonic()
         code = proc.wait()
     finally:
-        timer.cancel()
+        done.set()
         proc.stdout.close()
     if code != 0 or total < 2:
         return None
