@@ -29,7 +29,8 @@ def ssh_options(key: Path | None, known_hosts: Path | None, port: int | None) ->
         out += ["-i", str(key), "-o", "IdentitiesOnly=yes"]
     out += ["-o", "StrictHostKeyChecking=yes"]  # always: a host's ssh_config must not relax it
     if known_hosts is not None:
-        out += ["-o", f"UserKnownHostsFile={known_hosts}"]
+        # Only the pinned file is trusted: not the system's /etc/ssh/ssh_known_hosts either.
+        out += ["-o", f"UserKnownHostsFile={known_hosts}", "-o", "GlobalKnownHostsFile=/dev/null"]
     if port is not None:
         out += ["-o", f"Port={port}"]
     return out

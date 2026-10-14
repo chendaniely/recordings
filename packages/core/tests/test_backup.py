@@ -91,6 +91,25 @@ class FakeRestic:
         return subprocess.CompletedProcess(cmd, self.returncode, self.stdout, self.stderr)
 
 
+def restore_like_restic(writer, bc, cmd, *, state_copy=None) -> tuple[Path, Path]:
+    """What `restic restore --target T` writes: every backed-up path under T at its absolute
+    path, the state.db copy (`state_copy`, or one taken now) included. Returns (T, the archive's
+    copy)."""
+    target = Path(cmd[cmd.index("--target") + 1])
+    copy = target / writer.root.relative_to(writer.root.anchor)
+    shutil.copytree(writer.root, copy)
+    for path in bc.paths:
+        (target / path.relative_to(path.anchor)).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target / path.relative_to(path.anchor))
+    dest = target / backup.state_copy_path(bc).relative_to(bc.state.anchor)
+    if state_copy is None:
+        writer.state.backup_to(dest)
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(state_copy, dest)
+    return target, copy
+
+
 SUMMARY = json.dumps({"message_type": "summary", "snapshot_id": "f" * 64,
                       "total_files_processed": 12, "data_added": 4096})
 
@@ -209,6 +228,39 @@ def test_the_weekly_check_reads_a_different_quarter_each_week():
     # every four weeks.
     assert {backup.check_subset(NOW + timedelta(weeks=w)) for w in range(4)} == {
         "1/4", "2/4", "3/4", "4/4"}
+
+
+def test_a_failed_check_reads_the_same_quarter_again_until_it_passes(tmp_path, writer):
+    # why: a retry that read another quarter would pass and look like a recovery, while the
+    # damaged pack waited weeks for its quarter to come round again (ops council).
+    cfg, environ = config(tmp_path, writer)
+    now = [NOW]
+    fake = FakeRestic(returncode=1, stderr="Fatal: repository contains errors", only=("check",))
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, clock=lambda: now[0], runner=fake)
+    assert run_job(ctx, "check").detail == "BackupError; exit 1"
+    now[0] += timedelta(weeks=1)  # another calendar week: its quarter must wait its turn
+    assert not run_job(ctx, "check").ok
+    fake.returncode = 0
+    assert run_job(ctx, "check").ok and run_job(ctx, "check").ok
+    first = backup.check_subset(NOW)
+    after = ops.QUARTERS[(ops.QUARTERS.index(first) + 1) % 4]
+    assert [a.removeprefix("--read-data-subset=") for cmd, _ in fake.calls if verb(cmd) == "check"
+            for a in cmd if a.startswith("--read-data-subset=")] == [first, first, first, after]
+
+
+def test_restics_whole_report_reaches_the_debug_log_and_nowhere_else(tmp_path, writer, caplog):
+    # why: restic check names the damaged packs and the repair command on lines before its last,
+    # which says only "Fatal: repository contains errors". `backup check --debug` must show them.
+    cfg, environ = config(tmp_path, writer)
+    report = ("pack f5261ce8 contains 2 errors\nrestic repair packs f5261ce8\n"
+              "rest:https://recordings:hunter2@nas:8000/ answered 500\n"
+              "Fatal: repository contains errors\n")
+    fake = FakeRestic(returncode=1, stderr=report, only=("check",))
+    with caplog.at_level("DEBUG", logger="recordings.backup"), pytest.raises(BackupError) as caught:
+        backup.run_check(backup.from_config(cfg, environ), environ, now=NOW, runner=fake)
+    assert "restic repair packs f5261ce8" in caplog.text and "https://***@nas" in caplog.text
+    assert "hunter2" not in caplog.text
+    assert str(caught.value).endswith("Fatal: repository contains errors")
 
 
 def test_retry_lock_and_the_rest_server_certificate_reach_restic(tmp_path, writer):
@@ -345,9 +397,7 @@ def test_a_restored_copy_with_a_truncated_file_fails_the_restore_test(tmp_path, 
 
     def restore(cmd):
         if "restore" in cmd:
-            target = Path(cmd[cmd.index("--target") + 1])
-            copy = target / writer.root.relative_to(writer.root.anchor)
-            shutil.copytree(writer.root, copy)
+            _, copy = restore_like_restic(writer, backup.from_config(cfg, environ), cmd)
             media = copy / "recordings" / "2026" / "10" / rec.id / rec.media.file
             media.chmod(0o644)
             media.write_bytes(media.read_bytes()[:100])
@@ -378,11 +428,15 @@ def test_the_restore_test_clears_old_copies_then_checks_the_space(tmp_path, writ
     monkeypatch.setattr(backup.shutil, "disk_usage", lambda path: SimpleNamespace(
         total=100 * gib, used=80 * gib - 1, free=20 * gib + 1))  # just above 20% free
     fake = FakeRestic()
-    with pytest.raises(backup.BackupRefused, match="below 20% free"):
+    with pytest.raises(backup.ScratchTooSmall, match="below 20% free"):
         backup.run_restore_test(backup.from_config(cfg, environ), environ,
                                 expected_uuid=writer.identity.uuid, now=NOW, runner=fake)
     assert fake.calls == [] and not old.exists()
     assert (tmp_path / "scratch" / "notes.txt").is_file()
+    # the archive outgrows the disk one day: Status and the alert must say that, not just
+    # "BackupRefused", which is also a missing sentinel, file or password
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, clock=lambda: NOW, runner=fake)
+    assert run_job(ctx, "restore-test").detail == "ScratchTooSmall"
 
 
 def test_a_restored_copy_left_behind_fails_the_restore_test(tmp_path, writer, make_incoming,
@@ -551,14 +605,14 @@ CLEANS_UP = ("import pathlib, signal, sys, time\n"
              "time.sleep(30)\n")
 
 
-def sigterm_when_ready(ready: Path) -> None:
+def sigterm_when_ready(ready: Path, signum: int = signal.SIGTERM) -> None:
     main_thread = threading.main_thread().ident
 
     def send():
         deadline = time.monotonic() + 10
         while not ready.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-        signal.pthread_kill(main_thread, signal.SIGTERM)
+        signal.pthread_kill(main_thread, signum)
 
     threading.Thread(target=send, daemon=True).start()
 
@@ -606,6 +660,54 @@ def test_a_sigterm_while_the_child_is_starting_still_reaches_it(monkeypatch):
     except subprocess.TimeoutExpired:
         children[0].kill()
         pytest.fail("the child was never signalled")
+
+
+def test_ctrl_c_waits_for_the_child_to_finish_its_cleanup_before_it_propagates(tmp_path):
+    # why: at a terminal, Ctrl-C reaches restic as well. KeyboardInterrupt inside communicate()
+    # closed the pipes before waiting, so restic could die of SIGPIPE in the middle of its
+    # cleanup and leave its repository lock behind (the SIGTERM fault again, by another route).
+    ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
+    child = ("import pathlib, sys, time\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(1.0)  # the child's own SIGINT cleanup begins; its pipes must still be open\n"
+             "sys.stderr.write('cleaning up\\n'); sys.stderr.flush()\n"
+             f"pathlib.Path({str(cleaned)!r}).touch()\n")
+    sigterm_when_ready(ready, signal.SIGINT)
+    with pytest.raises(KeyboardInterrupt):
+        ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=60)
+    assert cleaned.exists()  # run_child waited for the child, and only then let Ctrl-C through
+
+
+def test_a_sigterm_in_the_spawn_window_is_honoured_when_popen_raises(monkeypatch):
+    # why: the flag was only looked at after a child had been waited for, so on this path the CLI
+    # exited 1 instead of 143 and the loop went on to its next turn.
+    def popen_fails_after_sigterm(*args, **kwargs):
+        signal.raise_signal(signal.SIGTERM)  # recorded only: no child yet
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(ops.subprocess, "Popen", popen_fails_after_sigterm)
+    with pytest.raises(SystemExit) as stopped, ops.sigterm_forwarded():
+        ops.run_child(["restic"], capture_output=True, text=True, timeout=60)
+    assert stopped.value.code == 128 + signal.SIGTERM
+
+
+def test_a_forwarded_sigterm_is_honoured_when_the_child_then_times_out(tmp_path):
+    # why: communicate() raised TimeoutExpired past the check, so the earlier handler never ran
+    # and the stop was held back until the next run_child or the end of the block.
+    ready = tmp_path / "ready"
+    child = ("import pathlib, signal, time\n"
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(30)\n")
+    seen = []
+    before = signal.signal(signal.SIGTERM, lambda signum, frame: seen.append(signum))
+    try:
+        sigterm_when_ready(ready)
+        with pytest.raises(subprocess.TimeoutExpired), ops.sigterm_forwarded():
+            ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=2)
+    finally:
+        signal.signal(signal.SIGTERM, before)
+    assert seen == [signal.SIGTERM]  # the earlier handler ran, once, as the timeout went by
 
 
 def test_sigterm_forwarded_can_nest_and_copes_with_a_handler_python_cannot_see(monkeypatch):
@@ -660,6 +762,9 @@ def test_host_keys_are_always_checked_and_a_nas_without_a_known_hosts_file_is_re
     options = ssh_options(None, None, None)
     assert options[options.index("StrictHostKeyChecking=yes") - 1] == "-o"
     assert not any(o.startswith("UserKnownHostsFile=") for o in options)
+    pinned = ssh_options(None, tmp_path / "kh", None)
+    assert f"UserKnownHostsFile={tmp_path / 'kh'}" in pinned
+    assert "GlobalKnownHostsFile=/dev/null" in pinned  # the system's known hosts are not trusted
     cfg, environ = config(tmp_path, writer, repository="sftp:backup@nas:/backups/r")
     del environ["RECORDINGS_NAS_KNOWN_HOSTS_FILE"]
     with pytest.raises(ConfigError, match="RECORDINGS_NAS_KNOWN_HOSTS_FILE"):
@@ -704,15 +809,60 @@ def test_a_missing_sentinel_in_the_restored_copy_is_reported_once(tmp_path, writ
 
     def restore(cmd):
         if "restore" in cmd:
-            target = Path(cmd[cmd.index("--target") + 1])
-            copy = target / writer.root.relative_to(writer.root.anchor)
-            shutil.copytree(writer.root, copy)
+            _, copy = restore_like_restic(writer, backup.from_config(cfg, environ), cmd)
             (copy / SENTINEL).unlink()
 
     result = backup.run_restore_test(backup.from_config(cfg, environ), environ,
                                      expected_uuid=writer.identity.uuid, now=NOW,
                                      runner=FakeRestic(on_call=restore))
     assert len(result.problems) == 1
+
+
+def test_a_snapshot_missing_a_recording_or_a_backed_up_file_fails_the_restore_test(
+        tmp_path, writer, make_incoming):
+    # why: --verify and the hashes prove what was restored, not that everything was: a snapshot
+    # missing a whole recording folder passes both. The snapshot's own state.db copy, taken
+    # before restic read the archive, names every recording.json it must hold.
+    first = writer.add(make_incoming()).recording
+    early = writer.state.backup_to(tmp_path / "early" / "state.db")  # before `later` existed
+    later = writer.add(make_incoming()).recording
+    cfg, environ = config(tmp_path, writer)
+    bc = backup.from_config(cfg, environ)
+
+    def run(change, state_copy=None):
+        def restore(cmd):
+            if "restore" in cmd:
+                change(*restore_like_restic(writer, bc, cmd, state_copy=state_copy))
+        return backup.run_restore_test(bc, environ, expected_uuid=writer.identity.uuid, now=NOW,
+                                       runner=FakeRestic(on_call=restore))
+
+    def drop_first_and_the_config(target, copy):
+        shutil.rmtree(copy / writer.archive.path_for(first.id).relative_to(writer.root))
+        (target / cfg.path.relative_to(cfg.path.anchor)).unlink()
+
+    result = run(drop_first_and_the_config)
+    assert result.recordings == 1
+    assert sorted((p["path"], p["message"]) for p in result.problems) == sorted([
+        (str(cfg.path), "is not in the snapshot"),
+        (str(writer.archive.path_for(first.id) / "recording.json"), "is not in the snapshot")])
+
+    def drop_the_state_copy(target, copy):
+        (target / backup.state_copy_path(bc).relative_to(bc.state.anchor)).unlink()
+
+    result = run(drop_the_state_copy)
+    assert [(p["path"], p["message"]) for p in result.problems] == [
+        (str(backup.state_copy_path(bc)), "is not in the snapshot")]
+
+    # `later` was added after this snapshot's state copy: there or not, it is no problem
+    result = run(lambda target, copy: None, state_copy=early)
+    assert result.ok and result.recordings == 2
+
+    def drop_later(target, copy):
+        shutil.rmtree(copy / writer.archive.path_for(later.id).relative_to(writer.root))
+
+    result = run(drop_later, state_copy=early)
+    assert result.ok and result.recordings == 1
+    assert not any((tmp_path / "scratch").iterdir())
 
 
 def test_backup_init_prints_fixed_text_and_a_missing_restic_is_a_clean_error(

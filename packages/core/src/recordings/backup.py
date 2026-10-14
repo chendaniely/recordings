@@ -22,12 +22,15 @@ CLI's container and the loop's share a host name but not their PIDs.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +43,7 @@ from recordings.sentinel import SentinelError, read_sentinel
 from recordings.ssh import Nas, nas_free_bytes, nas_from_config, require_known_hosts
 from recordings.state import State
 
+log = logging.getLogger(__name__)
 TAG = "recordings"
 MILESTONE_TAGS = ("pre-import", "post-import")
 _USERINFO = re.compile(r"(\w+://)[^/@\s]+@")
@@ -62,6 +66,11 @@ class BackupRefused(BackupError):
 
 class NasLowOnSpace(BackupRefused):
     pass
+
+
+class ScratchTooSmall(BackupRefused):
+    """The restore test's copy would take its disk past full or below a threshold. The archive
+    grows and the disk doesn't, so this one is named: Status and the alert say why."""
 
 
 class RestoreTestFailed(BackupError):
@@ -190,6 +199,11 @@ def restic_base(bc: BackupConfig) -> list[str]:
     return base
 
 
+def state_copy_path(bc: BackupConfig) -> Path:
+    """The consistent copy of state.db that each snapshot carries (§15.1)."""
+    return bc.state / "backup" / "state.db"
+
+
 def backup_command(bc: BackupConfig, state_copy: Path, *, tags: Sequence[str] = ()) -> list[str]:
     tag_args = [x for t in (TAG, *tags) for x in ("--tag", t)]
     return [*restic_base(bc), "backup", "--json", "--host", bc.host, *tag_args,
@@ -234,9 +248,14 @@ def _run(bc: BackupConfig, cmd: list[str], environ: Mapping[str, str], what: str
     proc = runner(cmd, env=restic_env(bc, environ), capture_output=True, text=True,
                   timeout=timeout)
     if proc.returncode != 0:
-        last = (proc.stderr or "").strip().splitlines()[-1:] or ["no message"]
+        lines = (proc.stderr or "").strip().splitlines()
+        # restic's whole report, for --debug only: a failed check names the damaged packs and the
+        # `restic repair packs` line to run; its last line says only that there are errors.
+        log.debug("restic %s exited %d:\n%s", what, proc.returncode,
+                  _USERINFO.sub(r"\1***@", "\n".join(lines)))
         raise BackupError(f"restic {what} failed (exit {proc.returncode}): "
-                          + _USERINFO.sub(r"\1***@", last[0])[:300], returncode=proc.returncode)
+                          + _USERINFO.sub(r"\1***@", (lines or ["no message"])[-1])[:300],
+                          returncode=proc.returncode)
     return proc
 
 
@@ -278,7 +297,7 @@ def run_backup(bc: BackupConfig, state: State, environ: Mapping[str, str], *,
         free = nas_free_bytes(bc.nas, bc.nas_repo_path, runner=runner)
         if free is not None and free < bc.min_nas_free_bytes:
             raise NasLowOnSpace(f"refusing to back up: only {free / 1024 ** 3:.1f} GB free on the NAS")
-    state_copy = state.backup_to(bc.state / "backup" / "state.db")
+    state_copy = state.backup_to(state_copy_path(bc))
     _unlock(bc, environ, runner)
     proc = _run(bc, backup_command(bc, state_copy, tags=tags), environ, "backup", runner)
     summary = None
@@ -303,9 +322,10 @@ def run_forget(bc: BackupConfig, environ: Mapping[str, str], *, runner=subproces
 
 
 def run_check(bc: BackupConfig, environ: Mapping[str, str], *, now: datetime | None = None,
-              runner=subprocess.run) -> str:
-    """`restic check`; given `now`, it also reads back this week's quarter of the data."""
-    subset = check_subset(now) if now is not None else None
+              subset: str | None = None, runner=subprocess.run) -> str:
+    """`restic check`; given `subset` ("2/4"), or `now` for this week's quarter, it also reads
+    back that part of the data."""
+    subset = subset or (check_subset(now) if now is not None else None)
     _unlock(bc, environ, runner)
     _run(bc, check_command(bc, subset=subset), environ, "check", runner)
     return f"repository checked, data {subset} read back" if subset else "repository checked"
@@ -343,8 +363,36 @@ def _check_scratch_space(bc: BackupConfig, keep_free_percents: Sequence[float]) 
                if usage.free * 100 >= t * usage.total > after * 100]
     if after <= 0 or crossed:
         where = f"below {crossed[0]:g}% free" if crossed else "past full"
-        raise BackupRefused(f"refusing the restore test: restoring {needed / 1024 ** 3:.1f} GB "
-                            f"would take the scratch folder's disk {where}")
+        raise ScratchTooSmall(f"refusing the restore test: restoring {needed / 1024 ** 3:.1f} GB "
+                              f"would take the scratch folder's disk {where}")
+
+
+def _in_restore(target: Path, path: Path) -> Path:
+    """Where `restic restore --target` puts a backed-up path: under its absolute path."""
+    return target / path.relative_to(path.anchor)
+
+
+def _not_in_snapshot(bc: BackupConfig, target: Path, restored: Path) -> list[dict]:
+    """What the snapshot should hold and doesn't. --verify and the hashes prove what was restored,
+    not that everything was: a snapshot missing whole recording folders passes both. Its own
+    state.db copy was taken before restic read the archive, so every recording.json that copy has
+    committed must be in the snapshot; recordings added since are allowed. config.toml, the extra
+    paths and the copy itself must be there too."""
+    copy = state_copy_path(bc)
+    problems = [{"path": str(p), "message": "is not in the snapshot"}
+                for p in (*bc.paths, copy) if not _in_restore(target, p).is_file()]
+    if not _in_restore(target, copy).is_file():
+        return problems
+    uri = f"{_in_restore(target, copy).absolute().as_uri()}?mode=ro&immutable=1"
+    try:
+        with closing(sqlite3.connect(uri, uri=True)) as db:
+            files = [r[0] for r in db.execute(
+                "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file")]
+    except sqlite3.Error as exc:
+        return problems + [{"path": str(copy), "message": "the snapshot's copy can't be read "
+                                                          f"({type(exc).__name__})"}]
+    return problems + [{"path": str(bc.archive / f), "message": "is not in the snapshot"}
+                       for f in files if not (restored / f).is_file()]
 
 
 def run_restore_test(bc: BackupConfig, environ: Mapping[str, str], *, expected_uuid: str,
@@ -352,7 +400,8 @@ def run_restore_test(bc: BackupConfig, environ: Mapping[str, str], *, expected_u
                      keep_free_percents: Sequence[float] = (WARN_FREE_PERCENT, STOP_FREE_PERCENT),
                      runner=subprocess.run) -> RestoreResult:
     """Restore the newest snapshot into scratch and prove it (§15.1): restic's --verify, then
-    `recordings validate` with every hash checked, and the same archive UUID.
+    `recordings validate` with every hash checked, the same archive UUID, and every recording
+    the snapshot's own state.db copy knows.
 
     Copies an earlier, killed test left behind are removed first. The new copy is always removed,
     and a copy that can't be is an error: it is the whole archive, unencrypted.
@@ -378,6 +427,7 @@ def run_restore_test(bc: BackupConfig, environ: Mapping[str, str], *, expected_u
                 problems.append({"path": str(restored), "message": "a different archive's UUID"})
         except SentinelError:
             pass  # validate() has reported it already: once is enough
+        problems += _not_in_snapshot(bc, target, restored)
         count = sum(1 for _ in Archive(restored).recording_dirs())
     finally:
         shutil.rmtree(target, ignore_errors=True)

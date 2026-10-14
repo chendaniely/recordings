@@ -16,7 +16,8 @@ in state.db, so Status can show it and the schedule knows what is due.
   sigterm_forwarded, it goes on to the running restic or rsync, which stops cleanly and removes
   its lock. Then the handler that was there before runs, if any; with none, this process stops
   once the child has. The loop (Task 13) runs inside sigterm_forwarded and sets no handler of
-  its own.
+  its own. Ctrl-C waits for the child the same way, and a SIGTERM still pending when run_child
+  ends or raises (Popen failing, a timeout) is honoured then.
 """
 
 from __future__ import annotations
@@ -61,7 +62,9 @@ def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: floa
     this process stops only once the child has exited and its pipes are drained. Then the handler
     that was there before runs (it may raise), or, with none, this process exits. Calling that
     handler while the child still ran would close the pipes under it: restic would die of SIGPIPE
-    in the middle of its cleanup and leave its repository lock behind."""
+    in the middle of its cleanup and leave its repository lock behind. Ctrl-C (KeyboardInterrupt)
+    waits for the child the same way, and a SIGTERM still pending when this returns or raises, for
+    whatever reason, is honoured then."""
     global _child, _spawning, _stopping
     if capture_output:
         popen_kwargs["stdout"] = popen_kwargs["stderr"] = subprocess.PIPE
@@ -72,28 +75,38 @@ def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: floa
     # pthread_sigmask instead would hand the child a blocked signal across exec.)
     _spawning = True
     try:
-        proc = subprocess.Popen(cmd, **popen_kwargs)
-        _child = proc
-    finally:
-        _spawning = False
-    with proc:
         try:
-            if _stopping:
-                proc.send_signal(signal.SIGTERM)
-            stdout, stderr = proc.communicate(input, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            raise
+            proc = subprocess.Popen(cmd, **popen_kwargs)
+            _child = proc
         finally:
-            _child = None
-    if _stopping:
-        _stopping = False
-        if _previous is not None:
-            _previous(signal.SIGTERM, None)  # the child is done: now the caller's handler decides
-        else:
-            raise SystemExit(128 + signal.SIGTERM)  # no one else decides when to stop: stop now
-    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+            _spawning = False
+        with proc:
+            try:
+                if _stopping:
+                    proc.send_signal(signal.SIGTERM)
+                stdout, stderr = proc.communicate(input, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                raise
+            except KeyboardInterrupt:
+                # At a terminal, Ctrl-C reaches the child too. Leaving the block now would close
+                # its pipes under it, as an early SIGTERM handler would: wait for it first.
+                proc.communicate()
+                raise
+            finally:
+                _child = None
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+    finally:
+        # On every way out, including Popen raising and a timeout: a SIGTERM that arrived while a
+        # child ran or was starting is honoured now, once the child is gone. If the earlier
+        # handler returns, whatever was in flight (a result or an exception) carries on.
+        if _stopping:
+            _stopping = False
+            if _previous is not None:
+                _previous(signal.SIGTERM, None)  # the child is done: now the caller's handler decides
+            else:
+                raise SystemExit(128 + signal.SIGTERM)  # no one else decides when to stop: stop now
 
 
 def _on_sigterm(signum: int, frame) -> None:
@@ -186,8 +199,21 @@ def _prune(ctx: Context, tags: tuple[str, ...]) -> str:
     return backup.run_forget(bc, ctx.environ, runner=ctx.runner)
 
 
+CHECK_NEXT = "check_next_quarter"  # state.db meta: the quarter of the data the next check reads
+QUARTERS = ("1/4", "2/4", "3/4", "4/4")
+
+
 def _check(ctx: Context, tags: tuple[str, ...]) -> str:
-    return backup.run_check(backup_config(ctx), ctx.environ, now=ctx.clock(), runner=ctx.runner)
+    """Each check reads one quarter of the data, and only a check that passes moves on to the next.
+    A failed check's retries, the loop's or the CLI's, read the same quarter again, so another
+    quarter can't pass in its place and look like a recovery while the damage waits weeks to be
+    read. Skipped weeks skip no quarter. The first check starts from the calendar week's."""
+    saved = ctx.state.meta(CHECK_NEXT)
+    subset = saved if saved in QUARTERS else backup.check_subset(ctx.clock())
+    ctx.state.set_meta(CHECK_NEXT, subset)  # a failure below leaves it here for the retry
+    detail = backup.run_check(backup_config(ctx), ctx.environ, subset=subset, runner=ctx.runner)
+    ctx.state.set_meta(CHECK_NEXT, QUARTERS[(QUARTERS.index(subset) + 1) % len(QUARTERS)])
+    return detail
 
 
 def _restore_test(ctx: Context, tags: tuple[str, ...]) -> str:
