@@ -356,17 +356,19 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
    sudo chmod 600 /volume1/homes/recordings-mirror/.ssh/authorized_keys
    ```
 
-   Then prove it from the server: a dry run, a real copy, and sftp's `df`, which also removes the
-   copy again.
+   Then prove it from the server: a dry run, a real copy shaped like the mirror's own (a folder
+   copied into the share's top folder, so rsync sets that folder's times and permissions too),
+   and sftp's `df`, which also removes the copy again.
    ```bash
    K="$RECORDINGS_HOME/secrets"
    SSH_OPTS=(-i "$K/nas_ssh_key" -o "UserKnownHostsFile=$K/nas_known_hosts" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
-   PROBE="$RECORDINGS_HOME/restore-test/probe.bin"             # a real file, not a symlink
-   [ -f "$PROBE" ] || head -c 5000000 /dev/urandom > "$PROBE"
-   rsync -an -e "ssh ${SSH_OPTS[*]}" "$PROBE" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
-   rsync -a -e "ssh ${SSH_OPTS[*]}" "$PROBE" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
+   PROBE="$RECORDINGS_HOME/restore-test/probe"                 # a folder with a real file in it
+   mkdir -p "$PROBE"
+   [ -f "$PROBE/probe.bin" ] || head -c 5000000 /dev/urandom > "$PROBE/probe.bin"
+   rsync -an -e "ssh ${SSH_OPTS[*]}" "$PROBE/" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
+   rsync -a -e "ssh ${SSH_OPTS[*]}" "$PROBE/" "$NAS_MIRROR_USER@$NAS_HOST:$NAS_MIRROR/"
    printf -- '-df %s\nrm %s/probe.bin\nls %s\n' "$NAS_MIRROR_SFTP" "$NAS_MIRROR_SFTP" "$NAS_MIRROR_SFTP" | sftp -b - "${SSH_OPTS[@]}" "$NAS_MIRROR_USER@$NAS_HOST"
-   rm -f "$PROBE"
+   rm -rf "$PROBE"
    ```
    Expected:
    - If ssh or rsync is refused outright ("Permission denied", "This account is currently not
@@ -377,6 +379,11 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
      module, or SFTP, changes `[mirror]`); don't make the mirror account an administrator.
    - Both `rsync` runs exit 0. If rsync says the folder doesn't exist, this DSM shows rsync the
      share's SFTP-style path: set `NAS_MIRROR` to `$NAS_MIRROR_SFTP` and try again.
+   - If the real copy fails with "failed to set times" (exit 23), the share's top folder belongs
+     to another account, and only its owner may set its times. The file itself copied. Create a
+     folder inside the share that the mirror account owns, such as `mirror`, and use that
+     (`$NAS_MIRROR/mirror`, with `NAS_MIRROR_SFTP` to match). Run the check again, and set
+     `[mirror] target` in step 2.1 to that folder, ending in `/`.
    - If the real copy fails with "failed to set permissions" (exit 23), the share's ACLs refuse
      rsync's permission changes. Run it again with `--no-perms` added, and write "`--no-perms`:
      yes" in the checklist, and set `[mirror] no_perms = true` in step 2.1.
