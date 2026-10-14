@@ -14290,9 +14290,9 @@ makes the jobs safe to run from the CLI and the loop alike:
 
 **Files:**
 - Create: `packages/core/src/recordings/ssh.py`, `packages/core/src/recordings/backup.py`, `packages/core/src/recordings/ops.py`, `scripts/fetch_restic.py`
-- Modify: `packages/core/src/recordings/state.py` (`ops_runs`, `Run`, `record_run`, `last_run`, `backup_to`), `config.py` (secrets: `file_only`, `secret_path`), `selfdoc.py` (`validate(deep=)`), `cli.py` (`backup …`, `validate --deep`)
+- Modify: `packages/core/src/recordings/state.py` (`ops_runs`, `Run`, `record_run`, `last_run`, `backup_to`), `config.py` (secrets: `file_only`, `secret_path`), `selfdoc.py` (`validate(deep=)`), `cli.py` (`backup …`, `validate --deep`, and the import's non-blocking peek at the ops lock)
 - Modify: `config.example.toml` (`[nas]`, `[backup]`, the secrets list), `Makefile` (`restic`), `.github/workflows/ci.yml` (restic for the tests)
-- Test: `packages/core/tests/test_backup.py`
+- Test: `packages/core/tests/test_backup.py`, `packages/core/tests/test_import_run.py` (the import's busy-lock exit)
 
 **Interfaces:**
 - Consumes:
@@ -14826,8 +14826,8 @@ def test_a_job_cannot_take_the_ops_lock_again_so_none_may_call_the_import(
 
 def test_the_cli_waits_for_the_loop_and_for_restic_locks(tmp_path, writer, monkeypatch):
     cfg, environ = config(tmp_path, writer)
-    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
-        monkeypatch.delenv(name, raising=False)
+    for name in [n for n in os.environ if n.startswith(("RECORDINGS_", "RESTIC_"))]:
+        monkeypatch.delenv(name)  # nothing from this machine: its own secrets and settings included
     for key, value in environ.items():
         monkeypatch.setenv(key, value)
     ctx = cli._ops_context(False)
@@ -14888,10 +14888,35 @@ def test_with_a_real_restic_backup_check_forget_and_restore(tmp_path, writer, ma
     assert not any((tmp_path / "scratch").iterdir())
 ```
 
+Also add this test to `packages/core/tests/test_import_run.py`, before
+`test_the_cli_stops_on_plan_problems_even_with_allow_unplaced` (it uses that file's `_cli_config`,
+`A`, `Locks` and `main`):
+```python
+def test_a_busy_ops_lock_stops_the_import_before_it_plans(ar_archive, plaud_env, tmp_path,
+                                                          monkeypatch, capsys):
+    # why: plan() decodes every file, which takes hours on the real archive. A backup holding
+    # "ops" must be found out at once (75), not after the plan, when run() would wait 600 s.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    _cli_config(tmp_path, monkeypatch)
+    assert main(["init", "--json"]) == 0
+    capsys.readouterr()
+
+    def no_plan(*args, **kwargs):
+        raise AssertionError("planned while a job held the ops lock")
+
+    monkeypatch.setattr("recordings.cli.plan", no_plan)
+    with Locks(tmp_path / "state" / "locks", timeout=0).hold("ops"):
+        assert main(["import-audio-router", str(ar_archive.root), "--json"]) == 75
+        assert "ops lock" in json.loads(capsys.readouterr().out)["error"]
+```
+
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `uv run pytest packages/core/tests/test_backup.py -v`
-Expected: FAIL with `ImportError: cannot import name 'backup' from 'recordings'`.
+Run: `uv run pytest packages/core/tests/test_backup.py packages/core/tests/test_import_run.py -v --continue-on-collection-errors`
+Expected: FAIL with `ImportError: cannot import name 'backup' from 'recordings'` (the flag keeps
+pytest from stopping at that collection error), and the import test fails with
+`AssertionError: planned while a job held the ops lock` until Step 4 adds the peek.
 
 - [ ] **Step 3: Write the state additions, secrets and SSH options**
 
@@ -14914,7 +14939,8 @@ In `packages/core/src/recordings/state.py`:
        ok: bool
        detail: str  # a fixed text (ops.failure_detail): never an error's message
    ```
-3. **Add** to `State`:
+3. **Add** to `State`, at the end of the class (the block below is indented 3 more spaces than the
+   file needs, for this list; remove them):
    ```python
        # ---- operations: each run of a scheduled job (§14, §15.1); Status reads these ----------
        def record_run(self, job: str, started_at: datetime, finished_at: datetime, ok: bool,
@@ -15789,6 +15815,32 @@ In `packages/core/src/recordings/cli.py`:
            return _job_result(ops.run_job(ctx, job, tags=tuple(args.tag)), args.json)
    ```
    and `"backup": cmd_backup,` in `commands`.
+5. **The import takes a peek at the ops lock before it plans.** `plan()` decodes every file and can
+   take hours; a backup holding "ops" would otherwise be found out only when `run()` has waited
+   its 600 s. `Locks(...).hold` with `timeout=0` is the non-blocking try (one `flock(LOCK_NB)`,
+   then `LockTimeout`), so no new method is needed. It takes and releases the lock at once:
+   holding it across `plan()` and `run()` would make `run()` wait on its own process's hold
+   (`Locks` is re-entrant only within one instance). In `cli.py`, **change**
+   `from recordings.locks import LockTimeout` to `from recordings.locks import OPS_LOCK, Locks, LockTimeout`,
+   **add** above `cmd_import_audio_router`:
+   ```python
+   OPS_BUSY = ("another job holds the ops lock (a backup, the mirror or a check): run the import "
+               "again when it finishes")
+   ```
+   **replace** the `except LockTimeout:` return at the end of that command with
+   `return _fail(OPS_BUSY, args.json, 75)`, and **add** after the `writer = _writer(args.json)` check
+   (`if isinstance(writer, int): return writer`, in the non-dry-run path) and before the `try:`
+   that calls `plan(`:
+   ```python
+       try:  # a peek, never a hold: plan() can take hours, and run() takes the lock itself (a
+           # Locks is re-entrant only within one instance). A job that starts in between is run()'s.
+           with Locks(writer.state.locks_dir, timeout=0).hold(OPS_LOCK):
+               pass
+       except LockTimeout:
+           return _fail(OPS_BUSY, args.json, 75)
+   ```
+   (Task 9's plan block for the command stays as it is; this is a Task 11 change to code Task 9
+   built.) The `--dry-run` path takes no lock and is unchanged.
 
 In `config.example.toml`, **add** after `[disk]`:
 ```toml
@@ -15920,14 +15972,18 @@ In `.github/workflows/ci.yml`'s `python` job, **replace** the line
 
 - [ ] **Step 5: Run the tests to see them pass**
 
-Run: `make restic && uv run pytest packages/core/tests/test_backup.py -v && RECORDINGS_REQUIRE_RESTIC=1 uv run pytest`
+Run: `make restic && uv run pytest packages/core/tests/test_backup.py packages/core/tests/test_import_run.py -v && RECORDINGS_REQUIRE_RESTIC=1 uv run pytest`
 Expected: restic 0.19.1 lands in `.cache/bin/`, then every test passes. The real-restic test runs
 rather than skipping; with `RECORDINGS_REQUIRE_RESTIC=1`, a missing restic would fail it.
+`make restic` downloads from github.com and checks the pinned SHA-256. If it can't (no network, a
+checksum mismatch), do not edit `PINNED` and do not skip the test quietly: report it as BLOCKED
+with the script's message. Without the binary, `test_backup.py` shows 32 passed, 1 skipped, which
+is the controller's cue to run `make restic` and the real-restic test itself.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/core/src/recordings packages/core/tests/test_backup.py scripts/fetch_restic.py config.example.toml Makefile .github/workflows/ci.yml
+git add packages/core/src/recordings packages/core/tests/test_backup.py packages/core/tests/test_import_run.py scripts/fetch_restic.py config.example.toml Makefile .github/workflows/ci.yml
 git commit -m "feat(core): restic backups, retention, check and a byte-for-byte restore test
 
 An explicit backup list (archive, config.toml, deploy.env, an SQLite backup copy of state.db) that
@@ -18094,7 +18150,20 @@ make deploy-smoke                                   # the real compose file, onc
   runbook installs it.
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
-  always allowed; the app refuses any other name.
+  always allowed; the app refuses any other name. Give each name alone, with no port or
+  scheme (`my-homelab`, not `my-homelab:8000`), using letters, digits, hyphens and dots only (no
+  underscores); the app refuses to start otherwise.
+- **Behind a TLS-terminating reverse proxy** (for example one that serves `https://…`), the
+  proxy must pass the `Host` header through unchanged (nginx: `proxy_set_header Host $host;`).
+  nginx's default sends `127.0.0.1:8000`, a name the app always allows, which would let a
+  DNS-rebinding page past the Host check. The proxy must also set `X-Forwarded-Proto` itself
+  and be trusted for it: set uvicorn's `FORWARDED_ALLOW_IPS` to the one address the app sees the
+  proxy connect from (the client address in the app's access log; the default trusts only
+  localhost). Under Docker that is usually the Compose network's gateway, not the proxy's LAN
+  address. Never `*` or a range: every machine in it could then set the scheme, and the client
+  address the app logs. The app compares a websocket's or write's `Origin` with the scheme and
+  `Host` it sees. Without this, every websocket and every write is refused. Plain
+  `http://my-homelab:8000` needs nothing.
 
 The first real run, step by step, is `docs/runbooks/first-run.md`.
 
@@ -18363,9 +18432,41 @@ def test_status_is_published_and_unconfigured_in_the_demo(local_server: TestServ
     assert status["configured"] is False and status["disk"] is None  # demo mode: no disk figure
 ```
 
-In `packages/ui/tests/test_demo_guard.py`, **add** after the `views.recording_view` loop, at the
-loop's own indentation (12 spaces: inside `with _watching() as events:` and its `try`, before
-`finally: runtime.configure(None)`):
+In `packages/ui/tests/test_demo_guard.py`, first make the websocket part send Shiny's `init`
+message and wait for the outputs, so the audit hook sees what the server function reads (Task 10
+left this for here). Shiny sends an output only once the client says it isn't hidden, and its first
+`values` message is empty. `receive_text` has no timeout, so the wait runs in a thread: a missing
+output fails the test instead of hanging CI. **Add** `import json` (before `import mimetypes`) and
+`import threading` (after `import tempfile`), and **replace**:
+```python
+                with client.websocket_connect("ws://localhost/websocket/",
+                                              headers={"Origin": "http://localhost"}):
+                    pass  # connects only: Shiny runs the server function after the client's
+                    # `init` message, which Task 15 sends once Status joins the server function
+```
+with:
+```python
+                with client.websocket_connect("ws://localhost/websocket/",
+                                              headers={"Origin": "http://localhost"}) as ws:
+                    # Shiny runs the server function after the client's `init` message, and sends
+                    # an output only once the client says it is not hidden. So the guard sees what
+                    # the outputs read, init says so for each, and the test waits for their values.
+                    wanted = {"library", "status"}  # "recording" needs a selected_id
+                    ws.send_text(json.dumps({"method": "init", "data": {
+                        f".clientdata_output_{name}_hidden": False for name in wanted}}))
+                    seen: set[str] = set()
+
+                    def read() -> None:
+                        while not wanted <= seen:
+                            seen.update(json.loads(ws.receive_text()).get("values", {}))
+
+                    reader = threading.Thread(target=read, daemon=True)
+                    reader.start()
+                    reader.join(20)  # receive_text has no timeout: a missing output must not hang
+                    assert wanted <= seen, f"the demo's websocket sent only {sorted(seen)}"
+```
+Then **add** after the `views.recording_view` loop, at the loop's own indentation (12 spaces:
+inside `with _watching() as events:` and its `try`, before `finally: runtime.configure(None)`):
 ```python
             # What create_app configured for Status in demo mode: if it ever read the real config's
             # [state] path, opening the real state.db would show up in the audit hook's events.
@@ -18507,9 +18608,9 @@ uv run pytest packages/ui/tests/test_status.py -v
 Expected:
 - `test_ops.py`: FAIL with `ImportError: cannot import name 'status_summary' from 'recordings.ops'`
   and `AttributeError: type object 'State' has no attribute 'read_only'`.
-- The Shiny and demo-guard tests: FAIL. The demo guard raises
-  `AttributeError: module 'recordings_ui.views' has no attribute 'status_view'`, and the session
-  has no `status` output.
+- The Shiny and demo-guard tests: FAIL. The demo guard fails after 20 s, `the demo's websocket sent
+  only ['library']`, because the server function has no `status` output yet, and the session has
+  none either. (The `views.status_view` AttributeError comes after it, once `status` is published.)
 - `test_status.py`: an error at collection, `ModuleNotFoundError: No module named 'recordings_ui.status'`.
 - Vitest fails to resolve `./nav`, `./when` and `./StatusPage`.
 - The new Pages test is checked in Step 5, once `make pages` has built the site.
