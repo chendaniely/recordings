@@ -61,7 +61,14 @@ docker compose --env-file docker/deploy.env -f docker/compose.yml exec web recor
 
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
-  always allowed; the app refuses any other name.
+  always allowed; the app refuses any other name. Give each name alone, with no port or
+  scheme (`my-homelab`, not `my-homelab:8000`); the app refuses to start otherwise.
+- **Behind a TLS-terminating reverse proxy** (for example one that serves `https://…`), the
+  proxy must pass the `Host` header through unchanged, and must be trusted for
+  `X-Forwarded-Proto`: set uvicorn's `FORWARDED_ALLOW_IPS` to the proxy's address (the default
+  trusts only localhost). The app compares a websocket's or write's `Origin` with the scheme and
+  `Host` it sees. Without this, every websocket and every write is refused. Plain
+  `http://my-homelab:8000` needs nothing.
 - **The library starts empty.** A stage-1 deployment shows an empty library until stage 2
   imports recordings.
 

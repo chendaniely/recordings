@@ -2042,8 +2042,16 @@ come from that frame.
   can reach the tailnet. So the app answers only to the host names it knows: localhost, the
   host in `[server] base_url`, `[server] allowed_hosts`, and `RECORDINGS_ALLOWED_HOSTS`.
   Other Host headers get 400, which defeats DNS rebinding. A websocket whose `Origin` isn't
-  one of those names is closed before Shiny accepts it. (Added 2026-10-08, after the stage-1
-  final review showed a foreign page could read a private recording through the websocket.)
+  exactly the app's own origin is closed before Shiny accepts it. "Exactly" means the
+  scheme, host name and port of the request's own `Host` header, so a page at another port of
+  the same host name is refused, and so is any handshake the browser marks
+  `Sec-Fetch-Site: cross-site` or `same-site`. (Added 2026-10-08, after the stage-1 final
+  review showed a foreign page could read a private recording through the websocket; made
+  exact in stage 2a, because stage 1 compared the host name only.)
+- **Behind a TLS-terminating reverse proxy,** the app sees `http` while the browser's `Origin`
+  says `https`. The proxy must preserve `Host` and be trusted for `X-Forwarded-Proto`, which
+  means listing it in uvicorn's `FORWARDED_ALLOW_IPS` (default: localhost only). Otherwise every
+  websocket and every write is refused. It fails closed, never open.
 - **Before the app goes beyond Tailscale:** when the reverse proxy arrives, the proxy
   handles login and the app only accepts requests from the proxy. This is a requirement.
 - **Cross-site writes:** the Host allow-list stops DNS rebinding, but not a foreign page
