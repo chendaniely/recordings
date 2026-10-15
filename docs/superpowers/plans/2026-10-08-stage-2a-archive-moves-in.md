@@ -1155,7 +1155,9 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    on `tailscale0` and for the data disk, then runs `docker compose … up -d`. It is its own unit,
    not a change to `docker.service`, so other containers on this server never wait for it. It
    reads the deployed image tag from the existing web container (`docker/up-deployed.sh`), so the
-   `rc build` / `rc up -d` flow above needs no tag file. Install it:
+   `rc build` / `rc up -d` flow above needs no tag file. It applies whatever `compose.yml` and
+   `docker/deploy.env` the checkout holds at boot, so pull only to deploy: after a `git pull` you
+   don't mean to deploy yet, a reboot starts the old image under the new files. Install it:
    ```bash
    sudo install -m 644 docker/recordings.service /etc/systemd/system/recordings.service
    ```

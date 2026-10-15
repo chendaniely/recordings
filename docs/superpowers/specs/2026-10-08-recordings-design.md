@@ -214,8 +214,8 @@ recordings/                      (repo root, uv workspace, MIT)
   | Secrets | Environment `NAME`, or `NAME_FILE` (Docker secrets under `/run/secrets`) | never |
 
   The templates avoid `.env` names so Claude can read them, because Dan's hooks block
-  reading `.env` files. The template's current name, `docker/deploy.example.env`, breaks
-  that rule; stage 2a renames it (§20). An environment variable beats `config.toml`. Demo
+  reading `.env` files. The Docker template was `docker/deploy.example.env`, which broke
+  that rule; stage 2a renamed it (§20). An environment variable beats `config.toml`. Demo
   mode reads none of the three.
 - **Machine config** (`config.toml`) is mounted read-only into both containers at
   `/config/config.toml`. It holds:
