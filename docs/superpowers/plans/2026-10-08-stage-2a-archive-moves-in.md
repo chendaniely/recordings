@@ -22046,6 +22046,15 @@ def test_state_from_another_writer_is_a_problem(tmp_path):
     assert any("another archive or another writer_id" in p for p in report["problems"])
 
 
+def test_a_state_db_that_vanishes_between_the_check_and_the_open_is_not_a_crash(tmp_path,
+                                                                                 monkeypatch):
+    # why: State.read_only returns None when state.db is gone (Task 15's council, minor 6).
+    environ = server(tmp_path)
+    monkeypatch.setattr(doctor_module.State, "read_only", classmethod(lambda cls, path: None))
+    report = doctor(environ)
+    assert report["problems"] == [] and any("no state.db yet" in w for w in report["warnings"])
+
+
 def test_a_damaged_state_db_is_a_problem_with_the_way_back(tmp_path):
     environ = server(tmp_path)
     (tmp_path / "state" / "state.db").write_bytes(b"not a database, " * 64)
@@ -22611,6 +22620,10 @@ def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[s
         warnings.append("no state.db yet: run `recordings init` once, on the writer")
         return
     state = State.read_only(cfg.state_path)
+    if state is None:  # state.db went away since the check above
+        info["state_db"] = False
+        warnings.append("no state.db yet: run `recordings init` once, on the writer")
+        return
     try:
         found_uuid, found_writer = state.meta("archive_uuid"), state.meta("writer_id")
     except sqlite3.DatabaseError as exc:  # the restore advice only for real damage
@@ -22857,8 +22870,11 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
 
 In `packages/core/src/recordings/config.py`, **delete** the `doctor` function.
 
-In `packages/core/src/recordings/cli.py`:
-1. **Add** `from recordings.doctor import ROLES, doctor` to the imports.
+In `packages/core/src/recordings/cli.py` (the code blocks below sit inside numbered lists, so each
+carries the list's 3-space indent: strip those 3 spaces; the parser lines end at 4 spaces and
+`basicConfig` at 8):
+1. **Add** `from recordings.doctor import ROLES, doctor` to the imports, after
+   `from recordings.disk import disk_status, disk_thresholds`.
 2. **Replace** the `doctor` parser's two lines,
    ```python
        p = sub.add_parser("doctor", help="check config.toml, the archive and secrets (presence only)")
@@ -22918,7 +22934,8 @@ finds nothing to warn about in them.
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_doctor.py packages/core/tests/test_config.py -v && uv run pytest`
-Expected: all pass, and the suite's passed count is not lower than Task 15's.
+Expected: all pass. The suite gains 37 tests over Task 15's count (36 in `test_doctor.py`, 1 in
+`test_ops.py`), so 851 + 37 = 888 with `RECORDINGS_REQUIRE_RESTIC=1`.
 
 Then run `make deploy-smoke`.
 Expected: it passes, `recordings doctor --role backup --json` among its backup commands, which
@@ -23602,7 +23619,7 @@ more reviews checked the result:
   - Final, at that dry run: 614 pytest passed with real restic 0.19.1 and no skips, plus 21 Vitest, 9
     e2e and 5 Pages tests, `make deploy-smoke`, gitleaks and `validate --deep`. The counts have
     grown since; each task's gate records its own. After Task 15, in a clone with real restic:
-    839 pytest, 23 Vitest, 9 e2e and 5 Pages tests.
+    851 pytest, 27 Vitest, 10 e2e and 5 Pages tests.
   - Its fixes: Status shows a good backup's NAS free space, ssh gets a 10 s connect timeout, the
     Pages demo's Status reports its disk as unknown, two README rows, and the smoke test's secret
     files at mode 600.
