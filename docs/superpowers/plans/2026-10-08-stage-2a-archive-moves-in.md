@@ -15287,6 +15287,20 @@ def test_host_keys_are_always_checked_and_a_nas_without_a_known_hosts_file_is_re
     backup.from_config(cfg, environ)  # a rest-server on the tailnet needs no ssh at all
 
 
+def test_ssh_shares_no_connection_or_agent_and_takes_no_option_for_a_host(tmp_path, writer):
+    # why: outside Docker the user's ~/.ssh/config applies too. A shared connection (ControlPath)
+    # skips the pinned host-key check, and ForwardAgent hands the NAS the user's agent. A
+    # destination that starts with "-" is read as an option, ProxyCommand included (Task 16's
+    # council).
+    options = ssh_options(None, tmp_path / "kh", None)
+    for option in ("ControlPath=none", "ForwardAgent=no", "ClearAllForwardings=yes"):
+        assert options[options.index(option) - 1] == "-o", option
+    cfg, environ = config(tmp_path, writer)
+    cfg.data["nas"] = {"ssh": "-oProxyCommand=touch /tmp/x"}
+    with pytest.raises(ConfigError, match=r"\[nas\] ssh"):
+        backup.from_config(cfg, environ)
+
+
 def test_a_key_path_with_a_space_survives_restics_sftp_args(tmp_path, writer):
     key = tmp_path / "my keys" / "nas key"
     key.parent.mkdir()
@@ -15529,6 +15543,13 @@ In `packages/core/src/recordings/config.py`:
    ```
 3. **Add** after `secret`:
    ```python
+   def _no_such_file(env: str) -> ConfigError:
+       """NAME_FILE names nothing that exists. Its value is never repeated: it may be the secret
+       itself, put where the path belongs, and doctor's output is pasted into issues and chats."""
+       return ConfigError(f"{env}_FILE names a file that does not exist. Its value is not shown: give "
+                          "the path to the secret's file there, never the secret itself")
+
+
    def secret_path(name: str, environ: Mapping[str, str]) -> Path | None:
        """The file a NAME_FILE secret names, checked to exist and be readable, never read here."""
        spec = SECRETS[name]
@@ -15538,6 +15559,8 @@ In `packages/core/src/recordings/config.py`:
        if not value:
            return None
        path = Path(value)
+       if not path.exists():
+           raise _no_such_file(spec.env)  # never the value: it may be the secret itself
        if not path.is_file():
            raise ConfigError(f"{spec.env}_FILE points at {path}, which is not a file")
        try:
@@ -15552,6 +15575,9 @@ In `packages/core/src/recordings/config.py`:
        if SECRETS[name].file_only:
            return str(path) if (path := secret_path(name, environ)) else None
    ```
+   and **replace** its `raise ConfigError(f"{spec.env}_FILE points at {path}, which does not exist")`
+   with `raise _no_such_file(spec.env)`: neither function ever repeats a `_FILE` value that names
+   nothing (Task 16's council; Task 16 has the test).
 5. In `doctor`'s secrets loop, it already reports `set` for every entry; leave it (Task 16
    rewrites `doctor`).
 
@@ -15583,7 +15609,10 @@ def ssh_options(key: Path | None, known_hosts: Path | None, port: int | None) ->
     # ConnectTimeout: a NAS that is off is given up on in seconds, not after TCP's own timeout
     # (minutes), which doctor and every backup's free-space check would otherwise wait out.
     out = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=60",
-           "-o", "ServerAliveCountMax=240"]
+           "-o", "ServerAliveCountMax=240",
+           # Outside Docker the user's ~/.ssh/config applies too: never ride a connection it
+           # opened (a shared one skips the host-key check), nor hand the NAS its agent.
+           "-o", "ControlPath=none", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"]
     if key is not None:
         out += ["-i", str(key), "-o", "IdentitiesOnly=yes"]
     out += ["-o", "StrictHostKeyChecking=yes"]  # always: a host's ssh_config must not relax it
@@ -15609,7 +15638,8 @@ class Nas:
 def nas_from_config(cfg: Config, environ: Mapping[str, str]) -> Nas:
     section = cfg.data.get("nas", {})
     ssh, port = section.get("ssh"), section.get("port")
-    if ssh is not None and (not isinstance(ssh, str) or not ssh.strip()):
+    if ssh is not None and (not isinstance(ssh, str) or not ssh.strip()
+                            or ssh.strip().startswith("-")):  # ssh would read it as an option
         raise ConfigError('[nas] ssh must be an ssh destination, such as "mirror@nas"')
     if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536):
         raise ConfigError("[nas] port must be a port number")
@@ -21884,7 +21914,19 @@ else `all`. Two checks read config.toml alone, so every role reports them, as th
 - `[backup] prune = false` is a warning: retention must then run on the NAS.
 - `[plaud] consent_list` is information only. In 2a it is mounted just for import runs, and the
   import reads it and fails closed by itself, so its absence in a long-running service is no
-  problem.
+  problem. Unset (or blank), which the import refuses, it is a note in `notes`, not a warning.
+
+Council round 2 (2026-10-14) added:
+- A `_FILE` variable holding a secret's value instead of a path is never repeated in any error
+  (spec §5): `config.secret_path` and `secret` name only the variable.
+- `doctor` reads `state.db`'s `schema_version`: newer than this release is a problem, as
+  `State.open` refuses it. An archive carrying `MIRROR.md` is a problem on a machine with a
+  `writer_id`, as the Writer refuses it; the hard-link probe is skipped on it and on a machine with
+  no `writer_id`. A config shape no check expects ends in one line and exit 70, never a traceback.
+- The NAS key is not demanded (`ssh_options` uses ssh's own without one); the host key is, by
+  `from_config`. A missing `[index] path`, or an index that is damaged or another archive's, is a
+  warning. A character device mounted as a job secret in `web` is a finding unless it is
+  `/dev/null`'s own (`st_rdev`).
 
 **Files:**
 - Create: `packages/core/src/recordings/doctor.py`
@@ -21899,7 +21941,8 @@ else `all`. Two checks read config.toml alone, so every role reports them, as th
   - from stage 1, extended by Tasks 11 and 13: `SECRETS` and `secret`
   - from Task 11: `secret_path`, `SecretSpec.file_only` and `.optional`, `ssh.nas_free_bytes` (ssh `df`, then sftp's `df`; None when neither answers), and `backup.from_config`, whose `BackupConfig` has `cacert: Path | None` (the optional `[backup] cacert`), `prune`, `rest_username`, `restore_scratch`, `nas` and `nas_repo_path`
   - from Task 2: `read_sentinel`, `init_archive`, `state.unreadable`
-  - from Task 9: the `[plaud] consent_list` setting, which the import itself reads, failing closed
+  - from Task 9: the `[plaud] consent_list` setting, which the import itself reads, failing closed, and `plaud.consent.consent_list_path`
+  - from Task 2: `sentinel.is_mirror` and `MIRROR`, and `State._version` with `SCHEMA_VERSION`
   - from Task 15: `State.read_only`
   - from Task 4: `Index`
   - from Task 12: `mirror.from_config`, `is_remote`
@@ -21913,13 +21956,14 @@ else `all`. Two checks read config.toml alone, so every role reports them, as th
   - `recordings.doctor.SECRETS_DIR = Path("/run/secrets")`
   - `recordings.doctor.hard_links_work(root: Path) -> bool` and `read_only_mount(root: Path) -> bool`
   - `recordings.doctor.TOOLS`
-  - CLI: `recordings doctor [--role web|backup|all] [--json]`
+  - CLI: `recordings doctor [--role web|backup|all] [--json]`, which exits 78 when there is a problem and 70, with one line naming the check and the exception's type, when a check crashes
 
 - [ ] **Step 1: Write the failing tests**
 
 `packages/core/tests/test_doctor.py`:
 ```python
 import json
+import sqlite3
 import subprocess
 from pathlib import Path
 from zoneinfo import ZoneInfoNotFoundError
@@ -21930,9 +21974,12 @@ from recordings import doctor as doctor_module
 from recordings.cli import main
 from recordings.config import SECRETS
 from recordings.doctor import JOB_SECRETS, doctor, read_only_mount
+from recordings.archive import Archive
+from recordings.index import Index
 from recordings.init import init_archive
-from recordings.sentinel import SENTINEL
+from recordings.sentinel import MIRROR, SENTINEL, read_sentinel
 from recordings.ssh import nas_free_bytes
+from recordings.state import SCHEMA_VERSION
 
 NAS_FREE = 500 * 1024 ** 3
 
@@ -22520,6 +22567,143 @@ def test_a_job_running_now_owns_its_folders_and_doctor_says_to_leave_them(tmp_pa
     assert not any("restic-check-cache-" in w for w in report["warnings"])
     assert any("restore-" in w and "unencrypted" in w for w in report["warnings"])  # not check's
     assert any("belongs to check, running now: leave it" in n for n in report["notes"])
+
+
+def test_the_mirror_and_a_reader_are_never_written(tmp_path, monkeypatch):
+    # why: spec §3, the mirror's copy is never written, and a reader writes nothing; doctor's
+    # hard-link probe wrote .tmp/ in both (Task 16's council).
+    environ = server(tmp_path)
+    monkeypatch.setattr(doctor_module, "hard_links_work",
+                        lambda root: pytest.fail("probed an archive this machine never writes"))
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    writer = cfg.read_text(encoding="utf-8")
+    cfg.write_text(writer.replace('writer_id = "homelab"\n', "", 1), encoding="utf-8")  # a reader
+    report = doctor(web_only(environ), role="web")
+    assert report["archive"]["hard_links"] is None
+    assert not any("hard links" in p or "read-only" in p for p in report["problems"])
+    cfg.write_text(writer, encoding="utf-8")
+    (tmp_path / "archive" / MIRROR).write_text("a mirror\n", encoding="utf-8")
+    report = doctor(environ)
+    assert report["archive"]["hard_links"] is None
+    assert any(MIRROR in p and "never written" in p for p in report["problems"])
+
+
+def test_a_crash_is_one_line_naming_the_check_never_a_traceback(tmp_path, monkeypatch, capsys):
+    # why: a config shape no check expects ([plaud] as a string; a number for cache_dir,
+    # nas_repo_path or extra_paths) ended doctor in a traceback, with no report (Task 16's council).
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text('plaud = "rest:https://u:pw-do-not-print@nas:8000/"\n'
+                   + cfg.read_text(encoding="utf-8"), encoding="utf-8")
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE"):
+        monkeypatch.delenv(name, raising=False)
+    assert main(["doctor", "--json"]) == 70
+    out = capsys.readouterr().out
+    assert json.loads(out)["error"].startswith("doctor stopped in _consent on AttributeError")
+    assert "do-not-print" not in out and "Traceback" not in out
+
+
+def test_a_state_db_from_a_newer_release_is_a_problem_as_state_open_refuses_it(tmp_path):
+    # why: after a rollback to an older release, State.open refuses a newer state.db (the
+    # runbook's "Restoring for real" step 3) while doctor passed it (Task 16's council).
+    environ = server(tmp_path)
+    assert doctor(environ)["problems"] == []
+    with sqlite3.connect(tmp_path / "state" / "state.db") as conn:
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                     (str(SCHEMA_VERSION + 1),))
+    for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
+        problems = doctor(env, role=role)["problems"]
+        assert any(f"schema version {SCHEMA_VERSION + 1}" in p and "newer" in p
+                   for p in problems), role
+    with sqlite3.connect(tmp_path / "state" / "state.db") as conn:
+        conn.execute("DELETE FROM meta WHERE key = 'schema_version'")
+    assert any("schema_version" in p for p in doctor(environ)["problems"])  # damaged, as open says
+
+
+def test_an_archive_that_is_the_mirrors_copy_is_a_problem_for_a_writer(tmp_path):
+    # why: Writer.__init__ refuses an archive carrying MIRROR.md, and the sentinel and UUID checks
+    # can't see it: the mirror's copy carries archive.json too (Task 16's council).
+    environ = server(tmp_path)
+    (tmp_path / "archive" / MIRROR).write_text("a mirror\n", encoding="utf-8")
+    problems = doctor(environ)["problems"]
+    assert any(MIRROR in p and "never written" in p for p in problems)
+    reader = Path(environ["RECORDINGS_CONFIG"])  # a machine with no writer_id only reads it
+    reader.write_text(reader.read_text(encoding="utf-8").replace('writer_id = "homelab"\n', ""),
+                      encoding="utf-8")
+    assert not any(MIRROR in p for p in doctor(web_only(environ), role="web")["problems"])
+
+
+def test_the_nas_key_is_not_demanded_but_the_host_key_is(tmp_path):
+    # why: ssh_options treats a missing key as "use ssh's own" (an agent), and spec §5 requires
+    # only known_hosts, which backup.from_config and mirror.from_config already enforce.
+    environ = server(tmp_path)
+    no_key = {k: v for k, v in environ.items() if k != "RECORDINGS_NAS_SSH_KEY_FILE"}
+    for role in ("backup", "all"):
+        report = doctor(no_key, role=role)
+        assert report["problems"] == [], role
+    no_hosts = {k: v for k, v in environ.items() if k != "RECORDINGS_NAS_KNOWN_HOSTS_FILE"}
+    problems = doctor(no_hosts, role="backup")["problems"]
+    assert problems and all("host key" in p for p in problems)
+
+
+def test_a_missing_or_unusable_index_is_a_warning(tmp_path):
+    # why: Writer.open refuses without [index] path, and an index of another archive or a damaged
+    # one answers nothing, so the Library lists no recording (Task 16's council).
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    good = cfg.read_text(encoding="utf-8")
+    index_path = tmp_path / "index.db"
+    index_path.write_bytes(b"not an index at all" * 100)  # damaged
+    report = doctor(environ)
+    assert report["problems"] == []
+    assert any("index" in w and "reindex" in w for w in report["warnings"])
+    assert report["index"]["matches"] is False
+    index_path.unlink()
+    init_archive(tmp_path / "other", tmp_path / "other-state", writer_id="homelab")
+    Index(index_path).rebuild(Archive(tmp_path / "other"), archive_uuid="another-archive",
+                              allow_empty=True)  # foreign
+    report = doctor(environ)
+    assert any("index" in w and "reindex" in w for w in report["warnings"])
+    Index(index_path).rebuild(Archive(tmp_path / "archive"),
+                              archive_uuid=read_sentinel(tmp_path / "archive").uuid,
+                              allow_empty=True)  # this archive's own
+    report = doctor(environ)
+    assert report["warnings"] == [] and report["index"]["matches"] is True
+    cfg.write_text(good.replace(f'[index]\npath = "{index_path}"\n', ""), encoding="utf-8")
+    report = doctor(environ)
+    assert report["problems"] == [] and report["index"] is None
+    assert any("[index] path" in w for w in report["warnings"])
+    assert not any("[index] path" in w for w in doctor(environ, role="backup")["warnings"])
+
+
+def test_an_unset_consent_list_is_a_note_not_a_warning(tmp_path):
+    # why: the import refuses to run without one (spec §9.1), and the long-running services never
+    # need it, so it is information (Task 16's council).
+    environ = server(tmp_path)
+    for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
+        report = doctor(env, role=role)
+        assert report["problems"] == [] and report["warnings"] == [], role
+        assert any("consent_list is not set" in n and "import" in n for n in report["notes"]), role
+        assert report["consent_list"] is None
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(cfg.read_text(encoding="utf-8") + '[plaud]\nconsent_list = "   "\n',
+                   encoding="utf-8")
+    assert any("consent_list is not set" in n for n in doctor(environ)["notes"])  # blank is unset
+
+
+def test_only_an_empty_mount_is_ignored_as_a_job_secret_in_web(tmp_path):
+    # why: Compose mounts an optional secret from /dev/null; any other character device (a tty,
+    # /dev/zero) is a mount that holds something (Task 16's council: compare st_rdev).
+    environ = web_only(server(tmp_path))
+    run_secrets = tmp_path / "run-secrets"
+    run_secrets.mkdir()
+    (run_secrets / "ntfy_token").symlink_to("/dev/null")
+    assert doctor(environ, role="web")["problems"] == []
+    (run_secrets / "ntfy_token").unlink()
+    (run_secrets / "ntfy_token").symlink_to("/dev/zero")
+    assert any("ntfy_token" in p for p in doctor(environ, role="web")["problems"])
 ```
 
 In `packages/core/tests/test_config.py`, **replace**
@@ -22534,6 +22718,29 @@ and in `test_doctor_reports_presence_never_values`, **replace** the two lines
 ```python
     archive = tmp_path / "archive"
     init_archive(archive, tmp_path / "state", writer_id="test")  # a real, initialised archive
+```
+and **add** at the end of the file (a secret put where its path belongs is never repeated, by
+`secret` or `secret_path`, nor in doctor's report; Task 16's council):
+```python
+@pytest.mark.parametrize("name, value", [
+    ("restic_password", "hunter2-do-not-print"),
+    ("nas_ssh_key", "b3BlbnNzaC1rZXktdjE-do-not-print\nAAAABG5vbmUAAAAEbm9uZQ\n"),
+    ("deadman_url", "https://hc-ping.com/uuid-do-not-print"),
+    ("ntfy_topic", "topic-do-not-print")], ids=["password", "key", "ping-url", "topic"])
+def test_a_secret_put_where_its_path_belongs_is_never_repeated(tmp_path, name, value):
+    # why: doctor's output is pasted into issues and chats (Task 16's council). With the secret
+    # itself in NAME_FILE, the error repeated it: "RESTIC_PASSWORD_FILE points at hunter2, which
+    # does not exist", and a pasted key came back whole, once per check that read it.
+    env = {f"{SECRETS[name].env}_FILE": value}
+    with pytest.raises(ConfigError, match="does not exist") as caught:
+        secret(name, env)
+    assert "do-not-print" not in str(caught.value)
+    archive = tmp_path / "archive"
+    init_archive(archive, tmp_path / "state", writer_id="test")
+    env["RECORDINGS_CONFIG"] = str(write(tmp_path, f'[archive]\npath = "{archive}"\n'))
+    report = doctor(env)
+    assert any(f"{SECRETS[name].env}_FILE" in p for p in report["problems"])
+    assert "do-not-print" not in json.dumps(report)
 ```
 
 In `packages/core/tests/test_ops.py`, **add** after `test_the_loop_runs_with_sigterm_forwarded`
@@ -22572,9 +22779,11 @@ Expected: errors at collection: `ImportError: cannot import name 'doctor' from '
 
 It never prints a secret's value, nor a repository URL, which can carry a password: only whether
 each is set and which transport it is. It reports the secrets first, so a broken config.toml still
-shows them (stage-1 carry-over). It probes hard links on the archive's disk, because write-once
-publishing needs them, and it reports whether this machine's state.db matches the archive and
-writer ID.
+shows them (stage-1 carry-over). On a machine that writes the archive it probes hard links on the
+archive's disk, because write-once publishing needs them, and it reports whether this machine's
+state.db matches the archive and writer ID and is not from a newer release. An archive carrying
+MIRROR.md is the NAS mirror's copy, which is never written. A missing or unusable index is a
+warning: `recordings reindex` rebuilds it.
 
 Each Compose service runs it in its own role (`--role`, else RECORDINGS_ROLE, else `all`):
 - `web` serves the Library and runs the import. It must hold no backup, mirror or alert secret,
@@ -22583,7 +22792,8 @@ Each Compose service runs it in its own role (`--role`, else RECORDINGS_ROLE, el
   hard-link probe is skipped there, and ssh needs this user's passwd entry.
 - `all`, the default outside Docker, checks everything.
 Every role warns when retention is off here, and reports where the consent list is, as
-information: the import reads it and fails closed by itself. Every role also checks that
+information (or, when it is unset, as a note in `notes`): the import reads it and fails closed
+by itself. Every role also checks that
 `[archive] default_timezone` is a zone this machine knows, and that `[disk]` is a valid pair.
 """
 
@@ -22594,6 +22804,7 @@ import os
 import pwd
 import shutil
 import sqlite3
+import stat
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
@@ -22605,9 +22816,10 @@ from recordings.config import SECRETS, Config, ConfigError, load_config, secret,
 from recordings.disk import disk_thresholds
 from recordings.index import Index
 from recordings.locks import running
-from recordings.sentinel import SentinelError, read_sentinel
+from recordings.plaud.consent import ConsentListError, consent_list_path
+from recordings.sentinel import MIRROR, SentinelError, is_mirror, read_sentinel
 from recordings.ssh import nas_free_bytes
-from recordings.state import State, unreadable
+from recordings.state import State, StateError, unreadable
 
 TOOLS = ("restic", "rsync", "ssh", "ffprobe", "ffmpeg")
 ROLES = ("web", "backup", "all")
@@ -22651,9 +22863,14 @@ def _no_job_secrets(environ: Mapping[str, str], problems: list[str]) -> None:
 
 
 def _mounted(path: Path) -> bool:
-    """A secret Compose mounted. An optional one it leaves empty is a character device
-    (/dev/null) and holds nothing."""
-    return path.exists() and not path.is_char_device()
+    """A secret Compose mounted. An optional one it leaves empty is /dev/null itself and holds
+    nothing; any other character device (/dev/zero, a tty) is a mount that holds something."""
+    try:
+        found = path.stat()
+        empty = stat.S_ISCHR(found.st_mode) and found.st_rdev == os.stat(os.devnull).st_rdev
+    except OSError:
+        return False
+    return not empty
 
 
 def _user(problems: list[str]) -> dict:
@@ -22715,7 +22932,14 @@ def _archive(cfg: Config, role: str, report: dict, problems: list[str]) -> str |
         problems.append(str(exc))
         return None
     info["sentinel"] = True
+    if is_mirror(cfg.archive_path):  # §3: the mirror's copy is never written, by doctor neither
+        if cfg.writer_id is not None:
+            problems.append(f"the archive path holds {MIRROR}: it is the NAS mirror's copy, which "
+                            "is never written. Point [archive] path at the archive itself")
+        return identity.uuid
     info["read_only"] = read_only_mount(cfg.archive_path)
+    if cfg.writer_id is None:  # a reader writes nothing, so it needs no hard links: no probe
+        return identity.uuid
     if info["read_only"]:
         if role != "backup":  # the backup service mounts it read-only on purpose
             problems.append("the archive is mounted read-only here, so this machine can't "
@@ -22753,12 +22977,39 @@ def _state(cfg: Config, archive_uuid: str | None, role: str, report: dict, probl
     except sqlite3.DatabaseError as exc:  # the restore advice only for real damage
         problems.append(unreadable(state.db_path, exc))
         return
+    try:  # State.open refuses a schema newer than this release (a rollback) or a damaged one
+        with state.db() as conn:
+            state._version(conn)
+    except StateError as exc:
+        problems.append(str(exc))
+    except sqlite3.DatabaseError as exc:
+        problems.append(unreadable(state.db_path, exc))
+        return
     if archive_uuid is None:  # the archive's own problem is already reported
         return
     info["matches"] = found_uuid == archive_uuid and found_writer == cfg.writer_id
     if not info["matches"]:
         problems.append("state.db belongs to another archive or another writer_id: this machine "
                         "must not write here")
+
+
+def _index(cfg: Config, archive_uuid: str | None, report: dict, warnings: list[str]) -> None:
+    """The derived index (§6.8) is rebuilt from the archive, so a missing, foreign or damaged one
+    costs a `recordings reindex`, not data: a warning. Index.count() answers 0 for a damaged file,
+    so whose index it is must be asked."""
+    if cfg.index_path is None:
+        warnings.append("no [index] path: the Library can't list recordings, and the writer "
+                        "refuses to open (config.example.toml has the line)")
+        return
+    index = Index(cfg.index_path)
+    info = {"path": str(cfg.index_path), "exists": index.exists(), "recordings": index.count(),
+            "matches": None}
+    report["index"] = info
+    if info["exists"] and archive_uuid is not None:
+        info["matches"] = index.archive_uuid() == archive_uuid
+        if not info["matches"]:
+            warnings.append("the index is damaged or belongs to another archive, so the Library "
+                            "lists nothing: `recordings reindex` rebuilds it")
 
 
 def _left_behind(cfg: Config, bc: backup.BackupConfig, report: dict, warnings: list[str]) -> None:
@@ -22843,9 +23094,6 @@ def _backup(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
             "nas_free_bytes": None,
             "restic_installed": shutil.which(bc.restic) is not None}
     report["backup"] = info
-    if info["transport"] == "sftp" and (bc.nas.key is None or bc.nas.known_hosts is None):
-        problems.append("an SFTP repository needs RECORDINGS_NAS_SSH_KEY_FILE and "
-                        "RECORDINGS_NAS_KNOWN_HOSTS_FILE")
     if info["transport"] == "rest" and environ.get("RESTIC_REST_PASSWORD_FILE"):
         try:  # a named but broken file refuses every backup, with or without a username
             secret("rest_password", environ)
@@ -22889,9 +23137,6 @@ def _mirror(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
     info = {"remote": mirror.is_remote(mc.target),
             "rsync_installed": shutil.which(mc.rsync) is not None}
     report["mirror"] = info
-    if info["remote"] and (mc.nas.key is None or mc.nas.known_hosts is None):
-        problems.append("a remote mirror needs RECORDINGS_NAS_SSH_KEY_FILE and "
-                        "RECORDINGS_NAS_KNOWN_HOSTS_FILE")
     if not info["rsync_installed"]:
         problems.append(f"{mc.rsync} is not installed")
 
@@ -22907,10 +23152,14 @@ def _retention(cfg: Config, warnings: list[str]) -> None:
 def _consent(cfg: Config, report: dict) -> None:
     """[plaud] consent_list, as information only. In 2a it is mounted just for import runs, and
     the import reads it and fails closed by itself. Its IDs are never read here."""
-    path = cfg.data.get("plaud", {}).get("consent_list")
-    if not isinstance(path, str) or not path:
+    try:
+        resolved = consent_list_path(cfg.data)  # as the import reads it: blank is unset
+    except ConsentListError:
+        report["notes"].append("[plaud] consent_list is not set, so the import refuses to run "
+                               "(spec §9.1); the services that stay up don't need it")
         return
-    here = Path(path).expanduser().is_file()  # as consent_list_path reads it
+    path = cfg.data["plaud"]["consent_list"]  # shown as configured, not expanded
+    here = resolved.is_file()
     report["consent_list"] = {
         "path": path, "here": here,
         "note": None if here else "not mounted here; the import reads it and fails closed"}
@@ -23013,10 +23262,8 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
     _disk(cfg, problems)
     archive_uuid = _archive(cfg, role, report, problems)
     _state(cfg, archive_uuid, role, report, problems, warnings)
-    if role != "backup" and cfg.index_path is not None:  # the backup service has no index
-        index = Index(cfg.index_path)
-        report["index"] = {"path": str(cfg.index_path), "exists": index.exists(),
-                           "recordings": index.count()}
+    if role != "backup":  # the backup service has no index
+        _index(cfg, archive_uuid, report, warnings)
     if role != "web":
         _backup(cfg, environ, role, report, problems, warnings)
         _mirror(cfg, environ, role, report, problems, warnings)
@@ -23039,7 +23286,8 @@ In `packages/core/src/recordings/cli.py` (the code blocks below sit inside numbe
 carries the list's 3-space indent: strip those 3 spaces; the parser lines end at 4 spaces and
 `basicConfig` at 8):
 1. **Add** `from recordings.doctor import ROLES, doctor` to the imports, after
-   `from recordings.disk import disk_status, disk_thresholds`.
+   `from recordings.disk import disk_status, disk_thresholds`, and `import traceback` after
+   `import sys`.
 2. **Replace** the `doctor` parser's two lines,
    ```python
        p = sub.add_parser("doctor", help="check config.toml, the archive and secrets (presence only)")
@@ -23054,7 +23302,19 @@ carries the list's 3-space indent: strip those 3 spaces; the parser lines end at
                       "else all)")
        p.add_argument("--json", action="store_true")
    ```
-3. **Replace** `report = config.doctor(os.environ)` with `report = doctor(os.environ, role=args.role)`.
+3. **Replace** `report = config.doctor(os.environ)` with:
+   ```python
+       try:
+           report = doctor(os.environ, role=args.role)
+       except Exception as exc:  # a config shape no check expects: one line, never a traceback
+           # Its output is pasted into issues and chats, so the error's type and the check it
+           # stopped in, never its text (as ops.failure_detail does).
+           where = next((frame.name for frame in reversed(traceback.extract_tb(exc.__traceback__))
+                         if frame.filename.endswith("doctor.py")), "doctor")
+           return _fail(f"doctor stopped in {where} on {type(exc).__name__}: a setting in "
+                        "config.toml may have the wrong type (compare it with "
+                        "config.example.toml)", args.json, 70)
+   ```
 4. In `cmd_ops`, **replace**
    ```python
            logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -23099,14 +23359,15 @@ finds nothing to warn about in them.
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_doctor.py packages/core/tests/test_config.py -v && uv run pytest`
-Expected: all pass. The suite gains 47 tests over Task 15's count (46 in `test_doctor.py`, 1 in
-`test_ops.py`), so 851 + 47 = 898 with `RECORDINGS_REQUIRE_RESTIC=1`.
+Expected: all pass. The suite gains 60 tests over Task 15's count (54 in `test_doctor.py`, 4 in
+`test_config.py`, 1 in `test_backup.py` and 1 in `test_ops.py`), so 851 + 60 = 911 with
+`RECORDINGS_REQUIRE_RESTIC=1`.
 
 Then run `make deploy-smoke`.
 Expected: it passes, `recordings doctor --role backup --json` among its backup commands, which
 exits 0. Its only warnings are about the smoke's own config, which has no `[nas]` or `[alerts]`:
 the NAS's free space isn't checked, and the topic file has no `[alerts] ntfy_server`, so no alert is
-sent. If doctor reports "hard links don't
+sent; and it adds one note, that `[plaud] consent_list` is not set. If doctor reports "hard links don't
 work", it didn't see the read-only mount: check `read_only_mount` against the container's
 `/archive`.
 

@@ -364,3 +364,24 @@ def test_allowed_hosts_with_a_port_scheme_or_path_are_refused(tmp_path, value):
     cfg_file = write(tmp_path, f'[server]\nallowed_hosts = ["{value}"]\n')
     with pytest.raises(ConfigError, match="allowed_hosts"):
         load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+
+
+@pytest.mark.parametrize("name, value", [
+    ("restic_password", "hunter2-do-not-print"),
+    ("nas_ssh_key", "b3BlbnNzaC1rZXktdjE-do-not-print\nAAAABG5vbmUAAAAEbm9uZQ\n"),
+    ("deadman_url", "https://hc-ping.com/uuid-do-not-print"),
+    ("ntfy_topic", "topic-do-not-print")], ids=["password", "key", "ping-url", "topic"])
+def test_a_secret_put_where_its_path_belongs_is_never_repeated(tmp_path, name, value):
+    # why: doctor's output is pasted into issues and chats (Task 16's council). With the secret
+    # itself in NAME_FILE, the error repeated it: "RESTIC_PASSWORD_FILE points at hunter2, which
+    # does not exist", and a pasted key came back whole, once per check that read it.
+    env = {f"{SECRETS[name].env}_FILE": value}
+    with pytest.raises(ConfigError, match="does not exist") as caught:
+        secret(name, env)
+    assert "do-not-print" not in str(caught.value)
+    archive = tmp_path / "archive"
+    init_archive(archive, tmp_path / "state", writer_id="test")
+    env["RECORDINGS_CONFIG"] = str(write(tmp_path, f'[archive]\npath = "{archive}"\n'))
+    report = doctor(env)
+    assert any(f"{SECRETS[name].env}_FILE" in p for p in report["problems"])
+    assert "do-not-print" not in json.dumps(report)

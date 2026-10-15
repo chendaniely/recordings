@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import subprocess
 from pathlib import Path
 from zoneinfo import ZoneInfoNotFoundError
@@ -9,9 +10,12 @@ from recordings import doctor as doctor_module
 from recordings.cli import main
 from recordings.config import SECRETS
 from recordings.doctor import JOB_SECRETS, doctor, read_only_mount
+from recordings.archive import Archive
+from recordings.index import Index
 from recordings.init import init_archive
-from recordings.sentinel import SENTINEL
+from recordings.sentinel import MIRROR, SENTINEL, read_sentinel
 from recordings.ssh import nas_free_bytes
+from recordings.state import SCHEMA_VERSION
 
 NAS_FREE = 500 * 1024 ** 3
 
@@ -599,3 +603,140 @@ def test_a_job_running_now_owns_its_folders_and_doctor_says_to_leave_them(tmp_pa
     assert not any("restic-check-cache-" in w for w in report["warnings"])
     assert any("restore-" in w and "unencrypted" in w for w in report["warnings"])  # not check's
     assert any("belongs to check, running now: leave it" in n for n in report["notes"])
+
+
+def test_the_mirror_and_a_reader_are_never_written(tmp_path, monkeypatch):
+    # why: spec §3, the mirror's copy is never written, and a reader writes nothing; doctor's
+    # hard-link probe wrote .tmp/ in both (Task 16's council).
+    environ = server(tmp_path)
+    monkeypatch.setattr(doctor_module, "hard_links_work",
+                        lambda root: pytest.fail("probed an archive this machine never writes"))
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    writer = cfg.read_text(encoding="utf-8")
+    cfg.write_text(writer.replace('writer_id = "homelab"\n', "", 1), encoding="utf-8")  # a reader
+    report = doctor(web_only(environ), role="web")
+    assert report["archive"]["hard_links"] is None
+    assert not any("hard links" in p or "read-only" in p for p in report["problems"])
+    cfg.write_text(writer, encoding="utf-8")
+    (tmp_path / "archive" / MIRROR).write_text("a mirror\n", encoding="utf-8")
+    report = doctor(environ)
+    assert report["archive"]["hard_links"] is None
+    assert any(MIRROR in p and "never written" in p for p in report["problems"])
+
+
+def test_a_crash_is_one_line_naming_the_check_never_a_traceback(tmp_path, monkeypatch, capsys):
+    # why: a config shape no check expects ([plaud] as a string; a number for cache_dir,
+    # nas_repo_path or extra_paths) ended doctor in a traceback, with no report (Task 16's council).
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text('plaud = "rest:https://u:pw-do-not-print@nas:8000/"\n'
+                   + cfg.read_text(encoding="utf-8"), encoding="utf-8")
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE"):
+        monkeypatch.delenv(name, raising=False)
+    assert main(["doctor", "--json"]) == 70
+    out = capsys.readouterr().out
+    assert json.loads(out)["error"].startswith("doctor stopped in _consent on AttributeError")
+    assert "do-not-print" not in out and "Traceback" not in out
+
+
+def test_a_state_db_from_a_newer_release_is_a_problem_as_state_open_refuses_it(tmp_path):
+    # why: after a rollback to an older release, State.open refuses a newer state.db (the
+    # runbook's "Restoring for real" step 3) while doctor passed it (Task 16's council).
+    environ = server(tmp_path)
+    assert doctor(environ)["problems"] == []
+    with sqlite3.connect(tmp_path / "state" / "state.db") as conn:
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                     (str(SCHEMA_VERSION + 1),))
+    for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
+        problems = doctor(env, role=role)["problems"]
+        assert any(f"schema version {SCHEMA_VERSION + 1}" in p and "newer" in p
+                   for p in problems), role
+    with sqlite3.connect(tmp_path / "state" / "state.db") as conn:
+        conn.execute("DELETE FROM meta WHERE key = 'schema_version'")
+    assert any("schema_version" in p for p in doctor(environ)["problems"])  # damaged, as open says
+
+
+def test_an_archive_that_is_the_mirrors_copy_is_a_problem_for_a_writer(tmp_path):
+    # why: Writer.__init__ refuses an archive carrying MIRROR.md, and the sentinel and UUID checks
+    # can't see it: the mirror's copy carries archive.json too (Task 16's council).
+    environ = server(tmp_path)
+    (tmp_path / "archive" / MIRROR).write_text("a mirror\n", encoding="utf-8")
+    problems = doctor(environ)["problems"]
+    assert any(MIRROR in p and "never written" in p for p in problems)
+    reader = Path(environ["RECORDINGS_CONFIG"])  # a machine with no writer_id only reads it
+    reader.write_text(reader.read_text(encoding="utf-8").replace('writer_id = "homelab"\n', ""),
+                      encoding="utf-8")
+    assert not any(MIRROR in p for p in doctor(web_only(environ), role="web")["problems"])
+
+
+def test_the_nas_key_is_not_demanded_but_the_host_key_is(tmp_path):
+    # why: ssh_options treats a missing key as "use ssh's own" (an agent), and spec §5 requires
+    # only known_hosts, which backup.from_config and mirror.from_config already enforce.
+    environ = server(tmp_path)
+    no_key = {k: v for k, v in environ.items() if k != "RECORDINGS_NAS_SSH_KEY_FILE"}
+    for role in ("backup", "all"):
+        report = doctor(no_key, role=role)
+        assert report["problems"] == [], role
+    no_hosts = {k: v for k, v in environ.items() if k != "RECORDINGS_NAS_KNOWN_HOSTS_FILE"}
+    problems = doctor(no_hosts, role="backup")["problems"]
+    assert problems and all("host key" in p for p in problems)
+
+
+def test_a_missing_or_unusable_index_is_a_warning(tmp_path):
+    # why: Writer.open refuses without [index] path, and an index of another archive or a damaged
+    # one answers nothing, so the Library lists no recording (Task 16's council).
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    good = cfg.read_text(encoding="utf-8")
+    index_path = tmp_path / "index.db"
+    index_path.write_bytes(b"not an index at all" * 100)  # damaged
+    report = doctor(environ)
+    assert report["problems"] == []
+    assert any("index" in w and "reindex" in w for w in report["warnings"])
+    assert report["index"]["matches"] is False
+    index_path.unlink()
+    init_archive(tmp_path / "other", tmp_path / "other-state", writer_id="homelab")
+    Index(index_path).rebuild(Archive(tmp_path / "other"), archive_uuid="another-archive",
+                              allow_empty=True)  # foreign
+    report = doctor(environ)
+    assert any("index" in w and "reindex" in w for w in report["warnings"])
+    Index(index_path).rebuild(Archive(tmp_path / "archive"),
+                              archive_uuid=read_sentinel(tmp_path / "archive").uuid,
+                              allow_empty=True)  # this archive's own
+    report = doctor(environ)
+    assert report["warnings"] == [] and report["index"]["matches"] is True
+    cfg.write_text(good.replace(f'[index]\npath = "{index_path}"\n', ""), encoding="utf-8")
+    report = doctor(environ)
+    assert report["problems"] == [] and report["index"] is None
+    assert any("[index] path" in w for w in report["warnings"])
+    assert not any("[index] path" in w for w in doctor(environ, role="backup")["warnings"])
+
+
+def test_an_unset_consent_list_is_a_note_not_a_warning(tmp_path):
+    # why: the import refuses to run without one (spec §9.1), and the long-running services never
+    # need it, so it is information (Task 16's council).
+    environ = server(tmp_path)
+    for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
+        report = doctor(env, role=role)
+        assert report["problems"] == [] and report["warnings"] == [], role
+        assert any("consent_list is not set" in n and "import" in n for n in report["notes"]), role
+        assert report["consent_list"] is None
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(cfg.read_text(encoding="utf-8") + '[plaud]\nconsent_list = "   "\n',
+                   encoding="utf-8")
+    assert any("consent_list is not set" in n for n in doctor(environ)["notes"])  # blank is unset
+
+
+def test_only_an_empty_mount_is_ignored_as_a_job_secret_in_web(tmp_path):
+    # why: Compose mounts an optional secret from /dev/null; any other character device (a tty,
+    # /dev/zero) is a mount that holds something (Task 16's council: compare st_rdev).
+    environ = web_only(server(tmp_path))
+    run_secrets = tmp_path / "run-secrets"
+    run_secrets.mkdir()
+    (run_secrets / "ntfy_token").symlink_to("/dev/null")
+    assert doctor(environ, role="web")["problems"] == []
+    (run_secrets / "ntfy_token").unlink()
+    (run_secrets / "ntfy_token").symlink_to("/dev/zero")
+    assert any("ntfy_token" in p for p in doctor(environ, role="web")["problems"])

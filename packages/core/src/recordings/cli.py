@@ -8,6 +8,7 @@ import logging
 import os
 import sqlite3
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -214,7 +215,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    report = doctor(os.environ, role=args.role)
+    try:
+        report = doctor(os.environ, role=args.role)
+    except Exception as exc:  # a config shape no check expects: one line, never a traceback
+        # Its output is pasted into issues and chats, so the error's type and the check it
+        # stopped in, never its text (as ops.failure_detail does).
+        where = next((frame.name for frame in reversed(traceback.extract_tb(exc.__traceback__))
+                      if frame.filename.endswith("doctor.py")), "doctor")
+        return _fail(f"doctor stopped in {where} on {type(exc).__name__}: a setting in "
+                     "config.toml may have the wrong type (compare it with "
+                     "config.example.toml)", args.json, 70)
     _emit(report, args.json)
     return 78 if report["problems"] else 0  # 78 = EX_CONFIG, as audio-router's doctor uses
 

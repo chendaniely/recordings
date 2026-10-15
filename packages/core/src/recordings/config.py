@@ -191,6 +191,13 @@ def load_config(environ: Mapping[str, str]) -> Config:
     )
 
 
+def _no_such_file(env: str) -> ConfigError:
+    """NAME_FILE names nothing that exists. Its value is never repeated: it may be the secret
+    itself, put where the path belongs, and doctor's output is pasted into issues and chats."""
+    return ConfigError(f"{env}_FILE names a file that does not exist. Its value is not shown: give "
+                       "the path to the secret's file there, never the secret itself")
+
+
 def secret_path(name: str, environ: Mapping[str, str]) -> Path | None:
     """The file a NAME_FILE secret names, checked to exist and be readable, never read here."""
     spec = SECRETS[name]
@@ -200,6 +207,8 @@ def secret_path(name: str, environ: Mapping[str, str]) -> Path | None:
     if not value:
         return None
     path = Path(value)
+    if not path.exists():
+        raise _no_such_file(spec.env)
     if not path.is_file():
         raise ConfigError(f"{spec.env}_FILE points at {path}, which is not a file")
     try:
@@ -221,7 +230,7 @@ def secret(name: str, environ: Mapping[str, str]) -> str | None:
     if file_var:
         path = Path(file_var)
         if not path.exists():
-            raise ConfigError(f"{spec.env}_FILE points at {path}, which does not exist")
+            raise _no_such_file(spec.env)
         if not path.is_file():
             raise ConfigError(f"{spec.env}_FILE points at {path}, which is not a file")
         try:

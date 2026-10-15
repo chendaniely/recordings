@@ -24,7 +24,10 @@ def ssh_options(key: Path | None, known_hosts: Path | None, port: int | None) ->
     # ConnectTimeout: a NAS that is off is given up on in seconds, not after TCP's own timeout
     # (minutes), which doctor and every backup's free-space check would otherwise wait out.
     out = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=60",
-           "-o", "ServerAliveCountMax=240"]
+           "-o", "ServerAliveCountMax=240",
+           # Outside Docker the user's ~/.ssh/config applies too: never ride a connection it
+           # opened (a shared one skips the host-key check), nor hand the NAS its agent.
+           "-o", "ControlPath=none", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"]
     if key is not None:
         out += ["-i", str(key), "-o", "IdentitiesOnly=yes"]
     out += ["-o", "StrictHostKeyChecking=yes"]  # always: a host's ssh_config must not relax it
@@ -50,7 +53,8 @@ class Nas:
 def nas_from_config(cfg: Config, environ: Mapping[str, str]) -> Nas:
     section = cfg.data.get("nas", {})
     ssh, port = section.get("ssh"), section.get("port")
-    if ssh is not None and (not isinstance(ssh, str) or not ssh.strip()):
+    if ssh is not None and (not isinstance(ssh, str) or not ssh.strip()
+                            or ssh.strip().startswith("-")):  # ssh would read it as an option
         raise ConfigError('[nas] ssh must be an ssh destination, such as "mirror@nas"')
     if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536):
         raise ConfigError("[nas] port must be a port number")

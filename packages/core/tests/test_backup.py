@@ -830,6 +830,20 @@ def test_host_keys_are_always_checked_and_a_nas_without_a_known_hosts_file_is_re
     backup.from_config(cfg, environ)  # a rest-server on the tailnet needs no ssh at all
 
 
+def test_ssh_shares_no_connection_or_agent_and_takes_no_option_for_a_host(tmp_path, writer):
+    # why: outside Docker the user's ~/.ssh/config applies too. A shared connection (ControlPath)
+    # skips the pinned host-key check, and ForwardAgent hands the NAS the user's agent. A
+    # destination that starts with "-" is read as an option, ProxyCommand included (Task 16's
+    # council).
+    options = ssh_options(None, tmp_path / "kh", None)
+    for option in ("ControlPath=none", "ForwardAgent=no", "ClearAllForwardings=yes"):
+        assert options[options.index(option) - 1] == "-o", option
+    cfg, environ = config(tmp_path, writer)
+    cfg.data["nas"] = {"ssh": "-oProxyCommand=touch /tmp/x"}
+    with pytest.raises(ConfigError, match=r"\[nas\] ssh"):
+        backup.from_config(cfg, environ)
+
+
 def test_a_key_path_with_a_space_survives_restics_sftp_args(tmp_path, writer):
     key = tmp_path / "my keys" / "nas key"
     key.parent.mkdir()

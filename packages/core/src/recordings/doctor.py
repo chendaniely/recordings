@@ -2,9 +2,11 @@
 
 It never prints a secret's value, nor a repository URL, which can carry a password: only whether
 each is set and which transport it is. It reports the secrets first, so a broken config.toml still
-shows them (stage-1 carry-over). It probes hard links on the archive's disk, because write-once
-publishing needs them, and it reports whether this machine's state.db matches the archive and
-writer ID.
+shows them (stage-1 carry-over). On a machine that writes the archive it probes hard links on the
+archive's disk, because write-once publishing needs them, and it reports whether this machine's
+state.db matches the archive and writer ID and is not from a newer release. An archive carrying
+MIRROR.md is the NAS mirror's copy, which is never written. A missing or unusable index is a
+warning: `recordings reindex` rebuilds it.
 
 Each Compose service runs it in its own role (`--role`, else RECORDINGS_ROLE, else `all`):
 - `web` serves the Library and runs the import. It must hold no backup, mirror or alert secret,
@@ -13,7 +15,8 @@ Each Compose service runs it in its own role (`--role`, else RECORDINGS_ROLE, el
   hard-link probe is skipped there, and ssh needs this user's passwd entry.
 - `all`, the default outside Docker, checks everything.
 Every role warns when retention is off here, and reports where the consent list is, as
-information: the import reads it and fails closed by itself. Every role also checks that
+information (or, when it is unset, as a note in `notes`): the import reads it and fails closed
+by itself. Every role also checks that
 `[archive] default_timezone` is a zone this machine knows, and that `[disk]` is a valid pair.
 """
 
@@ -24,6 +27,7 @@ import os
 import pwd
 import shutil
 import sqlite3
+import stat
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
@@ -35,9 +39,10 @@ from recordings.config import SECRETS, Config, ConfigError, load_config, secret,
 from recordings.disk import disk_thresholds
 from recordings.index import Index
 from recordings.locks import running
-from recordings.sentinel import SentinelError, read_sentinel
+from recordings.plaud.consent import ConsentListError, consent_list_path
+from recordings.sentinel import MIRROR, SentinelError, is_mirror, read_sentinel
 from recordings.ssh import nas_free_bytes
-from recordings.state import State, unreadable
+from recordings.state import State, StateError, unreadable
 
 TOOLS = ("restic", "rsync", "ssh", "ffprobe", "ffmpeg")
 ROLES = ("web", "backup", "all")
@@ -81,9 +86,14 @@ def _no_job_secrets(environ: Mapping[str, str], problems: list[str]) -> None:
 
 
 def _mounted(path: Path) -> bool:
-    """A secret Compose mounted. An optional one it leaves empty is a character device
-    (/dev/null) and holds nothing."""
-    return path.exists() and not path.is_char_device()
+    """A secret Compose mounted. An optional one it leaves empty is /dev/null itself and holds
+    nothing; any other character device (/dev/zero, a tty) is a mount that holds something."""
+    try:
+        found = path.stat()
+        empty = stat.S_ISCHR(found.st_mode) and found.st_rdev == os.stat(os.devnull).st_rdev
+    except OSError:
+        return False
+    return not empty
 
 
 def _user(problems: list[str]) -> dict:
@@ -145,7 +155,14 @@ def _archive(cfg: Config, role: str, report: dict, problems: list[str]) -> str |
         problems.append(str(exc))
         return None
     info["sentinel"] = True
+    if is_mirror(cfg.archive_path):  # §3: the mirror's copy is never written, by doctor neither
+        if cfg.writer_id is not None:
+            problems.append(f"the archive path holds {MIRROR}: it is the NAS mirror's copy, which "
+                            "is never written. Point [archive] path at the archive itself")
+        return identity.uuid
     info["read_only"] = read_only_mount(cfg.archive_path)
+    if cfg.writer_id is None:  # a reader writes nothing, so it needs no hard links: no probe
+        return identity.uuid
     if info["read_only"]:
         if role != "backup":  # the backup service mounts it read-only on purpose
             problems.append("the archive is mounted read-only here, so this machine can't "
@@ -183,12 +200,39 @@ def _state(cfg: Config, archive_uuid: str | None, role: str, report: dict, probl
     except sqlite3.DatabaseError as exc:  # the restore advice only for real damage
         problems.append(unreadable(state.db_path, exc))
         return
+    try:  # State.open refuses a schema newer than this release (a rollback) or a damaged one
+        with state.db() as conn:
+            state._version(conn)
+    except StateError as exc:
+        problems.append(str(exc))
+    except sqlite3.DatabaseError as exc:
+        problems.append(unreadable(state.db_path, exc))
+        return
     if archive_uuid is None:  # the archive's own problem is already reported
         return
     info["matches"] = found_uuid == archive_uuid and found_writer == cfg.writer_id
     if not info["matches"]:
         problems.append("state.db belongs to another archive or another writer_id: this machine "
                         "must not write here")
+
+
+def _index(cfg: Config, archive_uuid: str | None, report: dict, warnings: list[str]) -> None:
+    """The derived index (§6.8) is rebuilt from the archive, so a missing, foreign or damaged one
+    costs a `recordings reindex`, not data: a warning. Index.count() answers 0 for a damaged file,
+    so whose index it is must be asked."""
+    if cfg.index_path is None:
+        warnings.append("no [index] path: the Library can't list recordings, and the writer "
+                        "refuses to open (config.example.toml has the line)")
+        return
+    index = Index(cfg.index_path)
+    info = {"path": str(cfg.index_path), "exists": index.exists(), "recordings": index.count(),
+            "matches": None}
+    report["index"] = info
+    if info["exists"] and archive_uuid is not None:
+        info["matches"] = index.archive_uuid() == archive_uuid
+        if not info["matches"]:
+            warnings.append("the index is damaged or belongs to another archive, so the Library "
+                            "lists nothing: `recordings reindex` rebuilds it")
 
 
 def _left_behind(cfg: Config, bc: backup.BackupConfig, report: dict, warnings: list[str]) -> None:
@@ -273,9 +317,6 @@ def _backup(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
             "nas_free_bytes": None,
             "restic_installed": shutil.which(bc.restic) is not None}
     report["backup"] = info
-    if info["transport"] == "sftp" and (bc.nas.key is None or bc.nas.known_hosts is None):
-        problems.append("an SFTP repository needs RECORDINGS_NAS_SSH_KEY_FILE and "
-                        "RECORDINGS_NAS_KNOWN_HOSTS_FILE")
     if info["transport"] == "rest" and environ.get("RESTIC_REST_PASSWORD_FILE"):
         try:  # a named but broken file refuses every backup, with or without a username
             secret("rest_password", environ)
@@ -319,9 +360,6 @@ def _mirror(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
     info = {"remote": mirror.is_remote(mc.target),
             "rsync_installed": shutil.which(mc.rsync) is not None}
     report["mirror"] = info
-    if info["remote"] and (mc.nas.key is None or mc.nas.known_hosts is None):
-        problems.append("a remote mirror needs RECORDINGS_NAS_SSH_KEY_FILE and "
-                        "RECORDINGS_NAS_KNOWN_HOSTS_FILE")
     if not info["rsync_installed"]:
         problems.append(f"{mc.rsync} is not installed")
 
@@ -337,10 +375,14 @@ def _retention(cfg: Config, warnings: list[str]) -> None:
 def _consent(cfg: Config, report: dict) -> None:
     """[plaud] consent_list, as information only. In 2a it is mounted just for import runs, and
     the import reads it and fails closed by itself. Its IDs are never read here."""
-    path = cfg.data.get("plaud", {}).get("consent_list")
-    if not isinstance(path, str) or not path:
+    try:
+        resolved = consent_list_path(cfg.data)  # as the import reads it: blank is unset
+    except ConsentListError:
+        report["notes"].append("[plaud] consent_list is not set, so the import refuses to run "
+                               "(spec §9.1); the services that stay up don't need it")
         return
-    here = Path(path).expanduser().is_file()  # as consent_list_path reads it
+    path = cfg.data["plaud"]["consent_list"]  # shown as configured, not expanded
+    here = resolved.is_file()
     report["consent_list"] = {
         "path": path, "here": here,
         "note": None if here else "not mounted here; the import reads it and fails closed"}
@@ -443,10 +485,8 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
     _disk(cfg, problems)
     archive_uuid = _archive(cfg, role, report, problems)
     _state(cfg, archive_uuid, role, report, problems, warnings)
-    if role != "backup" and cfg.index_path is not None:  # the backup service has no index
-        index = Index(cfg.index_path)
-        report["index"] = {"path": str(cfg.index_path), "exists": index.exists(),
-                           "recordings": index.count()}
+    if role != "backup":  # the backup service has no index
+        _index(cfg, archive_uuid, report, warnings)
     if role != "web":
         _backup(cfg, environ, role, report, problems, warnings)
         _mirror(cfg, environ, role, report, problems, warnings)
