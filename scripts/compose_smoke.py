@@ -10,7 +10,8 @@ It proves, in the hardened containers and as this machine's user:
 - `recordings init` works in `web`
 - in `backup`, restic initialises a repository, backs up and passes the restore test, and rsync
   mirrors the archive, all for real
-- the web app answers /healthz
+- the web app answers /healthz, and passes the image's health check in the hardened container,
+  which `make deploy`'s `--wait` relies on
 
 The repository and the mirror are folders under the restore mount, so nothing contacts a NAS, and
 the secret files are placeholders. It never touches docker/deploy.env or a real archive. The
@@ -112,7 +113,7 @@ def main() -> int:
             compose_run(compose, env, "run", "--rm", "backup", "ssh", "-G", "nas", quiet=True)
             for command in BACKUP_COMMANDS:
                 compose_run(compose, env, "run", "--rm", "backup", "recordings", *command, "--json")
-            compose_run(compose, env, "up", "-d", "web")
+            compose_run(compose, env, "up", "-d", "--wait", "--wait-timeout", "120", "web")
             wait_for_healthz(compose, env)
             for path, what in (
                     (base / "archive" / "archive.json", "recordings init wrote no sentinel"),

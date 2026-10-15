@@ -3,6 +3,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -111,6 +113,19 @@ def test_each_service_names_its_role_and_backup_has_time_to_stop():
     assert services["backup"]["init"] is True  # reaps the ssh a killed rsync leaves behind
 
 
+def test_backup_yields_to_web_and_no_tmpfs_is_unsized():
+    # why: a restore test or a first backup can run for hours on a small homelab box; web must stay
+    # responsive and survive memory pressure. An unsized tmpfs may take half the host's memory.
+    # (ops council, Task 14; the cgroup weights and the oom_score_adj checked in a container)
+    services = compose()["services"]
+    assert services["backup"]["cpu_shares"] < services["web"].get("cpu_shares", 1024)
+    assert services["backup"]["oom_score_adj"] > services["web"].get("oom_score_adj", 0)
+    assert "mem_limit" not in services["backup"]  # a cap would kill restic mid-backup
+    for name, service in services.items():
+        for mount in service["tmpfs"]:
+            assert re.fullmatch(r"/tmp:size=\d+[mg]", mount), (name, mount)
+
+
 def test_images_are_tagged_by_commit_and_never_pulled():
     for name, service in compose()["services"].items():
         assert service["image"].startswith("recordings:${RECORDINGS_IMAGE_TAG:?"), name
@@ -187,6 +202,110 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
                           capture_output=True, text=True)
     assert down.returncode != 0 and "make deploy" not in down.stderr and down.stdout == ""
     assert "docker" in down.stderr and "daemon" in down.stderr
+
+
+@contextmanager
+def ops_lock_held(folder: Path, announced: str):
+    """Another process holds the ops lock, as the loop's run_job does, with `announced` in the lock
+    file, as Task 15's announce writes it."""
+    holder = subprocess.Popen([sys.executable, "-c", (
+        "import pathlib, sys\n"
+        "from recordings.locks import OPS_LOCK, Locks\n"
+        "folder = pathlib.Path(sys.argv[1])\n"
+        "with Locks(folder, timeout=0).hold(OPS_LOCK):\n"
+        "    (folder / f'{OPS_LOCK}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
+        "    print('held', flush=True)\n"
+        "    sys.stdin.read()\n"), str(folder), announced],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline() == "held\n"
+        yield
+    finally:
+        holder.communicate("")
+
+
+def test_the_ops_probe_sees_a_held_lock_and_what_it_announced(tmp_path):
+    # why: deploy-guard.sh asks the backup container with this file. flock is per host, so a hold
+    # by the loop, or by a one-off `rc run` in another container, shows the same.
+    probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks")]
+    assert subprocess.run(probe).returncode == 0  # never taken: no lock file yet
+    with ops_lock_held(tmp_path / "locks", '{"job": "restore-test"}'):
+        busy = subprocess.run(probe, capture_output=True, text=True)
+        assert busy.returncode == 3 and busy.stdout == '{"job": "restore-test"}\n'
+    assert subprocess.run(probe).returncode == 0  # let go: free again
+
+
+def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
+    # why: recreating backup stops the job it runs (restic and rsync stop cleanly), and the job
+    # starts again from the beginning: hours for a restore test or a check (ops council, Task 14).
+    fake = tmp_path / "docker"
+    # `ps -q` lists the running backup container. The guard pipes docker/ops-busy.py into that
+    # container's python; the fake runs it here instead, on the test's own lock folder.
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
+                    'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
+                    '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n', encoding="utf-8")
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_ID": "abc123", "FAKE_PYTHON": sys.executable,
+           "FAKE_LOCKS": str(tmp_path / "locks")}
+
+    def guard(**extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["sh", str(REPO / "docker" / "deploy-guard.sh")],
+                              env={**env, **extra}, capture_output=True, text=True)
+
+    assert guard().returncode == 0  # idle
+    assert guard(FAKE_ID="").returncode == 0  # no backup container: no job to stop
+    down = guard(FAKE_DOWN="1")
+    assert down.returncode != 0 and "daemon" in down.stderr
+    with ops_lock_held(tmp_path / "locks", '{"job": "restore-test"}'):
+        busy = guard()
+        assert busy.returncode != 0 and "restore-test" in busy.stderr and "FORCE=1" in busy.stderr
+        assert guard(FORCE="1").returncode == 0
+    broken = guard(FAKE_PYTHON="/nonexistent")  # the question itself failed: say so, don't deploy
+    assert broken.returncode != 0 and "could not ask" in broken.stderr
+    deploy = make_dry_run("deploy", "IMAGE_TAG=0123456789ab").stdout.splitlines()
+    (asked,) = [i for i, line in enumerate(deploy) if "sh docker/deploy-guard.sh" in line]
+    (up,) = [i for i, line in enumerate(deploy) if " up -d --build" in line]
+    assert asked < up
+    # and it fails, rather than passing silently, when web never passes its health check, which the
+    # smoke test proves passes in the hardened container
+    assert deploy[up].endswith(" up -d --build --wait --wait-timeout 180")
+    smoke = (REPO / "scripts" / "compose_smoke.py").read_text(encoding="utf-8")
+    assert '"up", "-d", "--wait", "--wait-timeout", "120", "web"' in smoke
+    forced = make_dry_run("deploy", "IMAGE_TAG=0123456789ab", "FORCE=1").stdout
+    assert "FORCE=1 sh docker/deploy-guard.sh" in forced
+
+
+def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path):
+    # why: each make deploy leaves an image, with its own venv, on the system disk, and
+    # `docker image prune -a` would take every rollback target with it (ops council, Task 14).
+    listed = ("2026-10-01 09:00:00 +0000 UTC|00000000000a", "2026-10-12 09:00:00 +0000 UTC|00000000000d",
+              "2026-10-05 09:00:00 +0000 UTC|00000000000b", "2026-10-09 09:00:00 +0000 UTC|00000000000c",
+              "2026-10-13 09:00:00 +0000 UTC|smoke", "2026-10-02 09:00:00 +0000 UTC|0123456789ab-dirty")
+    fake = tmp_path / "docker"
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1 $2" = "image ls" ]; then printf "%s\\n" '
+                    + " ".join(f"'{line}'" for line in listed) + "; exit 0; fi\n"
+                    'if [ "$1" = ps ]; then echo recordings:00000000000a; exit 0; fi\n'
+                    'if [ "$1 $2" = "image rm" ]; then echo "removed $3"; exit 0; fi\nexit 99\n',
+                    encoding="utf-8")
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
+    script = str(REPO / "docker" / "prune-images.sh")
+    run = subprocess.run(["sh", script, "2"], env=env, capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    # d and c are the newest two; a is older, but a container was made from it; smoke and the
+    # -dirty tag aren't commit tags
+    assert [line for line in run.stdout.splitlines() if line.startswith("removed")] == [
+        "removed recordings:00000000000b"]
+    assert subprocess.run(["sh", script, "five"], env=env, capture_output=True).returncode == 2
+    down = subprocess.run(["sh", script], env={**env, "FAKE_DOWN": "1"}, capture_output=True,
+                          text=True)
+    assert down.returncode != 0 and "daemon" in down.stderr
+    assert "sh docker/prune-images.sh 5" in make_dry_run("prune-images").stdout
+    assert "sh docker/prune-images.sh 1" in make_dry_run("prune-images", "KEEP=1").stdout
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "make prune-images" in readme and "docker image prune -a` deletes" not in readme
 
 
 def test_every_base_image_is_pinned_by_digest():

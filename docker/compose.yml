@@ -20,7 +20,9 @@ x-hardening: &hardening
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
-  tmpfs: ["/tmp"]
+  # A tmpfs is memory, and an unsized one may take half the host's. Nothing big belongs here:
+  # restic's cache is [backup] cache_dir, on the data disk; restic's temporary packs are small.
+  tmpfs: ["/tmp:size=1g"]
 
 x-environment: &environment
   RECORDINGS_CONFIG: /config/config.toml
@@ -81,6 +83,11 @@ services:
     # (Tasks 11 and 13). That can take longer than Docker's default 10 s, and a kill would leave a
     # stale restic lock behind.
     stop_grace_period: 2m
+    # When the two compete, web comes first: backup gets about a third of web's CPU weight (and all
+    # of the CPU while web is idle), and the kernel's out-of-memory killer picks backup before web.
+    # No hard memory cap: it would kill restic in the middle of a backup instead of slowing it.
+    cpu_shares: 256
+    oom_score_adj: 500
     environment:
       <<: *environment
       RECORDINGS_ROLE: backup

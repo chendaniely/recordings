@@ -8,7 +8,7 @@ IMAGE_TAG = $(shell git rev-parse --short=12 HEAD)$(shell test -z "$$(git status
 COMPOSE_ARGS = --env-file docker/deploy.env -f docker/compose.yml
 COMPOSE = RECORDINGS_IMAGE_TAG=$(IMAGE_TAG) docker compose $(COMPOSE_ARGS)
 
-.PHONY: restic setup skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke rollback
+.PHONY: restic setup skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke rollback prune-images
 
 setup:
 	uv sync
@@ -61,15 +61,23 @@ brand:
 docker:
 	docker compose -f docker/compose.demo.yml up --build
 
+# Not while a job runs (docker/deploy-guard.sh; FORCE=1 deploys anyway). --wait: fail, rather than
+# succeed silently, when web doesn't pass its health check within 3 minutes; then roll back.
 deploy:
 	$(if $(findstring -dirty,$(IMAGE_TAG)),$(error make deploy: commit first: a -dirty image has no commit to roll back to))
-	$(COMPOSE) up -d --build
+	FORCE=$(FORCE) sh docker/deploy-guard.sh
+	$(COMPOSE) up -d --build --wait --wait-timeout 180
 
 # Back to an image built before, never building one: make rollback TAG=<tag>, with a tag from
 # `docker image ls recordings`.
 rollback:
 	$(if $(TAG),,$(error usage: make rollback TAG=<a tag from docker image ls recordings>))
 	RECORDINGS_IMAGE_TAG=$(TAG) docker compose $(COMPOSE_ARGS) up -d --no-build
+
+# Each deploy leaves an image on the system disk: keep the newest KEEP (default 5) commit tags as
+# rollback targets, and any a container was made from.
+prune-images:
+	sh docker/prune-images.sh $(or $(KEEP),5)
 
 deploy-smoke:
 	uv run python scripts/compose_smoke.py

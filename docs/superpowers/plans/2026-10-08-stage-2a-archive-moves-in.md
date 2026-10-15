@@ -19119,9 +19119,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Checkpoint lens:** operations.
 
 **Files:**
-- Modify: `docker/Dockerfile`, `docker/compose.yml` (whole files below), `Makefile` (`deploy`, `rollback`, `deploy-smoke`), `README.md` (the Docker and configuration sections), `.github/workflows/ci.yml` (the compose smoke job), `.github/dependabot.yml` (a comment)
+- Modify: `docker/Dockerfile`, `docker/compose.yml` (whole files below), `Makefile` (`deploy`, `rollback`, `prune-images`, `deploy-smoke`), `README.md` (the Docker and configuration sections), `.github/workflows/ci.yml` (the compose smoke job), `.github/dependabot.yml` (a comment)
 - Rename: `docker/deploy.example.env` → `docker/deploy.example.conf` (whole file below)
-- Create: `docker/recordings.service`, `docker/up-deployed.sh`, `scripts/compose_smoke.py`, `conftest.py` (at the repo root)
+- Create: `docker/recordings.service`, `docker/up-deployed.sh`, `docker/deploy-guard.sh`, `docker/ops-busy.py`, `docker/prune-images.sh`, `scripts/compose_smoke.py`, `conftest.py` (at the repo root)
 - Modify: `packages/core/tests/test_deploy_template.py` (whole file below)
 
 **Interfaces:**
@@ -19139,7 +19139,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - the deploy variables `RECORDINGS_{ARCHIVE,STATE,RESTORE,SECRETS,CONFIG,DEPLOY_ENV}_HOST`, `RECORDINGS_NTFY_AUTH_HOST` (optional), `RECORDINGS_BIND`, `RECORDINGS_PORT`, `RECORDINGS_UID` and `RECORDINGS_GID`
   - **The image:** base images pinned by digest; build args `APP_UID` and `APP_GID` (default 10001), which Compose takes from `RECORDINGS_UID`/`RECORDINGS_GID`, creating that user in `/etc/passwd`; `USER ${APP_UID}:${APP_GID}`.
   - **Image tags:** `RECORDINGS_IMAGE_TAG`, set by `make deploy` to `git rev-parse --short=12 HEAD`, with `-dirty` for uncommitted or untracked changes, which `make deploy` refuses.
-  - **Make targets:** `make deploy`, `make rollback TAG=<tag>` (`up -d --no-build`), `make deploy-smoke`.
+  - **Make targets:** `make deploy [FORCE=1]` (refuses while a job holds the ops lock, unless forced: `docker/deploy-guard.sh` pipes `docker/ops-busy.py` into the running backup container's python; then `up -d --build --wait --wait-timeout 180`), `make rollback TAG=<tag>` (`up -d --no-build`), `make prune-images [KEEP=n]` (`docker/prune-images.sh`: keeps the newest n commit tags, default 5, and any a container was made from), `make deploy-smoke`.
   - **Boot:** `docker/recordings.service` (systemd; `/srv/recordings` and the checkout `/srv/recordings/repo` named at its top) and `docker/up-deployed.sh ARGS…`, which runs `docker compose ARGS…` on the tag the web container already runs.
   - **Tests:** the root `conftest.py`, with `KEEP = frozenset({"RECORDINGS_REQUIRE_RESTIC", "RECORDINGS_TEST_RESTIC"})`, `host_settings(environ) -> list[str]` and the autouse fixture `no_settings_from_this_machine`, which returns `host_settings`. The fixture drops every `RECORDINGS_*` and `RESTIC_*` variable except those in `KEEP`, and points `config.DEFAULT_PATH` at a file that never exists. CI's `RECORDINGS_REQUIRE_RESTIC=1` survives it.
 
@@ -19152,6 +19152,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -19260,6 +19262,19 @@ def test_each_service_names_its_role_and_backup_has_time_to_stop():
     assert services["backup"]["init"] is True  # reaps the ssh a killed rsync leaves behind
 
 
+def test_backup_yields_to_web_and_no_tmpfs_is_unsized():
+    # why: a restore test or a first backup can run for hours on a small homelab box; web must stay
+    # responsive and survive memory pressure. An unsized tmpfs may take half the host's memory.
+    # (ops council, Task 14; the cgroup weights and the oom_score_adj checked in a container)
+    services = compose()["services"]
+    assert services["backup"]["cpu_shares"] < services["web"].get("cpu_shares", 1024)
+    assert services["backup"]["oom_score_adj"] > services["web"].get("oom_score_adj", 0)
+    assert "mem_limit" not in services["backup"]  # a cap would kill restic mid-backup
+    for name, service in services.items():
+        for mount in service["tmpfs"]:
+            assert re.fullmatch(r"/tmp:size=\d+[mg]", mount), (name, mount)
+
+
 def test_images_are_tagged_by_commit_and_never_pulled():
     for name, service in compose()["services"].items():
         assert service["image"].startswith("recordings:${RECORDINGS_IMAGE_TAG:?"), name
@@ -19336,6 +19351,110 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
                           capture_output=True, text=True)
     assert down.returncode != 0 and "make deploy" not in down.stderr and down.stdout == ""
     assert "docker" in down.stderr and "daemon" in down.stderr
+
+
+@contextmanager
+def ops_lock_held(folder: Path, announced: str):
+    """Another process holds the ops lock, as the loop's run_job does, with `announced` in the lock
+    file, as Task 15's announce writes it."""
+    holder = subprocess.Popen([sys.executable, "-c", (
+        "import pathlib, sys\n"
+        "from recordings.locks import OPS_LOCK, Locks\n"
+        "folder = pathlib.Path(sys.argv[1])\n"
+        "with Locks(folder, timeout=0).hold(OPS_LOCK):\n"
+        "    (folder / f'{OPS_LOCK}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
+        "    print('held', flush=True)\n"
+        "    sys.stdin.read()\n"), str(folder), announced],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline() == "held\n"
+        yield
+    finally:
+        holder.communicate("")
+
+
+def test_the_ops_probe_sees_a_held_lock_and_what_it_announced(tmp_path):
+    # why: deploy-guard.sh asks the backup container with this file. flock is per host, so a hold
+    # by the loop, or by a one-off `rc run` in another container, shows the same.
+    probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks")]
+    assert subprocess.run(probe).returncode == 0  # never taken: no lock file yet
+    with ops_lock_held(tmp_path / "locks", '{"job": "restore-test"}'):
+        busy = subprocess.run(probe, capture_output=True, text=True)
+        assert busy.returncode == 3 and busy.stdout == '{"job": "restore-test"}\n'
+    assert subprocess.run(probe).returncode == 0  # let go: free again
+
+
+def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
+    # why: recreating backup stops the job it runs (restic and rsync stop cleanly), and the job
+    # starts again from the beginning: hours for a restore test or a check (ops council, Task 14).
+    fake = tmp_path / "docker"
+    # `ps -q` lists the running backup container. The guard pipes docker/ops-busy.py into that
+    # container's python; the fake runs it here instead, on the test's own lock folder.
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
+                    'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
+                    '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n', encoding="utf-8")
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_ID": "abc123", "FAKE_PYTHON": sys.executable,
+           "FAKE_LOCKS": str(tmp_path / "locks")}
+
+    def guard(**extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["sh", str(REPO / "docker" / "deploy-guard.sh")],
+                              env={**env, **extra}, capture_output=True, text=True)
+
+    assert guard().returncode == 0  # idle
+    assert guard(FAKE_ID="").returncode == 0  # no backup container: no job to stop
+    down = guard(FAKE_DOWN="1")
+    assert down.returncode != 0 and "daemon" in down.stderr
+    with ops_lock_held(tmp_path / "locks", '{"job": "restore-test"}'):
+        busy = guard()
+        assert busy.returncode != 0 and "restore-test" in busy.stderr and "FORCE=1" in busy.stderr
+        assert guard(FORCE="1").returncode == 0
+    broken = guard(FAKE_PYTHON="/nonexistent")  # the question itself failed: say so, don't deploy
+    assert broken.returncode != 0 and "could not ask" in broken.stderr
+    deploy = make_dry_run("deploy", "IMAGE_TAG=0123456789ab").stdout.splitlines()
+    (asked,) = [i for i, line in enumerate(deploy) if "sh docker/deploy-guard.sh" in line]
+    (up,) = [i for i, line in enumerate(deploy) if " up -d --build" in line]
+    assert asked < up
+    # and it fails, rather than passing silently, when web never passes its health check, which the
+    # smoke test proves passes in the hardened container
+    assert deploy[up].endswith(" up -d --build --wait --wait-timeout 180")
+    smoke = (REPO / "scripts" / "compose_smoke.py").read_text(encoding="utf-8")
+    assert '"up", "-d", "--wait", "--wait-timeout", "120", "web"' in smoke
+    forced = make_dry_run("deploy", "IMAGE_TAG=0123456789ab", "FORCE=1").stdout
+    assert "FORCE=1 sh docker/deploy-guard.sh" in forced
+
+
+def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path):
+    # why: each make deploy leaves an image, with its own venv, on the system disk, and
+    # `docker image prune -a` would take every rollback target with it (ops council, Task 14).
+    listed = ("2026-10-01 09:00:00 +0000 UTC|00000000000a", "2026-10-12 09:00:00 +0000 UTC|00000000000d",
+              "2026-10-05 09:00:00 +0000 UTC|00000000000b", "2026-10-09 09:00:00 +0000 UTC|00000000000c",
+              "2026-10-13 09:00:00 +0000 UTC|smoke", "2026-10-02 09:00:00 +0000 UTC|0123456789ab-dirty")
+    fake = tmp_path / "docker"
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1 $2" = "image ls" ]; then printf "%s\\n" '
+                    + " ".join(f"'{line}'" for line in listed) + "; exit 0; fi\n"
+                    'if [ "$1" = ps ]; then echo recordings:00000000000a; exit 0; fi\n'
+                    'if [ "$1 $2" = "image rm" ]; then echo "removed $3"; exit 0; fi\nexit 99\n',
+                    encoding="utf-8")
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
+    script = str(REPO / "docker" / "prune-images.sh")
+    run = subprocess.run(["sh", script, "2"], env=env, capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    # d and c are the newest two; a is older, but a container was made from it; smoke and the
+    # -dirty tag aren't commit tags
+    assert [line for line in run.stdout.splitlines() if line.startswith("removed")] == [
+        "removed recordings:00000000000b"]
+    assert subprocess.run(["sh", script, "five"], env=env, capture_output=True).returncode == 2
+    down = subprocess.run(["sh", script], env={**env, "FAKE_DOWN": "1"}, capture_output=True,
+                          text=True)
+    assert down.returncode != 0 and "daemon" in down.stderr
+    assert "sh docker/prune-images.sh 5" in make_dry_run("prune-images").stdout
+    assert "sh docker/prune-images.sh 1" in make_dry_run("prune-images", "KEEP=1").stdout
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "make prune-images" in readme and "docker image prune -a` deletes" not in readme
 
 
 def test_every_base_image_is_pinned_by_digest():
@@ -19469,7 +19588,8 @@ Run: `RECORDINGS_ARCHIVE=/nonexistent RESTIC_REPOSITORY=/nonexistent uv run pyte
 Expected: FAIL. `deploy.example.conf` doesn't exist yet (`FileNotFoundError`), the old
 `compose.yml` uses the short syntax, `test_no_test_sees_this_machines_settings` lists
 `RECORDINGS_ARCHIVE` and `RESTIC_REPOSITORY`, and `test_the_ci_switches_survive_the_fixture`
-errors with `fixture 'no_settings_from_this_machine' not found`.
+errors with `fixture 'no_settings_from_this_machine' not found`. The ops probe, deploy guard and
+image prune tests fail too: their scripts don't exist yet.
 
 - [ ] **Step 3: Write the Docker files**
 
@@ -19539,7 +19659,9 @@ x-hardening: &hardening
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
-  tmpfs: ["/tmp"]
+  # A tmpfs is memory, and an unsized one may take half the host's. Nothing big belongs here:
+  # restic's cache is [backup] cache_dir, on the data disk; restic's temporary packs are small.
+  tmpfs: ["/tmp:size=1g"]
 
 x-environment: &environment
   RECORDINGS_CONFIG: /config/config.toml
@@ -19600,6 +19722,11 @@ services:
     # (Tasks 11 and 13). That can take longer than Docker's default 10 s, and a kill would leave a
     # stale restic lock behind.
     stop_grace_period: 2m
+    # When the two compete, web comes first: backup gets about a third of web's CPU weight (and all
+    # of the CPU while web is idle), and the kernel's out-of-memory killer picks backup before web.
+    # No hard memory cap: it would kill restic in the middle of a backup instead of slowing it.
+    cpu_shares: 256
+    oom_score_adj: 500
     environment:
       <<: *environment
       RECORDINGS_ROLE: backup
@@ -19777,6 +19904,98 @@ RECORDINGS_IMAGE_TAG=${image#recordings:} exec docker compose --env-file docker/
   -f docker/compose.yml "$@"
 ```
 
+`docker/deploy-guard.sh`:
+```sh
+#!/bin/sh
+# `make deploy` runs this first. A deploy recreates the backup container, which stops the job it
+# runs: restic and rsync stop cleanly, but the job starts again from the beginning, so a deploy
+# during a restore test or a check costs hours. This asks the running backup container whether any
+# process holds the ops lock (docker/ops-busy.py), as Status does. FORCE=1 deploys anyway. It reads
+# no secret.
+set -eu
+cd "$(dirname "$0")/.."
+[ "${FORCE:-}" = 1 ] && exit 0
+ids=$(docker ps -q --filter label=com.docker.compose.project=recordings \
+  --filter label=com.docker.compose.service=backup --filter label=com.docker.compose.oneoff=False) \
+  || { echo "deploy-guard: docker failed (is the Docker daemon running?)" >&2; exit 1; }
+id=$(printf '%s\n' "$ids" | head -n 1)
+[ -n "$id" ] || exit 0  # no backup container running: no job to stop
+status=0
+held=$(docker exec -i "$id" python - /state/locks < docker/ops-busy.py) || status=$?
+case "$status" in
+  0) exit 0 ;;
+  3) echo "make deploy: a job is running${held:+ ($held)}. A deploy now would stop it, and it" \
+       "would start again from the beginning. Wait for it (Status shows it), or deploy" \
+       "anyway: make deploy FORCE=1" >&2 ;;
+  *) echo "make deploy: could not ask the backup container whether a job is running (exit" \
+       "$status). make deploy FORCE=1 deploys anyway." >&2 ;;
+esac
+exit 1
+```
+
+`docker/ops-busy.py`:
+```python
+"""Does a job hold the ops lock now? Exit 3, printing what its holder announced, or 0 if it's free.
+
+docker/deploy-guard.sh pipes this file into the backup container's python
+(`python - /state/locks`), so it works with whatever image is deployed: standard library only.
+A shared, non-blocking flock that fails means another process holds the lock. The probe takes
+nothing and lets go at once (as Status does). flock is per host, so a hold in any container counts.
+"""
+
+import errno
+import fcntl
+import os
+import sys
+
+try:
+    fd = os.open(os.path.join(sys.argv[1], "ops.lock"), os.O_RDONLY)
+except FileNotFoundError:
+    sys.exit(0)  # never taken yet
+try:
+    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+except OSError as exc:
+    if exc.errno not in (errno.EAGAIN, errno.EACCES):
+        raise
+    print(os.pread(fd, 4096, 0).decode("utf-8", "replace").strip())
+    sys.exit(3)
+sys.exit(0)
+```
+
+`docker/prune-images.sh`:
+```sh
+#!/bin/sh
+# Removes old recordings:<commit> images, keeping the newest KEEP (the argument, default 5) as
+# rollback targets. Each `make deploy` leaves one on the system disk, with its own copy of the venv.
+# It never removes an image a container (running or stopped) was made from: the boot starts the
+# containers again from it. It touches only commit tags (12 hex digits), never smoke, dev or demo.
+# `docker image prune -a` would remove every rollback target at once. It reads no secret.
+set -eu
+keep=${1:-5}
+case "$keep" in
+  ''|*[!0-9]*) echo "prune-images: KEEP must be a whole number" >&2; exit 2 ;;
+esac
+listed=$(docker image ls recordings --format '{{.CreatedAt}}|{{.Tag}}') \
+  || { echo "prune-images: docker failed (is the Docker daemon running?)" >&2; exit 1; }
+used=$(docker ps -a --format '{{.Image}}') \
+  || { echo "prune-images: docker failed (is the Docker daemon running?)" >&2; exit 1; }
+n=0
+printf '%s\n' "$listed" | sort -r | while IFS='|' read -r _ tag; do
+  case "$tag" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    *) continue ;;
+  esac
+  n=$((n + 1))
+  if [ "$n" -le "$keep" ]; then
+    echo "keeping recordings:$tag"
+  elif printf '%s\n' "$used" | grep -qx "recordings:$tag"; then
+    echo "keeping recordings:$tag (a container was made from it)"
+  else
+    docker image rm "recordings:$tag"
+  fi
+done
+```
+
 `docker/recordings.service` (Task 1's runbook, step 2.5, installs it at
 `/etc/systemd/system/recordings.service`):
 ```ini
@@ -19863,7 +20082,8 @@ It proves, in the hardened containers and as this machine's user:
 - `recordings init` works in `web`
 - in `backup`, restic initialises a repository, backs up and passes the restore test, and rsync
   mirrors the archive, all for real
-- the web app answers /healthz
+- the web app answers /healthz, and passes the image's health check in the hardened container,
+  which `make deploy`'s `--wait` relies on
 
 The repository and the mirror are folders under the restore mount, so nothing contacts a NAS, and
 the secret files are placeholders. It never touches docker/deploy.env or a real archive. The
@@ -19965,7 +20185,7 @@ def main() -> int:
             compose_run(compose, env, "run", "--rm", "backup", "ssh", "-G", "nas", quiet=True)
             for command in BACKUP_COMMANDS:
                 compose_run(compose, env, "run", "--rm", "backup", "recordings", *command, "--json")
-            compose_run(compose, env, "up", "-d", "web")
+            compose_run(compose, env, "up", "-d", "--wait", "--wait-timeout", "120", "web")
             wait_for_healthz(compose, env)
             for path, what in (
                     (base / "archive" / "archive.json", "recordings init wrote no sentinel"),
@@ -20007,9 +20227,12 @@ In the `Makefile`:
    ```
    with:
    ```make
+   # Not while a job runs (docker/deploy-guard.sh; FORCE=1 deploys anyway). --wait: fail, rather than
+   # succeed silently, when web doesn't pass its health check within 3 minutes; then roll back.
    deploy:
    	$(if $(findstring -dirty,$(IMAGE_TAG)),$(error make deploy: commit first: a -dirty image has no commit to roll back to))
-   	$(COMPOSE) up -d --build
+   	FORCE=$(FORCE) sh docker/deploy-guard.sh
+   	$(COMPOSE) up -d --build --wait --wait-timeout 180
 
    # Back to an image built before, never building one: make rollback TAG=<tag>, with a tag from
    # `docker image ls recordings`.
@@ -20017,12 +20240,17 @@ In the `Makefile`:
    	$(if $(TAG),,$(error usage: make rollback TAG=<a tag from docker image ls recordings>))
    	RECORDINGS_IMAGE_TAG=$(TAG) docker compose $(COMPOSE_ARGS) up -d --no-build
 
+   # Each deploy leaves an image on the system disk: keep the newest KEEP (default 5) commit tags as
+   # rollback targets, and any a container was made from.
+   prune-images:
+   	sh docker/prune-images.sh $(or $(KEEP),5)
+
    deploy-smoke:
    	uv run python scripts/compose_smoke.py
    ```
    `$(error …)` stops make while it expands the recipe, before any line runs, even under
    `make -n`. Keep commas out of its text: `$(if …)` would split on them.
-3. **Add** `deploy-smoke` and `rollback` to `.PHONY`.
+3. **Add** `deploy-smoke`, `rollback` and `prune-images` to `.PHONY`.
 
 In `.github/dependabot.yml`, the `docker` ecosystem already watches `/docker`. **Replace**:
 ```yaml
@@ -20045,15 +20273,28 @@ In `README.md`, **replace** the `## Docker` and `## Configuration and secrets` s
 make docker                                         # demo mode, http://127.0.0.1:8000
 cp config.example.toml config.toml                  # app settings (git-ignored)
 cp docker/deploy.example.conf docker/deploy.env     # host folders, bind address, UID/GID (git-ignored)
+# first time only: run `recordings init` and `recordings backup init` before this (runbook step 2.4)
 make deploy                                         # builds, tags the image by commit, starts web + backup
 make rollback TAG=<tag>                             # starts an older image again, never building one
+make prune-images                                   # removes old images, keeping the newest five
 make deploy-smoke                                   # the real compose file, once, against temporary folders
 ```
 
+- **First time: initialise before you deploy.** Do not run `make deploy` on a new archive. `recordings init`
+  (the archive) and `recordings backup init` (the repository) come first, and the runbook's step 2.4
+  runs them. Every deploy after that is `make deploy`.
 - **Images are tagged by commit.** `make deploy` refuses a tree with uncommitted or untracked
   changes, because a `-dirty` image has no commit to go back to.
+- **A deploy waits for a running job.** Recreating `backup` stops the job it runs, and the job
+  starts again from the beginning: hours for a restore test or a check. So `make deploy` refuses
+  while a job holds the ops lock, and says which; `make deploy FORCE=1` deploys anyway. It then
+  waits up to 3 minutes for `web` to pass its health check, and fails if it doesn't: roll back.
 - **Rolling back** starts an image that is already on the machine: `docker image ls recordings`
-  lists the tags. Keep a few: `docker image prune -a` deletes the ones no container uses.
+  lists the tags. Each deploy leaves an image on the system disk. `make prune-images` removes all
+  but the newest five commit tags (`KEEP=<n>` for another number), never one a container was made
+  from. Never `docker image prune -a` or `docker system prune -a`: they remove every rollback
+  target. `docker system df` shows what images and the build cache take; `docker builder prune`
+  empties the cache, which only makes the next build slower.
 - **At boot,** `docker/recordings.service` waits for the data disk and the Tailscale address,
   then starts the containers again on the tag they last ran (`docker/up-deployed.sh`). The
   runbook installs it. It uses the `compose.yml` and `deploy.env` the checkout holds at boot, so
@@ -20121,13 +20362,14 @@ In `.github/workflows/ci.yml`, **add** this job after `docker`:
 - [ ] **Step 4: Run the tests and the smoke test**
 
 Run: `RECORDINGS_ARCHIVE=/nonexistent RESTIC_REPOSITORY=/nonexistent RECORDINGS_REQUIRE_RESTIC=1 uv run pytest packages/core/tests/test_deploy_template.py -v && uv run pytest && make deploy-smoke`
-Expected: 25 passed, then the whole suite passes (821 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 798 less the 2 old template tests plus these 25; a clone without a built frontend shows 820 and one skip).
+Expected: 29 passed, then the whole suite passes (825 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 798 less the 2 old template tests plus these 29; a clone without a built frontend shows 824 and one skip).
 Everything in `test_deploy_template.py` and the suite runs without Docker. The smoke test and the
 image build need a running Docker daemon (`docker info` must work) and fail, not skip, without
 one: run `make deploy-smoke` on such a machine, and CI's `docker` and `compose-smoke` jobs cover it
 too. It also proves the `/dev/null` secret mount of `ntfy_token`. The smoke test builds the image with your own UID
 and GID, runs `recordings init`, `ssh -G nas`, `backup init`, `backup run`,
-`backup restore-test` and `mirror`, and prints
+`backup restore-test` and `mirror`, starts `web` with `up -d --wait` (so the image's health check,
+which `make deploy` waits for, must pass in the hardened container), and prints
 `compose smoke: init, ssh, backup, restore test and mirror ran, and web answered /healthz, as this machine's user`.
 `backup run` also logs `delivery failed: URLError` twice: its dead-man's switch pings go to the
 placeholder URL, a closed port on the loopback, as intended.

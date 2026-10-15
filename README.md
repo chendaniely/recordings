@@ -46,15 +46,28 @@ make pages-test   # Playwright smoke test of _site/, after `make pages`
 make docker                                         # demo mode, http://127.0.0.1:8000
 cp config.example.toml config.toml                  # app settings (git-ignored)
 cp docker/deploy.example.conf docker/deploy.env     # host folders, bind address, UID/GID (git-ignored)
+# first time only: run `recordings init` and `recordings backup init` before this (runbook step 2.4)
 make deploy                                         # builds, tags the image by commit, starts web + backup
 make rollback TAG=<tag>                             # starts an older image again, never building one
+make prune-images                                   # removes old images, keeping the newest five
 make deploy-smoke                                   # the real compose file, once, against temporary folders
 ```
 
+- **First time: initialise before you deploy.** Do not run `make deploy` on a new archive. `recordings init`
+  (the archive) and `recordings backup init` (the repository) come first, and the runbook's step 2.4
+  runs them. Every deploy after that is `make deploy`.
 - **Images are tagged by commit.** `make deploy` refuses a tree with uncommitted or untracked
   changes, because a `-dirty` image has no commit to go back to.
+- **A deploy waits for a running job.** Recreating `backup` stops the job it runs, and the job
+  starts again from the beginning: hours for a restore test or a check. So `make deploy` refuses
+  while a job holds the ops lock, and says which; `make deploy FORCE=1` deploys anyway. It then
+  waits up to 3 minutes for `web` to pass its health check, and fails if it doesn't: roll back.
 - **Rolling back** starts an image that is already on the machine: `docker image ls recordings`
-  lists the tags. Keep a few: `docker image prune -a` deletes the ones no container uses.
+  lists the tags. Each deploy leaves an image on the system disk. `make prune-images` removes all
+  but the newest five commit tags (`KEEP=<n>` for another number), never one a container was made
+  from. Never `docker image prune -a` or `docker system prune -a`: they remove every rollback
+  target. `docker system df` shows what images and the build cache take; `docker builder prune`
+  empties the cache, which only makes the next build slower.
 - **At boot,** `docker/recordings.service` waits for the data disk and the Tailscale address,
   then starts the containers again on the tag they last ran (`docker/up-deployed.sh`). The
   runbook installs it. It uses the `compose.yml` and `deploy.env` the checkout holds at boot, so
