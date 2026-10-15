@@ -94,7 +94,7 @@ Nothing in it calls Plaud.
    - `duplicate` (merged into its `dup_of` row's recording)
    - `present` (already in this archive)
    - `no-audio`
-   - `deferred-to-2b` (Dan, 2026-10-09): a Plaud row with audio but no snapshot and no time. It is reported with its Plaud ID and counted, never `unplaced`, so a real run doesn't refuse. Stage 2b's sync matches it by that ID; if Plaud no longer has it, 2b imports it from `audio-router`, timed by the file's mtime. It is on the plan tail's "Carried to stage 2b" list.
+   - `deferred-to-2b` (Dan, 2026-10-09): a Plaud row with audio but no snapshot and no time. It is reported with its Plaud ID and counted, never `unplaced`, so a real run doesn't refuse. Stage 2b's sync matches it by that ID; if Plaud no longer has it, 2b imports it from `audio-router`, timed by the file's mtime. It is on the plan tail's "Carried to stage 2b" list. Its labels are worked out from the catalog as any row's are, and kept on its item; nothing else of it is read, and its audio and files are never imported. Its privacy labels (a privacy tag, or an `access` tier) go to its same-audio group: every row linked to it by `dup_of` (either way), by the catalog's `audio_sha256` or by the file's hash, directly or through another row. A row of that group that imports creates or merges the recording with them already in its tags (§7.4), and the dry run counts that row as private. Its other labels stay with it, for 2b (the final review, 2026-10-14).
    - `consent-excluded` (ruled 2026-10-09: "Not unless I allow it"): a Plaud ID on Dan's consent list (`[plaud] consent_list`, §9.1). It is skipped, and the reports carry only its count. The list is read in the dry run and the run, failing closed: an unset, missing, unreadable or empty list stops both.
    - `unplaced`, with a reason
 
@@ -3677,6 +3677,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```python
 import os
 import sqlite3
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
@@ -4032,6 +4033,41 @@ def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(new_archive, 
     assert index.path.read_bytes().startswith(INDEX_HEADER)
     (moved,) = tmp_path.glob("index.db-wal.unreadable-*")
     assert moved.read_bytes() == wal
+
+
+def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
+        new_archive, tmp_path, monkeypatch):
+    # why: §6.4, §9.3 (the final review's minor 3). A lookup that waits out the busy timeout
+    # answers "none", and the import's plan took that for an answer: a recording already here
+    # planned as new, one the consent list now excludes left uncounted. strict raises SQLite's
+    # own error instead, as find_by_sha256's has for the Writer since Task 5b.
+    root, _ = new_archive
+    rec = put(root, sources=[("plaud", HEX)])
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+
+    @contextmanager
+    def at_once(self):  # the real lookups wait 30 s for the lock, then fail just the same
+        with closing(sqlite3.connect(self.path, timeout=0)) as conn:
+            yield conn
+
+    monkeypatch.setattr(Index, "_db", at_once)
+    lookups = {"find_by_source": lambda **kw: index.find_by_source("plaud", HEX, **kw),
+               "find_by_sha256": lambda **kw: index.find_by_sha256(rec.media.sha256, **kw),
+               "sha256_of": lambda **kw: index.sha256_of(rec.id, **kw)}
+    holder = sqlite3.connect(index.path)
+    holder.execute("BEGIN EXCLUSIVE")  # another process is writing the index
+    try:
+        for name, lookup in lookups.items():
+            with pytest.raises(sqlite3.OperationalError) as busy:
+                lookup(strict=True)
+            assert busy.value.sqlite_errorname == "SQLITE_BUSY", name
+            assert lookup() in ([], None), name  # without strict: "none", as before
+    finally:
+        holder.rollback()
+        holder.close()
+    assert {name: lookup(strict=True) for name, lookup in lookups.items()} == {
+        "find_by_source": [rec.id], "find_by_sha256": rec.id, "sha256_of": rec.media.sha256}
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -4115,7 +4151,8 @@ _SCHEMA = (
 )
 _UNREADABLE = ("SQLITE_NOTADB", "SQLITE_CORRUPT")
 # A sound index that can't answer now: locked past the busy timeout, or an I/O error. A lookup
-# that decides whether to make a new recording passes strict=True, and these raise (§6.4).
+# that decides whether to make a new recording, or whether the import's plan may go ahead,
+# passes strict=True, and these raise (§6.4, §9.3).
 _NO_ANSWER = ("SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_IOERR", "SQLITE_NOMEM", "SQLITE_CANTOPEN")
 
 
@@ -4305,13 +4342,16 @@ class Index:
         return self._one("SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,),
                          strict=strict)
 
-    def sha256_of(self, recording_id: str) -> str | None:
-        return self._one("SELECT sha256 FROM recordings WHERE id = ?", (recording_id,))
+    def sha256_of(self, recording_id: str, *, strict: bool = False) -> str | None:
+        """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
+        return self._one("SELECT sha256 FROM recordings WHERE id = ?", (recording_id,),
+                         strict=strict)
 
-    def find_by_source(self, kind: str, ref: str) -> list[str]:
+    def find_by_source(self, kind: str, ref: str, *, strict: bool = False) -> list[str]:
+        """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
         rows = self._rows(
             "SELECT DISTINCT recording_id FROM source_refs WHERE kind = ? AND canonical = ? "
-            "ORDER BY recording_id", (kind, canonical_ref(kind, ref)))
+            "ORDER BY recording_id", (kind, canonical_ref(kind, ref)), strict=strict)
         return [row[0] for row in rows]
 ```
 
@@ -9761,7 +9801,9 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
 - **Tags:** every tag in the catalog comes over, and a privacy label moves under `private/`. A
   privacy label, a non-empty `access` or the private tier makes a row `new-private`.
 - **Orphan Plaud rows:** a Plaud row with audio but no snapshot and no time is `deferred-to-2b`. It
-  is reported by its Plaud ID, and never `unplaced`.
+  is reported by its Plaud ID, and never `unplaced`. Its labels are read from the catalog and
+  kept on its item, so its privacy reaches its same-audio group (below); nothing else of it is
+  read.
 - **The private tier:** it is matched by SHA-256, and a `.txt` with the same stem comes with it.
 - **The consent list:** it excludes the recording, not only its ID (Dan, 2026-10-14). A row is
   `consent-excluded` when its own ID is listed, when its `dup_of` names an excluded row, when an
@@ -9788,6 +9830,17 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
   snapshots, even with `--allow-unplaced`. A row already imported by its `audio_router` URI with
   other audio is `unplaced`, as a Plaud ID is, and a private row's 64-hex ID must be its file's
   hash.
+- **A group's privacy is every linked row's** (the final review, 2026-10-14): a group is every
+  row linked by `dup_of` (either way), the catalog's hash or the file's, directly or through
+  another row, whether it imports or not, so a row deferred to 2b (or with no audio) is in it
+  too. Each row to import carries the privacy tags of its whole group as `group_privacy`, and
+  the report's `private` counts the rows to import whose recording will be private, by their
+  own labels or their group's. Only privacy labels travel from a row that doesn't import.
+- **A busy index fails the plan** (the final review, 2026-10-14): `_present` and the consent
+  count read the index with `strict=True`. A row it can't answer for now is `unplaced`, and the
+  plan has a problem, so not even `--allow-unplaced` imports past it: "not here" from a busy
+  index would plan a recording already here as new, and miss one the consent list now
+  excludes.
 - **Time zones** (Task 8's council): an offset is never changed. A zone name is kept when it
   agrees with the offset at that instant, as every main-tier row's does, a trip's included; a
   naive time takes the row's zone, or the default; an offset the zone contradicts (a
@@ -9804,7 +9857,7 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
 
 **Interfaces:**
 - Consumes:
-  - `Index.find_by_source`, `Index.find_by_sha256` and `Index.sha256_of`, and `recordings.refs.canonical_plaud_id` (Task 4)
+  - `Index.find_by_source`, `Index.find_by_sha256` and `Index.sha256_of`, each with `strict=True`, and `recordings.refs.canonical_plaud_id` (Task 4)
   - `recordings.models.is_private_tag` (Task 3), and `sha256_file` (`archive.py`)
   - the `plaud_env` fixture (Task 6)
 - Produces:
@@ -9823,7 +9876,7 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
       - `PRIVATE_TAGS`, each recognised label to its one tag: `private`, `personal` and `voiceprints` → `private`; `therapy`, `counselling` and `counseling` → `private/therapy`; `journal`, `medical` and `students` → `private/<label>`. `PRIVACY_LABELS = frozenset(PRIVATE_TAGS)`
     - `class CatalogError(RuntimeError)`
     - `@dataclass(frozen=True) Row(uri, source, file_id, recorded_at_local, timezone, time_source, audio_rel, audio_sha256, dup_of, tags: tuple[str, ...], access)`
-    - `@dataclass(frozen=True) Item(row: Row, disposition: str, reason: str = "", kind: str = "", audio: Path | None = None, sha256: str = "", recorded_at: datetime | None = None, timezone: str = "", time_source: str = "", snapshots: tuple[Path, ...] = (), renditions: tuple[Path, ...] = (), texts: tuple[Path, ...] = (), present_id: str | None = None, private: bool = False, tags: tuple[str, ...] = (), probed: MediaProbe | None = None, snapshot_problems: tuple[tuple[str, ...], ...] = ())`
+    - `@dataclass(frozen=True) Item(row: Row, disposition: str, reason: str = "", kind: str = "", audio: Path | None = None, sha256: str = "", recorded_at: datetime | None = None, timezone: str = "", time_source: str = "", snapshots: tuple[Path, ...] = (), renditions: tuple[Path, ...] = (), texts: tuple[Path, ...] = (), present_id: str | None = None, private: bool = False, tags: tuple[str, ...] = (), group_privacy: tuple[str, ...] = (), probed: MediaProbe | None = None, snapshot_problems: tuple[tuple[str, ...], ...] = ())`. `private` and `tags` are the row's own (a deferred or audio-less row keeps them too); `group_privacy`, on a row to import, is its same-audio group's privacy tags.
     - `@dataclass(frozen=True) Plan(root, items, ledger_only=(), unlisted=(), held_on_plaud=None, problems=(), unlisted_private=0)`, with:
       - `.counts() -> dict[str, int]` and `.unprobed() -> list[str]`
       - `.incomplete_snapshots() -> dict`, the Plaud snapshots reconcile will skip, as `{"total": n, "by_reason": {reason: n}}` (a reason is `unreadable`, a block's data type, or `legacy`), and `.all_snapshots_incomplete() -> list[str]`, the URIs of rows to import whose every snapshot is incomplete
@@ -10327,15 +10380,18 @@ def ar_archive(tmp_path) -> ARArchive:
 
 `packages/core/tests/test_import_plan.py`:
 ```python
+import contextlib
 import hashlib
 import json
 import os
+import sqlite3
 from datetime import datetime, timezone
 
 import pytest
 
 from recordings import media
 from recordings.archive import RawSource
+from recordings.index import Index
 from recordings.sources.audio_router import (
     DISPOSITIONS,
     CatalogError,
@@ -10872,6 +10928,112 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     ar_archive.rows[0]["audio_sha256"] = hashlib.sha256(b"x").hexdigest()
     ar_archive.write_catalog()
     assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver").problems)
+
+
+def _deferred_twin(ar, *, linked_by: str, label: str):
+    """A Plaud orphan (audio, but no snapshot and no time: deferred to 2b) with a privacy label in
+    audio-router's catalog, and a Pocket row with the same audio. They are linked by the Pocket
+    row's dup_of, by the orphan's, or by the catalog's audio hash alone."""
+    orphan = ar.orphan(T)
+    if label == "tags":
+        orphan["tags"] = "lecture;private"
+    else:  # audio-router's access tier
+        orphan["tags"], orphan["access"] = "lecture", "restricted"
+    twin = ar.pocket(UUID)
+    (ar.root / twin["audio_rel"]).write_bytes((ar.root / orphan["audio_rel"]).read_bytes())
+    twin["audio_sha256"] = orphan["audio_sha256"]
+    if linked_by == "the twin's dup_of":
+        twin["dup_of"] = orphan["uri"]
+    elif linked_by == "the orphan's dup_of":
+        orphan["dup_of"] = twin["uri"]
+    ar.write_catalog()
+    return orphan, twin
+
+
+@pytest.mark.parametrize("linked_by, label", [
+    ("the twin's dup_of", "tags"), ("the orphan's dup_of", "tags"), ("the audio hash", "tags"),
+    ("the twin's dup_of", "access")])
+def test_a_deferred_rows_privacy_reaches_the_row_that_imports_its_audio(ar_archive, linked_by,
+                                                                        label):
+    # why: §7.4, §9.3 (the final review's Important 1). A row deferred to 2b returned before its
+    # labels were read, and a same-audio group took its tags only from the rows that import: the
+    # Pocket twin created the recording untagged, and the dry run said ok, with 0 private. Only
+    # the deferred row's privacy labels travel; its files are never read.
+    orphan, twin = _deferred_twin(ar_archive, linked_by=linked_by, label=label)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    deferred, imported = by_uri[orphan["uri"]], by_uri[twin["uri"]]
+    assert deferred.disposition == "deferred-to-2b"
+    assert set(deferred.tags) == {"lecture", "private"} and deferred.private
+    assert deferred.audio is None and deferred.sha256 == "" and deferred.snapshots == ()
+    assert imported.disposition == ("duplicate" if linked_by == "the twin's dup_of" else "new")
+    assert imported.tags == () and imported.group_privacy == ("private",)
+    assert the_plan.ok and the_plan.report()["private"] == 1
+    assert the_plan.report()["deferred_to_2b"] == [T]
+
+
+def test_a_row_waits_for_an_unplaced_row_linked_to_it_through_a_deferred_one(ar_archive):
+    # why: §7.4, §9.3. A group is every row linked to it, whether it imports or not, so a link
+    # through a row deferred to 2b holds the group too: the unplaced row's labels can't be read,
+    # and the recording would be created without them.
+    orphan, twin = _deferred_twin(ar_archive, linked_by="the audio hash", label="tags")
+    broken = ar_archive.pocket("22222222-2222-4222-8222-222222222222")
+    broken.update(dup_of=orphan["uri"], audio_sha256="", tags="Not A Slug")
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    assert by_uri[broken["uri"]].disposition == "unplaced"
+    assert by_uri[twin["uri"]].disposition == "unplaced"
+    assert f"{broken['uri']} has the same audio" in by_uri[twin["uri"]].reason
+    assert by_uri[orphan["uri"]].disposition == "deferred-to-2b" and not the_plan.ok
+
+
+@contextlib.contextmanager
+def _busy(index, monkeypatch):
+    """Another process is writing the index, and lookups don't wait for it (the real ones wait 30 s
+    for the lock, then fail just the same)."""
+    @contextlib.contextmanager
+    def at_once(self):
+        with contextlib.closing(sqlite3.connect(self.path, timeout=0)) as conn:
+            yield conn
+
+    monkeypatch.setattr(Index, "_db", at_once)
+    holder = sqlite3.connect(index.path)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        yield
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_a_busy_index_fails_the_plan_instead_of_answering_none(ar_archive, plaud_env, writer,
+                                                              make_incoming, monkeypatch):
+    # why: §6.4, §9.1 (the final review's minor 3; FIX BEFORE THE REAL IMPORT). The plan read the
+    # index without strict, so a busy one read as empty: A, already here, was planned as new (its
+    # media decoded again, its labels merged again against S2(b)), and X, imported before its ID
+    # was listed, went uncounted, so the run that must stop went ahead.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00")
+    ar_archive.write_catalog()
+    for fid in (A, X):
+        writer.add(make_incoming(_wav_of(ar_archive, fid), name=f"{fid}.wav", sources=(
+            RawSource(kind="plaud", ref=fid, added_at=T0),)))
+    with _busy(writer.index, monkeypatch):
+        the_plan = plan(ar_archive.root, writer.index, consent={X},
+                        default_timezone="America/Vancouver")
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    assert by_uri[f"plaud/{A}"].disposition == "unplaced"
+    assert "the index can't answer now" in by_uri[f"plaud/{A}"].reason
+    assert by_uri[f"plaud/{X}"].disposition == "consent-excluded"
+    assert len(the_plan.problems) == 2 and not the_plan.ok
+    assert all("the index can't answer now" in p for p in the_plan.problems)
+    assert X not in json.dumps(the_plan.report(), ensure_ascii=False)
+    # The control: once the index answers, A is here and X is counted.
+    again = plan(ar_archive.root, writer.index, consent={X}, default_timezone="America/Vancouver")
+    assert {i.row.uri: i.disposition for i in again.items}[f"plaud/{A}"] == "present"
+    (problem,) = again.problems
+    assert problem.startswith("1 recordings already in this archive")
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -10915,9 +11077,10 @@ import csv
 import hashlib
 import json
 import re
+import sqlite3
 from collections import Counter
 from collections.abc import Collection, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -10965,6 +11128,10 @@ _TAG = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")  # audio-router's rule for catalo
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+# A row the index can't answer for now is unplaced with this reason, and plan() makes it a
+# problem too, so not even --allow-unplaced imports past a busy index (§6.4).
+INDEX_BUSY = ("the index can't answer now (busy, or an I/O error), so whether this archive holds "
+              "it is unknown: run the import again")
 
 
 class CatalogError(RuntimeError):
@@ -11001,8 +11168,11 @@ class Item:
     renditions: tuple[Path, ...] = ()
     texts: tuple[Path, ...] = ()  # prose exports kept as they came: the private tier's .txt
     present_id: str | None = None
-    private: bool = False
-    tags: tuple[str, ...] = ()  # recordings tags, privacy labels already under private/
+    private: bool = False  # its own labels make it private (decision 23)
+    tags: tuple[str, ...] = ()  # recordings tags, privacy labels already under private/; a row
+    # deferred to 2b, or with no audio, keeps its own too, for its same-audio group
+    group_privacy: tuple[str, ...] = ()  # for a row to import: the privacy tags of every row in
+    # its same-audio group, imported or not (§7.4); its recording is created with them
     probed: MediaProbe | None = None  # None: not measured (it can't be, or it is present)
     snapshot_problems: tuple[tuple[str, ...], ...] = ()  # per Plaud snapshot, why reconcile
     # will skip it; () when it is usable (§9.1.1: nothing is built from an incomplete one)
@@ -11069,7 +11239,9 @@ class Plan:
         return {
             "catalog_rows": len(self.items),
             "by_disposition": self.counts(),
-            "private": sum(i.private for i in self.items if i.disposition in IMPORTED),
+            # Rows to import whose recording will be private: by their own labels or their group's.
+            "private": sum(bool(i.private or i.group_privacy) for i in self.items
+                           if i.disposition in IMPORTED),
             "unplaced": [{"uri": i.row.uri, "reason": i.reason}
                          for i in self.items if i.disposition == "unplaced"],
             "no_audio": [i.row.uri for i in self.items if i.disposition == "no-audio"],
@@ -11304,20 +11476,22 @@ def _snapshot_problems(kind: str, snapshots: tuple[Path, ...]) -> tuple[tuple[st
 
 def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | None, str]:
     """Already in this archive? By Plaud ID (either form) first, then audio-router's own
-    reference, then the content hash (§9.3)."""
+    reference, then the content hash (§9.3). The lookups are strict: an index that can't answer
+    now raises sqlite3.DatabaseError rather than say "not here" (§6.4)."""
     if index is None or not index.exists():
         return None, ""
     if kind == "plaud":
-        for rid in index.find_by_source("plaud", row.file_id):
-            if index.sha256_of(rid) != sha:
+        for rid in index.find_by_source("plaud", row.file_id, strict=True):
+            if index.sha256_of(rid, strict=True) != sha:
                 return None, (f"Plaud ID {row.file_id} is already in this archive ({rid}) "
                               "with different audio")
             return rid, ""
-    for rid in index.find_by_source("audio_router", row.uri):
-        if index.sha256_of(rid) != sha:  # the same source row, other bytes: never a second copy
+    for rid in index.find_by_source("audio_router", row.uri, strict=True):
+        # The same source row with other bytes: never a second copy.
+        if index.sha256_of(rid, strict=True) != sha:
             return None, f"{row.uri} is already in this archive ({rid}) with different audio"
         return rid, ""
-    return index.find_by_sha256(sha), ""
+    return index.find_by_sha256(sha, strict=True), ""
 
 
 def _consent_closure(rows: list[Row], consent: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
@@ -11349,16 +11523,17 @@ def _consent_kept(index: Index | None, rows: list[Row],
                   excluded: tuple[frozenset[str], frozenset[str]]) -> int:
     """How many recordings this archive already holds that the consent list now excludes: an ID
     listed after its import. Found by Plaud ID, audio-router's reference and audio hash, from
-    catalog data alone, so no file of theirs is opened."""
+    catalog data alone, so no file of theirs is opened. The lookups are strict: an index that
+    can't answer now raises sqlite3.DatabaseError, never counts none (§6.4)."""
     if index is None or not index.exists():
         return 0
     found: set[str] = set()
     for row in rows:
         if row.uri in excluded[0]:
             if row.source == "plaud":
-                found.update(index.find_by_source("plaud", row.file_id))
-            found.update(index.find_by_source("audio_router", row.uri))
-    found.update(rid for sha in excluded[1] if (rid := index.find_by_sha256(sha)))
+                found.update(index.find_by_source("plaud", row.file_id, strict=True))
+            found.update(index.find_by_source("audio_router", row.uri, strict=True))
+    found.update(rid for sha in excluded[1] if (rid := index.find_by_sha256(sha, strict=True)))
     return len(found)
 
 
@@ -11367,12 +11542,15 @@ def _place(root: Path, row: Row, *, excluded: tuple[frozenset[str], frozenset[st
            private_media: dict[str, list[Path]]) -> Item:
     """One row, one disposition. An excluded row is never read; any other row whose files can't
     be read is `unplaced`, naming the exception's type and never a path (a private-tier file
-    name is an export title)."""
+    name is an export title). So is one the index can't answer for now, and plan() makes that a
+    problem: a busy index never reads as "not here"."""
     if row.uri in excluded[0]:
         return Item(row, "consent-excluded")
     try:
         item = _place_row(root, row, by_uri=by_uri, index=index, default_tz=default_tz,
                           private_media=private_media)
+    except sqlite3.DatabaseError:  # a strict lookup in _present (§6.4)
+        return Item(row, "unplaced", INDEX_BUSY)
     except (OSError, ValueError, RuntimeError) as exc:
         return Item(row, "unplaced", f"its files can't be read ({type(exc).__name__})")
     if item.sha256 and item.sha256 in excluded[1]:  # the same audio as an excluded recording
@@ -11387,18 +11565,22 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
     if not all(_TAG.fullmatch(label) for label in row.tags):
         return Item(row, "unplaced",
                     "a tag isn't a lowercase slug, as audio-router's catalog/tags.jsonl requires")
-    if row.source == "plaud" and not row.recorded_at_local:
-        snapshots, _ = _store_files(root, "plaud", row.file_id)
-        if not snapshots:  # build_catalog.py's orphans: audio alone (Dan, 2026-10-09)
-            return Item(row, "deferred-to-2b", "no snapshot and no recording time: stage 2b's "
-                        "sync matches it by its Plaud ID", kind="plaud")
-    when, zone, time_source, why = _when(row, default_tz)
-    if when is None:
-        return Item(row, "unplaced", why)
+    # Its labels first, from the catalog alone: a row that doesn't import keeps them too, so its
+    # privacy reaches the row of its same-audio group that creates the recording (§7.4).
     tags = map_tags(row.tags)
     if row.source == "private" or row.access:  # the private tier, or audio-router's access tier
         tags = tuple(dict.fromkeys(("private", *tags)))
     private = any(is_private_tag(t) for t in tags)
+    if row.source == "plaud" and not row.recorded_at_local:
+        snapshots, _ = _store_files(root, "plaud", row.file_id)
+        if not snapshots:  # build_catalog.py's orphans: audio alone (Dan, 2026-10-09). Its audio
+            # is never read; only its labels count, for its same-audio group.
+            return Item(row, "deferred-to-2b", "no snapshot and no recording time: stage 2b's "
+                        "sync matches it by its Plaud ID", kind="plaud", private=private,
+                        tags=tags)
+    when, zone, time_source, why = _when(row, default_tz)
+    if when is None:
+        return Item(row, "unplaced", why)
     texts: tuple[Path, ...] = ()
     if row.source == "private":
         found = _find_private(root, row.file_id, private_media)
@@ -11410,7 +11592,8 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
         kind = row.source
         if not row.audio_rel:
             later = "; Plaud's copy arrives through the sync" if kind == "plaud" else ""
-            return Item(row, "no-audio", f"no audio in audio-router{later}", kind=kind)
+            return Item(row, "no-audio", f"no audio in audio-router{later}", kind=kind,
+                        private=private, tags=tags)
         audio = _inside(root, row.audio_rel)
         if audio is None or not audio.is_file():
             return Item(row, "unplaced", f"audio {row.audio_rel} is missing from the copy")
@@ -11499,37 +11682,68 @@ def _unlisted(root: Path, rows: list[Row], consent: frozenset[str]) -> tuple[lis
     return sorted(out), unlistable
 
 
-def _hold_groups(items: list[Item]) -> list[Item]:
+def _links(item: Item) -> set[str]:
+    """What joins a row to the others with its audio: its URI and its `dup_of` (so `dup_of` links
+    both ways), the catalog's audio hash (a private row's 64-hex ID is one), and the hash of the
+    file read."""
+    row = item.row
+    out = {row.uri, *(f"sha:{s}" for s in (row.audio_sha256, item.sha256) if s)}
+    if row.dup_of:
+        out.add(row.dup_of)
+    if row.source == "private" and _HEX64.fullmatch(row.file_id):
+        out.add(f"sha:{row.file_id}")
+    return out
+
+
+def _groups(items: list[Item]) -> dict[str, str]:
+    """Each row's same-audio group, by URI: the rows linked to it (_links), directly or through
+    any other row, whether it imports or not. A consent-excluded row is in none: it is never read
+    past its ID, and the consent closure follows the same links, so no row that imports is linked
+    to one."""
+    parent: dict[str, str] = {}
+
+    def find(key: str) -> str:
+        while parent.setdefault(key, key) != key:
+            key = parent[key]
+        return key
+
+    linked = [i for i in items if i.disposition != "consent-excluded"]
+    for item in linked:
+        first, *rest = sorted(_links(item))
+        for key in rest:
+            a, b = find(key), find(first)
+            if a != b:
+                parent[a] = b
+    return {i.row.uri: find(i.row.uri) for i in linked}
+
+
+def _hold_groups(items: list[Item], groups: dict[str, str]) -> list[Item]:
     """Rows with the same audio are one recording, created with the whole group's privacy (§9.3,
     §7.4). When one of them can't be placed, the rest wait too: imported alone, the recording
     would lack that row's labels, titles and snapshots, and a later run could add its private
-    tag only after the content was already in. Rows are grouped by `dup_of`, by the catalog's
-    audio hash (a private row's 64-hex ID is one), and by the hash of the file read."""
-    def keys(item: Item) -> set[str]:
-        row = item.row
-        out = {row.uri, *(f"sha:{s}" for s in (row.audio_sha256, item.sha256) if s)}
-        if row.dup_of:
-            out.add(row.dup_of)
-        if row.source == "private" and _HEX64.fullmatch(row.file_id):
-            out.add(f"sha:{row.file_id}")
-        return out
+    tag only after the content was already in."""
+    waits: dict[str, str] = {}
+    for item in items:
+        if item.disposition == "unplaced":
+            waits.setdefault(groups[item.row.uri], item.row.uri)
+    return [Item(item.row, "unplaced", f"{waits[groups[item.row.uri]]} has the same audio and "
+                 "can't be placed: the recording waits for it")
+            if item.disposition in IMPORTED and groups[item.row.uri] in waits else item
+            for item in items]
 
-    blocked = {k: i.row.uri for i in items if i.disposition == "unplaced" for k in keys(i)}
-    items = list(items)
-    changed = True
-    while changed:
-        changed = False
-        for n, item in enumerate(items):
-            if item.disposition not in IMPORTED:
-                continue
-            hit = next((blocked[k] for k in sorted(keys(item)) if k in blocked), None)
-            if hit is None:
-                continue
-            items[n] = Item(item.row, "unplaced", f"{hit} has the same audio and can't be "
-                            "placed: the recording waits for it")
-            blocked.update({k: hit for k in keys(item)})
-            changed = True
-    return items
+
+def _share_privacy(items: list[Item], groups: dict[str, str]) -> list[Item]:
+    """Each row to import gets its whole group's privacy tags, as group_privacy: those of every
+    row linked to it, whether or not that row imports (§7.4, §9.3). A row deferred to 2b, or with
+    no audio, gives its privacy labels and nothing else: its audio and files are never read, and
+    its other labels stay with it."""
+    privacy: dict[str, dict[str, None]] = {}
+    for item in items:
+        if item.row.uri in groups:
+            privacy.setdefault(groups[item.row.uri], {}).update(
+                dict.fromkeys(t for t in item.tags if is_private_tag(t)))
+    return [replace(item, group_privacy=tuple(privacy[groups[item.row.uri]]))
+            if item.disposition in IMPORTED else item for item in items]
 
 
 def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
@@ -11556,7 +11770,13 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
                         "them can't be recognised: rebuild the catalog")
     # An ID listed after its recording was imported: 2a can't take the recording out, so the
     # run stops until Dan does (§9.1). Counted, never named, and found from catalog data alone.
-    kept = _consent_kept(index, rows, excluded)
+    try:
+        kept = _consent_kept(index, rows, excluded)
+    except sqlite3.DatabaseError:  # a busy index never counts none (§6.4)
+        kept = 0
+        problems.append("the index can't answer now (busy, or an I/O error), so recordings "
+                        "already here that the consent list now excludes can't be counted: run "
+                        "the import again")
     if kept:
         problems.append(f"{kept} recordings already in this archive are now on the consent "
                         "list: 2a can't remove them, so take them out by hand (then `recordings "
@@ -11570,9 +11790,15 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
     unlisted_private = sum(1 for sha, paths in private_media.items() for p in paths
                            if sha not in named and p.stem not in named)
     # Rows that are nobody's duplicate first, so a duplicate always merges into its original.
-    items = _hold_groups([_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
-                                 default_tz=default_timezone, private_media=private_media)
-                          for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))])
+    placed = [_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
+                     default_tz=default_timezone, private_media=private_media)
+              for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))]
+    busy = sum(1 for i in placed if i.reason == INDEX_BUSY)
+    if busy:
+        problems.append(f"the index can't answer now (busy, or an I/O error) for {busy} rows, so "
+                        "the plan can't tell which are already here: run the import again")
+    groups = _groups(placed)
+    items = _share_privacy(_hold_groups(placed, groups), groups)
     unlisted, unlistable = _unlisted(root, rows, listed)
     if unlistable:
         problems.append(f"{unlistable} store folders couldn't be listed: recordings in them can't "
@@ -11590,7 +11816,7 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
 - [ ] **Step 8: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_plan.py packages/core/tests/test_media.py -v && uv run pytest`
-Expected: 44 passed (36 and 8), and the full suite stays green, its count above Task 7's.
+Expected: 50 passed (42 and 8), and the full suite stays green, its count above Task 7's.
 
 - [ ] **Step 9: Commit**
 
@@ -11659,7 +11885,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - **Config:** `[plaud] consent_list`, and `[disk] warn_free_percent` and `stop_free_percent`.
 
 What the run guarantees:
-- **Privacy first (§7.4):** every private tag is in `Incoming.tags` when the recording is created. That covers the catalog's privacy labels and `access`, the private tier, and a Plaud title (any snapshot's, under either ID) that matches the auto-private patterns. A duplicate's labels and titles count too: rows with the same audio are one recording, so each is created with its whole group's privacy, whichever row is added first.
+- **Privacy first (§7.4):** every private tag is in `Incoming.tags` when the recording is created. That covers the catalog's privacy labels and `access`, the private tier, and a Plaud title (any snapshot's, under either ID) that matches the auto-private patterns. A duplicate's labels and titles count too: rows with the same audio are one recording, so each is created with its whole group's privacy, whichever row is added first. The group's privacy includes the rows that don't import: a row deferred to 2b, or with no audio, gives its privacy labels through `Item.group_privacy` (Task 8), and nothing else.
 - **Measured media:** a real run refuses to start while the media of any recording it would create can't be measured. Without ffmpeg, that means any non-WAV file. A row already in the archive (`present`) isn't decoded again: its recording's decoded duration is reused, so a re-run decodes only what is new, and a present row whose recording has gone fails instead of being created unmeasured.
 - **Outputs by identity, not bytes:** an audio-router output is imported once per file (`meta.file`), and a Pocket output once per snapshot, part hash and `version`, whatever its bytes are now. A later change to the mapping, or to how outputs are written, never leaves a second copy on a re-run. Bumping `IMPORT_VERSION` writes Pocket's outputs once more, as `pocket@N`; it never reaches an audio-router output already imported.
 - **Consent reaches what is already here:** a recording imported before its ID was listed is a plan problem, counted and never named, so the run stops until Dan takes it out.
@@ -11739,6 +11965,7 @@ from recordings.cli import main
 from recordings.disk import DiskStatus
 from recordings.index import Index, IndexRefused
 from recordings.locks import Locks, LockTimeout
+from recordings.models import is_private
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
 from recordings.plaud.reconcile import Held
 from recordings.selfdoc import validate
@@ -12689,6 +12916,43 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.failed == []
     assert {t.tag for t in writer.archive.load(rec.id).tags} == {"private/therapy"}
+
+
+@pytest.mark.parametrize("duplicate", ["the twin", "the orphan"])
+def test_a_deferred_orphans_private_label_is_on_the_recording_its_twin_creates(
+        ar_archive, writer, monkeypatch, duplicate):
+    # why: §7.4, §9.3 (the final review's Important 1, from its probe). An orphan deferred to 2b,
+    # tagged private in audio-router's catalog, and a Pocket row with its audio, either one the
+    # other's dup_of: the Pocket row creates the recording, and it was created with no tags. Only
+    # the orphan's privacy labels travel, never its audio, its files or its other labels.
+    orphan = ar_archive.orphan(A)
+    orphan["tags"] = "lecture;private"
+    twin = ar_archive.pocket(UUID)
+    (ar_archive.root / twin["audio_rel"]).write_bytes(
+        (ar_archive.root / orphan["audio_rel"]).read_bytes())
+    twin["audio_sha256"] = orphan["audio_sha256"]
+    if duplicate == "the twin":
+        twin["dup_of"] = orphan["uri"]
+    else:
+        orphan["dup_of"] = twin["uri"]
+    ar_archive.write_catalog()
+    seen = []
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen.append((incoming.sources[0].ref, [(t.tag, t.by) for t in incoming.tags]))
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
+    assert the_plan.ok and the_plan.report()["private"] == 1
+    report = run(the_plan, writer, now=NOW)
+    assert (report.created, report.failed) == (1, [])
+    assert seen == [(UUID, [("private", "you")])]  # in place when it is created
+    (rec,) = writer.archive.iter_recordings()
+    assert is_private(rec)
+    assert {(s.kind, s.ref) for s in rec.sources} == {
+        ("pocket", UUID), ("audio_router", f"pocket/{UUID}")}  # nothing of the orphan's
 ```
 
 The kill-point test runs the import in a child process, which dies with `os._exit(137)` at one of
@@ -13211,7 +13475,7 @@ import re
 import sqlite3
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -13405,9 +13669,11 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
         else:
             report.skipped_outputs[mapped.skipped] = report.skipped_outputs.get(mapped.skipped, 0) + 1
     # Privacy first (§7.4): every private tag is in place when the recording is created, never
-    # a second write after its content.
-    tags = [TagRef(tag=tag, by="you")
-            for tag in dict.fromkeys(t for member in group for t in member.tags)]
+    # a second write after its content. The group's privacy (group_privacy) includes the rows
+    # that don't import: one deferred to 2b, or with no audio.
+    tags = [TagRef(tag=tag, by="you") for tag in dict.fromkeys(
+        [*(t for member in group for t in member.tags),
+         *(t for member in group for t in member.group_privacy)])]
     if item.disposition == "present":  # its recording exists: a label Dan removed stays removed,
         tags = [t for t in tags if is_private_tag(t.tag)]  # and only privacy is merged again
     titles = [t for member in group if member.kind == "plaud" for t in _titles(member)]
@@ -13633,7 +13899,7 @@ In `packages/core/src/recordings/cli.py`:
 - [ ] **Step 6: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_import_run.py packages/core/tests/test_disk.py -v && uv run pytest`
-Expected: 56 passed (51 and 5), and the full suite stays green, its count above Task 8's.
+Expected: 58 passed (53 and 5), and the full suite stays green, its count above Task 8's.
 
 - [ ] **Step 7: Commit**
 
@@ -24169,7 +24435,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - **The two orphan Plaud rows** that the import reports as `deferred-to-2b`. They have audio but
   no snapshot and no time, so the import doesn't guess one. Their Plaud IDs are in the import's
   report.
-  - 2b's sync matches them by Plaud ID, and they come in like any other Plaud recording.
+  - 2b's sync matches them by Plaud ID, and they come in like any other Plaud recording, with
+    one difference: their catalog labels must come too. 2b reads them from `audio-router`'s
+    catalog (its own copy on the Mac), and a privacy label among them is in the recording's
+    tags when it is created or merged (§7.4). A same-audio row that 2a imported already
+    carries their privacy labels (decision 12).
   - If Plaud no longer has them, 2b imports them from `audio-router`'s copy, timed by the audio
     file's mtime (`time_source` `mtime`). That copy is `audio-router`'s own archive on the Mac:
     the server's `import/` copy is deleted in step 4.

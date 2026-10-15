@@ -43,7 +43,8 @@ _SCHEMA = (
 )
 _UNREADABLE = ("SQLITE_NOTADB", "SQLITE_CORRUPT")
 # A sound index that can't answer now: locked past the busy timeout, or an I/O error. A lookup
-# that decides whether to make a new recording passes strict=True, and these raise (§6.4).
+# that decides whether to make a new recording, or whether the import's plan may go ahead,
+# passes strict=True, and these raise (§6.4, §9.3).
 _NO_ANSWER = ("SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_IOERR", "SQLITE_NOMEM", "SQLITE_CANTOPEN")
 
 
@@ -233,11 +234,14 @@ class Index:
         return self._one("SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,),
                          strict=strict)
 
-    def sha256_of(self, recording_id: str) -> str | None:
-        return self._one("SELECT sha256 FROM recordings WHERE id = ?", (recording_id,))
+    def sha256_of(self, recording_id: str, *, strict: bool = False) -> str | None:
+        """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
+        return self._one("SELECT sha256 FROM recordings WHERE id = ?", (recording_id,),
+                         strict=strict)
 
-    def find_by_source(self, kind: str, ref: str) -> list[str]:
+    def find_by_source(self, kind: str, ref: str, *, strict: bool = False) -> list[str]:
+        """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
         rows = self._rows(
             "SELECT DISTINCT recording_id FROM source_refs WHERE kind = ? AND canonical = ? "
-            "ORDER BY recording_id", (kind, canonical_ref(kind, ref)))
+            "ORDER BY recording_id", (kind, canonical_ref(kind, ref)), strict=strict)
         return [row[0] for row in rows]

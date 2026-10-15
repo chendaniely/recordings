@@ -15,6 +15,7 @@ from recordings.cli import main
 from recordings.disk import DiskStatus
 from recordings.index import Index, IndexRefused
 from recordings.locks import Locks, LockTimeout
+from recordings.models import is_private
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
 from recordings.plaud.reconcile import Held
 from recordings.selfdoc import validate
@@ -987,6 +988,43 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.failed == []
     assert {t.tag for t in writer.archive.load(rec.id).tags} == {"private/therapy"}
+
+
+@pytest.mark.parametrize("duplicate", ["the twin", "the orphan"])
+def test_a_deferred_orphans_private_label_is_on_the_recording_its_twin_creates(
+        ar_archive, writer, monkeypatch, duplicate):
+    # why: §7.4, §9.3 (the final review's Important 1, from its probe). An orphan deferred to 2b,
+    # tagged private in audio-router's catalog, and a Pocket row with its audio, either one the
+    # other's dup_of: the Pocket row creates the recording, and it was created with no tags. Only
+    # the orphan's privacy labels travel, never its audio, its files or its other labels.
+    orphan = ar_archive.orphan(A)
+    orphan["tags"] = "lecture;private"
+    twin = ar_archive.pocket(UUID)
+    (ar_archive.root / twin["audio_rel"]).write_bytes(
+        (ar_archive.root / orphan["audio_rel"]).read_bytes())
+    twin["audio_sha256"] = orphan["audio_sha256"]
+    if duplicate == "the twin":
+        twin["dup_of"] = orphan["uri"]
+    else:
+        orphan["dup_of"] = twin["uri"]
+    ar_archive.write_catalog()
+    seen = []
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen.append((incoming.sources[0].ref, [(t.tag, t.by) for t in incoming.tags]))
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
+    assert the_plan.ok and the_plan.report()["private"] == 1
+    report = run(the_plan, writer, now=NOW)
+    assert (report.created, report.failed) == (1, [])
+    assert seen == [(UUID, [("private", "you")])]  # in place when it is created
+    (rec,) = writer.archive.iter_recordings()
+    assert is_private(rec)
+    assert {(s.kind, s.ref) for s in rec.sources} == {
+        ("pocket", UUID), ("audio_router", f"pocket/{UUID}")}  # nothing of the orphan's
 
 
 def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer):

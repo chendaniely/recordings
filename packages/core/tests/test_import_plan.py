@@ -1,12 +1,15 @@
+import contextlib
 import hashlib
 import json
 import os
+import sqlite3
 from datetime import datetime, timezone
 
 import pytest
 
 from recordings import media
 from recordings.archive import RawSource
+from recordings.index import Index
 from recordings.sources.audio_router import (
     DISPOSITIONS,
     CatalogError,
@@ -543,3 +546,109 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     ar_archive.rows[0]["audio_sha256"] = hashlib.sha256(b"x").hexdigest()
     ar_archive.write_catalog()
     assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver").problems)
+
+
+def _deferred_twin(ar, *, linked_by: str, label: str):
+    """A Plaud orphan (audio, but no snapshot and no time: deferred to 2b) with a privacy label in
+    audio-router's catalog, and a Pocket row with the same audio. They are linked by the Pocket
+    row's dup_of, by the orphan's, or by the catalog's audio hash alone."""
+    orphan = ar.orphan(T)
+    if label == "tags":
+        orphan["tags"] = "lecture;private"
+    else:  # audio-router's access tier
+        orphan["tags"], orphan["access"] = "lecture", "restricted"
+    twin = ar.pocket(UUID)
+    (ar.root / twin["audio_rel"]).write_bytes((ar.root / orphan["audio_rel"]).read_bytes())
+    twin["audio_sha256"] = orphan["audio_sha256"]
+    if linked_by == "the twin's dup_of":
+        twin["dup_of"] = orphan["uri"]
+    elif linked_by == "the orphan's dup_of":
+        orphan["dup_of"] = twin["uri"]
+    ar.write_catalog()
+    return orphan, twin
+
+
+@pytest.mark.parametrize("linked_by, label", [
+    ("the twin's dup_of", "tags"), ("the orphan's dup_of", "tags"), ("the audio hash", "tags"),
+    ("the twin's dup_of", "access")])
+def test_a_deferred_rows_privacy_reaches_the_row_that_imports_its_audio(ar_archive, linked_by,
+                                                                        label):
+    # why: §7.4, §9.3 (the final review's Important 1). A row deferred to 2b returned before its
+    # labels were read, and a same-audio group took its tags only from the rows that import: the
+    # Pocket twin created the recording untagged, and the dry run said ok, with 0 private. Only
+    # the deferred row's privacy labels travel; its files are never read.
+    orphan, twin = _deferred_twin(ar_archive, linked_by=linked_by, label=label)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    deferred, imported = by_uri[orphan["uri"]], by_uri[twin["uri"]]
+    assert deferred.disposition == "deferred-to-2b"
+    assert set(deferred.tags) == {"lecture", "private"} and deferred.private
+    assert deferred.audio is None and deferred.sha256 == "" and deferred.snapshots == ()
+    assert imported.disposition == ("duplicate" if linked_by == "the twin's dup_of" else "new")
+    assert imported.tags == () and imported.group_privacy == ("private",)
+    assert the_plan.ok and the_plan.report()["private"] == 1
+    assert the_plan.report()["deferred_to_2b"] == [T]
+
+
+def test_a_row_waits_for_an_unplaced_row_linked_to_it_through_a_deferred_one(ar_archive):
+    # why: §7.4, §9.3. A group is every row linked to it, whether it imports or not, so a link
+    # through a row deferred to 2b holds the group too: the unplaced row's labels can't be read,
+    # and the recording would be created without them.
+    orphan, twin = _deferred_twin(ar_archive, linked_by="the audio hash", label="tags")
+    broken = ar_archive.pocket("22222222-2222-4222-8222-222222222222")
+    broken.update(dup_of=orphan["uri"], audio_sha256="", tags="Not A Slug")
+    ar_archive.write_catalog()
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    assert by_uri[broken["uri"]].disposition == "unplaced"
+    assert by_uri[twin["uri"]].disposition == "unplaced"
+    assert f"{broken['uri']} has the same audio" in by_uri[twin["uri"]].reason
+    assert by_uri[orphan["uri"]].disposition == "deferred-to-2b" and not the_plan.ok
+
+
+@contextlib.contextmanager
+def _busy(index, monkeypatch):
+    """Another process is writing the index, and lookups don't wait for it (the real ones wait 30 s
+    for the lock, then fail just the same)."""
+    @contextlib.contextmanager
+    def at_once(self):
+        with contextlib.closing(sqlite3.connect(self.path, timeout=0)) as conn:
+            yield conn
+
+    monkeypatch.setattr(Index, "_db", at_once)
+    holder = sqlite3.connect(index.path)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        yield
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_a_busy_index_fails_the_plan_instead_of_answering_none(ar_archive, plaud_env, writer,
+                                                              make_incoming, monkeypatch):
+    # why: §6.4, §9.1 (the final review's minor 3; FIX BEFORE THE REAL IMPORT). The plan read the
+    # index without strict, so a busy one read as empty: A, already here, was planned as new (its
+    # media decoded again, its labels merged again against S2(b)), and X, imported before its ID
+    # was listed, went uncounted, so the run that must stop went ahead.
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00")
+    ar_archive.write_catalog()
+    for fid in (A, X):
+        writer.add(make_incoming(_wav_of(ar_archive, fid), name=f"{fid}.wav", sources=(
+            RawSource(kind="plaud", ref=fid, added_at=T0),)))
+    with _busy(writer.index, monkeypatch):
+        the_plan = plan(ar_archive.root, writer.index, consent={X},
+                        default_timezone="America/Vancouver")
+    by_uri = {i.row.uri: i for i in the_plan.items}
+    assert by_uri[f"plaud/{A}"].disposition == "unplaced"
+    assert "the index can't answer now" in by_uri[f"plaud/{A}"].reason
+    assert by_uri[f"plaud/{X}"].disposition == "consent-excluded"
+    assert len(the_plan.problems) == 2 and not the_plan.ok
+    assert all("the index can't answer now" in p for p in the_plan.problems)
+    assert X not in json.dumps(the_plan.report(), ensure_ascii=False)
+    # The control: once the index answers, A is here and X is counted.
+    again = plan(ar_archive.root, writer.index, consent={X}, default_timezone="America/Vancouver")
+    assert {i.row.uri: i.disposition for i in again.items}[f"plaud/{A}"] == "present"
+    (problem,) = again.problems
+    assert problem.startswith("1 recordings already in this archive")

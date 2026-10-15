@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
@@ -355,3 +356,38 @@ def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(new_archive, 
     assert index.path.read_bytes().startswith(INDEX_HEADER)
     (moved,) = tmp_path.glob("index.db-wal.unreadable-*")
     assert moved.read_bytes() == wal
+
+
+def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
+        new_archive, tmp_path, monkeypatch):
+    # why: §6.4, §9.3 (the final review's minor 3). A lookup that waits out the busy timeout
+    # answers "none", and the import's plan took that for an answer: a recording already here
+    # planned as new, one the consent list now excludes left uncounted. strict raises SQLite's
+    # own error instead, as find_by_sha256's has for the Writer since Task 5b.
+    root, _ = new_archive
+    rec = put(root, sources=[("plaud", HEX)])
+    index = Index(tmp_path / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+
+    @contextmanager
+    def at_once(self):  # the real lookups wait 30 s for the lock, then fail just the same
+        with closing(sqlite3.connect(self.path, timeout=0)) as conn:
+            yield conn
+
+    monkeypatch.setattr(Index, "_db", at_once)
+    lookups = {"find_by_source": lambda **kw: index.find_by_source("plaud", HEX, **kw),
+               "find_by_sha256": lambda **kw: index.find_by_sha256(rec.media.sha256, **kw),
+               "sha256_of": lambda **kw: index.sha256_of(rec.id, **kw)}
+    holder = sqlite3.connect(index.path)
+    holder.execute("BEGIN EXCLUSIVE")  # another process is writing the index
+    try:
+        for name, lookup in lookups.items():
+            with pytest.raises(sqlite3.OperationalError) as busy:
+                lookup(strict=True)
+            assert busy.value.sqlite_errorname == "SQLITE_BUSY", name
+            assert lookup() in ([], None), name  # without strict: "none", as before
+    finally:
+        holder.rollback()
+        holder.close()
+    assert {name: lookup(strict=True) for name, lookup in lookups.items()} == {
+        "find_by_source": [rec.id], "find_by_sha256": rec.id, "sha256_of": rec.media.sha256}
