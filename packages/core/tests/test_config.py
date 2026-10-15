@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from recordings.cli import main
-from recordings.config import SECRETS, ConfigError, doctor, load_config, secret
+from recordings.config import SECRETS, ConfigError, load_config, secret
+from recordings.doctor import doctor
+from recordings.init import init_archive
 
 REPO = Path(__file__).resolve().parents[3]
 TEMPLATE = REPO / "config.example.toml"
@@ -222,7 +224,7 @@ def test_cli_doctor_plain_with_unreadable_secret(tmp_path, monkeypatch, capsys):
 
 def test_doctor_reports_presence_never_values(tmp_path, capsys):
     archive = tmp_path / "archive"
-    archive.mkdir()
+    init_archive(archive, tmp_path / "state", writer_id="test")  # a real, initialised archive
     env = {
         "RECORDINGS_CONFIG": str(write(tmp_path, f'[archive]\npath = "{archive}"\n')),
         "RECORDINGS_PLAUD_TOKEN": "sentinel-do-not-print-8c1f",

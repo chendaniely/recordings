@@ -334,6 +334,23 @@ def test_the_loop_runs_with_sigterm_forwarded(tmp_path, writer, ntfy, monkeypatc
     assert events == ["forwarding", "loop retry_lock=None", "restored"]
 
 
+def test_the_loops_log_lines_carry_a_time_zone(tmp_path, writer, ntfy, monkeypatch):
+    # why: the container's clock is UTC, and a line stamped "2026-10-14 19:30:00" read as local
+    # time is 7 hours out for a reader in Vancouver. %z makes every stamp say which it is.
+    import logging
+    import re
+
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: seen.update(kwargs))
+    monkeypatch.setattr(ops, "loop", lambda ctx, **kwargs: None)
+    assert main(["ops", "--loop"]) == 0
+    record = logging.LogRecord("recordings.ops", logging.INFO, __file__, 1, "backup ok", None, None)
+    line = logging.Formatter(seen["format"], seen["datefmt"]).format(record)
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4} recordings\.ops backup ok", line)
+
+
 def test_alert_test_sends_one_logs_the_check_and_never_prints_the_topic(
         tmp_path, writer, ntfy, monkeypatch, capsys):
     ctx = context(tmp_path, writer, ntfy)

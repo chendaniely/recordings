@@ -232,32 +232,3 @@ def secret(name: str, environ: Mapping[str, str]) -> str | None:
             raise ConfigError(f"{spec.env}_FILE at {path} is empty")
         return content
     return direct or None
-
-
-def doctor(environ: Mapping[str, str]) -> dict[str, Any]:
-    """What is configured, as presence only: never a secret's value."""
-    report: dict[str, Any] = {"config": None, "archive": None, "secrets": {}, "problems": []}
-    try:
-        cfg = load_config(environ)
-    except ConfigError as exc:
-        report["problems"].append(str(exc))
-        return report
-    report["config"] = str(cfg.path) if cfg.path else None
-    if cfg.archive_path is None:
-        report["problems"].append(
-            "no archive path: set [archive] path in config.toml, or RECORDINGS_ARCHIVE")
-    else:
-        report["archive"] = {"path": str(cfg.archive_path), "exists": cfg.archive_path.is_dir()}
-        if not cfg.archive_path.is_dir():
-            report["problems"].append(f"archive folder {cfg.archive_path} does not exist")
-    for name, spec in SECRETS.items():
-        try:
-            present = secret(name, environ) is not None
-        except ConfigError as exc:
-            report["problems"].append(str(exc))
-            present = False
-        report["secrets"][name] = {
-            "env": spec.env, "set": present, "needed_from_stage": spec.stage,
-            "purpose": spec.purpose,
-        }
-    return report

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from recordings import __version__, alerts, backup, config, ops, schemas, selfdoc
 from recordings.disk import disk_status, disk_thresholds
+from recordings.doctor import ROLES, doctor
 from recordings.index import Index, IndexRefused
 from recordings.init import InitError, adopt_archive, init_archive
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
@@ -59,7 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "(needed after a deliberate deletion, until stage 3 adds forget)")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("doctor", help="check config.toml, the archive and secrets (presence only)")
+    p = sub.add_parser("doctor", help="check config.toml, the archive, state and secrets "
+                       "(presence only)")
+    p.add_argument("--role", choices=ROLES,
+                   help="the service it checks: web, backup or all (default: $RECORDINGS_ROLE, "
+                   "else all)")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("import-audio-router",
@@ -209,7 +214,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    report = config.doctor(os.environ)
+    report = doctor(os.environ, role=args.role)
     _emit(report, args.json)
     return 78 if report["problems"] else 0  # 78 = EX_CONFIG, as audio-router's doctor uses
 
@@ -361,7 +366,8 @@ def cmd_ops(args: argparse.Namespace) -> int:
         return ctx
     if args.loop:
         ctx.retry_lock = None  # §15.1: the loop never waits for restic's lock; the CLI does
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s",
+                            datefmt="%Y-%m-%dT%H:%M:%S%z")  # the container clock is UTC: say so
         # docker stop: SIGTERM goes on to a running restic or rsync, which stops cleanly and
         # drops its lock; then this process stops. The job it was in is neither recorded nor
         # alerted, and the next start runs it again.

@@ -1157,8 +1157,7 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    - `git status --porcelain` prints nothing, so the tag names the code exactly.
    - `init` prints the archive's UUID, and `backup init` reports the repository initialised.
    - Neither `doctor` reports a problem. `--role web` confirms that the web service holds no
-     backup or mirror secrets. `doctor --role` arrives with Task 16; until then run
-     `rc exec web recordings doctor` and `rc exec backup recordings doctor`.
+     backup or mirror secrets.
    - Both warn that retention is off here (`[backup] prune = false`). That is right for
      rest-server: retention runs on the NAS (1b.7).
    - From your own device, `nc -vz -w 5 "$SERVER_TS" 8000` now connects. From the refused

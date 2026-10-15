@@ -10,6 +10,8 @@ It proves, in the hardened containers and as this machine's user:
 - `recordings init` works in `web`
 - in `backup`, restic initialises a repository, backs up and passes the restore test, and rsync
   mirrors the archive, all for real
+- `recordings doctor --role backup` finds no problem there: it sees the read-only archive mount,
+  and the uid's passwd entry
 - the web app answers /healthz, and passes the image's health check in the hardened container,
   which `make deploy`'s `--wait` relies on
 
@@ -47,7 +49,8 @@ cache_dir = "/state/cache/restic"
 [mirror]
 target = "/restore/smoke-mirror/"
 """
-BACKUP_COMMANDS = (("backup", "init"), ("backup", "run"), ("backup", "restore-test"), ("mirror",))
+BACKUP_COMMANDS = (("backup", "init"), ("backup", "run"), ("backup", "restore-test"), ("mirror",),
+                   ("doctor", "--role", "backup"))
 
 
 class SmokeFailed(Exception):
