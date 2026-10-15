@@ -2,8 +2,13 @@
 # In CI (no nvm) setup-node already provides Node 22.
 FRONTEND := packages/ui/frontend
 NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --silent "$$(cat $(CURDIR)/$(FRONTEND)/.nvmrc)"; fi;
+# Images are tagged by the commit they run (spec §20, 2a). Uncommitted or untracked changes add
+# -dirty, and `make deploy` refuses those: a rollback needs a commit to go back to.
+IMAGE_TAG = $(shell git rev-parse --short=12 HEAD)$(shell test -z "$$(git status --porcelain)" || echo -dirty)
+COMPOSE_ARGS = --env-file docker/deploy.env -f docker/compose.yml
+COMPOSE = RECORDINGS_IMAGE_TAG=$(IMAGE_TAG) docker compose $(COMPOSE_ARGS)
 
-.PHONY: restic setup skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy
+.PHONY: restic setup skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke rollback
 
 setup:
 	uv sync
@@ -57,7 +62,17 @@ docker:
 	docker compose -f docker/compose.demo.yml up --build
 
 deploy:
-	docker compose --env-file docker/deploy.env -f docker/compose.yml up -d --build
+	$(if $(findstring -dirty,$(IMAGE_TAG)),$(error make deploy: commit first: a -dirty image has no commit to roll back to))
+	$(COMPOSE) up -d --build
+
+# Back to an image built before, never building one: make rollback TAG=<tag>, with a tag from
+# `docker image ls recordings`.
+rollback:
+	$(if $(TAG),,$(error usage: make rollback TAG=<a tag from docker image ls recordings>))
+	RECORDINGS_IMAGE_TAG=$(TAG) docker compose $(COMPOSE_ARGS) up -d --no-build
+
+deploy-smoke:
+	uv run python scripts/compose_smoke.py
 
 restic:
 	uv run python scripts/fetch_restic.py

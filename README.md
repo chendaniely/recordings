@@ -44,21 +44,20 @@ make pages-test   # Playwright smoke test of _site/, after `make pages`
 
 ```bash
 make docker                                         # demo mode, http://127.0.0.1:8000
-```
-
-To deploy for real, on the host:
-
-```bash
 cp config.example.toml config.toml                  # app settings (git-ignored)
-cp docker/deploy.example.env docker/deploy.env      # host paths, bind IP, UID/GID (git-ignored)
-# Before the first deploy, create the archive folder (RECORDINGS_ARCHIVE_HOST) owned by
-# RECORDINGS_UID:RECORDINGS_GID. Otherwise Docker creates it, owned by root.
-sudo mkdir -p /srv/recordings/archive && sudo chown <uid>:<gid> /srv/recordings/archive
-make deploy
-# Check the deployment from inside the container; secrets show as set or unset, never values.
-docker compose --env-file docker/deploy.env -f docker/compose.yml exec web recordings doctor
+cp docker/deploy.example.conf docker/deploy.env     # host folders, bind address, UID/GID (git-ignored)
+make deploy                                         # builds, tags the image by commit, starts web + backup
+make rollback TAG=<tag>                             # starts an older image again, never building one
+make deploy-smoke                                   # the real compose file, once, against temporary folders
 ```
 
+- **Images are tagged by commit.** `make deploy` refuses a tree with uncommitted or untracked
+  changes, because a `-dirty` image has no commit to go back to.
+- **Rolling back** starts an image that is already on the machine: `docker image ls recordings`
+  lists the tags. Keep a few: `docker image prune -a` deletes the ones no container uses.
+- **At boot,** `docker/recordings.service` waits for the data disk and the Tailscale address,
+  then starts the containers again on the tag they last ran (`docker/up-deployed.sh`). The
+  runbook installs it.
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
   always allowed; the app refuses any other name. Give each name alone, with no port or
@@ -70,13 +69,18 @@ docker compose --env-file docker/deploy.env -f docker/compose.yml exec web recor
   DNS-rebinding page past the Host check. The proxy must also set `X-Forwarded-Proto` itself
   and be trusted for it: set uvicorn's `FORWARDED_ALLOW_IPS` to the one address the app sees the
   proxy connect from (the client address in the app's access log; the default trusts only
-  localhost). Under Docker that is usually the Compose network's gateway, not the proxy's LAN
-  address. Never `*` or a range: every machine in it could then set the scheme, and the client
+  localhost). Under Docker the app does not see the proxy's LAN address: it sees the Compose
+  network's gateway, the address the bridge gives the host (the first address of the network's
+  subnet, for example `172.18.0.1`). Find it with
+  `docker network inspect recordings_default --format '{{(index .IPAM.Config 0).Gateway}}'`, or from
+  the client address in the web container's access log, and put it in `docker/deploy.env` as
+  `RECORDINGS_FORWARDED_ALLOW_IPS=<that address>`, then `make deploy`. The address can change when
+  the network is recreated, so check it after `docker compose down`. Never `*` or a range: every machine in it could then set the scheme, and the client
   address the app logs. The app compares a websocket's or write's `Origin` with the scheme and
   `Host` it sees. Without this, every websocket and every write is refused. Plain
   `http://my-homelab:8000` needs nothing.
-- **The library starts empty.** A stage-1 deployment shows an empty library until stage 2
-  imports recordings.
+
+The first real run, step by step, is `docs/runbooks/first-run.md`.
 
 ## Configuration and secrets
 
@@ -85,12 +89,14 @@ file. Docker sets it to `/config/config.toml`.
 
 | Setting | Where | Needed from |
 |---|---|---|
-| Archive folder, schedules, Spark address, model names | `config.toml` (template: `config.example.toml`) | stage 1 |
+| Archive, state and index paths, the writer ID, backups, mirror, alerts | `config.toml` (template: `config.example.toml`) | stage 1 / 2a |
 | The names the app answers to | `[server] allowed_hosts` in `config.toml`, plus `RECORDINGS_ALLOWED_HOSTS` (comma-separated) | stage 1 |
-| Host archive path, config path, bind IP and port, UID/GID | `docker/deploy.env` (template: `docker/deploy.example.env`) | stage 1 |
-| `RECORDINGS_PLAUD_TOKEN` | environment, or `RECORDINGS_PLAUD_TOKEN_FILE` (a Docker secret) | stage 2 |
-| `RECORDINGS_SPARK_API_KEY` | environment, or `…_FILE` | stage 4 |
-| `CLAUDE_CODE_OAUTH_TOKEN` | environment, or `…_FILE` | stage 4 |
+| Host folders, config path, bind address and port, the trusted proxy (`RECORDINGS_FORWARDED_ALLOW_IPS`), UID/GID | `docker/deploy.env` (template: `docker/deploy.example.conf`) | stage 1 |
+| `RESTIC_PASSWORD`; `RESTIC_REST_PASSWORD`, rest-server's; the NAS's SSH key and host key, `RECORDINGS_NAS_SSH_KEY` and `RECORDINGS_NAS_KNOWN_HOSTS` (files only); `RECORDINGS_NTFY_TOPIC`; `RECORDINGS_DEADMAN_URL`; and rest-server's certificate, the `nas_cacert` file that `[backup] cacert` names | secret files, as `…_FILE` (Docker secrets) | stage 2a |
+| `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | a secret file, which `RECORDINGS_NTFY_AUTH_HOST` in `docker/deploy.env` names (unset: no token is mounted) | stage 2a |
+| `RECORDINGS_PLAUD_TOKEN` | a secret file, as `RECORDINGS_PLAUD_TOKEN_FILE` | stage 2b |
+| `RECORDINGS_SPARK_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | environment, or `…_FILE` | stage 4 |
 
-Secrets never go in `config.toml`, `deploy.env`, the image or the repo. Stage 1 mounts
-the archive read-only, and the image runs as a non-root user.
+Secrets never go in `config.toml`, `deploy.env`, the image or the repo. `recordings doctor`
+reports which are set, never their values. The containers run as a non-root user, with
+read-only file systems.

@@ -1,0 +1,32 @@
+# recordings.service: starts the recordings containers at boot, once Docker, the data disk and the
+# Tailscale address are all ready (stage 2a). Docker's restart policy can't do this alone: web
+# publishes on the Tailscale address, which tailscaled assigns a little after it reports ready,
+# and Docker never retries a container whose first start failed. A unit of its own holds back no
+# other container. It starts the image tag the containers last ran (docker/up-deployed.sh).
+#
+# Check the two paths below before installing it (docs/runbooks/first-run.md, step 2.5):
+#   /srv/recordings        $RECORDINGS_HOME, the data disk        (RequiresMountsFor=)
+#   /srv/recordings/repo   this repo's checkout on the server     (WorkingDirectory=)
+# If yours differ, change the installed copy (sudo systemctl edit --full recordings.service), not
+# this file: an edited checkout is -dirty, and `make deploy` refuses it.
+# In this file, $$ is a literal $.
+[Unit]
+Description=recordings: the web and backup containers
+Requires=docker.service
+Wants=tailscaled.service
+After=docker.service tailscaled.service
+RequiresMountsFor=/srv/recordings
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/srv/recordings/repo
+TimeoutStartSec=300
+ExecStartPre=/bin/sh -c 'i=0; until ip -4 -o addr show dev tailscale0 2>/dev/null | grep -q inet; do i=$$((i + 1)); if [ "$$i" -ge 120 ]; then echo "tailscale0 has no IPv4 address after 120 s" >&2; exit 1; fi; sleep 1; done'
+ExecStart=/bin/sh docker/up-deployed.sh up -d --no-build
+# compose stop gives backup its stop_grace_period (2 minutes) to stop restic cleanly.
+ExecStop=/bin/sh docker/up-deployed.sh stop
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

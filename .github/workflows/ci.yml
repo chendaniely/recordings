@@ -94,3 +94,16 @@ jobs:
           file: docker/Dockerfile
           platforms: ${{ matrix.platform }}
           push: false
+
+  compose-smoke:
+    # The real compose file, once, as the runner's own user, against temporary folders (stage-1
+    # carry-over): every bind must exist, init must work in the image, ssh must find the user,
+    # restic and rsync must run in the backup service, and /healthz must answer.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with: { version: "0.12.23" }
+      - run: uv run --frozen python scripts/compose_smoke.py

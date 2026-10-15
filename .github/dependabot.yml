@@ -47,6 +47,8 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: vitest
         update-types: ["version-update:semver-major"]
+  # The Dockerfile pins each base image by tag and digest. Dependabot moves a digest when its tag
+  # is rebuilt (security fixes, so these PRs matter) and a tag within the ignore rules below.
   - package-ecosystem: docker
     directory: /docker
     schedule: { interval: weekly, day: friday }
