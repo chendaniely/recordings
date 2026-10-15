@@ -285,10 +285,50 @@ recordings/                      (repo root, uv workspace, MIT)
   `[backup] repository` in `config.toml`. Stage 5 adds the watched folder path.
 
   No secret appears in the image, the repo, the archive, logs or `--json` output. CI runs
-  gitleaks.
+  gitleaks. That holds when a secret is put in the wrong place: a secret's value in its
+  `_FILE` variable, where its path belongs, is never repeated in an error. The error names the
+  variable and says to give a path.
 - **Validation:** `recordings doctor` checks the config and reports which settings are
   missing. It checks secrets for presence only, never their values. Every config setting
   has a test proving it reaches the code that uses it (an `audio-router` lesson).
+  - **Output and exit code:** it reports `problems`, `warnings` and `notes`. A problem is
+    something the real code refuses or that stops a service from working (a missing sentinel,
+    a state.db that belongs to another archive or comes from a newer release, a secret file
+    that is missing or empty, alerts that are off because their configuration is broken). A
+    warning is a choice or a risk (retention is off here, the NAS's free space is unknown, a
+    secret file open to group or others, an index that needs `recordings reindex`). A note is
+    information (the consent list is unset, or a job's folder that belongs to a job running
+    now). It exits 78 when there is a problem, and 0 otherwise. `--json` prints the report as
+    one object. A check that crashes on a setting of the wrong type ends in one line naming
+    the check and the exception's type, never its text, and exit 70.
+  - **Roles:** `--role web|backup|all` (else `RECORDINGS_ROLE`, else `all`) says which service
+    it checks. `web` must hold no backup, mirror or alert secret (a problem if it does) and
+    skips the backup, mirror, alert and ssh checks. `backup` has a read-only archive mount, so
+    it skips the hard-link probe and the index, and it treats a missing `state.db`, repository
+    or mirror as a problem, because without them its loop exits 78. `all`, the default
+    outside Docker, checks everything; there a missing `state.db`, repository or mirror is a
+    warning.
+  - **What it checks beyond settings:**
+    - the archive's sentinel, and that the archive isn't the NAS mirror's copy (`MIRROR.md`),
+      which is never written: a problem on a machine with a `writer_id`;
+    - `state.db` against the archive's UUID and the `writer_id`, and its schema version: newer
+      than this release is a problem, as `State.open` refuses it (the rollback case in the
+      runbook);
+    - that hard links work on the archive's disk. On a writer it makes and removes two files
+      in `.tmp/`; on a reader and on the mirror's copy it writes nothing;
+    - that the user has a passwd entry (ssh exits without one), and that `ssh` is installed
+      where something needs it;
+    - `[archive] default_timezone` against the machine's tz database, and the `[disk]` pair;
+    - the tools (`restic`, `rsync`, `ssh`, `ffprobe`, `ffmpeg`);
+    - leftover `restic-check-cache-*` and `restore-*` folders (not when the job that owns
+      them is running now), a `cache_dir` unset or on another disk than `state`, and
+      `deploy.env` missing from `extra_paths`;
+    - that alerts and the dead-man's pings are on, and a topic with no `ntfy_server` (a
+      warning: `alert-test` exits 78 for it, because it is the explicit setup check);
+    - the index: a missing `[index] path`, or an index that is damaged or another archive's,
+      is a warning.
+  - **The NAS's key is optional,** because without one ssh uses its own defaults (an agent).
+    The host key is not: `known_hosts` is required wherever ssh reaches the NAS.
 
 ## 6. The archive
 
@@ -2092,8 +2132,10 @@ come from that frame.
     name or password in them, and no query (`?`) or fragment (`#`), in plain ASCII, because
     `/start`, `/fail` and the topic are added to the end (`http://` only to this machine's
     loopback, for tests). A URL that breaks this is refused when the configuration loads, which
-    stops every alert and ping until it is fixed; `alert-test` and the doctor say so, and
-    Healthchecks alerts after its grace. A redirect is never followed, because it would carry the
+    stops every alert and ping until it is fixed; `alert-test` and the doctor say so (the
+    doctor reports it as a problem, "alerts and dead-man pings are off"), and Healthchecks
+    alerts after its grace. The doctor warns, without failing, when no alerts or no dead-man's
+    switch are set up, and when a topic is set with no `ntfy_server`. A redirect is never followed, because it would carry the
     token and the title to another host, and it counts as not delivered. Only an https proxy from
     the environment is used (it sees a CONNECT to the host name); plain http to the loopback never
     goes through one. Each request times out
@@ -2264,7 +2306,8 @@ come from that frame.
     backstop for a change made between the two passes. The target must be empty or carry a
     `MIRROR.md` mark with this archive's UUID, so an interrupted first run resumes.
 - **Capacity:** The NAS's free space is checked before backups start, over ssh `df`, or
-  sftp's `df` for an SFTP-only account; otherwise it is unknown, and `doctor` says so. The
+  sftp's `df` for an SFTP-only account; otherwise it is unknown, and `doctor` says so (it makes
+  the same call, so it waits up to about 20 seconds when the NAS is off). The
   rest-server transport has neither, so there the space is always unknown: Status's backup row
   shows the NAS's figure, or "unknown", only when the check ran over ssh, and with rest-server it
   says nothing about the NAS. The backup repository grows with the archive, and deduplication
