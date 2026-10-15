@@ -14,7 +14,7 @@ RUN npm run build
 
 # libsass (shiny -> shinychat) ships Linux wheels for amd64 only, so on arm64 it compiles from
 # source and needs a C++ toolchain. Build the venv here; the runtime stage stays toolchain-free.
-FROM python:3.14-slim@sha256:f85c5697265c178cc6887276c55fe16cf3d14ca35c3df6a5eab3b360534a55d2 AS build
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /usr/local/bin/uv
@@ -28,7 +28,7 @@ COPY packages/ui packages/ui
 COPY --from=frontend /src/packages/ui/src/recordings_ui/www/ui.js /src/packages/ui/src/recordings_ui/www/ui.css packages/ui/src/recordings_ui/www/
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.14-slim@sha256:f85c5697265c178cc6887276c55fe16cf3d14ca35c3df6a5eab3b360534a55d2 AS runtime
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runtime
 ARG TARGETARCH
 ARG RESTIC_VERSION=0.19.1
 # Stage 2a (spec §15.1, §9.1.1): ffprobe (ffmpeg) measures imported media; rsync and ssh run the
