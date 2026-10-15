@@ -662,20 +662,52 @@ def test_a_sigterm_while_the_child_is_starting_still_reaches_it(monkeypatch):
         pytest.fail("the child was never signalled")
 
 
-def test_ctrl_c_waits_for_the_child_to_finish_its_cleanup_before_it_propagates(tmp_path):
+def test_ctrl_c_stops_the_child_with_sigterm_and_waits_for_its_cleanup(tmp_path):
     # why: at a terminal, Ctrl-C reaches restic as well. KeyboardInterrupt inside communicate()
     # closed the pipes before waiting, so restic could die of SIGPIPE in the middle of its
-    # cleanup and leave its repository lock behind (the SIGTERM fault again, by another route).
+    # cleanup and leave its repository lock behind. Now the child is sent SIGTERM (restic handles
+    # INT then TERM cleanly, exiting 130) and run_child waits for it before Ctrl-C goes on.
     ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
-    child = ("import pathlib, sys, time\n"
-             f"pathlib.Path({str(ready)!r}).touch()\n"
-             "time.sleep(1.0)  # the child's own SIGINT cleanup begins; its pipes must still be open\n"
-             "sys.stderr.write('cleaning up\\n'); sys.stderr.flush()\n"
-             f"pathlib.Path({str(cleaned)!r}).touch()\n")
     sigterm_when_ready(ready, signal.SIGINT)
     with pytest.raises(KeyboardInterrupt):
-        ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=60)
-    assert cleaned.exists()  # run_child waited for the child, and only then let Ctrl-C through
+        ops.run_child([sys.executable, "-c", CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}],
+                      capture_output=True, text=True, timeout=60)
+    assert cleaned.exists()  # run_child told it to stop, waited, and only then let Ctrl-C through
+
+
+def test_a_second_ctrl_c_does_not_abandon_a_child_that_is_cleaning_up(tmp_path):
+    # why: a second Ctrl-C used to leave the block, close the pipes and abandon restic mid-cleanup.
+    ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
+    sigterm_when_ready(ready, signal.SIGINT)  # the first, as soon as the child is up
+    main_thread = threading.main_thread().ident
+
+    def second():
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.25)  # the child's 0.5 s cleanup has begun
+        signal.pthread_kill(main_thread, signal.SIGINT)
+
+    threading.Thread(target=second, daemon=True).start()
+    with pytest.raises(KeyboardInterrupt):
+        ops.run_child([sys.executable, "-c", CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}],
+                      capture_output=True, text=True, timeout=60)
+    assert cleaned.exists()
+
+
+def test_ctrl_c_keeps_the_callers_timeout_and_kills_a_child_that_ignores_sigterm(tmp_path):
+    # why: the wait after Ctrl-C was unbounded and dropped the caller's timeout, so a hung child
+    # held the CLI for ever.
+    ready = tmp_path / "ready"
+    child = ("import pathlib, signal, time\n"
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(60)\n")
+    sigterm_when_ready(ready, signal.SIGINT)
+    began = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=2)
+    assert time.monotonic() - began < 8  # about the 2 s timeout, not the child's 60
 
 
 def test_a_sigterm_in_the_spawn_window_is_honoured_when_popen_raises(monkeypatch):

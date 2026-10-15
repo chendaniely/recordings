@@ -89,6 +89,15 @@ no_perms = false                        # true adds --no-perms: for a share with
 # An interrupted run can leave a `.~tmp~` folder behind (rsync --delay-updates). The mirror never
 # copies one, but on the Mac, add `.~tmp~` to Synology Drive's sync filter too, so none is synced.
 
+[alerts]                                # stage 2a: push alerts (spec §14)
+ntfy_server = "https://ntfy.sh"         # https only (stage-2a plan, decision 16)
+# The topic and the dead-man's switch URL are secrets: RECORDINGS_NTFY_TOPIC(_FILE) and
+# RECORDINGS_DEADMAN_URL(_FILE), below. The topic is 1 to 64 letters, digits, - or _.
+# The dead-man's switch is a Healthchecks.io check with a period of 1 hour and a grace of at least
+# 3 hours: the loop runs one job at a time, so a long check or restore test delays the next
+# backup's ping. Each backup pings <url>/start, then <url> or <url>/fail; `recordings alert-test`
+# pings <url>/log, which leaves the check's state alone.
+
 [plaud]                                 # stage 2
 schedule_minutes = 20                   # scheduled sync interval; 0 turns it off
 auto_import = true                      # import missing recordings (safe: nothing runs until tagged)
@@ -128,3 +137,6 @@ path = "/watch"
 #   RESTIC_REST_PASSWORD        rest-server's password, only if backups go there      (stage 2)
 #   RECORDINGS_NAS_SSH_KEY      the NAS account's SSH key: give RECORDINGS_NAS_SSH_KEY_FILE (stage 2)
 #   RECORDINGS_NAS_KNOWN_HOSTS  the NAS's host key: give RECORDINGS_NAS_KNOWN_HOSTS_FILE    (stage 2)
+#   RECORDINGS_NTFY_TOPIC       the private ntfy topic alerts go to                   (stage 2)
+#   RECORDINGS_DEADMAN_URL      the Healthchecks.io ping URL                          (stage 2)
+#   RECORDINGS_NTFY_TOKEN       an ntfy access token, only for a server that needs one (stage 2)

@@ -9,6 +9,11 @@ in state.db, so Status can show it and the schedule knows what is due.
   import: it takes "ops" through a Locks of its own, would wait out its 600 s on this process's
   hold, then raise LockTimeout, which is not in FAILURES. Imports run from the CLI alone; the
   backups around one are two CLI runs (`backup run --tag pre-import`, then `--tag post-import`).
+- **Exit 11 is busy, not broken.** A restic exit 11 means another process holds the repository, as
+  the NAS's weekly retention task does. run_job gives BUSY + " (repository locked)" for it: not
+  recorded, not alerted, no /fail ping, and the CLI exits 75 like any busy turn. A backup that
+  stays blocked leaves its /start ping unanswered, and the dead-man's switch alerts after its
+  grace (spec §14). Only restic's exit 11 counts: rsync's 11 is a file I/O error and fails.
 - **A failure is a result, not a crash.** It is recorded as the error's type and exit code only
   (failure_detail). The message, which can name paths or carry a server's words, goes only to
   the debug log.
@@ -16,8 +21,9 @@ in state.db, so Status can show it and the schedule knows what is due.
   sigterm_forwarded, it goes on to the running restic or rsync, which stops cleanly and removes
   its lock. Then the handler that was there before runs, if any; with none, this process stops
   once the child has. The loop (Task 13) runs inside sigterm_forwarded and sets no handler of
-  its own. Ctrl-C waits for the child the same way, and a SIGTERM still pending when run_child
-  ends or raises (Popen failing, a timeout) is honoured then.
+  its own. Ctrl-C stops the child with SIGTERM and waits for it, within the caller's timeout, the
+  same way, and a SIGTERM still pending when run_child ends or raises (Popen failing, a timeout)
+  is honoured then.
 """
 
 from __future__ import annotations
@@ -27,15 +33,17 @@ import signal
 import sqlite3
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from recordings import backup, mirror
+from recordings import alerts, backup, mirror
+from recordings.alerts import AlertConfig
 from recordings.backup import BackupError, RestoreTestFailed
 from recordings.config import Config, ConfigError
-from recordings.disk import disk_thresholds
+from recordings.disk import disk_status, disk_thresholds
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
 from recordings.mirror import MirrorError
 from recordings.sentinel import SentinelError
@@ -57,6 +65,29 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+INTERRUPT_GRACE = 120.0  # seconds a child gets to clean up after Ctrl-C when the caller set no timeout
+
+
+def _stop_child(proc: subprocess.Popen, deadline: float | None) -> None:
+    """After Ctrl-C: SIGTERM the child (restic and rsync stop cleanly on it, whatever signal the
+    terminal sent them), then wait for it within what is left of the caller's timeout, or
+    INTERRUPT_GRACE with none, and kill it when that runs out. A further Ctrl-C while it cleans up
+    is ignored: abandoning it there is what leaves restic's repository lock behind."""
+    proc.send_signal(signal.SIGTERM)
+    wait = INTERRUPT_GRACE if deadline is None else max(deadline - time.monotonic(), 0.0)
+    end = time.monotonic() + wait
+    while True:
+        try:
+            proc.communicate(timeout=max(end - time.monotonic(), 0.0))
+            return
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            return
+        except KeyboardInterrupt:
+            continue  # the child is already stopping: let it finish
+
+
 def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: float | None = None,
               capture_output: bool = False, **popen_kwargs) -> subprocess.CompletedProcess:
     """subprocess.run, except for SIGTERM inside sigterm_forwarded: it goes on to the child, and
@@ -64,8 +95,8 @@ def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: floa
     that was there before runs (it may raise), or, with none, this process exits. Calling that
     handler while the child still ran would close the pipes under it: restic would die of SIGPIPE
     in the middle of its cleanup and leave its repository lock behind. Ctrl-C (KeyboardInterrupt)
-    waits for the child the same way, and a SIGTERM still pending when this returns or raises, for
-    whatever reason, is honoured then."""
+    sends the child SIGTERM and waits for it (within the timeout; _stop_child), and a SIGTERM
+    still pending when this returns or raises, for whatever reason, is honoured then."""
     global _child, _spawning, _stopping
     if capture_output:
         popen_kwargs["stdout"] = popen_kwargs["stderr"] = subprocess.PIPE
@@ -81,6 +112,7 @@ def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: floa
             _child = proc
         finally:
             _spawning = False
+        deadline = None if timeout is None else time.monotonic() + timeout
         with proc:
             try:
                 if _stopping:
@@ -92,8 +124,8 @@ def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: floa
                 raise
             except KeyboardInterrupt:
                 # At a terminal, Ctrl-C reaches the child too. Leaving the block now would close
-                # its pipes under it, as an early SIGTERM handler would: wait for it first.
-                proc.communicate()
+                # its pipes under it, as an early SIGTERM handler would, so stop it and wait.
+                _stop_child(proc, deadline)
                 raise
             finally:
                 _child = None
@@ -241,19 +273,153 @@ def _mirror(ctx: Context, tags: tuple[str, ...]) -> str:
                              runner=ctx.runner, timeout=ctx.mirror_timeout)
 
 
+class DiskWarning(RuntimeError):
+    """The archive's disk is below a threshold, or its marker is missing."""
+
+
+def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
+    if ctx.cfg.archive_path is None:
+        raise ConfigError("set [archive] path")
+    status = disk_status(ctx.cfg.archive_path, expected_uuid=ctx.state.meta("archive_uuid"),
+                         **disk_thresholds(ctx.cfg))
+    if status.level != "ok":
+        raise DiskWarning(status.message)
+    return status.message
+
+
 JOBS: dict[str, Callable[[Context, tuple[str, ...]], str]] = {
-    "backup": _backup, "prune": _prune, "check": _check, "restore-test": _restore_test,
+    "disk": _disk, "backup": _backup, "prune": _prune, "check": _check, "restore-test": _restore_test,
     "mirror": _mirror,
 }
 FAILURES: tuple[type[BaseException], ...] = (
-    BackupError, MirrorError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
+    BackupError, MirrorError, DiskWarning, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
     subprocess.TimeoutExpired)
+
+
+INTERVALS = {"disk": timedelta(minutes=10), "backup": timedelta(hours=1),
+             "mirror": timedelta(hours=1), "prune": timedelta(days=1),
+             "check": timedelta(days=7), "restore-test": timedelta(days=30)}
+ORDER = ("disk", "backup", "mirror", "prune", "check", "restore-test")
+RETRY_AFTER = timedelta(minutes=15)
+# A failed check reads a quarter of the repository again, and a failed restore test all of it,
+# for hours in which the loop does nothing else: once a day is enough, and the alert has said
+# it failed. (Task 11's ops council.) A failed mirror walks both trees twice to fail again, and
+# one short of space first reads and rewrites all it staged: its own hour is soon enough.
+# (Task 12's ops council)
+RETRY_HEAVY_AFTER = {"check": timedelta(hours=24), "restore-test": timedelta(hours=24),
+                     "mirror": timedelta(hours=1)}
+REMIND_EVERY = timedelta(hours=24)
+KEEP_RUNS = timedelta(days=90)  # ops_runs gets about 70,000 rows a year; older ones go, daily
+PRUNE_RUNS_EVERY = timedelta(days=1)
+REPO_LOCKED = 11  # restic's exit status for a repository another process holds (the NAS's retention)
+LOCKED = f"{BUSY} (repository locked)"
+TITLES = {"disk": "disk space low", "backup": "backup failed", "mirror": "mirror failed",
+          "prune": "backup retention failed", "check": "backup check failed",
+          "restore-test": "restore test failed"}
+
+
+def enabled_jobs(cfg: Config) -> tuple[str, ...]:
+    jobs = {"disk"}
+    if cfg.data.get("backup", {}).get("repository"):
+        jobs |= {"backup", "prune", "check", "restore-test"}
+    if cfg.data.get("mirror", {}).get("target"):
+        jobs.add("mirror")
+    return tuple(j for j in ORDER if j in jobs)
+
+
+def due(state: State, now: datetime, jobs: tuple[str, ...]) -> list[str]:
+    """A run stamped in the future (a clock that ran ahead and was put right) counts as long
+    ago: otherwise every job, backups included, would wait for the clock to catch up."""
+    out = []
+    for job in jobs:
+        last = state.last_run(job)
+        wait = RETRY_HEAVY_AFTER.get(job, RETRY_AFTER)
+        if last is not None and not last.ok and timedelta(0) <= now - last.finished_at < wait:
+            continue
+        good = state.last_run(job, ok=True)
+        if good is None or not timedelta(0) <= now - good.finished_at < INTERVALS[job]:
+            out.append(job)
+    return out
+
+
+def _alert_config(ctx: Context) -> AlertConfig | None:
+    try:
+        return alerts.from_config(ctx.cfg, ctx.environ)
+    except ConfigError as exc:  # its text names a setting, never a secret's value
+        log.warning("alerts are not configured: %s", exc)
+        return None
+
+
+def _alert(ctx: Context, ac: AlertConfig, job: str, ok: bool, detail: str) -> None:
+    """One push when a job starts failing, a reminder every day while it fails, and one when it
+    works again. The text is a fixed template: the job, the failure's fixed detail and "See
+    Status", never a path, a title or a tool's own output (Review Focus 4). A state.db that
+    can't be read or written never stops this: a failure is still said (at every retry, since
+    its last alert can't be known), and a recovery is skipped."""
+    key, now = f"job:{job}", ctx.clock()
+    try:
+        failing, last_sent = ctx.state.alert_state(key)
+    except FAILURES:  # state.db unreadable: a failure is still said, a recovery can't be known
+        log.warning("%s: could not read the alert state", job)
+        failing, last_sent = not ok, None
+    if ok:
+        if failing:
+            alerts.send(ac, title=f"recordings: {job} recovered",
+                        message=f"{job} works again. See Status.", priority=3,
+                        tags=("white_check_mark",))
+            _remember(ctx, key, failing=False, last_sent_at=now)
+        return
+    if not failing or last_sent is None or now - last_sent >= REMIND_EVERY:
+        delivered = alerts.send(ac, title=f"recordings: {TITLES[job]}",
+                                message=f"{job} failed ({detail}). See Status.")
+        last_sent = now if delivered else last_sent
+    _remember(ctx, key, failing=True, last_sent_at=last_sent)
+
+
+def _remember(ctx: Context, key: str, *, failing: bool, last_sent_at: datetime | None) -> None:
+    try:
+        ctx.state.set_alert_state(key, failing=failing, last_sent_at=last_sent_at)
+    except FAILURES:  # nothing to lose but the next reminder's timing
+        log.warning("%s: could not save the alert state", key)
+
+
+def _run_held(ctx: Context, job: str, tags: tuple[str, ...]) -> JobResult:
+    ac = _alert_config(ctx)
+    heartbeat = ac is not None and job == "backup"
+    if heartbeat:
+        alerts.ping_deadman(ac, "start")
+    started = ctx.clock()
+    try:
+        detail, ok = JOBS[job](ctx, tags), True
+    except FAILURES as exc:
+        if isinstance(exc, BackupError) and exc.returncode == REPO_LOCKED:
+            # The NAS's weekly forget --prune holds the repository for a while. Not a failure:
+            # not recorded, not alerted, no /fail ping. A backup that stays blocked leaves its
+            # /start unanswered, and the dead-man's switch alerts after its grace.
+            log.info("%s: %s", job, LOCKED)
+            return JobResult(job, False, LOCKED)
+        log.debug("%s failed", job, exc_info=True)  # the full error, for --debug only
+        detail, ok = failure_detail(exc), False
+    try:
+        ctx.state.record_run(job, started, ctx.clock(), ok, detail)
+    except FAILURES:  # a broken state disk must not hide the alert below (which guards its own)
+        log.warning("%s: could not record the run (%s)", job, detail)
+    if ac is not None:
+        _alert(ctx, ac, job, ok, detail)
+        if heartbeat:
+            alerts.ping_deadman(ac, "success" if ok else "fail",
+                                message="" if ok else f"{job} failed ({detail}). See Status.")
+    return JobResult(job, ok, detail)
 
 
 def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
             lock_timeout: float = CLI_WAIT) -> JobResult:
-    """Run one job under the ops lock, and record it. The CLI waits for the lock (the default);
-    the loop passes 0. A lock still held means another run is busy: BUSY, not recorded."""
+    """Run one job under the ops lock, record it, alert, and for a backup ping the dead-man's
+    switch: /start first, then the URL itself or /fail. The CLI waits for the lock (the default);
+    the loop passes 0. A lock still held means another run is busy: BUSY. A restic exit 11 (the
+    repository is locked, as while the NAS's retention task runs) is busy too: LOCKED, which
+    starts with BUSY. Neither is recorded or alerted, and neither sends /fail (a backup has
+    sent /start before an exit 11, and its dead-man's switch decides)."""
     with ExitStack() as stack:
         try:
             stack.enter_context(Locks(ctx.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK))
@@ -263,13 +429,53 @@ def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
         except FAILURES as exc:  # the lock file can't be opened: a failure, recorded as any is
             log.debug("%s failed", job, exc_info=True)
             now = ctx.clock()
-            ctx.state.record_run(job, now, now, False, failure_detail(exc))
-            return JobResult(job, False, failure_detail(exc))
-        started = ctx.clock()
+            detail = failure_detail(exc)
+            try:
+                ctx.state.record_run(job, now, now, False, detail)
+            except FAILURES:  # state.db is broken too: the loop must not die of it
+                log.warning("%s: could not record the failure (%s)", job, detail)
+            return JobResult(job, False, detail)
+        return _run_held(ctx, job, tags)
+
+
+def _trim_runs(ctx: Context) -> None:
+    """Once a day: drop runs older than KEEP_RUNS, but never a job's newest run or its newest good
+    one, so Status never reads "never succeeded" after a long failing streak. A failure here is
+    only logged."""
+    now = ctx.clock()
+    try:
+        last = ctx.state.meta("ops_runs_trimmed")
+        if last and timedelta(0) <= now - datetime.fromisoformat(last) < PRUNE_RUNS_EVERY:
+            return
+        gone = ctx.state.prune_runs(now - KEEP_RUNS)
+        ctx.state.set_meta("ops_runs_trimmed", now.isoformat())
+    except (*FAILURES, ValueError):
+        log.warning("could not trim the old runs")
+        return
+    if gone:
+        log.info("trimmed %d old runs", gone)
+
+
+def run_due(ctx: Context) -> list[JobResult]:
+    """One pass of the loop: each job that is due, in ORDER, never waiting for the ops lock. A
+    busy job is BUSY, and the next pass tries it again."""
+    try:
+        ctx.state.set_meta("ops_heartbeat", ctx.clock().isoformat())
+    except FAILURES:  # a broken state disk must not stop the pass: the jobs still run
+        log.warning("could not write the heartbeat")
+    _trim_runs(ctx)
+    return [run_job(ctx, job, lock_timeout=0)
+            for job in due(ctx.state, ctx.clock(), enabled_jobs(ctx.cfg))]
+
+
+def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: False) -> None:
+    """The backup service's main loop: what is due, then a minute's sleep, forever.
+    `recordings ops --loop` runs it inside sigterm_forwarded: `docker stop` passes SIGTERM on to a
+    running restic or rsync, and once that has stopped, the loop stops too."""
+    while not stop():
         try:
-            detail, ok = JOBS[job](ctx, tags), True
-        except FAILURES as exc:
-            log.debug("%s failed", job, exc_info=True)  # the full error, for --debug only
-            detail, ok = failure_detail(exc), False
-        ctx.state.record_run(job, started, ctx.clock(), ok, detail)
-    return JobResult(job, ok, detail)
+            for result in run_due(ctx):
+                log.info("%s: %s (%s)", result.job, "ok" if result.ok else "not ok", result.detail)
+        except FAILURES:  # due() reading a broken state.db: wait a tick and try again
+            log.warning("a pass of the loop failed", exc_info=True)
+        sleep(tick)

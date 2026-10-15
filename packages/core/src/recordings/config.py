@@ -47,6 +47,13 @@ SECRETS: dict[str, SecretSpec] = {
     "nas_known_hosts": SecretSpec(
         "RECORDINGS_NAS_KNOWN_HOSTS", "the NAS's SSH host key, as a known_hosts file", 2,
         file_only=True),
+    "ntfy_topic": SecretSpec(
+        "RECORDINGS_NTFY_TOPIC", "the private ntfy topic that alerts go to", 2),
+    "deadman_url": SecretSpec(
+        "RECORDINGS_DEADMAN_URL", "the Healthchecks.io ping URL (it carries its own token)", 2),
+    "ntfy_token": SecretSpec(
+        "RECORDINGS_NTFY_TOKEN", "an ntfy access token, only for a server that needs one", 2,
+        optional=True),
 }
 
 

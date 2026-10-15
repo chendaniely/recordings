@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS ops_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, started_at TEXT NOT NULL,
   finished_at TEXT NOT NULL, ok INTEGER NOT NULL, detail TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ops_runs_by_job ON ops_runs (job, id);
+CREATE TABLE IF NOT EXISTS alerts (
+  key TEXT PRIMARY KEY, failing INTEGER NOT NULL, last_sent_at TEXT);
 """
 # Every change after version 1, keyed by the version it makes: MIGRATIONS[2] takes a state.db
 # from version 1 to 2. CREATE TABLE IF NOT EXISTS can't add a column, so a later stage that changes
@@ -324,6 +326,32 @@ class State:
             return None
         return Run(row[0], datetime.fromisoformat(row[1]), datetime.fromisoformat(row[2]),
                    bool(row[3]), row[4])
+
+    # ---- alert state: one alert per failure, a daily reminder, and "recovered" ---------------
+    def alert_state(self, key: str) -> tuple[bool, datetime | None]:
+        with self.db() as db:
+            row = db.execute("SELECT failing, last_sent_at FROM alerts WHERE key = ?",
+                             (key,)).fetchone()
+        if row is None:
+            return False, None
+        return bool(row[0]), datetime.fromisoformat(row[1]) if row[1] else None
+
+    def set_alert_state(self, key: str, *, failing: bool, last_sent_at: datetime | None) -> None:
+        with self.db() as db:
+            db.execute("INSERT OR REPLACE INTO alerts (key, failing, last_sent_at) VALUES (?, ?, ?)",
+                       (key, int(failing), last_sent_at.isoformat() if last_sent_at else None))
+
+    # ---- ops_runs retention: the loop trims it once a day (ops._trim_runs) ---------------------
+    def prune_runs(self, before: datetime) -> int:
+        """Delete the runs that finished before `before`, except each job's newest run and its
+        newest good one (what Status and the schedule read, however long a job has been failing).
+        Returns how many rows went."""
+        with self.db() as db:
+            return db.execute(
+                "DELETE FROM ops_runs WHERE datetime(finished_at) < datetime(?) "
+                "AND id NOT IN (SELECT MAX(id) FROM ops_runs WHERE ok = 1 GROUP BY job) "
+                "AND id NOT IN (SELECT MAX(id) FROM ops_runs GROUP BY job)",
+                (before.isoformat(),)).rowcount
 
     def backup_to(self, dest: Path) -> Path:
         """A consistent copy of state.db, with SQLite's own backup command (§15.1), even while

@@ -11,7 +11,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from recordings import __version__, backup, config, ops, schemas, selfdoc
+from recordings import __version__, alerts, backup, config, ops, schemas, selfdoc
 from recordings.disk import disk_status, disk_thresholds
 from recordings.index import Index, IndexRefused
 from recordings.init import InitError, adopt_archive, init_archive
@@ -85,6 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "would delete from (Status and alerts carry the error's type only)")
     p.add_argument("--max-delete", type=int, metavar="N",
                    help="allow up to N deletions in this run only ([mirror] max_delete stays)")
+
+    p = sub.add_parser("ops", help="run the scheduled jobs that are due (--loop: forever)")
+    p.add_argument("--loop", action="store_true", help="the backup service's main loop")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("alert-test", help="send a test alert and log a dead-man's switch ping")
+    p.add_argument("--json", action="store_true")
     return parser
 
 
@@ -306,7 +313,7 @@ def _debug_logging(on: bool) -> None:
 
 def _job_result(result: ops.JobResult, as_json: bool) -> int:
     _emit({"job": result.job, "ok": result.ok, "detail": result.detail}, as_json)
-    if result.detail == ops.BUSY:
+    if result.detail.startswith(ops.BUSY):  # also "skipped: busy (repository locked)"
         return 75  # EX_TEMPFAIL: another job held the ops lock for ops.CLI_WAIT; try again
     return 0 if result.ok else 1
 
@@ -348,12 +355,49 @@ def cmd_mirror(args: argparse.Namespace) -> int:
         return _job_result(ops.run_job(ctx, "mirror"), args.json)
 
 
+def cmd_ops(args: argparse.Namespace) -> int:
+    ctx = _ops_context(args.json)
+    if isinstance(ctx, int):
+        return ctx
+    if args.loop:
+        ctx.retry_lock = None  # §15.1: the loop never waits for restic's lock; the CLI does
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+        # docker stop: SIGTERM goes on to a running restic or rsync, which stops cleanly and
+        # drops its lock; then this process stops. The job it was in is neither recorded nor
+        # alerted, and the next start runs it again.
+        with ops.sigterm_forwarded():
+            ops.loop(ctx)
+        return 0
+    with ops.sigterm_forwarded():
+        results = ops.run_due(ctx)
+    _emit({"ran": [{"job": r.job, "ok": r.ok, "detail": r.detail} for r in results]}, args.json)
+    return 0 if all(r.ok for r in results) else 1
+
+
+def cmd_alert_test(args: argparse.Namespace) -> int:
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        ac = alerts.from_config(cfg, os.environ)
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, 78)
+    if not ac.enabled:
+        return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE first", args.json, 78)
+    sent = alerts.send(ac, title="recordings: test alert", message="If you see this, alerts work.",
+                       priority=3, tags=("white_check_mark",))
+    # /log records the test without changing the check's state, so it can never hide an outage.
+    logged = alerts.ping_deadman(ac, "log", message="recordings alert-test")
+    _emit({"ntfy": sent, "deadman": logged}, args.json)
+    return 0 if sent else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "reindex": cmd_reindex, "validate": cmd_validate, "doctor": cmd_doctor,
                 "import-audio-router": cmd_import_audio_router, "backup": cmd_backup,
-                "mirror": cmd_mirror}
+                "mirror": cmd_mirror, "ops": cmd_ops, "alert-test": cmd_alert_test}
     if args.command in commands:
         return commands[args.command](args)
     parser.print_help(sys.stdout)

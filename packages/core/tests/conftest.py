@@ -5,8 +5,10 @@ import hashlib
 import io
 import itertools
 import json
+import threading
 import wave
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -279,3 +281,43 @@ class ARArchive:
 @pytest.fixture
 def ar_archive(tmp_path) -> ARArchive:
     return ARArchive(tmp_path / "audio-router-media")
+
+
+class FakeNtfy:
+    """An ntfy server on a real local socket: it records each request and answers `status`.
+    The dead-man's switch pings land here too, under the ping URL's own path."""
+
+    def __init__(self):
+        self.requests, self.status = [], 200
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _record(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                outer.requests.append({"method": self.command, "path": self.path,
+                                       "headers": dict(self.headers),
+                                       "body": self.rfile.read(length).decode("utf-8")})
+                self.send_response(outer.status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"id": "x", "event": "message"}).encode())
+
+            do_POST = do_GET = _record
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def ntfy():
+    server = FakeNtfy()
+    yield server
+    server.close()
