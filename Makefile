@@ -8,7 +8,7 @@ IMAGE_TAG = $(shell git rev-parse --short=12 HEAD)$(shell test -z "$$(git status
 COMPOSE_ARGS = --env-file docker/deploy.env -f docker/compose.yml
 COMPOSE = RECORDINGS_IMAGE_TAG=$(IMAGE_TAG) docker compose $(COMPOSE_ARGS)
 
-.PHONY: restic setup skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke rollback prune-images
+.PHONY: restic setup lint skills build test test-py test-js e2e demo demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke rollback prune-images
 
 setup:
 	uv sync
@@ -21,6 +21,10 @@ skills:
 
 build:
 	cd $(FRONTEND) && $(NVM) npm run build
+
+lint:
+	uv run ruff check .
+	uv run ruff format --check .
 
 test: test-py test-js
 

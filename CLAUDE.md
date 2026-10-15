@@ -9,6 +9,8 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
   installs.
 - **`make test`** runs pytest and Vitest. **`make e2e`** runs the Playwright tests against
   demo mode.
+- **`make lint`** runs ruff (check and format --check). CI runs it too. The rule set is pinned in
+  pyproject.toml.
 - **`make pages`** builds the static GitHub Pages demo into `_site/` (spec §17.1). Only the demo
   archive is ever exported.
 
@@ -56,7 +58,10 @@ smoke test on purpose until someone does the steps below:
 2. Check that `shinylive/_assets.py` still has `shinylive_cache_dir()`, which
    `scripts/shinylive_local.py` overrides to keep its assets in the repo's `.cache/`. Then
    update `PINNED` there.
-3. Run `make pages pages-test`, and also `make pages-serve` to check it by hand.
+3. Set `[tool.ruff] target-version` in `pyproject.toml` to the Python of its Pyodide
+   (`info.python` in `.cache/shinylive/shinylive-*/shinylive/pyodide/pyodide-lock.json`). The demo
+   runs our source under that Python, so ruff must not write newer syntax.
+4. Run `make pages pages-test`, and also `make pages-serve` to check it by hand.
 
 ## Archive rules (spec §6)
 

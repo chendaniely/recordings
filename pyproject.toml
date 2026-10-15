@@ -44,3 +44,20 @@ markers = [
 
 [tool.ruff]
 line-length = 100
+# The server runs 3.14, but the Pages demo vendors recordings and recordings_ui into Pyodide,
+# whose Python is 3.12 (Pyodide 0.27.7, in Shinylive's 0.10.15 assets). So ruff writes no newer
+# syntax (like 3.14's unparenthesised `except A, B:`), and flags any that is added. This
+# overrides requires-python, for ruff only. CLAUDE.md "Upgrading Shinylive" keeps it in step.
+target-version = "py312"
+
+[tool.ruff.lint]
+# An explicit rule set (ruff's docs: prefer lint.select), so a ruff upgrade can't change what is
+# checked: 0.17.0 dropped the datetimez rules from its defaults, and dates are this app's core.
+select = [
+    "E", "F", "W", "I", "UP", "B", "SIM", "C4", "DTZ", "PERF", "BLE", "PLW", "FURB", "RUF",
+    "ISC004",
+]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # deliberate typographic dashes; test_ids.py's lookalike digits
+    "PLW0603",  # module state behind functions (ops.py, runtime.py) is deliberate
+]

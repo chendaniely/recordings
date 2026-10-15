@@ -36,6 +36,7 @@ MIT licensed.
 ## Developing
 
 ```bash
+make lint         # ruff check and ruff format --check
 make test         # pytest and Vitest
 make e2e          # Playwright tests against `make demo`
 make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ is exported)
