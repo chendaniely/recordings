@@ -36,8 +36,15 @@ NEXT_DAY = datetime.fromisoformat("2026-10-07T09:00:00-07:00")  # a second, diff
 
 
 def notes(created_at=T0, model="qwen3.6-35b-a3b", markdown="# Notes") -> Rendition:
-    return Rendition(kind="notes", note_type="lecture", engine="canned", model=model,
-                     version=f"{model}@demo", created_at=created_at, payload={"markdown": markdown})
+    return Rendition(
+        kind="notes",
+        note_type="lecture",
+        engine="canned",
+        model=model,
+        version=f"{model}@demo",
+        created_at=created_at,
+        payload={"markdown": markdown},
+    )
 
 
 def test_add_lays_out_the_folder_and_starts_at_rev_1(writer, make_incoming):
@@ -84,7 +91,9 @@ def test_writer_open_says_which_settings_are_missing_and_writes_the_docs(writer,
         Writer.open(load_config({"RECORDINGS_CONFIG": str(cfg_file)}))
     cfg_file.write_text(
         f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n[state]\npath = "{writer.state.path}"\n'
-        f'[index]\npath = "{writer.index.path}"\n', encoding="utf-8")
+        f'[index]\npath = "{writer.index.path}"\n',
+        encoding="utf-8",
+    )
     (writer.root / "FORMAT.md").unlink()
     Writer.open(load_config({"RECORDINGS_CONFIG": str(cfg_file)}))
     assert (writer.root / "FORMAT.md").is_file()  # §6.7: the docs are written at startup
@@ -94,7 +103,9 @@ def test_a_damaged_state_db_is_not_the_writer_and_says_to_restore_it(writer, tmp
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
         f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n[state]\npath = "{writer.state.path}"\n'
-        f'[index]\npath = "{writer.index.path}"\n', encoding="utf-8")
+        f'[index]\npath = "{writer.index.path}"\n',
+        encoding="utf-8",
+    )
     for leftover in writer.state.path.glob("state.db-*"):  # WAL files: garbage stands alone
         leftover.unlink()
     writer.state.db_path.write_bytes(b"this is not a database\n" * 64)
@@ -128,8 +139,9 @@ def test_a_writer_rechecks_its_archive_before_each_write(writer, make_incoming, 
         writer.write_rendition(rec.id, notes())
     with pytest.raises(NotTheWriter, match="not mounted"):
         writer.reindex()
-    assert sorted(p.relative_to(writer.root) for p in writer.root.rglob("*")
-                  if p.name != SENTINEL) == [p for p in before if p.name != SENTINEL]
+    assert sorted(
+        p.relative_to(writer.root) for p in writer.root.rglob("*") if p.name != SENTINEL
+    ) == [p for p in before if p.name != SENTINEL]
     (tmp_path / "archive.json.away").rename(writer.root / SENTINEL)
     assert writer.mutate(rec.id, AddTags((TagRef(tag="talks"),))).rev == 2  # back: writes again
 
@@ -138,7 +150,9 @@ def test_a_writer_refuses_when_the_archives_uuid_has_changed(writer, make_incomi
     # why: §6.7. A different archive mounted at the same place has its own UUID.
     sentinel = writer.root / SENTINEL
     data = json.loads(sentinel.read_text(encoding="utf-8"))
-    sentinel.write_text(json.dumps({**data, "uuid": "6f1c1c1e-5b0a-4a54-9d57-0c1c1c1c1c1c"}), encoding="utf-8")
+    sentinel.write_text(
+        json.dumps({**data, "uuid": "6f1c1c1e-5b0a-4a54-9d57-0c1c1c1c1c1c"}), encoding="utf-8"
+    )
     with pytest.raises(NotTheWriter, match="UUID changed"):
         writer.add(make_incoming())
     assert list((writer.root / "recordings").glob("[0-9]*")) == []
@@ -151,7 +165,8 @@ def test_a_writer_refuses_once_its_folder_turns_out_to_be_the_mirror(writer, mak
 
 
 def test_a_mount_that_drops_while_the_media_is_hashed_creates_nothing(
-        writer, make_incoming, tmp_path, monkeypatch):
+    writer, make_incoming, tmp_path, monkeypatch
+):
     # why: the check at the top of add is not enough: hashing a long file takes time. The check
     # before the rename means the recording never lands on the bare mountpoint.
     calls = []
@@ -167,7 +182,10 @@ def test_a_mount_that_drops_while_the_media_is_hashed_creates_nothing(
     monkeypatch.setattr(writer_module, "sha256_file", hashing)
     with pytest.raises(NotTheWriter, match="not mounted"):
         writer.add(make_incoming())
-    assert list((writer.root / "recordings").glob("[0-9]*")) == [] and not (writer.root / ".tmp").exists()
+    assert (
+        list((writer.root / "recordings").glob("[0-9]*")) == []
+        and not (writer.root / ".tmp").exists()
+    )
     assert writer.state.committed_files() == []
 
 
@@ -199,8 +217,9 @@ def test_no_index_rebuild_runs_over_an_unreadable_year_folder(writer, make_incom
     # why: §6.4. A year folder that reads as empty made _holding rebuild a shrunken index, and
     # the same bytes then looked new: a second recording. Every rebuild is guarded. Another year
     # stays readable, so the archive is not empty and the empty-index guard can't be what stops it.
-    kept = writer.add(make_incoming(b"kept", recorded_at=datetime.fromisoformat(
-        "2025-03-01T09:00:00-07:00"))).recording
+    kept = writer.add(
+        make_incoming(b"kept", recorded_at=datetime.fromisoformat("2025-03-01T09:00:00-07:00"))
+    ).recording
     rec = writer.add(make_incoming(b"same bytes")).recording
     year = writer.root / "recordings" / "2026"
     before = sorted(p.relative_to(writer.root) for p in writer.root.rglob("*"))
@@ -214,18 +233,23 @@ def test_no_index_rebuild_runs_over_an_unreadable_year_folder(writer, make_incom
         assert "--allow-empty" not in str(caught.value)
         with pytest.raises(IndexRefused, match="can't be read"):
             writer.reindex(allow_missing=True)  # unreadable is not gone: never forgotten
-        assert writer.state.committed_files() != [] and writer._rel(rec.id) in \
-            writer.state.committed_files()
+        assert (
+            writer.state.committed_files() != []
+            and writer._rel(rec.id) in writer.state.committed_files()
+        )
     finally:
         year.chmod(0o755)
-    assert writer.index.count() == 2 and writer.index.find_by_sha256(
-        writer.archive.load(rec.id).media.sha256) == rec.id
+    assert (
+        writer.index.count() == 2
+        and writer.index.find_by_sha256(writer.archive.load(rec.id).media.sha256) == rec.id
+    )
     assert sorted(p.relative_to(writer.root) for p in writer.root.rglob("*")) == before
     assert {r.id for r in writer.archive.iter_recordings()} == {kept.id, rec.id}
 
 
 def test_a_start_with_no_committed_revisions_still_never_empties_the_index(
-        writer, make_incoming, tmp_path):
+    writer, make_incoming, tmp_path
+):
     # why: §6.7. A state.db recreated by `init --adopt` has no committed revisions, so the
     # missing-files guard has nothing to say; only allow_empty=foreign stands between a pending
     # mark and an index emptied by an archive that reads as empty.
@@ -287,8 +311,10 @@ def test_reindex_allow_missing_forgets_once(writer, make_incoming):
     shutil.rmtree(writer.archive.path_for(gone.id))
     report = writer.reindex(allow_missing=True)
     assert report.forgotten == (gone.id,) and report.to_dict()["forgotten"] == [gone.id]
-    assert writer.state.committed_files() != [] and writer._rel(gone.id) not in \
-        writer.state.committed_files()
+    assert (
+        writer.state.committed_files() != []
+        and writer._rel(gone.id) not in writer.state.committed_files()
+    )
     assert writer.state.flags() == [] and writer.reindex().forgotten == ()
 
 
@@ -315,14 +341,21 @@ def test_a_writer_never_takes_state_db_for_its_index(writer):
 
 
 def test_the_same_bytes_again_merge_and_keep_the_second_copys_outputs_tags_and_notes(
-        writer, make_incoming):
+    writer, make_incoming
+):
     # why: §6.4. The merge keeps the second copy's sources, outputs, decisions and notes.
     first = writer.add(make_incoming(b"same bytes", my_notes="first\n")).recording
-    second = writer.add(make_incoming(
-        b"same bytes", name="other.mp3",
-        sources=(RawSource(kind="upload", ref="other.mp3", added_at=T0),),
-        tags=(TagRef(tag="talks"),), renditions=(notes(),), my_notes="second\n",
-        excluded_note_types=("glossary",)))
+    second = writer.add(
+        make_incoming(
+            b"same bytes",
+            name="other.mp3",
+            sources=(RawSource(kind="upload", ref="other.mp3", added_at=T0),),
+            tags=(TagRef(tag="talks"),),
+            renditions=(notes(),),
+            my_notes="second\n",
+            excluded_note_types=("glossary",),
+        )
+    )
     assert not second.created and second.recording.id == first.id
     assert (second.sources_added, second.renditions_added) == (1, 1)
     rec = writer.archive.load(first.id)
@@ -343,8 +376,9 @@ def test_adding_the_same_thing_twice_adds_nothing(writer, make_incoming):
     assert writer.archive.read_my_notes(again.recording.id) == "mine\n"
 
 
-def test_a_private_tag_on_a_duplicate_lands_before_any_of_its_content(writer, make_incoming,
-                                                                      monkeypatch):
+def test_a_private_tag_on_a_duplicate_lands_before_any_of_its_content(
+    writer, make_incoming, monkeypatch
+):
     # why: §7.4. A merge killed after publishing must never leave private content in a
     # recording that isn't private yet.
     rec = writer.add(make_incoming(b"bytes")).recording
@@ -354,19 +388,30 @@ def test_a_private_tag_on_a_duplicate_lands_before_any_of_its_content(writer, ma
 
     monkeypatch.setattr(Writer, "_publish_raw", staticmethod(killed))
     with pytest.raises(KeyboardInterrupt):
-        writer.add(make_incoming(
-            b"bytes", tags=(TagRef(tag="private"),), renditions=(notes(),),
-            sources=(RawSource(kind="upload", ref="u", added_at=T0, payload=b"{}"),)))
+        writer.add(
+            make_incoming(
+                b"bytes",
+                tags=(TagRef(tag="private"),),
+                renditions=(notes(),),
+                sources=(RawSource(kind="upload", ref="u", added_at=T0, payload=b"{}"),),
+            )
+        )
     assert is_private(writer.archive.load(rec.id))
 
 
 def test_a_merge_killed_before_its_mutate_leaves_no_duplicate_source_on_the_rerun(
-        writer, make_incoming, monkeypatch):
+    writer, make_incoming, monkeypatch
+):
     # Review Focus 2: the new snapshot is published, then the process dies before mutate records
     # it. Running the same add again must reuse that file, not publish a `-2` copy.
     writer.add(make_incoming(b"bytes"))
-    later = RawSource(kind="plaud", ref="a" * 32, added_at=T0,
-                      fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc), payload=b'{"id": 2}')
+    later = RawSource(
+        kind="plaud",
+        ref="a" * 32,
+        added_at=T0,
+        fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc),
+        payload=b'{"id": 2}',
+    )
     real_mutate = Writer.mutate
 
     def killed_in_the_merge(self, recording_id, op):
@@ -387,12 +432,19 @@ def test_a_merge_killed_before_its_mutate_leaves_no_duplicate_source_on_the_reru
 
 def test_a_new_snapshot_of_the_same_source_is_kept_beside_the_first(writer, make_incoming):
     writer.add(make_incoming(b"bytes"))
-    later = RawSource(kind="plaud", ref="a" * 32, added_at=T0,
-                      fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc), payload=b'{"id": 2}')
+    later = RawSource(
+        kind="plaud",
+        ref="a" * 32,
+        added_at=T0,
+        fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc),
+        payload=b'{"id": 2}',
+    )
     added = writer.add(make_incoming(b"bytes", sources=(later,)))
     assert added.sources_added == 1
     assert [s.raw for s in added.recording.sources] == [
-        "source/plaud-20261008T120000Z.json", "source/plaud-20261009T000000Z.json"]
+        "source/plaud-20261008T120000Z.json",
+        "source/plaud-20261009T000000Z.json",
+    ]
 
 
 def test_renditions_are_write_once_ordered_and_never_duplicated(writer, make_incoming):
@@ -521,8 +573,9 @@ def test_mutate_refuses_an_invalid_file_and_flags_it(writer, make_incoming):
     assert path.read_text(encoding="utf-8") == "{"  # §11: never overwritten or "fixed"
 
 
-def test_a_crash_before_the_file_is_replaced_loses_only_that_write(writer, make_incoming,
-                                                                   monkeypatch):
+def test_a_crash_before_the_file_is_replaced_loses_only_that_write(
+    writer, make_incoming, monkeypatch
+):
     # Review Focus 1: a pending revision whose file never landed is discarded, not "stale".
     rec = writer.add(make_incoming()).recording
 
@@ -558,7 +611,8 @@ def test_a_crash_after_the_file_is_replaced_keeps_the_write(writer, make_incomin
 
 
 def test_a_crash_after_a_new_recording_lands_but_before_its_commit_merges_on_the_next_add(
-        writer, make_incoming, monkeypatch):
+    writer, make_incoming, monkeypatch
+):
     # Review Focus 1, for add: the folder landed, its revision wasn't committed, and the index
     # never heard of it. The same bytes again, under another ID, merge into it without StaleFile.
     def power_cut(revision_id):
@@ -569,8 +623,13 @@ def test_a_crash_after_a_new_recording_lands_but_before_its_commit_merges_on_the
         writer.add(make_incoming(b"same bytes"))
     monkeypatch.undo()
     (folder,) = writer.archive.recording_dirs()
-    again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY, sources=(
-        RawSource(kind="upload", ref="u", added_at=T0),)))
+    again = writer.add(
+        make_incoming(
+            b"same bytes",
+            recorded_at=NEXT_DAY,
+            sources=(RawSource(kind="upload", ref="u", added_at=T0),),
+        )
+    )
     assert not again.created and again.recording.id == folder.name
     assert again.sources_added == 1 and again.recording.rev == 2
 
@@ -578,10 +637,12 @@ def test_a_crash_after_a_new_recording_lands_but_before_its_commit_merges_on_the
 def test_an_index_left_behind_by_a_crash_never_causes_a_duplicate(writer, make_incoming):
     first = writer.add(make_incoming(b"bytes")).recording
     writer.index.path.unlink()  # as if the process died after the rename, before the index
-    Index(writer.index.path).rebuild(Archive(writer.root / "nowhere"),
-                                     archive_uuid=writer.identity.uuid, allow_empty=True)
-    again = writer.add(make_incoming(b"bytes", sources=(RawSource(kind="upload", ref="u",
-                                                                  added_at=T0),)))
+    Index(writer.index.path).rebuild(
+        Archive(writer.root / "nowhere"), archive_uuid=writer.identity.uuid, allow_empty=True
+    )
+    again = writer.add(
+        make_incoming(b"bytes", sources=(RawSource(kind="upload", ref="u", added_at=T0),))
+    )
     assert again.recording.id == first.id and not again.created
 
 
@@ -595,7 +656,8 @@ def test_an_index_that_cannot_answer_is_rebuilt_before_an_add_believes_it(writer
 
 
 def test_a_stuck_index_never_turns_the_same_bytes_into_a_second_recording(
-        writer, make_incoming, monkeypatch):
+    writer, make_incoming, monkeypatch
+):
     # why: the index answers "none" while it can't be updated, and its UUID still matches, so no
     # rebuild runs. The pending marks name the recordings it has not heard of: ask them too.
     def busy(rec):
@@ -603,16 +665,21 @@ def test_a_stuck_index_never_turns_the_same_bytes_into_a_second_recording(
 
     monkeypatch.setattr(writer.index, "upsert", busy)
     first = writer.add(make_incoming(b"same bytes")).recording
-    again = writer.add(make_incoming(
-        b"same bytes", recorded_at=NEXT_DAY,
-        sources=(RawSource(kind="upload", ref="u", added_at=T0),)))
+    again = writer.add(
+        make_incoming(
+            b"same bytes",
+            recorded_at=NEXT_DAY,
+            sources=(RawSource(kind="upload", ref="u", added_at=T0),),
+        )
+    )
     assert not again.created and again.recording.id == first.id
     assert len(list(writer.archive.recording_dirs())) == 1
     assert [s.kind for s in writer.archive.load(first.id).sources] == ["plaud", "upload"]
 
 
 def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recording(
-        writer, make_incoming, monkeypatch):
+    writer, make_incoming, monkeypatch
+):
     # why: another process's catch-up can finish a recording's update after this add asked the
     # index (which said none) and before it read the marks. The marks are read first.
     real_upsert = writer.index.upsert
@@ -640,7 +707,8 @@ def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recordi
 
 
 def test_a_busy_index_is_never_read_as_no_recording_holding_the_bytes(
-        writer, make_incoming, monkeypatch):
+    writer, make_incoming, monkeypatch
+):
     # why: §6.4. Index._rows read every DatabaseError as "no rows". A lookup that waited out the
     # busy timeout behind another process, then an archive_uuid() that read fine, made add
     # believe nothing held these bytes: the same bytes under another recorded_at became a
@@ -678,7 +746,8 @@ def test_a_busy_index_is_never_read_as_no_recording_holding_the_bytes(
 
 
 def test_a_pending_recording_that_cannot_be_read_now_is_not_read_as_none(
-        writer, make_incoming, monkeypatch):
+    writer, make_incoming, monkeypatch
+):
     # why: §6.4. _pending_holding skipped every OSError, so an I/O error on a pending
     # recording's file read as "nothing holds these bytes", and the add made a second recording.
     def busy(rec):
@@ -703,7 +772,8 @@ def test_a_pending_recording_that_cannot_be_read_now_is_not_read_as_none(
 
 
 def test_a_stuck_index_costs_an_add_one_wait_not_one_per_pending_mark(
-        writer, make_incoming, monkeypatch):
+    writer, make_incoming, monkeypatch
+):
     # why: each add first retries every pending mark, and each retry can wait 30 s for the
     # index lock. With the index stuck, an import's adds slowed by 30 s more each time.
     tried = []
@@ -725,7 +795,8 @@ def test_a_stuck_index_costs_an_add_one_wait_not_one_per_pending_mark(
 
 
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(
-        writer, make_incoming, monkeypatch):
+    writer, make_incoming, monkeypatch
+):
     # The write has landed, so a busy index must not report it as failed. The next add must
     # still find it, or the same bytes under another ID would become a second recording.
     def busy(rec):
@@ -740,8 +811,9 @@ def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up
     assert writer.state.index_pending() == []
 
 
-def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(writer, make_incoming,
-                                                                   monkeypatch):
+def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(
+    writer, make_incoming, monkeypatch
+):
     # why: a recording whose folder landed after the rebuild listed the archive still has its
     # mark. Clearing every mark at once left it out of the index until the next reindex.
     rec = writer.add(make_incoming(b"bytes")).recording
@@ -749,8 +821,9 @@ def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(writer, make_
 
     def rebuild_that_missed_it(*args, **kwargs):
         count = real(*args, **kwargs)
-        Index(writer.index.path).rebuild(Archive(writer.root / "nowhere"),
-                                         archive_uuid=writer.identity.uuid, allow_empty=True)
+        Index(writer.index.path).rebuild(
+            Archive(writer.root / "nowhere"), archive_uuid=writer.identity.uuid, allow_empty=True
+        )
         return count
 
     monkeypatch.setattr(writer.index, "rebuild", rebuild_that_missed_it)
@@ -760,8 +833,7 @@ def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(writer, make_
     assert writer.state.index_pending() == []
 
 
-def test_a_pending_mark_on_an_invalid_file_does_not_make_every_start_rebuild(writer,
-                                                                             make_incoming):
+def test_a_pending_mark_on_an_invalid_file_does_not_make_every_start_rebuild(writer, make_incoming):
     rec = writer.add(make_incoming()).recording
     writer.add(make_incoming(recorded_at=NEXT_DAY))
     (writer.archive.path_for(rec.id) / "recording.json").write_text("{", encoding="utf-8")
@@ -771,7 +843,8 @@ def test_a_pending_mark_on_an_invalid_file_does_not_make_every_start_rebuild(wri
 
 
 def test_an_index_entry_whose_folder_was_deleted_by_hand_asks_for_reindex_allow_missing(
-        writer, make_incoming):
+    writer, make_incoming
+):
     # why: a KeyError used to escape add() here, and the import doesn't catch KeyError. Now add
     # stops with IndexUnavailable, because a folder gone from the archive may be an unmounted
     # disk: a second recording of the same bytes is the harm (§6.4). `reindex --allow-missing`
@@ -829,8 +902,10 @@ def test_two_writer_processes_never_lose_an_update(writer, make_incoming):
     # why: §9.1.1 asks for a lost-update test with two writer processes.
     rec = writer.add(make_incoming()).recording
     args = [str(writer.root), str(writer.state.path), str(writer.index.path), rec.id]
-    procs = [subprocess.Popen([sys.executable, "-c", SCRIPT, *args, prefix, "25"])
-             for prefix in ("a", "b")]
+    procs = [
+        subprocess.Popen([sys.executable, "-c", SCRIPT, *args, prefix, "25"])
+        for prefix in ("a", "b")
+    ]
     assert [p.wait(timeout=120) for p in procs] == [0, 0]
     final = writer.archive.load(rec.id)
     assert len(final.tags) == 50 and final.rev == 51

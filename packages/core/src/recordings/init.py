@@ -41,9 +41,14 @@ def _check_writer_id(writer_id: str) -> None:
         raise InitError(f"writer_id {writer_id!r} must be a short lowercase name, such as homelab")
 
 
-def init_archive(archive_root: Path, state_path: Path, *, writer_id: str,
-                 archive_uuid: str | None = None, created_at: datetime | None = None,
-                 ) -> ArchiveIdentity:
+def init_archive(
+    archive_root: Path,
+    state_path: Path,
+    *,
+    writer_id: str,
+    archive_uuid: str | None = None,
+    created_at: datetime | None = None,
+) -> ArchiveIdentity:
     root, state_dir = Path(archive_root), Path(state_path)
     _check_writer_id(writer_id)
     if root.exists() and not root.is_dir():
@@ -54,7 +59,8 @@ def init_archive(archive_root: Path, state_path: Path, *, writer_id: str,
         raise InitError(f"{state_dir / 'state.db'} already exists: init runs once per archive")
     identity = ArchiveIdentity(
         uuid=str(uuid.UUID(archive_uuid)) if archive_uuid else str(uuid.uuid4()),
-        created_at=created_at or datetime.now(timezone.utc))
+        created_at=created_at or datetime.now(timezone.utc),
+    )
     try:
         root.mkdir(parents=True, exist_ok=True)
         (root / "recordings").mkdir()
@@ -66,7 +72,8 @@ def init_archive(archive_root: Path, state_path: Path, *, writer_id: str,
         raise InitError(
             f"init stopped part-way ({exc}) and wrote no {SENTINEL}. Check that {root} and "
             f"{state_dir / 'state.db'} hold only what this init just wrote, then move both "
-            "aside and run init again.") from None
+            "aside and run init again."
+        ) from None
     return identity
 
 
@@ -82,12 +89,14 @@ def adopt_archive(archive_root: Path, state_path: Path, *, writer_id: str) -> Ar
         raise InitError(
             f"{root} holds {MIRROR}: it is the NAS mirror's copy, not the archive. Only the "
             "archive's writer writes (spec §3), so --adopt runs there; anywhere else, use the "
-            "app.")
+            "app."
+        )
     if (state_dir / "state.db").exists():
         raise InitError(
             f"{state_dir / 'state.db'} exists: --adopt only replaces a lost one. If it is damaged "
             "and no backup copy is usable, stop the app and move the whole state folder aside "
-            "first.")
+            "first."
+        )
     try:
         State.create(state_dir, archive_uuid=identity.uuid, writer_id=writer_id)
     except (OSError, StateError) as exc:

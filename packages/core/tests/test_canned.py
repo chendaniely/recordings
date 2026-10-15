@@ -11,8 +11,9 @@ RID = "20261006T140003-0700_3fa91c2e"
 def canned(tmp_path: Path) -> Path:
     root = tmp_path / "canned"
     (root / "transcripts").mkdir(parents=True)
-    (root / "transcripts" / "jfk.json").write_text(json.dumps(
-        {"language": "en", "segments": [{"start": 0, "end": 2, "text": "We choose"}]}))
+    (root / "transcripts" / "jfk.json").write_text(
+        json.dumps({"language": "en", "segments": [{"start": 0, "end": 2, "text": "We choose"}]})
+    )
     (root / "notes" / "jfk").mkdir(parents=True)
     (root / "notes" / "jfk" / "conference-talk--claude-opus-5-5.md").write_text("# Notes\n")
     (root / "aliases.json").write_text(json.dumps({RID: "jfk"}))
@@ -32,8 +33,9 @@ def test_transcribe_returns_the_stored_transcript_by_alias(tmp_path):
 
 def test_complete_returns_stored_notes_and_the_model_asked(tmp_path):
     backend = CannedBackend.from_dir(canned(tmp_path))
-    req = CompletionRequest(prompt="ignored", model="claude-opus-5-5", recording_id=RID,
-                            note_type="conference-talk")
+    req = CompletionRequest(
+        prompt="ignored", model="claude-opus-5-5", recording_id=RID, note_type="conference-talk"
+    )
     out = backend.complete(req)
     assert (out.text, out.model, out.backend) == ("# Notes\n", "claude-opus-5-5", "canned")
 

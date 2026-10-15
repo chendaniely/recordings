@@ -65,14 +65,22 @@ def test_the_sentinel_is_never_replaced(new_archive):
     assert (root / SENTINEL).read_bytes() == before
 
 
-@pytest.mark.parametrize("text", [
-    "{",
-    "[]",
-    json.dumps({"format": "something-else@1", "uuid": UUID, "created_at": T0.isoformat()}),
-    json.dumps({"format": "recordings-archive@1", "uuid": "nope", "created_at": T0.isoformat()}),
-    json.dumps({"format": "recordings-archive@1", "uuid": 7, "created_at": T0.isoformat()}),
-    json.dumps({"format": "recordings-archive@1", "uuid": UUID, "created_at": "2026-10-08T12:00:00"}),
-], ids=["truncated", "not-an-object", "wrong-format", "bad-uuid", "uuid-not-text", "naive-time"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{",
+        "[]",
+        json.dumps({"format": "something-else@1", "uuid": UUID, "created_at": T0.isoformat()}),
+        json.dumps(
+            {"format": "recordings-archive@1", "uuid": "nope", "created_at": T0.isoformat()}
+        ),
+        json.dumps({"format": "recordings-archive@1", "uuid": 7, "created_at": T0.isoformat()}),
+        json.dumps(
+            {"format": "recordings-archive@1", "uuid": UUID, "created_at": "2026-10-08T12:00:00"}
+        ),
+    ],
+    ids=["truncated", "not-an-object", "wrong-format", "bad-uuid", "uuid-not-text", "naive-time"],
+)
 def test_a_damaged_sentinel_is_refused(tmp_path, text):
     (tmp_path / SENTINEL).write_text(text, encoding="utf-8")
     with pytest.raises(SentinelError):
@@ -133,8 +141,11 @@ def test_a_state_db_newer_than_the_code_is_refused(tmp_path):
 def test_open_runs_the_numbered_migrations_in_order(tmp_path, monkeypatch):
     # why: CREATE TABLE IF NOT EXISTS can't add a column, so a later stage changes a table this way.
     State.create(tmp_path / "state", archive_uuid=UUID, writer_id="test")
-    monkeypatch.setattr(state_module, "MIGRATIONS", {
-        2: ("CREATE TABLE extra (x TEXT)",), 3: ("ALTER TABLE extra ADD COLUMN y TEXT",)})
+    monkeypatch.setattr(
+        state_module,
+        "MIGRATIONS",
+        {2: ("CREATE TABLE extra (x TEXT)",), 3: ("ALTER TABLE extra ADD COLUMN y TEXT",)},
+    )
     monkeypatch.setattr(state_module, "SCHEMA_VERSION", 3)
     st = State.open(tmp_path / "state")
     State.open(tmp_path / "state")  # a second open finds nothing left to do
@@ -228,7 +239,9 @@ def _config(tmp_path, monkeypatch, *, writer_id="homelab"):
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         f'[archive]\npath = "{tmp_path / "archive"}"\nwriter_id = "{writer_id}"\n'
-        f'[state]\npath = "{tmp_path / "state"}"\n', encoding="utf-8")
+        f'[state]\npath = "{tmp_path / "state"}"\n',
+        encoding="utf-8",
+    )
     monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
     for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
         monkeypatch.delenv(name, raising=False)
@@ -275,7 +288,9 @@ def test_docs_refuses_a_folder_without_a_sentinel(tmp_path, monkeypatch, capsys)
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         f'[archive]\npath = "{empty}"\nwriter_id = "test"\n[state]\npath = "{tmp_path / "state"}"\n'
-        f'[index]\npath = "{tmp_path / "index.db"}"\n', encoding="utf-8")
+        f'[index]\npath = "{tmp_path / "index.db"}"\n',
+        encoding="utf-8",
+    )
     monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
     for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
         monkeypatch.delenv(name, raising=False)

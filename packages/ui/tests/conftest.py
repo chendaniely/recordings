@@ -33,5 +33,6 @@ def writer(tmp_path) -> Writer:
     demo_archive (which is tmp_path/"archive")."""
     root, state = tmp_path / "written-archive", tmp_path / "written-state"
     init_archive(root, state, writer_id="test")
-    return Writer(root, State.open(state), Index(tmp_path / "written-index" / "index.db"),
-                  writer_id="test")
+    return Writer(
+        root, State.open(state), Index(tmp_path / "written-index" / "index.db"), writer_id="test"
+    )

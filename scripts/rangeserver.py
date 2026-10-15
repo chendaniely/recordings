@@ -35,7 +35,7 @@ class RangeHandler(SimpleHTTPRequestHandler):
         url_path = urlsplit(path).path
         if url_path != base and not url_path.startswith(base + "/"):
             return ""  # outside the prefix: 404
-        return super().translate_path(path[len(base):] or "/")
+        return super().translate_path(path[len(base) :] or "/")
 
     def send_head(self):
         path = self.translate_path(self.path)
@@ -95,7 +95,7 @@ class Server(ThreadingHTTPServer):
 
 
 def normalize_prefix(prefix: str) -> str:
-    """"recordings", "/recordings" and "/recordings/" all mean "/recordings/"."""
+    """ "recordings", "/recordings" and "/recordings/" all mean "/recordings/"."""
     return f"/{prefix.strip('/')}/" if prefix.strip("/") else "/"
 
 

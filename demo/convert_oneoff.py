@@ -37,14 +37,18 @@ def convert(data: dict, duration_s: float) -> TranscriptPayload:
         if seg["start"] >= duration_s:
             continue
         inside = [w for w in words if seg["start"] <= (w["start"] + w["end"]) / 2 < seg["end"]]
-        segments.append(Segment(
-            start=round(seg["start"], 3),
-            end=round(seg["end"], 3),
-            speaker=speaker_for(seg["start"], seg["end"], data.get("turns") or []),
-            text=text,
-            words=[Word(word=w["word"].strip(), start=round(w["start"], 3), end=round(w["end"], 3))
-                   for w in inside],
-        ))
+        segments.append(
+            Segment(
+                start=round(seg["start"], 3),
+                end=round(seg["end"], 3),
+                speaker=speaker_for(seg["start"], seg["end"], data.get("turns") or []),
+                text=text,
+                words=[
+                    Word(word=w["word"].strip(), start=round(w["start"], 3), end=round(w["end"], 3))
+                    for w in inside
+                ],
+            )
+        )
     return TranscriptPayload(language=data.get("language"), segments=segments)
 
 
@@ -58,7 +62,8 @@ def main() -> int:
             raise SystemExit(f"{path.name}: slug {path.stem!r} is not in demo/sources.toml")
         payload = convert(json.loads(path.read_text(encoding="utf-8")), durations[path.stem])
         (out / path.name).write_text(
-            payload.model_dump_json(exclude_none=True, indent=2) + "\n", encoding="utf-8")
+            payload.model_dump_json(exclude_none=True, indent=2) + "\n", encoding="utf-8"
+        )
         print(f"wrote {out / path.name}: {len(payload.segments)} segments")
     return 0
 

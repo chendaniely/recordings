@@ -55,8 +55,10 @@ def _only_the_demo(path: Path) -> Path:
     except SentinelError:
         ok = False
     if not ok:
-        raise SystemExit(f"{path} is not the demo archive (its archive.json lacks the demo's "
-                         "UUID); demo mode serves nothing else")
+        raise SystemExit(
+            f"{path} is not the demo archive (its archive.json lacks the demo's "
+            "UUID); demo mode serves nothing else"
+        )
     return path
 
 
@@ -77,7 +79,8 @@ def from_env(environ: Mapping[str, str], *, demo: bool | None = None) -> Setting
     if cfg.archive_path is None:
         raise SystemExit(
             "no archive path: set [archive] path in config.toml (see config.example.toml), "
-            "set RECORDINGS_ARCHIVE, or run with --demo")
+            "set RECORDINGS_ARCHIVE, or run with --demo"
+        )
     hosts = LOCAL_HOSTS | env_hosts(environ) | set(cfg.allowed_hosts)  # already normalised
     if cfg.base_url and (name := urlsplit(cfg.base_url).hostname):
         try:  # the same rules as allowed_hosts, so the canonical form a browser sends matches

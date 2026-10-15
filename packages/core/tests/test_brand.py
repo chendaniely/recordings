@@ -18,9 +18,10 @@ def test_theme_css_is_up_to_date():
 
 def contrast(a: str, b: str) -> float:
     def lum(h):
-        c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [int(h[i : i + 2], 16) / 255 for i in (1, 3, 5)]
         c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
         return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
     hi, lo = sorted([lum(a), lum(b)], reverse=True)
     return (hi + 0.05) / (lo + 0.05)
 
@@ -41,8 +42,8 @@ def test_orange_is_never_a_light_mode_text_colour():
 
 
 def _mix(fg, share, bg):
-    a = [int(fg[i:i + 2], 16) for i in (1, 3, 5)]
-    b = [int(bg[i:i + 2], 16) for i in (1, 3, 5)]
+    a = [int(fg[i : i + 2], 16) for i in (1, 3, 5)]
+    b = [int(bg[i : i + 2], 16) for i in (1, 3, 5)]
     return "#" + "".join(f"{round(share * x + (1 - share) * y):02X}" for x, y in zip(a, b))
 
 

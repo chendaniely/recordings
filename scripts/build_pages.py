@@ -57,11 +57,13 @@ def check_inputs(www: Path = UI / "www", demo: Path = DEMO_ARCHIVE) -> None:
         if not (www / name).is_file():
             raise SystemExit(
                 f"build_pages: {_shown(www / name)} is missing. Build the frontend first with "
-                "`make build`, or run `make pages`, which builds it.")
+                "`make build`, or run `make pages`, which builds it."
+            )
     if not (demo / "README.md").is_file():
         raise SystemExit(
             f"build_pages: the demo archive {_shown(demo)}/ is missing. It is committed: "
-            "restore it from git, or rebuild it with `make demo-archive`.")
+            "restore it from git, or rebuild it with `make demo-archive`."
+        )
 
 
 def demo_media(demo: Path = DEMO_ARCHIVE) -> dict[Path, str]:
@@ -72,8 +74,10 @@ def demo_media(demo: Path = DEMO_ARCHIVE) -> dict[Path, str]:
         path = archive.media_path(rec.id)
         # The app links <media_base><media.file>, so media.file must be exactly <id>.<ext>.
         if rec.media.file != f"{rec.id}{path.suffix}" or not path.is_file():
-            raise SystemExit(f"build_pages: {rec.id}: media.file must be <id>.<ext> and exist; "
-                             f"it is {rec.media.file!r}")
+            raise SystemExit(
+                f"build_pages: {rec.id}: media.file must be <id>.<ext> and exist; "
+                f"it is {rec.media.file!r}"
+            )
         media[path] = rec.media.file
     if archive.problems or not media:
         raise SystemExit(f"build_pages: the demo archive has problems: {archive.problems}")
@@ -85,8 +89,10 @@ def relative_font_urls(css: str) -> str:
     Relative to ui.css they resolve to www/fonts/, which page_react serves beside it."""
     text, n = FONT_URL.subn(r"url(\1fonts/", css)
     if n == 0 or ROOT_URL.search(text):
-        raise SystemExit("build_pages: ui.css should load its fonts from url(/fonts/…) and "
-                         "nothing else from the site root; check its url()s")
+        raise SystemExit(
+            "build_pages: ui.css should load its fonts from url(/fonts/…) and "
+            "nothing else from the site root; check its url()s"
+        )
     return text
 
 
@@ -99,8 +105,10 @@ def refuse_symlinks(*roots: Path) -> None:
             for folder, dirs, files in os.walk(root):  # never enters a linked folder
                 found += [Path(folder) / n for n in dirs + files if (Path(folder) / n).is_symlink()]
     if found:
-        raise SystemExit("build_pages: refusing to copy a symlink into the site, which would copy "
-                         "what it points at: " + ", ".join(_shown(p) for p in sorted(found)))
+        raise SystemExit(
+            "build_pages: refusing to copy a symlink into the site, which would copy "
+            "what it points at: " + ", ".join(_shown(p) for p in sorted(found))
+        )
 
 
 def assemble(app: Path, media: dict[Path, str], ui: Path = UI, demo: Path = DEMO_ARCHIVE) -> None:
@@ -115,8 +123,11 @@ def assemble(app: Path, media: dict[Path, str], ui: Path = UI, demo: Path = DEMO
     skip_media = {p.resolve() for p in media}
 
     def ignore(folder: str, names: list[str]) -> set[str]:
-        return {n for n in names if n.startswith(".") or n == "__pycache__"
-                or (Path(folder) / n).resolve() in skip_media}
+        return {
+            n
+            for n in names
+            if n.startswith(".") or n == "__pycache__" or (Path(folder) / n).resolve() in skip_media
+        }
 
     shutil.copytree(demo, app / "demo" / "archive", ignore=ignore)
     # Only this copy changes; the normal build keeps /fonts/, which the server serves.
@@ -126,17 +137,27 @@ def assemble(app: Path, media: dict[Path, str], ui: Path = UI, demo: Path = DEMO
 
 def export(app: Path) -> None:
     subprocess.run(
-        [sys.executable, str(SHINYLIVE), "export", str(app), str(SITE),
-         "--template-params", json.dumps(TEMPLATE_PARAMS)],
-        check=True)
+        [
+            sys.executable,
+            str(SHINYLIVE),
+            "export",
+            str(app),
+            str(SITE),
+            "--template-params",
+            json.dumps(TEMPLATE_PARAMS),
+        ],
+        check=True,
+    )
 
 
 def main() -> None:
     check_inputs()
     media = demo_media()
     if importlib.util.find_spec("shinylive") is None:  # before anything is deleted
-        raise SystemExit("build_pages: Shinylive isn't installed here. Run `make pages`, or "
-                         "`uv run --group pages python scripts/build_pages.py`.")
+        raise SystemExit(
+            "build_pages: Shinylive isn't installed here. Run `make pages`, or "
+            "`uv run --group pages python scripts/build_pages.py`."
+        )
     for old in (BUILD, SITE):  # both are build output, git-ignored
         shutil.rmtree(old, ignore_errors=True)
     app = BUILD / "app"
@@ -151,8 +172,10 @@ def main() -> None:
     (SITE / ".nojekyll").touch()
     size = sum(f.stat().st_size for f in SITE.rglob("*") if f.is_file())
     # Not Shinylive's suggested `python3 -m http.server`: it ignores Range, so media can't seek.
-    print(f"build_pages: wrote {SITE.relative_to(REPO)}/ ({size / 1e6:.1f} MB, "
-          f"{len(media)} media files). Serve it as Pages does with `make pages-serve`.")
+    print(
+        f"build_pages: wrote {SITE.relative_to(REPO)}/ ({size / 1e6:.1f} MB, "
+        f"{len(media)} media files). Serve it as Pages does with `make pages-serve`."
+    )
 
 
 if __name__ == "__main__":

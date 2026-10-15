@@ -67,11 +67,13 @@ def library_view(archive: Archive) -> dict:
         "counts": {"all": len(recordings), "untagged": sum(is_untagged(r) for r in recordings)},
         "tags": [
             {"tag": tag, "count": n, "private": is_private_tag(tag)}
-            for tag, n in sorted(counts.items()) if not tag.startswith("notes/")
+            for tag, n in sorted(counts.items())
+            if not tag.startswith("notes/")
         ],
         "note_types": [
             {"note_type": tag.removeprefix("notes/"), "count": n}
-            for tag, n in sorted(counts.items()) if tag.startswith("notes/")
+            for tag, n in sorted(counts.items())
+            if tag.startswith("notes/")
         ],
         "problems": [{"path": str(p.path), "message": p.message} for p in archive.problems],
     }
@@ -83,23 +85,30 @@ def _turns(r: Rendition) -> list[dict]:
         # Until people arrive (stage 3b), a turn shows the name Plaud gave its speaker, if any,
         # and otherwise the diarization label.
         speaker = seg.get("speaker_name") or seg.get("speaker")
-        out.append({
-            "start": seg["start"],
-            "end": seg["end"],
-            "speaker": speaker or None,
-            "text": seg["text"],
-            "words": [{"word": w["word"], "start": w["start"], "end": w["end"]}
-                      for w in seg.get("words", [])],
-        })
+        out.append(
+            {
+                "start": seg["start"],
+                "end": seg["end"],
+                "speaker": speaker or None,
+                "text": seg["text"],
+                "words": [
+                    {"word": w["word"], "start": w["start"], "end": w["end"]}
+                    for w in seg.get("words", [])
+                ],
+            }
+        )
     return out
 
 
 def _label(r: Rendition) -> str:
-    return "Plaud" if r.engine == "plaud" else f"{(r.model or r.engine).split('/')[-1]} · {r.engine}"
+    return (
+        "Plaud" if r.engine == "plaud" else f"{(r.model or r.engine).split('/')[-1]} · {r.engine}"
+    )
 
 
-def _media_url(archive: Archive, rec: Recording, media_base: str | None,
-               problems: list[Problem]) -> str | None:
+def _media_url(
+    archive: Archive, rec: Recording, media_base: str | None, problems: list[Problem]
+) -> str | None:
     """The server's own route, which checks the file itself; or, with a base (the static Pages
     demo, spec §17.1), the file under it, whose extension sets the Content-Type. recording.json
     is hand-editable, so then media.file must be a plain name: no folder, no way out of the base.
@@ -108,8 +117,12 @@ def _media_url(archive: Archive, rec: Recording, media_base: str | None,
         return f"/media/{rec.id}"
     name = rec.media.file
     if name in ("", ".", "..") or "/" in name or "\\" in name:
-        problems.append(Problem(path=archive.path_for(rec.id) / "recording.json",
-                                message=f"media.file {name!r} is not a plain file name"))
+        problems.append(
+            Problem(
+                path=archive.path_for(rec.id) / "recording.json",
+                message=f"media.file {name!r} is not a plain file name",
+            )
+        )
         return None
     return f"{media_base}{quote(name, safe='')}"
 
@@ -124,21 +137,34 @@ def recording_view(archive: Archive, rid: str, *, media_base: str | None = None)
     problems: list[Problem] = []
     outputs = archive.renditions(rid, problems)
     transcripts = [
-        {"rendition": path, "label": _label(r), "engine": r.engine, "model": r.model,
-         "created_at": r.created_at.isoformat(), "turns": _turns(r)}
-        for path, r in outputs if r.kind == "transcript"
+        {
+            "rendition": path,
+            "label": _label(r),
+            "engine": r.engine,
+            "model": r.model,
+            "created_at": r.created_at.isoformat(),
+            "turns": _turns(r),
+        }
+        for path, r in outputs
+        if r.kind == "transcript"
     ]
     names = [t["rendition"] for t in transcripts]
-    chosen = rec.chosen.transcript if rec.chosen.transcript in names else (names[-1] if names else None)
+    chosen = (
+        rec.chosen.transcript if rec.chosen.transcript in names else (names[-1] if names else None)
+    )
 
     groups: dict[str, list[dict]] = {}
     for path, r in reversed(outputs):  # newest first inside each group
         if r.kind == "notes" and r.engine != "plaud":
-            groups.setdefault(r.note_type, []).append({
-                "rendition": path, "model": r.model, "engine": r.engine,
-                "created_at": r.created_at.isoformat(),
-                "html": render_markdown(r.payload["markdown"]),
-            })
+            groups.setdefault(r.note_type, []).append(
+                {
+                    "rendition": path,
+                    "model": r.model,
+                    "engine": r.engine,
+                    "created_at": r.created_at.isoformat(),
+                    "html": render_markdown(r.payload["markdown"]),
+                }
+            )
     my_notes = archive.read_my_notes(rid)
     media_url = _media_url(archive, rec, media_base, problems)  # before problems is listed
     return {
@@ -152,20 +178,32 @@ def recording_view(archive: Archive, rid: str, *, media_base: str | None = None)
         "private": is_private(rec),
         "media_url": media_url,
         "tags": _tags(rec),
-        "sources": [{"kind": s.kind, "ref": s.ref,
-                     "added_at": (s.fetched_at or s.added_at).isoformat()} for s in rec.sources],
+        "sources": [
+            {"kind": s.kind, "ref": s.ref, "added_at": (s.fetched_at or s.added_at).isoformat()}
+            for s in rec.sources
+        ],
         "transcripts": transcripts,
         "chosen_transcript": chosen,
         "notes": [{"note_type": k, "outputs": v} for k, v in sorted(groups.items())],
         "plaud_notes": [
-            {"rendition": path, "created_at": r.created_at.isoformat(),
-             "html": render_markdown(r.payload["markdown"])}
-            for path, r in outputs if r.kind == "notes" and r.engine == "plaud"
+            {
+                "rendition": path,
+                "created_at": r.created_at.isoformat(),
+                "html": render_markdown(r.payload["markdown"]),
+            }
+            for path, r in outputs
+            if r.kind == "notes" and r.engine == "plaud"
         ],
         "my_notes_html": render_markdown(my_notes) if my_notes is not None else None,
         "renditions": [
-            {"rendition": path, "kind": r.kind, "note_type": r.note_type, "engine": r.engine,
-             "model": r.model, "created_at": r.created_at.isoformat()}
+            {
+                "rendition": path,
+                "kind": r.kind,
+                "note_type": r.note_type,
+                "engine": r.engine,
+                "model": r.model,
+                "created_at": r.created_at.isoformat(),
+            }
             for path, r in outputs
         ],
         "problems": [{"path": str(p.path), "message": p.message} for p in problems],

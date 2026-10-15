@@ -68,7 +68,9 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-INTERRUPT_GRACE = 120.0  # seconds a child gets to clean up after Ctrl-C when the caller set no timeout
+INTERRUPT_GRACE = (
+    120.0  # seconds a child gets to clean up after Ctrl-C when the caller set no timeout
+)
 
 
 def _stop_child(proc: subprocess.Popen, deadline: float | None) -> None:
@@ -91,8 +93,14 @@ def _stop_child(proc: subprocess.Popen, deadline: float | None) -> None:
             continue  # the child is already stopping: let it finish
 
 
-def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: float | None = None,
-              capture_output: bool = False, **popen_kwargs) -> subprocess.CompletedProcess:
+def run_child(
+    cmd: list[str],
+    *,
+    input: str | bytes | None = None,
+    timeout: float | None = None,
+    capture_output: bool = False,
+    **popen_kwargs,
+) -> subprocess.CompletedProcess:
     """subprocess.run, except for SIGTERM inside sigterm_forwarded: it goes on to the child, and
     this process stops only once the child has exited and its pipes are drained. Then the handler
     that was there before runs (it may raise), or, with none, this process exits. Calling that
@@ -140,7 +148,9 @@ def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: floa
         if _stopping:
             _stopping = False
             if _previous is not None:
-                _previous(signal.SIGTERM, None)  # the child is done: now the caller's handler decides
+                _previous(
+                    signal.SIGTERM, None
+                )  # the child is done: now the caller's handler decides
             else:
                 raise SystemExit(128 + signal.SIGTERM)  # no one else decides when to stop: stop now
 
@@ -232,11 +242,15 @@ def backup_config(ctx: Context) -> backup.BackupConfig:
 def _backup(ctx: Context, tags: tuple[str, ...]) -> str:
     bc = backup_config(ctx)
     result = backup.run_backup(bc, ctx.state, ctx.environ, tags=tags, runner=ctx.runner)
-    detail = (f"snapshot {result.snapshot_id[:12]}: {result.files} files, "
-              f"{result.data_added} bytes added")
+    detail = (
+        f"snapshot {result.snapshot_id[:12]}: {result.files} files, {result.data_added} bytes added"
+    )
     if bc.nas_repo_path and bc.nas.ssh:  # §15.1: the NAS's free space, or "unknown"
-        detail += ("; NAS free space unknown" if result.nas_free is None
-                   else f"; {result.nas_free / 1024 ** 3:.0f} GB free on the NAS")
+        detail += (
+            "; NAS free space unknown"
+            if result.nas_free is None
+            else f"; {result.nas_free / 1024**3:.0f} GB free on the NAS"
+        )
     return detail
 
 
@@ -266,13 +280,19 @@ def _check(ctx: Context, tags: tuple[str, ...]) -> str:
 
 def _restore_test(ctx: Context, tags: tuple[str, ...]) -> str:
     result = backup.run_restore_test(
-        backup_config(ctx), ctx.environ, expected_uuid=ctx.state.meta("archive_uuid") or "",
-        now=ctx.clock(), keep_free_percents=tuple(disk_thresholds(ctx.cfg).values()),
-        runner=ctx.runner)
+        backup_config(ctx),
+        ctx.environ,
+        expected_uuid=ctx.state.meta("archive_uuid") or "",
+        now=ctx.clock(),
+        keep_free_percents=tuple(disk_thresholds(ctx.cfg).values()),
+        runner=ctx.runner,
+    )
     if not result.ok:
         first = result.problems[0]
-        raise RestoreTestFailed(f"restore test failed: {len(result.problems)} problems; first: "
-                                f"{first['message']} ({first['path']})")
+        raise RestoreTestFailed(
+            f"restore test failed: {len(result.problems)} problems; first: "
+            f"{first['message']} ({first['path']})"
+        )
     return f"restored and validated {result.recordings} recordings"
 
 
@@ -280,8 +300,12 @@ def _mirror(ctx: Context, tags: tuple[str, ...]) -> str:
     mc = mirror.from_config(ctx.cfg, ctx.environ)
     if ctx.mirror_max_delete is not None:
         mc = replace(mc, max_delete=ctx.mirror_max_delete)
-    return mirror.run_mirror(mc, expected_uuid=ctx.state.meta("archive_uuid") or "",
-                             runner=ctx.runner, timeout=ctx.mirror_timeout)
+    return mirror.run_mirror(
+        mc,
+        expected_uuid=ctx.state.meta("archive_uuid") or "",
+        runner=ctx.runner,
+        timeout=ctx.mirror_timeout,
+    )
 
 
 class DiskWarning(RuntimeError):
@@ -317,8 +341,11 @@ def _restore_copy_left(ctx: Context) -> bool:
 def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
     if ctx.cfg.archive_path is None:
         raise ConfigError("set [archive] path")
-    status = disk_status(ctx.cfg.archive_path, expected_uuid=ctx.state.meta("archive_uuid"),
-                         **disk_thresholds(ctx.cfg))
+    status = disk_status(
+        ctx.cfg.archive_path,
+        expected_uuid=ctx.state.meta("archive_uuid"),
+        **disk_thresholds(ctx.cfg),
+    )
     if not status.marker:
         raise ArchiveMarkerError(status.message)
     if _restore_copy_left(ctx):  # before low space: Status shows that, and nothing shows this
@@ -329,19 +356,36 @@ def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
 
 
 JOBS: dict[str, Callable[[Context, tuple[str, ...]], str]] = {
-    "disk": _disk, "backup": _backup, "prune": _prune, "check": _check, "restore-test": _restore_test,
+    "disk": _disk,
+    "backup": _backup,
+    "prune": _prune,
+    "check": _check,
+    "restore-test": _restore_test,
     "mirror": _mirror,
 }
 # The errors a job is expected to raise, and the ones a broken state.db is guarded against;
 # run_job also contains any other Exception.
 FAILURES: tuple[type[BaseException], ...] = (
-    BackupError, MirrorError, DiskWarning, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
-    subprocess.TimeoutExpired)
+    BackupError,
+    MirrorError,
+    DiskWarning,
+    ConfigError,
+    SentinelError,
+    StateError,
+    OSError,
+    sqlite3.Error,
+    subprocess.TimeoutExpired,
+)
 
 
-INTERVALS = {"disk": timedelta(minutes=10), "backup": timedelta(hours=1),
-             "mirror": timedelta(hours=1), "prune": timedelta(days=1),
-             "check": timedelta(days=7), "restore-test": timedelta(days=30)}
+INTERVALS = {
+    "disk": timedelta(minutes=10),
+    "backup": timedelta(hours=1),
+    "mirror": timedelta(hours=1),
+    "prune": timedelta(days=1),
+    "check": timedelta(days=7),
+    "restore-test": timedelta(days=30),
+}
 ORDER = ("disk", "backup", "mirror", "prune", "check", "restore-test")
 RETRY_AFTER = timedelta(minutes=15)
 # A failed check reads a quarter of the repository again, and a failed restore test all of it,
@@ -349,19 +393,31 @@ RETRY_AFTER = timedelta(minutes=15)
 # it failed. (Task 11's ops council.) A failed mirror walks both trees twice to fail again, and
 # one short of space first reads and rewrites all it staged: its own hour is soon enough.
 # (Task 12's ops council)
-RETRY_HEAVY_AFTER = {"check": timedelta(hours=24), "restore-test": timedelta(hours=24),
-                     "mirror": timedelta(hours=1)}
+RETRY_HEAVY_AFTER = {
+    "check": timedelta(hours=24),
+    "restore-test": timedelta(hours=24),
+    "mirror": timedelta(hours=1),
+}
 REMIND_EVERY = timedelta(hours=24)
 KEEP_RUNS = timedelta(days=90)  # ops_runs gets about 70,000 rows a year; older ones go, daily
 PRUNE_RUNS_EVERY = timedelta(days=1)
-REPO_LOCKED = 11  # restic's exit status for a repository another process holds (the NAS's retention)
+REPO_LOCKED = (
+    11  # restic's exit status for a repository another process holds (the NAS's retention)
+)
 LOCKED = f"{BUSY} (repository locked)"
-TITLES = {"disk": "disk space low", "backup": "backup failed", "mirror": "mirror failed",
-          "prune": "backup retention failed", "check": "backup check failed",
-          "restore-test": "restore test failed"}
+TITLES = {
+    "disk": "disk space low",
+    "backup": "backup failed",
+    "mirror": "mirror failed",
+    "prune": "backup retention failed",
+    "check": "backup check failed",
+    "restore-test": "restore test failed",
+}
 # Failures of their own kind: each has its own title and its own alert state.
-DETAIL_TITLES = {"ArchiveMarkerError": "archive disk missing or changed",
-                 "RestoreCopyLeft": "restore copy left behind"}
+DETAIL_TITLES = {
+    "ArchiveMarkerError": "archive disk missing or changed",
+    "RestoreCopyLeft": "restore copy left behind",
+}
 
 
 def enabled_jobs(cfg: Config) -> tuple[str, ...]:
@@ -373,8 +429,12 @@ def enabled_jobs(cfg: Config) -> tuple[str, ...]:
     return tuple(j for j in ORDER if j in jobs)
 
 
-def due(state: State, now: datetime, jobs: tuple[str, ...],
-        attempts: Mapping[str, tuple[datetime, bool]] | None = None) -> list[str]:
+def due(
+    state: State,
+    now: datetime,
+    jobs: tuple[str, ...],
+    attempts: Mapping[str, tuple[datetime, bool]] | None = None,
+) -> list[str]:
     """A run stamped in the future (a clock that ran ahead and was put right) counts as long
     ago: otherwise every job, backups included, would wait for the clock to catch up. `attempts`
     are the runs this process could not record (a full state disk): one newer than state.db's
@@ -419,17 +479,24 @@ def _alert(ctx: Context, ac: AlertConfig, job: str, ok: bool, detail: str) -> No
         keys = [f"job:{job}", *(f"job:{job}:{kind}" for kind in DETAIL_TITLES)]
         failing = [key for key in keys if _known(ctx, key)[0]]
         if failing:
-            alerts.send(ac, title=f"recordings: {job} recovered",
-                        message=f"{job} works again. See Status.", priority=3,
-                        tags=("white_check_mark",))
+            alerts.send(
+                ac,
+                title=f"recordings: {job} recovered",
+                message=f"{job} works again. See Status.",
+                priority=3,
+                tags=("white_check_mark",),
+            )
         for key in failing:
             _remember(ctx, key, failing=False, last_sent_at=now)
         return
     key = f"job:{job}:{detail}" if detail in DETAIL_TITLES else f"job:{job}"
     failing, last_sent = _known(ctx, key)
     if not failing or last_sent is None or not timedelta(0) <= now - last_sent < REMIND_EVERY:
-        delivered = alerts.send(ac, title=f"recordings: {DETAIL_TITLES.get(detail, TITLES[job])}",
-                                message=f"{job} failed ({detail}). See Status.")
+        delivered = alerts.send(
+            ac,
+            title=f"recordings: {DETAIL_TITLES.get(detail, TITLES[job])}",
+            message=f"{job} failed ({detail}). See Status.",
+        )
         last_sent = now if delivered else last_sent
     _remember(ctx, key, failing=True, last_sent_at=last_sent)
 
@@ -447,8 +514,9 @@ def _known(ctx: Context, key: str) -> tuple[bool, datetime | None]:
         return mine or (False, None)
     if mine is None:
         return saved
-    newer = (saved[1] is not None and saved[1] <= ctx.clock()
-             and (mine[1] is None or saved[1] > mine[1]))
+    newer = (
+        saved[1] is not None and saved[1] <= ctx.clock() and (mine[1] is None or saved[1] > mine[1])
+    )
     return saved if newer else mine
 
 
@@ -460,8 +528,9 @@ def _remember(ctx: Context, key: str, *, failing: bool, last_sent_at: datetime |
         log.warning("%s: could not save the alert state", key)
 
 
-def _conclude(ctx: Context, ac: AlertConfig | None, job: str, started: datetime, ok: bool,
-              detail: str) -> JobResult:
+def _conclude(
+    ctx: Context, ac: AlertConfig | None, job: str, started: datetime, ok: bool, detail: str
+) -> JobResult:
     """Record a run, alert, and for a backup ping the dead-man's switch: the URL itself or /fail.
     A state.db that can't record it leaves the attempt in ctx.attempts, for due()."""
     try:
@@ -473,8 +542,11 @@ def _conclude(ctx: Context, ac: AlertConfig | None, job: str, started: datetime,
     if ac is not None:
         _alert(ctx, ac, job, ok, detail)
         if job == "backup":
-            alerts.ping_deadman(ac, "success" if ok else "fail",
-                                message="" if ok else f"{job} failed ({detail}). See Status.")
+            alerts.ping_deadman(
+                ac,
+                "success" if ok else "fail",
+                message="" if ok else f"{job} failed ({detail}). See Status.",
+            )
     return JobResult(job, ok, detail)
 
 
@@ -499,8 +571,9 @@ def _run_held(ctx: Context, job: str, tags: tuple[str, ...]) -> JobResult:
     return _conclude(ctx, ac, job, started, ok, detail)
 
 
-def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
-            lock_timeout: float = CLI_WAIT) -> JobResult:
+def run_job(
+    ctx: Context, job: str, *, tags: tuple[str, ...] = (), lock_timeout: float = CLI_WAIT
+) -> JobResult:
     """Run one job under the ops lock, record it, alert, and for a backup ping the dead-man's
     switch: /start first, then the URL itself or /fail. The CLI waits for the lock (the default);
     the loop passes 0. A lock still held means another run is busy: BUSY. A restic exit 11 (the
@@ -564,9 +637,11 @@ def run_due(ctx: Context) -> list[JobResult]:
         _warn_hourly(ctx, "heartbeat", "could not write the heartbeat")
     _trim_runs(ctx)
     now = ctx.clock()
-    return [run_job(ctx, job, lock_timeout=0)
-            for job in due(ctx.state, now, enabled_jobs(ctx.cfg), ctx.attempts)
-            if not (job in ctx.locked and timedelta(0) <= now - ctx.locked[job] < RETRY_AFTER)]
+    return [
+        run_job(ctx, job, lock_timeout=0)
+        for job in due(ctx.state, now, enabled_jobs(ctx.cfg), ctx.attempts)
+        if not (job in ctx.locked and timedelta(0) <= now - ctx.locked[job] < RETRY_AFTER)
+    ]
 
 
 def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: False) -> None:
@@ -583,13 +658,18 @@ def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: Fal
         sleep(tick)
 
 
-SHOWN = (("backup", "Backup", timedelta(hours=2)),
-         ("restore-test", "Restore test", timedelta(days=31)),
-         ("check", "Repository check", timedelta(days=8)),
-         ("mirror", "Mirror for the Mac", timedelta(hours=2)),
-         ("prune", "Retention", timedelta(days=2)))  # its alert says "See Status" too (§14)
-RUNNING_LABELS = {**{job: label for job, label, _ in SHOWN}, "disk": "Disk check",
-                  "import": "Import"}
+SHOWN = (
+    ("backup", "Backup", timedelta(hours=2)),
+    ("restore-test", "Restore test", timedelta(days=31)),
+    ("check", "Repository check", timedelta(days=8)),
+    ("mirror", "Mirror for the Mac", timedelta(hours=2)),
+    ("prune", "Retention", timedelta(days=2)),
+)  # its alert says "See Status" too (§14)
+RUNNING_LABELS = {
+    **{job: label for job, label, _ in SHOWN},
+    "disk": "Disk check",
+    "import": "Import",
+}
 # The loop writes its heartbeat at each pass, about once a minute (Task 13). Between passes only a
 # job holding "ops" keeps it quiet, and that job's run reports when it ends.
 QUIET_AFTER = timedelta(minutes=15)
@@ -623,20 +703,39 @@ def when_label(t: datetime, now: datetime, timezone_name: str) -> str:
     return f"{t.astimezone(ZoneInfo(timezone_name)):%Y-%m-%d %H:%M} ({ago})"
 
 
-def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_name: str,
-                   warn: float, stop: float, jobs: tuple[str, ...]) -> dict:
+def status_summary(
+    state: State,
+    *,
+    archive_root: Path,
+    now: datetime,
+    timezone_name: str,
+    warn: float,
+    stop: float,
+    jobs: tuple[str, ...],
+) -> dict:
     """Status's backup and disk panels (spec §12.5). The backup needs attention after 2 hours."""
-    disk = disk_view(disk_status(archive_root, expected_uuid=state.meta("archive_uuid"),
-                                 warn=warn, stop=stop))
+    disk = disk_view(
+        disk_status(archive_root, expected_uuid=state.meta("archive_uuid"), warn=warn, stop=stop)
+    )
     flags = len(state.flags())
     held = running(state.locks_dir)  # (job, since) while a job holds the ops lock
     # A hold can excuse a late job for HOLD_LIMIT at most. A start in the future (a clock put
     # right) counts as long ago, as in due().
     hold_ok = held is not None and timedelta(0) <= now - held[1] <= HOLD_LIMIT
-    out: dict = {"configured": True, "jobs": [], "attention": [], "flags": flags, "disk": disk,
-                 "running": None if held is None else {
-                     "job": held[0], "label": RUNNING_LABELS.get(held[0], held[0]),
-                     "since": when_label(held[1], now, timezone_name)}}
+    out: dict = {
+        "configured": True,
+        "jobs": [],
+        "attention": [],
+        "flags": flags,
+        "disk": disk,
+        "running": None
+        if held is None
+        else {
+            "job": held[0],
+            "label": RUNNING_LABELS.get(held[0], held[0]),
+            "since": when_label(held[1], now, timezone_name),
+        },
+    }
     reports = [_stamp(state.meta("ops_heartbeat"))]  # the loop's heartbeat, and each job's last run
     for job, label, stale_after in SHOWN:
         if job not in jobs:
@@ -650,28 +749,48 @@ def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_
         # §12.5: while a job holds the ops lock the backup's and the mirror's turns are skipped,
         # so one that is merely late is waiting, not an outage, for HOLD_LIMIT at most, and only
         # if the hold began before the job turned late: a hold that began after explains nothing.
-        waiting = (late and job in ("backup", "mirror") and ago is not None and hold_ok
-                   and held[1] <= good.finished_at + stale_after)
+        waiting = (
+            late
+            and job in ("backup", "mirror")
+            and ago is not None
+            and hold_ok
+            and held[1] <= good.finished_at + stale_after
+        )
         stale = late and not waiting
         last_ok = when_label(good.finished_at, now, timezone_name) if good else None
-        out["jobs"].append({
-            "job": job, "label": label, "last_ok": last_ok,
-            "last_ok_detail": good.detail if good else None,  # the NAS's free space, for a backup
-            "failing": failing, "detail": last.detail if failing else None,
-            "attention": failing or stale, "waiting": waiting})
+        out["jobs"].append(
+            {
+                "job": job,
+                "label": label,
+                "last_ok": last_ok,
+                "last_ok_detail": good.detail
+                if good
+                else None,  # the NAS's free space, for a backup
+                "failing": failing,
+                "detail": last.detail if failing else None,
+                "attention": failing or stale,
+                "waiting": waiting,
+            }
+        )
         if job == "backup" and stale:
-            out["attention"].append("The last backup is more than 2 hours old." if good
-                                    else "No backup has finished yet.")
+            out["attention"].append(
+                "The last backup is more than 2 hours old."
+                if good
+                else "No backup has finished yet."
+            )
         elif stale and not failing:  # a failing job has its line below
             out["attention"].append(
-                f"{label} is overdue: it last worked {last_ok}." if good
-                else f"{label} has not worked yet.")
+                f"{label} is overdue: it last worked {last_ok}."
+                if good
+                else f"{label} has not worked yet."
+            )
         if failing:
             out["attention"].append(f"{label} failed: {last.detail}")
     if held is not None and not hold_ok:
         out["attention"].append(
             f"{out['running']['label']} has been running since {out['running']['since']}, and no "
-            "backup runs until it ends: check that it isn't stuck.")
+            "backup runs until it ends: check that it isn't stuck."
+        )
     # Silence with nothing holding "ops" means the backup service has stopped, whatever the
     # backup's own age says, and also where no backup is set up. A future stamp proves nothing.
     seen = max((t for t in reports if t is not None and t <= now), default=None)
@@ -679,11 +798,15 @@ def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_
     if held is None and (seen is None or now - seen > QUIET_AFTER):
         out["attention"].append(
             f"The backup service last reported {out['reported']}: check that it is running."
-            if seen else "The backup service has not reported yet: check that it is running.")
+            if seen
+            else "The backup service has not reported yet: check that it is running."
+        )
     if disk["level"] != "ok":
         out["attention"].append(disk["message"])
     if flags:
         out["attention"].append(
-            f"{flags} file needs attention: run recordings reindex." if flags == 1
-            else f"{flags} files need attention: run recordings reindex.")
+            f"{flags} file needs attention: run recordings reindex."
+            if flags == 1
+            else f"{flags} files need attention: run recordings reindex."
+        )
     return out

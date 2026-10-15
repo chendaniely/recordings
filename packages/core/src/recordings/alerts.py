@@ -62,8 +62,8 @@ def _build_opener() -> urllib.request.OpenerDirector:
     never end (and makes a later fork() warn)."""
     proxies = urllib.request.getproxies_environment()
     return urllib.request.build_opener(
-        urllib.request.ProxyHandler({k: v for k, v in proxies.items() if k == "https"}),
-        _NoRedirect)
+        urllib.request.ProxyHandler({k: v for k, v in proxies.items() if k == "https"}), _NoRedirect
+    )
 
 
 _OPENER = _build_opener()
@@ -75,18 +75,28 @@ def _check_url(url: object, what: str) -> None:
     (Healthchecks takes it as a plain success ping) or be dropped. Visible ASCII only, so the URL
     checked is the URL sent (urlsplit drops a tab or a newline the request keeps) and a host can't
     be a look-alike. The error names the setting, never the URL, which may be a secret."""
-    plain = isinstance(url, str) and url.isascii() and url.isprintable() and not any(
-        c in url for c in " ?#")
+    plain = (
+        isinstance(url, str)
+        and url.isascii()
+        and url.isprintable()
+        and not any(c in url for c in " ?#")
+    )
     try:
         parts = urlsplit(url) if plain else None
         host = parts.hostname if parts else None
         _ = parts.port if parts else None  # a port that isn't a number raises ValueError
     except ValueError:  # a malformed IPv6 address, or port
         parts, host = None, None
-    if parts is None or not host or "@" in parts.netloc or not (
-            parts.scheme == "https" or (parts.scheme == "http" and host in _LOOPBACK)):
-        raise ConfigError(f"{what} must be an https:// URL in plain ASCII, with no user name, "
-                          "password, query (?) or fragment (#) in it")
+    if (
+        parts is None
+        or not host
+        or "@" in parts.netloc
+        or not (parts.scheme == "https" or (parts.scheme == "http" and host in _LOOPBACK))
+    ):
+        raise ConfigError(
+            f"{what} must be an https:// URL in plain ASCII, with no user name, "
+            "password, query (?) or fragment (#) in it"
+        )
 
 
 @dataclass(frozen=True)
@@ -105,31 +115,41 @@ class AlertConfig:
             raise ConfigError("RECORDINGS_NTFY_TOPIC must be 1 to 64 letters, digits, '-' or '_'")
         if self.token is not None and not TOKEN_RE.fullmatch(self.token):
             raise ConfigError("RECORDINGS_NTFY_TOKEN must be one word of visible ASCII")
-        if (self.topic is not None and self.token is None and self.ntfy_server is not None
-                and urlsplit(self.ntfy_server).hostname not in _LOOPBACK
-                and len(self.topic) < MIN_OPEN_TOPIC):
-            raise ConfigError(f"RECORDINGS_NTFY_TOPIC must be {MIN_OPEN_TOPIC} or more random "
-                              "characters: with no token, it is all that keeps the alerts private")
+        if (
+            self.topic is not None
+            and self.token is None
+            and self.ntfy_server is not None
+            and urlsplit(self.ntfy_server).hostname not in _LOOPBACK
+            and len(self.topic) < MIN_OPEN_TOPIC
+        ):
+            raise ConfigError(
+                f"RECORDINGS_NTFY_TOPIC must be {MIN_OPEN_TOPIC} or more random "
+                "characters: with no token, it is all that keeps the alerts private"
+            )
 
     @property
     def enabled(self) -> bool:
         return bool(self.ntfy_server and self.topic)
 
     def __repr__(self) -> str:  # never the topic, the ping URL or the token
-        return (f"AlertConfig(ntfy_server={self.ntfy_server!r}, "
-                f"topic={'set' if self.topic else None}, "
-                f"deadman_url={'set' if self.deadman_url else None}, "
-                f"token={'set' if self.token else None})")
+        return (
+            f"AlertConfig(ntfy_server={self.ntfy_server!r}, "
+            f"topic={'set' if self.topic else None}, "
+            f"deadman_url={'set' if self.deadman_url else None}, "
+            f"token={'set' if self.token else None})"
+        )
 
     __str__ = __repr__
 
 
 def from_config(cfg: Config, environ: Mapping[str, str]) -> AlertConfig:
     server = cfg.data.get("alerts", {}).get("ntfy_server")
-    return AlertConfig(ntfy_server=server.rstrip("/") if isinstance(server, str) else server,
-                       topic=secret("ntfy_topic", environ),
-                       deadman_url=secret("deadman_url", environ),
-                       token=secret("ntfy_token", environ))
+    return AlertConfig(
+        ntfy_server=server.rstrip("/") if isinstance(server, str) else server,
+        topic=secret("ntfy_topic", environ),
+        deadman_url=secret("deadman_url", environ),
+        token=secret("ntfy_token", environ),
+    )
 
 
 def _deliver(request: urllib.request.Request) -> bool:
@@ -144,18 +164,33 @@ def _deliver(request: urllib.request.Request) -> bool:
     return False
 
 
-def send(ac: AlertConfig, *, title: str, message: str, priority: int = 4,
-         tags: Sequence[str] = ("warning",)) -> bool:
+def send(
+    ac: AlertConfig,
+    *,
+    title: str,
+    message: str,
+    priority: int = 4,
+    tags: Sequence[str] = ("warning",),
+) -> bool:
     """Push one alert. The title and the message come from fixed templates (Review Focus 4)."""
     if not ac.enabled:
         return False
-    headers = {"Title": title, "Priority": str(priority), "Tags": ",".join(tags),
-               "User-Agent": f"recordings/{__version__}"}
+    headers = {
+        "Title": title,
+        "Priority": str(priority),
+        "Tags": ",".join(tags),
+        "User-Agent": f"recordings/{__version__}",
+    }
     if ac.token:
         headers["Authorization"] = f"Bearer {ac.token}"
-    delivered = _deliver(urllib.request.Request(
-        f"{ac.ntfy_server}/{ac.topic}", data=message.encode("utf-8"), method="POST",
-        headers=headers))
+    delivered = _deliver(
+        urllib.request.Request(
+            f"{ac.ntfy_server}/{ac.topic}",
+            data=message.encode("utf-8"),
+            method="POST",
+            headers=headers,
+        )
+    )
     if not delivered:
         log.warning("alert %r was not delivered", title)
     return delivered
@@ -165,6 +200,11 @@ def ping_deadman(ac: AlertConfig, kind: str = "success", *, message: str = "") -
     """One Healthchecks ping, `kind` being a key of PINGS. The body is a fixed text."""
     if not ac.deadman_url:
         return False
-    return _deliver(urllib.request.Request(
-        ac.deadman_url.rstrip("/") + PINGS[kind], data=message.encode("utf-8"), method="POST",
-        headers={"User-Agent": f"recordings/{__version__}"}))
+    return _deliver(
+        urllib.request.Request(
+            ac.deadman_url.rstrip("/") + PINGS[kind],
+            data=message.encode("utf-8"),
+            method="POST",
+            headers={"User-Agent": f"recordings/{__version__}"},
+        )
+    )

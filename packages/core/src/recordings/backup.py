@@ -122,11 +122,20 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
     if not isinstance(repository, str) or not repository.strip():
         raise ConfigError("[backup] repository is not set (see config.example.toml)")
     if _PASSWORD_IN_URL.search(repository):  # the message never repeats the URL
-        raise ConfigError("[backup] repository: the repository URL carries credentials; put the "
-                          "password in the secret file (RESTIC_REST_PASSWORD_FILE) and the user "
-                          "in [backup] rest_username")
-    missing = [n for n, v in (("[archive] path", cfg.archive_path), ("[state] path", cfg.state_path),
-                              ("[archive] writer_id", cfg.writer_id)) if v is None]
+        raise ConfigError(
+            "[backup] repository: the repository URL carries credentials; put the "
+            "password in the secret file (RESTIC_REST_PASSWORD_FILE) and the user "
+            "in [backup] rest_username"
+        )
+    missing = [
+        n
+        for n, v in (
+            ("[archive] path", cfg.archive_path),
+            ("[state] path", cfg.state_path),
+            ("[archive] writer_id", cfg.writer_id),
+        )
+        if v is None
+    ]
     if missing:
         raise ConfigError("set " + ", ".join(missing) + " before backing up")
     extra = section.get("extra_paths", [])
@@ -136,7 +145,11 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
     if not isinstance(prune, bool):
         raise ConfigError("[backup] prune must be true or false")
     min_free_gb = section.get("min_nas_free_gb", 10)
-    if not isinstance(min_free_gb, (int, float)) or isinstance(min_free_gb, bool) or min_free_gb < 0:
+    if (
+        not isinstance(min_free_gb, (int, float))
+        or isinstance(min_free_gb, bool)
+        or min_free_gb < 0
+    ):
         raise ConfigError("[backup] min_nas_free_gb must be a number")
     nas = nas_from_config(cfg, environ)
     if repository.strip().startswith("sftp:"):
@@ -151,25 +164,40 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
     except OSError:
         pass  # a missing file stays named, and restic says it can't read it
     paths = ([cfg.path] if cfg.path else []) + [Path(p) for p in extra]
-    keep = Keep(**{k: _positive_int(section, f"keep_{k}", d)
-                   for k, d in (("hourly", 24), ("daily", 14), ("weekly", 8), ("monthly", 12))})
+    keep = Keep(
+        **{
+            k: _positive_int(section, f"keep_{k}", d)
+            for k, d in (("hourly", 24), ("daily", 14), ("weekly", 8), ("monthly", 12))
+        }
+    )
     return BackupConfig(
-        repository=repository.strip(), host=cfg.writer_id, archive=cfg.archive_path,
-        state=cfg.state_path, paths=tuple(paths), keep=keep, prune=prune,
+        repository=repository.strip(),
+        host=cfg.writer_id,
+        archive=cfg.archive_path,
+        state=cfg.state_path,
+        paths=tuple(paths),
+        keep=keep,
+        prune=prune,
         restic=str(section.get("restic", "restic")),
         cache_dir=Path(section["cache_dir"]) if section.get("cache_dir") else None,
-        restore_scratch=Path(section["restore_scratch"]) if section.get("restore_scratch") else None,
+        restore_scratch=Path(section["restore_scratch"])
+        if section.get("restore_scratch")
+        else None,
         nas=nas,
         nas_repo_path=section.get("nas_repo_path") or None,
-        min_nas_free_bytes=int(min_free_gb * 1024 ** 3),
+        min_nas_free_bytes=int(min_free_gb * 1024**3),
         rest_username=section.get("rest_username") or None,
-        cacert=cacert_path)
+        cacert=cacert_path,
+    )
 
 
 def restic_env(bc: BackupConfig, environ: Mapping[str, str]) -> dict[str, str]:
     """restic's whole environment: nothing from ours but these, so no stray variable leaks in."""
-    env = {"PATH": environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-           "HOME": environ.get("HOME", "/tmp"), "RESTIC_REPOSITORY": bc.repository}
+    env = {
+        "PATH": environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "HOME": environ.get("HOME", "/tmp"),
+        "RESTIC_REPOSITORY": bc.repository,
+    }
     if environ.get("RESTIC_PASSWORD_FILE"):
         env["RESTIC_PASSWORD_FILE"] = environ["RESTIC_PASSWORD_FILE"]
     elif environ.get("RESTIC_PASSWORD"):
@@ -206,17 +234,43 @@ def state_copy_path(bc: BackupConfig) -> Path:
 
 def backup_command(bc: BackupConfig, state_copy: Path, *, tags: Sequence[str] = ()) -> list[str]:
     tag_args = [x for t in (TAG, *tags) for x in ("--tag", t)]
-    return [*restic_base(bc), "backup", "--json", "--host", bc.host, *tag_args,
-            "--exclude", str(bc.archive / ".tmp"), "--exclude", ".*.tmp",
-            str(bc.archive), *(str(p) for p in bc.paths), str(state_copy)]
+    return [
+        *restic_base(bc),
+        "backup",
+        "--json",
+        "--host",
+        bc.host,
+        *tag_args,
+        "--exclude",
+        str(bc.archive / ".tmp"),
+        "--exclude",
+        ".*.tmp",
+        str(bc.archive),
+        *(str(p) for p in bc.paths),
+        str(state_copy),
+    ]
 
 
 def forget_command(bc: BackupConfig) -> list[str]:
     keep_tags = [x for t in MILESTONE_TAGS for x in ("--keep-tag", t)]
-    return [*restic_base(bc), "forget", "--host", bc.host, "--tag", TAG,
-            "--keep-hourly", str(bc.keep.hourly), "--keep-daily", str(bc.keep.daily),
-            "--keep-weekly", str(bc.keep.weekly), "--keep-monthly", str(bc.keep.monthly),
-            *keep_tags, "--prune"]
+    return [
+        *restic_base(bc),
+        "forget",
+        "--host",
+        bc.host,
+        "--tag",
+        TAG,
+        "--keep-hourly",
+        str(bc.keep.hourly),
+        "--keep-daily",
+        str(bc.keep.daily),
+        "--keep-weekly",
+        str(bc.keep.weekly),
+        "--keep-monthly",
+        str(bc.keep.monthly),
+        *keep_tags,
+        "--prune",
+    ]
 
 
 def unlock_command(bc: BackupConfig) -> list[str]:
@@ -235,27 +289,48 @@ def check_command(bc: BackupConfig, *, subset: str | None = None) -> list[str]:
 
 def restore_command(bc: BackupConfig, target: Path) -> list[str]:
     # --verify reads every restored file back and compares it with the repository.
-    return [*restic_base(bc), "restore", "latest", "--host", bc.host, "--tag", TAG,
-            "--target", str(target), "--verify"]
+    return [
+        *restic_base(bc),
+        "restore",
+        "latest",
+        "--host",
+        bc.host,
+        "--tag",
+        TAG,
+        "--target",
+        str(target),
+        "--verify",
+    ]
 
 
 def init_command(bc: BackupConfig) -> list[str]:
     return [*restic_base(bc), "init"]
 
 
-def _run(bc: BackupConfig, cmd: list[str], environ: Mapping[str, str], what: str, runner,
-         timeout: float | None = None) -> subprocess.CompletedProcess:
-    proc = runner(cmd, env=restic_env(bc, environ), capture_output=True, text=True,
-                  timeout=timeout)
+def _run(
+    bc: BackupConfig,
+    cmd: list[str],
+    environ: Mapping[str, str],
+    what: str,
+    runner,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess:
+    proc = runner(cmd, env=restic_env(bc, environ), capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         lines = (proc.stderr or "").strip().splitlines()
         # restic's whole report, for --debug only: a failed check names the damaged packs and the
         # `restic repair packs` line to run; its last line says only that there are errors.
-        log.debug("restic %s exited %d:\n%s", what, proc.returncode,
-                  _USERINFO.sub(r"\1***@", "\n".join(lines)))
-        raise BackupError(f"restic {what} failed (exit {proc.returncode}): "
-                          + _USERINFO.sub(r"\1***@", (lines or ["no message"])[-1])[:300],
-                          returncode=proc.returncode)
+        log.debug(
+            "restic %s exited %d:\n%s",
+            what,
+            proc.returncode,
+            _USERINFO.sub(r"\1***@", "\n".join(lines)),
+        )
+        raise BackupError(
+            f"restic {what} failed (exit {proc.returncode}): "
+            + _USERINFO.sub(r"\1***@", (lines or ["no message"])[-1])[:300],
+            returncode=proc.returncode,
+        )
     return proc
 
 
@@ -269,7 +344,9 @@ def _check_archive(bc: BackupConfig, state: State) -> str:
     except SentinelError as exc:
         raise BackupRefused(f"refusing to back up: {exc}") from None
     if state.meta("archive_uuid") != identity.uuid:
-        raise BackupRefused("refusing to back up: the archive's UUID changed since `recordings init`")
+        raise BackupRefused(
+            "refusing to back up: the archive's UUID changed since `recordings init`"
+        )
     return identity.uuid
 
 
@@ -286,8 +363,14 @@ def run_init(bc: BackupConfig, environ: Mapping[str, str], *, runner=subprocess.
     return "repository initialised"
 
 
-def run_backup(bc: BackupConfig, state: State, environ: Mapping[str, str], *,
-               tags: Sequence[str] = (), runner=subprocess.run) -> BackupResult:
+def run_backup(
+    bc: BackupConfig,
+    state: State,
+    environ: Mapping[str, str],
+    *,
+    tags: Sequence[str] = (),
+    runner=subprocess.run,
+) -> BackupResult:
     _check_archive(bc, state)
     for path in bc.paths:
         if not path.is_file():
@@ -296,7 +379,9 @@ def run_backup(bc: BackupConfig, state: State, environ: Mapping[str, str], *,
     if bc.nas_repo_path and bc.nas.ssh:
         free = nas_free_bytes(bc.nas, bc.nas_repo_path, runner=runner)
         if free is not None and free < bc.min_nas_free_bytes:
-            raise NasLowOnSpace(f"refusing to back up: only {free / 1024 ** 3:.1f} GB free on the NAS")
+            raise NasLowOnSpace(
+                f"refusing to back up: only {free / 1024**3:.1f} GB free on the NAS"
+            )
     state_copy = state.backup_to(state_copy_path(bc))
     _unlock(bc, environ, runner)
     proc = _run(bc, backup_command(bc, state_copy, tags=tags), environ, "backup", runner)
@@ -310,9 +395,12 @@ def run_backup(bc: BackupConfig, state: State, environ: Mapping[str, str], *,
             summary = message
     if not summary or not summary.get("snapshot_id"):
         raise BackupError("restic backup finished without a snapshot")
-    return BackupResult(snapshot_id=summary["snapshot_id"],
-                        files=int(summary.get("total_files_processed") or 0),
-                        data_added=int(summary.get("data_added") or 0), nas_free=free)
+    return BackupResult(
+        snapshot_id=summary["snapshot_id"],
+        files=int(summary.get("total_files_processed") or 0),
+        data_added=int(summary.get("data_added") or 0),
+        nas_free=free,
+    )
 
 
 def run_forget(bc: BackupConfig, environ: Mapping[str, str], *, runner=subprocess.run) -> str:
@@ -321,8 +409,14 @@ def run_forget(bc: BackupConfig, environ: Mapping[str, str], *, runner=subproces
     return "retention applied"
 
 
-def run_check(bc: BackupConfig, environ: Mapping[str, str], *, now: datetime | None = None,
-              subset: str | None = None, runner=subprocess.run) -> str:
+def run_check(
+    bc: BackupConfig,
+    environ: Mapping[str, str],
+    *,
+    now: datetime | None = None,
+    subset: str | None = None,
+    runner=subprocess.run,
+) -> str:
     """`restic check`; given `subset` ("2/4"), or `now` for this week's quarter, it also reads
     back that part of the data."""
     subset = subset or (check_subset(now) if now is not None else None)
@@ -359,12 +453,17 @@ def _check_scratch_space(bc: BackupConfig, keep_free_percents: Sequence[float]) 
     needed = _tree_bytes(bc.archive) + sum(p.stat().st_size for p in bc.paths if p.is_file())
     usage = shutil.disk_usage(bc.restore_scratch)
     after = usage.free - needed
-    crossed = [t for t in sorted(keep_free_percents, reverse=True)
-               if usage.free * 100 >= t * usage.total > after * 100]
+    crossed = [
+        t
+        for t in sorted(keep_free_percents, reverse=True)
+        if usage.free * 100 >= t * usage.total > after * 100
+    ]
     if after <= 0 or crossed:
         where = f"below {crossed[0]:g}% free" if crossed else "past full"
-        raise ScratchTooSmall(f"refusing the restore test: restoring {needed / 1024 ** 3:.1f} GB "
-                              f"would take the scratch folder's disk {where}")
+        raise ScratchTooSmall(
+            f"refusing the restore test: restoring {needed / 1024**3:.1f} GB "
+            f"would take the scratch folder's disk {where}"
+        )
 
 
 def _in_restore(target: Path, path: Path) -> Path:
@@ -379,26 +478,45 @@ def _not_in_snapshot(bc: BackupConfig, target: Path, restored: Path) -> list[dic
     committed must be in the snapshot; recordings added since are allowed. config.toml, the extra
     paths and the copy itself must be there too."""
     copy = state_copy_path(bc)
-    problems = [{"path": str(p), "message": "is not in the snapshot"}
-                for p in (*bc.paths, copy) if not _in_restore(target, p).is_file()]
+    problems = [
+        {"path": str(p), "message": "is not in the snapshot"}
+        for p in (*bc.paths, copy)
+        if not _in_restore(target, p).is_file()
+    ]
     if not _in_restore(target, copy).is_file():
         return problems
     uri = f"{_in_restore(target, copy).absolute().as_uri()}?mode=ro&immutable=1"
     try:
         with closing(sqlite3.connect(uri, uri=True)) as db:
-            files = [r[0] for r in db.execute(
-                "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file")]
+            files = [
+                r[0]
+                for r in db.execute(
+                    "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file"
+                )
+            ]
     except sqlite3.Error as exc:
-        return problems + [{"path": str(copy), "message": "the snapshot's copy can't be read "
-                                                          f"({type(exc).__name__})"}]
-    return problems + [{"path": str(bc.archive / f), "message": "is not in the snapshot"}
-                       for f in files if not (restored / f).is_file()]
+        return problems + [
+            {
+                "path": str(copy),
+                "message": f"the snapshot's copy can't be read ({type(exc).__name__})",
+            }
+        ]
+    return problems + [
+        {"path": str(bc.archive / f), "message": "is not in the snapshot"}
+        for f in files
+        if not (restored / f).is_file()
+    ]
 
 
-def run_restore_test(bc: BackupConfig, environ: Mapping[str, str], *, expected_uuid: str,
-                     now: datetime,
-                     keep_free_percents: Sequence[float] = (WARN_FREE_PERCENT, STOP_FREE_PERCENT),
-                     runner=subprocess.run) -> RestoreResult:
+def run_restore_test(
+    bc: BackupConfig,
+    environ: Mapping[str, str],
+    *,
+    expected_uuid: str,
+    now: datetime,
+    keep_free_percents: Sequence[float] = (WARN_FREE_PERCENT, STOP_FREE_PERCENT),
+    runner=subprocess.run,
+) -> RestoreResult:
     """Restore the newest snapshot into scratch and prove it (§15.1): restic's --verify, then
     `recordings validate` with every hash checked, the same archive UUID, and every recording
     the snapshot's own state.db copy knows.
@@ -432,6 +550,7 @@ def run_restore_test(bc: BackupConfig, environ: Mapping[str, str], *, expected_u
     finally:
         shutil.rmtree(target, ignore_errors=True)
     if target.exists():  # checked here, so the error a failed restore raised isn't masked above
-        raise RestoreCopyLeftBehind(f"the restored copy at {target} could not be removed: "
-                                    "delete it by hand")
+        raise RestoreCopyLeftBehind(
+            f"the restored copy at {target} could not be removed: delete it by hand"
+        )
     return RestoreResult(recordings=count, problems=tuple(problems))

@@ -64,7 +64,9 @@ def test_secret_from_env_or_file(tmp_path):
     f.write_text("from-file\n")
     assert secret("plaud_token", {"RECORDINGS_PLAUD_TOKEN_FILE": str(f)}) == "from-file"
     with pytest.raises(ConfigError, match="not both"):
-        secret("plaud_token", {"RECORDINGS_PLAUD_TOKEN": "a", "RECORDINGS_PLAUD_TOKEN_FILE": str(f)})
+        secret(
+            "plaud_token", {"RECORDINGS_PLAUD_TOKEN": "a", "RECORDINGS_PLAUD_TOKEN_FILE": str(f)}
+        )
 
 
 def test_secret_empty_file_is_an_error(tmp_path):
@@ -249,8 +251,13 @@ def test_allowed_hosts_default_to_none_listed(tmp_path):
 
 
 def test_allowed_hosts_are_read_from_server(tmp_path):
-    cfg = load_config({"RECORDINGS_CONFIG": str(write(
-        tmp_path, '[server]\nallowed_hosts = ["my-homelab", " 100.64.0.1 "]\n'))})
+    cfg = load_config(
+        {
+            "RECORDINGS_CONFIG": str(
+                write(tmp_path, '[server]\nallowed_hosts = ["my-homelab", " 100.64.0.1 "]\n')
+            )
+        }
+    )
     assert cfg.allowed_hosts == ("my-homelab", "100.64.0.1")
 
 
@@ -262,7 +269,9 @@ def test_the_template_documents_allowed_hosts():
 @pytest.mark.parametrize("value", ['"my-homelab"', "[1]", '[""]', '["  "]', '[["a"]]', "true"])
 def test_allowed_hosts_must_be_a_list_of_names(tmp_path, value):
     with pytest.raises(ConfigError, match="allowed_hosts"):
-        load_config({"RECORDINGS_CONFIG": str(write(tmp_path, f"[server]\nallowed_hosts = {value}\n"))})
+        load_config(
+            {"RECORDINGS_CONFIG": str(write(tmp_path, f"[server]\nallowed_hosts = {value}\n"))}
+        )
 
 
 def test_doctor_reports_a_bad_allowed_hosts(tmp_path):
@@ -271,16 +280,27 @@ def test_doctor_reports_a_bad_allowed_hosts(tmp_path):
 
 
 def test_writer_id_and_the_state_and_index_paths(tmp_path):
-    cfg_file = write(tmp_path, '[archive]\nwriter_id = "homelab"\n[state]\npath = "/s"\n'
-                               '[index]\npath = "/i/index.db"\n')
+    cfg_file = write(
+        tmp_path,
+        '[archive]\nwriter_id = "homelab"\n[state]\npath = "/s"\n[index]\npath = "/i/index.db"\n',
+    )
     cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file)})
-    assert (cfg.writer_id, cfg.state_path, cfg.index_path) == ("homelab", Path("/s"), Path("/i/index.db"))
+    assert (cfg.writer_id, cfg.state_path, cfg.index_path) == (
+        "homelab",
+        Path("/s"),
+        Path("/i/index.db"),
+    )
 
 
 def test_the_environment_overrides_the_state_and_index_paths(tmp_path):
     cfg_file = write(tmp_path, '[state]\npath = "/s"\n[index]\npath = "/i/index.db"\n')
-    cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_STATE": "/state",
-                       "RECORDINGS_INDEX": "/index/index.db"})
+    cfg = load_config(
+        {
+            "RECORDINGS_CONFIG": str(cfg_file),
+            "RECORDINGS_STATE": "/state",
+            "RECORDINGS_INDEX": "/index/index.db",
+        }
+    )
     assert (cfg.state_path, cfg.index_path) == (Path("/state"), Path("/index/index.db"))
 
 
@@ -318,8 +338,15 @@ def test_the_state_and_index_paths_are_absolute_text(tmp_path, line):
         load_config({"RECORDINGS_CONFIG": str(cfg), "RECORDINGS_STATE": "state"})
 
 
-@pytest.mark.parametrize("index", ["/srv/r/state/state.db", "/srv/r/state/index.db",
-                                   "/srv/r/state/backup/state.db", "/srv/r/state"])
+@pytest.mark.parametrize(
+    "index",
+    [
+        "/srv/r/state/state.db",
+        "/srv/r/state/index.db",
+        "/srv/r/state/backup/state.db",
+        "/srv/r/state",
+    ],
+)
 def test_the_index_never_lies_inside_the_state_folder(tmp_path, index):
     # why: §6.8. The state folder holds state.db, its backup copy, voice.db and the Plaud token, and
     # their writers don't take the index lock. A typo that points the index there is refused here,
@@ -328,39 +355,77 @@ def test_the_index_never_lies_inside_the_state_folder(tmp_path, index):
     with pytest.raises(ConfigError, match=r"\[index\] path .* inside \[state\] path"):
         load_config({"RECORDINGS_CONFIG": str(cfg_file)})
     with pytest.raises(ConfigError, match="RECORDINGS_INDEX"):
-        load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_STATE": "/state",
-                     "RECORDINGS_INDEX": "/state/state.db"})
+        load_config(
+            {
+                "RECORDINGS_CONFIG": str(cfg_file),
+                "RECORDINGS_STATE": "/state",
+                "RECORDINGS_INDEX": "/state/state.db",
+            }
+        )
 
 
 def test_the_index_inside_the_state_folder_through_a_symlink_is_refused(tmp_path):
     (tmp_path / "state").mkdir()
     (tmp_path / "index").symlink_to(tmp_path / "state")
-    cfg_file = write(tmp_path, f'[state]\npath = "{tmp_path / "state"}"\n'
-                               f'[index]\npath = "{tmp_path / "index" / "index.db"}"\n')
+    cfg_file = write(
+        tmp_path,
+        f'[state]\npath = "{tmp_path / "state"}"\n'
+        f'[index]\npath = "{tmp_path / "index" / "index.db"}"\n',
+    )
     with pytest.raises(ConfigError, match="inside"):
         load_config({"RECORDINGS_CONFIG": str(cfg_file)})
 
 
 def test_an_index_beside_the_state_folder_is_fine(tmp_path):
-    cfg_file = write(tmp_path, '[state]\npath = "/srv/r/state"\n'
-                               '[index]\npath = "/srv/r/state-index/index.db"\n')
+    cfg_file = write(
+        tmp_path, '[state]\npath = "/srv/r/state"\n[index]\npath = "/srv/r/state-index/index.db"\n'
+    )
     assert load_config({"RECORDINGS_CONFIG": str(cfg_file)}).index_path == Path(
-        "/srv/r/state-index/index.db")
+        "/srv/r/state-index/index.db"
+    )
 
 
-@pytest.mark.parametrize("value, expected", [
-    ("My-Homelab", "my-homelab"), (" 100.64.0.1 ", "100.64.0.1"), ("[fd7a::1]", "fd7a::1"),
-    ("fd7a::1", "fd7a::1"), ("fd7a:0:0::1", "fd7a::1"), ("My.Home-lab.example", "my.home-lab.example")])
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("My-Homelab", "my-homelab"),
+        (" 100.64.0.1 ", "100.64.0.1"),
+        ("[fd7a::1]", "fd7a::1"),
+        ("fd7a::1", "fd7a::1"),
+        ("fd7a:0:0::1", "fd7a::1"),
+        ("My.Home-lab.example", "my.home-lab.example"),
+    ],
+)
 def test_host_names_are_normalised(value, expected):
     from recordings.config import normalise_host
+
     assert normalise_host(value) == expected
 
 
-@pytest.mark.parametrize("value", ["my-homelab:8000", "http://my-homelab", "my-homelab/x", "", "a b",
-                                   "a\\tb", "user@my-homelab", "my-homelab?x", "my-homelab.",
-                                   "-my-homelab", "my-homelab-", "my..homelab",
-                                   "127.1", "0x7f.1", "2130706433", "01.02.03.04", "1.2.3.4.5",
-                                   "::ffff:127.0.0.1", "fe80::1%en0"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "my-homelab:8000",
+        "http://my-homelab",
+        "my-homelab/x",
+        "",
+        "a b",
+        "a\\tb",
+        "user@my-homelab",
+        "my-homelab?x",
+        "my-homelab.",
+        "-my-homelab",
+        "my-homelab-",
+        "my..homelab",
+        "127.1",
+        "0x7f.1",
+        "2130706433",
+        "01.02.03.04",
+        "1.2.3.4.5",
+        "::ffff:127.0.0.1",
+        "fe80::1%en0",
+    ],
+)
 def test_allowed_hosts_with_a_port_scheme_or_path_are_refused(tmp_path, value):
     # why: stage-1 carry-over. They passed validation, never matched, and gave a bare 400.
     cfg_file = write(tmp_path, f'[server]\nallowed_hosts = ["{value}"]\n')
@@ -368,11 +433,16 @@ def test_allowed_hosts_with_a_port_scheme_or_path_are_refused(tmp_path, value):
         load_config({"RECORDINGS_CONFIG": str(cfg_file)})
 
 
-@pytest.mark.parametrize("name, value", [
-    ("restic_password", "hunter2-do-not-print"),
-    ("nas_ssh_key", "b3BlbnNzaC1rZXktdjE-do-not-print\nAAAABG5vbmUAAAAEbm9uZQ\n"),
-    ("deadman_url", "https://hc-ping.com/uuid-do-not-print"),
-    ("ntfy_topic", "topic-do-not-print")], ids=["password", "key", "ping-url", "topic"])
+@pytest.mark.parametrize(
+    "name, value",
+    [
+        ("restic_password", "hunter2-do-not-print"),
+        ("nas_ssh_key", "b3BlbnNzaC1rZXktdjE-do-not-print\nAAAABG5vbmUAAAAEbm9uZQ\n"),
+        ("deadman_url", "https://hc-ping.com/uuid-do-not-print"),
+        ("ntfy_topic", "topic-do-not-print"),
+    ],
+    ids=["password", "key", "ping-url", "topic"],
+)
 def test_a_secret_put_where_its_path_belongs_is_never_repeated(tmp_path, name, value):
     # why: doctor's output is pasted into issues and chats (Task 16's council). With the secret
     # itself in NAME_FILE, the error repeated it: "RESTIC_PASSWORD_FILE points at hunter2, which

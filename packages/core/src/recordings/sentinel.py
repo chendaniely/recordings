@@ -39,15 +39,17 @@ def read_sentinel(root: Path) -> ArchiveIdentity:
     if not path.is_file():
         raise SentinelError(
             f"{root} has no {SENTINEL}, so it is not an initialised archive. Is the archive's "
-            "disk mounted? A new archive is set up once, with `recordings init`.")
+            "disk mounted? A new archive is set up once, with `recordings init`."
+        )
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("not a JSON object")
         if data.get("format") != FORMAT:
             raise ValueError(f"format is {data.get('format')!r}, not {FORMAT!r}")
-        identity = ArchiveIdentity(uuid=str(uuid.UUID(data["uuid"])),
-                                   created_at=datetime.fromisoformat(data["created_at"]))
+        identity = ArchiveIdentity(
+            uuid=str(uuid.UUID(data["uuid"])), created_at=datetime.fromisoformat(data["created_at"])
+        )
     except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise SentinelError(f"{path} is not a valid sentinel: {exc}") from None
     if identity.created_at.utcoffset() is None:
@@ -62,7 +64,16 @@ def is_mirror(root: Path) -> bool:
 
 def write_sentinel(root: Path, identity: ArchiveIdentity) -> Path:
     path = Path(root) / SENTINEL
-    text = json.dumps({"format": FORMAT, "uuid": identity.uuid,
-                       "created_at": identity.created_at.isoformat()}, indent=2) + "\n"
+    text = (
+        json.dumps(
+            {
+                "format": FORMAT,
+                "uuid": identity.uuid,
+                "created_at": identity.created_at.isoformat(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     create_exclusive(path, text.encode("utf-8"))
     return path

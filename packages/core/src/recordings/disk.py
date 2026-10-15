@@ -41,13 +41,20 @@ def disk_thresholds(cfg: Config) -> dict[str, float]:
     stop = section.get("stop_free_percent", STOP_FREE_PERCENT)
     numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (warn, stop))
     if not numbers or not 0 < stop < warn < 100:
-        raise ConfigError("[disk] stop_free_percent and warn_free_percent must be numbers with "
-                          "0 < stop_free_percent < warn_free_percent < 100")
+        raise ConfigError(
+            "[disk] stop_free_percent and warn_free_percent must be numbers with "
+            "0 < stop_free_percent < warn_free_percent < 100"
+        )
     return {"warn": float(warn), "stop": float(stop)}
 
 
-def disk_status(archive_root: Path, *, expected_uuid: str | None,
-                warn: float = WARN_FREE_PERCENT, stop: float = STOP_FREE_PERCENT) -> DiskStatus:
+def disk_status(
+    archive_root: Path,
+    *,
+    expected_uuid: str | None,
+    warn: float = WARN_FREE_PERCENT,
+    stop: float = STOP_FREE_PERCENT,
+) -> DiskStatus:
     root = Path(archive_root)
     marker, message = True, ""
     try:
@@ -62,8 +69,9 @@ def disk_status(archive_root: Path, *, expected_uuid: str | None,
         free, total = st.f_bavail * st.f_frsize, st.f_blocks * st.f_frsize
     except (OSError, AttributeError):  # missing folder, or no statvfs (the Pages demo)
         pass
-    status = DiskStatus(path=str(root), marker=marker, free_bytes=free, total_bytes=total,
-                        level="ok", message="")
+    status = DiskStatus(
+        path=str(root), marker=marker, free_bytes=free, total_bytes=total, level="ok", message=""
+    )
     pct = status.free_percent
     if not marker:
         level = "stop"
@@ -73,12 +81,18 @@ def disk_status(archive_root: Path, *, expected_uuid: str | None,
         level, message = "warn", f"{pct:.1f}% free: below {warn:g}%"
     else:
         level, message = "ok", (f"{pct:.1f}% free" if pct is not None else "free space unknown")
-    return DiskStatus(path=str(root), marker=marker, free_bytes=free, total_bytes=total,
-                      level=level, message=message)
+    return DiskStatus(
+        path=str(root),
+        marker=marker,
+        free_bytes=free,
+        total_bytes=total,
+        level=level,
+        message=message,
+    )
 
 
 def _size(n: int) -> str:
-    for unit, scale in (("TB", 10 ** 12), ("GB", 10 ** 9), ("MB", 10 ** 6)):
+    for unit, scale in (("TB", 10**12), ("GB", 10**9), ("MB", 10**6)):
         if n >= scale:
             return f"{n / scale:.1f} {unit}"
     return f"{n} bytes"
@@ -87,7 +101,15 @@ def _size(n: int) -> str:
 def disk_view(status: DiskStatus) -> dict:
     """What the Status page shows (spec §12.5): the level, the reason, and free space."""
     pct = status.free_percent
-    label = (f"{_size(status.free_bytes)} free of {_size(status.total_bytes)}"
-             if status.free_bytes is not None and status.total_bytes else None)
-    return {"level": status.level, "message": status.message, "marker": status.marker,
-            "free_percent": round(pct, 1) if pct is not None else None, "free_label": label}
+    label = (
+        f"{_size(status.free_bytes)} free of {_size(status.total_bytes)}"
+        if status.free_bytes is not None and status.total_bytes
+        else None
+    )
+    return {
+        "level": status.level,
+        "message": status.message,
+        "marker": status.marker,
+        "free_percent": round(pct, 1) if pct is not None else None,
+        "free_label": label,
+    }

@@ -109,8 +109,9 @@ class Archive:
     def media_path(self, rid: str) -> Path:
         return self.path_for(rid) / self.load(rid).media.file
 
-    def renditions(self, rid: str, problems: list[Problem] | None = None
-                   ) -> list[tuple[str, Rendition]]:
+    def renditions(
+        self, rid: str, problems: list[Problem] | None = None
+    ) -> list[tuple[str, Rendition]]:
         folder = self.path_for(rid)
         out = []
         for path in sorted((folder / "renditions").glob("*.json")):

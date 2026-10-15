@@ -7,4 +7,11 @@ from recordings.backends.base import (
 )
 from recordings.backends.canned import CannedBackend
 
-__all__ = ["Backend", "BackendError", "CannedBackend", "Completion", "CompletionRequest", "model_slug"]
+__all__ = [
+    "Backend",
+    "BackendError",
+    "CannedBackend",
+    "Completion",
+    "CompletionRequest",
+    "model_slug",
+]

@@ -24,9 +24,18 @@ from pathlib import Path
 
 VERSION = "0.19.1"
 PINNED = {
-    ("linux", "x86_64"): ("linux_amd64", "f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c"),
-    ("linux", "aarch64"): ("linux_arm64", "a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465"),
-    ("darwin", "arm64"): ("darwin_arm64", "7be0a144ccc377880f294204aa271d76e4b79554b42a751151d425ce6ebac143"),
+    ("linux", "x86_64"): (
+        "linux_amd64",
+        "f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c",
+    ),
+    ("linux", "aarch64"): (
+        "linux_arm64",
+        "a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465",
+    ),
+    ("darwin", "arm64"): (
+        "darwin_arm64",
+        "7be0a144ccc377880f294204aa271d76e4b79554b42a751151d425ce6ebac143",
+    ),
 }
 BINARY_SHA256 = {  # the decompressed restic, by the first element of each PINNED value
     "linux_amd64": "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639",
@@ -56,17 +65,23 @@ def main() -> int:
     if installed(BINARY_SHA256[name]):
         print(f"restic {VERSION} already in {TARGET.relative_to(REPO)}")
         return 0
-    url = f"https://github.com/restic/restic/releases/download/v{VERSION}/restic_{VERSION}_{name}.bz2"
+    url = (
+        f"https://github.com/restic/restic/releases/download/v{VERSION}/restic_{VERSION}_{name}.bz2"
+    )
     with urllib.request.urlopen(url, timeout=120) as response:
         data = response.read(MAX_DOWNLOAD + 1)
     if len(data) > MAX_DOWNLOAD or hashlib.sha256(data).hexdigest() != expected:
-        print("fetch_restic: the download is too large or does not match its pinned SHA-256",
-              file=sys.stderr)
+        print(
+            "fetch_restic: the download is too large or does not match its pinned SHA-256",
+            file=sys.stderr,
+        )
         return 1
     binary = bz2.BZ2Decompressor().decompress(data, MAX_BINARY + 1)
     if len(binary) > MAX_BINARY or hashlib.sha256(binary).hexdigest() != BINARY_SHA256[name]:
-        print("fetch_restic: the decompressed binary does not match its pinned SHA-256",
-              file=sys.stderr)
+        print(
+            "fetch_restic: the decompressed binary does not match its pinned SHA-256",
+            file=sys.stderr,
+        )
         return 1
     TARGET.parent.mkdir(parents=True, exist_ok=True)
     tmp = TARGET.with_suffix(".part")

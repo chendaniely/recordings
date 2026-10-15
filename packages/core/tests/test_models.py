@@ -151,7 +151,8 @@ def test_ids_with_non_ascii_digits_are_rejected():
 
 def _committed_schema(name: str) -> dict:
     return json.loads(
-        (resources.files("recordings") / "format" / "schemas" / name).read_text(encoding="utf-8"))
+        (resources.files("recordings") / "format" / "schemas" / name).read_text(encoding="utf-8")
+    )
 
 
 def test_the_committed_schema_checks_the_id_shape():
@@ -162,8 +163,12 @@ def test_the_committed_schema_checks_the_id_shape():
     validator = jsonschema.Draft202012Validator(schema)
     good = json.loads(dump_json(recording()))
     assert list(validator.iter_errors(good)) == []
-    for bad in ["2026-10-06_3fa91c2e", "x20261006T140003-0700_3fa91c2e",
-                "20261006T140003-0700_3fa91c2ef", "٢٠٢٦١٠٠٦T١٤٠٠٠٣-0700_3fa91c2e"]:
+    for bad in [
+        "2026-10-06_3fa91c2e",
+        "x20261006T140003-0700_3fa91c2e",
+        "20261006T140003-0700_3fa91c2ef",
+        "٢٠٢٦١٠٠٦T١٤٠٠٠٣-0700_3fa91c2e",
+    ]:
         errors = list(validator.iter_errors({**good, "id": bad}))
         assert [e.json_path for e in errors] == ["$.id"], bad
 
@@ -176,35 +181,48 @@ def test_empty_speakers_still_serialise_as_an_empty_object():
 
 
 def test_the_speakers_shape_round_trips_with_not_spelled_not():
-    rec = recording(speakers={
-        "source": "renditions/transcript-plaud-plaud@1-20261008T143000Z.json",
-        "labels": {"Speaker 1": {"person": "ada-lovelace", "by": "you"},
-                   "Speaker 2": {"person": "grace-hopper", "by": "you", "plaud_name_seen": "Ada"},
-                   "Speaker 3": {"not": ["ada-lovelace"]}},
-        "spans": [{"start": 41.2, "end": 58.0, "person": "grace-hopper", "by": "you"},
-                  {"start": 300.0, "end": 312.5, "person": UNKNOWN_PERSON, "by": "you"}]})
+    rec = recording(
+        speakers={
+            "source": "renditions/transcript-plaud-plaud@1-20261008T143000Z.json",
+            "labels": {
+                "Speaker 1": {"person": "ada-lovelace", "by": "you"},
+                "Speaker 2": {"person": "grace-hopper", "by": "you", "plaud_name_seen": "Ada"},
+                "Speaker 3": {"not": ["ada-lovelace"]},
+            },
+            "spans": [
+                {"start": 41.2, "end": 58.0, "person": "grace-hopper", "by": "you"},
+                {"start": 300.0, "end": 312.5, "person": UNKNOWN_PERSON, "by": "you"},
+            ],
+        }
+    )
     data = json.loads(dump_json(rec))
     assert data["speakers"]["labels"]["Speaker 3"] == {"not": ["ada-lovelace"]}
     assert data["speakers"]["spans"][1]["person"] == "unknown"
     assert Recording.model_validate_json(dump_json(rec)) == rec
 
 
-@pytest.mark.parametrize("speakers, message", [
-    ({"labels": {"Speaker 1": {"person": "Ada Lovelace", "by": "you"}}}, "pattern"),
-    ({"labels": {"Speaker 1": {"person": "ada"}}}, "person and by go together"),
-    ({"labels": {"Speaker 1": {"by": "you"}}}, "person and by go together"),
-    ({"labels": {"Speaker 1": {"person": "ada", "by": "auto"}}}, "you"),
-    ({"spans": [{"start": 5.0, "end": 5.0, "person": "ada"}]}, "end after it starts"),
-    ({"spans": [{"start": 1.0, "end": 2.0, "person": "ada", "from": "voice"}]}, "Extra inputs"),
-])
+@pytest.mark.parametrize(
+    "speakers, message",
+    [
+        ({"labels": {"Speaker 1": {"person": "Ada Lovelace", "by": "you"}}}, "pattern"),
+        ({"labels": {"Speaker 1": {"person": "ada"}}}, "person and by go together"),
+        ({"labels": {"Speaker 1": {"by": "you"}}}, "person and by go together"),
+        ({"labels": {"Speaker 1": {"person": "ada", "by": "auto"}}}, "you"),
+        ({"spans": [{"start": 5.0, "end": 5.0, "person": "ada"}]}, "end after it starts"),
+        ({"spans": [{"start": 1.0, "end": 2.0, "person": "ada", "from": "voice"}]}, "Extra inputs"),
+    ],
+)
 def test_bad_speaker_decisions_are_rejected(speakers, message):
     with pytest.raises(ValidationError, match=message):
         recording(speakers=speakers)
 
 
 def test_rev_title_by_and_plaud_are_optional_and_validated():
-    rec = recording(rev=7, title_by="plaud",
-                    plaud={"title_seen": "Week 4", "acknowledged_up_to": "source/plaud-x.json"})
+    rec = recording(
+        rev=7,
+        title_by="plaud",
+        plaud={"title_seen": "Week 4", "acknowledged_up_to": "source/plaud-x.json"},
+    )
     assert Recording.model_validate_json(dump_json(rec)) == rec
     with pytest.raises(ValidationError):
         recording(rev=-1)
@@ -225,27 +243,54 @@ def test_a_validation_error_never_echoes_the_input():
         recording(title_by="会議メモ / Q&A")
     assert "会議メモ" not in str(caught.value)
     with pytest.raises(ValidationError) as caught:
-        Rendition(kind="transcript", engine="plaud", version="plaud@1",
-                  created_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
-                  payload={"segments": [{"start": 0, "text": "Ada said something private."}]})
+        Rendition(
+            kind="transcript",
+            engine="plaud",
+            version="plaud@1",
+            created_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+            payload={"segments": [{"start": 0, "text": "Ada said something private."}]},
+        )
     assert "something private" not in str(caught.value)
 
 
 def test_plaud_segment_fields_and_snapshot_fields():
-    seg = Segment(start=0, end=1.5, speaker="Speaker 1", speaker_name="Ada",
-                  embedding_key="ek-1", text="Hello.")
+    seg = Segment(
+        start=0,
+        end=1.5,
+        speaker="Speaker 1",
+        speaker_name="Ada",
+        embedding_key="ek-1",
+        text="Hello.",
+    )
     assert seg.model_dump(exclude_none=True)["speaker_name"] == "Ada"
-    ref = SourceRef(kind="plaud", ref="a" * 32, added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
-                    fetched_at=datetime(2026, 8, 1, tzinfo=timezone.utc), sha256="b" * 64)
+    ref = SourceRef(
+        kind="plaud",
+        ref="a" * 32,
+        added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+        fetched_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        sha256="b" * 64,
+    )
     assert SourceRef.model_validate_json(ref.model_dump_json()) == ref
     with pytest.raises(ValidationError):
-        SourceRef(kind="plaud", ref="x", added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
-                  sha256="not-a-hash")
+        SourceRef(
+            kind="plaud",
+            ref="x",
+            added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+            sha256="not-a-hash",
+        )
 
 
 def test_media_info_keeps_sample_rate_and_channels():
-    rec = recording(media={"file": "x.mp3", "sha256": SHA, "kind": "audio", "duration_ms": 1000,
-                           "sample_rate": 44100, "channels": 2})
+    rec = recording(
+        media={
+            "file": "x.mp3",
+            "sha256": SHA,
+            "kind": "audio",
+            "duration_ms": 1000,
+            "sample_rate": 44100,
+            "channels": 2,
+        }
+    )
     assert (rec.media.sample_rate, rec.media.channels) == (44100, 2)
     with pytest.raises(ValidationError):
         recording(media={"file": "x.mp3", "sha256": SHA, "kind": "audio", "channels": 0})

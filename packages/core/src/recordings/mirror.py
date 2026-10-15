@@ -114,10 +114,17 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> MirrorConfig:
         raise ConfigError("[mirror] no_perms must be true or false")
     nas = nas_from_config(cfg, environ)
     if is_remote(target.strip()):
-        require_known_hosts(nas)  # also when [nas] ssh is unset: the plaintext archive goes over ssh
-    return MirrorConfig(target=target.strip(), archive=cfg.archive_path,
-                        rsync=str(section.get("rsync", "rsync")), nas=nas,
-                        max_delete=max_delete, no_perms=no_perms)
+        require_known_hosts(
+            nas
+        )  # also when [nas] ssh is unset: the plaintext archive goes over ssh
+    return MirrorConfig(
+        target=target.strip(),
+        archive=cfg.archive_path,
+        rsync=str(section.get("rsync", "rsync")),
+        nas=nas,
+        max_delete=max_delete,
+        no_perms=no_perms,
+    )
 
 
 def is_remote(target: str) -> bool:
@@ -137,12 +144,21 @@ def _folder(mc: MirrorConfig) -> str:
 def rsync_command(mc: MirrorConfig, *, dry_run: bool = False) -> list[str]:
     """The mirror run, or with `dry_run` its dry run: it lists what would change and what would be
     deleted, and has no --max-delete, which would stop the count at the limit."""
-    cmd = [mc.rsync, "-a", "--delete", "--delete-delay", "--delay-updates",
-           f"--timeout={IO_TIMEOUT}",
-           *(["--dry-run", "--itemize-changes"] if dry_run else [f"--max-delete={mc.max_delete}"]),
-           "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
-           "--exclude=/#recycle/", "--filter=-p @eaDir/",
-           f"--exclude=/{MIRROR}"]  # the mark: never copied over, never deleted by --delete
+    cmd = [
+        mc.rsync,
+        "-a",
+        "--delete",
+        "--delete-delay",
+        "--delay-updates",
+        f"--timeout={IO_TIMEOUT}",
+        *(["--dry-run", "--itemize-changes"] if dry_run else [f"--max-delete={mc.max_delete}"]),
+        "--exclude=/.tmp/",
+        "--exclude=.*.tmp",
+        "--filter=-p .~tmp~/",
+        "--exclude=/#recycle/",
+        "--filter=-p @eaDir/",
+        f"--exclude=/{MIRROR}",
+    ]  # the mark: never copied over, never deleted by --delete
     if mc.no_perms:
         cmd.append("--no-perms")
     return [*cmd, *_ssh(mc), f"{mc.archive}/", mc.target]
@@ -150,12 +166,19 @@ def rsync_command(mc: MirrorConfig, *, dry_run: bool = False) -> list[str]:
 
 def _target_names(mc: MirrorConfig, runner) -> list[str]:
     """What the target folder holds at its top, from `rsync --list-only`, which needs no shell."""
-    proc = runner([mc.rsync, "--list-only", *_ssh(mc), _folder(mc)], capture_output=True,
-                  text=True, timeout=600)
+    proc = runner(
+        [mc.rsync, "--list-only", *_ssh(mc), _folder(mc)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
     if proc.returncode != 0:
-        raise MirrorRefused(f"refusing to mirror: the target can't be listed (rsync exit "
-                            f"{proc.returncode}); check that its folder exists and that the "
-                            "account can reach it", returncode=proc.returncode)
+        raise MirrorRefused(
+            f"refusing to mirror: the target can't be listed (rsync exit "
+            f"{proc.returncode}); check that its folder exists and that the "
+            "account can reach it",
+            returncode=proc.returncode,
+        )
     names = []
     for line in proc.stdout.splitlines():
         if not line.strip():
@@ -197,21 +220,31 @@ def _check_target(mc: MirrorConfig, expected_uuid: str, runner) -> None:
     names = _target_names(mc, runner)
     if MIRROR not in names:
         if names:
-            raise MirrorRefused("refusing to mirror: the target holds other files and no "
-                                f"{MIRROR} of this archive")
+            raise MirrorRefused(
+                f"refusing to mirror: the target holds other files and no {MIRROR} of this archive"
+            )
         return  # empty: the first mirror
     with tempfile.TemporaryDirectory(prefix="recordings-mirror-") as tmp:
-        proc = runner([mc.rsync, *_ssh(mc), _folder(mc) + MIRROR, f"{tmp}/"],
-                      capture_output=True, text=True, timeout=600)
+        proc = runner(
+            [mc.rsync, *_ssh(mc), _folder(mc) + MIRROR, f"{tmp}/"],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
         if proc.returncode != 0:
-            raise MirrorRefused(f"refusing to mirror: the target's {MIRROR} can't be read (rsync "
-                                f"exit {proc.returncode})", returncode=proc.returncode)
+            raise MirrorRefused(
+                f"refusing to mirror: the target's {MIRROR} can't be read (rsync "
+                f"exit {proc.returncode})",
+                returncode=proc.returncode,
+            )
         uuid = _mark_uuid(Path(tmp) / MIRROR)
     if uuid is None:
         raise MirrorRefused(f"refusing to mirror: the target's {MIRROR} is not valid")
     if uuid != expected_uuid:
-        raise MirrorRefused("refusing to mirror: the target is another archive's mirror (its UUID "
-                            "differs). If that archive is gone for good, empty the target first")
+        raise MirrorRefused(
+            "refusing to mirror: the target is another archive's mirror (its UUID "
+            "differs). If that archive is gone for good, empty the target first"
+        )
 
 
 def _mark(mc: MirrorConfig, uuid: str, runner) -> None:
@@ -220,11 +253,17 @@ def _mark(mc: MirrorConfig, uuid: str, runner) -> None:
     with tempfile.TemporaryDirectory(prefix="recordings-mirror-") as tmp:
         mark = Path(tmp) / MIRROR
         mark.write_text(mark_text(uuid), encoding="utf-8")
-        proc = runner([mc.rsync, "-c", *_ssh(mc), str(mark), _folder(mc)], capture_output=True,
-                      text=True, timeout=600)
+        proc = runner(
+            [mc.rsync, "-c", *_ssh(mc), str(mark), _folder(mc)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
     if proc.returncode != 0:
-        raise MirrorError(f"the target's {MIRROR} could not be written (rsync exit "
-                          f"{proc.returncode})", returncode=proc.returncode)
+        raise MirrorError(
+            f"the target's {MIRROR} could not be written (rsync exit {proc.returncode})",
+            returncode=proc.returncode,
+        )
 
 
 def _where(path: str) -> str:
@@ -238,11 +277,12 @@ def _check_deletions(mc: MirrorConfig, runner, timeout: float | None) -> None:
     """Count what the run would delete, and refuse, deleting nothing, past [mirror] max_delete.
     A dry run it can't read stops the mirror too. No path leaves this function: the refusal
     carries the count, and the debug log (`recordings mirror --debug`) recording IDs and counts."""
-    proc = runner(rsync_command(mc, dry_run=True), capture_output=True, text=True,
-                  timeout=timeout)
+    proc = runner(rsync_command(mc, dry_run=True), capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
-        raise MirrorError(f"the rsync dry run failed (exit {proc.returncode}); nothing was "
-                          "deleted", returncode=proc.returncode)
+        raise MirrorError(
+            f"the rsync dry run failed (exit {proc.returncode}); nothing was deleted",
+            returncode=proc.returncode,
+        )
     gone: Counter[str] = Counter()
     for line in proc.stdout.splitlines():
         if not line.strip():
@@ -255,14 +295,17 @@ def _check_deletions(mc: MirrorConfig, runner, timeout: float | None) -> None:
     if gone.total() > mc.max_delete:
         for where, count in sorted(gone.items()):  # the loop logs at INFO: --debug only
             log.debug("the mirror would delete, %s: %d", where, count)
-        raise MirrorRefused(f"the mirror would delete {gone.total()} files and folders, over the "
-                            f"limit of {mc.max_delete} ([mirror] max_delete): nothing was deleted. "
-                            "`recordings mirror --debug` shows where; if they are meant, "
-                            "`recordings mirror --max-delete N` allows N for one run")
+        raise MirrorRefused(
+            f"the mirror would delete {gone.total()} files and folders, over the "
+            f"limit of {mc.max_delete} ([mirror] max_delete): nothing was deleted. "
+            "`recordings mirror --debug` shows where; if they are meant, "
+            "`recordings mirror --max-delete N` allows N for one run"
+        )
 
 
-def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run,
-               timeout: float | None = TIMEOUT) -> str:
+def run_mirror(
+    mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run, timeout: float | None = TIMEOUT
+) -> str:
     """One mirror run. `timeout` caps the dry run and the run each (the loop's TIMEOUT); None, for
     the CLI, lets a big first mirror finish, and rsync's --timeout still ends a stall."""
     try:
@@ -270,17 +313,22 @@ def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run,
     except SentinelError as exc:
         raise MirrorRefused(f"refusing to mirror: {exc}") from None
     if identity.uuid != expected_uuid:
-        raise MirrorRefused("refusing to mirror: the archive's UUID changed since `recordings init`")
+        raise MirrorRefused(
+            "refusing to mirror: the archive's UUID changed since `recordings init`"
+        )
     _check_target(mc, expected_uuid, runner)
     _mark(mc, identity.uuid, runner)
     _check_deletions(mc, runner, timeout)
     proc = runner(rsync_command(mc), capture_output=True, text=True, timeout=timeout)
     if proc.returncode == 25:
-        raise MirrorError(f"rsync stopped deleting at {mc.max_delete} ([mirror] max_delete): the "
-                          "archive changed since the dry run. The next run counts again",
-                          returncode=25)
+        raise MirrorError(
+            f"rsync stopped deleting at {mc.max_delete} ([mirror] max_delete): the "
+            "archive changed since the dry run. The next run counts again",
+            returncode=25,
+        )
     if proc.returncode != 0:
         last = (proc.stderr or "").strip().splitlines()[-1:] or ["no message"]
-        raise MirrorError(f"rsync failed (exit {proc.returncode}): {last[0][:300]}",
-                          returncode=proc.returncode)
+        raise MirrorError(
+            f"rsync failed (exit {proc.returncode}): {last[0][:300]}", returncode=proc.returncode
+        )
     return "mirrored"

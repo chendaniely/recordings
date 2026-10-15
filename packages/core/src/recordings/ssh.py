@@ -23,11 +23,24 @@ def ssh_options(key: Path | None, known_hosts: Path | None, port: int | None) ->
     (require_known_hosts)."""
     # ConnectTimeout: a NAS that is off is given up on in seconds, not after TCP's own timeout
     # (minutes), which doctor and every backup's free-space check would otherwise wait out.
-    out = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=60",
-           "-o", "ServerAliveCountMax=240",
-           # Outside Docker the user's ~/.ssh/config applies too: never ride a connection it
-           # opened (a shared one skips the host-key check), nor hand the NAS its agent.
-           "-o", "ControlPath=none", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"]
+    out = [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=60",
+        "-o",
+        "ServerAliveCountMax=240",
+        # Outside Docker the user's ~/.ssh/config applies too: never ride a connection it
+        # opened (a shared one skips the host-key check), nor hand the NAS its agent.
+        "-o",
+        "ControlPath=none",
+        "-o",
+        "ForwardAgent=no",
+        "-o",
+        "ClearAllForwardings=yes",
+    ]
     if key is not None:
         out += ["-i", str(key), "-o", "IdentitiesOnly=yes"]
     out += ["-o", "StrictHostKeyChecking=yes"]  # always: a host's ssh_config must not relax it
@@ -53,13 +66,20 @@ class Nas:
 def nas_from_config(cfg: Config, environ: Mapping[str, str]) -> Nas:
     section = cfg.data.get("nas", {})
     ssh, port = section.get("ssh"), section.get("port")
-    if ssh is not None and (not isinstance(ssh, str) or not ssh.strip()
-                            or ssh.strip().startswith("-")):  # ssh would read it as an option
+    if ssh is not None and (
+        not isinstance(ssh, str) or not ssh.strip() or ssh.strip().startswith("-")
+    ):  # ssh would read it as an option
         raise ConfigError('[nas] ssh must be an ssh destination, such as "mirror@nas"')
-    if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536):
+    if port is not None and (
+        not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536
+    ):
         raise ConfigError("[nas] port must be a port number")
-    nas = Nas(ssh=ssh, port=port, key=secret_path("nas_ssh_key", environ),
-              known_hosts=secret_path("nas_known_hosts", environ))
+    nas = Nas(
+        ssh=ssh,
+        port=port,
+        key=secret_path("nas_ssh_key", environ),
+        known_hosts=secret_path("nas_known_hosts", environ),
+    )
     if ssh is not None:
         require_known_hosts(nas)
     return nas
@@ -69,8 +89,10 @@ def require_known_hosts(nas: Nas) -> None:
     """Every use of ssh to the NAS pins its host key to the secret file (§15.1): the mirror sends
     the plaintext archive, private recordings included, over these options."""
     if nas.known_hosts is None:
-        raise ConfigError("ssh to the NAS needs its host key: give RECORDINGS_NAS_KNOWN_HOSTS_FILE, "
-                          "the path to a file of known hosts")
+        raise ConfigError(
+            "ssh to the NAS needs its host key: give RECORDINGS_NAS_KNOWN_HOSTS_FILE, "
+            "the path to a file of known hosts"
+        )
 
 
 def _avail_kib(text: str) -> int | None:

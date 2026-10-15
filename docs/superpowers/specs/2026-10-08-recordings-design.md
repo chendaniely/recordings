@@ -1227,10 +1227,12 @@ does the rest, the same way for every source:
 
 ```python
 class Source(Protocol):
-    name: str                                   # "plaud", "upload", "url", …
+    name: str  # "plaud", "upload", "url", …
+
     def candidates(self) -> Iterable[Candidate]:
         """Everything the source currently holds. Account-style sources (Plaud) list it;
         one-shot sources (upload, URL) return nothing."""
+
     def fetch(self, ref: str, workdir: Path) -> Fetched:
         """Media + raw payload + recorded_at/time_source + title + any outputs the source
         already has (e.g. Plaud's transcript and notes)."""

@@ -32,28 +32,40 @@ class SecretSpec:
 SECRETS: dict[str, SecretSpec] = {
     "plaud_token": SecretSpec("RECORDINGS_PLAUD_TOKEN", "Plaud API token (Plaud sync)", 2),
     "spark_api_key": SecretSpec(
-        "RECORDINGS_SPARK_API_KEY", "this app's llama-swap key on the Spark", 4),
+        "RECORDINGS_SPARK_API_KEY", "this app's llama-swap key on the Spark", 4
+    ),
     "claude_oauth_token": SecretSpec(
-        "CLAUDE_CODE_OAUTH_TOKEN", "Claude subscription token from `claude setup-token`", 4),
+        "CLAUDE_CODE_OAUTH_TOKEN", "Claude subscription token from `claude setup-token`", 4
+    ),
     "restic_password": SecretSpec(
-        "RESTIC_PASSWORD", "the restic repository's password; keep a copy in your password "
-        "manager", 2),
+        "RESTIC_PASSWORD",
+        "the restic repository's password; keep a copy in your password manager",
+        2,
+    ),
     "rest_password": SecretSpec(
-        "RESTIC_REST_PASSWORD", "rest-server's password, when backups go there", 2,
-        optional=True),
+        "RESTIC_REST_PASSWORD", "rest-server's password, when backups go there", 2, optional=True
+    ),
     "nas_ssh_key": SecretSpec(
-        "RECORDINGS_NAS_SSH_KEY", "the NAS account's SSH private key, as a file", 2,
-        file_only=True),
+        "RECORDINGS_NAS_SSH_KEY", "the NAS account's SSH private key, as a file", 2, file_only=True
+    ),
     "nas_known_hosts": SecretSpec(
-        "RECORDINGS_NAS_KNOWN_HOSTS", "the NAS's SSH host key, as a known_hosts file", 2,
-        file_only=True),
+        "RECORDINGS_NAS_KNOWN_HOSTS",
+        "the NAS's SSH host key, as a known_hosts file",
+        2,
+        file_only=True,
+    ),
     "ntfy_topic": SecretSpec(
-        "RECORDINGS_NTFY_TOPIC", "the private ntfy topic that alerts go to", 2),
+        "RECORDINGS_NTFY_TOPIC", "the private ntfy topic that alerts go to", 2
+    ),
     "deadman_url": SecretSpec(
-        "RECORDINGS_DEADMAN_URL", "the Healthchecks.io ping URL (it carries its own token)", 2),
+        "RECORDINGS_DEADMAN_URL", "the Healthchecks.io ping URL (it carries its own token)", 2
+    ),
     "ntfy_token": SecretSpec(
-        "RECORDINGS_NTFY_TOKEN", "an ntfy access token, only for a server that needs one", 2,
-        optional=True),
+        "RECORDINGS_NTFY_TOKEN",
+        "an ntfy access token, only for a server that needs one",
+        2,
+        optional=True,
+    ),
 }
 
 
@@ -96,12 +108,16 @@ def normalise_host(value: str) -> str:
         address = None
     if address is not None:
         if getattr(address, "scope_id", None) or getattr(address, "ipv4_mapped", None):
-            raise ValueError(f"{value!r} is an address no browser sends in `Host`: write it as "
-                             "a browser shows it (no zone ID, and an IPv4 address as 4 numbers)")
+            raise ValueError(
+                f"{value!r} is an address no browser sends in `Host`: write it as "
+                "a browser shows it (no zone ID, and an IPv4 address as 4 numbers)"
+            )
         return str(address)
     if all(label.isdigit() or re.fullmatch(r"0x[0-9a-f]*", label) for label in host.split(".")):
-        raise ValueError(f"{value!r} is a number, not a host name, and no browser sends it as "
-                         "written (127.1 and 0x7f.1 become 127.0.0.1): write the address in full")
+        raise ValueError(
+            f"{value!r} is a number, not a host name, and no browser sends it as "
+            "written (127.1 and 0x7f.1 become 127.0.0.1): write the address in full"
+        )
     if "://" in host or "/" in host:
         raise ValueError(f"{value!r} is not a host name: give the name or address alone")
     if ":" in host:
@@ -116,7 +132,8 @@ def _allowed_hosts(server: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(h, str) for h in value):
         raise ConfigError(
             "[server] allowed_hosts must be a list of host names, "
-            'for example ["my-homelab", "100.64.0.1"]')
+            'for example ["my-homelab", "100.64.0.1"]'
+        )
     try:
         return tuple(normalise_host(h) for h in value)
     except ValueError as exc:
@@ -127,14 +144,16 @@ def _writer_id(archive: dict[str, Any]) -> str | None:
     if "writer_host" in archive:
         raise ConfigError(
             "[archive] writer_host was renamed writer_id in stage 2a. It names the archive's "
-            'one writer and is not a host name: set writer_id = "homelab" (any short name).')
+            'one writer and is not a host name: set writer_id = "homelab" (any short name).'
+        )
     value = archive.get("writer_id")
     if value is None:
         return None
     if not isinstance(value, str) or not WRITER_ID_RE.fullmatch(value):
         raise ConfigError(
             '[archive] writer_id must be a short lowercase name such as "homelab": letters, '
-            "digits, '.', '_' or '-'")
+            "digits, '.', '_' or '-'"
+        )
     return value
 
 
@@ -166,7 +185,8 @@ def _index_apart(index: Path | None, state: Path | None) -> None:
     if index is not None and state is not None and index.resolve().is_relative_to(state.resolve()):
         raise ConfigError(
             f"[index] path (or RECORDINGS_INDEX) {index} lies inside [state] path {state}, beside "
-            "state.db. Give the index a folder of its own, such as /srv/recordings/index/index.db.")
+            "state.db. Give the index a folder of its own, such as /srv/recordings/index/index.db."
+        )
 
 
 def load_config(environ: Mapping[str, str]) -> Config:
@@ -202,8 +222,10 @@ def load_config(environ: Mapping[str, str]) -> Config:
 def _no_such_file(env: str) -> ConfigError:
     """NAME_FILE names nothing that exists. Its value is never repeated: it may be the secret
     itself, put where the path belongs, and doctor's output is pasted into issues and chats."""
-    return ConfigError(f"{env}_FILE names a file that does not exist. Its value is not shown: give "
-                       "the path to the secret's file there, never the secret itself")
+    return ConfigError(
+        f"{env}_FILE names a file that does not exist. Its value is not shown: give "
+        "the path to the secret's file there, never the secret itself"
+    )
 
 
 def secret_path(name: str, environ: Mapping[str, str]) -> Path | None:

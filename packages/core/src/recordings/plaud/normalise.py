@@ -34,7 +34,8 @@ from recordings.refs import canonical_plaud_id
 
 NORMALISER_VERSION = 1
 DROPPED_KEYS = frozenset(
-    {"presigned_url", "data_link", "_meta", "_fetched_from_data_link", "_data_link_error"})
+    {"presigned_url", "data_link", "_meta", "_fetched_from_data_link", "_data_link_error"}
+)
 SEGMENT_TYPES = frozenset({"transaction", "transaction_polish"})
 OWN_NOTE_TYPES = frozenset({"high_light", "consumer_note", "mark_memo"})  # Dan's own notes
 # What Plaud emits before it knows a person: "Speaker 1", "spk_2", bare numbers, "unknown".
@@ -45,8 +46,9 @@ PRESIGNED = "<presigned>"
 # `%` or `=`, so a sentence's final period survives. `&amp;` is an HTML-escaped `&`.
 _QUERY_CHARS = r"(?:&amp;|[A-Za-z0-9\-._~%&=+/:@])*"
 _PRESIGNED_QUERY = re.compile(
-    r"(https?://[^\s?#\"'\\]+)\?" + _QUERY_CHARS + r"X-Amz-" + _QUERY_CHARS
-    + r"(?<=[A-Za-z0-9%=])", re.I)
+    r"(https?://[^\s?#\"'\\]+)\?" + _QUERY_CHARS + r"X-Amz-" + _QUERY_CHARS + r"(?<=[A-Za-z0-9%=])",
+    re.I,
+)
 # A note block's own fields. Any other key on one is unknown, so it goes to "other" and counts
 # towards the circuit breaker, while an edit to a known field is a notes edit (§9.1.1).
 _NOTE_KEYS = frozenset({"data_type", "data_tab_name", "data_id", "data_title", "data_content"})
@@ -57,7 +59,10 @@ _NAME_KEYS = ("speaker", "embeddingKey")
 _ROW_KEYS = frozenset(_TEXT_KEYS + _NAME_KEYS)
 
 
-_UNPARSEABLE = (ValueError, RecursionError)  # JSONDecodeError is a ValueError; so is the int-size limit
+_UNPARSEABLE = (
+    ValueError,
+    RecursionError,
+)  # JSONDecodeError is a ValueError; so is the int-size limit
 
 
 def _is_segment(block: Any) -> bool:
@@ -102,8 +107,12 @@ def _scrub(obj: Any) -> Any:
 def _block_key(block: Any) -> tuple[str, str, str, str]:
     if not isinstance(block, dict):
         return ("", "", "", canonical_json(block))
-    return (str(block.get("data_type") or ""), str(block.get("data_tab_name") or ""),
-            str(block.get("data_id") or ""), canonical_json(block))
+    return (
+        str(block.get("data_type") or ""),
+        str(block.get("data_tab_name") or ""),
+        str(block.get("data_id") or ""),
+        canonical_json(block),
+    )
 
 
 def _canonical_block(block: Any) -> Any:
@@ -212,8 +221,11 @@ def _ascii_slug(text: str) -> str:
 
 
 def note_type_base(block: dict) -> str:
-    return (_ascii_slug(str(block.get("data_tab_name") or ""))
-            or _ascii_slug(str(block.get("data_type") or "")) or "note")
+    return (
+        _ascii_slug(str(block.get("data_tab_name") or ""))
+        or _ascii_slug(str(block.get("data_type") or ""))
+        or "note"
+    )
 
 
 def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
@@ -221,8 +233,11 @@ def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
     `outline`, then every `note_list` tab, Dan's own highlights and memos included. The note
     type is `plaud-<tab>` (§6.5); a second tab with the same name gets `-2`, then `-3`, and so
     on. Hash the normalised block. Render the raw one."""
-    outline = [b for b in _section(envelope, "source_list")
-               if isinstance(b, dict) and b.get("data_type") == "outline"]
+    outline = [
+        b
+        for b in _section(envelope, "source_list")
+        if isinstance(b, dict) and b.get("data_type") == "outline"
+    ]
     tabs = [b for b in _section(envelope, "note_list") if isinstance(b, dict)]
     out, seen = [], {}
     for blocks in (outline, tabs):
@@ -283,8 +298,11 @@ def part_hashes(envelope: dict) -> dict[str, str]:
             kind = block["data_type"]
             text.append([kind, [[r.get(k) for k in _TEXT_KEYS] for r in rows]])
             names.append([kind, [[r.get(k) for k in _NAME_KEYS] for r in rows]])
-            extra = [[i, {k: v for k, v in r.items() if k not in _ROW_KEYS}]
-                     for i, r in enumerate(rows) if not _ROW_KEYS.issuperset(r)]
+            extra = [
+                [i, {k: v for k, v in r.items() if k not in _ROW_KEYS}]
+                for i, r in enumerate(rows)
+                if not _ROW_KEYS.issuperset(r)
+            ]
             residue.append([{k: v for k, v in block.items() if k != "data_content"}, extra])
         elif not (isinstance(block, dict) and block.get("data_type") == "outline"):
             residue.append(block)  # the outline is a note tab; anything else stays here whole

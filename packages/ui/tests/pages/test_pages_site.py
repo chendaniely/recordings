@@ -28,7 +28,9 @@ RENDER_TIMEOUT = 30_000
 
 
 def _rangeserver():
-    spec = importlib.util.spec_from_file_location("rangeserver", REPO / "scripts" / "rangeserver.py")
+    spec = importlib.util.spec_from_file_location(
+        "rangeserver", REPO / "scripts" / "rangeserver.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -103,7 +105,8 @@ def test_jfk_plays_from_the_static_host_and_a_line_seeks(page: Page, site_url, w
     expect(turns.first).to_be_visible(timeout=RENDER_TIMEOUT)
     assert turns.count() > 3
     frame.wait_for_function(
-        "document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=RENDER_TIMEOUT)
+        "document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=RENDER_TIMEOUT
+    )
     # Pages serves the file itself, under the site's media/ folder, with its extension.
     src = frame.evaluate("document.querySelector('[data-testid=media]').currentSrc")
     assert src == f"{site_url}media/{demo_ids['jfk-rice']}.mp3"
@@ -115,7 +118,9 @@ def test_jfk_plays_from_the_static_host_and_a_line_seeks(page: Page, site_url, w
     # buffer and fetches nothing new. tests/test_rangeserver.py covers the server's 206s.
     frame.wait_for_function(
         "s => Math.abs(document.querySelector('[data-testid=media]').currentTime - s) < 0.5",
-        arg=start, timeout=RENDER_TIMEOUT)
+        arg=start,
+        timeout=RENDER_TIMEOUT,
+    )
     expect(turn).to_have_class(re.compile(r"\bnow\b"), timeout=RENDER_TIMEOUT)
     watch.assert_clean()
 
@@ -127,7 +132,8 @@ def test_notes_show_two_outputs_and_compare_side_by_side(page: Page, site_url, w
     expect(app.get_by_test_id("notes-output")).to_have_count(2, timeout=RENDER_TIMEOUT)
     app.get_by_test_id("compare-select").select_option(index=1)
     expect(app.get_by_test_id("compare-view").locator("section")).to_have_count(
-        2, timeout=RENDER_TIMEOUT)
+        2, timeout=RENDER_TIMEOUT
+    )
     watch.assert_clean()
 
 

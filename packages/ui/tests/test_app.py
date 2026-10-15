@@ -44,7 +44,8 @@ def test_a_range_past_the_end_is_416_not_500(client, demo_ids):
 
 
 @pytest.mark.parametrize(
-    "bad", ["20200101T000000+0000_00000000", "not-an-id", "20261399T256199+0000_deadbeef"])
+    "bad", ["20200101T000000+0000_00000000", "not-an-id", "20261399T256199+0000_deadbeef"]
+)
 def test_unknown_or_malformed_media_is_404(client, bad):
     assert client.get(f"/media/{bad}").status_code == 404
 
@@ -126,7 +127,8 @@ def test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write(tmp_p
     cfg_file.write_text(
         f'[archive]\npath = "{tmp_path / "archive"}"\nwriter_id = "test"\n'
         f'[state]\npath = "{tmp_path / "state"}"\n[index]\npath = "{tmp_path / "index.db"}"\n',
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file)})
     (tmp_path / "archive" / "FORMAT.md").unlink()
     create_app(Settings(archive=cfg.archive_path, demo=False, config=cfg))

@@ -23,14 +23,24 @@ HEX = "0123456789abcdef0123456789abcdef"
 
 
 def test_a_rotating_presigned_url_is_not_a_change(plaud_env):
-    assert envelope_sha256(plaud_env(presigned="one")) == envelope_sha256(plaud_env(presigned="two"))
+    assert envelope_sha256(plaud_env(presigned="one")) == envelope_sha256(
+        plaud_env(presigned="two")
+    )
 
 
 def test_only_the_query_part_of_a_url_inside_text_is_replaced(plaud_env):
     # why: audio-router once replaced the whole string, which erased a note from the hash.
     text = "See https://notes.example/a.png?X-Amz-Signature=1 and then decide."
-    env = plaud_env(notes=[{"data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
-                            "data_content": text}])
+    env = plaud_env(
+        notes=[
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "n",
+                "data_tab_name": "S",
+                "data_content": text,
+            }
+        ]
+    )
     (block,) = normalise(env)["note_list"]
     assert block["data_content"] == "See https://notes.example/a.png?<presigned> and then decide."
     edited = copy.deepcopy(env)
@@ -67,7 +77,8 @@ def test_the_transcripts_inner_json_is_compared_canonically(plaud_env):
     rows = json.loads(env["source_list"][0]["data_content"])
     spaced = copy.deepcopy(env)
     spaced["source_list"][0]["data_content"] = json.dumps(
-        [dict(reversed(list(r.items()))) for r in rows], indent=4)
+        [dict(reversed(list(r.items()))) for r in rows], indent=4
+    )
     assert envelope_sha256(spaced) == envelope_sha256(env)
 
 
@@ -118,8 +129,15 @@ def test_changing_any_field_off_the_drop_list_changes_the_hash(plaud_env):
 
 
 def _row(content):
-    return [{"content": content, "start_time": 0, "end_time": 900, "speaker": "Ada",
-             "original_speaker": "Speaker 1"}]
+    return [
+        {
+            "content": content,
+            "start_time": 0,
+            "end_time": 900,
+            "speaker": "Ada",
+            "original_speaker": "Speaker 1",
+        }
+    ]
 
 
 def _reversed_blocks(env):
@@ -133,9 +151,16 @@ _URL = "http://a.example/b?X-Amz-S=1"
 _IDEMPOTENCE_CASES = {
     "plain": lambda make: make(),
     "link error": lambda make: make(link_error=True),
-    "url in text": lambda make: make(notes=[{
-        "data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
-        "data_content": "See [x](https://n.example/a.png?X-Amz-Signature=1) now."}]),
+    "url in text": lambda make: make(
+        notes=[
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "n",
+                "data_tab_name": "S",
+                "data_content": "See [x](https://n.example/a.png?X-Amz-Signature=1) now.",
+            }
+        ]
+    ),
     "polish": lambda make: make(polish=True),
     "of_ id": lambda make: make("of_" + HEX),
     "reversed blocks": lambda make: _reversed_blocks(make(polish=True)),
@@ -172,13 +197,19 @@ def test_a_snapshot_with_link_errors_is_incomplete(plaud_env):
     env = plaud_env(link_error=True)
     assert not is_complete(env) and link_errors(env) == ["auto_sum_note"]
     unfetched = plaud_env()
-    unfetched["note_list"][0] = {**unfetched["note_list"][0], "data_content": "",
-                                 "data_link": "https://x.example/y?X-Amz-Expires=300"}
+    unfetched["note_list"][0] = {
+        **unfetched["note_list"][0],
+        "data_content": "",
+        "data_link": "https://x.example/y?X-Amz-Expires=300",
+    }
     assert not is_complete(unfetched)
     # A link that answered with an empty body is no better than one that failed.
     empty_body = plaud_env()
-    empty_body["note_list"][0] = {**empty_body["note_list"][0], "data_content": " ",
-                                  "_fetched_from_data_link": True}
+    empty_body["note_list"][0] = {
+        **empty_body["note_list"][0],
+        "data_content": " ",
+        "_fetched_from_data_link": True,
+    }
     assert link_errors(empty_body) == ["auto_sum_note"]
 
 
@@ -215,25 +246,66 @@ def test_transcript_rows_and_their_absence(plaud_env):
 
 def test_note_types_are_plaud_and_the_tab_ascii_folded_and_numbered(plaud_env):
     # Review Focus 4: a tab name in another script, or with punctuation, gives a safe note type.
-    env = plaud_env(notes=[
-        {"data_type": "auto_sum_note", "data_id": "a", "data_tab_name": "Summary", "data_content": "x"},
-        {"data_type": "auto_sum_note", "data_id": "b", "data_tab_name": "Summary", "data_content": "y"},
-        {"data_type": "auto_sum_note", "data_id": "c", "data_tab_name": "会議メモ / Q&A", "data_content": "z"},
-        {"data_type": "consumer_note", "data_id": "d", "data_tab_name": "会議", "data_content": "w"},
-        {"data_type": "high_light", "data_id": "e", "data_tab_name": None, "data_content": "[]"},
-    ])
+    env = plaud_env(
+        notes=[
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "a",
+                "data_tab_name": "Summary",
+                "data_content": "x",
+            },
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "b",
+                "data_tab_name": "Summary",
+                "data_content": "y",
+            },
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "c",
+                "data_tab_name": "会議メモ / Q&A",
+                "data_content": "z",
+            },
+            {
+                "data_type": "consumer_note",
+                "data_id": "d",
+                "data_tab_name": "会議",
+                "data_content": "w",
+            },
+            {
+                "data_type": "high_light",
+                "data_id": "e",
+                "data_tab_name": None,
+                "data_content": "[]",
+            },
+        ]
+    )
     types = [t for t, _, _ in note_blocks(env)]
     # The outline first, then note_list sorted by (type, tab, id): "Summary" sorts before "会議…".
-    assert types == ["plaud-outline", "plaud-summary", "plaud-summary-2", "plaud-q-a",
-                     "plaud-consumer-note", "plaud-high-light"]
+    assert types == [
+        "plaud-outline",
+        "plaud-summary",
+        "plaud-summary-2",
+        "plaud-q-a",
+        "plaud-consumer-note",
+        "plaud-high-light",
+    ]
     assert all(t.isascii() and " " not in t and "/" not in t for t in types)
 
 
 def test_note_blocks_pair_each_normalised_block_with_its_raw_one(plaud_env):
     # why: notes render from the raw block, never the normalised one.
     text = "See [the chart](https://notes.example/a.png?X-Amz-Signature=1) here."
-    env = plaud_env(notes=[{"data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
-                            "data_content": text}])
+    env = plaud_env(
+        notes=[
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "n",
+                "data_tab_name": "S",
+                "data_content": text,
+            }
+        ]
+    )
     _outline, (note_type, block, raw) = note_blocks(env)
     assert note_type == "plaud-s" and raw["data_content"] == text
     assert block["data_content"] == "See [the chart](https://notes.example/a.png?<presigned>) here."
@@ -255,8 +327,15 @@ def _parts_changed(before, after):
 
 def test_part_hashes_say_what_changed(plaud_env):
     env = plaud_env()
-    assert set(part_hashes(env)) == {"title", "transcript", "speakers", "notes:plaud-outline",
-                                     "notes:plaud-summary", "notes:plaud-high-light", "other"}
+    assert set(part_hashes(env)) == {
+        "title",
+        "transcript",
+        "speakers",
+        "notes:plaud-outline",
+        "notes:plaud-summary",
+        "notes:plaud-high-light",
+        "other",
+    }
     rows = json.loads(env["source_list"][0]["data_content"])
     assert _parts_changed(env, plaud_env(name="Week 5")) == {"title"}
     renamed = plaud_env(segments=[{**rows[0], "speaker": "Grace"}, rows[1]])
@@ -301,8 +380,17 @@ def test_every_field_lands_in_some_part_and_new_row_fields_are_other(plaud_env):
 
 
 def _note(text):
-    return {"id": HEX, "note_list": [{"data_type": "auto_sum_note", "data_id": "n",
-                                      "data_tab_name": "S", "data_content": text}]}
+    return {
+        "id": HEX,
+        "note_list": [
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "n",
+                "data_tab_name": "S",
+                "data_content": text,
+            }
+        ],
+    }
 
 
 def test_text_glued_to_a_signed_link_is_still_compared():
@@ -313,20 +401,49 @@ def test_text_glued_to_a_signed_link_is_still_compared():
     images = "![a](http://h/x?X-Amz-S=1)![b](http://h/{}?X-Amz-S=2)"
     assert envelope_sha256(_note(images.format("y"))) != envelope_sha256(_note(images.format("z")))
     # The signature still goes, and a sentence's period stays.
-    assert normalise(_note("a http://h/q?a=1&X-Amz-Date=2%3A3. b"))["note_list"][0][
-        "data_content"] == "a http://h/q?<presigned>. b"
+    assert (
+        normalise(_note("a http://h/q?a=1&X-Amz-Date=2%3A3. b"))["note_list"][0]["data_content"]
+        == "a http://h/q?<presigned>. b"
+    )
 
 
-@pytest.mark.parametrize("hostile", [
-    {"id": HEX, "name": "\ud800"},                                          # lone surrogate
-    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
-                                 "data_content": "[" * 5000 + "]" * 5000}]},     # too deep
-    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
-                                 "data_content": '[{"start_time": ' + "9" * 5000 + "}]"}]},
-    {"id": HEX, "source_list": [{"data_type": ["x"], "data_id": "t"}]},          # unhashable type
-    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
-                                 "data_content": '[{"content": "x", "start_time": NaN}]'}]},
-])
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        {"id": HEX, "name": "\ud800"},  # lone surrogate
+        {
+            "id": HEX,
+            "source_list": [
+                {
+                    "data_type": "transaction",
+                    "data_id": "t",
+                    "data_content": "[" * 5000 + "]" * 5000,
+                }
+            ],
+        },  # too deep
+        {
+            "id": HEX,
+            "source_list": [
+                {
+                    "data_type": "transaction",
+                    "data_id": "t",
+                    "data_content": '[{"start_time": ' + "9" * 5000 + "}]",
+                }
+            ],
+        },
+        {"id": HEX, "source_list": [{"data_type": ["x"], "data_id": "t"}]},  # unhashable type
+        {
+            "id": HEX,
+            "source_list": [
+                {
+                    "data_type": "transaction",
+                    "data_id": "t",
+                    "data_content": '[{"content": "x", "start_time": NaN}]',
+                }
+            ],
+        },
+    ],
+)
 def test_hostile_payloads_hash_instead_of_raising(hostile):
     # why: one odd snapshot from a third party must not abort a whole import or sync pass.
     assert envelope_sha256(hostile) == envelope_sha256(copy.deepcopy(hostile))
@@ -335,24 +452,32 @@ def test_hostile_payloads_hash_instead_of_raising(hostile):
 
 
 def _with_rows(rows):
-    return {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
-                                        "data_content": json.dumps(rows)}]}
+    return {
+        "id": HEX,
+        "source_list": [
+            {"data_type": "transaction", "data_id": "t", "data_content": json.dumps(rows)}
+        ],
+    }
 
 
 def test_the_fingerprint_survives_a_rename_without_original_speaker_and_float_times():
     def rows(first, mid=1500, original=None):
-        out = [{"content": "a", "start_time": 0, "end_time": mid, "speaker": first},
-               {"content": "b", "start_time": mid, "end_time": 2600, "speaker": "Speaker 2"}]
+        out = [
+            {"content": "a", "start_time": 0, "end_time": mid, "speaker": first},
+            {"content": "b", "start_time": mid, "end_time": 2600, "speaker": "Speaker 2"},
+        ]
         if original:
             out[0]["original_speaker"] = original
         return out
+
     base = diarization_fingerprint(_with_rows(rows("Speaker 1")))
-    assert diarization_fingerprint(_with_rows(rows("Ada"))) == base                 # named
-    assert diarization_fingerprint(_with_rows(rows("Grace"))) == base               # renamed
-    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1500.0))) == base   # 1500.0 is 1500
-    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1400))) != base     # re-segmented
-    assert (diarization_fingerprint(_with_rows(rows("Ada", original="Speaker 1")))
-            != diarization_fingerprint(_with_rows(rows("Ada", original="Speaker 3"))))  # relabelled
+    assert diarization_fingerprint(_with_rows(rows("Ada"))) == base  # named
+    assert diarization_fingerprint(_with_rows(rows("Grace"))) == base  # renamed
+    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1500.0))) == base  # 1500.0 is 1500
+    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1400))) != base  # re-segmented
+    assert diarization_fingerprint(
+        _with_rows(rows("Ada", original="Speaker 1"))
+    ) != diarization_fingerprint(_with_rows(rows("Ada", original="Speaker 3")))  # relabelled
 
 
 def test_the_diarization_key_is_what_the_fingerprint_hashes():
@@ -367,7 +492,8 @@ def test_an_html_entity_signed_query_is_fully_stripped():
     # why: an <img src> in a note writes `&amp;` between the query's pairs; the signature must go.
     text = '<img src="http://h/x.png?X-Amz-Algorithm=A&amp;X-Amz-Signature=abc">'
     assert normalise(_note(text))["note_list"][0]["data_content"] == (
-        '<img src="http://h/x.png?<presigned>">')
+        '<img src="http://h/x.png?<presigned>">'
+    )
 
 
 @pytest.mark.parametrize("section", ["note_list", "source_list"])
@@ -399,28 +525,64 @@ def test_a_new_field_on_a_note_block_is_other_not_a_notes_edit(plaud_env):
 
 
 GOLDEN_ROWS = [
-    {"content": "Hello \u00e9.", "start_time": 0, "end_time": 1500, "speaker": "Ada",
-     "original_speaker": "Speaker 1"},
-    {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2",
-     "original_speaker": "Speaker 2"},
-    {"content": "Bye.", "start_time": 2600.0, "end_time": 3000, "speaker": "spk_2"}]
+    {
+        "content": "Hello \u00e9.",
+        "start_time": 0,
+        "end_time": 1500,
+        "speaker": "Ada",
+        "original_speaker": "Speaker 1",
+    },
+    {
+        "content": "Hi.",
+        "start_time": 1500,
+        "end_time": 2600,
+        "speaker": "Speaker 2",
+        "original_speaker": "Speaker 2",
+    },
+    {"content": "Bye.", "start_time": 2600.0, "end_time": 3000, "speaker": "spk_2"},
+]
 GOLDEN_ENVELOPE = {
-    "id": "of_0123456789abcdef0123456789abcdef", "name": "Week 4 \u4f1a\u8b70", "duration": 3000,
+    "id": "of_0123456789abcdef0123456789abcdef",
+    "name": "Week 4 \u4f1a\u8b70",
+    "duration": 3000,
     "presigned_url": "https://a.example/x.mp3?X-Amz-Signature=abc",
     "source_list": [
-        {"data_type": "transaction", "data_id": "t-1", "data_tab_name": None,
-         "data_content": json.dumps(GOLDEN_ROWS)},
-        {"data_type": "transaction_polish", "data_id": "t-2", "data_tab_name": None,
-         "data_content": json.dumps(GOLDEN_ROWS)},
-        {"data_type": "outline", "data_id": "o-1", "data_tab_name": None,
-         "data_content": '[{"topic": "Hi", "start_time": 0}]'}],
+        {
+            "data_type": "transaction",
+            "data_id": "t-1",
+            "data_tab_name": None,
+            "data_content": json.dumps(GOLDEN_ROWS),
+        },
+        {
+            "data_type": "transaction_polish",
+            "data_id": "t-2",
+            "data_tab_name": None,
+            "data_content": json.dumps(GOLDEN_ROWS),
+        },
+        {
+            "data_type": "outline",
+            "data_id": "o-1",
+            "data_tab_name": None,
+            "data_content": '[{"topic": "Hi", "start_time": 0}]',
+        },
+    ],
     "note_list": [
-        {"data_type": "auto_sum_note", "data_id": "n-1", "data_tab_name": "Summary",
-         "data_title": "Recap", "data_error_code": 0,
-         "data_content": "See [c](https://n.example/a.png?X-Amz-Signature=1) now. "
-                         "Or http://n.example/b.png?X-Amz-Signature=2."},
-        {"data_type": "auto_sum_note", "data_id": "n-2", "data_tab_name": "R\u00e9sum\u00e9",
-         "data_content": "![a](http://h/x?X-Amz-S=1)![b](http://h/y?X-Amz-S=2)"}],
+        {
+            "data_type": "auto_sum_note",
+            "data_id": "n-1",
+            "data_tab_name": "Summary",
+            "data_title": "Recap",
+            "data_error_code": 0,
+            "data_content": "See [c](https://n.example/a.png?X-Amz-Signature=1) now. "
+            "Or http://n.example/b.png?X-Amz-Signature=2.",
+        },
+        {
+            "data_type": "auto_sum_note",
+            "data_id": "n-2",
+            "data_tab_name": "R\u00e9sum\u00e9",
+            "data_content": "![a](http://h/x?X-Amz-S=1)![b](http://h/y?X-Amz-S=2)",
+        },
+    ],
     "_meta": {"tool": "x"},
 }
 
@@ -431,7 +593,8 @@ def test_the_normaliser_version_is_pinned_to_its_behaviour():
     # (or miss real edits). Change these only together with NORMALISER_VERSION.
     assert NORMALISER_VERSION == 1
     assert envelope_sha256(GOLDEN_ENVELOPE) == (
-        "e11df2135a32ff64a0130254c40c9c987534ebbecd11f87264b96d39f7371525")
+        "e11df2135a32ff64a0130254c40c9c987534ebbecd11f87264b96d39f7371525"
+    )
     assert part_hashes(GOLDEN_ENVELOPE) == {
         "title": "ffba669af7869bb0f89d4b48a826866cdb406fc6495268b43df7e97bdaff7161",
         "transcript": "f2297e1afec9413a533b6051b1607d399782f5e088e2b155fcfd1a0a9686cf7e",
@@ -439,6 +602,8 @@ def test_the_normaliser_version_is_pinned_to_its_behaviour():
         "notes:plaud-outline": "19c6f09bde57fc5e25d3ae808a508de00674a79d25fb87cd898a41305ae53855",
         "notes:plaud-resume": "3181d74088af69ce2ccd0dec8abe3513e6b2345d5852d5b325ce6b59d980ba02",
         "notes:plaud-summary": "d1816bd50f86a93da01915538d4904972de800c957d725616e18ddcf59a4d270",
-        "other": "a5afe73e3ace44be4eb81a0684a6aa0b96643fedb7c55b866157ab2db8cce54c"}
+        "other": "a5afe73e3ace44be4eb81a0684a6aa0b96643fedb7c55b866157ab2db8cce54c",
+    }
     assert diarization_fingerprint(GOLDEN_ENVELOPE) == (
-        "baae9531d588f19e7cff5149c7ad2c64314aa4c952767dbc1e0755382f441ec8")
+        "baae9531d588f19e7cff5149c7ad2c64314aa4c952767dbc1e0755382f441ec8"
+    )

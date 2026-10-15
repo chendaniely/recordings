@@ -112,8 +112,9 @@ def patterns_from_config(data: dict) -> tuple[str, ...]:
         try:
             re.compile(pattern)
         except re.error as exc:
-            raise ConfigError(f"[plaud] auto_private_patterns: {pattern!r} is not a regular "
-                              f"expression ({exc})") from None
+            raise ConfigError(
+                f"[plaud] auto_private_patterns: {pattern!r} is not a regular expression ({exc})"
+            ) from None
     return tuple(value)
 
 
@@ -121,15 +122,19 @@ def strip_date_prefix(title: str) -> str:
     return TITLE_DATE_PREFIX.sub("", title, count=1).strip()
 
 
-def matches_auto_private(titles: Iterable[str],
-                         patterns: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> bool:
+def matches_auto_private(
+    titles: Iterable[str], patterns: Sequence[str] = DEFAULT_AUTO_PRIVATE
+) -> bool:
     """Whether any of these Plaud titles matches an auto-private pattern (§7.4). Each pattern is
     searched, ignoring case, in the title as given and with its "MM-DD " prefix stripped; trying
     both errs towards private. The import calls it to tag a recording when it is created, and
     reconcile on every snapshot's title."""
-    return any(re.search(pattern, text, re.IGNORECASE)
-               for title in titles for text in (title, strip_date_prefix(title))
-               for pattern in patterns)
+    return any(
+        re.search(pattern, text, re.IGNORECASE)
+        for title in titles
+        for text in (title, strip_date_prefix(title))
+        for pattern in patterns
+    )
 
 
 def _number(value: Any) -> bool:
@@ -195,8 +200,11 @@ def _segments(rows: list[dict]) -> tuple[list[dict], int]:
         previous_end = end
         name = str(row.get("speaker") or "").strip()
         label = str(row.get("original_speaker") or "").strip() or name
-        segment: dict[str, Any] = {"start": start, "end": end,
-                                   "text": str(row.get("content") or "").strip()}
+        segment: dict[str, Any] = {
+            "start": start,
+            "end": end,
+            "text": str(row.get("content") or "").strip(),
+        }
         if label:
             segment["speaker"] = label
         if name and (name != label or _named(row)):  # a real name is kept even without a label
@@ -221,8 +229,10 @@ def _slots(envelope: dict) -> dict[str, tuple[str, Any]]:
         # the diarization keys: everything the output takes from the rows.
         segments, untimed = _segments(rows)
         last_end = timing_check({}, rows, None).get("last_segment_end_ms")
-        out["transcript"] = (sha256_of([segments, untimed, last_end,
-                                        [diarization_key(r) for r in rows]]), rows)
+        out["transcript"] = (
+            sha256_of([segments, untimed, last_end, [diarization_key(r) for r in rows]]),
+            rows,
+        )
     for note_type, block, raw in note_blocks(envelope):
         if render_note(raw):
             # Rendered from the normalised block, so a rotating signature is never a change,
@@ -233,33 +243,53 @@ def _slots(envelope: dict) -> dict[str, tuple[str, Any]]:
     return out
 
 
-def _transcript(rows: list[dict], digest: str, snap: Snapshot, env: dict,
-                rec: Recording) -> Rendition:
+def _transcript(
+    rows: list[dict], digest: str, snap: Snapshot, env: dict, rec: Recording
+) -> Rendition:
     segments, untimed = _segments(rows)
-    meta: dict[str, Any] = {"diarization": diarization_fingerprint(env),
-                            "timing": timing_check(env, rows, rec.media.duration_ms)}
+    meta: dict[str, Any] = {
+        "diarization": diarization_fingerprint(env),
+        "timing": timing_check(env, rows, rec.media.duration_ms),
+    }
     if untimed:
         meta["untimed_segments"] = untimed
-    return Rendition(kind="transcript", engine="plaud", model="plaud", version=PLAUD_VERSION,
-                     created_at=snap.fetched_at,
-                     inputs={"source": snap.path, "part_sha256": digest},
-                     meta=meta, payload={"segments": segments})
+    return Rendition(
+        kind="transcript",
+        engine="plaud",
+        model="plaud",
+        version=PLAUD_VERSION,
+        created_at=snap.fetched_at,
+        inputs={"source": snap.path, "part_sha256": digest},
+        meta=meta,
+        payload={"segments": segments},
+    )
 
 
 def _notes(note_type: str, block: dict, digest: str, snap: Snapshot) -> Rendition:
-    return Rendition(kind="notes", note_type=note_type, engine="plaud", model="plaud",
-                     version=PLAUD_VERSION, created_at=snap.fetched_at,
-                     inputs={"source": snap.path, "part_sha256": digest},
-                     meta={"data_type": str(block.get("data_type") or "")},
-                     payload={"markdown": render_note(block)})
+    return Rendition(
+        kind="notes",
+        note_type=note_type,
+        engine="plaud",
+        model="plaud",
+        version=PLAUD_VERSION,
+        created_at=snap.fetched_at,
+        inputs={"source": snap.path, "part_sha256": digest},
+        meta={"data_type": str(block.get("data_type") or "")},
+        payload={"markdown": render_note(block)},
+    )
 
 
 def _identity(r: Rendition) -> tuple:
     return (r.kind, r.note_type, r.inputs.get("source"), r.inputs.get("part_sha256"), r.version)
 
 
-def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[Rendition], *,
-              auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> Reconciled:
+def reconcile(
+    rec: Recording,
+    snapshots: Sequence[Snapshot],
+    existing: Sequence[Rendition],
+    *,
+    auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE,
+) -> Reconciled:
     ordered = [s for _, s in sorted(enumerate(snapshots), key=lambda p: (p[1].fetched_at, p[0]))]
     ack = rec.plaud.acknowledged_up_to if rec.plaud else None
     ack_position = max((i for i, s in enumerate(ordered) if s.path == ack), default=-1)
@@ -299,14 +329,21 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
                 if slot not in applied and slot in gone and gone[slot][0] == digest:
                     applied[slot] = gone.pop(slot)  # back as it was: its output is already there
                     continue
-                if (slot == "transcript" and slot in applied and not reviewed
-                        and _names_removed(applied[slot][1], value)):
+                if (
+                    slot == "transcript"
+                    and slot in applied
+                    and not reviewed
+                    and _names_removed(applied[slot][1], value)
+                ):
                     held[(ref, slot)] = Held(snapshot.path, slot, "names removed")
                     continue
                 held.pop((ref, slot), None)
                 applied[slot] = (digest, value)
-                output = (_transcript(value, digest, snapshot, env, rec) if slot == "transcript"
-                          else _notes(slot.removeprefix("notes:"), value, digest, snapshot))
+                output = (
+                    _transcript(value, digest, snapshot, env, rec)
+                    if slot == "transcript"
+                    else _notes(slot.removeprefix("notes:"), value, digest, snapshot)
+                )
                 if _identity(output) not in have:
                     have.add(_identity(output))
                     outputs.append(output)
@@ -335,6 +372,12 @@ def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[
             newest[canonical_plaud_id(snapshot.ref)] = name
     due = seen is None or any(name != seen for name in newest.values())
     add_private = due and not is_private(rec) and matches_auto_private(titles, auto_private)
-    return Reconciled(outputs=tuple(outputs), title=title, title_seen=title_seen,
-                      title_difference=difference, add_private=add_private,
-                      held=tuple(held.values()), skipped=tuple(skipped))
+    return Reconciled(
+        outputs=tuple(outputs),
+        title=title,
+        title_seen=title_seen,
+        title_difference=difference,
+        add_private=add_private,
+        held=tuple(held.values()),
+        skipped=tuple(skipped),
+    )

@@ -17,9 +17,12 @@ OTHER_UUID = "00000000-0000-4000-8000-000000000000"
 
 def setup(tmp_path, writer, target, extra="", known_hosts=True):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
-                        f'[state]\npath = "{writer.state.path}"\n'
-                        f'[mirror]\ntarget = "{target}"\n{extra}', encoding="utf-8")
+    cfg_file.write_text(
+        f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
+        f'[state]\npath = "{writer.state.path}"\n'
+        f'[mirror]\ntarget = "{target}"\n{extra}',
+        encoding="utf-8",
+    )
     environ = {"RECORDINGS_CONFIG": str(cfg_file), "PATH": os.environ["PATH"]}
     if known_hosts:  # fixtures only: the real RECORDINGS_* and RESTIC_* never reach this module
         (tmp_path / "known_hosts").write_text("nas ssh-ed25519 AAAAexample\n", encoding="utf-8")
@@ -63,13 +66,24 @@ class FakeRsync:
 
 
 def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_skips_work_in_progress(
-        tmp_path, writer):
+    tmp_path, writer
+):
     mc = mirror_config(tmp_path, writer, "recordings-mirror@nas:/volume1/recordings-mirror/")
     cmd = rsync_command(mc)
-    for flag in ("-a", "--delete", "--delete-delay", "--delay-updates", "--max-delete=50",
-                 "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
-                 "--exclude=/#recycle/", "--filter=-p @eaDir/", f"--exclude=/{MIRROR}",
-                 "--timeout=600"):  # a stalled NAS ends the run (exit 30), not the loop's cap
+    for flag in (
+        "-a",
+        "--delete",
+        "--delete-delay",
+        "--delay-updates",
+        "--max-delete=50",
+        "--exclude=/.tmp/",
+        "--exclude=.*.tmp",
+        "--filter=-p .~tmp~/",
+        "--exclude=/#recycle/",
+        "--filter=-p @eaDir/",
+        f"--exclude=/{MIRROR}",
+        "--timeout=600",
+    ):  # a stalled NAS ends the run (exit 30), not the loop's cap
         assert flag in cmd, flag
     assert "--no-perms" not in cmd
     assert cmd[-2:] == [f"{writer.root}/", "recordings-mirror@nas:/volume1/recordings-mirror/"]
@@ -85,7 +99,9 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
 
 
 def test_the_deletion_limit_and_no_perms_come_from_config(tmp_path, writer):
-    mc = mirror_config(tmp_path, writer, str(tmp_path / "mirror"), "max_delete = 500\nno_perms = true\n")
+    mc = mirror_config(
+        tmp_path, writer, str(tmp_path / "mirror"), "max_delete = 500\nno_perms = true\n"
+    )
     cmd = rsync_command(mc)
     assert "--max-delete=500" in cmd and "--no-perms" in cmd  # a share with Windows ACLs
     for bad in ("max_delete = -1\n", 'max_delete = "50"\n', 'no_perms = "yes"\n'):
@@ -103,8 +119,10 @@ def test_a_remote_target_needs_the_known_hosts_file_even_without_nas_ssh(tmp_pat
     assert mirror.from_config(cfg, environ).target  # a local target needs none
 
 
-@pytest.mark.parametrize("target, remote", [("nas:/x", True), ("backup@nas:/x/", True),
-                                            ("/mnt/mirror", False), ("./x:y", False)])
+@pytest.mark.parametrize(
+    "target, remote",
+    [("nas:/x", True), ("backup@nas:/x/", True), ("/mnt/mirror", False), ("./x:y", False)],
+)
 def test_is_remote(target, remote):
     assert is_remote(target) is remote
 
@@ -190,8 +208,11 @@ def test_a_dry_run_it_cannot_read_stops_the_mirror(tmp_path, writer):
     target.mkdir()
     fake = FakeRsync(target)
     mc = mirror_config(tmp_path, writer, str(target))
-    for dry in (subprocess.CompletedProcess([], 0, "what is this\n", ""),
-                subprocess.CompletedProcess([], 23, "", "rsync: some error\n")):
+    for dry in (
+        subprocess.CompletedProcess([], 0, "what is this\n", ""),
+        subprocess.CompletedProcess([], 23, "", "rsync: some error\n"),
+    ):
+
         def runner(cmd, dry=dry, **kwargs):
             return dry if "--dry-run" in cmd else fake(cmd, **kwargs)
 
@@ -224,8 +245,11 @@ def test_a_failed_rsync_is_an_error(tmp_path, writer):
     target.mkdir()
     mc = mirror_config(tmp_path, writer, str(target))
     with pytest.raises(MirrorError, match="exit 23") as caught:
-        run_mirror(mc, expected_uuid=writer.identity.uuid,
-                   runner=FakeRsync(target, returncode=23, stderr="rsync: some error\n"))
+        run_mirror(
+            mc,
+            expected_uuid=writer.identity.uuid,
+            runner=FakeRsync(target, returncode=23, stderr="rsync: some error\n"),
+        )
     assert caught.value.returncode == 23
 
 
@@ -237,13 +261,16 @@ def test_more_deletions_than_the_limit_stop_the_mirror(tmp_path, writer):
     cfg, environ = setup(tmp_path, writer, str(target))
     fake = FakeRsync(target, returncode=25)
     with pytest.raises(MirrorError, match="max_delete"):
-        run_mirror(mirror.from_config(cfg, environ), expected_uuid=writer.identity.uuid, runner=fake)
+        run_mirror(
+            mirror.from_config(cfg, environ), expected_uuid=writer.identity.uuid, runner=fake
+        )
     ctx = Context(cfg=cfg, environ=environ, state=writer.state, runner=fake)
     assert run_job(ctx, "mirror").detail == "MirrorError; exit 25"
 
 
 def test_the_loop_caps_a_run_and_a_run_from_the_cli_may_finish_a_first_mirror(
-        tmp_path, writer, monkeypatch):
+    tmp_path, writer, monkeypatch
+):
     # why: a first mirror can outlast the loop's cap. Stopped and started again every 6 hours, it
     # holds the backups off each time, and rsync 3.x on the NAS reads and rewrites every file
     # staged in .~tmp~ before it moves on, so a big one over a slow link may never finish. From a
@@ -267,7 +294,8 @@ def test_the_loop_caps_a_run_and_a_run_from_the_cli_may_finish_a_first_mirror(
 
 
 def test_a_refusal_names_recordings_only_under_debug_and_the_cli_allows_more_for_one_run(
-        tmp_path, writer, monkeypatch, caplog):
+    tmp_path, writer, monkeypatch, caplog
+):
     # why: "if they are meant, raise it for one run" must not need a config edit that outlives
     # the run, and Dan must first see what would go: recording IDs and counts, at debug level only
     # (the loop logs at INFO), never a name, since a file left in the mirror could be called
@@ -276,8 +304,10 @@ def test_a_refusal_names_recordings_only_under_debug_and_the_cli_allows_more_for
     target.mkdir()
     cfg, environ = setup(tmp_path, writer, str(target), "max_delete = 2\n")
     rid = "20261008T143512+0200_0123abcd"
-    gone = "".join(f"*deleting   recordings/2026/10/{rid}/{name}\n"
-                   for name in ("audio.m4a", "recording.json", ""))  # "": the folder itself
+    gone = "".join(
+        f"*deleting   recordings/2026/10/{rid}/{name}\n"
+        for name in ("audio.m4a", "recording.json", "")
+    )  # "": the folder itself
     gone += "*deleting   Grace and Ada.m4a\n"
     fake = FakeRsync(target)
 
@@ -347,11 +377,13 @@ def test_a_first_mirror_cut_short_is_resumed(tmp_path, writer):
     (target / "recordings").mkdir()
     assert run_mirror(mc, expected_uuid=writer.identity.uuid) == "mirrored"
     assert (target / SENTINEL).read_text(encoding="utf-8") == (writer.root / SENTINEL).read_text(
-        encoding="utf-8")
+        encoding="utf-8"
+    )
 
 
 def test_real_rsync_refuses_another_archives_mark_a_foreign_folder_and_the_archive_itself(
-        tmp_path, writer):
+    tmp_path, writer
+):
     target, mc = _real_rsync_mirror(tmp_path, writer)
     (target / MIRROR).write_text(mirror.mark_text(OTHER_UUID), encoding="utf-8")
     with pytest.raises(MirrorRefused, match="another archive's mirror"):

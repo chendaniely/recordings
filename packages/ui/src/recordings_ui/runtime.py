@@ -10,8 +10,9 @@ _media_base: str | None = None
 _status: StatusSettings | None = None
 
 
-def configure(archive: Archive | None, *, media_base: str | None = None,
-              status: StatusSettings | None = None) -> None:
+def configure(
+    archive: Archive | None, *, media_base: str | None = None, status: StatusSettings | None = None
+) -> None:
     """media_base: where the browser finds media files, as `<media_base><media.file>`.
 
     None (the server) links the FastAPI route /media/{id}. The static Pages demo, which has no

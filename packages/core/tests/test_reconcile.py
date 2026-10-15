@@ -25,18 +25,24 @@ T1 = datetime(2026, 8, 1, 16, 10, tzinfo=timezone.utc)
 
 
 def rec(**over) -> Recording:
-    fields = dict(id="20260801T090000-0700_" + "a" * 8, title="Week 4", title_by="plaud",
-                  recorded_at=datetime.fromisoformat("2026-08-01T09:00:00-07:00"),
-                  timezone="America/Vancouver", time_source="plaud",
-                  media=MediaInfo(file="x.wav", sha256="a" * 64, kind="audio", duration_ms=2600))
+    fields = dict(
+        id="20260801T090000-0700_" + "a" * 8,
+        title="Week 4",
+        title_by="plaud",
+        recorded_at=datetime.fromisoformat("2026-08-01T09:00:00-07:00"),
+        timezone="America/Vancouver",
+        time_source="plaud",
+        media=MediaInfo(file="x.wav", sha256="a" * 64, kind="audio", duration_ms=2600),
+    )
     fields.update(over)
     return Recording(**fields)
 
 
 def snap(env, n=0, *, ref=HEX) -> Snapshot:
     when = T1 + timedelta(days=n)
-    return Snapshot(path=f"source/plaud-{when:%Y%m%dT%H%M%SZ}.json", ref=ref, fetched_at=when,
-                    envelope=env)
+    return Snapshot(
+        path=f"source/plaud-{when:%Y%m%dT%H%M%SZ}.json", ref=ref, fetched_at=when, envelope=env
+    )
 
 
 def kinds(outputs):
@@ -45,16 +51,26 @@ def kinds(outputs):
 
 def test_the_first_snapshot_gives_a_transcript_and_a_notes_output_per_tab(plaud_env):
     result = reconcile(rec(), [snap(plaud_env())], [])
-    assert kinds(result.outputs) == [("notes", "plaud-high-light"), ("notes", "plaud-outline"),
-                                     ("notes", "plaud-summary"), ("transcript", None)]
+    assert kinds(result.outputs) == [
+        ("notes", "plaud-high-light"),
+        ("notes", "plaud-outline"),
+        ("notes", "plaud-summary"),
+        ("transcript", None),
+    ]
     transcript = next(o for o in result.outputs if o.kind == "transcript")
     assert transcript.version == PLAUD_VERSION == "plaud@1"
     assert transcript.created_at == T1
     assert transcript.inputs["source"] == "source/plaud-20260801T161000Z.json"
     assert len(transcript.inputs["part_sha256"]) == 64
     first, second = transcript.payload["segments"]
-    assert first == {"start": 0.0, "end": 1.5, "text": "Hello there.", "speaker": "Speaker 1",
-                     "speaker_name": "Ada", "embedding_key": "ek-1"}
+    assert first == {
+        "start": 0.0,
+        "end": 1.5,
+        "text": "Hello there.",
+        "speaker": "Speaker 1",
+        "speaker_name": "Ada",
+        "embedding_key": "ek-1",
+    }
     assert second == {"start": 1.5, "end": 2.6, "text": "Hi.", "speaker": "Speaker 2"}
     assert transcript.meta["timing"]["ok"] is True
     summary = next(o for o in result.outputs if o.note_type == "plaud-summary")
@@ -81,13 +97,31 @@ def test_notes_are_rendered_from_the_raw_block_and_hashed_from_the_normalised_on
     link = "https://notes.example/a.png?X-Amz-Expires=300&X-Amz-Signature={}"
 
     def envelope(signature):
-        return plaud_env(notes=[
-            {"data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "Summary",
-             "data_content": f"See [the chart]({link.format(signature)}) here."},
-            {"data_type": "high_light", "data_id": "h", "data_tab_name": None,
-             "data_content": json.dumps([{"timestamp": 1000, "title": "Board",
-                                          "content": "A sketch",
-                                          "picture_link": link.format(signature)}])}])
+        return plaud_env(
+            notes=[
+                {
+                    "data_type": "auto_sum_note",
+                    "data_id": "n",
+                    "data_tab_name": "Summary",
+                    "data_content": f"See [the chart]({link.format(signature)}) here.",
+                },
+                {
+                    "data_type": "high_light",
+                    "data_id": "h",
+                    "data_tab_name": None,
+                    "data_content": json.dumps(
+                        [
+                            {
+                                "timestamp": 1000,
+                                "title": "Board",
+                                "content": "A sketch",
+                                "picture_link": link.format(signature),
+                            }
+                        ]
+                    ),
+                },
+            ]
+        )
 
     s1, s2 = snap(envelope("one")), snap(envelope("two"), 1)
     first = reconcile(rec(), [s1], [])
@@ -95,7 +129,8 @@ def test_notes_are_rendered_from_the_raw_block_and_hashed_from_the_normalised_on
     assert summary.payload["markdown"] == f"See [the chart]({link.format('one')}) here."
     highlight = next(o for o in first.outputs if o.note_type == "plaud-high-light")
     assert highlight.payload["markdown"] == (
-        f"**[00:01] Board**\n\nA sketch\n\n(image: {link.format('one')})")
+        f"**[00:01] Board**\n\nA sketch\n\n(image: {link.format('one')})"
+    )
     assert reconcile(rec(), [s1, s2], first.outputs).outputs == ()
 
 
@@ -116,8 +151,10 @@ def test_a_speaker_rename_writes_a_new_transcript_and_a_note_edit_only_that_note
     result = reconcile(rec(), [s1, s2], first.outputs)
     assert kinds(result.outputs) == [("notes", "plaud-summary"), ("transcript", None)]
     assert all(o.inputs["source"] == s2.path for o in result.outputs)
-    names = [s.get("speaker_name") for s in next(o for o in result.outputs
-                                                 if o.kind == "transcript").payload["segments"]]
+    names = [
+        s.get("speaker_name")
+        for s in next(o for o in result.outputs if o.kind == "transcript").payload["segments"]
+    ]
     assert names == ["Ada", "Grace"]
 
 
@@ -129,7 +166,8 @@ def test_a_vanished_note_tab_waits_for_review(plaud_env):
     result = reconcile(rec(), [s1, s2], first.outputs)
     assert result.outputs == ()
     assert [(h.snapshot, h.slot, h.reason) for h in result.held] == [
-        (s2.path, "notes:plaud-summary", "notes removed")]
+        (s2.path, "notes:plaud-summary", "notes removed")
+    ]
     reviewed = rec(plaud=PlaudState(acknowledged_up_to=s2.path))
     assert reconcile(reviewed, [s1, s2], first.outputs).held == ()
 
@@ -150,8 +188,10 @@ def test_names_reverting_to_speaker_n_wait_for_review(plaud_env):
 def test_names_reverting_wait_for_review_when_rows_have_no_original_speaker(plaud_env):
     # why: the diarization key must not depend on the current name, or "Ada" going back to
     # "Speaker 1" reads as a new diarization and the removal is applied without review.
-    rows = [{"content": "Hello there.", "start_time": 0, "end_time": 1500, "speaker": "Ada"},
-            {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2"}]
+    rows = [
+        {"content": "Hello there.", "start_time": 0, "end_time": 1500, "speaker": "Ada"},
+        {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2"},
+    ]
     env = plaud_env(segments=rows)
     reverted = plaud_env(segments=[{**rows[0], "speaker": "Speaker 1"}, rows[1]])
     s1, s2 = snap(env), snap(reverted, 1)
@@ -203,10 +243,12 @@ def test_a_title_dan_edited_by_hand_is_not_reverted(plaud_env):
 
 def test_a_real_name_without_an_original_speaker_is_kept_as_speaker_name(plaud_env):
     # why: stage 3b links Plaud's names to people, so a named row must carry its name.
-    env = plaud_env(segments=[{"content": "Hello.", "start_time": 0, "end_time": 1000,
-                               "speaker": "Ada"},
-                              {"content": "Hi.", "start_time": 1000, "end_time": 2000,
-                               "speaker": "Speaker 2"}])
+    env = plaud_env(
+        segments=[
+            {"content": "Hello.", "start_time": 0, "end_time": 1000, "speaker": "Ada"},
+            {"content": "Hi.", "start_time": 1000, "end_time": 2000, "speaker": "Speaker 2"},
+        ]
+    )
     (transcript,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.kind == "transcript"]
     first, second = transcript.payload["segments"]
     assert (first["speaker"], first["speaker_name"]) == ("Ada", "Ada")
@@ -223,9 +265,10 @@ def test_a_difference_the_transcript_output_cant_show_writes_no_new_output(plaud
     # embeddingKey for none give the same output, so none may be written again.
     env = plaud_env()
     rows = json.loads(env["source_list"][0]["data_content"])
-    same = [{**rows[0], "content": rows[0]["content"] + " ", "end_time": 1500.0},
-            {**rows[1], "start_time": 1500.0, "speaker": rows[1]["speaker"] + " ",
-             "embeddingKey": ""}]
+    same = [
+        {**rows[0], "content": rows[0]["content"] + " ", "end_time": 1500.0},
+        {**rows[1], "start_time": 1500.0, "speaker": rows[1]["speaker"] + " ", "embeddingKey": ""},
+    ]
     s1, s2 = snap(env), snap(plaud_env(segments=same), 1)
     first = reconcile(rec(), [s1], [])
     assert reconcile(rec(), [s1, s2], first.outputs).outputs == ()
@@ -249,8 +292,10 @@ def test_a_private_tag_dan_removed_stays_removed_until_plauds_title_changes(plau
     # never on every reindex, which would undo Dan's decision each time.
     removed = rec(title="Interview: Ada", plaud=PlaudState(title_seen="Interview: Ada"))
     assert reconcile(removed, [snap(plaud_env(name="Interview: Ada"))], []).add_private is False
-    renamed = [snap(plaud_env(name="Interview: Ada")),
-               snap(plaud_env(name="Interview: Ada, part 2"), 1)]
+    renamed = [
+        snap(plaud_env(name="Interview: Ada")),
+        snap(plaud_env(name="Interview: Ada, part 2"), 1),
+    ]
     assert reconcile(removed, renamed, []).add_private is True
     assert reconcile(rec(), [snap(plaud_env(name="Interview: Ada"))], []).add_private is True
 
@@ -259,11 +304,12 @@ def test_a_new_title_under_either_id_or_in_a_degraded_snapshot_runs_the_patterns
     # why: privacy still errs towards private once Dan has removed a tag: a new title under the
     # other Plaud ID, or in a snapshot nothing is built from, is a title change.
     removed = rec(title="Week 4", plaud=PlaudState(title_seen="Week 4"))
-    other = [snap(plaud_env(name="Week 4")),
-             snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER)]
+    other = [
+        snap(plaud_env(name="Week 4")),
+        snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER),
+    ]
     assert reconcile(removed, other, []).add_private is True
-    degraded = [snap(plaud_env(name="Week 4")),
-                snap(plaud_env(name="Private", link_error=True), 1)]
+    degraded = [snap(plaud_env(name="Week 4")), snap(plaud_env(name="Private", link_error=True), 1)]
     assert reconcile(removed, degraded, []).add_private is True
 
 
@@ -284,8 +330,12 @@ def test_accepting_a_later_removal_never_rewrites_a_slot_that_came_back_as_it_wa
 def test_the_timing_check_catches_a_trim_without_plauds_duration():
     rows = [{"start_time": 0, "end_time": 5000}]
     trimmed = timing_check({}, rows, 3400)
-    assert trimmed == {"rule": "timing@1", "last_segment_end_ms": 5000,
-                       "media_duration_ms": 3400, "ok": False}
+    assert trimmed == {
+        "rule": "timing@1",
+        "last_segment_end_ms": 5000,
+        "media_duration_ms": 3400,
+        "ok": False,
+    }
     assert timing_check({}, [{"start_time": 0, "end_time": 3400}], 3400)["ok"] is True
     assert "ok" not in timing_check({}, [], 3400)
 
@@ -296,15 +346,24 @@ def test_odd_numbers_and_deep_nesting_never_raise(plaud_env):
     assert render_note({"data_type": "outline", "data_content": deep}) == deep
     assert render_note({"data_type": "high_light", "data_content": deep}) == deep
     huge = "1" + "0" * 4000
-    marks = json.loads('[{"timestamp": Infinity, "title": "A"}, {"timestamp": 1e400, "title": "B"}]')
+    marks = json.loads(
+        '[{"timestamp": Infinity, "title": "A"}, {"timestamp": 1e400, "title": "B"}]'
+    )
     assert render_note({"data_type": "high_light", "data_content": json.dumps(marks)}) == (
-        "**[--:--] A**\n\n**[--:--] B**")
-    assert render_note({"data_type": "outline", "data_content":
-                        '[{"topic": "T", "start_time": ' + huge + "}]"}) == "- [--:--] T"
+        "**[--:--] A**\n\n**[--:--] B**"
+    )
+    assert (
+        render_note(
+            {"data_type": "outline", "data_content": '[{"topic": "T", "start_time": ' + huge + "}]"}
+        )
+        == "- [--:--] T"
+    )
     check = timing_check({"duration": float("inf")}, [{"end_time": float("inf")}], 3400)
     assert check == {"rule": "timing@1", "media_duration_ms": 3400}
-    env = plaud_env(duration=int(huge), segments=[
-        {"content": "x", "start_time": 0, "end_time": int(huge), "speaker": "Speaker 1"}])
+    env = plaud_env(
+        duration=int(huge),
+        segments=[{"content": "x", "start_time": 0, "end_time": int(huge), "speaker": "Speaker 1"}],
+    )
     (transcript,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.kind == "transcript"]
     assert transcript.meta["untimed_segments"] == 1
     env = plaud_env(duration=0)
@@ -346,8 +405,12 @@ def test_a_degraded_or_unreadable_snapshot_is_skipped_and_reported(plaud_env):
     # isn't a JSON object.
     s1 = snap(plaud_env(link_error=True))
     s2 = snap(None, 1)
-    s3 = Snapshot(path="source/plaud-x.json", ref=HEX, fetched_at=T1 + timedelta(days=2),
-                  envelope=["not", "an", "object"])
+    s3 = Snapshot(
+        path="source/plaud-x.json",
+        ref=HEX,
+        fetched_at=T1 + timedelta(days=2),
+        envelope=["not", "an", "object"],
+    )
     result = reconcile(rec(), [s1, s2, s3], [])
     assert result.outputs == () and result.skipped == (s1.path, s2.path, s3.path)
 
@@ -364,12 +427,20 @@ def test_plaud_owns_the_title_only_while_title_by_is_plaud_or_absent(plaud_env):
     assert reconcile(dismissed, renamed, []).title_difference is None
 
 
-@pytest.mark.parametrize("title, private", [
-    ("Private: therapy", True), ("  private notes", True), ("Interview: Grace", True),
-    ("10-06 Private session", True), ("10-06-private notes", True),
-    ("1-2 Interview: Grace", True),
-    ("Consultation: Private Chef Charity", False), ("10-06 Consultation: Private Chef", False),
-    ("Week 4", False)])
+@pytest.mark.parametrize(
+    "title, private",
+    [
+        ("Private: therapy", True),
+        ("  private notes", True),
+        ("Interview: Grace", True),
+        ("10-06 Private session", True),
+        ("10-06-private notes", True),
+        ("1-2 Interview: Grace", True),
+        ("Consultation: Private Chef Charity", False),
+        ("10-06 Consultation: Private Chef", False),
+        ("Week 4", False),
+    ],
+)
 def test_the_auto_private_patterns_add_private(plaud_env, title, private):
     assert reconcile(rec(), [snap(plaud_env(name=title))], []).add_private is private
 
@@ -389,14 +460,17 @@ def test_plauds_date_prefix_is_stripped_before_matching():
 def test_auto_private_checks_every_snapshot_title_and_both_plaud_ids(plaud_env):
     # why: privacy errs towards private. A title Plaud has since changed, the other Plaud ID's
     # title, and a degraded snapshot's title all still count.
-    renamed_since = [snap(plaud_env(name="10-06 Private session")),
-                     snap(plaud_env(name="Week 4"), 1)]
+    renamed_since = [
+        snap(plaud_env(name="10-06 Private session")),
+        snap(plaud_env(name="Week 4"), 1),
+    ]
     assert reconcile(rec(), renamed_since, []).add_private is True
-    other_id = [snap(plaud_env(name="Week 4")),
-                snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER)]
+    other_id = [
+        snap(plaud_env(name="Week 4")),
+        snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER),
+    ]
     assert reconcile(rec(), other_id, []).add_private is True
-    degraded = [snap(plaud_env(name="Week 4")),
-                snap(plaud_env(name="Private", link_error=True), 1)]
+    degraded = [snap(plaud_env(name="Week 4")), snap(plaud_env(name="Private", link_error=True), 1)]
     assert reconcile(rec(), degraded, []).add_private is True
 
 
@@ -418,27 +492,49 @@ def test_the_timing_check_catches_a_trim():
     ok = timing_check({"duration": 3500}, rows, 3400)
     trimmed = timing_check({"duration": 5000}, rows, 3400)
     unknown = timing_check({"duration": 3500}, rows, None)
-    assert ok == {"rule": "timing@1", "plaud_duration_ms": 3500, "last_segment_end_ms": 3500,
-                  "media_duration_ms": 3400, "ok": True}
+    assert ok == {
+        "rule": "timing@1",
+        "plaud_duration_ms": 3500,
+        "last_segment_end_ms": 3500,
+        "media_duration_ms": 3400,
+        "ok": True,
+    }
     assert trimmed["ok"] is False
     assert "ok" not in unknown and "media_duration_ms" not in unknown
 
 
 def test_untimed_segments_are_kept_and_counted(plaud_env):
-    env = plaud_env(segments=[{"content": "No timing.", "speaker": "Speaker 1"},
-                              {"content": "Timed.", "start_time": 1000, "end_time": 2000,
-                               "speaker": "Speaker 1"}])
+    env = plaud_env(
+        segments=[
+            {"content": "No timing.", "speaker": "Speaker 1"},
+            {"content": "Timed.", "start_time": 1000, "end_time": 2000, "speaker": "Speaker 1"},
+        ]
+    )
     (transcript,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.kind == "transcript"]
-    assert [(s["start"], s["end"]) for s in transcript.payload["segments"]] == [(0.0, 0.0), (1.0, 2.0)]
+    assert [(s["start"], s["end"]) for s in transcript.payload["segments"]] == [
+        (0.0, 0.0),
+        (1.0, 2.0),
+    ]
     assert transcript.meta["untimed_segments"] == 1
 
 
 def test_a_tab_named_in_another_script_gives_a_safe_file_name(plaud_env):
     # Review Focus 4.
-    env = plaud_env(notes=[{"data_type": "auto_sum_note", "data_id": "n",
-                            "data_tab_name": "会議メモ / Q&A", "data_content": "x"}])
-    (note,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.note_type != "plaud-outline"
-               and o.kind == "notes"]
+    env = plaud_env(
+        notes=[
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "n",
+                "data_tab_name": "会議メモ / Q&A",
+                "data_content": "x",
+            }
+        ]
+    )
+    (note,) = [
+        o
+        for o in reconcile(rec(), [snap(env)], []).outputs
+        if o.note_type != "plaud-outline" and o.kind == "notes"
+    ]
     assert note.note_type == "plaud-q-a"
     name = rendition_filename(note)
     assert name.isascii() and "/" not in name and name.startswith("notes-plaud-q-a-plaud-plaud@1-")
@@ -457,11 +553,18 @@ def test_the_patterns_come_from_config_and_are_checked():
 
 # ---- through the Writer ----------------------------------------------------------------------
 
+
 def test_the_writer_reconciles_once_and_owns_the_plaud_fields(writer, make_incoming, plaud_env):
     payload = json.dumps(plaud_env(name="Interview: Ada")).encode()
-    added = writer.add(make_incoming(
-        title="Interview: Ada", title_by="plaud",
-        sources=(RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),)))
+    added = writer.add(
+        make_incoming(
+            title="Interview: Ada",
+            title_by="plaud",
+            sources=(
+                RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),
+            ),
+        )
+    )
     report = writer.reconcile_plaud(added.recording.id)
     assert report.written == 4 and report.held == () and report.skipped == ()
     recording = writer.archive.load(added.recording.id)
@@ -472,13 +575,21 @@ def test_the_writer_reconciles_once_and_owns_the_plaud_fields(writer, make_incom
     assert writer.archive.load(added.recording.id).rev == rev  # a second run changes nothing
 
 
-def test_the_private_tag_lands_before_any_plaud_output(writer, make_incoming, plaud_env,
-                                                        monkeypatch):
+def test_the_private_tag_lands_before_any_plaud_output(
+    writer, make_incoming, plaud_env, monkeypatch
+):
     # why: privacy first (§7.4). Were the outputs written first, a crash before the tag would
     # leave Plaud's transcript and notes in a recording nothing marks private.
     payload = json.dumps(plaud_env(name="10-06 Private session")).encode()
-    added = writer.add(make_incoming(title="Week 4", title_by="plaud", sources=(
-        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),)))
+    added = writer.add(
+        make_incoming(
+            title="Week 4",
+            title_by="plaud",
+            sources=(
+                RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),
+            ),
+        )
+    )
     private_at_each_output = []
     real = Writer._write_rendition_locked
 
@@ -491,19 +602,43 @@ def test_the_private_tag_lands_before_any_plaud_output(writer, make_incoming, pl
     assert private_at_each_output == [True] * 4
 
 
-def test_reindex_finishes_an_update_interrupted_after_its_snapshot(writer, make_incoming,
-                                                                    plaud_env):
+def test_reindex_finishes_an_update_interrupted_after_its_snapshot(
+    writer, make_incoming, plaud_env
+):
     # why: §9.1.1. Reconcile runs on reindex, so a snapshot written before a crash is still built.
     env = plaud_env()
     rows = json.loads(env["source_list"][0]["data_content"])
-    first = writer.add(make_incoming(b"same", title_by="plaud", sources=(
-        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1,
-                  payload=json.dumps(env).encode()),))).recording
+    first = writer.add(
+        make_incoming(
+            b"same",
+            title_by="plaud",
+            sources=(
+                RawSource(
+                    kind="plaud",
+                    ref=HEX,
+                    added_at=T1,
+                    fetched_at=T1,
+                    payload=json.dumps(env).encode(),
+                ),
+            ),
+        )
+    ).recording
     writer.reconcile_plaud(first.id)
     later = plaud_env(segments=[{**rows[0], "content": "Hello!"}, rows[1]])
-    writer.add(make_incoming(b"same", sources=(
-        RawSource(kind="plaud", ref="of_" + HEX, added_at=T1, fetched_at=T1 + timedelta(days=1),
-                  payload=json.dumps(later).encode()),)))
+    writer.add(
+        make_incoming(
+            b"same",
+            sources=(
+                RawSource(
+                    kind="plaud",
+                    ref="of_" + HEX,
+                    added_at=T1,
+                    fetched_at=T1 + timedelta(days=1),
+                    payload=json.dumps(later).encode(),
+                ),
+            ),
+        )
+    )
     report = writer.reindex()
     (rec_report,) = report.reconciled
     assert rec_report.written == 1
@@ -514,10 +649,16 @@ def test_a_bad_pattern_in_config_refuses_the_writer_cleanly(new_archive, tmp_pat
     # why: a typo in [plaud] auto_private_patterns must give the CLI exit 78 and let the web
     # app start read-only, not a traceback: NotTheWriter is what both callers already handle.
     root, state = new_archive
-    cfg = Config(path=None, archive_path=root, writer_id="test",
-                 default_timezone="America/Vancouver", base_url=None,
-                 data={"plaud": {"auto_private_patterns": ["("]}},
-                 state_path=state, index_path=tmp_path / "index" / "index.db")
+    cfg = Config(
+        path=None,
+        archive_path=root,
+        writer_id="test",
+        default_timezone="America/Vancouver",
+        base_url=None,
+        data={"plaud": {"auto_private_patterns": ["("]}},
+        state_path=state,
+        index_path=tmp_path / "index" / "index.db",
+    )
     with pytest.raises(NotTheWriter, match="auto_private_patterns"):
         Writer.open(cfg)
 
@@ -528,8 +669,14 @@ def test_reindex_reconciles_after_it_rebuilds_the_index(writer, make_incoming, p
     for n in range(2):
         fid = HEX[:-1] + str(n)
         payload = json.dumps(plaud_env(fid, name="Interview: A")).encode()
-        writer.add(make_incoming(title_by="plaud", sources=(
-            RawSource(kind="plaud", ref=fid, added_at=T1, fetched_at=T1, payload=payload),)))
+        writer.add(
+            make_incoming(
+                title_by="plaud",
+                sources=(
+                    RawSource(kind="plaud", ref=fid, added_at=T1, fetched_at=T1, payload=payload),
+                ),
+            )
+        )
     writer.index.path.unlink()
     with caplog.at_level(logging.WARNING, logger="recordings.writer"):
         report = writer.reindex()
@@ -541,8 +688,14 @@ def test_reconcile_holds_no_lock_when_it_returns(writer, make_incoming, plaud_en
     # why: Task 5b. `add`, `rebuild_index` and `reindex` take locks that sort before a held
     # recording's, so reconcile must never call them, and must leave nothing held.
     payload = json.dumps(plaud_env(name="Week 4")).encode()
-    added = writer.add(make_incoming(title_by="plaud", sources=(
-        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),)))
+    added = writer.add(
+        make_incoming(
+            title_by="plaud",
+            sources=(
+                RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),
+            ),
+        )
+    )
     writer.reconcile_plaud(added.recording.id)
     assert not writer.locks._held()  # a released key is removed, so nothing is held
 
@@ -551,9 +704,14 @@ def test_an_output_that_cant_be_read_is_never_written_again(writer, make_incomin
     # why: write-once. An output that can't be read now (damaged, or an I/O error) isn't a
     # missing one: writing it again would leave a second, permanent copy beside it.
     payload = json.dumps(plaud_env()).encode()
-    rid = writer.add(make_incoming(title_by="plaud", sources=(
-        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1,
-                  payload=payload),))).recording.id
+    rid = writer.add(
+        make_incoming(
+            title_by="plaud",
+            sources=(
+                RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),
+            ),
+        )
+    ).recording.id
     assert writer.reconcile_plaud(rid).written == 4
     renditions = writer.archive.path_for(rid) / "renditions"
     next(renditions.glob("transcript-*.json")).write_text("{damaged", encoding="utf-8")

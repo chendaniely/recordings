@@ -16,7 +16,14 @@ B = "20261007T140003-0700_bbbbbbbb"
 def test_the_lock_order_is_people_then_tags_then_hashes_then_recordings():
     keys = ["index", B, "sha-" + "f" * 64, "tags.yaml", A, "people.private.yaml", "people.yaml"]
     assert sorted(keys, key=lock_order) == [
-        "people.yaml", "people.private.yaml", "tags.yaml", "sha-" + "f" * 64, A, B, "index"]
+        "people.yaml",
+        "people.private.yaml",
+        "tags.yaml",
+        "sha-" + "f" * 64,
+        A,
+        B,
+        "index",
+    ]
 
 
 def test_locks_taken_together_never_deadlock(tmp_path):
@@ -139,11 +146,14 @@ def test_a_key_that_is_not_a_plain_file_name_is_refused(tmp_path, key):
 
 def test_a_lock_is_released_when_its_process_dies(tmp_path):
     # why: §6.8. flock is released by the kernel, so a crash never leaves a stale lock.
-    script = ("import sys,time; from pathlib import Path; from recordings.locks import Locks\n"
-              "with Locks(Path(sys.argv[1])).hold(sys.argv[2]):\n"
-              "    print('held', flush=True); time.sleep(60)\n")
-    with subprocess.Popen([sys.executable, "-c", script, str(tmp_path), A],
-                          stdout=subprocess.PIPE, text=True) as proc:
+    script = (
+        "import sys,time; from pathlib import Path; from recordings.locks import Locks\n"
+        "with Locks(Path(sys.argv[1])).hold(sys.argv[2]):\n"
+        "    print('held', flush=True); time.sleep(60)\n"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", script, str(tmp_path), A], stdout=subprocess.PIPE, text=True
+    ) as proc:
         try:
             assert select.select([proc.stdout], [], [], 10)[0], "the child never took the lock"
             assert proc.stdout.readline().strip() == "held"
@@ -163,6 +173,7 @@ def test_a_held_ops_lock_says_which_job_runs_and_since_when(tmp_path):
     from datetime import datetime, timezone
 
     from recordings.locks import OPS_LOCK, announce, running
+
     folder, since = tmp_path / "locks", datetime(2026, 10, 9, 7, 0, tzinfo=timezone.utc)
     assert running(folder) is None  # no lock file yet
     with Locks(folder, timeout=0).hold(OPS_LOCK):

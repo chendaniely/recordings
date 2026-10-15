@@ -34,8 +34,9 @@ def _stand_ins(tmp_path, monkeypatch, *, pcm_bytes, streams):
 
 def test_a_wav_file_is_measured_without_ffmpeg(tmp_path, monkeypatch):
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
-    assert probe(_wav(tmp_path / "a.wav")) == MediaProbe(duration_ms=1500, sample_rate=22050,
-                                                         channels=2, method="wave")
+    assert probe(_wav(tmp_path / "a.wav")) == MediaProbe(
+        duration_ms=1500, sample_rate=22050, channels=2, method="wave"
+    )
 
 
 def test_anything_else_needs_ffmpeg_and_is_never_guessed(tmp_path, monkeypatch):
@@ -49,20 +50,30 @@ def test_anything_else_needs_ffmpeg_and_is_never_guessed(tmp_path, monkeypatch):
 def test_the_duration_is_decoded_never_the_containers_claim(tmp_path, monkeypatch):
     # why: §9.1.1. reconcile's timing check compares Plaud's duration against this one, and an
     # mp3's or m4a's container duration is only an estimate. 64000 bytes of PCM is 2000 ms.
-    _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000,
-               streams=[{"codec_type": "audio", "sample_rate": "44100", "channels": 1}])
+    _stand_ins(
+        tmp_path,
+        monkeypatch,
+        pcm_bytes=64000,
+        streams=[{"codec_type": "audio", "sample_rate": "44100", "channels": 1}],
+    )
     (tmp_path / "a.m4a").write_bytes(b"not really")
-    assert probe(tmp_path / "a.m4a") == MediaProbe(duration_ms=2000, sample_rate=44100,
-                                                   channels=1, has_video=False, method="decoded")
+    assert probe(tmp_path / "a.m4a") == MediaProbe(
+        duration_ms=2000, sample_rate=44100, channels=1, has_video=False, method="decoded"
+    )
 
 
 def test_a_failed_decode_or_a_file_with_no_audio_is_not_measured(tmp_path, monkeypatch):
-    _stand_ins(tmp_path, monkeypatch, pcm_bytes=0,
-               streams=[{"codec_type": "audio", "sample_rate": "44100", "channels": 1}])
+    _stand_ins(
+        tmp_path,
+        monkeypatch,
+        pcm_bytes=0,
+        streams=[{"codec_type": "audio", "sample_rate": "44100", "channels": 1}],
+    )
     (tmp_path / "a.m4a").write_bytes(b"not really")
     assert probe(tmp_path / "a.m4a") is None
     (tmp_path / "bin" / "ffprobe").write_text(
-        "#!/bin/sh\necho '{\"streams\": [{\"codec_type\": \"video\"}]}'\n", encoding="utf-8")
+        '#!/bin/sh\necho \'{"streams": [{"codec_type": "video"}]}\'\n', encoding="utf-8"
+    )
     assert probe(tmp_path / "a.m4a") is None
 
 
@@ -77,10 +88,20 @@ def test_the_kind_comes_from_the_suffix_and_for_mp4_from_the_streams(tmp_path):
 def _wav_declaring(path, declared_seconds, actual_seconds, rate=16000):
     """A WAV whose data chunk declares more audio than the file holds."""
     import struct
+
     body = b"\x01\x00" * int(actual_seconds * rate)
     fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 2, 2, 16)
-    data = (b"RIFF" + struct.pack("<I", 36 + len(body)) + b"WAVE" + b"fmt " + struct.pack("<I", 16)
-            + fmt + b"data" + struct.pack("<I", int(declared_seconds * rate) * 2) + body)
+    data = (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(body))
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", 16)
+        + fmt
+        + b"data"
+        + struct.pack("<I", int(declared_seconds * rate) * 2)
+        + body
+    )
     path.write_bytes(data)
     return path
 
@@ -88,24 +109,32 @@ def _wav_declaring(path, declared_seconds, actual_seconds, rate=16000):
 def test_a_wavs_duration_is_the_frames_read_never_its_headers_claim(tmp_path, monkeypatch):
     # why: §9.1.1. A file holding 2 s that declares 60 s is decoded instead, and a WAV with no
     # frames at all is not measured.
-    _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000,
-               streams=[{"codec_type": "audio", "sample_rate": "16000", "channels": 1}])
+    _stand_ins(
+        tmp_path,
+        monkeypatch,
+        pcm_bytes=64000,
+        streams=[{"codec_type": "audio", "sample_rate": "16000", "channels": 1}],
+    )
     liar = _wav_declaring(tmp_path / "liar.wav", declared_seconds=60, actual_seconds=2)
-    assert probe(liar) == MediaProbe(duration_ms=2000, sample_rate=16000, channels=1,
-                                     has_video=False, method="decoded")
+    assert probe(liar) == MediaProbe(
+        duration_ms=2000, sample_rate=16000, channels=1, has_video=False, method="decoded"
+    )
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     assert probe(liar) is None
     assert probe(_wav_declaring(tmp_path / "empty.wav", 0, 0)) is None
 
 
-def test_a_malformed_wav_or_non_utf8_ffprobe_output_is_not_measured_never_raised(tmp_path,
-                                                                                 monkeypatch):
+def test_a_malformed_wav_or_non_utf8_ffprobe_output_is_not_measured_never_raised(
+    tmp_path, monkeypatch
+):
     import struct
+
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     # A chunk that runs past the end of the file: wave raises RuntimeError, not wave.Error.
     bad = tmp_path / "bad.wav"
-    bad.write_bytes(b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6)
-                    + b"abc")
+    bad.write_bytes(
+        b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6) + b"abc"
+    )
     assert probe(bad) is None
     monkeypatch.undo()
     _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000, streams=[])
@@ -118,15 +147,20 @@ def test_a_long_decode_that_keeps_going_is_never_cut_short(tmp_path, monkeypatch
     # why: §9.1.1, Task 8's council. The timeout is for a decode that stalls: a multi-hour
     # recording on a slow or busy host must not come back unmeasured, which stops the import.
     import time
+
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     steady = bin_dir / "ffmpeg"
-    steady.write_text("#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 65536 /dev/zero; sleep 0.3; "
-                      "done\n", encoding="utf-8")
+    steady.write_text(
+        "#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 65536 /dev/zero; sleep 0.3; done\n",
+        encoding="utf-8",
+    )
     steady.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     (tmp_path / "a.m4a").write_bytes(b"not really")
-    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 12288  # 1.8 s in all, a 64 KiB read each step
+    assert (
+        media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 12288
+    )  # 1.8 s in all, a 64 KiB read each step
     steady.write_text("#!/bin/sh\nhead -c 32000 /dev/zero\nexec sleep 30\n", encoding="utf-8")
     started = time.monotonic()
     assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) is None  # stalled: killed

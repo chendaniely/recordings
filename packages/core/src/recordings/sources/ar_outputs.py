@@ -57,8 +57,12 @@ def _number(value: Any) -> bool:
 
 
 def _timed(item: Any) -> bool:
-    return (isinstance(item, dict) and _number(item.get("start")) and _number(item.get("end"))
-            and 0 <= item["start"] <= item["end"])
+    return (
+        isinstance(item, dict)
+        and _number(item.get("start"))
+        and _number(item.get("end"))
+        and 0 <= item["start"] <= item["end"]
+    )
 
 
 def _times(rows: list[dict], start: float = 0.0) -> tuple[list[tuple[float, float]], int]:
@@ -80,7 +84,8 @@ def ar_stamp(path: Path) -> datetime | None:
     """The UTC stamp a rendition's file name ends with (audio-router's store._rendition_stamp)."""
     try:
         return datetime.strptime(path.stem.rsplit("-", 1)[-1], "%Y%m%dT%H%M%SZ").replace(
-            tzinfo=timezone.utc)
+            tzinfo=timezone.utc
+        )
     except ValueError:
         return None
 
@@ -89,8 +94,10 @@ def _words(items: Any, start: float) -> tuple[list[dict], int]:
     """Every word of a merged turn, in order, the untimed ones included and counted."""
     rows = [w for w in items or [] if isinstance(w, dict)]
     times, untimed = _times(rows, start)
-    return [{"word": str(w.get("word") or ""), "start": begin, "end": end}
-            for w, (begin, end) in zip(rows, times)], untimed
+    return [
+        {"word": str(w.get("word") or ""), "start": begin, "end": end}
+        for w, (begin, end) in zip(rows, times)
+    ], untimed
 
 
 def _words_transcript(payload: dict) -> tuple[dict, int] | None:
@@ -102,9 +109,14 @@ def _words_transcript(payload: dict) -> tuple[dict, int] | None:
     if not rows:
         return None
     times, untimed = _times(rows)
-    words = sorted(({"word": str(w.get("word") or ""), "start": float(w["start"]),
-                     "end": float(w["end"])} for w in payload.get("words") or [] if _timed(w)),
-                   key=lambda w: (w["start"] + w["end"]) / 2)
+    words = sorted(
+        (
+            {"word": str(w.get("word") or ""), "start": float(w["start"]), "end": float(w["end"])}
+            for w in payload.get("words") or []
+            if _timed(w)
+        ),
+        key=lambda w: (w["start"] + w["end"]) / 2,
+    )
     # bisect needs ordered ends. whisper's nearly always are; when one ends before an earlier
     # one, the running maximum keeps a word with the segment that contains it.
     starts, ends = [start for start, _ in times], list(accumulate((e for _, e in times), max))
@@ -117,8 +129,10 @@ def _words_transcript(payload: dict) -> tuple[dict, int] | None:
         elif n and middle - ends[n - 1] <= max(0.0, starts[n] - middle):
             n -= 1  # in the gap, and no nearer to the next segment than to the one before
         inside[n].append(word)
-    out = [{"start": start, "end": end, "text": str(seg.get("text") or "").strip(),
-            "words": found} for seg, (start, end), found in zip(rows, times, inside)]
+    out = [
+        {"start": start, "end": end, "text": str(seg.get("text") or "").strip(), "words": found}
+        for seg, (start, end), found in zip(rows, times, inside)
+    ]
     return {"segments": out}, untimed
 
 
@@ -131,9 +145,15 @@ def _merged_transcript(payload: dict) -> tuple[dict, int, int] | None:
     for turn, (start, end) in zip(turns, times):
         words, missing = _words(turn.get("words"), start)
         untimed_words += missing
-        segments.append({"start": start, "end": end, "text": str(turn.get("text") or "").strip(),
-                         **({"speaker": str(turn["speaker"])} if turn.get("speaker") else {}),
-                         "words": words})
+        segments.append(
+            {
+                "start": start,
+                "end": end,
+                "text": str(turn.get("text") or "").strip(),
+                **({"speaker": str(turn["speaker"])} if turn.get("speaker") else {}),
+                "words": words,
+            }
+        )
     return {"segments": segments}, untimed, untimed_words
 
 
@@ -143,8 +163,11 @@ def _summary_markdown(payload: dict) -> str:
         parts.append(f"# {payload['title'].strip()}")
     if isinstance(payload.get("summary_md"), str) and payload["summary_md"].strip():
         parts.append(payload["summary_md"].strip())
-    actions = [a for a in payload.get("actions") or []
-               if isinstance(a, dict) and str(a.get("text") or "").strip()]
+    actions = [
+        a
+        for a in payload.get("actions") or []
+        if isinstance(a, dict) and str(a.get("text") or "").strip()
+    ]
     if actions:
         lines = []
         for action in actions:
@@ -176,11 +199,18 @@ def map_rendition(path: Path, doc: object) -> Mapped:
         return Mapped(skipped="no UTC stamp in its file name")
     payload = doc["payload"] if isinstance(doc.get("payload"), dict) else {}
     meta_in = doc["meta"] if isinstance(doc.get("meta"), dict) else {}
-    inputs = {k: str(v) for k, v in (doc.get("inputs") or {}).items()
-              if isinstance(v, (str, int, float)) and not isinstance(v, bool)}
-    common = dict(engine=engine, version=version, created_at=created, inputs=inputs,
-                  meta={"imported_from": "audio-router", "file": path.name,
-                        "audio_router_meta": meta_in})
+    inputs = {
+        k: str(v)
+        for k, v in (doc.get("inputs") or {}).items()
+        if isinstance(v, (str, int, float)) and not isinstance(v, bool)
+    }
+    common = dict(
+        engine=engine,
+        version=version,
+        created_at=created,
+        inputs=inputs,
+        meta={"imported_from": "audio-router", "file": path.name, "audio_router_meta": meta_in},
+    )
     try:
         if kind == "words":
             built = _words_transcript(payload)
@@ -188,26 +218,52 @@ def map_rendition(path: Path, doc: object) -> Mapped:
                 return Mapped(skipped="a transcript with no segments")
             body, untimed = built
             model = meta_in.get("model") if isinstance(meta_in.get("model"), str) else None
-            return Mapped(Rendition(kind="transcript", model=model, payload=body,
-                                    **_counted(common, untimed_segments=untimed)))
+            return Mapped(
+                Rendition(
+                    kind="transcript",
+                    model=model,
+                    payload=body,
+                    **_counted(common, untimed_segments=untimed),
+                )
+            )
         if kind == "merged":
             built = _merged_transcript(payload)
             if built is None:
                 return Mapped(skipped="a transcript with no segments")
             body, untimed, untimed_words = built
-            return Mapped(Rendition(kind="transcript", payload=body,
-                                    **_counted(common, untimed_segments=untimed,
-                                               untimed_words=untimed_words)))
+            return Mapped(
+                Rendition(
+                    kind="transcript",
+                    payload=body,
+                    **_counted(common, untimed_segments=untimed, untimed_words=untimed_words),
+                )
+            )
         if kind == "turns":
-            return Mapped(Rendition(kind="speakers", payload={
-                "turns": list(payload.get("turns") or []),
-                "overlap_turns": list(payload.get("overlap_turns") or [])}, **common))
+            return Mapped(
+                Rendition(
+                    kind="speakers",
+                    payload={
+                        "turns": list(payload.get("turns") or []),
+                        "overlap_turns": list(payload.get("overlap_turns") or []),
+                    },
+                    **common,
+                )
+            )
         if kind == "summary":
             markdown = _summary_markdown(payload)
-            return (Mapped(Rendition(kind="notes", note_type="audio-router-summary",
-                                     model=engine.split("/")[-1], payload={"markdown": markdown},
-                                     **common))
-                    if markdown else Mapped(skipped="an empty summary"))
+            return (
+                Mapped(
+                    Rendition(
+                        kind="notes",
+                        note_type="audio-router-summary",
+                        model=engine.split("/")[-1],
+                        payload={"markdown": markdown},
+                        **common,
+                    )
+                )
+                if markdown
+                else Mapped(skipped="an empty summary")
+            )
     except ValidationError:
         return Mapped(skipped="does not fit the output schema")
     shown = kind if re.fullmatch(r"[a-z_]{1,40}", kind) else "other"  # a file's text is never shown
@@ -228,31 +284,55 @@ def pocket_outputs(doc: dict, raw: str, fetched_at: datetime) -> list[Rendition]
         in_ms = _number(duration) and duration > 0 and bool(ends) and max(ends) > 2 * duration
         scale = 1000.0 if in_ms else 1.0
         times, untimed = _times(rows)
-        segments = [{"start": start / scale, "end": end / scale,
-                     "text": str(r.get("text") or "").strip(),
-                     **({"speaker": str(r["speaker"])} if r.get("speaker") else {})}
-                    for r, (start, end) in zip(rows, times)]
+        segments = [
+            {
+                "start": start / scale,
+                "end": end / scale,
+                "text": str(r.get("text") or "").strip(),
+                **({"speaker": str(r["speaker"])} if r.get("speaker") else {}),
+            }
+            for r, (start, end) in zip(rows, times)
+        ]
         meta: dict[str, Any] = {"time_unit": "ms" if in_ms else "s"}
         if untimed:
             meta["untimed_segments"] = untimed
-        out.append(Rendition(kind="transcript", engine="pocket", model="pocket", version=version,
-                             created_at=fetched_at,
-                             inputs={"source": raw, "part_sha256": sha256_of(
-                                 [segments, untimed, meta["time_unit"]])},
-                             meta=meta, payload={"segments": segments}))
+        out.append(
+            Rendition(
+                kind="transcript",
+                engine="pocket",
+                model="pocket",
+                version=version,
+                created_at=fetched_at,
+                inputs={
+                    "source": raw,
+                    "part_sha256": sha256_of([segments, untimed, meta["time_unit"]]),
+                },
+                meta=meta,
+                payload={"segments": segments},
+            )
+        )
     summaries = doc.get("summarizations") if isinstance(doc.get("summarizations"), dict) else {}
     n = 0
     for key in sorted(summaries):
         value = summaries[key]
-        text = (value["text"] if isinstance(value, dict) and isinstance(value.get("text"), str)
-                else canonical_json(value))
+        text = (
+            value["text"]
+            if isinstance(value, dict) and isinstance(value.get("text"), str)
+            else canonical_json(value)
+        )
         if not text.strip():
             continue
         n += 1
-        out.append(Rendition(kind="notes",
-                             note_type="pocket-summary" if n == 1 else f"pocket-summary-{n}",
-                             engine="pocket", model="pocket", version=version,
-                             created_at=fetched_at,
-                             inputs={"source": raw, "part_sha256": sha256_of(text.strip())},
-                             payload={"markdown": text.strip()}))
+        out.append(
+            Rendition(
+                kind="notes",
+                note_type="pocket-summary" if n == 1 else f"pocket-summary-{n}",
+                engine="pocket",
+                model="pocket",
+                version=version,
+                created_at=fetched_at,
+                inputs={"source": raw, "part_sha256": sha256_of(text.strip())},
+                payload={"markdown": text.strip()},
+            )
+        )
     return out

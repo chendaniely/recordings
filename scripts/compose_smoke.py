@@ -34,8 +34,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PORT = 18000
-SECRETS = ("restic_password", "rest_password", "nas_cacert", "nas_ssh_key", "nas_known_hosts",
-           "ntfy_topic", "deadman_url")
+SECRETS = (
+    "restic_password",
+    "rest_password",
+    "nas_cacert",
+    "nas_ssh_key",
+    "nas_known_hosts",
+    "ntfy_topic",
+    "deadman_url",
+)
 CONFIG = """\
 [archive]
 writer_id = "smoke"
@@ -49,8 +56,13 @@ cache_dir = "/state/cache/restic"
 [mirror]
 target = "/restore/smoke-mirror/"
 """
-BACKUP_COMMANDS = (("backup", "init"), ("backup", "run"), ("backup", "restore-test"), ("mirror",),
-                   ("doctor", "--role", "backup"))
+BACKUP_COMMANDS = (
+    ("backup", "init"),
+    ("backup", "run"),
+    ("backup", "restore-test"),
+    ("mirror",),
+    ("doctor", "--role", "backup"),
+)
 
 
 class SmokeFailed(Exception):
@@ -89,27 +101,50 @@ def main() -> int:
             # Mode 600, as the runbook makes them. The ping URL has the form alerts and doctor check
             # (https): a closed port on the container's own loopback, so a ping fails at once and
             # nothing leaves the machine.
-            value = ("https://127.0.0.1:9/smoke" if name == "deadman_url"
-                     else "smoke-test-placeholder")
+            value = (
+                "https://127.0.0.1:9/smoke" if name == "deadman_url" else "smoke-test-placeholder"
+            )
             path = base / "secrets" / name
             path.write_text(value + "\n", encoding="utf-8")
             path.chmod(0o600)
         (base / "config.toml").write_text(CONFIG, encoding="utf-8")
         deploy = base / "deploy.env"
-        deploy.write_text("\n".join([
-            f"RECORDINGS_ARCHIVE_HOST={base / 'archive'}", f"RECORDINGS_STATE_HOST={base / 'state'}",
-            f"RECORDINGS_RESTORE_HOST={base / 'restore'}", f"RECORDINGS_SECRETS_HOST={base / 'secrets'}",
-            f"RECORDINGS_CONFIG_HOST={base / 'config.toml'}", f"RECORDINGS_DEPLOY_ENV_HOST={deploy}",
-            "RECORDINGS_BIND=127.0.0.1", f"RECORDINGS_PORT={PORT}",
-            f"RECORDINGS_UID={os.getuid()}", f"RECORDINGS_GID={os.getgid()}"]) + "\n",
-            encoding="utf-8")
+        deploy.write_text(
+            "\n".join(
+                [
+                    f"RECORDINGS_ARCHIVE_HOST={base / 'archive'}",
+                    f"RECORDINGS_STATE_HOST={base / 'state'}",
+                    f"RECORDINGS_RESTORE_HOST={base / 'restore'}",
+                    f"RECORDINGS_SECRETS_HOST={base / 'secrets'}",
+                    f"RECORDINGS_CONFIG_HOST={base / 'config.toml'}",
+                    f"RECORDINGS_DEPLOY_ENV_HOST={deploy}",
+                    "RECORDINGS_BIND=127.0.0.1",
+                    f"RECORDINGS_PORT={PORT}",
+                    f"RECORDINGS_UID={os.getuid()}",
+                    f"RECORDINGS_GID={os.getgid()}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         # Compose lets a shell variable beat --env-file, so an exported RECORDINGS_* would point the
         # smoke at real data: drop them all, as the root conftest does, and set the tag.
-        env = {name: value for name, value in os.environ.items()
-               if not name.startswith(("RECORDINGS_", "RESTIC_"))}
+        env = {
+            name: value
+            for name, value in os.environ.items()
+            if not name.startswith(("RECORDINGS_", "RESTIC_"))
+        }
         env["RECORDINGS_IMAGE_TAG"] = "smoke"
-        compose = ["docker", "compose", "-p", "recordings-smoke", "--env-file", str(deploy),
-                   "-f", str(REPO / "docker" / "compose.yml")]
+        compose = [
+            "docker",
+            "compose",
+            "-p",
+            "recordings-smoke",
+            "--env-file",
+            str(deploy),
+            "-f",
+            str(REPO / "docker" / "compose.yml"),
+        ]
         try:
             compose_run(compose, env, "build", "web")
             compose_run(compose, env, "run", "--rm", "web", "recordings", "init", "--json")
@@ -119,9 +154,10 @@ def main() -> int:
             compose_run(compose, env, "up", "-d", "--wait", "--wait-timeout", "120", "web")
             wait_for_healthz(compose, env)
             for path, what in (
-                    (base / "archive" / "archive.json", "recordings init wrote no sentinel"),
-                    (base / "restore" / "smoke-repo" / "config", "restic made no repository"),
-                    (base / "restore" / "smoke-mirror" / "archive.json", "the mirror copied nothing")):
+                (base / "archive" / "archive.json", "recordings init wrote no sentinel"),
+                (base / "restore" / "smoke-repo" / "config", "restic made no repository"),
+                (base / "restore" / "smoke-mirror" / "archive.json", "the mirror copied nothing"),
+            ):
                 if not path.is_file():
                     raise SmokeFailed(what)
             if list((base / "restore").glob("restore-*")):
@@ -133,8 +169,10 @@ def main() -> int:
             # --rmi all removes recordings:smoke (an image with a custom tag, which --rmi local
             # keeps), so it never shows among `docker image ls recordings`' rollback tags.
             subprocess.run([*compose, "down", "-v", "--rmi", "all"], env=env)
-        print("compose smoke: init, ssh, backup, restore test and mirror ran, and web answered "
-              "/healthz, as this machine's user")
+        print(
+            "compose smoke: init, ssh, backup, restore test and mirror ran, and web answered "
+            "/healthz, as this machine's user"
+        )
         return 0
 
 

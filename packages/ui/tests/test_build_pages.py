@@ -39,14 +39,17 @@ def test_it_refuses_to_run_without_the_demo_archive(build_pages, tmp_path):
 
 def test_media_is_named_id_dot_ext(build_pages, demo_ids):
     names = set(build_pages.demo_media().values())
-    assert names == {f"{rid}.mp4" if slug == "apollo11-first-steps" else f"{rid}.mp3"
-                     for slug, rid in demo_ids.items()}
+    assert names == {
+        f"{rid}.mp4" if slug == "apollo11-first-steps" else f"{rid}.mp3"
+        for slug, rid in demo_ids.items()
+    }
 
 
 def test_font_urls_become_relative_and_nothing_else_may_be_root_absolute(build_pages):
     css = 'a{src:url(/fonts/A.woff2)}b{src:url("/fonts/B.woff2")}c{background:url(data:x)}'
     assert build_pages.relative_font_urls(css) == (
-        'a{src:url(fonts/A.woff2)}b{src:url("fonts/B.woff2")}c{background:url(data:x)}')
+        'a{src:url(fonts/A.woff2)}b{src:url("fonts/B.woff2")}c{background:url(data:x)}'
+    )
     with pytest.raises(SystemExit, match="url"):
         build_pages.relative_font_urls("a{src:url(/fonts/A.woff2)}b{background:url(/img/x.png)}")
     with pytest.raises(SystemExit, match="url"):
@@ -69,15 +72,34 @@ def test_the_app_holds_the_browser_parts_and_the_demo_without_media(build_pages,
     build_pages.assemble(app, build_pages.demo_media(), ui=ui)
 
     files = {p.relative_to(app).as_posix() for p in app.rglob("*") if p.is_file()}
-    assert {"app.py", "requirements.txt", "recordings/archive.py", "recordings_ui/shiny_app.py",
-            "recordings_ui/www/ui.js", "recordings_ui/www/fonts/OFL.txt",
-            "shinyreact/__init__.py", "demo/archive/README.md"} <= files
+    assert {
+        "app.py",
+        "requirements.txt",
+        "recordings/archive.py",
+        "recordings_ui/shiny_app.py",
+        "recordings_ui/www/ui.js",
+        "recordings_ui/www/fonts/OFL.txt",
+        "shinyreact/__init__.py",
+        "demo/archive/README.md",
+    } <= files
     # No FastAPI app, uvicorn entry point or Playwright helper, no bytecode, no media.
-    assert not files & {"recordings_ui/app.py", "recordings_ui/__main__.py", "shinyreact/playwright.py"}
+    assert not files & {
+        "recordings_ui/app.py",
+        "recordings_ui/__main__.py",
+        "shinyreact/playwright.py",
+    }
     assert not [f for f in files if "__pycache__" in f or f.endswith((".mp3", ".mp4"))]
     assert {f.split("/")[0] for f in files} == {
-        "app.py", "requirements.txt", "recordings", "recordings_ui", "shinyreact", "demo"}
-    assert (app / "recordings_ui/www/ui.css").read_text(encoding="utf-8") == "x{src:url(fonts/A.woff2)}"
+        "app.py",
+        "requirements.txt",
+        "recordings",
+        "recordings_ui",
+        "shinyreact",
+        "demo",
+    }
+    assert (app / "recordings_ui/www/ui.css").read_text(
+        encoding="utf-8"
+    ) == "x{src:url(fonts/A.woff2)}"
     assert (ui / "www/ui.css").read_text(encoding="utf-8") == "x{src:url(/fonts/A.woff2)}"
 
 
@@ -101,8 +123,9 @@ def test_a_symlink_in_the_demo_archive_stops_the_build(build_pages, tmp_path, de
     app = tmp_path / "app"
     app.mkdir()
     with pytest.raises(SystemExit, match=r"symlink.*recordings/more"):
-        build_pages.assemble(app, build_pages.demo_media(demo_archive), ui=_built_ui(tmp_path),
-                             demo=demo_archive)
+        build_pages.assemble(
+            app, build_pages.demo_media(demo_archive), ui=_built_ui(tmp_path), demo=demo_archive
+        )
 
 
 def test_the_pages_entry_is_demo_only_and_links_media_files(tmp_path, monkeypatch):

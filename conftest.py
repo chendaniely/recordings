@@ -15,8 +15,9 @@ NO_CONFIG = Path("/nonexistent/recordings-tests/config.toml")
 
 def host_settings(environ) -> list[str]:
     """The variables to hide: every RECORDINGS_* and RESTIC_* one, except the switches in KEEP."""
-    return sorted(name for name in environ
-                  if name.startswith(("RECORDINGS_", "RESTIC_")) and name not in KEEP)
+    return sorted(
+        name for name in environ if name.startswith(("RECORDINGS_", "RESTIC_")) and name not in KEEP
+    )
 
 
 @pytest.fixture(autouse=True)

@@ -30,15 +30,47 @@ def download(url: str, dest: Path) -> None:
 
 
 def encode(src: Path, entry: dict, dest: Path) -> None:
-    trim = ["-ss", str(entry["start"])] + (["-t", str(entry["duration"])] if entry["duration"] else [])
+    trim = ["-ss", str(entry["start"])] + (
+        ["-t", str(entry["duration"])] if entry["duration"] else []
+    )
     if entry["kind"] == "audio":
         codec = ["-ac", "1", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "64k"]
     else:
-        codec = ["-vf", "scale=-2:360", "-c:v", "libx264", "-preset", "slow", "-crf", "30",
-                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k", "-ac", "1",
-                 "-movflags", "+faststart"]
-    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(src), *trim,
-                    *codec, str(dest)], check=True)
+        codec = [
+            "-vf",
+            "scale=-2:360",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "64k",
+            "-ac",
+            "1",
+            "-movflags",
+            "+faststart",
+        ]
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(src),
+            *trim,
+            *codec,
+            str(dest),
+        ],
+        check=True,
+    )
 
 
 def main() -> int:

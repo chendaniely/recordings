@@ -53,11 +53,14 @@ class IndexRefused(RuntimeError):
 
 
 def _insert(db: sqlite3.Connection, rec: Recording) -> None:
-    db.execute("INSERT INTO recordings (id, folder, sha256, rev) VALUES (?, ?, ?, ?)",
-               (rec.id, relative_dir(rec.id).as_posix(), rec.media.sha256, rec.rev or 0))
+    db.execute(
+        "INSERT INTO recordings (id, folder, sha256, rev) VALUES (?, ?, ?, ?)",
+        (rec.id, relative_dir(rec.id).as_posix(), rec.media.sha256, rec.rev or 0),
+    )
     db.executemany(
         "INSERT OR IGNORE INTO source_refs (recording_id, kind, ref, canonical) VALUES (?, ?, ?, ?)",
-        [(rec.id, s.kind, s.ref, canonical_ref(s.kind, s.ref)) for s in rec.sources])
+        [(rec.id, s.kind, s.ref, canonical_ref(s.kind, s.ref)) for s in rec.sources],
+    )
 
 
 class Index:
@@ -98,8 +101,10 @@ class Index:
         # header) and is one (its meta) answers.
         if self._one("PRAGMA application_id") != APPLICATION_ID:
             return None
-        return self._one("SELECT value FROM meta WHERE key = 'archive_uuid' AND EXISTS "
-                         "(SELECT 1 FROM meta WHERE key = 'index_version')")
+        return self._one(
+            "SELECT value FROM meta WHERE key = 'archive_uuid' AND EXISTS "
+            "(SELECT 1 FROM meta WHERE key = 'index_version')"
+        )
 
     def rebuild(self, archive: Archive, *, archive_uuid: str, allow_empty: bool = False) -> int:
         recordings = list(archive.iter_recordings())
@@ -111,25 +116,32 @@ class Index:
                 db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
                 tables = self._check_ours(db)
                 # Counted inside the lock, on this connection: outside it, a locked index read as 0.
-                held = (db.execute("SELECT count(*) FROM recordings").fetchone()[0]
-                        if "recordings" in tables else 0)
+                held = (
+                    db.execute("SELECT count(*) FROM recordings").fetchone()[0]
+                    if "recordings" in tables
+                    else 0
+                )
             except sqlite3.DatabaseError as exc:
                 if exc.sqlite_errorname not in _UNREADABLE:
                     raise
                 raise IndexRefused(
                     f"{self.path} can't be read ({exc.sqlite_errorname}) and doesn't say it is an "
                     "index, so rebuild leaves it alone. Check [index] path. If it is the index, "
-                    "move it aside and run `recordings reindex`.") from None
+                    "move it aside and run `recordings reindex`."
+                ) from None
             if not recordings and held and not allow_empty:
                 raise IndexRefused(
                     f"{archive.root} lists no recordings but the index holds {held}: refusing to "
-                    "empty it. Is the archive mounted? Pass --allow-empty if it really is empty.")
+                    "empty it. Is the archive mounted? Pass --allow-empty if it really is empty."
+                )
             for table in _TABLES:
                 db.execute(f"DROP TABLE IF EXISTS {table}")
             for statement in _SCHEMA:
                 db.execute(statement)
-            db.executemany("INSERT INTO meta (key, value) VALUES (?, ?)",
-                           [("index_version", str(INDEX_VERSION)), ("archive_uuid", archive_uuid)])
+            db.executemany(
+                "INSERT INTO meta (key, value) VALUES (?, ?)",
+                [("index_version", str(INDEX_VERSION)), ("archive_uuid", archive_uuid)],
+            )
             for rec in recordings:
                 _insert(db, rec)
         return len(recordings)
@@ -173,11 +185,14 @@ class Index:
             with self.path.open("rb") as f:
                 header = f.read(100)
         except OSError as exc:
-            raise IndexRefused(f"{self.path} can't be read ({type(exc).__name__}): check its "
-                               "owner and mode, and [index] path.") from None
+            raise IndexRefused(
+                f"{self.path} can't be read ({type(exc).__name__}): check its "
+                "owner and mode, and [index] path."
+            ) from None
         if header[:16] != b"SQLite format 3\x00":
-            raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
-                             "Check [index] path.")
+            raise IndexRefused(
+                f"{self.path} is not an index (SQLite header not found). Check [index] path."
+            )
         if header[68:72] != _MARK:
             return  # it doesn't say it is an index: never renamed; BEGIN IMMEDIATE decides
         # It says it is an index; can SQLite read it? A file written during the probe proves
@@ -213,14 +228,18 @@ class Index:
 
     def _check_ours(self, db: sqlite3.Connection) -> set[str]:
         """The file's tables, once it is known to be empty or an index."""
-        tables = {row[0] for row in
-                  db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        ours = "meta" in tables and db.execute(
-            "SELECT 1 FROM meta WHERE key = 'index_version'").fetchone() is not None
+        tables = {
+            row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        ours = (
+            "meta" in tables
+            and db.execute("SELECT 1 FROM meta WHERE key = 'index_version'").fetchone() is not None
+        )
         if tables and not ours:
             raise IndexRefused(
                 f"{self.path} is a database but not an index, so rebuild won't replace it. "
-                "Check [index] path.")
+                "Check [index] path."
+            )
         return tables
 
     def upsert(self, rec: Recording) -> None:
@@ -231,17 +250,22 @@ class Index:
 
     def find_by_sha256(self, sha: str, *, strict: bool = False) -> str | None:
         """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
-        return self._one("SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,),
-                         strict=strict)
+        return self._one(
+            "SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,), strict=strict
+        )
 
     def sha256_of(self, recording_id: str, *, strict: bool = False) -> str | None:
         """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
-        return self._one("SELECT sha256 FROM recordings WHERE id = ?", (recording_id,),
-                         strict=strict)
+        return self._one(
+            "SELECT sha256 FROM recordings WHERE id = ?", (recording_id,), strict=strict
+        )
 
     def find_by_source(self, kind: str, ref: str, *, strict: bool = False) -> list[str]:
         """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
         rows = self._rows(
             "SELECT DISTINCT recording_id FROM source_refs WHERE kind = ? AND canonical = ? "
-            "ORDER BY recording_id", (kind, canonical_ref(kind, ref)), strict=strict)
+            "ORDER BY recording_id",
+            (kind, canonical_ref(kind, ref)),
+            strict=strict,
+        )
         return [row[0] for row in rows]

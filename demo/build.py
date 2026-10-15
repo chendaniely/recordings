@@ -1,6 +1,6 @@
 """Build demo/archive from encoded media + demo/canned. Deterministic: fixed stamps, no clock.
 
-    uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
+uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 """
 
 from __future__ import annotations
@@ -42,16 +42,37 @@ def plaud_envelope(entry: dict, transcript: dict, summary_md: str) -> dict:
     for seg in transcript["segments"]:
         raw_label = seg.get("speaker") or "SPEAKER_00"
         label = labels.setdefault(raw_label, f"Speaker {len(labels) + 1}")
-        rows.append({"content": seg["text"], "start_time": round(seg["start"] * 1000),
-                     "end_time": round(seg["end"] * 1000), "speaker": label,
-                     "original_speaker": label})
-    return {"id": entry["source_ref"], "name": entry["title"], "duration": entry["duration_ms"],
-            "demo": True,
-            "source_list": [{"data_type": "transaction", "data_id": "demo-transaction",
-                             "data_tab_name": None,
-                             "data_content": json.dumps(rows, ensure_ascii=False)}],
-            "note_list": [{"data_type": "auto_sum_note", "data_id": "demo-summary",
-                           "data_tab_name": "Summary", "data_content": summary_md}]}
+        rows.append(
+            {
+                "content": seg["text"],
+                "start_time": round(seg["start"] * 1000),
+                "end_time": round(seg["end"] * 1000),
+                "speaker": label,
+                "original_speaker": label,
+            }
+        )
+    return {
+        "id": entry["source_ref"],
+        "name": entry["title"],
+        "duration": entry["duration_ms"],
+        "demo": True,
+        "source_list": [
+            {
+                "data_type": "transaction",
+                "data_id": "demo-transaction",
+                "data_tab_name": None,
+                "data_content": json.dumps(rows, ensure_ascii=False),
+            }
+        ],
+        "note_list": [
+            {
+                "data_type": "auto_sum_note",
+                "data_id": "demo-summary",
+                "data_tab_name": "Summary",
+                "data_content": summary_md,
+            }
+        ],
+    }
 
 
 def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
@@ -64,55 +85,91 @@ def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
         for n, entry in enumerate(entries):
             media = Path(media_dir) / f"{entry['slug']}.{entry['ext']}"
             recorded_at = datetime.fromisoformat(entry["recorded_at"]).replace(
-                tzinfo=ZoneInfo(entry["timezone"]))
+                tzinfo=ZoneInfo(entry["timezone"])
+            )
             sha = sha256_file(media)
             rid = make_id(recorded_at, sha)
             ids[rid] = entry["slug"]
             backend = CannedBackend(canned_dir, {rid: entry["slug"]})
             stamp = BUILD_AT + timedelta(minutes=n)
-            renditions = [Rendition(
-                kind="transcript", engine="canned", model=WHISPER["model"],
-                version=WHISPER["version"], created_at=stamp,
-                inputs={"audio_sha256": sha}, meta={"demo": True},
-                payload=backend.transcribe(media, recording_id=rid).model_dump(exclude_none=True),
-            )]
+            renditions = [
+                Rendition(
+                    kind="transcript",
+                    engine="canned",
+                    model=WHISPER["model"],
+                    version=WHISPER["version"],
+                    created_at=stamp,
+                    inputs={"audio_sha256": sha},
+                    meta={"demo": True},
+                    payload=backend.transcribe(media, recording_id=rid).model_dump(
+                        exclude_none=True
+                    ),
+                )
+            ]
             for i, note in enumerate(entry.get("notes", []), start=1):
-                done = backend.complete(CompletionRequest(
-                    prompt="(canned)", model=note["model"], recording_id=rid,
-                    note_type=note["note_type"]))
-                renditions.append(Rendition(
-                    kind="notes", note_type=note["note_type"], engine="canned", model=done.model,
-                    version=f"{done.model}@demo", created_at=stamp + timedelta(seconds=i),
-                    inputs={"audio_sha256": sha}, meta={"demo": True},
-                    payload={"markdown": done.text}))
+                done = backend.complete(
+                    CompletionRequest(
+                        prompt="(canned)",
+                        model=note["model"],
+                        recording_id=rid,
+                        note_type=note["note_type"],
+                    )
+                )
+                renditions.append(
+                    Rendition(
+                        kind="notes",
+                        note_type=note["note_type"],
+                        engine="canned",
+                        model=done.model,
+                        version=f"{done.model}@demo",
+                        created_at=stamp + timedelta(seconds=i),
+                        inputs={"audio_sha256": sha},
+                        meta={"demo": True},
+                        payload={"markdown": done.text},
+                    )
+                )
             payload = None
             fetched_at = None
             if entry.get("plaud"):
                 summary = (canned_dir / "notes" / entry["slug"] / "plaud.md").read_text(
-                    encoding="utf-8")
+                    encoding="utf-8"
+                )
                 envelope = plaud_envelope(entry, renditions[0].payload, summary)
                 payload = json.dumps(envelope, indent=2, ensure_ascii=False).encode() + b"\n"
                 fetched_at = stamp + timedelta(seconds=30)
             my_notes_path = canned_dir / "my-notes" / f"{entry['slug']}.md"
-            added = writer.add(Incoming(
-                media=media,
-                recorded_at=recorded_at,
-                timezone_name=entry["timezone"],
-                time_source=entry["time_source"],
-                title=entry["title"],
-                kind=entry["kind"],
-                duration_ms=entry["duration_ms"],
-                sources=(RawSource(kind=entry["source_kind"], ref=entry["source_ref"],
-                                   added_at=BUILD_AT, fetched_at=fetched_at,
-                                   payload=payload),),
-                title_by="plaud" if entry.get("plaud") else None,
-                tags=tuple(TagRef(**t) for t in entry.get("tags", [])),
-                renditions=tuple(renditions),
-                my_notes=(my_notes_path.read_text(encoding="utf-8")
-                          if my_notes_path.is_file() else None),
-            ))
+            added = writer.add(
+                Incoming(
+                    media=media,
+                    recorded_at=recorded_at,
+                    timezone_name=entry["timezone"],
+                    time_source=entry["time_source"],
+                    title=entry["title"],
+                    kind=entry["kind"],
+                    duration_ms=entry["duration_ms"],
+                    sources=(
+                        RawSource(
+                            kind=entry["source_kind"],
+                            ref=entry["source_ref"],
+                            added_at=BUILD_AT,
+                            fetched_at=fetched_at,
+                            payload=payload,
+                        ),
+                    ),
+                    title_by="plaud" if entry.get("plaud") else None,
+                    tags=tuple(TagRef(**t) for t in entry.get("tags", [])),
+                    renditions=tuple(renditions),
+                    my_notes=(
+                        my_notes_path.read_text(encoding="utf-8")
+                        if my_notes_path.is_file()
+                        else None
+                    ),
+                )
+            )
             if entry.get("plaud"):
-                writer.reconcile_plaud(added.recording.id)  # Plaud's outputs, as the sync makes them
+                writer.reconcile_plaud(
+                    added.recording.id
+                )  # Plaud's outputs, as the sync makes them
     return dict(sorted(ids.items()))
 
 

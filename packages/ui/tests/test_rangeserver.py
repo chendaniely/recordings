@@ -14,7 +14,9 @@ REPO = Path(__file__).resolve().parents[3]
 @pytest.fixture(scope="module")
 def site(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("site")
-    spec = importlib.util.spec_from_file_location("rangeserver", REPO / "scripts" / "rangeserver.py")
+    spec = importlib.util.spec_from_file_location(
+        "rangeserver", REPO / "scripts" / "rangeserver.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     (tmp_path / "media").mkdir()
@@ -43,12 +45,15 @@ def test_a_whole_file_says_it_accepts_ranges(site):
     assert headers["Accept-Ranges"] == "bytes" and headers["Content-Type"] == "audio/mpeg"
 
 
-@pytest.mark.parametrize(("range_", "content_range", "body"), [
-    ("bytes=2-4", "bytes 2-4/10", b"234"),
-    ("bytes=7-", "bytes 7-9/10", b"789"),
-    ("bytes=-3", "bytes 7-9/10", b"789"),
-    ("bytes=8-99", "bytes 8-9/10", b"89"),
-])
+@pytest.mark.parametrize(
+    ("range_", "content_range", "body"),
+    [
+        ("bytes=2-4", "bytes 2-4/10", b"234"),
+        ("bytes=7-", "bytes 7-9/10", b"789"),
+        ("bytes=-3", "bytes 7-9/10", b"789"),
+        ("bytes=8-99", "bytes 8-9/10", b"89"),
+    ],
+)
 def test_a_range_gets_206_and_just_those_bytes(site, range_, content_range, body):
     status, headers, got = get(f"{site}/recordings/media/a.mp3", range_)
     assert (status, headers["Content-Range"], got) == (206, content_range, body)

@@ -1275,8 +1275,13 @@ def test_renditions_are_write_once_and_ordered(tmp_path):
 
 def test_add_recording_writes_given_renditions_and_my_notes(tmp_path):
     archive = Archive(tmp_path / "archive")
-    rec = add(archive, media(tmp_path), renditions=[notes()], my_notes="hello\n",
-              tags=[TagRef(tag="talks")])
+    rec = add(
+        archive,
+        media(tmp_path),
+        renditions=[notes()],
+        my_notes="hello\n",
+        tags=[TagRef(tag="talks")],
+    )
     assert len(archive.renditions(rec.id)) == 1
     assert archive.read_my_notes(rec.id) == "hello\n"
     assert archive.load(rec.id).tags[0].tag == "talks"
@@ -1294,8 +1299,11 @@ def test_non_ascii_title_round_trips_as_utf8(tmp_path):
 def test_a_broken_recording_json_is_reported_not_fatal(tmp_path):
     archive = Archive(tmp_path / "archive")
     good = add(archive, media(tmp_path))
-    bad = add(archive, media(tmp_path, b"other bytes", name="b.mp3"),
-              recorded_at=datetime.fromisoformat("2026-10-07T09:00:00-07:00"))
+    bad = add(
+        archive,
+        media(tmp_path, b"other bytes", name="b.mp3"),
+        recorded_at=datetime.fromisoformat("2026-10-07T09:00:00-07:00"),
+    )
     (archive.path_for(bad.id) / "recording.json").write_text("{ truncated", encoding="utf-8")
     assert [r.id for r in archive.iter_recordings()] == [good.id]
     assert len(archive.problems) == 1
@@ -1521,7 +1529,9 @@ class Archive:
     def _write_raw(self, folder: Path, source: RawSource) -> SourceRef:
         raw = None
         if source.payload is not None:
-            path = _unique(folder / "source" / f"{_slug(source.kind)}-{utc_stamp(source.added_at)}.json")
+            path = _unique(
+                folder / "source" / f"{_slug(source.kind)}-{utc_stamp(source.added_at)}.json"
+            )
             path.write_bytes(source.payload)
             raw = path.relative_to(folder).as_posix()
         return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at, raw=raw)
@@ -1529,7 +1539,12 @@ class Archive:
     def _write_rendition_into(self, folder: Path, rendition: Rendition) -> str:
         kind = f"notes-{rendition.note_type}" if rendition.kind == "notes" else rendition.kind
         name = "-".join(
-            [_slug(kind), _slug(rendition.engine), _slug(rendition.version), utc_stamp(rendition.created_at)]
+            [
+                _slug(kind),
+                _slug(rendition.engine),
+                _slug(rendition.version),
+                utc_stamp(rendition.created_at),
+            ]
         )
         path = _unique(folder / "renditions" / f"{name}.json")
         path.parent.mkdir(exist_ok=True)
@@ -1541,7 +1556,9 @@ class Archive:
         if any(s.kind == source.kind and s.ref == source.ref for s in rec.sources):
             return rec
         folder = self.path_for(rec.id)
-        updated = rec.model_copy(update={"sources": [*rec.sources, self._write_raw(folder, source)]})
+        updated = rec.model_copy(
+            update={"sources": [*rec.sources, self._write_raw(folder, source)]}
+        )
         write_text_atomic(folder / "recording.json", dump_json(updated))
         return updated
 
@@ -1718,11 +1735,23 @@ def build_one(tmp_path) -> Archive:
         source=RawSource(kind="plaud", ref="of_x", added_at=T0, payload=b"{}"),
         my_notes="mine\n",
         renditions=[
-            Rendition(kind="transcript", engine="canned", model="whisper-large-v3-turbo",
-                      version="large-v3-turbo@a4aaeec", created_at=T0,
-                      payload={"segments": [{"start": 0, "end": 1, "text": "hi"}]}),
-            Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
-                      version="m@demo", created_at=T0, payload={"markdown": "x"}),
+            Rendition(
+                kind="transcript",
+                engine="canned",
+                model="whisper-large-v3-turbo",
+                version="large-v3-turbo@a4aaeec",
+                created_at=T0,
+                payload={"segments": [{"start": 0, "end": 1, "text": "hi"}]},
+            ),
+            Rendition(
+                kind="notes",
+                note_type="lecture",
+                engine="canned",
+                model="m",
+                version="m@demo",
+                created_at=T0,
+                payload={"markdown": "x"},
+            ),
         ],
     )
     write_docs(archive.root)
@@ -1731,9 +1760,15 @@ def build_one(tmp_path) -> Archive:
 
 def test_write_docs_installs_every_doc_and_schema(tmp_path):
     archive, _ = build_one(tmp_path)
-    for rel in ["README.md", "AGENTS.md", "FORMAT.md", "recordings/README.md",
-                "catalog/README.md", "schemas/recording.schema.json",
-                "schemas/rendition.schema.json"]:
+    for rel in [
+        "README.md",
+        "AGENTS.md",
+        "FORMAT.md",
+        "recordings/README.md",
+        "catalog/README.md",
+        "schemas/recording.schema.json",
+        "schemas/rendition.schema.json",
+    ]:
         assert (archive.root / rel).is_file(), rel
 
 
@@ -1744,6 +1779,7 @@ def test_write_docs_is_idempotent(tmp_path):
 
 def test_agents_md_states_the_privacy_rule():
     from importlib import resources
+
     text = (resources.files("recordings") / "format" / "AGENTS.md").read_text(encoding="utf-8")
     assert "`private` or `private/…` tag" in text
 
@@ -1851,8 +1887,9 @@ def write_docs(root: Path) -> list[str]:
 
 
 def layout_patterns() -> list[re.Pattern]:
-    block = re.search(r"<!-- layout:begin -->\n(.*?)<!-- layout:end -->",
-                      _package_text("FORMAT.md"), re.S)
+    block = re.search(
+        r"<!-- layout:begin -->\n(.*?)<!-- layout:end -->", _package_text("FORMAT.md"), re.S
+    )
     if block is None:
         raise RuntimeError("FORMAT.md has no layout block")
     patterns = []
@@ -1974,8 +2011,9 @@ RID = "20261006T140003-0700_3fa91c2e"
 def canned(tmp_path: Path) -> Path:
     root = tmp_path / "canned"
     (root / "transcripts").mkdir(parents=True)
-    (root / "transcripts" / "jfk.json").write_text(json.dumps(
-        {"language": "en", "segments": [{"start": 0, "end": 2, "text": "We choose"}]}))
+    (root / "transcripts" / "jfk.json").write_text(
+        json.dumps({"language": "en", "segments": [{"start": 0, "end": 2, "text": "We choose"}]})
+    )
     (root / "notes" / "jfk").mkdir(parents=True)
     (root / "notes" / "jfk" / "conference-talk--claude-opus-5-5.md").write_text("# Notes\n")
     (root / "aliases.json").write_text(json.dumps({RID: "jfk"}))
@@ -1995,8 +2033,9 @@ def test_transcribe_returns_the_stored_transcript_by_alias(tmp_path):
 
 def test_complete_returns_stored_notes_and_the_model_asked(tmp_path):
     backend = CannedBackend.from_dir(canned(tmp_path))
-    req = CompletionRequest(prompt="ignored", model="claude-opus-5-5", recording_id=RID,
-                            note_type="conference-talk")
+    req = CompletionRequest(
+        prompt="ignored", model="claude-opus-5-5", recording_id=RID, note_type="conference-talk"
+    )
     out = backend.complete(req)
     assert (out.text, out.model, out.backend) == ("# Notes\n", "claude-opus-5-5", "canned")
 
@@ -2114,7 +2153,9 @@ class CannedBackend:
         path = self.root / "notes" / key / f"{request.note_type}--{model_slug(request.model)}.md"
         if not path.is_file():
             raise BackendError(f"no canned notes for {request.recording_id} ({path})")
-        return Completion(text=path.read_text(encoding="utf-8"), model=request.model, backend=self.name)
+        return Completion(
+            text=path.read_text(encoding="utf-8"), model=request.model, backend=self.name
+        )
 ```
 
 `packages/core/src/recordings/backends/__init__.py`:
@@ -2128,7 +2169,14 @@ from recordings.backends.base import (
 )
 from recordings.backends.canned import CannedBackend
 
-__all__ = ["Backend", "BackendError", "CannedBackend", "Completion", "CompletionRequest", "model_slug"]
+__all__ = [
+    "Backend",
+    "BackendError",
+    "CannedBackend",
+    "Completion",
+    "CompletionRequest",
+    "model_slug",
+]
 ```
 
 - [ ] **Step 4: Run the tests to see them pass**
@@ -2299,15 +2347,47 @@ def download(url: str, dest: Path) -> None:
 
 
 def encode(src: Path, entry: dict, dest: Path) -> None:
-    trim = ["-ss", str(entry["start"])] + (["-t", str(entry["duration"])] if entry["duration"] else [])
+    trim = ["-ss", str(entry["start"])] + (
+        ["-t", str(entry["duration"])] if entry["duration"] else []
+    )
     if entry["kind"] == "audio":
         codec = ["-ac", "1", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "64k"]
     else:
-        codec = ["-vf", "scale=-2:360", "-c:v", "libx264", "-preset", "slow", "-crf", "30",
-                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k", "-ac", "1",
-                 "-movflags", "+faststart"]
-    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(src), *trim,
-                    *codec, str(dest)], check=True)
+        codec = [
+            "-vf",
+            "scale=-2:360",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "64k",
+            "-ac",
+            "1",
+            "-movflags",
+            "+faststart",
+        ]
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(src),
+            *trim,
+            *codec,
+            str(dest),
+        ],
+        check=True,
+    )
 
 
 def main() -> int:
@@ -2402,14 +2482,18 @@ def convert(data: dict, duration_s: float) -> TranscriptPayload:
         if seg["start"] >= duration_s:
             continue
         inside = [w for w in words if seg["start"] <= (w["start"] + w["end"]) / 2 < seg["end"]]
-        segments.append(Segment(
-            start=round(seg["start"], 3),
-            end=round(seg["end"], 3),
-            speaker=speaker_for(seg["start"], seg["end"], data.get("turns") or []),
-            text=text,
-            words=[Word(word=w["word"].strip(), start=round(w["start"], 3), end=round(w["end"], 3))
-                   for w in inside],
-        ))
+        segments.append(
+            Segment(
+                start=round(seg["start"], 3),
+                end=round(seg["end"], 3),
+                speaker=speaker_for(seg["start"], seg["end"], data.get("turns") or []),
+                text=text,
+                words=[
+                    Word(word=w["word"].strip(), start=round(w["start"], 3), end=round(w["end"], 3))
+                    for w in inside
+                ],
+            )
+        )
     return TranscriptPayload(language=data.get("language"), segments=segments)
 
 
@@ -2423,7 +2507,8 @@ def main() -> int:
             raise SystemExit(f"{path.name}: slug {path.stem!r} is not in demo/sources.toml")
         payload = convert(json.loads(path.read_text(encoding="utf-8")), durations[path.stem])
         (out / path.name).write_text(
-            payload.model_dump_json(exclude_none=True, indent=2) + "\n", encoding="utf-8")
+            payload.model_dump_json(exclude_none=True, indent=2) + "\n", encoding="utf-8"
+        )
         print(f"wrote {out / path.name}: {len(payload.segments)} segments")
     return 0
 
@@ -2612,13 +2697,20 @@ def test_the_committed_demo_archive_is_valid():
 def test_the_demo_covers_what_the_ui_needs():
     archive = Archive(DEMO / "archive")
     by_slug = {aliases()[r.id]: r for r in archive.iter_recordings()}
-    assert set(by_slug) == {"jfk-rice", "apollo13-problem", "apollo11-first-steps", "fdr-fireside-1"}
+    assert set(by_slug) == {
+        "jfk-rice",
+        "apollo13-problem",
+        "apollo11-first-steps",
+        "fdr-fireside-1",
+    }
     assert is_untagged(by_slug["apollo13-problem"])
     assert is_private(by_slug["fdr-fireside-1"])
     assert by_slug["apollo11-first-steps"].media.kind == "video"
     jfk_notes = [r for _, r in archive.renditions(by_slug["jfk-rice"].id) if r.kind == "notes"]
     assert {r.model for r in jfk_notes} == {"qwen3.6-35b-a3b", "claude-opus-5-5"}
-    plaud = [r for _, r in archive.renditions(by_slug["apollo13-problem"].id) if r.engine == "plaud"]
+    plaud = [
+        r for _, r in archive.renditions(by_slug["apollo13-problem"].id) if r.engine == "plaud"
+    ]
     assert {r.kind for r in plaud} == {"transcript", "notes"}
     assert archive.read_my_notes(by_slug["jfk-rice"].id)
 
@@ -2635,8 +2727,11 @@ def test_rebuilding_from_the_archives_own_media_is_byte_identical(tmp_path):
     out = tmp_path / "archive"
     built = load_build().build(media_dir, out, DEMO / "canned")
     assert built == aliases()
-    committed = {p.relative_to(DEMO / "archive"): p.read_bytes()
-                 for p in (DEMO / "archive").rglob("*") if p.is_file()}
+    committed = {
+        p.relative_to(DEMO / "archive"): p.read_bytes()
+        for p in (DEMO / "archive").rglob("*")
+        if p.is_file()
+    }
     rebuilt = {p.relative_to(out): p.read_bytes() for p in out.rglob("*") if p.is_file()}
     assert rebuilt.keys() == committed.keys()
     for rel in committed:
@@ -2654,7 +2749,7 @@ Expected: FAIL, because `demo/archive` and `demo/canned/aliases.json` don't exis
 ```python
 """Build demo/archive from encoded media + demo/canned. Deterministic: fixed stamps, no clock.
 
-    uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
+uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 """
 
 from __future__ import annotations
@@ -2687,42 +2782,83 @@ def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
     for n, entry in enumerate(entries):
         media = Path(media_dir) / f"{entry['slug']}.{entry['ext']}"
         recorded_at = datetime.fromisoformat(entry["recorded_at"]).replace(
-            tzinfo=ZoneInfo(entry["timezone"]))
+            tzinfo=ZoneInfo(entry["timezone"])
+        )
         sha = sha256_file(media)
         rid = make_id(recorded_at, sha)
         ids[rid] = entry["slug"]
         backend = CannedBackend(canned_dir, {rid: entry["slug"]})
         stamp = BUILD_AT + timedelta(minutes=n)
-        renditions = [Rendition(
-            kind="transcript", engine="canned", model=WHISPER["model"],
-            version=WHISPER["version"], created_at=stamp,
-            inputs={"audio_sha256": sha}, meta={"demo": True},
-            payload=backend.transcribe(media, recording_id=rid).model_dump(exclude_none=True),
-        )]
+        renditions = [
+            Rendition(
+                kind="transcript",
+                engine="canned",
+                model=WHISPER["model"],
+                version=WHISPER["version"],
+                created_at=stamp,
+                inputs={"audio_sha256": sha},
+                meta={"demo": True},
+                payload=backend.transcribe(media, recording_id=rid).model_dump(exclude_none=True),
+            )
+        ]
         for i, note in enumerate(entry.get("notes", []), start=1):
-            done = backend.complete(CompletionRequest(
-                prompt="(canned)", model=note["model"], recording_id=rid,
-                note_type=note["note_type"]))
-            renditions.append(Rendition(
-                kind="notes", note_type=note["note_type"], engine="canned", model=done.model,
-                version=f"{done.model}@demo", created_at=stamp + timedelta(seconds=i),
-                inputs={"audio_sha256": sha}, meta={"demo": True},
-                payload={"markdown": done.text}))
+            done = backend.complete(
+                CompletionRequest(
+                    prompt="(canned)",
+                    model=note["model"],
+                    recording_id=rid,
+                    note_type=note["note_type"],
+                )
+            )
+            renditions.append(
+                Rendition(
+                    kind="notes",
+                    note_type=note["note_type"],
+                    engine="canned",
+                    model=done.model,
+                    version=f"{done.model}@demo",
+                    created_at=stamp + timedelta(seconds=i),
+                    inputs={"audio_sha256": sha},
+                    meta={"demo": True},
+                    payload={"markdown": done.text},
+                )
+            )
         payload = None
         if entry.get("plaud"):
             transcript = renditions[0].payload
-            renditions.append(Rendition(
-                kind="transcript", engine="plaud", model="plaud", version="plaud@demo",
-                created_at=stamp + timedelta(seconds=30), meta={"demo": True},
-                payload=transcript))
-            renditions.append(Rendition(
-                kind="notes", note_type="plaud-summary", engine="plaud", model="plaud",
-                version="plaud@demo", created_at=stamp + timedelta(seconds=31),
-                meta={"demo": True},
-                payload={"markdown": (canned_dir / "notes" / entry["slug"] / "plaud.md")
-                         .read_text(encoding="utf-8")}))
-            payload = json.dumps({"id": entry["source_ref"], "demo": True,
-                                  "name": entry["title"]}, indent=2).encode() + b"\n"
+            renditions.append(
+                Rendition(
+                    kind="transcript",
+                    engine="plaud",
+                    model="plaud",
+                    version="plaud@demo",
+                    created_at=stamp + timedelta(seconds=30),
+                    meta={"demo": True},
+                    payload=transcript,
+                )
+            )
+            renditions.append(
+                Rendition(
+                    kind="notes",
+                    note_type="plaud-summary",
+                    engine="plaud",
+                    model="plaud",
+                    version="plaud@demo",
+                    created_at=stamp + timedelta(seconds=31),
+                    meta={"demo": True},
+                    payload={
+                        "markdown": (canned_dir / "notes" / entry["slug"] / "plaud.md").read_text(
+                            encoding="utf-8"
+                        )
+                    },
+                )
+            )
+            payload = (
+                json.dumps(
+                    {"id": entry["source_ref"], "demo": True, "name": entry["title"]}, indent=2
+                ).encode()
+                + b"\n"
+            )
         my_notes_path = canned_dir / "my-notes" / f"{entry['slug']}.md"
         archive.add_recording(
             media=media,
@@ -2732,8 +2868,12 @@ def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
             title=entry["title"],
             kind=entry["kind"],
             duration_ms=entry["duration_ms"],
-            source=RawSource(kind=entry["source_kind"], ref=entry["source_ref"],
-                             added_at=BUILD_AT, payload=payload),
+            source=RawSource(
+                kind=entry["source_kind"],
+                ref=entry["source_ref"],
+                added_at=BUILD_AT,
+                payload=payload,
+            ),
             tags=[TagRef(**t) for t in entry.get("tags", [])],
             renditions=renditions,
             my_notes=my_notes_path.read_text(encoding="utf-8") if my_notes_path.is_file() else None,
@@ -2944,7 +3084,9 @@ def test_secret_from_env_or_file(tmp_path):
     f.write_text("from-file\n")
     assert secret("plaud_token", {"RECORDINGS_PLAUD_TOKEN_FILE": str(f)}) == "from-file"
     with pytest.raises(ConfigError, match="not both"):
-        secret("plaud_token", {"RECORDINGS_PLAUD_TOKEN": "a", "RECORDINGS_PLAUD_TOKEN_FILE": str(f)})
+        secret(
+            "plaud_token", {"RECORDINGS_PLAUD_TOKEN": "a", "RECORDINGS_PLAUD_TOKEN_FILE": str(f)}
+        )
 
 
 def test_doctor_reports_presence_never_values(tmp_path, capsys):
@@ -3007,9 +3149,11 @@ class SecretSpec:
 SECRETS: dict[str, SecretSpec] = {
     "plaud_token": SecretSpec("RECORDINGS_PLAUD_TOKEN", "Plaud API token (Plaud sync)", 2),
     "spark_api_key": SecretSpec(
-        "RECORDINGS_SPARK_API_KEY", "this app's llama-swap key on the Spark", 4),
+        "RECORDINGS_SPARK_API_KEY", "this app's llama-swap key on the Spark", 4
+    ),
     "claude_oauth_token": SecretSpec(
-        "CLAUDE_CODE_OAUTH_TOKEN", "Claude subscription token from `claude setup-token`", 4),
+        "CLAUDE_CODE_OAUTH_TOKEN", "Claude subscription token from `claude setup-token`", 4
+    ),
 }
 
 
@@ -3079,7 +3223,8 @@ def doctor(environ: Mapping[str, str]) -> dict[str, Any]:
     report["config"] = str(cfg.path) if cfg.path else None
     if cfg.archive_path is None:
         report["problems"].append(
-            "no archive path: set [archive] path in config.toml, or RECORDINGS_ARCHIVE")
+            "no archive path: set [archive] path in config.toml, or RECORDINGS_ARCHIVE"
+        )
     else:
         report["archive"] = {"path": str(cfg.archive_path), "exists": cfg.archive_path.is_dir()}
         if not cfg.archive_path.is_dir():
@@ -3091,7 +3236,9 @@ def doctor(environ: Mapping[str, str]) -> dict[str, Any]:
             report["problems"].append(str(exc))
             present = False
         report["secrets"][name] = {
-            "env": spec.env, "set": present, "needed_from_stage": spec.stage,
+            "env": spec.env,
+            "set": present,
+            "needed_from_stage": spec.stage,
             "purpose": spec.purpose,
         }
     return report
@@ -3208,8 +3355,11 @@ from recordings_ui.views import library_view, recording_view, render_markdown
 def test_library_lists_the_demo_newest_first(demo_archive, demo_ids):
     view = library_view(Archive(demo_archive))
     assert [r["id"] for r in view["recordings"]] == [
-        demo_ids["apollo13-problem"], demo_ids["apollo11-first-steps"],
-        demo_ids["jfk-rice"], demo_ids["fdr-fireside-1"]]
+        demo_ids["apollo13-problem"],
+        demo_ids["apollo11-first-steps"],
+        demo_ids["jfk-rice"],
+        demo_ids["fdr-fireside-1"],
+    ]
     assert view["counts"] == {"all": 4, "untagged": 1}
     assert {t["tag"] for t in view["tags"]} == {"talks", "space/apollo", "private"}
     assert next(t for t in view["tags"] if t["tag"] == "private")["private"] is True
@@ -3250,7 +3400,9 @@ def test_unknown_or_malformed_id_is_none(demo_archive):
     archive = Archive(demo_archive)
     assert recording_view(archive, "20200101T000000+0000_00000000") is None
     assert recording_view(archive, "../../etc/passwd") is None
-    assert recording_view(archive, "20261399T256199+0000_deadbeef") is None  # regex-valid, impossible date
+    assert (
+        recording_view(archive, "20261399T256199+0000_deadbeef") is None
+    )  # regex-valid, impossible date
 
 
 def test_a_recording_with_no_outputs_has_empty_tabs(tmp_path):
@@ -3258,9 +3410,16 @@ def test_a_recording_with_no_outputs_has_empty_tabs(tmp_path):
     media.write_bytes(b"ID3")
     archive = Archive(tmp_path / "archive")
     rec = archive.add_recording(
-        media=media, recorded_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
-        timezone_name="UTC", time_source="ingest", title="Fresh upload", kind="audio",
-        source=RawSource(kind="upload", ref="x.mp3", added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)))
+        media=media,
+        recorded_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
+        timezone_name="UTC",
+        time_source="ingest",
+        title="Fresh upload",
+        kind="audio",
+        source=RawSource(
+            kind="upload", ref="x.mp3", added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)
+        ),
+    )
     view = recording_view(archive, rec.id)
     assert view["transcripts"] == [] and view["chosen_transcript"] is None
     assert view["notes"] == [] and view["plaud_notes"] == [] and view["my_notes_html"] is None
@@ -3274,11 +3433,25 @@ def test_model_written_html_is_escaped(tmp_path):
     archive = Archive(tmp_path / "archive")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
     rec = archive.add_recording(
-        media=media, recorded_at=t, timezone_name="UTC", time_source="ingest", title="x",
-        kind="audio", source=RawSource(kind="upload", ref="x", added_at=t),
-        renditions=[Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
-                              version="m@1", created_at=t,
-                              payload={"markdown": "<img src=x onerror=alert(1)>"})])
+        media=media,
+        recorded_at=t,
+        timezone_name="UTC",
+        time_source="ingest",
+        title="x",
+        kind="audio",
+        source=RawSource(kind="upload", ref="x", added_at=t),
+        renditions=[
+            Rendition(
+                kind="notes",
+                note_type="lecture",
+                engine="canned",
+                model="m",
+                version="m@1",
+                created_at=t,
+                payload={"markdown": "<img src=x onerror=alert(1)>"},
+            )
+        ],
+    )
     html = recording_view(archive, rec.id)["notes"][0]["outputs"][0]["html"]
     assert "<img" not in html
 ```
@@ -3358,11 +3531,13 @@ def library_view(archive: Archive) -> dict:
         "counts": {"all": len(recordings), "untagged": sum(is_untagged(r) for r in recordings)},
         "tags": [
             {"tag": tag, "count": n, "private": tag == "private" or tag.startswith("private/")}
-            for tag, n in sorted(counts.items()) if not tag.startswith("notes/")
+            for tag, n in sorted(counts.items())
+            if not tag.startswith("notes/")
         ],
         "note_types": [
             {"note_type": tag.removeprefix("notes/"), "count": n}
-            for tag, n in sorted(counts.items()) if tag.startswith("notes/")
+            for tag, n in sorted(counts.items())
+            if tag.startswith("notes/")
         ],
         "problems": [{"path": str(p.path), "message": p.message} for p in archive.problems],
     }
@@ -3372,19 +3547,25 @@ def _turns(r: Rendition, speakers: dict[str, str]) -> list[dict]:
     out = []
     for seg in r.payload.get("segments", []):
         speaker = seg.get("speaker")
-        out.append({
-            "start": seg["start"],
-            "end": seg["end"],
-            "speaker": speakers.get(speaker, speaker) if speaker else None,
-            "text": seg["text"],
-            "words": [{"word": w["word"], "start": w["start"], "end": w["end"]}
-                      for w in seg.get("words", [])],
-        })
+        out.append(
+            {
+                "start": seg["start"],
+                "end": seg["end"],
+                "speaker": speakers.get(speaker, speaker) if speaker else None,
+                "text": seg["text"],
+                "words": [
+                    {"word": w["word"], "start": w["start"], "end": w["end"]}
+                    for w in seg.get("words", [])
+                ],
+            }
+        )
     return out
 
 
 def _label(r: Rendition) -> str:
-    return "Plaud" if r.engine == "plaud" else f"{(r.model or r.engine).split('/')[-1]} · {r.engine}"
+    return (
+        "Plaud" if r.engine == "plaud" else f"{(r.model or r.engine).split('/')[-1]} · {r.engine}"
+    )
 
 
 def recording_view(archive: Archive, rid: str) -> dict | None:
@@ -3396,21 +3577,34 @@ def recording_view(archive: Archive, rid: str) -> dict | None:
         return None
     outputs = archive.renditions(rid)
     transcripts = [
-        {"rendition": path, "label": _label(r), "engine": r.engine, "model": r.model,
-         "created_at": r.created_at.isoformat(), "turns": _turns(r, rec.speakers)}
-        for path, r in outputs if r.kind == "transcript"
+        {
+            "rendition": path,
+            "label": _label(r),
+            "engine": r.engine,
+            "model": r.model,
+            "created_at": r.created_at.isoformat(),
+            "turns": _turns(r, rec.speakers),
+        }
+        for path, r in outputs
+        if r.kind == "transcript"
     ]
     names = [t["rendition"] for t in transcripts]
-    chosen = rec.chosen.transcript if rec.chosen.transcript in names else (names[-1] if names else None)
+    chosen = (
+        rec.chosen.transcript if rec.chosen.transcript in names else (names[-1] if names else None)
+    )
 
     groups: dict[str, list[dict]] = {}
     for path, r in reversed(outputs):  # newest first inside each group
         if r.kind == "notes" and r.engine != "plaud":
-            groups.setdefault(r.note_type, []).append({
-                "rendition": path, "model": r.model, "engine": r.engine,
-                "created_at": r.created_at.isoformat(),
-                "html": render_markdown(r.payload["markdown"]),
-            })
+            groups.setdefault(r.note_type, []).append(
+                {
+                    "rendition": path,
+                    "model": r.model,
+                    "engine": r.engine,
+                    "created_at": r.created_at.isoformat(),
+                    "html": render_markdown(r.payload["markdown"]),
+                }
+            )
     my_notes = archive.read_my_notes(rid)
     return {
         "id": rec.id,
@@ -3423,20 +3617,31 @@ def recording_view(archive: Archive, rid: str) -> dict | None:
         "private": is_private(rec),
         "media_url": f"/media/{rec.id}",
         "tags": _tags(rec),
-        "sources": [{"kind": s.kind, "ref": s.ref, "added_at": s.added_at.isoformat()}
-                    for s in rec.sources],
+        "sources": [
+            {"kind": s.kind, "ref": s.ref, "added_at": s.added_at.isoformat()} for s in rec.sources
+        ],
         "transcripts": transcripts,
         "chosen_transcript": chosen,
         "notes": [{"note_type": k, "outputs": v} for k, v in sorted(groups.items())],
         "plaud_notes": [
-            {"rendition": path, "created_at": r.created_at.isoformat(),
-             "html": render_markdown(r.payload["markdown"])}
-            for path, r in outputs if r.kind == "notes" and r.engine == "plaud"
+            {
+                "rendition": path,
+                "created_at": r.created_at.isoformat(),
+                "html": render_markdown(r.payload["markdown"]),
+            }
+            for path, r in outputs
+            if r.kind == "notes" and r.engine == "plaud"
         ],
         "my_notes_html": render_markdown(my_notes) if my_notes is not None else None,
         "renditions": [
-            {"rendition": path, "kind": r.kind, "note_type": r.note_type, "engine": r.engine,
-             "model": r.model, "created_at": r.created_at.isoformat()}
+            {
+                "rendition": path,
+                "kind": r.kind,
+                "note_type": r.note_type,
+                "engine": r.engine,
+                "model": r.model,
+                "created_at": r.created_at.isoformat(),
+            }
             for path, r in outputs
         ],
     }
@@ -3563,7 +3768,8 @@ def test_a_range_past_the_end_is_416_not_500(client, demo_ids):
 
 
 @pytest.mark.parametrize(
-    "bad", ["20200101T000000+0000_00000000", "not-an-id", "20261399T256199+0000_deadbeef"])
+    "bad", ["20200101T000000+0000_00000000", "not-an-id", "20261399T256199+0000_deadbeef"]
+)
 def test_unknown_or_malformed_media_is_404(client, bad):
     assert client.get(f"/media/{bad}").status_code == 404
 
@@ -3675,7 +3881,8 @@ def from_env(environ: Mapping[str, str], *, demo: bool | None = None) -> Setting
     if cfg.archive_path is None:
         raise SystemExit(
             "no archive path: set [archive] path in config.toml (see config.example.toml), "
-            "set RECORDINGS_ARCHIVE, or run with --demo")
+            "set RECORDINGS_ARCHIVE, or run with --demo"
+        )
     return Settings(archive=cfg.archive_path, demo=False)
 ```
 
@@ -3944,9 +4151,10 @@ def test_theme_css_is_up_to_date():
 
 def contrast(a: str, b: str) -> float:
     def lum(h):
-        c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [int(h[i : i + 2], 16) / 255 for i in (1, 3, 5)]
         c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
         return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
     hi, lo = sorted([lum(a), lum(b)], reverse=True)
     return (hi + 0.05) / (lo + 0.05)
 
@@ -3998,20 +4206,34 @@ EXTRA = {
 }
 # shadcn token -> brand.yml theme key, or extra:<role>
 TOKENS = {
-    "background": "background", "foreground": "foreground",
-    "card": "light", "card-foreground": "foreground",
-    "popover": "light", "popover-foreground": "foreground",
-    "primary": "primary", "primary-foreground": "background",
-    "secondary": "extra:chip", "secondary-foreground": "foreground",
-    "muted": "tertiary", "muted-foreground": "secondary",
-    "accent": "extra:chip", "accent-foreground": "foreground",
+    "background": "background",
+    "foreground": "foreground",
+    "card": "light",
+    "card-foreground": "foreground",
+    "popover": "light",
+    "popover-foreground": "foreground",
+    "primary": "primary",
+    "primary-foreground": "background",
+    "secondary": "extra:chip",
+    "secondary-foreground": "foreground",
+    "muted": "tertiary",
+    "muted-foreground": "secondary",
+    "accent": "extra:chip",
+    "accent-foreground": "foreground",
     "destructive": "danger",
-    "border": "extra:hairline", "input": "extra:hairline", "ring": "primary",
-    "sidebar": "tertiary", "sidebar-foreground": "foreground",
-    "sidebar-primary": "primary", "sidebar-primary-foreground": "background",
-    "sidebar-accent": "extra:chip", "sidebar-accent-foreground": "foreground",
-    "sidebar-border": "extra:hairline", "sidebar-ring": "primary",
-    "brand-orange": "warning", "brand-success": "success",
+    "border": "extra:hairline",
+    "input": "extra:hairline",
+    "ring": "primary",
+    "sidebar": "tertiary",
+    "sidebar-foreground": "foreground",
+    "sidebar-primary": "primary",
+    "sidebar-primary-foreground": "background",
+    "sidebar-accent": "extra:chip",
+    "sidebar-accent-foreground": "foreground",
+    "sidebar-border": "extra:hairline",
+    "sidebar-ring": "primary",
+    "brand-orange": "warning",
+    "brand-success": "success",
 }
 
 
@@ -4035,23 +4257,29 @@ def tokens(repo: Path, mode: str) -> dict[str, str]:
 
 
 def _block(selector: str, values: dict[str, str], scheme: str, indent: str = "") -> str:
-    lines = [f"{indent}{selector} {{", f"{indent}  color-scheme: {scheme};", f"{indent}  --radius: 0.5rem;"]
+    lines = [
+        f"{indent}{selector} {{",
+        f"{indent}  color-scheme: {scheme};",
+        f"{indent}  --radius: 0.5rem;",
+    ]
     lines += [f"{indent}  --{k}: {v};" for k, v in values.items()]
     return "\n".join(lines + [f"{indent}}}"])
 
 
 def render(repo: Path) -> str:
     light, dark = tokens(repo, "light"), tokens(repo, "dark")
-    return "\n".join([
-        "/* Generated by scripts/brand_css.py from _brand.yml. Do not edit. */",
-        _block(":root", light, "light"),
-        _block(".dark", dark, "dark"),
-        "/* Before the app picks a mode (class light/dark on <html>), follow the OS. */",
-        "@media (prefers-color-scheme: dark) {",
-        _block(":root:not(.light):not(.dark)", dark, "dark", indent="  "),
-        "}",
-        "",
-    ])
+    return "\n".join(
+        [
+            "/* Generated by scripts/brand_css.py from _brand.yml. Do not edit. */",
+            _block(":root", light, "light"),
+            _block(".dark", dark, "dark"),
+            "/* Before the app picks a mode (class light/dark on <html>), follow the OS. */",
+            "@media (prefers-color-scheme: dark) {",
+            _block(":root:not(.light):not(.dark)", dark, "dark", indent="  "),
+            "}",
+            "",
+        ]
+    )
 
 
 if __name__ == "__main__":
@@ -5320,20 +5548,26 @@ def server_url(tmp_path_factory):
     with open(log_path, "wb") as log:
         proc = subprocess.Popen(
             [sys.executable, "-m", "recordings_ui", "--demo", "--port", str(port)],
-            env=env, stdout=log, stderr=subprocess.STDOUT,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
         )
     url = f"http://127.0.0.1:{port}"
     try:
         deadline = time.monotonic() + 20
         while True:
             if proc.poll() is not None:
-                pytest.fail(f"demo server exited with {proc.returncode}:\n{log_path.read_text(errors='replace')[-2000:]}")
+                pytest.fail(
+                    f"demo server exited with {proc.returncode}:\n{log_path.read_text(errors='replace')[-2000:]}"
+                )
             try:
                 with urllib.request.urlopen(f"{url}/healthz", timeout=1):
                     break
             except OSError:
                 if time.monotonic() > deadline:
-                    pytest.fail(f"demo server did not start in 20 s:\n{log_path.read_text(errors='replace')[-2000:]}")
+                    pytest.fail(
+                        f"demo server did not start in 20 s:\n{log_path.read_text(errors='replace')[-2000:]}"
+                    )
                 time.sleep(0.2)
         yield url
     finally:
@@ -5361,13 +5595,16 @@ def test_untagged_filter_shows_only_apollo_13(page: Page, server_url):
 def test_clicking_a_line_seeks_the_audio(page: Page, server_url):
     open_library(page, server_url)
     page.get_by_test_id("recording-row").filter(has_text="JFK").click()
-    page.wait_for_function("document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=10_000)
+    page.wait_for_function(
+        "document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=10_000
+    )
     turn = page.get_by_test_id("turn").nth(2)
     start = float(turn.get_attribute("data-start"))
     turn.click()
     page.wait_for_function(
         "s => Math.abs(document.querySelector('[data-testid=media]').currentTime - s) < 0.5",
-        arg=start, timeout=5_000,
+        arg=start,
+        timeout=5_000,
     )
     expect(turn).to_have_class(re.compile(r"\bnow\b"))
 
@@ -5378,7 +5615,9 @@ def test_a_newly_chosen_recording_starts_from_the_beginning(page: Page, server_u
     # first. Back on JFK (first line at 1.8 s) the fresh audio sits at 0, so no line is current.
     open_library(page, server_url)
     page.get_by_test_id("recording-row").filter(has_text="JFK").click()
-    page.wait_for_function("document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=10_000)
+    page.wait_for_function(
+        "document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=10_000
+    )
     page.get_by_test_id("turn").nth(2).click()
     expect(page.get_by_test_id("turn").nth(2)).to_have_class(re.compile(r"\bnow\b"))
     page.get_by_test_id("recording-row").filter(has_text="Apollo 11").click()

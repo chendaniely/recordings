@@ -27,7 +27,8 @@ def consent_list_path(data: dict) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ConsentListError(
             "[plaud] consent_list is not set in config.toml. It names Dan's consent list, and "
-            "the import refuses to run without it (spec §9.1).")
+            "the import refuses to run without it (spec §9.1)."
+        )
     return Path(value).expanduser()
 
 
@@ -39,17 +40,25 @@ def load_consent_list(path: Path) -> frozenset[str]:
     except FileNotFoundError:
         raise ConsentListError(
             f"the consent list {path} is missing: refusing, because a missing list would "
-            "exclude nothing") from None
+            "exclude nothing"
+        ) from None
     except (OSError, UnicodeDecodeError) as exc:
         raise ConsentListError(
-            f"the consent list {path} can't be read ({type(exc).__name__}): refusing") from None
+            f"the consent list {path} can't be read ({type(exc).__name__}): refusing"
+        ) from None
     if not text.strip():
         raise ConsentListError(
-            f"the consent list {path} is empty (a placeholder, or a truncated copy?): refusing")
-    ids = frozenset(canonical_plaud_id(m.group(1)) for line in text.splitlines()
-                    if not line.lstrip().startswith("#")
-                    for m in [ENTRY_RE.match(line)] if m)
+            f"the consent list {path} is empty (a placeholder, or a truncated copy?): refusing"
+        )
+    ids = frozenset(
+        canonical_plaud_id(m.group(1))
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+        for m in [ENTRY_RE.match(line)]
+        if m
+    )
     if not ids:
         raise ConsentListError(
-            f"the consent list {path} holds no IDs, so it is the wrong file: refusing")
+            f"the consent list {path} holds no IDs, so it is the wrong file: refusing"
+        )
     return ids

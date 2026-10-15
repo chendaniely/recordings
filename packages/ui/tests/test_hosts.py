@@ -43,15 +43,34 @@ def test_the_unknown_host_answer_keeps_to_this_origin_too():
     assert r.headers["referrer-policy"] == "same-origin"
 
 
-@pytest.mark.parametrize("host", ["attacker.example", "attacker.example:8000",
-                                  "localhost.attacker.example", "evil-localhost", "[::2]:8000", ""])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "attacker.example",
+        "attacker.example:8000",
+        "localhost.attacker.example",
+        "evil-localhost",
+        "[::2]:8000",
+        "",
+    ],
+)
 def test_an_unknown_host_is_400(host):
     r = guarded().get("/", headers={"Host": host})
     assert r.status_code == 400 and r.text == "unknown host"
 
 
-@pytest.mark.parametrize("host", ["localhost", "localhost:8000", "127.0.0.1:8000", "[::1]:8000",
-                                  "[::1]", "LOCALHOST:8000", "LocalHost"])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost",
+        "localhost:8000",
+        "127.0.0.1:8000",
+        "[::1]:8000",
+        "[::1]",
+        "LOCALHOST:8000",
+        "LocalHost",
+    ],
+)
 def test_allowed_host_variants_pass(host):
     r = guarded().get("/", headers={"Host": host})
     assert r.status_code == 200 and r.text == "hi"
@@ -69,30 +88,38 @@ def _refused(client, url, headers) -> int:
     return exc.value.code
 
 
-@pytest.mark.parametrize("origin", ["http://evil.example", "https://localhost.evil.example",
-                                    "null", "http://[::1"])
+@pytest.mark.parametrize(
+    "origin", ["http://evil.example", "https://localhost.evil.example", "null", "http://[::1"]
+)
 def test_a_websocket_from_a_foreign_origin_is_refused(origin):
     assert _refused(guarded(), "ws://localhost/ws", {"Origin": origin}) == 1008
 
 
 def test_a_websocket_to_an_unknown_host_is_refused():
-    assert _refused(guarded(), "ws://attacker.example/ws", {"Origin": "http://attacker.example"}) == 1008
+    assert (
+        _refused(guarded(), "ws://attacker.example/ws", {"Origin": "http://attacker.example"})
+        == 1008
+    )
 
 
-@pytest.mark.parametrize("url, origin", [
-    ("ws://localhost:8000/ws", "http://localhost:8000"),
-    ("ws://127.0.0.1:8000/ws", "http://127.0.0.1:8000"),
-    ("ws://[::1]:8000/ws", "http://[::1]:8000"),
-    ("ws://localhost/ws", "HTTP://LOCALHOST"),
-])
+@pytest.mark.parametrize(
+    "url, origin",
+    [
+        ("ws://localhost:8000/ws", "http://localhost:8000"),
+        ("ws://127.0.0.1:8000/ws", "http://127.0.0.1:8000"),
+        ("ws://[::1]:8000/ws", "http://[::1]:8000"),
+        ("ws://localhost/ws", "HTTP://LOCALHOST"),
+    ],
+)
 def test_a_websocket_from_its_own_origin_is_accepted(url, origin):
     # The page's own origin: the scheme, host name and port of the Host it connects to.
     with guarded().websocket_connect(url, headers={"Origin": origin}) as ws:
         assert ws.receive_text() == "hello"
 
 
-@pytest.mark.parametrize("origin", ["http://localhost:9999", "https://localhost:8000",
-                                    "http://127.0.0.1:8000"])
+@pytest.mark.parametrize(
+    "origin", ["http://localhost:9999", "https://localhost:8000", "http://127.0.0.1:8000"]
+)
 def test_a_websocket_from_another_port_scheme_or_name_of_this_host_is_refused(origin):
     # why: an origin is a scheme, a host name and a port (RFC 6454). A page at
     # http://localhost:9999 is another program, though its host name is allowed.
@@ -101,8 +128,14 @@ def test_a_websocket_from_another_port_scheme_or_name_of_this_host_is_refused(or
 
 @pytest.mark.parametrize("site", ["cross-site", "same-site"])
 def test_a_websocket_the_browser_marks_as_another_sites_is_refused(site):
-    assert _refused(guarded(), "ws://localhost:8000/ws",
-                    {"Origin": "http://localhost:8000", "Sec-Fetch-Site": site}) == 1008
+    assert (
+        _refused(
+            guarded(),
+            "ws://localhost:8000/ws",
+            {"Origin": "http://localhost:8000", "Sec-Fetch-Site": site},
+        )
+        == 1008
+    )
 
 
 def test_a_websocket_without_an_origin_is_accepted():
@@ -127,6 +160,7 @@ def test_lifespan_passes_straight_through():
 
 # ---- the real app ----------------------------------------------------------------------
 
+
 @pytest.fixture
 def app_client(demo_archive):
     settings = Settings(archive=demo_archive, demo=True)
@@ -138,31 +172,39 @@ def app_client(demo_archive):
 def test_the_app_refuses_a_foreign_host_everywhere(app_client, demo_ids):
     foreign = {"Host": "attacker.example:8000"}
     assert app_client.get("/healthz", headers=foreign).status_code == 400
-    assert app_client.get(f"/media/{demo_ids['fdr-fireside-1']}", headers=foreign).status_code == 400
+    assert (
+        app_client.get(f"/media/{demo_ids['fdr-fireside-1']}", headers=foreign).status_code == 400
+    )
     assert app_client.get("/", headers=foreign).status_code == 400  # the mounted Shiny app
 
 
 def test_the_app_refuses_a_cross_site_websocket(app_client):
     # The review's exploit: a page on another site opening Shiny's websocket.
-    assert _refused(app_client, "ws://localhost:8000/websocket/",
-                    {"Origin": "http://evil.example"}) == 1008
+    assert (
+        _refused(app_client, "ws://localhost:8000/websocket/", {"Origin": "http://evil.example"})
+        == 1008
+    )
 
 
 def test_the_app_refuses_a_websocket_from_another_port_of_this_host(app_client):
     # The council's finding: a page at http://localhost:9999 passed the host-name-only check.
-    assert _refused(app_client, "ws://localhost:8000/websocket/",
-                    {"Origin": "http://localhost:9999"}) == 1008
+    assert (
+        _refused(app_client, "ws://localhost:8000/websocket/", {"Origin": "http://localhost:9999"})
+        == 1008
+    )
 
 
 def test_the_app_accepts_its_own_websocket(app_client):
-    with app_client.websocket_connect("ws://localhost:8000/websocket/",
-                                      headers={"Origin": "http://localhost:8000"}):
+    with app_client.websocket_connect(
+        "ws://localhost:8000/websocket/", headers={"Origin": "http://localhost:8000"}
+    ):
         pass  # accepted: entering the session did not raise WebSocketDisconnect
 
 
 def test_the_app_answers_to_its_configured_names(demo_archive):
-    settings = Settings(archive=demo_archive, demo=False,
-                        allowed_hosts=LOCAL_HOSTS | {"my-homelab"})
+    settings = Settings(
+        archive=demo_archive, demo=False, allowed_hosts=LOCAL_HOSTS | {"my-homelab"}
+    )
     try:
         with TestClient(create_app(settings), base_url="http://my-homelab:8000") as c:
             assert c.get("/healthz").status_code == 200

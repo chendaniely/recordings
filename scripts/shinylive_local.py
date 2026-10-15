@@ -30,7 +30,8 @@ def main(argv: list[str] | None = None) -> None:
     if shinylive_version != PINNED:
         raise SystemExit(
             f"shinylive {shinylive_version} is installed, but this wrapper patches shinylive "
-            f"{PINNED}'s private cache function. Check shinylive/_assets.py, then update PINNED.")
+            f"{PINNED}'s private cache function. Check shinylive/_assets.py, then update PINNED."
+        )
     CACHE.mkdir(parents=True, exist_ok=True)
     _assets.shinylive_cache_dir = lambda: str(CACHE)
     _main.main(args=sys.argv[1:] if argv is None else argv, prog_name="shinylive")

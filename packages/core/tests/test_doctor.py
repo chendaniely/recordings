@@ -17,26 +17,40 @@ from recordings.sentinel import MIRROR, SENTINEL, read_sentinel
 from recordings.ssh import nas_free_bytes
 from recordings.state import SCHEMA_VERSION
 
-NAS_FREE = 500 * 1024 ** 3
+NAS_FREE = 500 * 1024**3
 
-SENTINELS = ("pw-do-not-print", "key-do-not-print", "topic-do-not-print", "ping-do-not-print",
-             "rest-do-not-print", "hunter2")
-SECRET_ENV = ("RESTIC_PASSWORD_FILE", "RESTIC_REST_PASSWORD_FILE", "RECORDINGS_NAS_SSH_KEY_FILE",
-              "RECORDINGS_NAS_KNOWN_HOSTS_FILE", "RECORDINGS_NTFY_TOPIC_FILE",
-              "RECORDINGS_NTFY_TOKEN_FILE", "RECORDINGS_DEADMAN_URL_FILE")
+SENTINELS = (
+    "pw-do-not-print",
+    "key-do-not-print",
+    "topic-do-not-print",
+    "ping-do-not-print",
+    "rest-do-not-print",
+    "hunter2",
+)
+SECRET_ENV = (
+    "RESTIC_PASSWORD_FILE",
+    "RESTIC_REST_PASSWORD_FILE",
+    "RECORDINGS_NAS_SSH_KEY_FILE",
+    "RECORDINGS_NAS_KNOWN_HOSTS_FILE",
+    "RECORDINGS_NTFY_TOPIC_FILE",
+    "RECORDINGS_NTFY_TOKEN_FILE",
+    "RECORDINGS_DEADMAN_URL_FILE",
+)
 
 
-def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings",
-           backup_extra=""):
+def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings", backup_extra=""):
     init_archive(tmp_path / "archive", tmp_path / "state", writer_id="homelab")
     (tmp_path / "scratch").mkdir()
     secrets = tmp_path / "secrets"
     secrets.mkdir()
-    for name, value in (("pw", "pw-do-not-print"), ("key", "key-do-not-print"),
-                        ("known_hosts", "nas ssh-ed25519 AAAAexample"),
-                        ("topic", "topic-do-not-print-20"),
-                        ("ping", "https://hc.example/ping-do-not-print"),
-                        ("rest_password", "rest-do-not-print")):
+    for name, value in (
+        ("pw", "pw-do-not-print"),
+        ("key", "key-do-not-print"),
+        ("known_hosts", "nas ssh-ed25519 AAAAexample"),
+        ("topic", "topic-do-not-print-20"),
+        ("ping", "https://hc.example/ping-do-not-print"),
+        ("rest_password", "rest-do-not-print"),
+    ):
         (secrets / name).write_text(value + "\n", encoding="utf-8")
         (secrets / name).chmod(0o600)  # as the runbook makes them
     cfg = tmp_path / "config.toml"
@@ -49,12 +63,17 @@ def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings"
         f'extra_paths = ["/backup-extra/deploy.env"]\n'
         f'cache_dir = "{tmp_path / "cache"}"\n{backup_extra}'
         f'[mirror]\ntarget = "backup@nas:/volume1/recordings-mirror/"\n'
-        f'[alerts]\nntfy_server = "https://ntfy.sh"\n', encoding="utf-8")
-    return {"RECORDINGS_CONFIG": str(cfg), "RESTIC_PASSWORD_FILE": str(secrets / "pw"),
-            "RECORDINGS_NAS_SSH_KEY_FILE": str(secrets / "key"),
-            "RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(secrets / "known_hosts"),
-            "RECORDINGS_NTFY_TOPIC_FILE": str(secrets / "topic"),
-            "RECORDINGS_DEADMAN_URL_FILE": str(secrets / "ping")}
+        f'[alerts]\nntfy_server = "https://ntfy.sh"\n',
+        encoding="utf-8",
+    )
+    return {
+        "RECORDINGS_CONFIG": str(cfg),
+        "RESTIC_PASSWORD_FILE": str(secrets / "pw"),
+        "RECORDINGS_NAS_SSH_KEY_FILE": str(secrets / "key"),
+        "RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(secrets / "known_hosts"),
+        "RECORDINGS_NTFY_TOPIC_FILE": str(secrets / "topic"),
+        "RECORDINGS_DEADMAN_URL_FILE": str(secrets / "ping"),
+    }
 
 
 def web_only(environ):
@@ -85,10 +104,16 @@ def test_a_fully_configured_writer_has_no_problems(tmp_path):
     assert report["archive"]["sentinel"] and report["archive"]["hard_links"]
     assert report["archive"]["read_only"] is False
     assert report["state"]["matches"] is True
-    assert report["backup"] == {"transport": "sftp", "password_set": True, "prune": True,
-                                "cacert_exists": None, "restore_scratch_exists": True,
-                                "nas_free_check": True, "nas_free_bytes": NAS_FREE,
-                                "restic_installed": True}
+    assert report["backup"] == {
+        "transport": "sftp",
+        "password_set": True,
+        "prune": True,
+        "cacert_exists": None,
+        "restore_scratch_exists": True,
+        "nas_free_check": True,
+        "nas_free_bytes": NAS_FREE,
+        "restic_installed": True,
+    }
     assert report["mirror"] == {"remote": True, "rsync_installed": True}
     assert report["alerts"] == {"ntfy_server_set": True, "topic_set": True, "deadman_set": True}
     for name in ("restic_password", "nas_ssh_key", "nas_known_hosts", "ntfy_topic", "deadman_url"):
@@ -104,8 +129,9 @@ def test_doctor_never_prints_a_secret_or_the_repository(tmp_path):
     text = json.dumps(report, ensure_ascii=False)
     # A topic ntfy would refuse and a ping URL without https: their errors must not echo them.
     (tmp_path / "secrets" / "topic").write_text("topic-do-not-print!\n", encoding="utf-8")
-    (tmp_path / "secrets" / "ping").write_text("http://hc.example/ping-do-not-print\n",
-                                               encoding="utf-8")
+    (tmp_path / "secrets" / "ping").write_text(
+        "http://hc.example/ping-do-not-print\n", encoding="utf-8"
+    )
     text += json.dumps(doctor(environ), ensure_ascii=False)
     for value in SENTINELS:
         assert value not in text
@@ -128,8 +154,9 @@ def test_state_from_another_writer_is_a_problem(tmp_path):
     assert any("another archive or another writer_id" in p for p in report["problems"])
 
 
-def test_a_state_db_that_vanishes_between_the_check_and_the_open_is_not_a_crash(tmp_path,
-                                                                                 monkeypatch):
+def test_a_state_db_that_vanishes_between_the_check_and_the_open_is_not_a_crash(
+    tmp_path, monkeypatch
+):
     # why: State.read_only returns None when state.db is gone (Task 15's council, minor 6).
     environ = server(tmp_path)
     monkeypatch.setattr(doctor_module.State, "read_only", classmethod(lambda cls, path: None))
@@ -190,8 +217,10 @@ def test_leftover_job_folders_and_an_unset_cache_dir_are_warnings(tmp_path):
     web = doctor(web_only(environ), role="web")["warnings"]
     assert not any("restic-check-cache-" in w or "restore-" in w for w in web)  # not its job
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
-        f'cache_dir = "{tmp_path / "cache"}"\n', ""), encoding="utf-8")
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace(f'cache_dir = "{tmp_path / "cache"}"\n', ""),
+        encoding="utf-8",
+    )
     assert any("cache_dir" in w and "/tmp" in w for w in doctor(environ, role="backup")["warnings"])
 
 
@@ -248,8 +277,10 @@ def test_a_topic_with_no_server_is_a_warning(tmp_path):
     # silence. The reverse (a server, no topic) is the template's normal dead-man-only setup.
     environ = server(tmp_path)
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(cfg.read_text(encoding="utf-8").replace('ntfy_server = "https://ntfy.sh"\n', ""),
-                   encoding="utf-8")
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace('ntfy_server = "https://ntfy.sh"\n', ""),
+        encoding="utf-8",
+    )
     report = doctor(environ)
     assert report["problems"] == []
     assert any("ntfy_server" in w and "no alert is sent" in w for w in report["warnings"])
@@ -260,8 +291,10 @@ def test_the_backup_role_warns_when_deploy_env_is_not_backed_up(tmp_path):
     environ = server(tmp_path)  # the fixture names deploy.env in extra_paths, as the template does
     assert not any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
-        'extra_paths = ["/backup-extra/deploy.env"]\n', ""), encoding="utf-8")
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace('extra_paths = ["/backup-extra/deploy.env"]\n', ""),
+        encoding="utf-8",
+    )
     assert any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
     assert not any("deploy.env" in w for w in doctor(environ, role="all")["warnings"])
 
@@ -274,7 +307,8 @@ def test_a_secret_file_others_can_read_is_a_warning(tmp_path):
     assert report["problems"] == []
     assert [w for w in report["warnings"] if "chmod 600" in w] == [
         "RECORDINGS_NAS_SSH_KEY_FILE names a file that group or others can open (mode 644): "
-        "chmod 600 it"]
+        "chmod 600 it"
+    ]
     assert "key-do-not-print" not in json.dumps(report)
 
 
@@ -294,8 +328,13 @@ def test_missing_tools_and_alerts_are_reported(tmp_path, monkeypatch):
     monkeypatch.setattr(doctor_module.shutil, "which", lambda name: None)
     environ = {k: v for k, v in server(tmp_path).items() if "DEADMAN" not in k}
     report = doctor(environ)
-    assert report["tools"] == {"restic": False, "rsync": False, "ssh": False, "ffprobe": False,
-                               "ffmpeg": False}
+    assert report["tools"] == {
+        "restic": False,
+        "rsync": False,
+        "ssh": False,
+        "ffprobe": False,
+        "ffmpeg": False,
+    }
     assert any("restic is not installed" in p for p in report["problems"])
     assert any("dead-man" in w for w in report["warnings"])
     assert any("ffprobe and ffmpeg not installed" in w for w in report["warnings"])
@@ -305,8 +344,7 @@ def test_retention_off_here_is_a_warning_in_every_role(tmp_path):
     # why: with rest-server --append-only, the server can't prune, so retention runs on the NAS.
     # If that task is missing, nothing else says so, and the repository grows without limit.
     environ = server(tmp_path, backup_extra="prune = false\n")
-    warning = ("retention is off here: it must run on the NAS, or the repository grows without "
-               "limit")
+    warning = "retention is off here: it must run on the NAS, or the repository grows without limit"
     for role, env in (("all", environ), ("backup", environ), ("web", web_only(environ))):
         report = doctor(env, role=role)
         assert report["problems"] == [] and report["warnings"] == [warning], role
@@ -324,8 +362,10 @@ def test_a_consent_list_mounted_only_for_imports_is_information(tmp_path):
         report = doctor(env, role=role)
         assert report["problems"] == [] and report["warnings"] == [], role
         assert report["consent_list"] == {
-            "path": "/consent/consent-list.md", "here": False,
-            "note": "not mounted here; the import reads it and fails closed"}
+            "path": "/consent/consent-list.md",
+            "here": False,
+            "note": "not mounted here; the import reads it and fails closed",
+        }
     listed = tmp_path / "consent-list.md"
     listed.write_text("- " + "d" * 32 + "\n", encoding="utf-8")
     cfg.write_text(base + f'[plaud]\nconsent_list = "{listed}"\n', encoding="utf-8")
@@ -341,9 +381,14 @@ def test_an_unknown_default_timezone_is_a_problem_in_every_role(tmp_path, monkey
     cfg = tmp_path / "config.toml"
     good = cfg.read_text(encoding="utf-8")
     assert doctor(environ, role="backup")["problems"] == []  # the default, America/Vancouver
-    cfg.write_text(good.replace('writer_id = "homelab"\n',
-                                'writer_id = "homelab"\ndefault_timezone = "Mars/Olympus"\n', 1),
-                   encoding="utf-8")
+    cfg.write_text(
+        good.replace(
+            'writer_id = "homelab"\n',
+            'writer_id = "homelab"\ndefault_timezone = "Mars/Olympus"\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
     for role, env in (("web", web_only(environ)), ("backup", environ)):
         (problem,) = doctor(env, role=role)["problems"]
         assert "default_timezone" in problem and "Mars/Olympus" in problem, role
@@ -360,8 +405,11 @@ def test_a_bad_disk_threshold_pair_is_a_problem(tmp_path):
     # why: the import exits 78 on it and Status quietly uses the defaults (Task 9, Task 15).
     environ = server(tmp_path)
     cfg = tmp_path / "config.toml"
-    cfg.write_text(cfg.read_text(encoding="utf-8")
-                   + "[disk]\nwarn_free_percent = 20\nstop_free_percent = 30\n", encoding="utf-8")
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8")
+        + "[disk]\nwarn_free_percent = 20\nstop_free_percent = 30\n",
+        encoding="utf-8",
+    )
     (problem,) = doctor(web_only(environ), role="web")["problems"]
     assert "stop_free_percent" in problem
 
@@ -369,9 +417,14 @@ def test_a_bad_disk_threshold_pair_is_a_problem(tmp_path):
 def test_the_rest_server_setup_has_no_problems(tmp_path):
     # why: rest-server --append-only is the primary transport (council ruling, 2026-10-09).
     (tmp_path / "rest-server.crt").write_text("a test certificate\n", encoding="utf-8")
-    environ = server(tmp_path, repository="rest:https://nas:8000/recordings/", backup_extra=(
-        f'rest_username = "recordings"\nprune = false\n'
-        f'cacert = "{tmp_path / "rest-server.crt"}"\n'))
+    environ = server(
+        tmp_path,
+        repository="rest:https://nas:8000/recordings/",
+        backup_extra=(
+            f'rest_username = "recordings"\nprune = false\n'
+            f'cacert = "{tmp_path / "rest-server.crt"}"\n'
+        ),
+    )
     environ["RESTIC_REST_PASSWORD_FILE"] = str(tmp_path / "secrets" / "rest_password")
     report = doctor(environ)
     assert report["problems"] == []
@@ -380,14 +433,20 @@ def test_the_rest_server_setup_has_no_problems(tmp_path):
 
 
 def test_a_missing_cacert_is_a_problem(tmp_path):
-    environ = server(tmp_path, repository="rest:https://nas:8000/recordings/",
-                     backup_extra=f'cacert = "{tmp_path / "missing.crt"}"\n')
+    environ = server(
+        tmp_path,
+        repository="rest:https://nas:8000/recordings/",
+        backup_extra=f'cacert = "{tmp_path / "missing.crt"}"\n',
+    )
     assert any("cacert" in p for p in doctor(environ)["problems"])
 
 
 def test_a_rest_user_without_its_password_is_a_problem(tmp_path):
-    environ = server(tmp_path, repository="rest:https://nas:8000/recordings/",
-                     backup_extra='rest_username = "recordings"\n')
+    environ = server(
+        tmp_path,
+        repository="rest:https://nas:8000/recordings/",
+        backup_extra='rest_username = "recordings"\n',
+    )
     assert any("RESTIC_REST_PASSWORD_FILE" in p for p in doctor(environ)["problems"])
 
 
@@ -400,13 +459,17 @@ def test_a_nas_whose_free_space_cant_be_read_is_a_warning(tmp_path, monkeypatch)
         calls.append(cmd[0])
         return subprocess.CompletedProcess(cmd, 255, "", "")
 
-    monkeypatch.setattr(doctor_module, "nas_free_bytes",
-                        lambda nas, path: nas_free_bytes(nas, path, runner=neither_answers))
+    monkeypatch.setattr(
+        doctor_module,
+        "nas_free_bytes",
+        lambda nas, path: nas_free_bytes(nas, path, runner=neither_answers),
+    )
     report = doctor(server(tmp_path), role="backup")
     assert calls == ["ssh", "sftp"]
     assert report["problems"] == [] and report["backup"]["nas_free_bytes"] is None
     assert report["warnings"] == [
-        "the NAS's free space is unknown: neither ssh df nor sftp df answered"]
+        "the NAS's free space is unknown: neither ssh df nor sftp df answered"
+    ]
 
 
 def test_the_web_role_needs_no_secrets_and_refuses_any(tmp_path):
@@ -414,8 +477,9 @@ def test_the_web_role_needs_no_secrets_and_refuses_any(tmp_path):
     report = doctor(web_only(full), role="web")
     assert report["problems"] == [] and report["role"] == "web" and report["user"] is None
     assert report["backup"] is None and report["mirror"] is None and report["alerts"] is None
-    report = doctor(web_only(full) | {"RESTIC_PASSWORD_FILE": full["RESTIC_PASSWORD_FILE"]},
-                    role="web")
+    report = doctor(
+        web_only(full) | {"RESTIC_PASSWORD_FILE": full["RESTIC_PASSWORD_FILE"]}, role="web"
+    )
     assert any("restic_password" in p and "web" in p for p in report["problems"])
     assert "pw-do-not-print" not in json.dumps(report)
     for name in JOB_SECRETS:  # the optional ntfy_token included
@@ -433,8 +497,9 @@ def test_every_job_secret_is_a_known_secret():
 def test_the_backup_role_skips_the_hard_link_probe_on_a_read_only_archive(tmp_path, monkeypatch):
     environ = server(tmp_path)
     monkeypatch.setattr(doctor_module, "read_only_mount", lambda root: True)
-    monkeypatch.setattr(doctor_module, "hard_links_work",
-                        lambda root: pytest.fail("probed a read-only archive"))
+    monkeypatch.setattr(
+        doctor_module, "hard_links_work", lambda root: pytest.fail("probed a read-only archive")
+    )
     report = doctor(environ, role="backup")
     assert report["problems"] == [] and report["index"] is None
     assert report["archive"]["read_only"] is True and report["archive"]["hard_links"] is None
@@ -480,8 +545,13 @@ def test_the_cli_exits_0_when_all_is_well(tmp_path, monkeypatch, capsys):
 def test_the_cli_takes_the_role(tmp_path, monkeypatch, capsys):
     for key, value in web_only(server(tmp_path)).items():
         monkeypatch.setenv(key, value)
-    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE",
-                 *SECRET_ENV):
+    for name in (
+        "RECORDINGS_ARCHIVE",
+        "RECORDINGS_STATE",
+        "RECORDINGS_INDEX",
+        "RECORDINGS_ROLE",
+        *SECRET_ENV,
+    ):
         monkeypatch.delenv(name, raising=False)
     assert main(["doctor", "--role", "web", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["role"] == "web"
@@ -489,8 +559,9 @@ def test_the_cli_takes_the_role(tmp_path, monkeypatch, capsys):
     assert "RESTIC_PASSWORD_FILE" in " ".join(json.loads(capsys.readouterr().out)["problems"])
 
 
-def test_an_empty_named_token_file_is_a_problem_because_no_alert_is_ever_sent(tmp_path, monkeypatch,
-                                                                              capsys):
+def test_an_empty_named_token_file_is_a_problem_because_no_alert_is_ever_sent(
+    tmp_path, monkeypatch, capsys
+):
     # why: the loop reads any alerts.from_config failure as "alerts off": no alert and no dead-man
     # ping is sent, so doctor, the deploy gate, must say so and exit 78 (Task 16 review).
     environ = server(tmp_path)
@@ -499,8 +570,13 @@ def test_an_empty_named_token_file_is_a_problem_because_no_alert_is_ever_sent(tm
     token.chmod(0o600)
     environ["RECORDINGS_NTFY_TOKEN_FILE"] = str(token)
     report = doctor(environ)
-    assert [p for p in report["problems"] if "alerts and dead-man pings are off" in p
-            and "RECORDINGS_NTFY_TOKEN_FILE" in p and "is empty" in p]
+    assert [
+        p
+        for p in report["problems"]
+        if "alerts and dead-man pings are off" in p
+        and "RECORDINGS_NTFY_TOKEN_FILE" in p
+        and "is empty" in p
+    ]
     assert not any("is empty" in w for w in report["warnings"])  # moved, not repeated
     for key, value in environ.items():
         monkeypatch.setenv(key, value)
@@ -531,9 +607,12 @@ def test_in_the_backup_role_a_missing_state_db_or_an_unconfigured_job_is_a_probl
     (tmp_path / "state" / "state.db").unlink()
     assert any("no state.db yet" in p for p in doctor(environ, role="backup")["problems"])
     assert any("no state.db yet" in w for w in doctor(environ, role="all")["warnings"])
-    cfg.write_text(good.replace(f'repository = "sftp:backup@nas:/volume1/backups/recordings"\n', "")
-                   .replace('target = "backup@nas:/volume1/recordings-mirror/"\n', ""),
-                   encoding="utf-8")
+    cfg.write_text(
+        good.replace(f'repository = "sftp:backup@nas:/volume1/backups/recordings"\n', "").replace(
+            'target = "backup@nas:/volume1/recordings-mirror/"\n', ""
+        ),
+        encoding="utf-8",
+    )
     problems = doctor(environ, role="backup")["problems"]
     assert any("backups aren't configured" in p for p in problems)
     assert any("the mirror isn't configured" in p for p in problems)
@@ -543,8 +622,9 @@ def test_in_the_backup_role_a_missing_state_db_or_an_unconfigured_job_is_a_probl
 
 def test_a_missing_ssh_is_a_problem_when_something_needs_it(tmp_path, monkeypatch):
     environ = server(tmp_path)
-    monkeypatch.setattr(doctor_module.shutil, "which",
-                        lambda name: None if name == "ssh" else f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        doctor_module.shutil, "which", lambda name: None if name == "ssh" else f"/usr/bin/{name}"
+    )
     assert any("ssh is not installed" in p for p in doctor(environ, role="backup")["problems"])
     assert doctor(web_only(environ), role="web")["problems"] == []  # web runs no ssh
 
@@ -561,8 +641,12 @@ def test_state_from_another_archive_is_a_problem(tmp_path):
     environ = server(tmp_path)
     init_archive(tmp_path / "archive2", tmp_path / "state2", writer_id="homelab")
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
-        f'path = "{tmp_path / "state"}"', f'path = "{tmp_path / "state2"}"'), encoding="utf-8")
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace(
+            f'path = "{tmp_path / "state"}"', f'path = "{tmp_path / "state2"}"'
+        ),
+        encoding="utf-8",
+    )
     report = doctor(environ)
     assert report["state"]["matches"] is False
     assert any("another archive or another writer_id" in p for p in report["problems"])
@@ -580,9 +664,12 @@ def test_an_empty_restic_password_file_is_not_also_reported_unset(tmp_path):
 def test_a_default_timezone_that_is_not_a_string_is_a_problem_not_a_crash(tmp_path, value):
     environ = server(tmp_path)
     cfg = tmp_path / "config.toml"
-    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
-        'writer_id = "homelab"\n', f'writer_id = "homelab"\ndefault_timezone = {value}\n', 1),
-        encoding="utf-8")
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace(
+            'writer_id = "homelab"\n', f'writer_id = "homelab"\ndefault_timezone = {value}\n', 1
+        ),
+        encoding="utf-8",
+    )
     assert any("default_timezone" in p for p in doctor(web_only(environ), role="web")["problems"])
 
 
@@ -609,8 +696,11 @@ def test_the_mirror_and_a_reader_are_never_written(tmp_path, monkeypatch):
     # why: spec §3, the mirror's copy is never written, and a reader writes nothing; doctor's
     # hard-link probe wrote .tmp/ in both (Task 16's council).
     environ = server(tmp_path)
-    monkeypatch.setattr(doctor_module, "hard_links_work",
-                        lambda root: pytest.fail("probed an archive this machine never writes"))
+    monkeypatch.setattr(
+        doctor_module,
+        "hard_links_work",
+        lambda root: pytest.fail("probed an archive this machine never writes"),
+    )
     cfg = Path(environ["RECORDINGS_CONFIG"])
     writer = cfg.read_text(encoding="utf-8")
     cfg.write_text(writer.replace('writer_id = "homelab"\n', "", 1), encoding="utf-8")  # a reader
@@ -629,8 +719,10 @@ def test_a_crash_is_one_line_naming_the_check_never_a_traceback(tmp_path, monkey
     # nas_repo_path or extra_paths) ended doctor in a traceback, with no report (Task 16's council).
     environ = server(tmp_path)
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text('plaud = "rest:https://u:pw-do-not-print@nas:8000/"\n'
-                   + cfg.read_text(encoding="utf-8"), encoding="utf-8")
+    cfg.write_text(
+        'plaud = "rest:https://u:pw-do-not-print@nas:8000/"\n' + cfg.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     for key, value in environ.items():
         monkeypatch.setenv(key, value)
     for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE"):
@@ -647,12 +739,14 @@ def test_a_state_db_from_a_newer_release_is_a_problem_as_state_open_refuses_it(t
     environ = server(tmp_path)
     assert doctor(environ)["problems"] == []
     with sqlite3.connect(tmp_path / "state" / "state.db") as conn:
-        conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
-                     (str(SCHEMA_VERSION + 1),))
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION + 1),)
+        )
     for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
         problems = doctor(env, role=role)["problems"]
-        assert any(f"schema version {SCHEMA_VERSION + 1}" in p and "newer" in p
-                   for p in problems), role
+        assert any(
+            f"schema version {SCHEMA_VERSION + 1}" in p and "newer" in p for p in problems
+        ), role
     with sqlite3.connect(tmp_path / "state" / "state.db") as conn:
         conn.execute("DELETE FROM meta WHERE key = 'schema_version'")
     assert any("schema_version" in p for p in doctor(environ)["problems"])  # damaged, as open says
@@ -666,8 +760,9 @@ def test_an_archive_that_is_the_mirrors_copy_is_a_problem_for_a_writer(tmp_path)
     problems = doctor(environ)["problems"]
     assert any(MIRROR in p and "never written" in p for p in problems)
     reader = Path(environ["RECORDINGS_CONFIG"])  # a machine with no writer_id only reads it
-    reader.write_text(reader.read_text(encoding="utf-8").replace('writer_id = "homelab"\n', ""),
-                      encoding="utf-8")
+    reader.write_text(
+        reader.read_text(encoding="utf-8").replace('writer_id = "homelab"\n', ""), encoding="utf-8"
+    )
     assert not any(MIRROR in p for p in doctor(web_only(environ), role="web")["problems"])
 
 
@@ -698,13 +793,16 @@ def test_a_missing_or_unusable_index_is_a_warning(tmp_path):
     assert report["index"]["matches"] is False
     index_path.unlink()
     init_archive(tmp_path / "other", tmp_path / "other-state", writer_id="homelab")
-    Index(index_path).rebuild(Archive(tmp_path / "other"), archive_uuid="another-archive",
-                              allow_empty=True)  # foreign
+    Index(index_path).rebuild(
+        Archive(tmp_path / "other"), archive_uuid="another-archive", allow_empty=True
+    )  # foreign
     report = doctor(environ)
     assert any("index" in w and "reindex" in w for w in report["warnings"])
-    Index(index_path).rebuild(Archive(tmp_path / "archive"),
-                              archive_uuid=read_sentinel(tmp_path / "archive").uuid,
-                              allow_empty=True)  # this archive's own
+    Index(index_path).rebuild(
+        Archive(tmp_path / "archive"),
+        archive_uuid=read_sentinel(tmp_path / "archive").uuid,
+        allow_empty=True,
+    )  # this archive's own
     report = doctor(environ)
     assert report["warnings"] == [] and report["index"]["matches"] is True
     cfg.write_text(good.replace(f'[index]\npath = "{index_path}"\n', ""), encoding="utf-8")
@@ -724,8 +822,9 @@ def test_an_unset_consent_list_is_a_note_not_a_warning(tmp_path):
         assert any("consent_list is not set" in n and "import" in n for n in report["notes"]), role
         assert report["consent_list"] is None
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(cfg.read_text(encoding="utf-8") + '[plaud]\nconsent_list = "   "\n',
-                   encoding="utf-8")
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + '[plaud]\nconsent_list = "   "\n', encoding="utf-8"
+    )
     assert any("consent_list is not set" in n for n in doctor(environ)["notes"])  # blank is unset
 
 

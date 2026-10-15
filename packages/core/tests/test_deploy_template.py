@@ -35,7 +35,9 @@ def test_every_compose_variable_is_documented_in_the_template_or_set_by_make():
     used = set(re.findall(r"\$\{(\w+)", COMPOSE.read_text(encoding="utf-8")))
     documented = set(re.findall(r"^(\w+)=", TEMPLATE.read_text(encoding="utf-8"), re.M))
     assert used, "compose.yml uses no variables?"
-    assert used <= documented | SET_BY_MAKE, f"undocumented: {sorted(used - documented - SET_BY_MAKE)}"
+    assert used <= documented | SET_BY_MAKE, (
+        f"undocumented: {sorted(used - documented - SET_BY_MAKE)}"
+    )
 
 
 def test_the_web_service_takes_its_trusted_proxy_from_the_deploy_variable():
@@ -87,8 +89,10 @@ def test_web_reads_the_state_folder_the_backup_service_writes():
     # why: Status (web) reads the state.db and the ops lock that the loop (backup) writes. Two
     # folders would show, for ever, the last runs Status saw before they split.
     doc = compose()
-    mounts = {name: {v["target"]: v for v in service["volumes"]}
-              for name, service in doc["services"].items()}
+    mounts = {
+        name: {v["target"]: v for v in service["volumes"]}
+        for name, service in doc["services"].items()
+    }
     assert mounts["web"]["/state"]["source"] == mounts["backup"]["/state"]["source"]
     for name in ("web", "backup"):
         assert doc["services"][name]["environment"]["RECORDINGS_STATE"] == "/state", name
@@ -113,7 +117,9 @@ def test_the_image_has_a_passwd_entry_for_the_deploy_uid():
     assert 'useradd --uid "$APP_UID" --gid "$APP_GID"' in dockerfile
     assert "USER ${APP_UID}:${APP_GID}\n" in dockerfile
     assert compose()["services"]["web"]["build"]["args"] == {
-        "APP_UID": "${RECORDINGS_UID:?}", "APP_GID": "${RECORDINGS_GID:?}"}
+        "APP_UID": "${RECORDINGS_UID:?}",
+        "APP_GID": "${RECORDINGS_GID:?}",
+    }
 
 
 def test_each_service_names_its_role_and_backup_has_time_to_stop():
@@ -180,13 +186,19 @@ def test_the_smoke_script_parses_and_creates_every_compose_secret():
 
 def test_the_boot_unit_waits_for_docker_the_disk_and_tailscale():
     unit = UNIT.read_text(encoding="utf-8")
-    for line in ("Requires=docker.service", "After=docker.service tailscaled.service",
-                 "RequiresMountsFor=/srv/recordings", "Type=oneshot", "RemainAfterExit=yes",
-                 "WorkingDirectory=/srv/recordings/repo", "WantedBy=multi-user.target",
-                 "ExecStart=/bin/sh docker/up-deployed.sh up -d --no-build"):
+    for line in (
+        "Requires=docker.service",
+        "After=docker.service tailscaled.service",
+        "RequiresMountsFor=/srv/recordings",
+        "Type=oneshot",
+        "RemainAfterExit=yes",
+        "WorkingDirectory=/srv/recordings/repo",
+        "WantedBy=multi-user.target",
+        "ExecStart=/bin/sh docker/up-deployed.sh up -d --no-build",
+    ):
         assert f"\n{line}\n" in unit, line
     (pre,) = [line for line in unit.splitlines() if line.startswith("ExecStartPre=")]
-    assert "tailscale0" in pre and '-ge 120 ]' in pre
+    assert "tailscale0" in pre and "-ge 120 ]" in pre
 
 
 def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
@@ -194,23 +206,37 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
     # tag the web container runs is the deployed one, however it was started.
     fake = tmp_path / "docker"
     # `ps -q` lists container IDs; `inspect` prints the image reference the container was created from
-    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
-                    'if [ "$1" = ps ]; then [ "$FAKE_IMAGE" ] && echo abc123; exit 0; fi\n'
-                    'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
-                    'echo "RECORDINGS_IMAGE_TAG=$RECORDINGS_IMAGE_TAG $*"\n', encoding="utf-8")
+    fake.write_text(
+        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+        'if [ "$1" = ps ]; then [ "$FAKE_IMAGE" ] && echo abc123; exit 0; fi\n'
+        'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
+        'echo "RECORDINGS_IMAGE_TAG=$RECORDINGS_IMAGE_TAG $*"\n',
+        encoding="utf-8",
+    )
     fake.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_IMAGE": "recordings:0123456789ab"}
     script = str(REPO / "docker" / "up-deployed.sh")
-    up = subprocess.run(["sh", script, "up", "-d", "--no-build"], env=env, capture_output=True,
-                        text=True)
+    up = subprocess.run(
+        ["sh", script, "up", "-d", "--no-build"], env=env, capture_output=True, text=True
+    )
     assert up.returncode == 0, up.stderr
-    assert up.stdout == ("RECORDINGS_IMAGE_TAG=0123456789ab compose --env-file docker/deploy.env "
-                         "-f docker/compose.yml up -d --no-build\n")
-    none = subprocess.run(["sh", script, "up", "-d", "--no-build"], env={**env, "FAKE_IMAGE": ""},
-                          capture_output=True, text=True)
+    assert up.stdout == (
+        "RECORDINGS_IMAGE_TAG=0123456789ab compose --env-file docker/deploy.env "
+        "-f docker/compose.yml up -d --no-build\n"
+    )
+    none = subprocess.run(
+        ["sh", script, "up", "-d", "--no-build"],
+        env={**env, "FAKE_IMAGE": ""},
+        capture_output=True,
+        text=True,
+    )
     assert none.returncode != 0 and "make deploy" in none.stderr and none.stdout == ""
-    down = subprocess.run(["sh", script, "up", "-d", "--no-build"], env={**env, "FAKE_DOWN": "1"},
-                          capture_output=True, text=True)
+    down = subprocess.run(
+        ["sh", script, "up", "-d", "--no-build"],
+        env={**env, "FAKE_DOWN": "1"},
+        capture_output=True,
+        text=True,
+    )
     assert down.returncode != 0 and "make deploy" not in down.stderr and down.stdout == ""
     assert "docker" in down.stderr and "daemon" in down.stderr
 
@@ -219,15 +245,26 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
 def ops_lock_held(folder: Path, announced: str):
     """Another process holds the ops lock, as the loop's run_job does, with `announced` in the lock
     file, as Task 15's announce writes it."""
-    holder = subprocess.Popen([sys.executable, "-c", (
-        "import pathlib, sys\n"
-        "from recordings.locks import OPS_LOCK, Locks\n"
-        "folder = pathlib.Path(sys.argv[1])\n"
-        "with Locks(folder, timeout=0).hold(OPS_LOCK):\n"
-        "    (folder / f'{OPS_LOCK}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
-        "    print('held', flush=True)\n"
-        "    sys.stdin.read()\n"), str(folder), announced],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib, sys\n"
+                "from recordings.locks import OPS_LOCK, Locks\n"
+                "folder = pathlib.Path(sys.argv[1])\n"
+                "with Locks(folder, timeout=0).hold(OPS_LOCK):\n"
+                "    (folder / f'{OPS_LOCK}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
+                "    print('held', flush=True)\n"
+                "    sys.stdin.read()\n"
+            ),
+            str(folder),
+            announced,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
     try:
         assert holder.stdout.readline() == "held\n"
         yield
@@ -252,17 +289,28 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
     fake = tmp_path / "docker"
     # `ps -q` lists the running backup container. The guard pipes docker/ops-busy.py into that
     # container's python; the fake runs it here instead, on the test's own lock folder.
-    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
-                    'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
-                    'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
-                    '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n', encoding="utf-8")
+    fake.write_text(
+        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+        'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
+        'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
+        '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
+        encoding="utf-8",
+    )
     fake.chmod(0o755)
-    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_ID": "abc123", "FAKE_PYTHON": sys.executable,
-           "FAKE_LOCKS": str(tmp_path / "locks")}
+    env = {
+        "PATH": f"{tmp_path}:/usr/bin:/bin",
+        "FAKE_ID": "abc123",
+        "FAKE_PYTHON": sys.executable,
+        "FAKE_LOCKS": str(tmp_path / "locks"),
+    }
 
     def guard(**extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["sh", str(REPO / "docker" / "deploy-guard.sh")],
-                              env={**env, **extra}, capture_output=True, text=True)
+        return subprocess.run(
+            ["sh", str(REPO / "docker" / "deploy-guard.sh")],
+            env={**env, **extra},
+            capture_output=True,
+            text=True,
+        )
 
     assert guard().returncode == 0  # idle
     assert guard(FAKE_ID="").returncode == 0  # no backup container: no job to stop
@@ -295,21 +343,32 @@ def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(t
     # `ps -q` lists running containers (none), `ps -a -q` stopped ones too, and `inspect` the image
     # one was made from. The one-off `compose run` gets docker/ops-busy.py on stdin; the fake runs
     # it here instead, on the test's own lock folder.
-    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
-                    'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
-                    'if [ "$1" = ps ]; then exit 0; fi\n'
-                    'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
-                    'if [ "$RECORDINGS_IMAGE_TAG $*" = "0123456789ab compose --env-file docker/deploy.env '
-                    '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks" ]; then\n'
-                    '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n', encoding="utf-8")
+    fake.write_text(
+        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+        'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
+        'if [ "$1" = ps ]; then exit 0; fi\n'
+        'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
+        'if [ "$RECORDINGS_IMAGE_TAG $*" = "0123456789ab compose --env-file docker/deploy.env '
+        '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks" ]; then\n'
+        '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
+        encoding="utf-8",
+    )
     fake.chmod(0o755)
-    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_STOPPED": "def456",
-           "FAKE_IMAGE": "recordings:0123456789ab", "FAKE_PYTHON": sys.executable,
-           "FAKE_LOCKS": str(tmp_path / "locks")}
+    env = {
+        "PATH": f"{tmp_path}:/usr/bin:/bin",
+        "FAKE_STOPPED": "def456",
+        "FAKE_IMAGE": "recordings:0123456789ab",
+        "FAKE_PYTHON": sys.executable,
+        "FAKE_LOCKS": str(tmp_path / "locks"),
+    }
 
     def guard(**extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["sh", str(REPO / "docker" / "deploy-guard.sh")],
-                              env={**env, **extra}, capture_output=True, text=True)
+        return subprocess.run(
+            ["sh", str(REPO / "docker" / "deploy-guard.sh")],
+            env={**env, **extra},
+            capture_output=True,
+            text=True,
+        )
 
     assert guard().returncode == 0  # stopped, and nothing holds the lock
     with ops_lock_held(tmp_path / "locks", '{"job": "import"}'):
@@ -327,16 +386,24 @@ def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(t
 def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path):
     # why: each make deploy leaves an image, with its own venv, on the system disk, and
     # `docker image prune -a` would take every rollback target with it (ops council, Task 14).
-    listed = ("2026-10-01 09:00:00 +0000 UTC|00000000000a", "2026-10-12 09:00:00 +0000 UTC|00000000000d",
-              "2026-10-05 09:00:00 +0000 UTC|00000000000b", "2026-10-09 09:00:00 +0000 UTC|00000000000c",
-              "2026-10-13 09:00:00 +0000 UTC|smoke", "2026-10-02 09:00:00 +0000 UTC|0123456789ab-dirty")
+    listed = (
+        "2026-10-01 09:00:00 +0000 UTC|00000000000a",
+        "2026-10-12 09:00:00 +0000 UTC|00000000000d",
+        "2026-10-05 09:00:00 +0000 UTC|00000000000b",
+        "2026-10-09 09:00:00 +0000 UTC|00000000000c",
+        "2026-10-13 09:00:00 +0000 UTC|smoke",
+        "2026-10-02 09:00:00 +0000 UTC|0123456789ab-dirty",
+    )
     fake = tmp_path / "docker"
-    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
-                    'if [ "$1 $2" = "image ls" ]; then printf "%s\\n" '
-                    + " ".join(f"'{line}'" for line in listed) + "; exit 0; fi\n"
-                    'if [ "$1" = ps ]; then echo recordings:00000000000a; exit 0; fi\n'
-                    'if [ "$1 $2" = "image rm" ]; then echo "removed $3"; exit 0; fi\nexit 99\n',
-                    encoding="utf-8")
+    fake.write_text(
+        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+        'if [ "$1 $2" = "image ls" ]; then printf "%s\\n" '
+        + " ".join(f"'{line}'" for line in listed)
+        + "; exit 0; fi\n"
+        'if [ "$1" = ps ]; then echo recordings:00000000000a; exit 0; fi\n'
+        'if [ "$1 $2" = "image rm" ]; then echo "removed $3"; exit 0; fi\nexit 99\n',
+        encoding="utf-8",
+    )
     fake.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
     script = str(REPO / "docker" / "prune-images.sh")
@@ -345,10 +412,12 @@ def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path)
     # d and c are the newest two; a is older, but a container was made from it; smoke and the
     # -dirty tag aren't commit tags
     assert [line for line in run.stdout.splitlines() if line.startswith("removed")] == [
-        "removed recordings:00000000000b"]
+        "removed recordings:00000000000b"
+    ]
     assert subprocess.run(["sh", script, "five"], env=env, capture_output=True).returncode == 2
-    down = subprocess.run(["sh", script], env={**env, "FAKE_DOWN": "1"}, capture_output=True,
-                          text=True)
+    down = subprocess.run(
+        ["sh", script], env={**env, "FAKE_DOWN": "1"}, capture_output=True, text=True
+    )
     assert down.returncode != 0 and "daemon" in down.stderr
     assert "sh docker/prune-images.sh 5" in make_dry_run("prune-images").stdout
     assert "sh docker/prune-images.sh 1" in make_dry_run("prune-images", "KEEP=1").stdout
@@ -374,18 +443,29 @@ def test_every_base_image_is_pinned_by_digest():
 def test_the_images_restic_is_the_one_fetch_restic_pins():
     # why: one restic, checked against one release's SHA256SUMS, in CI, on the Mac, in the image
     # and in the runbook's spike (security review).
-    spec = importlib.util.spec_from_file_location("fetch_restic", REPO / "scripts" / "fetch_restic.py")
+    spec = importlib.util.spec_from_file_location(
+        "fetch_restic", REPO / "scripts" / "fetch_restic.py"
+    )
     fetch_restic = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fetch_restic)
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     assert f"ARG RESTIC_VERSION={fetch_restic.VERSION}\n" in dockerfile
-    found = {arch: (sum_, bin_) for arch, sum_, bin_ in re.findall(
-        r"^\s+(amd64|arm64)\) sum=([0-9a-f]{64}); bin=([0-9a-f]{64}) ;;", dockerfile, re.M)}
+    found = {
+        arch: (sum_, bin_)
+        for arch, sum_, bin_ in re.findall(
+            r"^\s+(amd64|arm64)\) sum=([0-9a-f]{64}); bin=([0-9a-f]{64}) ;;", dockerfile, re.M
+        )
+    }
     assert found == {
-        "amd64": (fetch_restic.PINNED[("linux", "x86_64")][1],
-                  fetch_restic.BINARY_SHA256["linux_amd64"]),
-        "arm64": (fetch_restic.PINNED[("linux", "aarch64")][1],
-                  fetch_restic.BINARY_SHA256["linux_arm64"])}
+        "amd64": (
+            fetch_restic.PINNED[("linux", "x86_64")][1],
+            fetch_restic.BINARY_SHA256["linux_amd64"],
+        ),
+        "arm64": (
+            fetch_restic.PINNED[("linux", "aarch64")][1],
+            fetch_restic.BINARY_SHA256["linux_arm64"],
+        ),
+    }
     runbook = (REPO / "docs" / "runbooks" / "first-run.md").read_text(encoding="utf-8")
     for arch, (sum_, _) in found.items():
         # each sum sits on the case arm of its own architecture: x86_64 is amd64, aarch64 arm64
@@ -398,7 +478,7 @@ def test_the_runtime_image_has_the_time_zone_database():
     # why: zoneinfo reads the system's database and uv.lock has no tzdata wheel. Without it every
     # ZoneInfo(...) fails: the import places no row, and Status shows no local time.
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    runtime = dockerfile[dockerfile.index("AS runtime"):]
+    runtime = dockerfile[dockerfile.index("AS runtime") :]
     install = re.search(r"apt-get install[^;]*;", runtime)
     assert install and "tzdata" in install.group(0).split()
 
@@ -411,9 +491,15 @@ def test_the_backup_service_reads_the_archive_and_takes_secrets_only_from_files(
     for key, value in env.items():
         if key.endswith("_FILE"):
             # the optional ntfy token's path appears only when deploy.env sets its host file
-            assert value.removeprefix("${RECORDINGS_NTFY_AUTH_HOST:+").startswith("/run/secrets/"), key
-    for leaked in ("RESTIC_PASSWORD", "RECORDINGS_NTFY_TOPIC", "RECORDINGS_DEADMAN_URL",
-                   "RECORDINGS_NTFY_TOKEN"):
+            assert value.removeprefix("${RECORDINGS_NTFY_AUTH_HOST:+").startswith(
+                "/run/secrets/"
+            ), key
+    for leaked in (
+        "RESTIC_PASSWORD",
+        "RECORDINGS_NTFY_TOPIC",
+        "RECORDINGS_DEADMAN_URL",
+        "RECORDINGS_NTFY_TOKEN",
+    ):
         assert leaked not in env
     assert "secrets" not in compose()["services"]["web"], "a secret mounted in web"
     assert service["command"] == ["recordings", "ops", "--loop"]
@@ -432,8 +518,12 @@ def test_the_writer_identity_comes_from_config_never_the_host_name():
 def test_no_test_sees_this_machines_settings():
     # why: the server's checkout holds a real config.toml, and a shell can export RECORDINGS_* or
     # RESTIC_* variables; the root conftest.py hides both from every test (security review).
-    leaked = [name for name in os.environ if name.startswith(("RECORDINGS_", "RESTIC_"))
-              and name not in ("RECORDINGS_REQUIRE_RESTIC", "RECORDINGS_TEST_RESTIC")]
+    leaked = [
+        name
+        for name in os.environ
+        if name.startswith(("RECORDINGS_", "RESTIC_"))
+        and name not in ("RECORDINGS_REQUIRE_RESTIC", "RECORDINGS_TEST_RESTIC")
+    ]
     assert leaked == []
     assert config.DEFAULT_PATH.is_absolute() and not config.DEFAULT_PATH.exists()
 
@@ -442,9 +532,13 @@ def test_the_ci_switches_survive_the_fixture(no_settings_from_this_machine):
     # why: CI sets RECORDINGS_REQUIRE_RESTIC=1 (Task 11), so a missing restic fails the
     # real-restic tests instead of skipping them. The fixture must never hide it.
     hide = no_settings_from_this_machine
-    environ = {"RECORDINGS_REQUIRE_RESTIC": "1", "RECORDINGS_TEST_RESTIC": "/opt/restic",
-               "RECORDINGS_ARCHIVE": "/srv/archive", "RESTIC_PASSWORD_FILE": "/run/pw",
-               "PATH": "/usr/bin"}
+    environ = {
+        "RECORDINGS_REQUIRE_RESTIC": "1",
+        "RECORDINGS_TEST_RESTIC": "/opt/restic",
+        "RECORDINGS_ARCHIVE": "/srv/archive",
+        "RESTIC_PASSWORD_FILE": "/run/pw",
+        "PATH": "/usr/bin",
+    }
     assert hide(environ) == ["RECORDINGS_ARCHIVE", "RESTIC_PASSWORD_FILE"]
 
 
@@ -452,7 +546,7 @@ def test_the_readme_names_every_secret_and_environment_setting():
     # why: a setting only the code knows about is one nobody sets. Every secret's variable, later
     # stages' included, and RECORDINGS_ALLOWED_HOSTS have a row in the README's settings table.
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    table = readme[readme.index("## Configuration and secrets"):]
+    table = readme[readme.index("## Configuration and secrets") :]
     for spec in config.SECRETS.values():
         assert f"`{spec.env}`" in table, spec.env
     assert "`RECORDINGS_ALLOWED_HOSTS`" in table
@@ -464,7 +558,9 @@ def test_the_ntfy_token_is_an_optional_secret_in_backup_only():
     # secret is mounted and named only when deploy.env sets RECORDINGS_NTFY_AUTH_HOST.
     doc = compose()
     env = doc["services"]["backup"]["environment"]
-    assert env["RECORDINGS_NTFY_TOKEN_FILE"] == "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
+    assert (
+        env["RECORDINGS_NTFY_TOKEN_FILE"] == "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
+    )
     assert "ntfy_token" in doc["services"]["backup"]["secrets"]
     assert doc["secrets"]["ntfy_token"]["file"] == "${RECORDINGS_NTFY_AUTH_HOST:-/dev/null}"
     template = TEMPLATE.read_text(encoding="utf-8")
@@ -475,7 +571,10 @@ def test_the_example_config_backs_up_the_deploy_file_where_compose_mounts_it():
     # why: [backup] extra_paths defaults to [], so a config.toml written without this line would
     # silently leave deploy.env (the UID, the paths: what a restore needs) out of every backup.
     import tomllib
+
     example = tomllib.loads((REPO / "config.example.toml").read_text(encoding="utf-8"))
     mounts = {v["source"]: v["target"] for v in compose()["services"]["backup"]["volumes"]}
-    target = mounts["${RECORDINGS_DEPLOY_ENV_HOST:?set RECORDINGS_DEPLOY_ENV_HOST in docker/deploy.env}"]
+    target = mounts[
+        "${RECORDINGS_DEPLOY_ENV_HOST:?set RECORDINGS_DEPLOY_ENV_HOST in docker/deploy.env}"
+    ]
     assert target in example["backup"]["extra_paths"]

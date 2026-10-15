@@ -17,32 +17,52 @@ def build_one(tmp_path):
     root, state = tmp_path / "archive", tmp_path / "state"
     init_archive(root, state, writer_id="test")
     writer = Writer(root, State.open(state), Index(tmp_path / "index.db"), writer_id="test")
-    rec = writer.add(Incoming(
-        media=media,
-        recorded_at=datetime.fromisoformat("2026-10-06T14:00:03-07:00"),
-        timezone_name="America/Vancouver",
-        time_source="plaud",
-        title="Week 4",
-        kind="audio",
-        sources=(RawSource(kind="plaud", ref="of_x", added_at=T0, payload=b"{}"),),
-        my_notes="mine\n",
-        renditions=(
-            Rendition(kind="transcript", engine="canned", model="whisper-large-v3-turbo",
-                      version="large-v3-turbo@a4aaeec", created_at=T0,
-                      payload={"segments": [{"start": 0, "end": 1, "text": "hi"}]}),
-            Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
-                      version="m@demo", created_at=T0, payload={"markdown": "x"}),
-        ),
-    )).recording
+    rec = writer.add(
+        Incoming(
+            media=media,
+            recorded_at=datetime.fromisoformat("2026-10-06T14:00:03-07:00"),
+            timezone_name="America/Vancouver",
+            time_source="plaud",
+            title="Week 4",
+            kind="audio",
+            sources=(RawSource(kind="plaud", ref="of_x", added_at=T0, payload=b"{}"),),
+            my_notes="mine\n",
+            renditions=(
+                Rendition(
+                    kind="transcript",
+                    engine="canned",
+                    model="whisper-large-v3-turbo",
+                    version="large-v3-turbo@a4aaeec",
+                    created_at=T0,
+                    payload={"segments": [{"start": 0, "end": 1, "text": "hi"}]},
+                ),
+                Rendition(
+                    kind="notes",
+                    note_type="lecture",
+                    engine="canned",
+                    model="m",
+                    version="m@demo",
+                    created_at=T0,
+                    payload={"markdown": "x"},
+                ),
+            ),
+        )
+    ).recording
     write_docs(writer.root)
     return writer.archive, rec
 
 
 def test_write_docs_installs_every_doc_and_schema(tmp_path):
     archive, _ = build_one(tmp_path)
-    for rel in ["README.md", "AGENTS.md", "FORMAT.md", "recordings/README.md",
-                "catalog/README.md", "schemas/recording.schema.json",
-                "schemas/rendition.schema.json"]:
+    for rel in [
+        "README.md",
+        "AGENTS.md",
+        "FORMAT.md",
+        "recordings/README.md",
+        "catalog/README.md",
+        "schemas/recording.schema.json",
+        "schemas/rendition.schema.json",
+    ]:
         assert (archive.root / rel).is_file(), rel
 
 
@@ -53,6 +73,7 @@ def test_write_docs_is_idempotent(tmp_path):
 
 def test_agents_md_states_the_privacy_rule():
     from importlib import resources
+
     text = (resources.files("recordings") / "format" / "AGENTS.md").read_text(encoding="utf-8")
     assert "`private` or `private/…` tag" in text
 
@@ -61,8 +82,12 @@ def test_the_docs_say_privacy_ignores_capitalisation_and_means_local_models_only
     # why: privacy is an allow-list. Only models on the owner's own hardware may read a
     # private recording; every other agent or model, Claude included, is blocked.
     from importlib import resources
+
     def read(doc):  # whitespace-insensitive: the docs are wrapped at 92 columns
-        return " ".join((resources.files("recordings") / "format" / doc).read_text(encoding="utf-8").split())
+        return " ".join(
+            (resources.files("recordings") / "format" / doc).read_text(encoding="utf-8").split()
+        )
+
     for doc in ("AGENTS.md", "FORMAT.md"):
         text = read(doc)
         assert "in any capitalisation" in text, doc
@@ -196,8 +221,10 @@ def test_validate_reports_a_missing_media_file_and_a_missing_source_file(tmp_pat
     (folder / rec.media.file).unlink()
     (folder / rec.sources[0].raw).unlink()
     messages = sorted(p["message"] for p in validate(archive.root))
-    assert messages == [f"media.file {rec.media.file!r} is missing",
-                        f"source file {rec.sources[0].raw} is missing"]
+    assert messages == [
+        f"media.file {rec.media.file!r} is missing",
+        f"source file {rec.sources[0].raw} is missing",
+    ]
 
 
 def test_validate_reports_a_span_past_the_end_of_the_media(tmp_path):
@@ -220,18 +247,32 @@ def test_validate_checks_renditions_even_when_recording_json_is_broken(tmp_path)
     (folder / "recording.json").write_text("{", encoding="utf-8")
     (folder / "renditions" / "broken.json").write_text("{", encoding="utf-8")
     paths = sorted(p["path"] for p in validate(archive.root))
-    assert paths == sorted([str(folder / "recording.json"), str(folder / "renditions" / "broken.json")])
+    assert paths == sorted(
+        [str(folder / "recording.json"), str(folder / "renditions" / "broken.json")]
+    )
 
 
 def test_the_docs_describe_rev_speakers_and_the_plaud_fields():
     from importlib import resources
 
     def read(doc):
-        return " ".join((resources.files("recordings") / "format" / doc)
-                        .read_text(encoding="utf-8").split())
+        return " ".join(
+            (resources.files("recordings") / "format" / doc).read_text(encoding="utf-8").split()
+        )
+
     fmt = read("FORMAT.md")
-    for needle in ("`rev`", "only `mutate`", "`unknown`", "`speaker_name`", "`embedding_key`",
-                   "`fetched_at`", "`title_by`", "`recorder`", "acknowledged_up_to", "stage 3a",
-                   "only appends to `my-notes.md`"):
+    for needle in (
+        "`rev`",
+        "only `mutate`",
+        "`unknown`",
+        "`speaker_name`",
+        "`embedding_key`",
+        "`fetched_at`",
+        "`title_by`",
+        "`recorder`",
+        "acknowledged_up_to",
+        "stage 3a",
+        "only appends to `my-notes.md`",
+    ):
         assert needle in fmt, needle
     assert "Never change `rev`" in read("AGENTS.md")

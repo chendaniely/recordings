@@ -87,7 +87,8 @@ class HostGuard:
         if scope["type"] == "http":
             if not host_ok:
                 await PlainTextResponse("unknown host", status_code=400)(
-                    scope, receive, _keep_to_this_origin(scope, send))
+                    scope, receive, _keep_to_this_origin(scope, send)
+                )
                 return
         else:
             # A browser always sends Origin on a websocket. It must be the app's own, exactly,
@@ -108,12 +109,16 @@ CORP = (b"cross-origin-resource-policy", b"same-origin")
 # A framed app is this origin, so its websocket passes every check above: a page that framed it
 # under a decoy could steer Dan's clicks (clickjacking). CSP for current browsers, X-Frame-Options
 # for older ones.
-NO_FRAMING = ((b"content-security-policy", b"frame-ancestors 'none'"),
-              (b"x-frame-options", b"DENY"))
+NO_FRAMING = (
+    (b"content-security-policy", b"frame-ancestors 'none'"),
+    (b"x-frame-options", b"DENY"),
+)
 # A page that opens the app in a window doesn't share its browsing context group (and so its
 # process); a link in a note doesn't send the app's address to the site it opens.
-NO_OPENER_OR_REFERRER = ((b"cross-origin-opener-policy", b"same-origin"),
-                         (b"referrer-policy", b"same-origin"))
+NO_OPENER_OR_REFERRER = (
+    (b"cross-origin-opener-policy", b"same-origin"),
+    (b"referrer-policy", b"same-origin"),
+)
 # /media only: a private recording's audio would otherwise sit in the disk cache of every device
 # that played it. Range requests still seek.
 NO_STORE = (b"cache-control", b"no-store")
@@ -132,6 +137,7 @@ def _keep_to_this_origin(scope: Scope, send: Send) -> Send:
         if message["type"] == "http.response.start":
             message = {**message, "headers": [*message.get("headers", []), *extra]}
         await send(message)
+
     return wrapped
 
 
@@ -164,13 +170,17 @@ class WriteGuard:
             await self.app(scope, receive, send)
             return
         origin = _header(scope, b"origin")
-        own = origin is None or (same_origin(scope, origin)
-                                 and host_name(_header(scope, b"host") or "") in self.allowed)
+        own = origin is None or (
+            same_origin(scope, origin) and host_name(_header(scope, b"host") or "") in self.allowed
+        )
         if not (own and sent_by_this_site(scope)):
-            await PlainTextResponse("cross-site request refused", status_code=403)(scope, receive, send)
+            await PlainTextResponse("cross-site request refused", status_code=403)(
+                scope, receive, send
+            )
             return
         if (_header(scope, b"content-type") or "").strip().lower() != "application/json":
-            await PlainTextResponse("send Content-Type exactly application/json",
-                                    status_code=415)(scope, receive, send)
+            await PlainTextResponse("send Content-Type exactly application/json", status_code=415)(
+                scope, receive, send
+            )
             return
         await self.app(scope, receive, send)

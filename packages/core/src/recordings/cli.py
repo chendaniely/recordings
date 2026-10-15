@@ -33,8 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     p = sub.add_parser("init", help="set up a new, empty archive, once: its sentinel and state.db")
-    p.add_argument("--adopt", action="store_true",
-                   help="recreate a lost state.db for the existing archive, from its archive.json")
+    p.add_argument(
+        "--adopt",
+        action="store_true",
+        help="recreate a lost state.db for the existing archive, from its archive.json",
+    )
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("schemas", help="regenerate or check the committed JSON Schemas")
@@ -43,8 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("docs", help="write README/AGENTS/FORMAT and schemas into the archive")
-    p.add_argument("archive", type=Path, nargs="?",
-                   help="optional: it must be this machine's archive, [archive] path")
+    p.add_argument(
+        "archive",
+        type=Path,
+        nargs="?",
+        help="optional: it must be this machine's archive, [archive] path",
+    )
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("validate", help="check every recording.json and rendition")
@@ -52,45 +59,76 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--deep", action="store_true", help="also check every file's SHA-256")
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("reindex", help="accept outside edits, rebuild the derived index.db and build any "
-                        "missing Plaud outputs")
-    p.add_argument("--allow-empty", action="store_true",
-                   help="let the index become empty (refused by default: is the archive mounted?)")
-    p.add_argument("--allow-missing", action="store_true",
-                   help="rebuild even though recordings state.db knows are gone from the archive "
-                        "(needed after a deliberate deletion, until stage 3 adds forget)")
+    p = sub.add_parser(
+        "reindex",
+        help="accept outside edits, rebuild the derived index.db and build any "
+        "missing Plaud outputs",
+    )
+    p.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="let the index become empty (refused by default: is the archive mounted?)",
+    )
+    p.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="rebuild even though recordings state.db knows are gone from the archive "
+        "(needed after a deliberate deletion, until stage 3 adds forget)",
+    )
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("doctor", help="check config.toml, the archive, state and secrets "
-                       "(presence only)")
-    p.add_argument("--role", choices=ROLES,
-                   help="the service it checks: web, backup or all (default: $RECORDINGS_ROLE, "
-                   "else all)")
+    p = sub.add_parser(
+        "doctor", help="check config.toml, the archive, state and secrets (presence only)"
+    )
+    p.add_argument(
+        "--role",
+        choices=ROLES,
+        help="the service it checks: web, backup or all (default: $RECORDINGS_ROLE, else all)",
+    )
     p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("import-audio-router",
-                       help="import a read-only copy of audio-router's archive (dry run first)")
+    p = sub.add_parser(
+        "import-audio-router",
+        help="import a read-only copy of audio-router's archive (dry run first)",
+    )
     p.add_argument("path", type=Path, help="the copy of audio-router's media root")
     p.add_argument("--dry-run", action="store_true", help="report what would happen; write nothing")
-    p.add_argument("--allow-unplaced", action="store_true",
-                   help="import what can be placed even when some rows can't")
+    p.add_argument(
+        "--allow-unplaced",
+        action="store_true",
+        help="import what can be placed even when some rows can't",
+    )
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("backup", help="restic backups to the NAS (spec §15.1)")
     p.add_argument("action", choices=["init", "run", "check", "prune", "restore-test"])
-    p.add_argument("--tag", action="append", default=[],
-                   help="an extra snapshot tag, such as pre-import (with run)")
+    p.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="an extra snapshot tag, such as pre-import (with run)",
+    )
     p.add_argument("--json", action="store_true")
-    p.add_argument("--debug", action="store_true",
-                   help="print a failed job's full error (Status and alerts carry its type only)")
+    p.add_argument(
+        "--debug",
+        action="store_true",
+        help="print a failed job's full error (Status and alerts carry its type only)",
+    )
 
     p = sub.add_parser("mirror", help="rsync the archive to the NAS's read-only mirror, now")
     p.add_argument("--json", action="store_true")
-    p.add_argument("--debug", action="store_true",
-                   help="print a failed run's full error, and for a refused run the recordings it "
-                        "would delete from (Status and alerts carry the error's type only)")
-    p.add_argument("--max-delete", type=int, metavar="N",
-                   help="allow up to N deletions in this run only ([mirror] max_delete stays)")
+    p.add_argument(
+        "--debug",
+        action="store_true",
+        help="print a failed run's full error, and for a refused run the recordings it "
+        "would delete from (Status and alerts carry the error's type only)",
+    )
+    p.add_argument(
+        "--max-delete",
+        type=int,
+        metavar="N",
+        help="allow up to N deletions in this run only ([mirror] max_delete stays)",
+    )
 
     p = sub.add_parser("ops", help="run the scheduled jobs that are due (--loop: forever)")
     p.add_argument("--loop", action="store_true", help="the backup service's main loop")
@@ -133,9 +171,15 @@ def cmd_init(args: argparse.Namespace) -> int:
     cfg = _config(args.json)
     if isinstance(cfg, int):
         return cfg
-    missing = [name for name, value in (("[archive] path", cfg.archive_path),
-                                        ("[state] path", cfg.state_path),
-                                        ("[archive] writer_id", cfg.writer_id)) if value is None]
+    missing = [
+        name
+        for name, value in (
+            ("[archive] path", cfg.archive_path),
+            ("[state] path", cfg.state_path),
+            ("[archive] writer_id", cfg.writer_id),
+        )
+        if value is None
+    ]
     if missing:
         return _fail("set " + ", ".join(missing) + " in config.toml first", args.json, 78)
     setup = adopt_archive if args.adopt else init_archive
@@ -143,8 +187,15 @@ def cmd_init(args: argparse.Namespace) -> int:
         identity = setup(cfg.archive_path, cfg.state_path, writer_id=cfg.writer_id)
     except (InitError, StateError) as exc:
         return _fail(str(exc), args.json, 1)
-    _emit({"archive": str(cfg.archive_path), "uuid": identity.uuid,
-           "writer_id": cfg.writer_id, "adopted": args.adopt}, args.json)
+    _emit(
+        {
+            "archive": str(cfg.archive_path),
+            "uuid": identity.uuid,
+            "writer_id": cfg.writer_id,
+            "adopted": args.adopt,
+        },
+        args.json,
+    )
     return 0
 
 
@@ -156,7 +207,11 @@ def _writer(as_json: bool, *, docs: bool = True, rebuild: bool = True) -> Writer
         return Writer.open(cfg, docs=docs, rebuild=rebuild)
     except LockTimeout as exc:  # busy, not misconfigured: 75 (EX_TEMPFAIL), as the import uses
         return _fail(str(exc), as_json, 75)
-    except (WriterError, OSError, sqlite3.Error) as exc:  # docs write: a read-only mount, a full disk
+    except (
+        WriterError,
+        OSError,
+        sqlite3.Error,
+    ) as exc:  # docs write: a read-only mount, a full disk
         return _fail(str(exc), as_json, 78)
 
 
@@ -175,8 +230,9 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     # A recording the rebuild left out (not valid, or its id doesn't match its folder) is
     # dropped from the index: exit 1 so a script notices (§11).
     # A Plaud recording that could not be reconciled is a failure too: its outputs are missing.
-    return 1 if report.invalid or report.problems or any(
-        r.problem for r in report.reconciled) else 0
+    return (
+        1 if report.invalid or report.problems or any(r.problem for r in report.reconciled) else 0
+    )
 
 
 def cmd_schemas(args: argparse.Namespace) -> int:
@@ -197,9 +253,14 @@ def cmd_docs(args: argparse.Namespace) -> int:
     if isinstance(cfg, int):
         return cfg
     if args.archive is not None and (
-            cfg.archive_path is None or args.archive.resolve() != cfg.archive_path.resolve()):
-        return _fail(f"{args.archive} is not this machine's archive ([archive] path in "
-                     "config.toml): only the archive's writer writes its docs", args.json, 78)
+        cfg.archive_path is None or args.archive.resolve() != cfg.archive_path.resolve()
+    ):
+        return _fail(
+            f"{args.archive} is not this machine's archive ([archive] path in "
+            "config.toml): only the archive's writer writes its docs",
+            args.json,
+            78,
+        )
     writer = _writer(args.json, docs=False)
     if isinstance(writer, int):
         return writer
@@ -225,11 +286,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     except Exception as exc:  # a config shape no check expects: one line, never a traceback
         # Its output is pasted into issues and chats, so the error's type and the check it
         # stopped in, never its text (as ops.failure_detail does).
-        where = next((frame.name for frame in reversed(traceback.extract_tb(exc.__traceback__))
-                      if frame.filename.endswith("doctor.py")), "doctor")
-        return _fail(f"doctor stopped in {where} on {type(exc).__name__}: a setting in "
-                     "config.toml may have the wrong type (compare it with "
-                     "config.example.toml)", args.json, 70)
+        where = next(
+            (
+                frame.name
+                for frame in reversed(traceback.extract_tb(exc.__traceback__))
+                if frame.filename.endswith("doctor.py")
+            ),
+            "doctor",
+        )
+        return _fail(
+            f"doctor stopped in {where} on {type(exc).__name__}: a setting in "
+            "config.toml may have the wrong type (compare it with "
+            "config.example.toml)",
+            args.json,
+            70,
+        )
     _emit(report, args.json)
     return 78 if report["problems"] else 0  # 78 = EX_CONFIG, as audio-router's doctor uses
 
@@ -246,8 +317,10 @@ def _matching_index(cfg: config.Config) -> Index | None:
     return index if index.archive_uuid() == identity.uuid else None
 
 
-OPS_BUSY = ("another job holds the ops lock (a backup, the mirror or a check): run the import "
-            "again when it finishes")
+OPS_BUSY = (
+    "another job holds the ops lock (a backup, the mirror or a check): run the import "
+    "again when it finishes"
+)
 
 
 def cmd_import_audio_router(args: argparse.Namespace) -> int:
@@ -261,12 +334,15 @@ def cmd_import_audio_router(args: argparse.Namespace) -> int:
     if args.dry_run:
         index = _matching_index(cfg)
         try:
-            the_plan = plan(args.path, index, consent=consent,
-                            default_timezone=cfg.default_timezone)
+            the_plan = plan(
+                args.path, index, consent=consent, default_timezone=cfg.default_timezone
+            )
         except CatalogError as exc:
             return _fail(str(exc), args.json, 1)
-        _emit({**the_plan.report(), "dry_run": True,
-               "matched_against_archive": index is not None}, args.json)
+        _emit(
+            {**the_plan.report(), "dry_run": True, "matched_against_archive": index is not None},
+            args.json,
+        )
         return 0 if the_plan.ok else 1
     try:
         thresholds = disk_thresholds(cfg)
@@ -282,26 +358,37 @@ def cmd_import_audio_router(args: argparse.Namespace) -> int:
     except LockTimeout:
         return _fail(OPS_BUSY, args.json, 75)
     try:
-        the_plan = plan(args.path, writer.index, consent=consent,
-                        default_timezone=cfg.default_timezone)
+        the_plan = plan(
+            args.path, writer.index, consent=consent, default_timezone=cfg.default_timezone
+        )
     except CatalogError as exc:
         return _fail(str(exc), args.json, 1)
     if the_plan.problems:
         return _fail("; ".join(the_plan.problems), args.json, 1)
     unplaced = the_plan.counts()["unplaced"]
     if unplaced and not args.allow_unplaced:
-        return _fail(f"{unplaced} catalog rows can't be placed (see --dry-run): fix them, or "
-                     "pass --allow-unplaced to import the rest", args.json, 1)
+        return _fail(
+            f"{unplaced} catalog rows can't be placed (see --dry-run): fix them, or "
+            "pass --allow-unplaced to import the rest",
+            args.json,
+            1,
+        )
 
     def guard():
         return disk_status(writer.root, expected_uuid=writer.identity.uuid, **thresholds)
 
     try:
-        result = run(the_plan, writer, now=datetime.now(timezone.utc), disk=guard,
-                     stop_free_percent=thresholds["stop"])
+        result = run(
+            the_plan,
+            writer,
+            now=datetime.now(timezone.utc),
+            disk=guard,
+            stop_free_percent=thresholds["stop"],
+        )
     except ImportStopped as exc:
-        _emit({**the_plan.report(), "imported": exc.report.to_dict(), "stopped": str(exc)},
-              args.json)
+        _emit(
+            {**the_plan.report(), "imported": exc.report.to_dict(), "stopped": str(exc)}, args.json
+        )
         return 1
     except LockTimeout:
         return _fail(OPS_BUSY, args.json, 75)
@@ -353,8 +440,12 @@ def cmd_backup(args: argparse.Namespace) -> int:
                 # Fixed text, never restic's own words (a path, a server's reply); a restic that
                 # isn't installed is an OSError, not a traceback. --debug prints the full error.
                 logging.getLogger(__name__).debug("backup init failed", exc_info=True)
-                return _fail(f"backup init failed ({ops.failure_detail(exc)}); run with --debug "
-                             "for the full error", args.json, 1)
+                return _fail(
+                    f"backup init failed ({ops.failure_detail(exc)}); run with --debug "
+                    "for the full error",
+                    args.json,
+                    1,
+                )
             _emit({"job": "backup init", "ok": True, "detail": detail}, args.json)
             return 0
         job = "backup" if args.action == "run" else args.action
@@ -381,8 +472,11 @@ def cmd_ops(args: argparse.Namespace) -> int:
         return ctx
     if args.loop:
         ctx.retry_lock = None  # §15.1: the loop never waits for restic's lock; the CLI does
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s",
-                            datefmt="%Y-%m-%dT%H:%M:%S%z")  # the container clock is UTC: say so
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(name)s %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S%z",
+        )  # the container clock is UTC: say so
         # docker stop: SIGTERM goes on to a running restic or rsync, which stops cleanly and
         # drops its lock; then this process stops. The job it was in is neither recorded nor
         # alerted, and the next start runs it again.
@@ -409,14 +503,28 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
     if ac.topic and not ac.ntfy_server:
         return _fail("RECORDINGS_NTFY_TOPIC is set but [alerts] ntfy_server is not", args.json, 78)
     if not ac.enabled and not ac.deadman_url:
-        return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
-                     "RECORDINGS_DEADMAN_URL_FILE, first", args.json, 78)
+        return _fail(
+            "set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
+            "RECORDINGS_DEADMAN_URL_FILE, first",
+            args.json,
+            78,
+        )
     # Each part is tested when it is set up: null is "not configured", false is "failed".
-    sent = alerts.send(ac, title="recordings: test alert", message="If you see this, alerts work.",
-                       priority=3, tags=("white_check_mark",)) if ac.enabled else None
+    sent = (
+        alerts.send(
+            ac,
+            title="recordings: test alert",
+            message="If you see this, alerts work.",
+            priority=3,
+            tags=("white_check_mark",),
+        )
+        if ac.enabled
+        else None
+    )
     # /log records the test without changing the check's state, so it can never hide an outage.
-    logged = (alerts.ping_deadman(ac, "log", message="recordings alert-test")
-              if ac.deadman_url else None)
+    logged = (
+        alerts.ping_deadman(ac, "log", message="recordings alert-test") if ac.deadman_url else None
+    )
     _emit({"ntfy": sent, "deadman": logged}, args.json)
     return 0 if sent is not False and logged is not False else 1
 
@@ -424,9 +532,19 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    commands = {"init": cmd_init, "schemas": cmd_schemas, "docs": cmd_docs, "reindex": cmd_reindex, "validate": cmd_validate, "doctor": cmd_doctor,
-                "import-audio-router": cmd_import_audio_router, "backup": cmd_backup,
-                "mirror": cmd_mirror, "ops": cmd_ops, "alert-test": cmd_alert_test}
+    commands = {
+        "init": cmd_init,
+        "schemas": cmd_schemas,
+        "docs": cmd_docs,
+        "reindex": cmd_reindex,
+        "validate": cmd_validate,
+        "doctor": cmd_doctor,
+        "import-audio-router": cmd_import_audio_router,
+        "backup": cmd_backup,
+        "mirror": cmd_mirror,
+        "ops": cmd_ops,
+        "alert-test": cmd_alert_test,
+    }
     if args.command in commands:
         return commands[args.command](args)
     parser.print_help(sys.stdout)

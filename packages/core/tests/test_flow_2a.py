@@ -39,15 +39,23 @@ def restic_or_skip() -> str:
 
 def setup(tmp_path, monkeypatch, ar, plaud_env, restic="restic"):
     ar.plaud(A, envelopes=[plaud_env(A), plaud_env(A, name="Week 4, edited")])
-    ar.plaud(B, envelopes=[plaud_env(B, name="会議メモ / Q&A")],
-             same_audio_as=f"plaud/audio/2026/08/{A}.wav", dup_of=f"plaud/{A}")
+    ar.plaud(
+        B,
+        envelopes=[plaud_env(B, name="会議メモ / Q&A")],
+        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+        dup_of=f"plaud/{A}",
+    )
     ar.plaud(C, envelopes=[plaud_env(C)], audio=False)
     ar.plaud(D, envelopes=[plaud_env(D)], recorded_at="2026-08-03T11:00:00-07:00")
     ar.recorder()
     ar.pocket(UUID)
     # A main-tier row that audio-router's own catalog tags private (the council's Task 8 blocker).
-    ar.plaud(P, envelopes=[plaud_env(P, name="A PRIVATE TITLE")],
-             recorded_at="2026-08-04T15:00:00-07:00", tags=("private",))
+    ar.plaud(
+        P,
+        envelopes=[plaud_env(P, name="A PRIVATE TITLE")],
+        recorded_at="2026-08-04T15:00:00-07:00",
+        tags=("private",),
+    )
     ar.private(name="A PRIVATE EXPORT")  # the private tier: matched by SHA-256, tagged therapy
     ar.orphan(O)  # audio, but no snapshot and no time: deferred to 2b
     ar.ledger_only = ["f" * 32]
@@ -64,12 +72,20 @@ def setup(tmp_path, monkeypatch, ar, plaud_env, restic="restic"):
         f'[plaud]\nconsent_list = "{tmp_path / "consent.md"}"\n'
         f'[backup]\nrepository = "{tmp_path / "repo"}"\nrestic = "{restic}"\n'
         f'extra_paths = ["{tmp_path / "deploy.env"}"]\nrestore_scratch = "{tmp_path / "scratch"}"\n'
-        f'cache_dir = "{tmp_path / "cache"}"\n', encoding="utf-8")
+        f'cache_dir = "{tmp_path / "cache"}"\n',
+        encoding="utf-8",
+    )
     monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
     monkeypatch.setenv("RESTIC_PASSWORD_FILE", str(tmp_path / "pw"))
     monkeypatch.setenv("HOME", str(tmp_path))
-    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE",
-                 "RESTIC_PASSWORD", "RESTIC_REPOSITORY"):
+    for name in (
+        "RECORDINGS_ARCHIVE",
+        "RECORDINGS_STATE",
+        "RECORDINGS_INDEX",
+        "RECORDINGS_ROLE",
+        "RESTIC_PASSWORD",
+        "RESTIC_REPOSITORY",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -102,8 +118,9 @@ def test_init_import_and_validate(tmp_path, monkeypatch, capsys, caplog, ar_arch
     assert len(recordings) == 5 and sum(is_private(r) for r in recordings) == 2
     # Which two: the main-tier row that audio-router tagged private (by its Plaud ID), and the
     # private tier's (by the hash of its audio). Not a count that any two recordings could meet.
-    (by_plaud,) = [r for r in recordings if any(s.kind == "plaud" and s.ref.endswith(P)
-                                                 for s in r.sources)]
+    (by_plaud,) = [
+        r for r in recordings if any(s.kind == "plaud" and s.ref.endswith(P) for s in r.sources)
+    ]
     tier = next(row["file_id"] for row in ar_archive.rows if row["source"] == "private")
     (by_hash,) = [r for r in recordings if r.media.sha256 == tier]
     assert by_plaud is not by_hash
@@ -111,7 +128,10 @@ def test_init_import_and_validate(tmp_path, monkeypatch, capsys, caplog, ar_arch
     # The consent-listed recording never came in: its ID is in no recording.json.
     written = list((tmp_path / "archive" / "recordings").rglob("recording.json"))
     assert len(written) == 5 and [f for f in written if D in f.read_text(encoding="utf-8")] == []
-    assert run(capsys, caplog, "validate", str(tmp_path / "archive"), "--deep") == (0, {"problems": []})
+    assert run(capsys, caplog, "validate", str(tmp_path / "archive"), "--deep") == (
+        0,
+        {"problems": []},
+    )
     code, again = run(capsys, caplog, "import-audio-router", str(ar_archive.root))
     assert code == 0 and again["imported"]["created"] == 0
     assert again["imported"]["sources_added"] == 0
@@ -119,7 +139,9 @@ def test_init_import_and_validate(tmp_path, monkeypatch, capsys, caplog, ar_arch
     assert code == 0 and reindexed["recordings"] == 5 and reindexed["plaud"]["written"] == 0
 
 
-def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, caplog, ar_archive, plaud_env):
+def test_back_up_and_prove_the_restore(
+    tmp_path, monkeypatch, capsys, caplog, ar_archive, plaud_env
+):
     exe = restic_or_skip()
     setup(tmp_path, monkeypatch, ar_archive, plaud_env, restic=exe)
     assert run(capsys, caplog, "init")[0] == 0
@@ -127,15 +149,23 @@ def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, caplog, ar
     assert run(capsys, caplog, "backup", "run", "--tag", "pre-import")[1]["ok"] is True
     assert run(capsys, caplog, "import-audio-router", str(ar_archive.root))[0] == 0
     assert run(capsys, caplog, "backup", "run", "--tag", "post-import")[1]["ok"] is True
-    code, restored = run(capsys, caplog, "backup", "restore-test")  # after the import, as the runbook does
+    code, restored = run(
+        capsys, caplog, "backup", "restore-test"
+    )  # after the import, as the runbook does
     assert code == 0 and restored["detail"] == "restored and validated 5 recordings"
     state = State.open(tmp_path / "state")
     assert state.last_run("restore-test", ok=True) is not None
     assert not any((tmp_path / "scratch").iterdir())
     # Status (spec §12.5) reads what the runs just recorded, as the web service does: read-only.
-    summary = status_summary(State.read_only(tmp_path / "state"), archive_root=tmp_path / "archive",
-                             now=datetime.now(timezone.utc), timezone_name="UTC", warn=0.0, stop=0.0,
-                             jobs=("disk", "backup", "restore-test"))
+    summary = status_summary(
+        State.read_only(tmp_path / "state"),
+        archive_root=tmp_path / "archive",
+        now=datetime.now(timezone.utc),
+        timezone_name="UTC",
+        warn=0.0,
+        stop=0.0,
+        jobs=("disk", "backup", "restore-test"),
+    )
     jobs = {j["job"]: j for j in summary["jobs"]}
     assert jobs["backup"]["last_ok"] and jobs["backup"]["last_ok_detail"].startswith("snapshot ")
     assert jobs["restore-test"]["last_ok_detail"] == "restored and validated 5 recordings"

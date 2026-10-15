@@ -45,24 +45,33 @@ def render_outline(raw: str) -> str | None:
     rows = _rows(raw)
     if rows is None or not any("topic" in r for r in rows):
         return None
-    lines = [f"- {_stamp(r.get('start_time'))} {str(r.get('topic') or '').strip()}"
-             for r in rows if str(r.get("topic") or "").strip()]
+    lines = [
+        f"- {_stamp(r.get('start_time'))} {str(r.get('topic') or '').strip()}"
+        for r in rows
+        if str(r.get("topic") or "").strip()
+    ]
     return "\n".join(lines) or None
 
 
 def render_marks(raw: str) -> str | None:
     rows = _rows(raw)
-    if rows is None or not any(("mark_content" in r or "content" in r or "title" in r)
-                               for r in rows):
+    if rows is None or not any(
+        ("mark_content" in r or "content" in r or "title" in r) for r in rows
+    ):
         return None
     out = []
     for r in rows:
         if r.get("is_user_deleted"):
             continue
         title = str(r.get("title") or "").strip()
-        body = next((str(r.get(k) or "").strip() for k in ("expanded_content", "content",
-                                                           "mark_content")
-                     if str(r.get(k) or "").strip()), "")
+        body = next(
+            (
+                str(r.get(k) or "").strip()
+                for k in ("expanded_content", "content", "mark_content")
+                if str(r.get(k) or "").strip()
+            ),
+            "",
+        )
         picture = str(r.get("picture_link") or r.get("picture_full_url") or "").strip()
         if not title and not body and not picture:
             continue

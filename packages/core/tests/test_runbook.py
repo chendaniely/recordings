@@ -14,8 +14,12 @@ def _text() -> str:
 
 def _code_lines(text: str | None = None) -> list[str]:
     """Every line of the shell blocks (bash, sh or unmarked), in order."""
-    return [line for lang, body in FENCE.findall(_text() if text is None else text)
-            if lang in ("", "bash", "sh") for line in body.splitlines()]
+    return [
+        line
+        for lang, body in FENCE.findall(_text() if text is None else text)
+        if lang in ("", "bash", "sh")
+        for line in body.splitlines()
+    ]
 
 
 def _section(heading: str) -> str:
@@ -41,11 +45,17 @@ def test_the_runbook_covers_steps_one_to_four_and_a_real_restore():
     # why: whole lines, not substrings, so a heading quoted in prose or indented in a block
     # can't stand in for a real one.
     lines = set(_text().splitlines())
-    for heading in ("## 1. Spikes", "### 1a. Server facts", "### 1b. NAS transport",
-                    "### 1c. Before stage 2b (not needed for 2a)",
-                    "## 2. Deploy 2a against an empty, initialised archive",
-                    "## 3. Bring the source over", "## 4. Import", "## Restoring for real",
-                    "## Checklist"):
+    for heading in (
+        "## 1. Spikes",
+        "### 1a. Server facts",
+        "### 1b. NAS transport",
+        "### 1c. Before stage 2b (not needed for 2a)",
+        "## 2. Deploy 2a against an empty, initialised archive",
+        "## 3. Bring the source over",
+        "## 4. Import",
+        "## Restoring for real",
+        "## Checklist",
+    ):
         assert heading in lines, heading
     assert "| Fact | Answer |" in lines, "the Checklist table"
 
@@ -68,7 +78,9 @@ def test_no_secret_is_ever_typed_on_a_command_line():
         # RESTIC_REST_PASSWORD is fine when it is read from the file, never as a literal.
         assert not re.search(r'\bRESTIC_REST_PASSWORD=(?!"?\$)', line), line
         assert not re.search(r"\bcreate_user\s+\S+\s+\S", line), line  # user AND password
-        assert not re.search(r"\bhtpasswd\b.*\s-[A-Za-z]*b", line), line  # -b: password as an argument
+        assert not re.search(r"\bhtpasswd\b.*\s-[A-Za-z]*b", line), (
+            line
+        )  # -b: password as an argument
         assert not re.search(r"rest:https?://[^/\s]*:[^/\s]*@", line), line  # user:pass@ in a URL
 
 
@@ -102,8 +114,10 @@ def test_the_folders_are_private_before_anything_lands():
     # why: state.db keeps whole revisions of every recording.json, titles included, so it is
     # as private as the archive. Nobody but the owner gets into $RECORDINGS_HOME.
     lines = _code_lines(_section("### 1a. Server facts"))
-    assert any('chmod 700 "$RECORDINGS_HOME"' in line and '"$RECORDINGS_HOME/state"' in line
-               for line in lines)
+    assert any(
+        'chmod 700 "$RECORDINGS_HOME"' in line and '"$RECORDINGS_HOME/state"' in line
+        for line in lines
+    )
 
 
 def test_manual_runs_never_race_the_backup_loop():
@@ -116,7 +130,8 @@ def test_manual_runs_never_race_the_backup_loop():
         elif re.search(r"\brc (stop backup|kill backup|down)\b", line):
             running = False
         elif re.search(r"\brc run --rm backup\b", line) or (
-                "import-audio-router" in line and "--dry-run" not in line):
+            "import-audio-router" in line and "--dry-run" not in line
+        ):
             assert not running, line
     # §20 asks for a killed backup service to raise the alert, and a stop isn't a kill.
     assert any(re.search(r"\brc kill backup\b", line) for line in _code_lines())
@@ -138,9 +153,17 @@ def test_the_imported_data_is_restore_tested_before_the_import_copy_goes():
 
 def test_restoring_for_real_puts_every_piece_back():
     code = "\n".join(_code_lines(_section("## Restoring for real")))
-    for needed in ('restore "$SNAP"', "--tag recordings", "--include",
-                   "recordings reindex", "recordings init --adopt",
-                   "/archive", "config.toml", "deploy.env", "state.db"):
+    for needed in (
+        'restore "$SNAP"',
+        "--tag recordings",
+        "--include",
+        "recordings reindex",
+        "recordings init --adopt",
+        "/archive",
+        "config.toml",
+        "deploy.env",
+        "state.db",
+    ):
         assert needed in code, needed
 
 
@@ -154,8 +177,9 @@ def test_every_recordings_command_the_runbook_names_parses():
 
     # The fenced blocks, and the commands the prose names in `inline code` (`mirror --debug`).
     prose = FENCE.sub("", _text())
-    lines = ("\n".join(_code_lines()).replace("\\\n", " ").splitlines()
-             + re.findall(r"`([^`\n]+)`", prose))
+    lines = "\n".join(_code_lines()).replace("\\\n", " ").splitlines() + re.findall(
+        r"`([^`\n]+)`", prose
+    )
     commands = []
     for line in lines:
         if not re.search(r"\brecordings [a-z]", line):
@@ -165,11 +189,12 @@ def test_every_recordings_command_the_runbook_names_parses():
         for i, token in enumerate(tokens):
             # The command itself: first on the line, or after a service name, `run` or `exec`.
             # Not `--tag recordings` or a path.
-            if token != "recordings" or (i and tokens[i - 1] not in ("web", "backup", "run",
-                                                                       "exec")):
+            if token != "recordings" or (
+                i and tokens[i - 1] not in ("web", "backup", "run", "exec")
+            ):
                 continue
             command = []
-            for t in tokens[i + 1:]:
+            for t in tokens[i + 1 :]:
                 if t in ("|", "||", "&&", ";", "&") or t.startswith((">", "2>")):
                     break
                 command.append(t)
@@ -183,11 +208,20 @@ def test_every_recordings_command_the_runbook_names_parses():
             unparsed.append("recordings " + shlex.join(command))
     assert unparsed == []
     named = {c[0] for c in commands}
-    assert {"init", "doctor", "backup", "mirror", "import-audio-router", "validate", "reindex",
-            "alert-test"} <= named, sorted(named)
+    assert {
+        "init",
+        "doctor",
+        "backup",
+        "mirror",
+        "import-audio-router",
+        "validate",
+        "reindex",
+        "alert-test",
+    } <= named, sorted(named)
     assert any(c[0] == "init" and "--adopt" in c for c in commands)
-    assert {"web", "backup"} <= {c[c.index("--role") + 1] for c in commands
-                                 if c[0] == "doctor" and "--role" in c[:-1]}
+    assert {"web", "backup"} <= {
+        c[c.index("--role") + 1] for c in commands if c[0] == "doctor" and "--role" in c[:-1]
+    }
     assert any(c[:2] == ["backup", "restore-test"] for c in commands)
     # Two commands the runbook names only in prose, where the parse used to skip them.
     assert ["mirror", "--max-delete", "1"] in commands and ["mirror", "--debug"] in commands

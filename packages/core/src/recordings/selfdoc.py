@@ -49,8 +49,9 @@ def write_docs(root: Path) -> list[str]:
 
 
 def layout_patterns() -> list[re.Pattern]:
-    block = re.search(r"<!-- layout:begin -->\n(.*?)<!-- layout:end -->",
-                      _package_text("FORMAT.md"), re.S)
+    block = re.search(
+        r"<!-- layout:begin -->\n(.*?)<!-- layout:end -->", _package_text("FORMAT.md"), re.S
+    )
     if block is None:
         raise RuntimeError("FORMAT.md has no layout block")
     patterns = []
@@ -68,8 +69,12 @@ def validate(root: Path, *, deep: bool = False) -> list[dict]:
     if not root.exists():
         return [{"path": str(root), "message": "does not exist"}]
     if not (root / "recordings").is_dir():
-        return [{"path": str(root),
-                 "message": "is not a recordings archive: it has no recordings/ folder"}]
+        return [
+            {
+                "path": str(root),
+                "message": "is not a recordings archive: it has no recordings/ folder",
+            }
+        ]
     problems = []
     try:
         read_sentinel(root)
@@ -108,17 +113,33 @@ def _recording_problems(archive: Archive, rec, *, deep: bool = False) -> list[di
         end = rec.media.duration_ms / 1000
         for span in rec.speakers.spans:
             if span.end > end:
-                problems.append({"path": here, "message":
-                                 f"speakers span {span.start}-{span.end} s runs past the "
-                                 f"media's end ({end} s)"})
+                problems.append(
+                    {
+                        "path": here,
+                        "message": f"speakers span {span.start}-{span.end} s runs past the "
+                        f"media's end ({end} s)",
+                    }
+                )
     if deep:  # every byte, as the restore test needs: a file that's there isn't proof enough
         if present and sha256_file(media) != rec.media.sha256:
-            problems.append({"path": here, "message": f"media.file {rec.media.file!r} does not "
-                                                      "match its SHA-256"})
+            problems.append(
+                {
+                    "path": here,
+                    "message": f"media.file {rec.media.file!r} does not match its SHA-256",
+                }
+            )
         for source in rec.sources:
             path = folder / source.raw if source.raw else None
-            if source.sha256 and path is not None and path.is_file() \
-                    and sha256_file(path) != source.sha256:
-                problems.append({"path": here, "message": f"source file {source.raw} does not "
-                                                          "match its SHA-256"})
+            if (
+                source.sha256
+                and path is not None
+                and path.is_file()
+                and sha256_file(path) != source.sha256
+            ):
+                problems.append(
+                    {
+                        "path": here,
+                        "message": f"source file {source.raw} does not match its SHA-256",
+                    }
+                )
     return problems

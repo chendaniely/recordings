@@ -11,8 +11,11 @@ from recordings_ui.views import library_view, recording_view, render_markdown
 def test_library_lists_the_demo_newest_first(demo_archive, demo_ids):
     view = library_view(Archive(demo_archive))
     assert [r["id"] for r in view["recordings"]] == [
-        demo_ids["apollo13-problem"], demo_ids["apollo11-first-steps"],
-        demo_ids["jfk-rice"], demo_ids["fdr-fireside-1"]]
+        demo_ids["apollo13-problem"],
+        demo_ids["apollo11-first-steps"],
+        demo_ids["jfk-rice"],
+        demo_ids["fdr-fireside-1"],
+    ]
     assert view["counts"] == {"all": 4, "untagged": 1}
     assert {t["tag"] for t in view["tags"]} == {"talks", "space/apollo", "private"}
     assert next(t for t in view["tags"] if t["tag"] == "private")["private"] is True
@@ -63,8 +66,9 @@ def _set_media_file(archive, rid, name):
     return path
 
 
-@pytest.mark.parametrize("name", ["../x", "../../etc/passwd", "sub/x.mp3", "sub\\x.mp3", "/x.mp3",
-                                  "", ".", ".."])
+@pytest.mark.parametrize(
+    "name", ["../x", "../../etc/passwd", "sub/x.mp3", "sub\\x.mp3", "/x.mp3", "", ".", ".."]
+)
 def test_a_media_base_links_no_file_outside_the_media_folder(demo_archive, demo_ids, name):
     # recording.json is hand-editable: with a base, media.file becomes part of a URL.
     archive = Archive(demo_archive)
@@ -74,7 +78,10 @@ def test_a_media_base_links_no_file_outside_the_media_folder(demo_archive, demo_
     assert [p["path"] for p in view["problems"]] == [str(path)]
     assert "media.file" in view["problems"][0]["message"]
     # The server's route checks the file itself, so its URL doesn't change.
-    assert recording_view(archive, demo_ids["jfk-rice"])["media_url"] == f"/media/{demo_ids['jfk-rice']}"
+    assert (
+        recording_view(archive, demo_ids["jfk-rice"])["media_url"]
+        == f"/media/{demo_ids['jfk-rice']}"
+    )
 
 
 def test_a_media_base_percent_encodes_the_file_name(demo_archive, demo_ids):
@@ -101,17 +108,29 @@ def test_unknown_or_malformed_id_is_none(demo_archive):
     archive = Archive(demo_archive)
     assert recording_view(archive, "20200101T000000+0000_00000000") is None
     assert recording_view(archive, "../../etc/passwd") is None
-    assert recording_view(archive, "20261399T256199+0000_deadbeef") is None  # regex-valid, impossible date
+    assert (
+        recording_view(archive, "20261399T256199+0000_deadbeef") is None
+    )  # regex-valid, impossible date
 
 
 def test_a_recording_with_no_outputs_has_empty_tabs(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    rec = writer.add(Incoming(
-        media=media, recorded_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
-        timezone_name="UTC", time_source="ingest", title="Fresh upload", kind="audio",
-        sources=(RawSource(kind="upload", ref="x.mp3",
-                           added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)),))).recording
+    rec = writer.add(
+        Incoming(
+            media=media,
+            recorded_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
+            timezone_name="UTC",
+            time_source="ingest",
+            title="Fresh upload",
+            kind="audio",
+            sources=(
+                RawSource(
+                    kind="upload", ref="x.mp3", added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)
+                ),
+            ),
+        )
+    ).recording
     view = recording_view(writer.archive, rec.id)
     assert view["transcripts"] == [] and view["chosen_transcript"] is None
     assert view["notes"] == [] and view["plaud_notes"] == [] and view["my_notes_html"] is None
@@ -123,12 +142,28 @@ def test_model_written_html_is_escaped(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = writer.add(Incoming(
-        media=media, recorded_at=t, timezone_name="UTC", time_source="ingest", title="x",
-        kind="audio", sources=(RawSource(kind="upload", ref="x", added_at=t),),
-        renditions=(Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
-                              version="m@1", created_at=t,
-                              payload={"markdown": "<img src=x onerror=alert(1)>"}),))).recording
+    rec = writer.add(
+        Incoming(
+            media=media,
+            recorded_at=t,
+            timezone_name="UTC",
+            time_source="ingest",
+            title="x",
+            kind="audio",
+            sources=(RawSource(kind="upload", ref="x", added_at=t),),
+            renditions=(
+                Rendition(
+                    kind="notes",
+                    note_type="lecture",
+                    engine="canned",
+                    model="m",
+                    version="m@1",
+                    created_at=t,
+                    payload={"markdown": "<img src=x onerror=alert(1)>"},
+                ),
+            ),
+        )
+    ).recording
     html = recording_view(writer.archive, rec.id)["notes"][0]["outputs"][0]["html"]
     assert "<img" not in html
 
@@ -146,7 +181,7 @@ def test_recording_view_with_corrupt_rendition_shows_problems(demo_archive, demo
     folder = archive.path_for(demo_ids["jfk-rice"])
     corrupt_path = folder / "renditions" / "corrupt.json"
     corrupt_path.write_text("{junk", encoding="utf-8")
-    
+
     view = recording_view(archive, demo_ids["jfk-rice"])
     assert view is not None
     assert len(view["problems"]) == 1
@@ -159,7 +194,7 @@ def test_recording_view_with_corrupt_recording_json_is_none(demo_archive, demo_i
     archive = Archive(demo_archive)
     folder = archive.path_for(demo_ids["jfk-rice"])
     (folder / "recording.json").write_text("{", encoding="utf-8")
-    
+
     view = recording_view(archive, demo_ids["jfk-rice"])
     assert view is None
 
@@ -179,9 +214,11 @@ def test_library_reports_a_copied_folder_and_a_mistyped_id(demo_archive, demo_id
 
     view = library_view(archive)
     assert sorted(r["id"] for r in view["recordings"]) == sorted(
-        [demo_ids["jfk-rice"], demo_ids["apollo11-first-steps"], demo_ids["fdr-fireside-1"]])
+        [demo_ids["jfk-rice"], demo_ids["apollo11-first-steps"], demo_ids["fdr-fireside-1"]]
+    )
     assert sorted(p["path"] for p in view["problems"]) == sorted(
-        [str(copy / "recording.json"), str(apollo)])
+        [str(copy / "recording.json"), str(apollo)]
+    )
     assert all("does not match its folder" in p["message"] for p in view["problems"])
 
 
@@ -191,10 +228,18 @@ def test_a_capitalised_private_tag_is_private_everywhere(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = writer.add(Incoming(
-        media=media, recorded_at=t, timezone_name="UTC", time_source="ingest", title="x",
-        kind="audio", sources=(RawSource(kind="upload", ref="x", added_at=t),),
-        tags=(TagRef(tag="Private/Health"), TagRef(tag="notes/private")))).recording
+    rec = writer.add(
+        Incoming(
+            media=media,
+            recorded_at=t,
+            timezone_name="UTC",
+            time_source="ingest",
+            title="x",
+            kind="audio",
+            sources=(RawSource(kind="upload", ref="x", added_at=t),),
+            tags=(TagRef(tag="Private/Health"), TagRef(tag="notes/private")),
+        )
+    ).recording
     view = library_view(writer.archive)
     assert {t["tag"]: t["private"] for t in view["tags"]} == {"Private/Health": True}
     assert view["recordings"][0]["private"] is True
@@ -205,14 +250,37 @@ def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = writer.add(Incoming(
-        media=media, recorded_at=t, timezone_name="UTC", time_source="plaud", title="x",
-        kind="audio", sources=(RawSource(kind="plaud", ref="x", added_at=t),),
-        renditions=(Rendition(kind="transcript", engine="plaud", model="plaud", version="plaud@1",
-                              created_at=t, payload={"segments": [
-                                  {"start": 0, "end": 1, "speaker": "Speaker 1",
-                                   "speaker_name": "Ada", "text": "Hello."},
-                                  {"start": 1, "end": 2, "speaker": "Speaker 2",
-                                   "text": "Hi."}]}),))).recording
+    rec = writer.add(
+        Incoming(
+            media=media,
+            recorded_at=t,
+            timezone_name="UTC",
+            time_source="plaud",
+            title="x",
+            kind="audio",
+            sources=(RawSource(kind="plaud", ref="x", added_at=t),),
+            renditions=(
+                Rendition(
+                    kind="transcript",
+                    engine="plaud",
+                    model="plaud",
+                    version="plaud@1",
+                    created_at=t,
+                    payload={
+                        "segments": [
+                            {
+                                "start": 0,
+                                "end": 1,
+                                "speaker": "Speaker 1",
+                                "speaker_name": "Ada",
+                                "text": "Hello.",
+                            },
+                            {"start": 1, "end": 2, "speaker": "Speaker 2", "text": "Hi."},
+                        ]
+                    },
+                ),
+            ),
+        )
+    ).recording
     turns = recording_view(writer.archive, rec.id)["transcripts"][0]["turns"]
     assert [t["speaker"] for t in turns] == ["Ada", "Speaker 2"]

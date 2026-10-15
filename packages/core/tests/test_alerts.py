@@ -9,8 +9,11 @@ from recordings.config import ConfigError, load_config
 
 def test_an_alert_posts_to_the_topic_with_title_priority_and_tags(ntfy):
     ac = AlertConfig(ntfy_server=ntfy.url, topic="topic-do-not-print_1", deadman_url=None)
-    assert send(ac, title="recordings: backup failed",
-                message="backup failed (BackupError; exit 1). See Status.")
+    assert send(
+        ac,
+        title="recordings: backup failed",
+        message="backup failed (BackupError; exit 1). See Status.",
+    )
     (req,) = ntfy.requests
     assert (req["method"], req["path"]) == ("POST", "/topic-do-not-print_1")
     assert req["headers"]["Title"] == "recordings: backup failed"
@@ -34,7 +37,9 @@ def test_a_failed_delivery_never_raises_and_never_logs_the_topic(ntfy, caplog):
         s.bind(("127.0.0.1", 0))
         closed = f"http://127.0.0.1:{s.getsockname()[1]}"
     with caplog.at_level("WARNING"):
-        assert send(AlertConfig(closed, "topic-do-not-print", None), title="t", message="m") is False
+        assert (
+            send(AlertConfig(closed, "topic-do-not-print", None), title="t", message="m") is False
+        )
     assert "topic-do-not-print" not in caplog.text and "HTTP 500" in caplog.text
 
 
@@ -46,8 +51,11 @@ def test_the_dead_mans_switch_speaks_healthchecks(ntfy):
     assert ping_deadman(ac, "fail", message="backup failed (BackupError; exit 1). See Status.")
     assert ping_deadman(ac, "log", message="recordings alert-test")
     assert [(r["method"], r["path"]) for r in ntfy.requests] == [
-        ("POST", "/ping/abc-do-not-print/start"), ("POST", "/ping/abc-do-not-print"),
-        ("POST", "/ping/abc-do-not-print/fail"), ("POST", "/ping/abc-do-not-print/log")]
+        ("POST", "/ping/abc-do-not-print/start"),
+        ("POST", "/ping/abc-do-not-print"),
+        ("POST", "/ping/abc-do-not-print/fail"),
+        ("POST", "/ping/abc-do-not-print/log"),
+    ]
     assert ntfy.requests[2]["body"] == "backup failed (BackupError; exit 1). See Status."
     assert not ping_deadman(AlertConfig(None, None, None))
 
@@ -57,12 +65,17 @@ def test_the_config_reads_the_secrets_from_files_and_hides_them(tmp_path):
     (tmp_path / "ping").write_text("https://hc.example/ping/do-not-print\n", encoding="utf-8")
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text('[alerts]\nntfy_server = "https://ntfy.sh/"\n', encoding="utf-8")
-    environ = {"RECORDINGS_CONFIG": str(cfg_file),
-               "RECORDINGS_NTFY_TOPIC_FILE": str(tmp_path / "topic"),
-               "RECORDINGS_DEADMAN_URL_FILE": str(tmp_path / "ping")}
+    environ = {
+        "RECORDINGS_CONFIG": str(cfg_file),
+        "RECORDINGS_NTFY_TOPIC_FILE": str(tmp_path / "topic"),
+        "RECORDINGS_DEADMAN_URL_FILE": str(tmp_path / "ping"),
+    }
     ac = alerts.from_config(load_config(environ), environ)
     assert (ac.ntfy_server, ac.topic, ac.enabled) == (
-        "https://ntfy.sh", "topic-do-not-print-20", True)
+        "https://ntfy.sh",
+        "topic-do-not-print-20",
+        True,
+    )
     assert "do-not-print" not in repr(ac) and "do-not-print" not in str(ac)
     for server in ("ntfy.sh", "http://ntfy.example"):
         cfg_file.write_text(f'[alerts]\nntfy_server = "{server}"\n', encoding="utf-8")
@@ -74,23 +87,29 @@ def test_an_ntfy_token_goes_in_a_bearer_header_and_nowhere_else(tmp_path, ntfy):
     (tmp_path / "token").write_text("tk_do-not-print\n", encoding="utf-8")
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(f'[alerts]\nntfy_server = "{ntfy.url}"\n', encoding="utf-8")
-    environ = {"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_NTFY_TOPIC": "alerts-topic",
-               "RECORDINGS_NTFY_TOKEN_FILE": str(tmp_path / "token")}
+    environ = {
+        "RECORDINGS_CONFIG": str(cfg_file),
+        "RECORDINGS_NTFY_TOPIC": "alerts-topic",
+        "RECORDINGS_NTFY_TOKEN_FILE": str(tmp_path / "token"),
+    }
     ac = alerts.from_config(load_config(environ), environ)
     assert send(ac, title="recordings: test alert", message="m")
     assert ntfy.requests[0]["headers"]["Authorization"] == "Bearer tk_do-not-print"
     assert "do-not-print" not in repr(ac)
 
 
-@pytest.mark.parametrize("field, value", [
-    ("ntfy_server", "ntfy.sh"),
-    ("ntfy_server", "http://ntfy.example"),
-    ("ntfy_server", "https://user:do-not-print@ntfy.example"),
-    ("deadman_url", "http://hc-ping.example/do-not-print"),
-    ("deadman_url", "hc-ping.com/do-not-print"),
-    ("topic", "do-not-print/1"),
-    ("topic", "x" * 65),
-])
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("ntfy_server", "ntfy.sh"),
+        ("ntfy_server", "http://ntfy.example"),
+        ("ntfy_server", "https://user:do-not-print@ntfy.example"),
+        ("deadman_url", "http://hc-ping.example/do-not-print"),
+        ("deadman_url", "hc-ping.com/do-not-print"),
+        ("topic", "do-not-print/1"),
+        ("topic", "x" * 65),
+    ],
+)
 def test_plain_http_credentials_in_a_url_and_odd_topics_are_refused(field, value):
     # why: https keeps the topic and the ping URL's token off the wire in clear (security review);
     # ntfy topics are [-_A-Za-z0-9]{1,64} (ops review). The error never repeats the value.
@@ -103,7 +122,8 @@ def test_plain_http_credentials_in_a_url_and_odd_topics_are_refused(field, value
 
 @pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
 def test_a_redirect_is_never_followed_and_the_alert_is_not_delivered(
-        ntfy, other_ntfy, caplog, code):
+    ntfy, other_ntfy, caplog, code
+):
     # why: urlopen's default opener follows a 301, 302 or 303 answer to a POST as a GET, to any host
     # and even from https down to http, with the Authorization and Title headers (security review).
     # Here nothing may reach the second server, and a redirected alert is not a delivered one.
@@ -116,15 +136,18 @@ def test_a_redirect_is_never_followed_and_the_alert_is_not_delivered(
     assert f"HTTP {code}" in caplog.text and "do-not-print" not in caplog.text
 
 
-@pytest.mark.parametrize("field, value", [
-    ("deadman_url", "https://hc-ping.example/key/do-not-print?create=1"),
-    ("deadman_url", "https://hc-ping.example/do-not-print?"),
-    ("deadman_url", "https://hc-ping.example/do-not-print#x"),
-    ("ntfy_server", "https://ntfy.example/?do-not-print"),
-    ("ntfy_server", "https://ntfy.example\tdo-not-print"),
-    ("ntfy_server", "https://ntfy.example:do-not-print"),
-    ("ntfy_server", "https://ntf\u0443.example/do-not-print"),
-])
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("deadman_url", "https://hc-ping.example/key/do-not-print?create=1"),
+        ("deadman_url", "https://hc-ping.example/do-not-print?"),
+        ("deadman_url", "https://hc-ping.example/do-not-print#x"),
+        ("ntfy_server", "https://ntfy.example/?do-not-print"),
+        ("ntfy_server", "https://ntfy.example\tdo-not-print"),
+        ("ntfy_server", "https://ntfy.example:do-not-print"),
+        ("ntfy_server", "https://ntf\u0443.example/do-not-print"),
+    ],
+)
 def test_a_url_whose_suffix_would_not_land_on_its_path_is_refused(field, value):
     # why: /start, /fail and the topic are added to the end of the URL. After a ? or a # they land
     # in the query or are dropped, and Healthchecks takes ".../slug?create=1/fail" as a plain
@@ -154,7 +177,8 @@ def test_a_topic_that_is_the_only_lock_is_long_and_a_token_is_one_visible_word()
 
 
 def test_an_http_proxy_never_carries_an_alert_and_nothing_secret_is_logged(
-        ntfy, other_ntfy, monkeypatch, caplog):
+    ntfy, other_ntfy, monkeypatch, caplog
+):
     # why: urllib sends plain http through HTTP_PROXY as the whole URL with every header, the topic,
     # the ping URL and the token in clear. Only an https proxy is used, and through it an alert
     # travels in a CONNECT tunnel that shows the proxy the host name alone (security council).
@@ -163,8 +187,9 @@ def test_an_http_proxy_never_carries_an_alert_and_nothing_secret_is_logged(
     for name in ("NO_PROXY", "no_proxy"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(alerts, "_OPENER", alerts._build_opener())
-    ac = AlertConfig(ntfy.url, "topic-do-not-print", f"{ntfy.url}/ping/do-not-print",
-                     token="tk_do-not-print")
+    ac = AlertConfig(
+        ntfy.url, "topic-do-not-print", f"{ntfy.url}/ping/do-not-print", token="tk_do-not-print"
+    )
     with caplog.at_level("DEBUG"):
         assert send(ac, title="recordings: test alert", message="m")
         assert ping_deadman(ac, "fail", message="m")

@@ -12,7 +12,9 @@ T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 
 def test_a_broken_recording_json_is_reported_not_fatal(writer, make_incoming):
     good = writer.add(make_incoming()).recording
-    bad = writer.add(make_incoming(recorded_at=datetime.fromisoformat("2026-10-07T09:00:00-07:00"))).recording
+    bad = writer.add(
+        make_incoming(recorded_at=datetime.fromisoformat("2026-10-07T09:00:00-07:00"))
+    ).recording
     (writer.archive.path_for(bad.id) / "recording.json").write_text("{ truncated", encoding="utf-8")
     archive = Archive(writer.root)
     assert [r.id for r in archive.iter_recordings()] == [good.id]
@@ -31,9 +33,21 @@ def test_media_path_points_at_the_media_file(writer, make_incoming):
 
 
 def test_renditions_skips_corrupt_files_when_problems_given(writer, make_incoming):
-    rec = writer.add(make_incoming(renditions=(Rendition(
-        kind="notes", note_type="lecture", engine="canned", model="m", version="m@1",
-        created_at=T0, payload={"markdown": "# Notes"}),))).recording
+    rec = writer.add(
+        make_incoming(
+            renditions=(
+                Rendition(
+                    kind="notes",
+                    note_type="lecture",
+                    engine="canned",
+                    model="m",
+                    version="m@1",
+                    created_at=T0,
+                    payload={"markdown": "# Notes"},
+                ),
+            )
+        )
+    ).recording
     corrupt = writer.archive.path_for(rec.id) / "renditions" / "corrupt.json"
     corrupt.write_text("{", encoding="utf-8")
     problems = []
@@ -49,14 +63,20 @@ def _set_id(folder, rid: str) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-@pytest.mark.parametrize("wrong", [
-    lambda rid: rid[:-1] + ("1" if rid[-1] == "0" else "0"),  # a typo in the hash
-    lambda rid: rid.replace("T140003", "T140004"),  # a typo in the time
-    lambda rid: "20261399T256199+0000_deadbeef",  # the right shape, but no such date
-], ids=["hash", "time", "impossible-date"])
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        lambda rid: rid[:-1] + ("1" if rid[-1] == "0" else "0"),  # a typo in the hash
+        lambda rid: rid.replace("T140003", "T140004"),  # a typo in the time
+        lambda rid: "20261399T256199+0000_deadbeef",  # the right shape, but no such date
+    ],
+    ids=["hash", "time", "impossible-date"],
+)
 def test_a_recording_whose_id_does_not_match_its_folder_is_reported(writer, make_incoming, wrong):
     good = writer.add(make_incoming()).recording
-    bad = writer.add(make_incoming(recorded_at=datetime.fromisoformat("2026-10-07T14:00:03-07:00"))).recording
+    bad = writer.add(
+        make_incoming(recorded_at=datetime.fromisoformat("2026-10-07T14:00:03-07:00"))
+    ).recording
     typo = wrong(bad.id)
     _set_id(writer.archive.path_for(bad.id), typo)
     archive = Archive(writer.root)

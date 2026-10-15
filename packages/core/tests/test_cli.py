@@ -13,7 +13,9 @@ def _writer_config(tmp_path, monkeypatch, archive, state, index=None):
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         f'[archive]\npath = "{archive}"\nwriter_id = "test"\n[state]\npath = "{state}"\n'
-        f'[index]\npath = "{index or tmp_path / "index.db"}"\n', encoding="utf-8")
+        f'[index]\npath = "{index or tmp_path / "index.db"}"\n',
+        encoding="utf-8",
+    )
     monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
     for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
         monkeypatch.delenv(name, raising=False)
@@ -48,8 +50,9 @@ def test_docs_are_never_written_into_the_macs_mirror(tmp_path, monkeypatch, caps
 def test_reindex_accepts_an_outside_edit(writer, make_incoming, tmp_path, monkeypatch, capsys):
     rec = writer.add(make_incoming(sources=())).recording  # no Plaud source to reconcile
     path = writer.archive.path_for(rec.id) / "recording.json"
-    path.write_text(path.read_text(encoding="utf-8").replace('"Week 4"', '"Edited"'),
-                    encoding="utf-8")
+    path.write_text(
+        path.read_text(encoding="utf-8").replace('"Week 4"', '"Edited"'), encoding="utf-8"
+    )
     _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
     assert main(["reindex", "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
@@ -58,7 +61,8 @@ def test_reindex_accepts_an_outside_edit(writer, make_incoming, tmp_path, monkey
 
 
 def test_reindex_exits_1_and_names_a_recording_the_rebuild_left_out(
-        writer, make_incoming, tmp_path, monkeypatch, capsys):
+    writer, make_incoming, tmp_path, monkeypatch, capsys
+):
     # why: §11. Index.rebuild drops a recording it can't list; reindex must say so, not exit 0.
     rec = writer.add(make_incoming(sources=())).recording
     folder = writer.archive.path_for(rec.id)
@@ -70,8 +74,10 @@ def test_reindex_exits_1_and_names_a_recording_the_rebuild_left_out(
     (problem,) = out["problems"]
     assert "does not match its folder" in problem["message"]
 
+
 def test_reindex_writes_no_docs_so_a_read_only_archive_cannot_stop_it(
-        writer, tmp_path, monkeypatch, capsys):
+    writer, tmp_path, monkeypatch, capsys
+):
     # why: reindex is the recovery command and writes nothing into the archive. A docs write
     # failure (read-only mount, full disk) must not stop it before it adopts anything.
     def refuse(root):
@@ -96,7 +102,8 @@ def test_reindex_names_an_index_it_cannot_rebuild(writer, tmp_path, monkeypatch,
 
 
 def test_reindex_refuses_when_recordings_state_db_knows_are_gone(
-        writer, make_incoming, tmp_path, monkeypatch, capsys):
+    writer, make_incoming, tmp_path, monkeypatch, capsys
+):
     # why: a half-mounted or partly restored archive lists fewer recordings, not none, so the
     # empty-index guard doesn't fire. Rebuilding would drop them from the index, and an import
     # could then make a second copy of their bytes (§6.4).
@@ -124,7 +131,8 @@ def test_validate_exits_1_on_problems(tmp_path, capsys):
 
 
 def test_reindex_allow_missing_works_when_index_db_is_gone(
-        writer, make_incoming, tmp_path, monkeypatch, capsys):
+    writer, make_incoming, tmp_path, monkeypatch, capsys
+):
     # why: the runbook's restore does not bring index.db back, and a hand deletion needs
     # --allow-missing. The command must not stop at the Writer's own start-up rebuild (exit 78).
     writer.add(make_incoming(sources=()))
@@ -140,7 +148,8 @@ def test_reindex_allow_missing_works_when_index_db_is_gone(
 
 
 def test_reindex_allow_missing_works_with_an_index_update_pending(
-        writer, make_incoming, tmp_path, monkeypatch, capsys):
+    writer, make_incoming, tmp_path, monkeypatch, capsys
+):
     keep = writer.add(make_incoming(sources=())).recording
     gone = writer.add(make_incoming(sources=())).recording
     shutil.rmtree(writer.archive.path_for(gone.id))
@@ -154,13 +163,24 @@ def test_reindex_allow_missing_works_with_an_index_update_pending(
 
 
 def test_reindex_exits_1_when_a_plaud_recording_could_not_be_reconciled(
-        writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys):
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
     # why: that recording's outputs are missing, so a script must be told, as it is for an
     # invalid file. The message ("busy") must not reach the report.
     when = datetime(2026, 8, 1, 16, 10, tzinfo=timezone.utc)
-    writer.add(make_incoming(sources=(RawSource(
-        kind="plaud", ref="0123456789abcdef0123456789abcdef", added_at=when, fetched_at=when,
-        payload=json.dumps(plaud_env()).encode()),)))
+    writer.add(
+        make_incoming(
+            sources=(
+                RawSource(
+                    kind="plaud",
+                    ref="0123456789abcdef0123456789abcdef",
+                    added_at=when,
+                    fetched_at=when,
+                    payload=json.dumps(plaud_env()).encode(),
+                ),
+            )
+        )
+    )
 
     def refuse(self, recording_id):
         raise LockTimeout("busy")
@@ -183,7 +203,12 @@ def test_the_cli_refuses_abbreviated_flags():
 
     parser = build_parser()
     assert parser.parse_args(["doctor", "--role", "web"]).role == "web"
-    for argv in (["doctor", "--rol", "web"], ["backup", "run", "--ta", "x"],
-                 ["validate", "x", "--dee"], ["init", "--ado"], ["mirror", "--max-del", "3"]):
+    for argv in (
+        ["doctor", "--rol", "web"],
+        ["backup", "run", "--ta", "x"],
+        ["validate", "x", "--dee"],
+        ["init", "--ado"],
+        ["mirror", "--max-del", "3"],
+    ):
         with pytest.raises(SystemExit):
             parser.parse_args(argv)

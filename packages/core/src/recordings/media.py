@@ -63,16 +63,31 @@ def _wave(path: Path) -> MediaProbe | None:
         return None  # wave raises RuntimeError for a chunk that overruns the file
     if not rate or not frame_size or frames == 0 or frames != declared:
         return None
-    return MediaProbe(duration_ms=round(frames * 1000 / rate), sample_rate=rate,
-                      channels=channels or None, method="wave")
+    return MediaProbe(
+        duration_ms=round(frames * 1000 / rate),
+        sample_rate=rate,
+        channels=channels or None,
+        method="wave",
+    )
 
 
 def _streams(exe: str, path: Path, timeout: float) -> list[dict] | None:
     try:
         proc = subprocess.run(
-            [exe, "-v", "error", "-show_entries", "stream=codec_type,sample_rate,channels",
-             "-of", "json", str(path)],
-            capture_output=True, text=True, timeout=timeout)
+            [
+                exe,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,sample_rate,channels",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         data = json.loads(proc.stdout) if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError):  # ValueError: bad JSON or bad UTF-8
         return None
@@ -91,9 +106,28 @@ def decoded_ms(path: Path, *, ffmpeg: str = "ffmpeg", timeout: float = 600) -> i
         return None
     try:
         proc = subprocess.Popen(
-            [exe, "-nostdin", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1",
-             "-ar", str(DECODE_RATE), "-c:a", "pcm_s16le", "-f", "s16le", "-"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            [
+                exe,
+                "-nostdin",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0:a:0",
+                "-ac",
+                "1",
+                "-ar",
+                str(DECODE_RATE),
+                "-c:a",
+                "pcm_s16le",
+                "-f",
+                "s16le",
+                "-",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
     except OSError:
         return None
     last = time.monotonic()
@@ -120,8 +154,9 @@ def decoded_ms(path: Path, *, ffmpeg: str = "ffmpeg", timeout: float = 600) -> i
     return round((total // 2) * 1000 / DECODE_RATE)
 
 
-def probe(path: Path, *, ffprobe: str = "ffprobe", ffmpeg: str = "ffmpeg",
-          timeout: float = 600) -> MediaProbe | None:
+def probe(
+    path: Path, *, ffprobe: str = "ffprobe", ffmpeg: str = "ffmpeg", timeout: float = 600
+) -> MediaProbe | None:
     path = Path(path)
     if path.suffix.lower() == ".wav":
         measured = _wave(path)
@@ -137,10 +172,13 @@ def probe(path: Path, *, ffprobe: str = "ffprobe", ffmpeg: str = "ffmpeg",
     duration_ms = decoded_ms(path, ffmpeg=ffmpeg, timeout=timeout)
     if duration_ms is None:
         return None
-    return MediaProbe(duration_ms=duration_ms, sample_rate=_int(audio.get("sample_rate")),
-                      channels=_int(audio.get("channels")),
-                      has_video=any(s.get("codec_type") == "video" for s in streams),
-                      method="decoded")
+    return MediaProbe(
+        duration_ms=duration_ms,
+        sample_rate=_int(audio.get("sample_rate")),
+        channels=_int(audio.get("channels")),
+        has_video=any(s.get("codec_type") == "video" for s in streams),
+        method="decoded",
+    )
 
 
 def media_kind(path: Path, probed: MediaProbe | None) -> Literal["audio", "video"] | None:

@@ -70,8 +70,12 @@ def create_app(settings: Settings) -> HostGuard:
         if not found or not (media_type or "").startswith(("audio/", "video/")):
             raise HTTPException(status_code=404)
         # FileResponse answers Range with 206, and an unsatisfiable range with 416 (Starlette docs).
-        return FileResponse(path, media_type=media_type, content_disposition_type="inline",
-                            headers={"X-Content-Type-Options": "nosniff"})
+        return FileResponse(
+            path,
+            media_type=media_type,
+            content_disposition_type="inline",
+            headers={"X-Content-Type-Options": "nosniff"},
+        )
 
     api.mount("/", shiny_app)  # last, so the routes above win
     # Around everything, the Shiny app and its websocket included (recordings_ui.hosts): first the

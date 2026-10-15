@@ -38,7 +38,9 @@ def test_clearing_the_selection_publishes_none(local_server: TestServerSession):
 
 def test_the_server_route_is_the_default_media_url(local_server: TestServerSession, demo_ids):
     local_server.set_inputs(selected_id=demo_ids["jfk-rice"])
-    assert local_server.get_output("recording").value["media_url"] == f"/media/{demo_ids['jfk-rice']}"
+    assert (
+        local_server.get_output("recording").value["media_url"] == f"/media/{demo_ids['jfk-rice']}"
+    )
 
 
 @pytest.mark.parametrize("_archive", ["../media/"], indirect=True)

@@ -27,10 +27,21 @@ from recordings_ui.app import create_app
 from recordings_ui.settings import find_demo_archive, from_env
 
 PATH_EVENTS = ("open", "sqlite3.connect", "os.scandir", "os.listdir")
-ANY_EVENTS = ("socket.connect", "socket.getaddrinfo", "socket.gethostbyname",
-              "socket.gethostbyname_ex", "socket.gethostbyaddr", "socket.getnameinfo",
-              "subprocess.Popen", "_posixsubprocess.fork_exec", "os.exec", "os.posix_spawn",
-              "os.spawn", "os.system", "os.fork")
+ANY_EVENTS = (
+    "socket.connect",
+    "socket.getaddrinfo",
+    "socket.gethostbyname",
+    "socket.gethostbyname_ex",
+    "socket.gethostbyaddr",
+    "socket.getnameinfo",
+    "subprocess.Popen",
+    "_posixsubprocess.fork_exec",
+    "os.exec",
+    "os.posix_spawn",
+    "os.spawn",
+    "os.system",
+    "os.fork",
+)
 _events: list[tuple[str, str]] | None = None
 
 
@@ -82,9 +93,19 @@ def test_the_hook_sees_sqlite_listings_other_programs_and_name_lookups(tmp_path)
     # os.spawn is Windows-only (POSIX spawnv forks and execs); gethostbyname_ex raises
     # socket.gethostbyname. Both stay watched.
     assert {e[0] for e in events} >= {
-        "os.listdir", "os.scandir", "subprocess.Popen", "_posixsubprocess.fork_exec",
-        "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr",
-        "socket.getnameinfo", "os.system", "os.posix_spawn", "os.exec", "os.fork"}
+        "os.listdir",
+        "os.scandir",
+        "subprocess.Popen",
+        "_posixsubprocess.fork_exec",
+        "socket.getaddrinfo",
+        "socket.gethostbyname",
+        "socket.gethostbyaddr",
+        "socket.getnameinfo",
+        "os.system",
+        "os.posix_spawn",
+        "os.exec",
+        "os.fork",
+    }
 
 
 def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, monkeypatch):
@@ -93,9 +114,12 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
     for name in ("config.toml", "secret"):
         (real / name).write_text("x\n", encoding="utf-8")
     environ = {
-        "RECORDINGS_CONFIG": str(real / "config.toml"), "RECORDINGS_ARCHIVE": str(real / "archive"),
-        "RECORDINGS_STATE": str(real / "state"), "RECORDINGS_INDEX": str(real / "index.db"),
-        "RESTIC_PASSWORD_FILE": str(real / "secret"), "RECORDINGS_NTFY_TOPIC_FILE": str(real / "secret"),
+        "RECORDINGS_CONFIG": str(real / "config.toml"),
+        "RECORDINGS_ARCHIVE": str(real / "archive"),
+        "RECORDINGS_STATE": str(real / "state"),
+        "RECORDINGS_INDEX": str(real / "index.db"),
+        "RESTIC_PASSWORD_FILE": str(real / "secret"),
+        "RECORDINGS_NTFY_TOPIC_FILE": str(real / "secret"),
         "RECORDINGS_DEADMAN_URL_FILE": str(real / "secret"),
     }
     for name, value in environ.items():  # code reading os.environ itself must find them too
@@ -106,15 +130,27 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
             with TestClient(create_app(settings), base_url="http://localhost") as client:
                 assert client.get("/healthz").json() == {"ok": True, "demo": True}
                 for rid in demo_ids.values():
-                    assert client.get(f"/media/{rid}", headers={"Range": "bytes=0-9"}).status_code == 206
-                with client.websocket_connect("ws://localhost/websocket/",
-                                              headers={"Origin": "http://localhost"}) as ws:
+                    assert (
+                        client.get(f"/media/{rid}", headers={"Range": "bytes=0-9"}).status_code
+                        == 206
+                    )
+                with client.websocket_connect(
+                    "ws://localhost/websocket/", headers={"Origin": "http://localhost"}
+                ) as ws:
                     # Shiny runs the server function after the client's `init` message, and sends
                     # an output only once the client says it is not hidden. So the guard sees what
                     # the outputs read, init says so for each, and the test waits for their values.
                     wanted = {"library", "status"}  # "recording" needs a selected_id
-                    ws.send_text(json.dumps({"method": "init", "data": {
-                        f".clientdata_output_{name}_hidden": False for name in wanted}}))
+                    ws.send_text(
+                        json.dumps(
+                            {
+                                "method": "init",
+                                "data": {
+                                    f".clientdata_output_{name}_hidden": False for name in wanted
+                                },
+                            }
+                        )
+                    )
                     seen: set[str] = set()
 
                     def read() -> None:
@@ -141,24 +177,37 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
     # don't know about. Three kinds of path are allowed by name, found when this was written:
     # the system's MIME tables (mimetypes, for /media), and Shiny's per-session upload folder in
     # the system temp folder (created when a session starts, never written to).
-    roots = [os.path.realpath(p) for p in (
-        settings.archive.parent, find_demo_archive({}), sys.prefix, sys.base_prefix,
-        Path(views.__file__).parent)]
+    roots = [
+        os.path.realpath(p)
+        for p in (
+            settings.archive.parent,
+            find_demo_archive({}),
+            sys.prefix,
+            sys.base_prefix,
+            Path(views.__file__).parent,
+        )
+    ]
     mime_tables = {os.path.realpath(p) for p in mimetypes.knownfiles}
     temp = os.path.realpath(tempfile.gettempdir())
 
     def allowed(path: str) -> bool:
         path = os.path.realpath(path)
-        return (any(os.path.commonpath([path, r]) == r for r in roots) or path in mime_tables
-                or (os.path.dirname(path) == temp and os.path.basename(path).startswith("fileupload-")))
+        return (
+            any(os.path.commonpath([path, r]) == r for r in roots)
+            or path in mime_tables
+            or (os.path.dirname(path) == temp and os.path.basename(path).startswith("fileupload-"))
+        )
 
     assert [e for e in events if e[0] in PATH_EVENTS and not allowed(e[1])] == []
 
 
 def test_demo_mode_removes_its_temporary_copy_at_exit(monkeypatch):
     registered = []
-    monkeypatch.setattr(settings_module.atexit, "register",
-                        lambda fn, *args, **kwargs: registered.append((fn, args, kwargs)))
+    monkeypatch.setattr(
+        settings_module.atexit,
+        "register",
+        lambda fn, *args, **kwargs: registered.append((fn, args, kwargs)),
+    )
     settings = from_env({}, demo=True)
     assert settings.archive.is_dir()
     for fn, args, kwargs in registered:
@@ -178,7 +227,10 @@ def test_demo_mode_removes_its_temporary_copy_on_sigterm(tmp_path):
     with log.open("wb") as out:
         proc = subprocess.Popen(
             [sys.executable, "-m", "recordings_ui", "--demo", "--port", str(port)],
-            env={**os.environ, "TMPDIR": str(scratch)}, stdout=out, stderr=out)
+            env={**os.environ, "TMPDIR": str(scratch)},
+            stdout=out,
+            stderr=out,
+        )
     try:
         deadline = time.monotonic() + 30
         while True:

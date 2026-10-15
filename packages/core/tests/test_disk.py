@@ -9,8 +9,9 @@ from recordings.sentinel import SENTINEL
 
 
 def fake_statvfs(free_percent):
-    return lambda path: SimpleNamespace(f_bavail=int(free_percent * 10), f_frsize=1024,
-                                        f_blocks=1000)
+    return lambda path: SimpleNamespace(
+        f_bavail=int(free_percent * 10), f_frsize=1024, f_blocks=1000
+    )
 
 
 @pytest.mark.parametrize("free, level", [(50.0, "ok"), (19.9, "warn"), (4.9, "stop")])
@@ -35,9 +36,13 @@ def test_a_missing_or_changed_marker_stops_everything(new_archive, monkeypatch):
 
 def test_the_thresholds_come_from_config(tmp_path):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text("[disk]\nwarn_free_percent = 30\nstop_free_percent = 10\n", encoding="utf-8")
+    cfg_file.write_text(
+        "[disk]\nwarn_free_percent = 30\nstop_free_percent = 10\n", encoding="utf-8"
+    )
     assert disk_thresholds(load_config({"RECORDINGS_CONFIG": str(cfg_file)})) == {
-        "warn": 30.0, "stop": 10.0}
+        "warn": 30.0,
+        "stop": 10.0,
+    }
     cfg_file.write_text("[disk]\nwarn_free_percent = 5\nstop_free_percent = 10\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="stop_free_percent"):
         disk_thresholds(load_config({"RECORDINGS_CONFIG": str(cfg_file)}))

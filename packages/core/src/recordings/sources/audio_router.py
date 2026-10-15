@@ -49,18 +49,40 @@ from recordings.writer import Incoming, IndexUnavailable, NotTheWriter, Writer, 
 
 CATALOG = Path("catalog") / "catalog.csv"
 PROVENANCE = Path("catalog") / "provenance.json"
-REQUIRED_COLUMNS = ("uri", "source", "file_id", "recorded_at_local", "timezone", "time_source",
-                    "audio_rel", "audio_sha256", "dup_of", "tags", "access")
+REQUIRED_COLUMNS = (
+    "uri",
+    "source",
+    "file_id",
+    "recorded_at_local",
+    "timezone",
+    "time_source",
+    "audio_rel",
+    "audio_sha256",
+    "dup_of",
+    "tags",
+    "access",
+)
 SOURCES = ("plaud", "recorder", "pocket")
 # audio-router's time_source, per source, as recordings' (§6.2); anything else is unplaced.
 TIME_SOURCES = {
-    ("plaud", "start_at"): "plaud", ("plaud", "created_at"): "plaud",
-    ("recorder", "filename"): "metadata", ("recorder", "file mtime (inferred)"): "mtime",
-    ("pocket", "recording_at"): "metadata", ("pocket", "created_at"): "ingest",
+    ("plaud", "start_at"): "plaud",
+    ("plaud", "created_at"): "plaud",
+    ("recorder", "filename"): "metadata",
+    ("recorder", "file mtime (inferred)"): "mtime",
+    ("pocket", "recording_at"): "metadata",
+    ("pocket", "created_at"): "ingest",
     ("private", "filename"): "metadata",
 }
-DISPOSITIONS = ("new", "new-private", "duplicate", "present", "no-audio", "deferred-to-2b",
-                "consent-excluded", "unplaced")
+DISPOSITIONS = (
+    "new",
+    "new-private",
+    "duplicate",
+    "present",
+    "no-audio",
+    "deferred-to-2b",
+    "consent-excluded",
+    "unplaced",
+)
 IMPORTED = ("new", "new-private", "duplicate", "present")  # the dispositions a run imports
 # audio-router's privacy labels: the protected markers in its sources/local_.py at 64612df
 # (PROTECTED_SEGMENTS, and the markers it checks in file names only), and the one tag each
@@ -85,8 +107,10 @@ _HEX32 = re.compile(r"[0-9a-f]{32}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 # A row the index can't answer for now is unplaced with this reason, and plan() makes it a
 # problem too, so not even --allow-unplaced imports past a busy index (§6.4).
-INDEX_BUSY = ("the index can't answer now (busy, or an I/O error), so whether this archive holds "
-              "it is unknown: run the import again")
+INDEX_BUSY = (
+    "the index can't answer now (busy, or an I/O error), so whether this archive holds "
+    "it is unknown: run the import again"
+)
 
 
 class CatalogError(RuntimeError):
@@ -151,34 +175,51 @@ class Plan:
         """Rows to import whose media couldn't be measured: a real run refuses them all. A
         `present` row isn't measured again: its recording holds the decoded duration of the same
         bytes (§9.1.1), so a re-run decodes only what it would create."""
-        return [i.row.uri for i in self.items if i.disposition in IMPORTED
-                and i.disposition != "present" and i.probed is None]
+        return [
+            i.row.uri
+            for i in self.items
+            if i.disposition in IMPORTED and i.disposition != "present" and i.probed is None
+        ]
 
     def incomplete_snapshots(self) -> dict:
         """Plaud snapshots reconcile will skip, counted by reason (a snapshot with two reasons
         counts under both), for rows a run imports."""
-        bad = [reasons for i in self.items if i.disposition in IMPORTED
-               for reasons in i.snapshot_problems if reasons]
+        bad = [
+            reasons
+            for i in self.items
+            if i.disposition in IMPORTED
+            for reasons in i.snapshot_problems
+            if reasons
+        ]
         by_reason = Counter(r for reasons in bad for r in set(reasons))
         return {"total": len(bad), "by_reason": dict(sorted(by_reason.items()))}
 
     def all_snapshots_incomplete(self) -> list[str]:
         """Rows whose every snapshot is incomplete: they would get no Plaud outputs at all."""
-        return [i.row.uri for i in self.items if i.disposition in IMPORTED
-                and i.snapshot_problems and all(i.snapshot_problems)]
+        return [
+            i.row.uri
+            for i in self.items
+            if i.disposition in IMPORTED and i.snapshot_problems and all(i.snapshot_problems)
+        ]
 
     def offset_only(self) -> list[str]:
         """Rows to import whose time keeps its offset but no zone name, because the zone the
         catalog gives contradicts it: reported, not refused, and fixable in recording.json."""
-        return [i.row.uri for i in self.items if i.disposition in IMPORTED
-                and i.recorded_at is not None and not i.timezone]
+        return [
+            i.row.uri
+            for i in self.items
+            if i.disposition in IMPORTED and i.recorded_at is not None and not i.timezone
+        ]
 
     def zones(self) -> dict[str, dict[str, int]]:
         """Rows to import by source and zone name ("" for offset only). audio-router stamps a
         Recorder, Pocket or private row with the zone its config named when its index or catalog
         was built, not where it was recorded: a zone wrong for a whole source shows here."""
-        found = Counter((i.row.source, i.timezone) for i in self.items
-                        if i.disposition in IMPORTED and i.recorded_at is not None)
+        found = Counter(
+            (i.row.source, i.timezone)
+            for i in self.items
+            if i.disposition in IMPORTED and i.recorded_at is not None
+        )
         out: dict[str, dict[str, int]] = {}
         for (source, zone), n in sorted(found.items()):
             out.setdefault(source, {})[zone] = n
@@ -186,8 +227,11 @@ class Plan:
 
     @property
     def ok(self) -> bool:
-        return (not self.problems and not self.unprobed()
-                and not any(i.disposition == "unplaced" for i in self.items))
+        return (
+            not self.problems
+            and not self.unprobed()
+            and not any(i.disposition == "unplaced" for i in self.items)
+        )
 
     def report(self) -> dict:
         """Counts, URIs and IDs: never a title or a transcript, and never a consent-listed ID."""
@@ -195,14 +239,19 @@ class Plan:
             "catalog_rows": len(self.items),
             "by_disposition": self.counts(),
             # Rows to import whose recording will be private: by their own labels or their group's.
-            "private": sum(bool(i.private or i.group_privacy) for i in self.items
-                           if i.disposition in IMPORTED),
-            "unplaced": [{"uri": i.row.uri, "reason": i.reason}
-                         for i in self.items if i.disposition == "unplaced"],
+            "private": sum(
+                bool(i.private or i.group_privacy) for i in self.items if i.disposition in IMPORTED
+            ),
+            "unplaced": [
+                {"uri": i.row.uri, "reason": i.reason}
+                for i in self.items
+                if i.disposition == "unplaced"
+            ],
             "no_audio": [i.row.uri for i in self.items if i.disposition == "no-audio"],
             # Plaud IDs, so stage 2b's sync can match them (Dan, 2026-10-09).
-            "deferred_to_2b": [i.row.file_id for i in self.items
-                               if i.disposition == "deferred-to-2b"],
+            "deferred_to_2b": [
+                i.row.file_id for i in self.items if i.disposition == "deferred-to-2b"
+            ],
             "unprobed": self.unprobed(),
             "incomplete_snapshots": self.incomplete_snapshots(),
             "all_snapshots_incomplete": self.all_snapshots_incomplete(),
@@ -239,13 +288,15 @@ def read_catalog(root: Path) -> list[Row]:
     if not path.is_file():
         raise CatalogError(
             f"{path}: catalog.csv is missing. The import is driven by audio-router's catalog: "
-            "build it there with scripts/build_catalog.py, then copy the archive again.")
+            "build it there with scripts/build_catalog.py, then copy the archive again."
+        )
     with path.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
         missing = [c for c in REQUIRED_COLUMNS if c not in (reader.fieldnames or [])]
         if missing:
-            raise CatalogError(f"{path} is not audio-router's catalog@5: missing columns "
-                               + ", ".join(missing))
+            raise CatalogError(
+                f"{path} is not audio-router's catalog@5: missing columns " + ", ".join(missing)
+            )
         rows = [_row(r) for r in reader]
     repeated = sorted(u for u, n in Counter(r.uri for r in rows).items() if n > 1)
     if repeated:
@@ -317,8 +368,15 @@ def _when(row: Row, default_tz: str) -> tuple[datetime | None, str, str, str]:
     elif when.utcoffset() != when.astimezone(zone).utcoffset():
         name = ""
     if when.utcoffset().total_seconds() % 60:
-        return None, "", "", (f"recording time {row.recorded_at_local!r} has an offset in "
-                              "seconds, which a recording ID can't carry")
+        return (
+            None,
+            "",
+            "",
+            (
+                f"recording time {row.recorded_at_local!r} has an offset in "
+                "seconds, which a recording ID can't carry"
+            ),
+        )
     return when, name, time_source, ""
 
 
@@ -340,8 +398,9 @@ def _walk(top: Path) -> tuple[list[Path], int]:
     skips those without a word on Python 3.13+, so a recording in one would look absent instead
     of unreadable. Symlinked folders aren't followed, as `rglob` doesn't follow them."""
     errors: list[OSError] = []
-    files = [folder / name for folder, _, names in top.walk(on_error=errors.append)
-             for name in names]
+    files = [
+        folder / name for folder, _, names in top.walk(on_error=errors.append) for name in names
+    ]
     return sorted(files), len(errors)
 
 
@@ -379,9 +438,12 @@ def _private_media(root: Path, consent: frozenset[str]) -> tuple[dict[str, list[
     if tier.is_dir():
         paths, skipped = _walk(tier)  # a folder that can't be listed counts as one
         for path in paths:
-            if (path.is_file() and not path.name.startswith(".")
-                    and path.suffix.lower() in MEDIA_SUFFIXES
-                    and canonical_plaud_id(path.stem) not in consent):
+            if (
+                path.is_file()
+                and not path.name.startswith(".")
+                and path.suffix.lower() in MEDIA_SUFFIXES
+                and canonical_plaud_id(path.stem) not in consent
+            ):
                 try:
                     if not _all_inside(root, [path]):
                         skipped += 1
@@ -406,8 +468,13 @@ def _find_private(root: Path, fid: str, media_by_sha: dict[str, list[Path]]):
     kind = _kind_from_id(fid)
     if not kind:
         return f"can't tell which source private recording {fid} came from"
-    texts = tuple(sorted(p for p in found.parent.iterdir()
-                         if p.is_file() and p.stem == found.stem and p.suffix.lower() == ".txt"))
+    texts = tuple(
+        sorted(
+            p
+            for p in found.parent.iterdir()
+            if p.is_file() and p.stem == found.stem and p.suffix.lower() == ".txt"
+        )
+    )
     return kind, found, texts
 
 
@@ -438,8 +505,10 @@ def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | 
     if kind == "plaud":
         for rid in index.find_by_source("plaud", row.file_id, strict=True):
             if index.sha256_of(rid, strict=True) != sha:
-                return None, (f"Plaud ID {row.file_id} is already in this archive ({rid}) "
-                              "with different audio")
+                return None, (
+                    f"Plaud ID {row.file_id} is already in this archive ({rid}) "
+                    "with different audio"
+                )
             return rid, ""
     for rid in index.find_by_source("audio_router", row.uri, strict=True):
         # The same source row with other bytes: never a second copy.
@@ -449,7 +518,9 @@ def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | 
     return index.find_by_sha256(sha, strict=True), ""
 
 
-def _consent_closure(rows: list[Row], consent: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
+def _consent_closure(
+    rows: list[Row], consent: frozenset[str]
+) -> tuple[frozenset[str], frozenset[str]]:
     """The recordings Dan's consent list excludes (§9.1, §9.3): the list excludes the recording,
     not only its ID. Returns (URIs, audio SHA-256s), closed over catalog data alone, so no
     excluded row's files are read. A row is excluded when its own ID is listed, when its `dup_of`
@@ -474,8 +545,9 @@ def _consent_closure(rows: list[Row], consent: frozenset[str]) -> tuple[frozense
     return frozenset(uris), frozenset(shas)
 
 
-def _consent_kept(index: Index | None, rows: list[Row],
-                  excluded: tuple[frozenset[str], frozenset[str]]) -> int:
+def _consent_kept(
+    index: Index | None, rows: list[Row], excluded: tuple[frozenset[str], frozenset[str]]
+) -> int:
     """How many recordings this archive already holds that the consent list now excludes: an ID
     listed after its import. Found by Plaud ID, audio-router's reference and audio hash, from
     catalog data alone, so no file of theirs is opened. The lookups are strict: an index that
@@ -492,9 +564,16 @@ def _consent_kept(index: Index | None, rows: list[Row],
     return len(found)
 
 
-def _place(root: Path, row: Row, *, excluded: tuple[frozenset[str], frozenset[str]],
-           by_uri: dict[str, Row], index: Index | None, default_tz: str,
-           private_media: dict[str, list[Path]]) -> Item:
+def _place(
+    root: Path,
+    row: Row,
+    *,
+    excluded: tuple[frozenset[str], frozenset[str]],
+    by_uri: dict[str, Row],
+    index: Index | None,
+    default_tz: str,
+    private_media: dict[str, list[Path]],
+) -> Item:
     """One row, one disposition. An excluded row is never read; any other row whose files can't
     be read is `unplaced`, naming the exception's type and never a path (a private-tier file
     name is an export title). So is one the index can't answer for now, and plan() makes that a
@@ -502,8 +581,14 @@ def _place(root: Path, row: Row, *, excluded: tuple[frozenset[str], frozenset[st
     if row.uri in excluded[0]:
         return Item(row, "consent-excluded")
     try:
-        item = _place_row(root, row, by_uri=by_uri, index=index, default_tz=default_tz,
-                          private_media=private_media)
+        item = _place_row(
+            root,
+            row,
+            by_uri=by_uri,
+            index=index,
+            default_tz=default_tz,
+            private_media=private_media,
+        )
     except sqlite3.DatabaseError:  # a strict lookup in _present (§6.4)
         return Item(row, "unplaced", INDEX_BUSY)
     except (OSError, ValueError, RuntimeError) as exc:
@@ -513,13 +598,23 @@ def _place(root: Path, row: Row, *, excluded: tuple[frozenset[str], frozenset[st
     return item
 
 
-def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | None,
-               default_tz: str, private_media: dict[str, list[Path]]) -> Item:
+def _place_row(
+    root: Path,
+    row: Row,
+    *,
+    by_uri: dict[str, Row],
+    index: Index | None,
+    default_tz: str,
+    private_media: dict[str, list[Path]],
+) -> Item:
     if row.source not in (*SOURCES, "private"):
         return Item(row, "unplaced", f"unknown source {row.source!r}")
     if not all(_TAG.fullmatch(label) for label in row.tags):
-        return Item(row, "unplaced",
-                    "a tag isn't a lowercase slug, as audio-router's catalog/tags.jsonl requires")
+        return Item(
+            row,
+            "unplaced",
+            "a tag isn't a lowercase slug, as audio-router's catalog/tags.jsonl requires",
+        )
     # Its labels first, from the catalog alone: a row that doesn't import keeps them too, so its
     # privacy reaches the row of its same-audio group that creates the recording (§7.4).
     tags = map_tags(row.tags)
@@ -530,9 +625,14 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
         snapshots, _ = _store_files(root, "plaud", row.file_id)
         if not snapshots:  # build_catalog.py's orphans: audio alone (Dan, 2026-10-09). Its audio
             # is never read; only its labels count, for its same-audio group.
-            return Item(row, "deferred-to-2b", "no snapshot and no recording time: stage 2b's "
-                        "sync matches it by its Plaud ID", kind="plaud", private=private,
-                        tags=tags)
+            return Item(
+                row,
+                "deferred-to-2b",
+                "no snapshot and no recording time: stage 2b's sync matches it by its Plaud ID",
+                kind="plaud",
+                private=private,
+                tags=tags,
+            )
     when, zone, time_source, why = _when(row, default_tz)
     if when is None:
         return Item(row, "unplaced", why)
@@ -547,36 +647,62 @@ def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | N
         kind = row.source
         if not row.audio_rel:
             later = "; Plaud's copy arrives through the sync" if kind == "plaud" else ""
-            return Item(row, "no-audio", f"no audio in audio-router{later}", kind=kind,
-                        private=private, tags=tags)
+            return Item(
+                row,
+                "no-audio",
+                f"no audio in audio-router{later}",
+                kind=kind,
+                private=private,
+                tags=tags,
+            )
         audio = _inside(root, row.audio_rel)
         if audio is None or not audio.is_file():
             return Item(row, "unplaced", f"audio {row.audio_rel} is missing from the copy")
         snapshots, renditions = _store_files(root, kind, row.file_id)
         if not snapshots:  # build_catalog built this row from one: its time, or pocket/raw/
-            return Item(row, "unplaced", "the copy has no snapshot of it, though the catalog "
-                        "was built from one: the copy is incomplete")
+            return Item(
+                row,
+                "unplaced",
+                "the copy has no snapshot of it, though the catalog "
+                "was built from one: the copy is incomplete",
+            )
     if not _all_inside(root, [audio, *snapshots, *renditions, *texts]):
         return Item(row, "unplaced", "a file resolves outside the source root")
     sha = sha256_file(audio)
     # A private row's 64-hex ID is its audio's hash, as the catalog's column is a main-tier row's.
-    expected = row.audio_sha256 or (row.file_id if row.source == "private"
-                                    and _HEX64.fullmatch(row.file_id) else "")
+    expected = row.audio_sha256 or (
+        row.file_id if row.source == "private" and _HEX64.fullmatch(row.file_id) else ""
+    )
     if expected and sha != expected:
-        return Item(row, "unplaced",
-                    "the audio's SHA-256 differs from the catalog's: the copy is damaged")
+        return Item(
+            row, "unplaced", "the audio's SHA-256 differs from the catalog's: the copy is damaged"
+        )
     if row.dup_of and row.dup_of not in by_uri:
         return Item(row, "unplaced", f"dup_of names {row.dup_of}, which the catalog doesn't list")
     present, conflict = _present(index, kind, row, sha)
     if conflict:
         return Item(row, "unplaced", conflict)
-    disposition = ("present" if present else "duplicate" if row.dup_of
-                   else "new-private" if private else "new")
-    return Item(row, disposition, kind=kind, audio=audio, sha256=sha, recorded_at=when,
-                timezone=zone, time_source=time_source, snapshots=snapshots,
-                renditions=renditions, texts=texts, present_id=present, private=private,
-                tags=tags, probed=None if present else probe(audio),
-                snapshot_problems=_snapshot_problems(kind, snapshots))
+    disposition = (
+        "present" if present else "duplicate" if row.dup_of else "new-private" if private else "new"
+    )
+    return Item(
+        row,
+        disposition,
+        kind=kind,
+        audio=audio,
+        sha256=sha,
+        recorded_at=when,
+        timezone=zone,
+        time_source=time_source,
+        snapshots=snapshots,
+        renditions=renditions,
+        texts=texts,
+        present_id=present,
+        private=private,
+        tags=tags,
+        probed=None if present else probe(audio),
+        snapshot_problems=_snapshot_problems(kind, snapshots),
+    )
 
 
 def _ids_on_disk(root: Path, source: str) -> tuple[set[str], int]:
@@ -588,8 +714,11 @@ def _ids_on_disk(root: Path, source: str) -> tuple[set[str], int]:
     audio = root / source / "audio"
     if audio.is_dir():
         files, unlistable = _walk(audio)
-        names |= {p.stem for p in files if p.is_file()
-                  and not p.name.startswith(".") and p.suffix not in (".part", ".tmp")}
+        names |= {
+            p.stem
+            for p in files
+            if p.is_file() and not p.name.startswith(".") and p.suffix not in (".part", ".tmp")
+        }
     for folder in ("raw", "derived"):
         base = root / source / folder
         try:
@@ -681,10 +810,17 @@ def _hold_groups(items: list[Item], groups: dict[str, str]) -> list[Item]:
     for item in items:
         if item.disposition == "unplaced":
             waits.setdefault(groups[item.row.uri], item.row.uri)
-    return [Item(item.row, "unplaced", f"{waits[groups[item.row.uri]]} has the same audio and "
-                 "can't be placed: the recording waits for it")
-            if item.disposition in IMPORTED and groups[item.row.uri] in waits else item
-            for item in items]
+    return [
+        Item(
+            item.row,
+            "unplaced",
+            f"{waits[groups[item.row.uri]]} has the same audio and "
+            "can't be placed: the recording waits for it",
+        )
+        if item.disposition in IMPORTED and groups[item.row.uri] in waits
+        else item
+        for item in items
+    ]
 
 
 def _share_privacy(items: list[Item], groups: dict[str, str]) -> list[Item]:
@@ -696,13 +832,19 @@ def _share_privacy(items: list[Item], groups: dict[str, str]) -> list[Item]:
     for item in items:
         if item.row.uri in groups:
             privacy.setdefault(groups[item.row.uri], {}).update(
-                dict.fromkeys(t for t in item.tags if is_private_tag(t)))
-    return [replace(item, group_privacy=tuple(privacy[groups[item.row.uri]]))
-            if item.disposition in IMPORTED else item for item in items]
+                dict.fromkeys(t for t in item.tags if is_private_tag(t))
+            )
+    return [
+        replace(item, group_privacy=tuple(privacy[groups[item.row.uri]]))
+        if item.disposition in IMPORTED
+        else item
+        for item in items
+    ]
 
 
-def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
-         default_timezone: str) -> Plan:
+def plan(
+    root: Path, index: Index | None = None, *, consent: Collection[str], default_timezone: str
+) -> Plan:
     """The dry run (§9.3). `consent` is Dan's consent list (§9.1), which the caller reads
     fail-closed with `recordings.plaud.consent`. `default_timezone` is `[archive] default_timezone`
     (it places a time the source gave without an offset). Neither has a default, so no caller
@@ -713,59 +855,94 @@ def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
     excluded = _consent_closure(rows, listed)
     provenance, problems = _provenance(root)
     if isinstance(provenance.get("rows"), int) and provenance["rows"] != len(rows):
-        problems.append(f"catalog.csv has {len(rows)} rows but provenance.json says "
-                        f"{provenance['rows']}: the copy may be incomplete")
+        problems.append(
+            f"catalog.csv has {len(rows)} rows but provenance.json says "
+            f"{provenance['rows']}: the copy may be incomplete"
+        )
     # The list excludes a recording's copies by its audio hash (§9.1). A listed row with none
     # (its private-tier file ID is its hash, so that one counts) can't have its copies
     # recognised: the run stops, saying how many and never which.
-    blind = sum(1 for r in rows if canonical_plaud_id(r.file_id) in listed and not r.audio_sha256
-                and not (r.source == "private" and _HEX64.fullmatch(r.file_id)))
+    blind = sum(
+        1
+        for r in rows
+        if canonical_plaud_id(r.file_id) in listed
+        and not r.audio_sha256
+        and not (r.source == "private" and _HEX64.fullmatch(r.file_id))
+    )
     if blind:
-        problems.append(f"{blind} consent-listed rows have no catalog audio hash, so copies of "
-                        "them can't be recognised: rebuild the catalog")
+        problems.append(
+            f"{blind} consent-listed rows have no catalog audio hash, so copies of "
+            "them can't be recognised: rebuild the catalog"
+        )
     # An ID listed after its recording was imported: 2a can't take the recording out, so the
     # run stops until Dan does (§9.1). Counted, never named, and found from catalog data alone.
     try:
         kept = _consent_kept(index, rows, excluded)
     except sqlite3.DatabaseError:  # a busy index never counts none (§6.4)
         kept = 0
-        problems.append("the index can't answer now (busy, or an I/O error), so recordings "
-                        "already here that the consent list now excludes can't be counted: run "
-                        "the import again")
+        problems.append(
+            "the index can't answer now (busy, or an I/O error), so recordings "
+            "already here that the consent list now excludes can't be counted: run "
+            "the import again"
+        )
     if kept:
-        problems.append(f"{kept} recordings already in this archive are now on the consent "
-                        "list: 2a can't remove them, so take them out by hand (then `recordings "
-                        "reindex --allow-missing`) before importing again")
+        problems.append(
+            f"{kept} recordings already in this archive are now on the consent "
+            "list: 2a can't remove them, so take them out by hand (then `recordings "
+            "reindex --allow-missing`) before importing again"
+        )
     by_uri = {r.uri: r for r in rows}
     private_media, skipped = _private_media(root, listed)
     if skipped:
-        problems.append(f"{skipped} private-tier files or folders couldn't be read or sit "
-                        "outside the source: they are not matched to any row")
+        problems.append(
+            f"{skipped} private-tier files or folders couldn't be read or sit "
+            "outside the source: they are not matched to any row"
+        )
     named = {r.file_id for r in rows if r.source == "private"}
-    unlisted_private = sum(1 for sha, paths in private_media.items() for p in paths
-                           if sha not in named and p.stem not in named)
+    unlisted_private = sum(
+        1
+        for sha, paths in private_media.items()
+        for p in paths
+        if sha not in named and p.stem not in named
+    )
     # Rows that are nobody's duplicate first, so a duplicate always merges into its original.
-    placed = [_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
-                     default_tz=default_timezone, private_media=private_media)
-              for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))]
+    placed = [
+        _place(
+            root,
+            row,
+            excluded=excluded,
+            by_uri=by_uri,
+            index=index,
+            default_tz=default_timezone,
+            private_media=private_media,
+        )
+        for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))
+    ]
     busy = sum(1 for i in placed if i.reason == INDEX_BUSY)
     if busy:
-        problems.append(f"the index can't answer now (busy, or an I/O error) for {busy} rows, so "
-                        "the plan can't tell which are already here: run the import again")
+        problems.append(
+            f"the index can't answer now (busy, or an I/O error) for {busy} rows, so "
+            "the plan can't tell which are already here: run the import again"
+        )
     groups = _groups(placed)
     items = _share_privacy(_hold_groups(placed, groups), groups)
     unlisted, unlistable = _unlisted(root, rows, listed)
     if unlistable:
-        problems.append(f"{unlistable} store folders couldn't be listed: recordings in them can't "
-                        "be found, so the copy can't be checked against the catalog")
+        problems.append(
+            f"{unlistable} store folders couldn't be listed: recordings in them can't "
+            "be found, so the copy can't be checked against the catalog"
+        )
     ledger = [str(x) for x in provenance.get("ledger_only_no_media") or []]
     held = ((provenance.get("per_source") or {}).get("plaud") or {}).get("held_count")
-    return Plan(root=root, items=tuple(items),
-                ledger_only=tuple(sorted(x for x in ledger
-                                         if canonical_plaud_id(x) not in listed)),
-                unlisted=tuple(unlisted),
-                held_on_plaud=held if isinstance(held, int) else None, problems=tuple(problems),
-                unlisted_private=unlisted_private)
+    return Plan(
+        root=root,
+        items=tuple(items),
+        ledger_only=tuple(sorted(x for x in ledger if canonical_plaud_id(x) not in listed)),
+        unlisted=tuple(unlisted),
+        held_on_plaud=held if isinstance(held, int) else None,
+        problems=tuple(problems),
+        unlisted_private=unlisted_private,
+    )
 
 
 _log = logging.getLogger(__name__)
@@ -863,10 +1040,16 @@ def _titles(item: Item, *, complete_only: bool = False) -> list[str]:
     (which uses them all, erring private), never into a report."""
     key = "title" if item.kind == "pocket" else "name"
     problems = item.snapshot_problems or ((),) * len(item.snapshots)
-    docs = [_read_json(path) for path, bad in zip(item.snapshots, problems)
-            if not (complete_only and bad)]
-    return [d[key].strip() for d in docs
-            if isinstance(d, dict) and isinstance(d.get(key), str) and d[key].strip()]
+    docs = [
+        _read_json(path)
+        for path, bad in zip(item.snapshots, problems)
+        if not (complete_only and bad)
+    ]
+    return [
+        d[key].strip()
+        for d in docs
+        if isinstance(d, dict) and isinstance(d.get(key), str) and d[key].strip()
+    ]
 
 
 def _identity(rendition: Rendition) -> tuple:
@@ -875,8 +1058,13 @@ def _identity(rendition: Rendition) -> tuple:
     snapshot, the hash of what it carries and its `version`, which carries IMPORT_VERSION."""
     if rendition.meta.get("imported_from") == "audio-router":
         return ("audio-router", rendition.meta.get("file"))
-    return (rendition.kind, rendition.note_type, rendition.inputs.get("source"),
-            rendition.inputs.get("part_sha256"), rendition.version)
+    return (
+        rendition.kind,
+        rendition.note_type,
+        rendition.inputs.get("source"),
+        rendition.inputs.get("part_sha256"),
+        rendition.version,
+    )
 
 
 def _imported(writer: Writer, rid: str) -> set[tuple]:
@@ -884,8 +1072,11 @@ def _imported(writer: Writer, rid: str) -> set[tuple]:
     identity: compared by bytes, a change to the mapping, or to how an output is written, would
     leave a second, permanent copy of each on the next re-run, and the first would stay the one
     shown (`x-2.json` sorts before `x.json`)."""
-    return {_identity(r) for _, r in writer.archive.renditions(rid, problems=[])
-            if r.engine == "pocket" or r.meta.get("imported_from") == "audio-router"}
+    return {
+        _identity(r)
+        for _, r in writer.archive.renditions(rid, problems=[])
+        if r.engine == "pocket" or r.meta.get("imported_from") == "audio-router"
+    }
 
 
 def _title(item: Item) -> tuple[str, bool]:
@@ -908,24 +1099,49 @@ def _recorded(writer: Writer, item: Item) -> MediaProbe:
     fails and is never created unmeasured."""
     media = writer.archive.load(item.present_id or "").media
     if media.sha256 == item.sha256 and media.duration_ms is not None:
-        return MediaProbe(duration_ms=media.duration_ms, sample_rate=media.sample_rate,
-                          channels=media.channels, has_video=media.kind == "video",
-                          method="recorded")
+        return MediaProbe(
+            duration_ms=media.duration_ms,
+            sample_rate=media.sample_rate,
+            channels=media.channels,
+            has_video=media.kind == "video",
+            method="recorded",
+        )
     measured = probe(item.audio) if item.audio is not None else None
     if measured is None:
         raise WriterError("its media can't be measured (spec §9.1.1)")
     return measured
 
 
-def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
-                group: list[Item], counted: set[tuple]) -> None:
-    sources = [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
-                         fetched_at=_fetched_at(path), payload=path.read_bytes())
-               for path in item.snapshots]
-    sources += [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
-                          fetched_at=_fetched_at(path), payload=path.read_bytes(),
-                          suffix=path.suffix.lower())
-                for path in item.texts]  # Recorder's prose transcript, kept as it came (§9.3)
+def _import_one(
+    item: Item,
+    writer: Writer,
+    *,
+    now: datetime,
+    report: RunReport,
+    group: list[Item],
+    counted: set[tuple],
+) -> None:
+    sources = [
+        RawSource(
+            kind=item.kind,
+            ref=item.row.file_id,
+            added_at=now,
+            fetched_at=_fetched_at(path),
+            payload=path.read_bytes(),
+        )
+        for path in item.snapshots
+    ]
+    sources += [
+        RawSource(
+            kind=item.kind,
+            ref=item.row.file_id,
+            added_at=now,
+            fetched_at=_fetched_at(path),
+            payload=path.read_bytes(),
+            suffix=path.suffix.lower(),
+        )
+        for path in item.texts
+    ]  # Recorder's prose transcript, kept as it came (§9.3)
     if not sources:  # the source's own ID is always kept, so a later sync can match it
         sources.append(RawSource(kind=item.kind, ref=item.row.file_id, added_at=now))
     sources.append(RawSource(kind="audio_router", ref=item.row.uri, added_at=now))
@@ -937,30 +1153,58 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
             if _identity(mapped.rendition) not in have:  # each audio-router file goes in once
                 renditions.append(mapped.rendition)
         elif mapped.keep_raw:  # the speaker names Dan typed: verbatim in source/ (§9.3)
-            sources.append(RawSource(kind="audio_router", ref=item.row.uri, added_at=now,
-                                     fetched_at=ar_stamp(path), payload=path.read_bytes()))
+            sources.append(
+                RawSource(
+                    kind="audio_router",
+                    ref=item.row.uri,
+                    added_at=now,
+                    fetched_at=ar_stamp(path),
+                    payload=path.read_bytes(),
+                )
+            )
         else:
-            report.skipped_outputs[mapped.skipped] = report.skipped_outputs.get(mapped.skipped, 0) + 1
+            report.skipped_outputs[mapped.skipped] = (
+                report.skipped_outputs.get(mapped.skipped, 0) + 1
+            )
     # Privacy first (§7.4): every private tag is in place when the recording is created, never
     # a second write after its content. The group's privacy (group_privacy) includes the rows
     # that don't import: one deferred to 2b, or with no audio.
-    tags = [TagRef(tag=tag, by="you") for tag in dict.fromkeys(
-        [*(t for member in group for t in member.tags),
-         *(t for member in group for t in member.group_privacy)])]
+    tags = [
+        TagRef(tag=tag, by="you")
+        for tag in dict.fromkeys(
+            [
+                *(t for member in group for t in member.tags),
+                *(t for member in group for t in member.group_privacy),
+            ]
+        )
+    ]
     if item.disposition == "present":  # its recording exists: a label Dan removed stays removed,
         tags = [t for t in tags if is_private_tag(t.tag)]  # and only privacy is merged again
     titles = [t for member in group if member.kind == "plaud" for t in _titles(member)]
-    if (not any(is_private_tag(t.tag) for t in tags)
-            and matches_auto_private(titles, writer.auto_private)):
+    if not any(is_private_tag(t.tag) for t in tags) and matches_auto_private(
+        titles, writer.auto_private
+    ):
         tags.append(TagRef(tag="private", by="auto"))
     title, from_source = _title(item)
     probed = item.probed if item.probed is not None else _recorded(writer, item)
-    added = writer.add(Incoming(
-        media=item.audio, recorded_at=item.recorded_at, timezone_name=item.timezone,
-        time_source=item.time_source, title=title, title_by=item.kind if from_source else None,
-        kind=media_kind(item.audio, probed) or "audio", sources=tuple(sources),
-        duration_ms=probed.duration_ms, sample_rate=probed.sample_rate, channels=probed.channels,
-        tags=tuple(tags), renditions=tuple(renditions), sha256=item.sha256))
+    added = writer.add(
+        Incoming(
+            media=item.audio,
+            recorded_at=item.recorded_at,
+            timezone_name=item.timezone,
+            time_source=item.time_source,
+            title=title,
+            title_by=item.kind if from_source else None,
+            kind=media_kind(item.audio, probed) or "audio",
+            sources=tuple(sources),
+            duration_ms=probed.duration_ms,
+            sample_rate=probed.sample_rate,
+            channels=probed.channels,
+            tags=tuple(tags),
+            renditions=tuple(renditions),
+            sha256=item.sha256,
+        )
+    )
     if item.probed is not None:  # a present row was measured when its recording was created
         report.measured[probed.method] = report.measured.get(probed.method, 0) + 1
     report.created += added.created
@@ -985,13 +1229,24 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
         rec = writer.archive.load(rid)
         folder = writer.archive.path_for(rid)
         have = _imported(writer, rid)
-        last: dict[tuple, str] = {}  # each slot's part hash at the previous snapshot, as reconcile's `applied`
+        last: dict[
+            tuple, str
+        ] = {}  # each slot's part hash at the previous snapshot, as reconcile's `applied`
         for source in rec.sources:
-            doc = _read_json(folder / source.raw) if source.kind == "pocket" and source.raw else None
+            doc = (
+                _read_json(folder / source.raw) if source.kind == "pocket" and source.raw else None
+            )
             if isinstance(doc, dict):
-                for rendition in pocket_outputs(doc, source.raw, source.fetched_at or source.added_at):
-                    slot, part = (rendition.kind, rendition.note_type), rendition.inputs["part_sha256"]
-                    if last.get(slot) == part:  # the same output as the last snapshot's: no new file
+                for rendition in pocket_outputs(
+                    doc, source.raw, source.fetched_at or source.added_at
+                ):
+                    slot, part = (
+                        (rendition.kind, rendition.note_type),
+                        rendition.inputs["part_sha256"],
+                    )
+                    if (
+                        last.get(slot) == part
+                    ):  # the same output as the last snapshot's: no new file
                         continue
                     last[slot] = part
                     if _identity(rendition) in have:  # written before, whatever its bytes now
@@ -1000,13 +1255,11 @@ def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
                         report.renditions_added += 1
 
 
-def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float, *,
-                creates: bool) -> bool:
+def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float, *, creates: bool) -> bool:
     """Whether copying the item's media would leave less than the stop margin free. Only the row
     that creates a recording copies media: the first of its same-audio group not yet here, which
     is a `duplicate` when its original is deferred to 2b. The rest merge into it."""
-    if (not creates or item.audio is None
-            or status.free_bytes is None or not status.total_bytes):
+    if not creates or item.audio is None or status.free_bytes is None or not status.total_bytes:
         return False
     try:
         size = item.audio.stat().st_size
@@ -1015,9 +1268,15 @@ def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float, *,
     return (status.free_bytes - size) * 100 / status.total_bytes < stop_free_percent
 
 
-def run(plan: Plan, writer: Writer, *, now: datetime,
-        disk: Callable[[], DiskStatus] | None = None, stop_free_percent: float = STOP_FREE_PERCENT,
-        lock_timeout: float = 600) -> RunReport:
+def run(
+    plan: Plan,
+    writer: Writer,
+    *,
+    now: datetime,
+    disk: Callable[[], DiskStatus] | None = None,
+    stop_free_percent: float = STOP_FREE_PERCENT,
+    lock_timeout: float = 600,
+) -> RunReport:
     """Import every placeable row. Re-runnable: what is already there is matched and skipped.
 
     It holds the ops lock throughout, so a backup or the mirror never runs half-way through it.
@@ -1032,11 +1291,15 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
     if plan.problems:
         raise ImportStopped(
             f"the plan has {len(plan.problems)} problem{'s' if len(plan.problems) != 1 else ''} "
-            "(see --dry-run): nothing was imported", report)
+            "(see --dry-run): nothing was imported",
+            report,
+        )
     # Recordings already here go first: a label added in audio-router since (a privacy label
     # among them) lands even when a later new recording stops the run.
-    todo = sorted((item for item in plan.items if item.disposition in IMPORTED),
-                  key=lambda item: item.disposition != "present")
+    todo = sorted(
+        (item for item in plan.items if item.disposition in IMPORTED),
+        key=lambda item: item.disposition != "present",
+    )
     # Rows with the same audio become one recording, whichever is added first. Each is added
     # with its whole group's privacy, so a duplicate's label or title is never a late write.
     by_sha: dict[str, list[Item]] = {}
@@ -1046,10 +1309,14 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
     if unmeasured:
         raise ImportStopped(
             f"media can't be measured for {unmeasured} of {len(todo)} recordings: anything but "
-            "WAV needs ffprobe and ffmpeg (spec §9.1.1). Nothing was imported.", report)
+            "WAV needs ffprobe and ffmpeg (spec §9.1.1). Nothing was imported.",
+            report,
+        )
     counted: set[tuple] = set()
-    with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK), \
-            announce(writer.state.locks_dir, "import", now):
+    with (
+        Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK),
+        announce(writer.state.locks_dir, "import", now),
+    ):
         for item in todo:
             if disk is not None:
                 status = disk()
@@ -1057,22 +1324,40 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
                     raise ImportStopped(status.message, report)
                 creates = item.disposition != "present" and by_sha[item.sha256][0] is item
                 if _would_fill(status, item, stop_free_percent, creates=creates):
-                    raise ImportStopped(f"the next recording would leave less than "
-                                        f"{stop_free_percent:g}% free: new imports stop", report)
+                    raise ImportStopped(
+                        f"the next recording would leave less than "
+                        f"{stop_free_percent:g}% free: new imports stop",
+                        report,
+                    )
             try:
-                _import_one(item, writer, now=now, report=report, group=by_sha[item.sha256],
-                            counted=counted)
+                _import_one(
+                    item, writer, now=now, report=report, group=by_sha[item.sha256], counted=counted
+                )
             except IndexRefused as exc:  # the archive reads as empty: unmounted, most likely
                 _log.debug("importing %s stopped the run", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
-                raise ImportStopped("the archive reads as empty or unreadable (is its disk "
-                                    "mounted?): the import stopped", report) from None
-            except (WriterError, LockTimeout, KeyError, OSError, ValueError, TypeError,
-                    RecursionError, ArithmeticError, sqlite3.Error) as exc:
+                raise ImportStopped(
+                    "the archive reads as empty or unreadable (is its disk "
+                    "mounted?): the import stopped",
+                    report,
+                ) from None
+            except (
+                WriterError,
+                LockTimeout,
+                KeyError,
+                OSError,
+                ValueError,
+                TypeError,
+                RecursionError,
+                ArithmeticError,
+                sqlite3.Error,
+            ) as exc:
                 _log.debug("importing %s failed", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
                 if _stops_the_run(exc):
-                    raise ImportStopped("the disk is full, the archive has dropped off, or state.db "
-                                        "or the index can't be used now: the import stopped",
-                                        report) from None
+                    raise ImportStopped(
+                        "the disk is full, the archive has dropped off, or state.db "
+                        "or the index can't be used now: the import stopped",
+                        report,
+                    ) from None
     return report

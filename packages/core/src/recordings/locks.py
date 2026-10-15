@@ -77,7 +77,8 @@ class Locks:
         if new and held and lock_order(new[0]) < max(lock_order(k) for k in held):
             raise LockOrderError(
                 f"lock {new[0]!r} comes before one already held; take all of an operation's "
-                "locks together, in one hold()")
+                "locks together, in one hold()"
+            )
         counted: list[str] = []
         deadline = time.monotonic() + self.timeout  # one for the whole hold, not one per key
         try:
@@ -110,7 +111,7 @@ class Locks:
                     if time.monotonic() >= deadline:
                         raise LockTimeout(
                             f"{key} is held by another writer; gave up after {self.timeout:g} s"
-                            ) from None
+                        ) from None
                     time.sleep(0.02)
         except BaseException:
             os.close(fd)  # on any exception, even KeyboardInterrupt; closing drops a flock too

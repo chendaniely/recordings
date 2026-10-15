@@ -41,4 +41,6 @@ class CannedBackend:
         path = self.root / "notes" / key / f"{request.note_type}--{model_slug(request.model)}.md"
         if not path.is_file():
             raise BackendError(f"no canned notes for {request.recording_id} ({path})")
-        return Completion(text=path.read_text(encoding="utf-8"), model=request.model, backend=self.name)
+        return Completion(
+            text=path.read_text(encoding="utf-8"), model=request.model, backend=self.name
+        )

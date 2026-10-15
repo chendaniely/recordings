@@ -134,8 +134,10 @@ class MergeIncoming:
         rec = AddTags(self.tags).apply(rec)
         excluded = list(rec.excluded_note_types)
         excluded += [n for n in dict.fromkeys(self.excluded_note_types) if n not in excluded]
-        return rec.model_copy(update={"sources": [*rec.sources, *self.sources],
-                                      "excluded_note_types": excluded})
+        return rec.model_copy(
+            update={"sources": [*rec.sources, *self.sources], "excluded_note_types": excluded}
+        )
+
 
 @dataclass(frozen=True)
 class SetPlaudFields:
@@ -170,11 +172,16 @@ class ReconcileReport:
     problem: str | None = None  # a fixed phrase: never exception text, which can carry a title
 
     def to_dict(self) -> dict:
-        return {"recording_id": self.recording_id, "written": self.written,
-                "held": [{"snapshot": h.snapshot, "slot": h.slot, "reason": h.reason}
-                         for h in self.held],
-                "skipped": list(self.skipped), "title_difference": self.title_difference,
-                "problem": self.problem}
+        return {
+            "recording_id": self.recording_id,
+            "written": self.written,
+            "held": [
+                {"snapshot": h.snapshot, "slot": h.slot, "reason": h.reason} for h in self.held
+            ],
+            "skipped": list(self.skipped),
+            "title_difference": self.title_difference,
+            "problem": self.problem,
+        }
 
 
 @dataclass(frozen=True)
@@ -219,13 +226,19 @@ class ReindexReport:
     reconciled: tuple[ReconcileReport, ...] = ()
 
     def to_dict(self) -> dict:
-        return {"recordings": self.recordings, "adopted": list(self.adopted),
-                "invalid": list(self.invalid), "problems": list(self.problems),
-                "forgotten": list(self.forgotten),
-                "plaud": {"written": sum(r.written for r in self.reconciled),
-                          "held": sum(len(r.held) for r in self.reconciled),
-                          "skipped": sum(len(r.skipped) for r in self.reconciled),
-                          "problems": sum(r.problem is not None for r in self.reconciled)}}
+        return {
+            "recordings": self.recordings,
+            "adopted": list(self.adopted),
+            "invalid": list(self.invalid),
+            "problems": list(self.problems),
+            "forgotten": list(self.forgotten),
+            "plaud": {
+                "written": sum(r.written for r in self.reconciled),
+                "held": sum(len(r.held) for r in self.reconciled),
+                "skipped": sum(len(r.skipped) for r in self.reconciled),
+                "problems": sum(r.problem is not None for r in self.reconciled),
+            },
+        }
 
 
 def _slug(value: str) -> str:
@@ -235,8 +248,12 @@ def _slug(value: str) -> str:
 def rendition_filename(rendition: Rendition) -> str:
     """`<kind>-<engine>-<version>-<UTC stamp>.json`; notes' kind part is `notes-<note type>`."""
     kind = f"notes-{rendition.note_type}" if rendition.kind == "notes" else rendition.kind
-    parts = [_slug(kind), _slug(rendition.engine), _slug(rendition.version),
-             utc_stamp(rendition.created_at)]
+    parts = [
+        _slug(kind),
+        _slug(rendition.engine),
+        _slug(rendition.version),
+        utc_stamp(rendition.created_at),
+    ]
     return "-".join(parts) + ".json"
 
 
@@ -253,9 +270,16 @@ def _rev_of(raw: bytes) -> int:
 
 
 class Writer:
-    def __init__(self, root: Path, state: State, index: Index, *, writer_id: str,
-                 rebuild: bool = True,
-                 auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> None:
+    def __init__(
+        self,
+        root: Path,
+        state: State,
+        index: Index,
+        *,
+        writer_id: str,
+        rebuild: bool = True,
+        auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE,
+    ) -> None:
         self.auto_private = tuple(auto_private)
         self.root = Path(root)
         try:
@@ -263,8 +287,10 @@ class Writer:
         except SentinelError as exc:
             raise NotTheWriter(str(exc)) from None
         if is_mirror(self.root):  # §3: the mirror's copy carries archive.json, but is never written
-            raise NotTheWriter(f"{self.root} holds {MIRROR}: it is the NAS mirror's copy, not the "
-                               "archive. Only the archive's writer writes (spec §3).")
+            raise NotTheWriter(
+                f"{self.root} holds {MIRROR}: it is the NAS mirror's copy, not the "
+                "archive. Only the archive's writer writes (spec §3)."
+            )
         try:
             archive_uuid, recorded = state.meta("archive_uuid"), state.meta("writer_id")
         except StateError as exc:
@@ -274,11 +300,13 @@ class Writer:
         if archive_uuid != self.identity.uuid:
             raise NotTheWriter(
                 f"{state.db_path} belongs to another archive: the archive's UUID changed. "
-                "Refusing to write.")
+                "Refusing to write."
+            )
         if recorded != writer_id:
             raise NotTheWriter(
                 f"this process's writer_id {writer_id!r} is not the archive's writer "
-                f"({recorded!r}); only the writer writes (spec §3)")
+                f"({recorded!r}); only the writer writes (spec §3)"
+            )
         self.state, self.index, self.writer_id = state, index, writer_id
         self.archive = Archive(self.root)  # its own reader, never the UI's
         self.locks = Locks(state.locks_dir)
@@ -290,24 +318,35 @@ class Writer:
                 # §6.7: only an index that isn't this archive's may start out empty.
                 self.rebuild_index(allow_empty=foreign)
             except IndexRefused as exc:
-                hint = "" if foreign or isinstance(exc, MissingRecordings) else (
-                    f" A writer can't start with --allow-empty: if the archive really is empty, "
-                    f"delete {index.path} (it is derived) and start again.")
+                hint = (
+                    ""
+                    if foreign or isinstance(exc, MissingRecordings)
+                    else (
+                        f" A writer can't start with --allow-empty: if the archive really is empty, "
+                        f"delete {index.path} (it is derived) and start again."
+                    )
+                )
                 raise NotTheWriter(f"{exc}{hint}") from None
             except (sqlite3.DatabaseError, OSError) as exc:  # a mode, an owner, a full disk
                 code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
                 raise NotTheWriter(
                     f"rebuilding the index at {index.path} failed ({code}). Check that the archive "
                     "and the index's folder are mounted and belong to this user; the index is "
-                    "derived, so an empty folder for it will do.") from None
+                    "derived, so an empty folder for it will do."
+                ) from None
 
     @classmethod
     def open(cls, cfg: Config, *, docs: bool = True, rebuild: bool = True) -> Writer:
-        missing = [name for name, value in (("[archive] path", cfg.archive_path),
-                                            ("[state] path", cfg.state_path),
-                                            ("[index] path", cfg.index_path),
-                                            ("[archive] writer_id", cfg.writer_id))
-                   if value is None]
+        missing = [
+            name
+            for name, value in (
+                ("[archive] path", cfg.archive_path),
+                ("[state] path", cfg.state_path),
+                ("[index] path", cfg.index_path),
+                ("[archive] writer_id", cfg.writer_id),
+            )
+            if value is None
+        ]
         if missing:
             raise NotTheWriter("set " + ", ".join(missing) + " in config.toml to write the archive")
         try:
@@ -318,8 +357,14 @@ class Writer:
             patterns = patterns_from_config(cfg.data)
         except ConfigError as exc:  # a bad regex must not crash the CLI or stop the web app
             raise NotTheWriter(str(exc)) from None
-        writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
-                     rebuild=rebuild, auto_private=patterns)
+        writer = cls(
+            cfg.archive_path,
+            state,
+            Index(cfg.index_path),
+            writer_id=cfg.writer_id,
+            rebuild=rebuild,
+            auto_private=patterns,
+        )
         if docs:
             writer.write_docs()  # §6.7: at startup, and only into an archive with its sentinel
         return writer
@@ -345,7 +390,8 @@ class Writer:
             raise MissingRecordings(
                 f"{len(unreadable)} recording file(s) state.db knows can't be read "
                 f"({self._shown(unreadable)}). Is the archive fully mounted and readable? "
-                "Nothing was changed.")
+                "Nothing was changed."
+            )
         return gone
 
     @staticmethod
@@ -359,7 +405,8 @@ class Writer:
                 f"{len(gone)} recording(s) state.db knows are not in the archive now "
                 f"({self._shown(gone)}). Is the archive fully mounted and readable? The index was "
                 "not rebuilt. If they were removed on purpose, run `recordings reindex "
-                "--allow-missing`.")
+                "--allow-missing`."
+            )
 
     def rebuild_index(self, *, allow_empty: bool = False, allow_missing: bool = False) -> int:
         # state.db knows every file the app committed. One that is no longer a file means a folder
@@ -369,8 +416,9 @@ class Writer:
         if not allow_missing:
             self._refuse_missing(self._missing())
         with self.locks.hold(INDEX_LOCK):
-            count = self.index.rebuild(self.archive, archive_uuid=self.identity.uuid,
-                                       allow_empty=allow_empty)
+            count = self.index.rebuild(
+                self.archive, archive_uuid=self.identity.uuid, allow_empty=allow_empty
+            )
         # Not a bulk clear: a recording that landed after the rebuild listed the archive still has
         # its mark. Each mark is finished, and cleared, under that recording's own lock, with
         # INDEX_LOCK released first (lock order: recordings come before the index).
@@ -421,14 +469,18 @@ class Writer:
         try:
             found = read_sentinel(self.root)
         except SentinelError:
-            raise NotTheWriter("archive.json is gone or unreadable: the archive is not mounted "
-                               "now. Refusing to write.") from None
+            raise NotTheWriter(
+                "archive.json is gone or unreadable: the archive is not mounted "
+                "now. Refusing to write."
+            ) from None
         if found.uuid != self.identity.uuid:
-            raise NotTheWriter("the archive's UUID changed since this writer opened it. "
-                               "Refusing to write.")
+            raise NotTheWriter(
+                "the archive's UUID changed since this writer opened it. Refusing to write."
+            )
         if is_mirror(self.root):
-            raise NotTheWriter("this folder is now the NAS mirror's copy, not the archive. "
-                               "Refusing to write.")
+            raise NotTheWriter(
+                "this folder is now the NAS mirror's copy, not the archive. Refusing to write."
+            )
 
     def mutate(self, recording_id: str, op: Op) -> Recording:
         self._check_sentinel()
@@ -447,7 +499,8 @@ class Writer:
                 new = Recording.model_validate({**new.model_dump(by_alias=True), "rev": rev})
             except ValidationError as exc:
                 raise InvalidFile(
-                    f"{op.name} would make {rel} invalid: {str(exc).splitlines()[0]}") from None
+                    f"{op.name} would make {rel} invalid: {str(exc).splitlines()[0]}"
+                ) from None
             self._write_recording(rel, new, origin=op.name)
             return new
 
@@ -465,7 +518,8 @@ class Writer:
             self.state.flag(rel, "invalid", message)
             raise InvalidFile(
                 f"{rel} does not validate ({message}). Fix it by hand: the app changes nothing "
-                "in a file that doesn't validate (§11).") from None
+                "in a file that doesn't validate (§11)."
+            ) from None
         self._check_fresh(rel, raw)
         return rec
 
@@ -482,11 +536,16 @@ class Writer:
             self.state.adopt(rel, _rev_of(raw), sha, raw)
             return
         if last.sha256 != sha:
-            self.state.flag(rel, "stale", "edited outside the app since the app last wrote it; "
-                                          "run `recordings reindex` to accept the edit")
+            self.state.flag(
+                rel,
+                "stale",
+                "edited outside the app since the app last wrote it; "
+                "run `recordings reindex` to accept the edit",
+            )
             raise StaleFile(
                 f"{rel} was edited outside the app since the app last wrote it. Run "
-                "`recordings reindex` to accept the edit, then try again.")
+                "`recordings reindex` to accept the edit, then try again."
+            )
 
     def _write_recording(self, rel: str, rec: Recording, *, origin: str) -> None:
         data = dump_json(rec).encode("utf-8")
@@ -548,8 +607,10 @@ class Writer:
             return self.index.find_by_sha256(sha, strict=True)
         except sqlite3.DatabaseError as exc:
             code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
-            raise IndexUnavailable(f"the index at {self.index.path} can't answer now ({code}), "
-                                   "so nothing was written: try again") from None
+            raise IndexUnavailable(
+                f"the index at {self.index.path} can't answer now ({code}), "
+                "so nothing was written: try again"
+            ) from None
 
     def _pending_holding(self, sha: str, pending: list[str]) -> str | None:
         """A recording among `pending` that holds these bytes. recording.json is replaced
@@ -584,14 +645,26 @@ class Writer:
                 if incoming.my_notes is not None:
                     write_text_atomic(tmp / "my-notes.md", incoming.my_notes)
                 rec = Recording(
-                    schema_ref=SCHEMA_REF, id=rid, rev=1, title=incoming.title,
-                    title_by=incoming.title_by, recorded_at=incoming.recorded_at,
-                    timezone=incoming.timezone_name, time_source=incoming.time_source,
-                    media=MediaInfo(file=media_name, sha256=sha, kind=incoming.kind,
-                                    duration_ms=incoming.duration_ms,
-                                    sample_rate=incoming.sample_rate, channels=incoming.channels),
-                    sources=sources, tags=list(incoming.tags),
-                    excluded_note_types=list(dict.fromkeys(incoming.excluded_note_types)))
+                    schema_ref=SCHEMA_REF,
+                    id=rid,
+                    rev=1,
+                    title=incoming.title,
+                    title_by=incoming.title_by,
+                    recorded_at=incoming.recorded_at,
+                    timezone=incoming.timezone_name,
+                    time_source=incoming.time_source,
+                    media=MediaInfo(
+                        file=media_name,
+                        sha256=sha,
+                        kind=incoming.kind,
+                        duration_ms=incoming.duration_ms,
+                        sample_rate=incoming.sample_rate,
+                        channels=incoming.channels,
+                    ),
+                    sources=sources,
+                    tags=list(incoming.tags),
+                    excluded_note_types=list(dict.fromkeys(incoming.excluded_note_types)),
+                )
                 data = dump_json(rec).encode("utf-8")
                 write_bytes_atomic(tmp / "recording.json", data)
                 rel = self._rel(rid)
@@ -613,8 +686,12 @@ class Writer:
             self.state.commit(revision)
             self._drop_empty_tmp()
             self._index(rec)
-            return Added(rec, created=True, sources_added=len(sources),
-                         renditions_added=len(incoming.renditions))
+            return Added(
+                rec,
+                created=True,
+                sources_added=len(sources),
+                renditions_added=len(incoming.renditions),
+            )
 
     def _merge(self, rid: str, sha: str, incoming: Incoming) -> Added:
         with self.locks.hold(rid):
@@ -633,13 +710,19 @@ class Writer:
                 if key not in have:
                     have.add(key)
                     new_sources.append(self._publish_raw(folder, source))
-            written = sum(self._write_rendition_locked(folder, r) is not None
-                          for r in incoming.renditions)
+            written = sum(
+                self._write_rendition_locked(folder, r) is not None for r in incoming.renditions
+            )
             self._merge_notes(folder, incoming.my_notes)
-            merged = self.mutate(rid, MergeIncoming(tuple(new_sources), tuple(incoming.tags),
-                                                    tuple(incoming.excluded_note_types)))
-            return Added(merged, created=False, sources_added=len(new_sources),
-                         renditions_added=written)
+            merged = self.mutate(
+                rid,
+                MergeIncoming(
+                    tuple(new_sources), tuple(incoming.tags), tuple(incoming.excluded_note_types)
+                ),
+            )
+            return Added(
+                merged, created=False, sources_added=len(new_sources), renditions_added=written
+            )
 
     @staticmethod
     def _merge_notes(folder: Path, notes: str | None) -> None:
@@ -688,12 +771,24 @@ class Writer:
             digest = _sha(source.payload)
             # A file with these bytes already there is reused: a merge killed between publishing
             # and recording its snapshot never leaves a duplicate (Review Focus 2).
-            same = next((p for p in sorted(target.parent.glob(f"{target.stem}*{target.suffix}"))
-                         if _sha(p.read_bytes()) == digest), None)
+            same = next(
+                (
+                    p
+                    for p in sorted(target.parent.glob(f"{target.stem}*{target.suffix}"))
+                    if _sha(p.read_bytes()) == digest
+                ),
+                None,
+            )
             path = same or publish_exclusive(source.payload, target)
             raw = path.relative_to(folder).as_posix()
-        return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at,
-                         fetched_at=source.fetched_at, raw=raw, sha256=digest)
+        return SourceRef(
+            kind=source.kind,
+            ref=source.ref,
+            added_at=source.added_at,
+            fetched_at=source.fetched_at,
+            raw=raw,
+            sha256=digest,
+        )
 
     def reconcile_plaud(self, recording_id: str) -> ReconcileReport:
         """Build any Plaud outputs this recording's snapshots imply, and apply the fields Plaud
@@ -714,27 +809,45 @@ class Writer:
                     envelope = json.loads((folder / source.raw).read_text(encoding="utf-8"))
                 except (OSError, UnicodeDecodeError, ValueError, RecursionError):
                     envelope = None
-                snapshots.append(Snapshot(path=source.raw, ref=source.ref,
-                                          fetched_at=source.fetched_at or source.added_at,
-                                          envelope=envelope))
+                snapshots.append(
+                    Snapshot(
+                        path=source.raw,
+                        ref=source.ref,
+                        fetched_at=source.fetched_at or source.added_at,
+                        envelope=envelope,
+                    )
+                )
             if not snapshots:
                 return ReconcileReport(recording_id, 0, (), (), False)
             unreadable: list = []
             existing = [r for _, r in self.archive.renditions(recording_id, problems=unreadable)]
             result = reconcile(rec, snapshots, existing, auto_private=self.auto_private)
             if result.title is not None or result.title_seen is not None or result.add_private:
-                self.mutate(recording_id, SetPlaudFields(result.title, result.title_seen,
-                                                         result.add_private))
+                self.mutate(
+                    recording_id,
+                    SetPlaudFields(result.title, result.title_seen, result.add_private),
+                )
             if unreadable:
                 # An output that can't be read now (damaged, or an I/O error) isn't a missing
                 # one: writing it again would leave a second, permanent copy beside it.
-                return ReconcileReport(recording_id, 0, result.held, result.skipped,
-                                       result.title_difference is not None,
-                                       problem="an output can't be read: not reconciled")
-            written = sum(self._write_rendition_locked(folder, r) is not None
-                          for r in result.outputs)
-            return ReconcileReport(recording_id, written, result.held, result.skipped,
-                                   result.title_difference is not None)
+                return ReconcileReport(
+                    recording_id,
+                    0,
+                    result.held,
+                    result.skipped,
+                    result.title_difference is not None,
+                    problem="an output can't be read: not reconciled",
+                )
+            written = sum(
+                self._write_rendition_locked(folder, r) is not None for r in result.outputs
+            )
+            return ReconcileReport(
+                recording_id,
+                written,
+                result.held,
+                result.skipped,
+                result.title_difference is not None,
+            )
 
     # ---- housekeeping ------------------------------------------------------------------------
     def _sweep_tmp(self) -> None:
@@ -760,8 +873,7 @@ class Writer:
             (self.root / ".tmp").rmdir()
 
     # ---- reindex: accept outside edits, rebuild the index (§6.4, §6.7, §11) -----------------
-    def reindex(self, *, allow_empty: bool = False,
-                allow_missing: bool = False) -> ReindexReport:
+    def reindex(self, *, allow_empty: bool = False, allow_missing: bool = False) -> ReindexReport:
         self._check_sentinel()
         # Before anything is adopted or reconciled: a refused reindex writes nothing.
         gone = self._missing()
@@ -794,8 +906,16 @@ class Writer:
                 continue
             try:
                 reconciled.append(self.reconcile_plaud(rec.id))
-            except (WriterError, KeyError, LockTimeout, OSError, ValueError, TypeError,
-                    RecursionError, ArithmeticError) as exc:  # ValueError: a payload the
+            except (
+                WriterError,
+                KeyError,
+                LockTimeout,
+                OSError,
+                ValueError,
+                TypeError,
+                RecursionError,
+                ArithmeticError,
+            ) as exc:  # ValueError: a payload the
                 # renditions can't encode; RecursionError: a payload nested too deep to parse
                 log.debug("reconcile of %s failed", rec.id, exc_info=True)
                 # A fixed phrase, never the exception's text, which can carry a title.
@@ -803,11 +923,15 @@ class Writer:
                 reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
         for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
             self.state.forget(rel)
-        problems = tuple({"path": str(p.path), "message": p.message}
-                         for p in self.archive.problems)
-        return ReindexReport(recordings=count, adopted=tuple(adopted), invalid=tuple(invalid),
-                             problems=problems, forgotten=tuple(Path(f).parent.name for f in gone),
-                             reconciled=tuple(reconciled))
+        problems = tuple({"path": str(p.path), "message": p.message} for p in self.archive.problems)
+        return ReindexReport(
+            recordings=count,
+            adopted=tuple(adopted),
+            invalid=tuple(invalid),
+            problems=problems,
+            forgotten=tuple(Path(f).parent.name for f in gone),
+            reconciled=tuple(reconciled),
+        )
 
     def _accept(self, rel: str, raw: bytes) -> str:
         sha = _sha(raw)

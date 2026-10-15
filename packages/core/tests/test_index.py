@@ -19,8 +19,9 @@ T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 HEX = "0123456789abcdef0123456789abcdef"
 # The first 100 bytes of a file that says it is an index (its application_id at offset 68), with a
 # page size of 0, so SQLite can't read a page of it.
-INDEX_HEADER = (b"SQLite format 3\x00" + bytes(52) + index_module.APPLICATION_ID.to_bytes(4, "big")
-                + bytes(28))
+INDEX_HEADER = (
+    b"SQLite format 3\x00" + bytes(52) + index_module.APPLICATION_ID.to_bytes(4, "big") + bytes(28)
+)
 
 
 def put(root, *, when="2026-10-06T14:00:03-07:00", sha="a" * 64, sources=()) -> Recording:
@@ -29,18 +30,30 @@ def put(root, *, when="2026-10-06T14:00:03-07:00", sha="a" * 64, sources=()) -> 
     rid = make_id(recorded_at, sha)
     folder = root / relative_dir(rid)
     folder.mkdir(parents=True)
-    rec = Recording(id=rid, title="x", recorded_at=recorded_at, timezone="UTC",
-                    time_source="ingest",
-                    media=MediaInfo(file=f"{rid}.mp3", sha256=sha, kind="audio"),
-                    sources=[SourceRef(kind=k, ref=r, added_at=T0) for k, r in sources])
+    rec = Recording(
+        id=rid,
+        title="x",
+        recorded_at=recorded_at,
+        timezone="UTC",
+        time_source="ingest",
+        media=MediaInfo(file=f"{rid}.mp3", sha256=sha, kind="audio"),
+        sources=[SourceRef(kind=k, ref=r, added_at=T0) for k, r in sources],
+    )
     (folder / "recording.json").write_text(dump_json(rec), encoding="utf-8")
     return rec
 
 
-@pytest.mark.parametrize("ref, canonical", [
-    (HEX, HEX), ("of_" + HEX, HEX), ("OF_" + HEX.upper(), HEX), (" of_" + HEX + " ", HEX),
-    ("demo-apollo13", "demo-apollo13"), ("of_xyz", "of_xyz"),
-])
+@pytest.mark.parametrize(
+    "ref, canonical",
+    [
+        (HEX, HEX),
+        ("of_" + HEX, HEX),
+        ("OF_" + HEX.upper(), HEX),
+        (" of_" + HEX + " ", HEX),
+        ("demo-apollo13", "demo-apollo13"),
+        ("of_xyz", "of_xyz"),
+    ],
+)
 def test_both_plaud_id_forms_are_one_id(ref, canonical):
     # why: §6.3. Plaud's listing switched from bare hex to of_<hex> in September 2026.
     assert canonical_plaud_id(ref) == canonical
@@ -54,8 +67,12 @@ def test_other_sources_keep_their_references_as_they_are():
 def test_rebuild_then_look_up_by_hash_and_by_either_plaud_id_form(new_archive, tmp_path):
     root, _ = new_archive
     a = put(root, sha="a" * 64, sources=[("plaud", HEX), ("audio_router", f"plaud/{HEX}")])
-    b = put(root, when="2026-10-07T09:00:00-07:00", sha="b" * 64,
-            sources=[("pocket", "11111111-1111-4111-8111-111111111111")])
+    b = put(
+        root,
+        when="2026-10-07T09:00:00-07:00",
+        sha="b" * 64,
+        sources=[("pocket", "11111111-1111-4111-8111-111111111111")],
+    )
     index = Index(tmp_path / "index" / "index.db")
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 2
     assert (index.count(), index.archive_uuid()) == (2, "u-1")
@@ -157,8 +174,9 @@ def test_upsert_replaces_a_recordings_references(new_archive, tmp_path):
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
-    moved = rec.model_copy(update={"sources": [SourceRef(kind="recorder", ref="r-1", added_at=T0)],
-                                   "rev": 3})
+    moved = rec.model_copy(
+        update={"sources": [SourceRef(kind="recorder", ref="r-1", added_at=T0)], "rev": 3}
+    )
     index.upsert(moved)
     assert index.find_by_source("plaud", HEX) == []
     assert index.find_by_source("recorder", "r-1") == [rec.id]
@@ -222,6 +240,7 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     pre_existing.write_bytes(b"pre-existing data")
     # Patch the datetime module's now method to return a fixed timestamp
     import recordings.index
+
     fixed_dt = datetime(2026, 10, 9, 14, 35, 12, tzinfo=timezone.utc)
     mock_datetime = Mock()
     mock_datetime.now.return_value = fixed_dt
@@ -254,7 +273,7 @@ def test_corrupted_index_quarantines_every_sibling_untouched(new_archive, tmp_pa
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
     main = list(tmp_path.glob("index.db.unreadable-*"))
     assert len(main) == 1
-    suffix = main[0].name[len("index.db"):]
+    suffix = main[0].name[len("index.db") :]
     assert suffix.startswith(".unreadable-")
     for sibling, data in original.items():
         assert (tmp_path / f"index.db{sibling}{suffix}").read_bytes() == data
@@ -314,7 +333,8 @@ def test_an_index_whose_header_lost_its_mark_is_not_this_archives(new_archive, t
 
 
 def test_an_index_written_during_the_probe_is_rebuilt_in_place_not_quarantined(
-        new_archive, tmp_path, monkeypatch):
+    new_archive, tmp_path, monkeypatch
+):
     # why: the immutable probe can misread a file that changes under it; the stamp check keeps an
     # index that is being written from being renamed aside.
     root, _ = new_archive
@@ -333,8 +353,9 @@ def test_an_index_written_during_the_probe_is_rebuilt_in_place_not_quarantined(
     assert index.find_by_sha256(rec.media.sha256) == rec.id
 
 
-def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(new_archive, tmp_path,
-                                                                   monkeypatch):
+def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(
+    new_archive, tmp_path, monkeypatch
+):
     # why: the siblings move first and the file last. A -wal or -journal left beside a new, empty
     # index.db is deleted by SQLite, so a rename that fails part-way must leave the file, not them.
     root, _ = new_archive
@@ -359,7 +380,8 @@ def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(new_archive, 
 
 
 def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
-        new_archive, tmp_path, monkeypatch):
+    new_archive, tmp_path, monkeypatch
+):
     # why: §6.4, §9.3 (the final review's minor 3). A lookup that waits out the busy timeout
     # answers "none", and the import's plan took that for an answer: a recording already here
     # planned as new, one the consent list now excludes left uncounted. strict raises SQLite's
@@ -375,9 +397,11 @@ def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
             yield conn
 
     monkeypatch.setattr(Index, "_db", at_once)
-    lookups = {"find_by_source": lambda **kw: index.find_by_source("plaud", HEX, **kw),
-               "find_by_sha256": lambda **kw: index.find_by_sha256(rec.media.sha256, **kw),
-               "sha256_of": lambda **kw: index.sha256_of(rec.id, **kw)}
+    lookups = {
+        "find_by_source": lambda **kw: index.find_by_source("plaud", HEX, **kw),
+        "find_by_sha256": lambda **kw: index.find_by_sha256(rec.media.sha256, **kw),
+        "sha256_of": lambda **kw: index.sha256_of(rec.id, **kw),
+    }
     holder = sqlite3.connect(index.path)
     holder.execute("BEGIN EXCLUSIVE")  # another process is writing the index
     try:
@@ -390,4 +414,7 @@ def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
         holder.rollback()
         holder.close()
     assert {name: lookup(strict=True) for name, lookup in lookups.items()} == {
-        "find_by_source": [rec.id], "find_by_sha256": rec.id, "sha256_of": rec.media.sha256}
+        "find_by_source": [rec.id],
+        "find_by_sha256": rec.id,
+        "sha256_of": rec.media.sha256,
+    }

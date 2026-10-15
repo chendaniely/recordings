@@ -47,14 +47,23 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {}
 RESTORE_HINT = (
     "restore state.db from the backup (runbook: Restoring for real). If no backup copy is usable, "
     "stop the app, move the whole state folder aside (never state.db alone: its -wal file holds "
-    "the latest commits), and run `recordings init --adopt`.")
+    "the latest commits), and run `recordings init --adopt`."
+)
 # SQLite's logs beside state.db hold commits not yet in it. SQLite replays a -wal over whatever
 # state.db is next put beside it, and deletes one it finds beside a new, empty state.db.
 LOGS = ("state.db-wal", "state.db-journal")
 # SQLite's codes for a sound state.db that can't be reached now: a mode, an owner or a missing
 # mount (CANTOPEN), a read-only folder, a lock held too long, a full disk, an I/O error.
-_NOT_DAMAGE = ("SQLITE_CANTOPEN", "SQLITE_READONLY", "SQLITE_BUSY", "SQLITE_LOCKED",
-               "SQLITE_FULL", "SQLITE_IOERR", "SQLITE_PERM", "SQLITE_NOMEM")
+_NOT_DAMAGE = (
+    "SQLITE_CANTOPEN",
+    "SQLITE_READONLY",
+    "SQLITE_BUSY",
+    "SQLITE_LOCKED",
+    "SQLITE_FULL",
+    "SQLITE_IOERR",
+    "SQLITE_PERM",
+    "SQLITE_NOMEM",
+)
 
 
 def unreadable(db_path: Path, exc: sqlite3.Error) -> str:
@@ -63,9 +72,11 @@ def unreadable(db_path: Path, exc: sqlite3.Error) -> str:
     merge base."""
     code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
     if code.startswith(_NOT_DAMAGE):
-        return (f"{db_path} can't be opened now ({code}). That is not damage, so leave it where it "
-                "is: check that the state folder is mounted, owned by this user, writable and not "
-                "full, and that no other process holds it, then try again.")
+        return (
+            f"{db_path} can't be opened now ({code}). That is not damage, so leave it where it "
+            "is: check that the state folder is mounted, owned by this user, writable and not "
+            "full, and that no other process holds it, then try again."
+        )
     return f"{db_path} can't be read ({code}). If it is damaged, {RESTORE_HINT}"
 
 
@@ -132,7 +143,8 @@ class State:
             raise StateError(
                 f"{state.path} still holds {', '.join(logs)}: an earlier state.db's latest "
                 "commits, which a new state.db would destroy. Move the whole state folder aside "
-                "first.")
+                "first."
+            )
         state.path.mkdir(parents=True, exist_ok=True)
         state.locks_dir.mkdir(exist_ok=True)
         try:
@@ -141,11 +153,14 @@ class State:
                 conn.execute("PRAGMA journal_mode=WAL")
                 with conn:
                     conn.executescript(SCHEMA)
-                    conn.executemany("INSERT INTO meta (key, value) VALUES (?, ?)", [
-                        ("schema_version", "1"),
-                        ("archive_uuid", archive_uuid),
-                        ("writer_id", writer_id),
-                    ])
+                    conn.executemany(
+                        "INSERT INTO meta (key, value) VALUES (?, ?)",
+                        [
+                            ("schema_version", "1"),
+                            ("archive_uuid", archive_uuid),
+                            ("writer_id", writer_id),
+                        ],
+                    )
                 state._upgrade(conn)
         except sqlite3.IntegrityError:  # another init got there between the check and the insert
             raise StateError(_already(state.db_path)) from None
@@ -159,7 +174,8 @@ class State:
         if not state.db_path.is_file():
             raise StateError(
                 f"no state.db in {state.path}, so this machine is not the archive's writer. "
-                "`recordings init` creates it, once, on the writer.")
+                "`recordings init` creates it, once, on the writer."
+            )
         try:
             with state.db() as db:
                 state._version(db)  # refuse a newer state.db before changing anything in it
@@ -208,16 +224,19 @@ class State:
         try:
             version = int(row[0])
         except (TypeError, ValueError):
-            raise StateError(f"{self.db_path} has no readable schema_version, so it is damaged: "
-                             f"{RESTORE_HINT}") from None
+            raise StateError(
+                f"{self.db_path} has no readable schema_version, so it is damaged: {RESTORE_HINT}"
+            ) from None
         if version < 1:
-            raise StateError(f"{self.db_path} has schema version {version}, so it is damaged: "
-                             f"{RESTORE_HINT}")
+            raise StateError(
+                f"{self.db_path} has schema version {version}, so it is damaged: {RESTORE_HINT}"
+            )
         if version > SCHEMA_VERSION:
             raise StateError(
                 f"{self.db_path} is at schema version {version}, newer than this release's "
                 f"{SCHEMA_VERSION}: a newer release wrote it, and this one can't read it. Deploy "
-                "that release again.")
+                "that release again."
+            )
         return version
 
     def _upgrade(self, conn: sqlite3.Connection) -> None:
@@ -229,8 +248,9 @@ class State:
             for n in range(self._version(conn) + 1, SCHEMA_VERSION + 1):
                 for statement in MIGRATIONS[n]:
                     conn.execute(statement)
-            conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
-                         (str(SCHEMA_VERSION),))
+            conn.execute(
+                "UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),)
+            )
 
     def meta(self, key: str) -> str | None:
         with self.db() as db:
@@ -241,40 +261,45 @@ class State:
         with self.db() as db:
             db.execute(
                 "INSERT INTO meta (key, value) VALUES (?, ?) "
-                "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value))
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
 
     # ---- revisions: the merge bases (§6.4), in two phases so a crash is recognisable --------
     def _revision(self, sql: str, args: tuple) -> Revision | None:
         with self.db() as db:
             row = db.execute(
-                "SELECT id, file, rev, sha256, body, origin, committed FROM revisions " + sql,
-                args).fetchone()
+                "SELECT id, file, rev, sha256, body, origin, committed FROM revisions " + sql, args
+            ).fetchone()
         return Revision(*row[:6], committed=bool(row[6])) if row else None
 
     def last_committed(self, file: str) -> Revision | None:
-        return self._revision("WHERE file = ? AND committed = 1 ORDER BY id DESC LIMIT 1",
-                              (file,))
+        return self._revision("WHERE file = ? AND committed = 1 ORDER BY id DESC LIMIT 1", (file,))
 
     def pending(self, file: str) -> Revision | None:
-        return self._revision("WHERE file = ? AND committed = 0 ORDER BY id DESC LIMIT 1",
-                              (file,))
+        return self._revision("WHERE file = ? AND committed = 0 ORDER BY id DESC LIMIT 1", (file,))
 
     def begin(self, file: str, rev: int, sha256: str, body: bytes, origin: str) -> int:
         with self.db() as db:
             cur = db.execute(
                 "INSERT INTO revisions (file, rev, sha256, body, origin, committed, written_at) "
-                "VALUES (?, ?, ?, ?, ?, 0, ?)", (file, rev, sha256, body, origin, _now()))
+                "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                (file, rev, sha256, body, origin, _now()),
+            )
             return int(cur.lastrowid)
 
     def commit(self, revision_id: int) -> None:
         with self.db() as db:
-            (file,) = db.execute("SELECT file FROM revisions WHERE id = ?",
-                                 (revision_id,)).fetchone()
+            (file,) = db.execute(
+                "SELECT file FROM revisions WHERE id = ?", (revision_id,)
+            ).fetchone()
             db.execute("UPDATE revisions SET committed = 1 WHERE id = ?", (revision_id,))
             db.execute(
                 "DELETE FROM revisions WHERE file = ? AND committed = 1 AND id NOT IN "
                 "(SELECT id FROM revisions WHERE file = ? AND committed = 1 "
-                " ORDER BY id DESC LIMIT ?)", (file, file, KEEP_REVISIONS))
+                " ORDER BY id DESC LIMIT ?)",
+                (file, file, KEEP_REVISIONS),
+            )
 
     def discard(self, revision_id: int) -> None:
         with self.db() as db:
@@ -288,8 +313,10 @@ class State:
     # ---- flags: files that need attention (until stage 3's UI shows them) -----------------
     def flag(self, file: str, kind: str, message: str) -> None:
         with self.db() as db:
-            db.execute("INSERT OR REPLACE INTO flags (file, kind, message, at) VALUES (?, ?, ?, ?)",
-                       (file, kind, message, _now()))
+            db.execute(
+                "INSERT OR REPLACE INTO flags (file, kind, message, at) VALUES (?, ?, ?, ?)",
+                (file, kind, message, _now()),
+            )
 
     def clear_flags(self, file: str) -> None:
         with self.db() as db:
@@ -298,14 +325,19 @@ class State:
     def flags(self) -> list[dict]:
         with self.db() as db:
             rows = db.execute(
-                "SELECT file, kind, message, at FROM flags ORDER BY file, kind").fetchall()
+                "SELECT file, kind, message, at FROM flags ORDER BY file, kind"
+            ).fetchall()
         return [{"file": f, "kind": k, "message": m, "at": a} for f, k, m, a in rows]
 
     def committed_files(self) -> list[str]:
         """Every recording.json the app has committed a revision of."""
         with self.db() as db:
-            return [r[0] for r in db.execute(
-                "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file")]
+            return [
+                r[0]
+                for r in db.execute(
+                    "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file"
+                )
+            ]
 
     def forget(self, file: str) -> None:
         """Drop everything state.db remembers about a file that was removed on purpose."""
@@ -316,8 +348,9 @@ class State:
     # ---- index updates not yet made: a crash between a write and its index update ---------
     def mark_index_pending(self, recording_id: str) -> None:
         with self.db() as db:
-            db.execute("INSERT OR IGNORE INTO index_pending (recording_id) VALUES (?)",
-                       (recording_id,))
+            db.execute(
+                "INSERT OR IGNORE INTO index_pending (recording_id) VALUES (?)", (recording_id,)
+            )
 
     def clear_index_pending(self, recording_id: str) -> None:
         with self.db() as db:
@@ -325,16 +358,21 @@ class State:
 
     def index_pending(self) -> list[str]:
         with self.db() as db:
-            return [r[0] for r in db.execute(
-                "SELECT recording_id FROM index_pending ORDER BY recording_id")]
+            return [
+                r[0]
+                for r in db.execute("SELECT recording_id FROM index_pending ORDER BY recording_id")
+            ]
 
     # ---- operations: each run of a scheduled job (§14, §15.1); Status reads these ----------
-    def record_run(self, job: str, started_at: datetime, finished_at: datetime, ok: bool,
-                   detail: str) -> None:
+    def record_run(
+        self, job: str, started_at: datetime, finished_at: datetime, ok: bool, detail: str
+    ) -> None:
         with self.db() as db:
-            db.execute("INSERT INTO ops_runs (job, started_at, finished_at, ok, detail) "
-                       "VALUES (?, ?, ?, ?, ?)",
-                       (job, started_at.isoformat(), finished_at.isoformat(), int(ok), detail))
+            db.execute(
+                "INSERT INTO ops_runs (job, started_at, finished_at, ok, detail) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (job, started_at.isoformat(), finished_at.isoformat(), int(ok), detail),
+            )
 
     def last_run(self, job: str, *, ok: bool | None = None) -> Run | None:
         sql = "SELECT job, started_at, finished_at, ok, detail FROM ops_runs WHERE job = ?"
@@ -345,22 +383,30 @@ class State:
             row = db.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
         if row is None:
             return None
-        return Run(row[0], datetime.fromisoformat(row[1]), datetime.fromisoformat(row[2]),
-                   bool(row[3]), row[4])
+        return Run(
+            row[0],
+            datetime.fromisoformat(row[1]),
+            datetime.fromisoformat(row[2]),
+            bool(row[3]),
+            row[4],
+        )
 
     # ---- alert state: one alert per failure, a daily reminder, and "recovered" ---------------
     def alert_state(self, key: str) -> tuple[bool, datetime | None]:
         with self.db() as db:
-            row = db.execute("SELECT failing, last_sent_at FROM alerts WHERE key = ?",
-                             (key,)).fetchone()
+            row = db.execute(
+                "SELECT failing, last_sent_at FROM alerts WHERE key = ?", (key,)
+            ).fetchone()
         if row is None:
             return False, None
         return bool(row[0]), datetime.fromisoformat(row[1]) if row[1] else None
 
     def set_alert_state(self, key: str, *, failing: bool, last_sent_at: datetime | None) -> None:
         with self.db() as db:
-            db.execute("INSERT OR REPLACE INTO alerts (key, failing, last_sent_at) VALUES (?, ?, ?)",
-                       (key, int(failing), last_sent_at.isoformat() if last_sent_at else None))
+            db.execute(
+                "INSERT OR REPLACE INTO alerts (key, failing, last_sent_at) VALUES (?, ?, ?)",
+                (key, int(failing), last_sent_at.isoformat() if last_sent_at else None),
+            )
 
     # ---- ops_runs retention: the loop trims it once a day (ops._trim_runs) ---------------------
     def prune_runs(self, before: datetime) -> int:
@@ -372,7 +418,8 @@ class State:
                 "DELETE FROM ops_runs WHERE datetime(finished_at) < datetime(?) "
                 "AND id NOT IN (SELECT MAX(id) FROM ops_runs WHERE ok = 1 GROUP BY job) "
                 "AND id NOT IN (SELECT MAX(id) FROM ops_runs GROUP BY job)",
-                (before.isoformat(),)).rowcount
+                (before.isoformat(),),
+            ).rowcount
 
     def backup_to(self, dest: Path) -> Path:
         """A consistent copy of state.db, with SQLite's own backup command (§15.1), even while

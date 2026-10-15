@@ -34,14 +34,22 @@ JA = "会議メモ / Q&A"  # Review Focus 4: a title outside ASCII
 
 def full(ar, plaud_env):
     """Every kind of row audio-router's catalog holds (spec §9.3's mapping table)."""
-    ar.plaud(A, envelopes=[plaud_env(A, name="A PRIVATE TITLE"),
-                           plaud_env(A, name="Interview: Grace")], tags=("lecture",))
-    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
-             dup_of=f"plaud/{A}")
+    ar.plaud(
+        A,
+        envelopes=[plaud_env(A, name="A PRIVATE TITLE"), plaud_env(A, name="Interview: Grace")],
+        tags=("lecture",),
+    )
+    ar.plaud(
+        B,
+        envelopes=[plaud_env(B)],
+        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+        dup_of=f"plaud/{A}",
+    )
     ar.plaud(C, envelopes=[plaud_env(C, name=JA)], recorded_at="2026-08-03T11:00:00-07:00")
     ar.plaud(D, envelopes=[plaud_env(D)], audio=False)  # no audio: arrives through the sync
-    ar.plaud(T, envelopes=[plaud_env(T)], recorded_at="2026-08-04T11:00:00-07:00",
-             tags=("private",))
+    ar.plaud(
+        T, envelopes=[plaud_env(T)], recorded_at="2026-08-04T11:00:00-07:00", tags=("private",)
+    )
     ar.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00")
     ar.orphan(O)
     ar.recorder()
@@ -57,9 +65,16 @@ def test_the_dry_run_accounts_for_every_catalog_row(ar_archive, plaud_env):
     full(ar_archive, plaud_env)
     the_plan = plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver")
     assert sorted(i.row.uri for i in the_plan.items) == sorted(r["uri"] for r in ar_archive.rows)
-    assert the_plan.counts() == {"new": 4, "new-private": 2, "duplicate": 1, "present": 0,
-                                 "no-audio": 2, "deferred-to-2b": 1, "consent-excluded": 1,
-                                 "unplaced": 0}
+    assert the_plan.counts() == {
+        "new": 4,
+        "new-private": 2,
+        "duplicate": 1,
+        "present": 0,
+        "no-audio": 2,
+        "deferred-to-2b": 1,
+        "consent-excluded": 1,
+        "unplaced": 0,
+    }
     assert sum(the_plan.counts().values()) == len(ar_archive.rows)
     assert set(the_plan.counts()) == set(DISPOSITIONS)
     assert the_plan.ok and the_plan.problems == ()  # deferred rows never block a real run
@@ -84,9 +99,21 @@ def test_the_dry_run_never_names_a_title_and_never_changes_the_source(ar_archive
     # Review Focus 4, and §9.3: it reads audio-router's archive and never changes it.
     full(ar_archive, plaud_env)
     before = ar_archive.tree_hash()
-    text = json.dumps(plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver").report(), ensure_ascii=False)
-    for title in ("A PRIVATE TITLE", "Interview: Grace", "Getting Started", "getting_started",
-                  "Pocket chat", "Jul 15", JA, "会議メモ", "Aug 3 at 10-00"):
+    text = json.dumps(
+        plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver").report(),
+        ensure_ascii=False,
+    )
+    for title in (
+        "A PRIVATE TITLE",
+        "Interview: Grace",
+        "Getting Started",
+        "getting_started",
+        "Pocket chat",
+        "Jul 15",
+        JA,
+        "会議メモ",
+        "Aug 3 at 10-00",
+    ):
         assert title not in text
     assert ar_archive.tree_hash() == before
 
@@ -99,13 +126,21 @@ def test_audio_routers_privacy_labels_make_a_recording_private(ar_archive, plaud
     ar_archive.plaud(C, envelopes=[plaud_env(C)])["access"] = "restricted"
     ar_archive.plaud(D, envelopes=[plaud_env(D)], tags=("lecture", "therapy"))
     ar_archive.write_catalog()
-    by_id = {i.row.file_id: i for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items}
+    by_id = {
+        i.row.file_id: i
+        for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
+    }
     assert (by_id[A].disposition, by_id[A].tags, by_id[A].private) == ("new", ("lecture",), False)
     assert (by_id[B].disposition, by_id[B].tags) == ("new-private", ("private",))
     assert (by_id[C].disposition, by_id[C].tags) == ("new-private", ("private",))
     assert (by_id[D].disposition, by_id[D].tags) == ("new-private", ("lecture", "private/therapy"))
     assert map_tags(["medical", "journal", "students", "private", "lecture"]) == (
-        "private/medical", "private/journal", "private/students", "private", "lecture")
+        "private/medical",
+        "private/journal",
+        "private/students",
+        "private",
+        "lecture",
+    )
     # One tag per meaning: therapy and counselling fold together, and the generic markers are
     # `private`.
     folded = ["counseling", "therapy", "counselling", "personal", "voiceprints", "private"]
@@ -182,27 +217,38 @@ def test_recordings_on_disk_that_the_catalog_misses_are_reported_by_id(ar_archiv
         return hashlib.sha256(name.encode("utf-8")).hexdigest()[:32]
 
     assert set(the_plan.unlisted) == {
-        f"plaud/{B}", f"plaud/{C}", f"recorder/{'9' * 64}",
-        f"pocket/{surrogate('my_secret_slug')}", f"plaud/{surrogate('My secret title')}"}
+        f"plaud/{B}",
+        f"plaud/{C}",
+        f"recorder/{'9' * 64}",
+        f"pocket/{surrogate('my_secret_slug')}",
+        f"plaud/{surrogate('My secret title')}",
+    }
     text = json.dumps(the_plan.report(), ensure_ascii=False)
     assert "my_secret_slug" not in text and "My secret title" not in text and X not in text
 
 
 def test_snapshots_keep_audio_routers_order_within_one_second(ar_archive, plaud_env):
     # why: audio-router suffixes same-second snapshots -01, -02, and "-" sorts before "." .
-    ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, name="second"), plaud_env(A, name="third")],
-                     stamps=["20260801T161000Z", "20260801T161000Z-01", "20260801T161000Z-02"])
+    ar_archive.plaud(
+        A,
+        envelopes=[plaud_env(A), plaud_env(A, name="second"), plaud_env(A, name="third")],
+        stamps=["20260801T161000Z", "20260801T161000Z-01", "20260801T161000Z-02"],
+    )
     ar_archive.write_catalog()
     (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert [p.name for p in item.snapshots] == [
-        "20260801T161000Z.json", "20260801T161000Z-01.json", "20260801T161000Z-02.json"]
+        "20260801T161000Z.json",
+        "20260801T161000Z-01.json",
+        "20260801T161000Z-02.json",
+    ]
 
 
 def test_media_that_cant_be_measured_is_reported(ar_archive, plaud_env, monkeypatch):
     # why: §9.1.1. Without ffprobe and ffmpeg, anything but WAV has no decoded duration.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
-    ar_archive.plaud(B, envelopes=[plaud_env(B)], ext=".m4a",
-                     recorded_at="2026-08-02T09:00:00-07:00")
+    ar_archive.plaud(
+        B, envelopes=[plaud_env(B)], ext=".m4a", recorded_at="2026-08-02T09:00:00-07:00"
+    )
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
@@ -210,17 +256,31 @@ def test_media_that_cant_be_measured_is_reported(ar_archive, plaud_env, monkeypa
     assert {i.row.file_id: i.probed.method for i in the_plan.items if i.probed} == {A: "wave"}
 
 
-def test_a_row_already_in_the_archive_is_present_by_either_plaud_id_form(ar_archive, plaud_env,
-                                                                         writer, make_incoming):
+def test_a_row_already_in_the_archive_is_present_by_either_plaud_id_form(
+    ar_archive, plaud_env, writer, make_incoming
+):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.plaud(B, envelopes=[plaud_env(B)])
     ar_archive.write_catalog()
     audio_a = ar_archive.root / f"plaud/audio/2026/08/{A}.wav"
-    writer.add(make_incoming(audio_a.read_bytes(), name="a.wav", sources=(
-        RawSource(kind="plaud", ref="of_" + A, added_at=T0),)))
-    writer.add(make_incoming(b"other audio", name="b.wav", sources=(
-        RawSource(kind="plaud", ref=B, added_at=T0),)))
-    by_uri = {i.row.uri: i for i in plan(ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver").items}
+    writer.add(
+        make_incoming(
+            audio_a.read_bytes(),
+            name="a.wav",
+            sources=(RawSource(kind="plaud", ref="of_" + A, added_at=T0),),
+        )
+    )
+    writer.add(
+        make_incoming(
+            b"other audio", name="b.wav", sources=(RawSource(kind="plaud", ref=B, added_at=T0),)
+        )
+    )
+    by_uri = {
+        i.row.uri: i
+        for i in plan(
+            ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver"
+        ).items
+    }
     assert by_uri[f"plaud/{A}"].disposition == "present"
     assert by_uri[f"plaud/{B}"].disposition == "unplaced"
     assert "different audio" in by_uri[f"plaud/{B}"].reason
@@ -231,14 +291,17 @@ def test_incomplete_snapshots_are_counted_by_reason_and_never_hidden(ar_archive,
     # legitimately empty block that kept its data_link looks the same: the dry run says how
     # many, why, and which recordings would get no Plaud outputs at all.
     ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True), "{not json"])
-    ar_archive.plaud(B, envelopes=[plaud_env(B, link_error=True)],
-                     recorded_at="2026-08-02T09:00:00-07:00")
+    ar_archive.plaud(
+        B, envelopes=[plaud_env(B, link_error=True)], recorded_at="2026-08-02T09:00:00-07:00"
+    )
     ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
     ar_archive.write_catalog()
     the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     report = the_plan.report()
     assert report["incomplete_snapshots"] == {
-        "total": 3, "by_reason": {"auto_sum_note": 2, "unreadable": 1}}
+        "total": 3,
+        "by_reason": {"auto_sum_note": 2, "unreadable": 1},
+    }
     assert report["all_snapshots_incomplete"] == [f"plaud/{B}"]
     assert the_plan.ok  # reported, not refused: an empty block may be real
 
@@ -250,11 +313,17 @@ def _wav_of(ar, fid):
 def _consent_family(ar, plaud_env):
     """X, and every kind of row that carries X's recording: a copy that duplicates it, the
     original it duplicates, a Recorder copy, and a private-tier copy found by hash."""
-    ar.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00",
-             dup_of=f"plaud/{A}")
+    ar.plaud(
+        X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00", dup_of=f"plaud/{A}"
+    )
     ar.plaud(A, envelopes=[plaud_env(A)], same_audio_as=f"plaud/audio/2026/08/{X}.wav")
-    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{X}.wav",
-             dup_of=f"plaud/{X}", recorded_at="2026-08-06T11:00:00-07:00")
+    ar.plaud(
+        B,
+        envelopes=[plaud_env(B)],
+        same_audio_as=f"plaud/audio/2026/08/{X}.wav",
+        dup_of=f"plaud/{X}",
+        recorded_at="2026-08-06T11:00:00-07:00",
+    )
     x_sha = next(r["audio_sha256"] for r in ar.rows if r["file_id"] == X)
     rec = ar.recorder()
     (ar.root / rec["audio_rel"]).write_bytes(_wav_of(ar, X))
@@ -287,7 +356,10 @@ def test_a_consent_listed_recording_excludes_every_row_that_carries_it(ar_archiv
 def test_without_the_id_on_the_consent_list_the_same_rows_import(ar_archive, plaud_env):
     # The control for the test above: the exclusion comes from the list, nothing else.
     rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
-    by_uri = {i.row.uri: i for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items}
+    by_uri = {
+        i.row.uri: i
+        for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
+    }
     assert by_uri[f"plaud/{B}"].disposition == "duplicate"
     assert by_uri[rec_uri].disposition == "duplicate"
     assert by_uri[priv_uri].disposition == "new-private"
@@ -297,6 +369,7 @@ def test_without_the_id_on_the_consent_list_the_same_rows_import(ar_archive, pla
 
 def test_a_private_file_named_by_a_listed_id_is_never_read(ar_archive, monkeypatch):
     from recordings.sources import audio_router
+
     ar_archive.private()
     ar_archive._write(f"private/recorder-exports/of_{X}.wav", b"never to be read")
     ar_archive._write(f"private/recorder-exports/{X2}.wav", b"never to be read either")
@@ -336,9 +409,11 @@ def test_one_unreadable_file_does_not_stop_the_dry_run(ar_archive, plaud_env):
 
 def test_a_malformed_wav_is_unprobed_not_fatal(ar_archive, plaud_env, monkeypatch):
     import struct
+
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(
-        b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6) + b"abc")
+        b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6) + b"abc"
+    )
     ar_archive.rows[0]["audio_sha256"] = ""
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
@@ -348,6 +423,7 @@ def test_a_malformed_wav_is_unprobed_not_fatal(ar_archive, plaud_env, monkeypatc
 
 def test_every_path_the_plan_returns_is_inside_the_source(ar_archive, plaud_env, tmp_path):
     import shutil
+
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
     outside = tmp_path / "elsewhere"
@@ -372,8 +448,13 @@ def test_the_pocket_listing_honours_the_consent_list(ar_archive):
     ar_archive.rows.clear()
     ar_archive.write_catalog()
     surrogate = hashlib.sha256(b"my_secret_slug").hexdigest()[:32]
-    assert plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").unlisted == (f"pocket/{surrogate}",)
-    assert plan(ar_archive.root, consent={surrogate}, default_timezone="America/Vancouver").unlisted == ()
+    assert plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").unlisted == (
+        f"pocket/{surrogate}",
+    )
+    assert (
+        plan(ar_archive.root, consent={surrogate}, default_timezone="America/Vancouver").unlisted
+        == ()
+    )
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root lists every folder")
@@ -383,16 +464,24 @@ def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_e
     # without its transcript, or without its local outputs for a locked derived/<id>/, with
     # `ok` True. A row whose time came from a snapshot but whose snapshots are gone is the same.
     import shutil
+
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
-    ar_archive.plaud(B, envelopes=[plaud_env(B)], recorded_at="2026-08-02T09:00:00-07:00",
-                     derived={"merged-whisper-1-20260802T170000Z.json": {"payload": {"text": "x"}}})
+    ar_archive.plaud(
+        B,
+        envelopes=[plaud_env(B)],
+        recorded_at="2026-08-02T09:00:00-07:00",
+        derived={"merged-whisper-1-20260802T170000Z.json": {"payload": {"text": "x"}}},
+    )
     ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
     ar_archive.plaud(D, envelopes=[plaud_env(D)], recorded_at="2026-08-04T09:00:00-07:00")
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
     shutil.rmtree(ar_archive.root / "plaud" / "raw" / C)
-    locked = [ar_archive.root / "plaud" / "raw" / A, ar_archive.root / "plaud" / "derived" / B,
-              ar_archive.root / "pocket" / "raw"]
+    locked = [
+        ar_archive.root / "plaud" / "raw" / A,
+        ar_archive.root / "plaud" / "derived" / B,
+        ar_archive.root / "pocket" / "raw",
+    ]
     for folder in locked:
         folder.chmod(0)
     try:
@@ -418,8 +507,11 @@ def test_a_source_folder_that_cant_be_listed_is_a_problem_not_a_crash(ar_archive
     ar_archive.private()
     ar_archive._write("private/other/A Stray Title.wav", b"RIFF not a row")
     ar_archive.write_catalog()
-    locked = [ar_archive.root / "plaud" / "raw", ar_archive.root / "plaud" / "audio" / "2026",
-              ar_archive.root / "private" / "other"]
+    locked = [
+        ar_archive.root / "plaud" / "raw",
+        ar_archive.root / "plaud" / "audio" / "2026",
+        ar_archive.root / "private" / "other",
+    ]
     for folder in locked:
         folder.chmod(0o311)  # can be passed through, not listed
     try:
@@ -439,11 +531,20 @@ def test_rows_with_the_same_audio_wait_for_each_other(ar_archive, plaud_env):
     # with the whole group's privacy. Imported without a row that can't be placed, the
     # recording would lack its private label (and --allow-unplaced would import it so).
     ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("therapy",))
-    ar_archive.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
-                     dup_of=f"plaud/{A}")
+    ar_archive.plaud(
+        B,
+        envelopes=[plaud_env(B)],
+        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+        dup_of=f"plaud/{A}",
+    )
     ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
-    ar_archive.plaud(D, envelopes=[plaud_env(D)], same_audio_as=f"plaud/audio/2026/08/{C}.wav",
-                     dup_of=f"plaud/{C}", tags=("private",))["time_source"] = ""
+    ar_archive.plaud(
+        D,
+        envelopes=[plaud_env(D)],
+        same_audio_as=f"plaud/audio/2026/08/{C}.wav",
+        dup_of=f"plaud/{C}",
+        tags=("private",),
+    )["time_source"] = ""
     ar_archive.plaud(T, envelopes=[plaud_env(T)], recorded_at="2026-08-05T09:00:00-07:00")
     ar_archive.write_catalog()
     (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(b"damaged in the copy")
@@ -455,25 +556,49 @@ def test_rows_with_the_same_audio_wait_for_each_other(ar_archive, plaud_env):
     assert by_id[T].disposition == "new"
 
 
-@pytest.mark.parametrize("recorded_at, zone, default, expected", [
-    # Every main-tier row: its offset and zone agree, whatever zone audio-router's config named.
-    ("2026-08-01T09:00:00-07:00", "America/Vancouver", "America/Vancouver",
-     ("2026-08-01T09:00:00-07:00", "America/Vancouver")),
-    ("2026-08-02T01:00:00+09:00", "Asia/Seoul", "America/Vancouver",  # a trip: kept as it is
-     ("2026-08-02T01:00:00+09:00", "Asia/Seoul")),
-    ("2026-08-01T17:00:00+01:00", "", "Europe/London",  # no zone: the default, which agrees
-     ("2026-08-01T17:00:00+01:00", "Europe/London")),
-    # A naive time is wall-clock in the row's zone, or the default's.
-    ("2026-08-01T09:00:00", "", "Asia/Seoul", ("2026-08-01T09:00:00+09:00", "Asia/Seoul")),
-    ("2026-03-08T02:30:00", "America/Vancouver", "UTC",
-     ("2026-03-08T02:30:00-08:00", "America/Vancouver")),
-    # An offset the zone contradicts keeps the offset, the clock the source wrote, and no zone.
-    ("2026-08-02T10:00:00+09:00", "America/Vancouver", "America/Vancouver",
-     ("2026-08-02T10:00:00+09:00", "")),
-    ("2026-08-01T09:00:00-04:00", "", "Europe/London", ("2026-08-01T09:00:00-04:00", "")),
-])
+@pytest.mark.parametrize(
+    "recorded_at, zone, default, expected",
+    [
+        # Every main-tier row: its offset and zone agree, whatever zone audio-router's config named.
+        (
+            "2026-08-01T09:00:00-07:00",
+            "America/Vancouver",
+            "America/Vancouver",
+            ("2026-08-01T09:00:00-07:00", "America/Vancouver"),
+        ),
+        (
+            "2026-08-02T01:00:00+09:00",
+            "Asia/Seoul",
+            "America/Vancouver",  # a trip: kept as it is
+            ("2026-08-02T01:00:00+09:00", "Asia/Seoul"),
+        ),
+        (
+            "2026-08-01T17:00:00+01:00",
+            "",
+            "Europe/London",  # no zone: the default, which agrees
+            ("2026-08-01T17:00:00+01:00", "Europe/London"),
+        ),
+        # A naive time is wall-clock in the row's zone, or the default's.
+        ("2026-08-01T09:00:00", "", "Asia/Seoul", ("2026-08-01T09:00:00+09:00", "Asia/Seoul")),
+        (
+            "2026-03-08T02:30:00",
+            "America/Vancouver",
+            "UTC",
+            ("2026-03-08T02:30:00-08:00", "America/Vancouver"),
+        ),
+        # An offset the zone contradicts keeps the offset, the clock the source wrote, and no zone.
+        (
+            "2026-08-02T10:00:00+09:00",
+            "America/Vancouver",
+            "America/Vancouver",
+            ("2026-08-02T10:00:00+09:00", ""),
+        ),
+        ("2026-08-01T09:00:00-04:00", "", "Europe/London", ("2026-08-01T09:00:00-04:00", "")),
+    ],
+)
 def test_a_recording_keeps_its_own_offset_and_a_zone_only_when_they_agree(
-        ar_archive, plaud_env, recorded_at, zone, default, expected):
+    ar_archive, plaud_env, recorded_at, zone, default, expected
+):
     # why: §6.2 (the ID is local time with its offset) and Task 8's council: Dan records in
     # several zones, so no offset is ever changed and no trip is refused.
     row = ar_archive.plaud(A, envelopes=[plaud_env(A)], recorded_at=recorded_at)
@@ -499,10 +624,14 @@ def test_a_private_rows_hand_written_time_keeps_its_offset(ar_archive):
 
 def test_a_zone_or_offset_a_recording_cant_carry_is_unplaced(ar_archive, plaud_env):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])["timezone"] = "Mars/Olympus"
-    ar_archive.plaud(B, envelopes=[plaud_env(B)],
-                     recorded_at="2026-08-02T09:00:00+05:30:15")
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], recorded_at="2026-08-02T09:00:00+05:30:15")
     ar_archive.write_catalog()
-    reasons = {u["uri"]: u["reason"] for u in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").report()["unplaced"]}
+    reasons = {
+        u["uri"]: u["reason"]
+        for u in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").report()[
+            "unplaced"
+        ]
+    }
     assert "unknown time zone 'Mars/Olympus'" in reasons[f"plaud/{A}"]
     assert "offset in seconds" in reasons[f"plaud/{B}"]
 
@@ -517,13 +646,21 @@ def test_a_private_file_named_by_its_hash_must_have_that_hash(ar_archive):
     assert item.disposition == "unplaced" and "damaged" in item.reason
 
 
-def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(ar_archive, writer,
-                                                                      make_incoming):
+def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(
+    ar_archive, writer, make_incoming
+):
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
-    writer.add(make_incoming(b"other audio", name="p.wav", sources=(
-        RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),)))
-    (item,) = plan(ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver").items
+    writer.add(
+        make_incoming(
+            b"other audio",
+            name="p.wav",
+            sources=(RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),),
+        )
+    )
+    (item,) = plan(
+        ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver"
+    ).items
     assert item.disposition == "unplaced" and "different audio" in item.reason
 
 
@@ -539,13 +676,17 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
     assert [p for p in the_plan.problems if "consent-listed" in p] == [
         "1 consent-listed rows have no catalog audio hash, so copies of them can't be "
-        "recognised: rebuild the catalog"]
+        "recognised: rebuild the catalog"
+    ]
     text = json.dumps(the_plan.report(), ensure_ascii=False)
     assert X not in text and str(ar_archive.root) not in text and not the_plan.ok
     assert the_plan.counts()["consent-excluded"] == 1 and the_plan.counts()["new"] == 1
     ar_archive.rows[0]["audio_sha256"] = hashlib.sha256(b"x").hexdigest()
     ar_archive.write_catalog()
-    assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver").problems)
+    assert not any(
+        "consent-listed" in p
+        for p in plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver").problems
+    )
 
 
 def _deferred_twin(ar, *, linked_by: str, label: str):
@@ -568,11 +709,18 @@ def _deferred_twin(ar, *, linked_by: str, label: str):
     return orphan, twin
 
 
-@pytest.mark.parametrize("linked_by, label", [
-    ("the twin's dup_of", "tags"), ("the orphan's dup_of", "tags"), ("the audio hash", "tags"),
-    ("the twin's dup_of", "access")])
-def test_a_deferred_rows_privacy_reaches_the_row_that_imports_its_audio(ar_archive, linked_by,
-                                                                        label):
+@pytest.mark.parametrize(
+    "linked_by, label",
+    [
+        ("the twin's dup_of", "tags"),
+        ("the orphan's dup_of", "tags"),
+        ("the audio hash", "tags"),
+        ("the twin's dup_of", "access"),
+    ],
+)
+def test_a_deferred_rows_privacy_reaches_the_row_that_imports_its_audio(
+    ar_archive, linked_by, label
+):
     # why: §7.4, §9.3 (the final review's Important 1). A row deferred to 2b returned before its
     # labels were read, and a same-audio group took its tags only from the rows that import: the
     # Pocket twin created the recording untagged, and the dry run said ok, with 0 private. Only
@@ -610,6 +758,7 @@ def test_a_row_waits_for_an_unplaced_row_linked_to_it_through_a_deferred_one(ar_
 def _busy(index, monkeypatch):
     """Another process is writing the index, and lookups don't wait for it (the real ones wait 30 s
     for the lock, then fail just the same)."""
+
     @contextlib.contextmanager
     def at_once(self):
         with contextlib.closing(sqlite3.connect(self.path, timeout=0)) as conn:
@@ -625,8 +774,9 @@ def _busy(index, monkeypatch):
         holder.close()
 
 
-def test_a_busy_index_fails_the_plan_instead_of_answering_none(ar_archive, plaud_env, writer,
-                                                              make_incoming, monkeypatch):
+def test_a_busy_index_fails_the_plan_instead_of_answering_none(
+    ar_archive, plaud_env, writer, make_incoming, monkeypatch
+):
     # why: §6.4, §9.1 (the final review's minor 3; FIX BEFORE THE REAL IMPORT). The plan read the
     # index without strict, so a busy one read as empty: A, already here, was planned as new (its
     # media decoded again, its labels merged again against S2(b)), and X, imported before its ID
@@ -635,11 +785,17 @@ def test_a_busy_index_fails_the_plan_instead_of_answering_none(ar_archive, plaud
     ar_archive.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00")
     ar_archive.write_catalog()
     for fid in (A, X):
-        writer.add(make_incoming(_wav_of(ar_archive, fid), name=f"{fid}.wav", sources=(
-            RawSource(kind="plaud", ref=fid, added_at=T0),)))
+        writer.add(
+            make_incoming(
+                _wav_of(ar_archive, fid),
+                name=f"{fid}.wav",
+                sources=(RawSource(kind="plaud", ref=fid, added_at=T0),),
+            )
+        )
     with _busy(writer.index, monkeypatch):
-        the_plan = plan(ar_archive.root, writer.index, consent={X},
-                        default_timezone="America/Vancouver")
+        the_plan = plan(
+            ar_archive.root, writer.index, consent={X}, default_timezone="America/Vancouver"
+        )
     by_uri = {i.row.uri: i for i in the_plan.items}
     assert by_uri[f"plaud/{A}"].disposition == "unplaced"
     assert "the index can't answer now" in by_uri[f"plaud/{A}"].reason

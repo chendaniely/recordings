@@ -34,20 +34,26 @@ def server_url(tmp_path_factory):
     with open(log_path, "wb") as log:
         proc = subprocess.Popen(
             [sys.executable, "-m", "recordings_ui", "--demo", "--port", str(port)],
-            env=env, stdout=log, stderr=subprocess.STDOUT,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
         )
     url = f"http://127.0.0.1:{port}"
     try:
         deadline = time.monotonic() + 20
         while True:
             if proc.poll() is not None:
-                pytest.fail(f"demo server exited with {proc.returncode}:\n{log_path.read_text(errors='replace')[-2000:]}")
+                pytest.fail(
+                    f"demo server exited with {proc.returncode}:\n{log_path.read_text(errors='replace')[-2000:]}"
+                )
             try:
                 with urllib.request.urlopen(f"{url}/healthz", timeout=1):
                     break
             except OSError:
                 if time.monotonic() > deadline:
-                    pytest.fail(f"demo server did not start in 20 s:\n{log_path.read_text(errors='replace')[-2000:]}")
+                    pytest.fail(
+                        f"demo server did not start in 20 s:\n{log_path.read_text(errors='replace')[-2000:]}"
+                    )
                 time.sleep(0.2)
         yield url
     finally:
@@ -75,13 +81,16 @@ def test_untagged_filter_shows_only_apollo_13(page: Page, server_url):
 def test_clicking_a_line_seeks_the_audio(page: Page, server_url):
     open_library(page, server_url)
     page.get_by_test_id("recording-row").filter(has_text="JFK").click()
-    page.wait_for_function("document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=10_000)
+    page.wait_for_function(
+        "document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=10_000
+    )
     turn = page.get_by_test_id("turn").nth(2)
     start = float(turn.get_attribute("data-start"))
     turn.click()
     page.wait_for_function(
         "s => Math.abs(document.querySelector('[data-testid=media]').currentTime - s) < 0.5",
-        arg=start, timeout=5_000,
+        arg=start,
+        timeout=5_000,
     )
     expect(turn).to_have_class(re.compile(r"\bnow\b"))
 
@@ -92,7 +101,9 @@ def test_a_newly_chosen_recording_starts_from_the_beginning(page: Page, server_u
     # first. Back on JFK (first line at 1.8 s) the fresh audio sits at 0, so no line is current.
     open_library(page, server_url)
     page.get_by_test_id("recording-row").filter(has_text="JFK").click()
-    page.wait_for_function("document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=10_000)
+    page.wait_for_function(
+        "document.querySelector('[data-testid=media]')?.readyState >= 1", timeout=10_000
+    )
     page.get_by_test_id("turn").nth(2).click()
     expect(page.get_by_test_id("turn").nth(2)).to_have_class(re.compile(r"\bnow\b"))
     page.get_by_test_id("recording-row").filter(has_text="Apollo 11").click()
