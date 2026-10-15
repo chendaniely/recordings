@@ -91,9 +91,17 @@ def normalise_host(value: str) -> str:
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]
     try:
-        return str(ipaddress.ip_address(host))
+        address = ipaddress.ip_address(host)
     except ValueError:
-        pass
+        address = None
+    if address is not None:
+        if getattr(address, "scope_id", None) or getattr(address, "ipv4_mapped", None):
+            raise ValueError(f"{value!r} is an address no browser sends in `Host`: write it as "
+                             "a browser shows it (no zone ID, and an IPv4 address as 4 numbers)")
+        return str(address)
+    if all(label.isdigit() or re.fullmatch(r"0x[0-9a-f]*", label) for label in host.split(".")):
+        raise ValueError(f"{value!r} is a number, not a host name, and no browser sends it as "
+                         "written (127.1 and 0x7f.1 become 127.0.0.1): write the address in full")
     if "://" in host or "/" in host:
         raise ValueError(f"{value!r} is not a host name: give the name or address alone")
     if ":" in host:

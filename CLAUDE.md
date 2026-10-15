@@ -60,10 +60,20 @@ smoke test on purpose until someone does the steps below:
 
 ## Archive rules (spec §6)
 
-- **Write once:** media, `source/` and `renditions/` are never overwritten. Only
-  `recording.json`, `my-notes.md` and `tags.yaml` change, by atomic replace.
+- **Every write goes through `recordings.writer.Writer`.** Its `mutate` is the only thing that
+  changes a `recording.json`: it bumps `rev` and refuses a file edited outside the app until
+  `recordings reindex` accepts the edit. `my-notes.md` is only ever appended to, under the
+  recording's lock. Media, `source/` and `renditions/` are published write-once. Never write
+  archive files any other way, in code or in tests.
+- **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
+  make archives with `recordings.init.init_archive` (or the `writer` fixture).
 - **Privacy:** a recording is private if a tag is `private` or under `private/`, in any
-  capitalisation (`recordings.models.is_private_tag`). Don't read a private recording's
-  transcript or notes.
-- **The archive's own docs** come from `packages/core/src/recordings/format/`. Edit them
-  there.
+  capitalisation (`recordings.models.is_private_tag`). The private tag lands before any source or
+  output does. Don't read a private recording's transcript or notes. No report, alert or log
+  carries a title.
+- **Fixtures are synthetic:** `packages/core/tests/conftest.py` builds Plaud envelopes and an
+  `audio-router` archive by hand. Never copy real data in.
+- **The archive's own docs** come from `packages/core/src/recordings/format/`. Edit them there.
+- **Settings:** a new key in `config.example.toml` needs its row in
+  `packages/ui/tests/test_template_settings.py`, with the reader that uses it.
+- **The first real run, and restoring for real,** are in `docs/runbooks/first-run.md`.

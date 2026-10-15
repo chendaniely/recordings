@@ -868,3 +868,25 @@ def test_a_read_only_state_makes_every_connection_read_only(writer, tmp_path, mo
     state.backup_to(tmp_path / "copy" / "state.db")
     state.meta("archive_uuid")
     assert modes == ["ro", "ro"]
+
+
+def test_a_full_state_disk_warns_about_the_heartbeat_once_an_hour(tmp_path, writer, ntfy,
+                                                                 monkeypatch, caplog):
+    # why: a full state disk fails the heartbeat and the trim at every tick; the log said so every
+    # minute, which buries the one line that matters (Task 13's council).
+    import logging
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, full)
+    with caplog.at_level(logging.DEBUG, logger="recordings.ops"):
+        for _ in range(90):
+            run_due(ctx)
+            clock.now += timedelta(minutes=1)
+    warned = [r for r in caplog.records if r.levelno == logging.WARNING]
+    for text in ("could not write the heartbeat", "could not trim the old runs"):
+        assert len([r for r in warned if r.getMessage() == text]) == 2, text  # minute 0 and 60

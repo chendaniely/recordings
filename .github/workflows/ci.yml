@@ -27,7 +27,7 @@ jobs:
       - run: uv run --frozen pytest
         env: { RECORDINGS_REQUIRE_RESTIC: "1" }
       - run: uv run --frozen recordings schemas --check
-      - run: uv run --frozen recordings validate demo/archive
+      - run: uv run --frozen recordings validate demo/archive --deep
 
   frontend:
     runs-on: ubuntu-24.04

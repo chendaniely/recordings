@@ -358,7 +358,9 @@ def test_host_names_are_normalised(value, expected):
 
 @pytest.mark.parametrize("value", ["my-homelab:8000", "http://my-homelab", "my-homelab/x", "", "a b",
                                    "a\\tb", "user@my-homelab", "my-homelab?x", "my-homelab.",
-                                   "-my-homelab", "my-homelab-", "my..homelab"])
+                                   "-my-homelab", "my-homelab-", "my..homelab",
+                                   "127.1", "0x7f.1", "2130706433", "01.02.03.04", "1.2.3.4.5",
+                                   "::ffff:127.0.0.1", "fe80::1%en0"])
 def test_allowed_hosts_with_a_port_scheme_or_path_are_refused(tmp_path, value):
     # why: stage-1 carry-over. They passed validation, never matched, and gave a bare 400.
     cfg_file = write(tmp_path, f'[server]\nallowed_hosts = ["{value}"]\n')

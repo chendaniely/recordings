@@ -207,6 +207,7 @@ class Context:
     attempts: dict[str, tuple[datetime, bool]] = field(default_factory=dict)
     alerted: dict[str, tuple[bool, datetime | None]] = field(default_factory=dict)
     locked: dict[str, datetime] = field(default_factory=dict)
+    warned: dict[str, datetime] = field(default_factory=dict)  # when _warn_hourly last spoke
 
 
 @dataclass(frozen=True)
@@ -492,6 +493,21 @@ def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
         return _run_held(ctx, job, tags)
 
 
+WARN_EVERY = timedelta(hours=1)
+
+
+def _warn_hourly(ctx: Context, key: str, message: str) -> None:
+    """A full state disk fails the heartbeat and the trim at every tick: say so once an hour (the
+    rest at debug), not 1,440 times a day. The alert says it too, once (Task 13)."""
+    now = ctx.clock()
+    last = ctx.warned.get(key)
+    if last is None or not timedelta(0) <= now - last < WARN_EVERY:
+        ctx.warned[key] = now
+        log.warning(message)
+    else:
+        log.debug(message)
+
+
 def _trim_runs(ctx: Context) -> None:
     """Once a day: drop runs older than KEEP_RUNS, but never a job's newest run or its newest good
     one, so Status never reads "never succeeded" after a long failing streak. A failure here is
@@ -504,7 +520,7 @@ def _trim_runs(ctx: Context) -> None:
         gone = ctx.state.prune_runs(now - KEEP_RUNS)
         ctx.state.set_meta("ops_runs_trimmed", now.isoformat())
     except (*FAILURES, ValueError):
-        log.warning("could not trim the old runs")
+        _warn_hourly(ctx, "trim", "could not trim the old runs")
         return
     if gone:
         log.info("trimmed %d old runs", gone)
@@ -516,7 +532,7 @@ def run_due(ctx: Context) -> list[JobResult]:
     try:
         ctx.state.set_meta("ops_heartbeat", ctx.clock().isoformat())
     except FAILURES:  # a broken state disk must not stop the pass: the jobs still run
-        log.warning("could not write the heartbeat")
+        _warn_hourly(ctx, "heartbeat", "could not write the heartbeat")
     _trim_runs(ctx)
     now = ctx.clock()
     return [run_job(ctx, job, lock_timeout=0)

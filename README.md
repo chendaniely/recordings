@@ -4,7 +4,10 @@ A self-hosted library for recordings: Plaud, audio and video files, talks. One c
 archive, transcripts and notes from local models (and Claude when asked), and a web UI for
 listening, reading and tagging. Design: `docs/superpowers/specs/2026-10-08-recordings-design.md`.
 
-Stage 1 (this release) is the read-only Library over a demo archive.
+Stage 1 built the read-only Library over a demo archive. Stage 2a moves the real archive in: a
+locked write path, `recordings import-audio-router`, restic backups to an append-only
+rest-server on the NAS with a monthly restore test, the NAS mirror, alerts, and Status.
+`docs/runbooks/first-run.md` is the first real run.
 
 ## Live demo
 

@@ -142,3 +142,45 @@ def test_restoring_for_real_puts_every_piece_back():
                    "recordings reindex", "recordings init --adopt",
                    "/archive", "config.toml", "deploy.env", "state.db"):
         assert needed in code, needed
+
+
+def test_every_recordings_command_the_runbook_names_parses():
+    # why: a command renamed, or an option dropped, in a fix round must not leave the runbook
+    # naming one that doesn't exist. Each `recordings …` command is parsed by the real CLI parser,
+    # options and all: `doctor --role`, `init --adopt` and the restore steps included.
+    import shlex
+
+    from recordings.cli import build_parser
+
+    commands = []
+    for line in "\n".join(_code_lines()).replace("\\\n", " ").splitlines():
+        if not re.search(r"\brecordings [a-z]", line):
+            continue
+        tokens = shlex.split(line, comments=True)
+        for i, token in enumerate(tokens):
+            # The command itself: first on the line, or after a service name, `run` or `exec`.
+            # Not `--tag recordings` or a path.
+            if token != "recordings" or (i and tokens[i - 1] not in ("web", "backup", "run",
+                                                                       "exec")):
+                continue
+            command = []
+            for t in tokens[i + 1:]:
+                if t in ("|", "||", "&&", ";", "&") or t.startswith((">", "2>")):
+                    break
+                command.append(t)
+            if command and re.fullmatch(r"[a-z][a-z-]*", command[0]):
+                commands.append(command)
+    unparsed = []
+    for command in commands:
+        try:
+            build_parser().parse_args(command)
+        except SystemExit:
+            unparsed.append("recordings " + shlex.join(command))
+    assert unparsed == []
+    named = {c[0] for c in commands}
+    assert {"init", "doctor", "backup", "mirror", "import-audio-router", "validate", "reindex",
+            "alert-test"} <= named, sorted(named)
+    assert any(c[0] == "init" and "--adopt" in c for c in commands)
+    assert {"web", "backup"} <= {c[c.index("--role") + 1] for c in commands
+                                 if c[0] == "doctor" and "--role" in c[:-1]}
+    assert any(c[:2] == ["backup", "restore-test"] for c in commands)
