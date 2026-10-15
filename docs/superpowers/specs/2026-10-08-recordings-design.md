@@ -258,7 +258,10 @@ recordings/                      (repo root, uv workspace, MIT)
     the NAS is refused without it, because the mirror sends the plaintext archive, private
     recordings included, over it.
   - the ntfy topic (stage 2a; §14): 1 to 64 letters, digits, `-` or `_`; use 20 or more random
-    ones, because the topic is the only lock on the alerts
+    ones, because the topic is the only lock on the alerts. With no token and a server that is not
+    this machine, the app refuses a shorter one. That fails the whole alert configuration, so the
+    dead-man's pings stop too until it is fixed; `alert-test` exits 78 and Healthchecks alerts
+    after its grace
   - an ntfy access token, `RECORDINGS_NTFY_TOKEN`, only for a self-hosted server that needs
     login (stage 2a; §14)
   - the dead-man's switch ping URL, which carries its own token (stage 2a; §14)
@@ -2066,14 +2069,20 @@ come from that frame.
     for example on a full disk, the loop remembers its last attempts and sends in memory, so a
     failing job is retried at its normal retry time and alerted once, not at every tick.
   - **Delivery:** the ntfy server and the dead-man's switch URL must be `https://` with no user
-    name or password in them (`http://` only to this machine's loopback, for tests). A redirect
-    is never followed, because it would carry the token and the title to another host, and it
-    counts as not delivered. Only proxies from the environment are used. Each request times out
+    name or password in them, and no query (`?`) or fragment (`#`), in plain ASCII, because
+    `/start`, `/fail` and the topic are added to the end (`http://` only to this machine's
+    loopback, for tests). A URL that breaks this is refused when the configuration loads, which
+    stops every alert and ping until it is fixed; `alert-test` and the doctor say so, and
+    Healthchecks alerts after its grace. A redirect is never followed, because it would carry the
+    token and the title to another host, and it counts as not delivered. Only an https proxy from
+    the environment is used (it sees a CONNECT to the host name); plain http to the loopback never
+    goes through one. Each request times out
     after 10 seconds, and a failed delivery is logged without its URL. A server that needs
     login gets an optional access token (`RECORDINGS_NTFY_TOKEN`, a secret).
   - **`recordings alert-test`** sends one test push and one `/log` ping, which leaves the check's
     state alone. Each part is tested only if it is set up (`null` is "not configured"); it
-    exits 1 when a part that is set up fails, and 78 when neither is set up.
+    exits 1 when a part that is set up fails, and 78 when neither is set up, or when a topic is set
+    with no `ntfy_server`.
   - **A dead-man's switch** on Healthchecks.io: each good sync and each good backup pings
     it, and a missed window raises an alert, so a stopped worker or backup is noticed too.
     A backup pings `/start` when it begins, then the plain URL when it worked or `/fail` when
