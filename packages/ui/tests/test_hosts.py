@@ -7,15 +7,14 @@ directly (the browser sends the website's Origin) and be handed a private record
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse
-from starlette.routing import Route, WebSocketRoute
-from starlette.websockets import WebSocketDisconnect
-
 from recordings_ui import runtime
 from recordings_ui.app import create_app
 from recordings_ui.hosts import LOCAL_HOSTS, HostGuard
 from recordings_ui.settings import Settings
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route, WebSocketRoute
+from starlette.websockets import WebSocketDisconnect
 
 
 async def _hello(request):

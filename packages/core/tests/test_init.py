@@ -1,10 +1,9 @@
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from recordings import init as init_module
 from recordings import state as state_module
 from recordings.cli import main
@@ -20,7 +19,7 @@ from recordings.sentinel import (
 )
 from recordings.state import MIGRATIONS, SCHEMA_VERSION, State, StateError
 
-T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 UUID = "5f0c8e2a-3b1d-4c6e-9a7f-1d2e3f405162"
 
 

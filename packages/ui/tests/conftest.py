@@ -3,7 +3,6 @@ import shutil
 from pathlib import Path
 
 import pytest
-
 from recordings.index import Index
 from recordings.init import init_archive
 from recordings.state import State

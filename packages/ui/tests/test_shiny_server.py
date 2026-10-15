@@ -1,10 +1,9 @@
 from pathlib import Path
 
 import pytest
-from shiny.testserver import TestServerSession
-
 from recordings.archive import Archive
 from recordings_ui import runtime
+from shiny.testserver import TestServerSession
 
 SHINY_APP = Path(__file__).resolve().parents[1] / "src" / "recordings_ui" / "shiny_app.py"
 pytestmark = pytest.mark.parametrize("local_server", [str(SHINY_APP)], indirect=True)

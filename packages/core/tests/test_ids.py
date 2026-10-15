@@ -1,8 +1,7 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
-
 from recordings.ids import make_id, parse_id, relative_dir
 
 SHA = "3fa91c2e" + "0" * 56
@@ -14,7 +13,7 @@ def test_make_id_uses_iso_basic_local_time_with_offset():
 
 
 def test_utc_is_plus_zero_not_z():
-    t = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    t = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
     assert make_id(t, SHA) == "20260102T030405+0000_3fa91c2e"
 
 
@@ -41,7 +40,7 @@ def test_offset_with_seconds_is_refused():
 @pytest.mark.parametrize("bad", ["abc", SHA.upper(), SHA[:-1]])
 def test_sha_must_be_64_lowercase_hex(bad):
     with pytest.raises(ValueError, match="64 lowercase hex"):
-        make_id(datetime(2026, 1, 1, tzinfo=timezone.utc), bad)
+        make_id(datetime(2026, 1, 1, tzinfo=UTC), bad)
 
 
 @pytest.mark.parametrize(

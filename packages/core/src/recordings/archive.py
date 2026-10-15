@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -29,7 +29,7 @@ def sha256_file(path: Path) -> str:
 
 
 def utc_stamp(t: datetime) -> str:
-    return t.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return t.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 @dataclass(frozen=True)

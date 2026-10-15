@@ -11,7 +11,7 @@ import shutil
 import sys
 import tempfile
 import tomllib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -26,7 +26,7 @@ from recordings.writer import Incoming, Writer
 
 HERE = Path(__file__).resolve().parent
 # Every stamp in the demo derives from this instant, so a rebuild is byte-identical.
-BUILD_AT = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+BUILD_AT = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 # A fixed UUID, so a rebuild is byte-identical. Every copy of the demo shares it, harmlessly: each
 # demo run gets a fresh temporary state folder.
 DEMO_UUID = "5f0c8e2a-3b1d-4c6e-9a7f-1d2e3f405162"

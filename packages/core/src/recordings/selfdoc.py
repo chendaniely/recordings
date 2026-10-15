@@ -50,7 +50,7 @@ def write_docs(root: Path) -> list[str]:
 
 def layout_patterns() -> list[re.Pattern]:
     block = re.search(
-        r"<!-- layout:begin -->\n(.*?)<!-- layout:end -->", _package_text("FORMAT.md"), re.S
+        r"<!-- layout:begin -->\n(.*?)<!-- layout:end -->", _package_text("FORMAT.md"), re.DOTALL
     )
     if block is None:
         raise RuntimeError("FORMAT.md has no layout block")

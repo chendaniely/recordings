@@ -13,12 +13,11 @@ import sys
 import threading
 import time
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from recordings import backup, cli, ops
 from recordings.backup import BackupError, Keep
 from recordings.config import ConfigError, load_config, secret_path
@@ -29,7 +28,7 @@ from recordings.sentinel import SENTINEL
 from recordings.ssh import Nas, nas_free_bytes, ssh_options
 
 REPO = Path(__file__).resolve().parents[3]
-NOW = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 9, 8, 0, tzinfo=UTC)
 # Read once, at import, so the fixture that clears RECORDINGS_* (Task 14) can never hide them.
 REQUIRE_RESTIC = os.environ.get("RECORDINGS_REQUIRE_RESTIC") == "1"
 TEST_RESTIC = os.environ.get("RECORDINGS_TEST_RESTIC")

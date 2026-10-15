@@ -1,12 +1,11 @@
 import os
 import sqlite3
 from contextlib import closing, contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-
 from recordings import index as index_module
 from recordings.archive import Archive
 from recordings.ids import make_id, relative_dir
@@ -15,7 +14,7 @@ from recordings.models import MediaInfo, Recording, SourceRef, dump_json
 from recordings.refs import canonical_plaud_id, canonical_ref
 from recordings.state import State
 
-T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 HEX = "0123456789abcdef0123456789abcdef"
 # The first 100 bytes of a file that says it is an index (its application_id at offset 68), with a
 # page size of 0, so SQLite can't read a page of it.
@@ -241,7 +240,7 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     # Patch the datetime module's now method to return a fixed timestamp
     import recordings.index
 
-    fixed_dt = datetime(2026, 10, 9, 14, 35, 12, tzinfo=timezone.utc)
+    fixed_dt = datetime(2026, 10, 9, 14, 35, 12, tzinfo=UTC)
     mock_datetime = Mock()
     mock_datetime.now.return_value = fixed_dt
     monkeypatch.setattr(recordings.index, "datetime", mock_datetime)

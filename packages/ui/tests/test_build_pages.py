@@ -6,7 +6,6 @@ import shutil
 from pathlib import Path
 
 import pytest
-
 from recordings_ui import runtime
 
 REPO = Path(__file__).resolve().parents[3]

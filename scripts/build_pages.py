@@ -26,7 +26,6 @@ import sys
 from pathlib import Path
 
 import shinyreact
-
 from recordings.archive import Archive
 
 REPO = Path(__file__).resolve().parents[1]

@@ -1,6 +1,6 @@
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from recordings.archive import RawSource
 from recordings.cli import main
@@ -167,7 +167,7 @@ def test_reindex_exits_1_when_a_plaud_recording_could_not_be_reconciled(
 ):
     # why: that recording's outputs are missing, so a script must be told, as it is for an
     # invalid file. The message ("busy") must not reach the report.
-    when = datetime(2026, 8, 1, 16, 10, tzinfo=timezone.utc)
+    when = datetime(2026, 8, 1, 16, 10, tzinfo=UTC)
     writer.add(
         make_incoming(
             sources=(
@@ -198,7 +198,6 @@ def test_the_cli_refuses_abbreviated_flags():
     # renamed to an extension of the old one would keep the runbook "working" by accident. The
     # runbook test parses with this parser, so it must not guess.
     import pytest
-
     from recordings.cli import build_parser
 
     parser = build_parser()

@@ -4,11 +4,10 @@ import json
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-
 from recordings import media
 from recordings.archive import Archive
 from recordings.cli import main
@@ -31,7 +30,7 @@ C = "c" * 32
 J = "9" * 32  # a recording whose title is outside ASCII
 X = "7" * 32  # on the consent list
 UUID = "11111111-1111-4111-8111-111111111111"
-NOW = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 9, 8, 0, tzinfo=UTC)
 JA = "会議メモ / Q&A"  # Review Focus 4: a title outside ASCII
 CONSENT = f"# Never mirror\n- `{X}` — excluded\n"
 
@@ -232,7 +231,7 @@ def test_running_the_import_again_adds_nothing(ar_archive, plaud_env, writer):
         ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"
     )
     assert again_plan.counts()["present"] == 6
-    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=UTC))
     assert (again.created, again.sources_added, again.renditions_added, again.plaud_outputs) == (
         0,
         0,
@@ -614,9 +613,8 @@ def test_the_import_holds_the_ops_lock(ar_archive, plaud_env, writer):
     # mirror run lands half-way through an import.
     build(ar_archive, plaud_env)
     the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
-    with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
-        with pytest.raises(LockTimeout):
-            run(the_plan, writer, now=NOW, lock_timeout=0.1)
+    with Locks(writer.state.locks_dir, timeout=0).hold("ops"), pytest.raises(LockTimeout):
+        run(the_plan, writer, now=NOW, lock_timeout=0.1)
     assert list(writer.archive.iter_recordings()) == []
 
 
@@ -737,7 +735,7 @@ def test_two_pocket_snapshots_that_carry_the_same_output_give_one(ar_archive, wr
     again = run(
         plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
         writer,
-        now=datetime(2026, 10, 10, tzinfo=timezone.utc),
+        now=datetime(2026, 10, 10, tzinfo=UTC),
     )
     assert (again.sources_added, again.renditions_added, again.failed) == (1, 0, [])
     (rec,) = writer.archive.iter_recordings()
@@ -913,7 +911,7 @@ def test_a_same_audio_group_counts_each_skipped_snapshot_once(ar_archive, plaud_
         ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"
     )
     assert again_plan.incomplete_snapshots()["total"] == 1
-    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=UTC))
     assert again.skipped_snapshots == again_plan.incomplete_snapshots()["total"] == 1
 
 
@@ -1146,7 +1144,7 @@ def test_a_re_run_never_decodes_what_the_archive_already_holds(
         ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"
     )
     assert again_plan.counts()["present"] == 6 and again_plan.unprobed() == []
-    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
+    again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=UTC))
     assert (again.failed, again.measured, decoded) == ([], {}, [])
 
 
@@ -1203,7 +1201,7 @@ def test_a_re_run_never_writes_an_imported_output_twice_whatever_its_bytes(
     again = run(
         plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
         writer,
-        now=datetime(2026, 10, 10, tzinfo=timezone.utc),
+        now=datetime(2026, 10, 10, tzinfo=UTC),
     )
     assert (again.failed, again.renditions_added) == ([], 0)
     assert _files(writer.root) == files
@@ -1370,7 +1368,7 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
     again = run(
         plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
         writer,
-        now=datetime(2026, 10, 10, tzinfo=timezone.utc),
+        now=datetime(2026, 10, 10, tzinfo=UTC),
     )
     assert again.failed == []
     assert {t.tag for t in writer.archive.load(rec.id).tags} == {"private/therapy"}

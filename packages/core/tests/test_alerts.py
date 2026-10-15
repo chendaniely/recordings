@@ -1,7 +1,6 @@
 import socket
 
 import pytest
-
 from recordings import alerts
 from recordings.alerts import AlertConfig, ping_deadman, send
 from recordings.config import ConfigError, load_config

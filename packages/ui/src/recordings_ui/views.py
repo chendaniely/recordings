@@ -11,11 +11,12 @@ from datetime import datetime
 from urllib.parse import quote
 
 from markdown_it import MarkdownIt
-
 from recordings.archive import Archive, Problem
 from recordings.ids import ID_RE
 from recordings.models import Recording, Rendition, is_private, is_private_tag, is_untagged
-from recordings_ui.status import StatusSettings, status_view as _status_view
+
+from recordings_ui.status import StatusSettings
+from recordings_ui.status import status_view as _status_view
 
 # html=False: any HTML in model-written notes is escaped, never rendered (review focus #4).
 # No images: an image would make the browser fetch it, and the app makes no external requests.

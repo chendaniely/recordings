@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
 import pytest
-
 from recordings import disk
 from recordings.config import ConfigError, load_config
 from recordings.disk import disk_status, disk_thresholds

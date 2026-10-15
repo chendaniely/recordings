@@ -6,11 +6,10 @@ import json
 import logging
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 from recordings.archive import Archive
 from recordings.cli import main
 from recordings.models import is_private
@@ -160,7 +159,7 @@ def test_back_up_and_prove_the_restore(
     summary = status_summary(
         State.read_only(tmp_path / "state"),
         archive_root=tmp_path / "archive",
-        now=datetime.now(timezone.utc),
+        now=datetime.now(UTC),
         timezone_name="UTC",
         warn=0.0,
         stop=0.0,

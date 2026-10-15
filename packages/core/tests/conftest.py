@@ -7,19 +7,18 @@ import itertools
 import json
 import threading
 import wave
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
-
 from recordings.archive import RawSource
 from recordings.index import Index
 from recordings.init import init_archive
 from recordings.state import State
 from recordings.writer import Incoming, Writer
 
-T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 LOCAL = datetime.fromisoformat("2026-10-06T14:00:03-07:00")
 
 
@@ -260,7 +259,7 @@ class ARArchive:
         ).hexdigest()
 
     def _row(self, **cells) -> dict:
-        row = {c: "" for c in AR_COLUMNS}
+        row = dict.fromkeys(AR_COLUMNS, "")
         row.update(cells)
         self.rows.append(row)
         return row

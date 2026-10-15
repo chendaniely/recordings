@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 from recordings_ui import runtime
 from recordings_ui.app import create_app
 from recordings_ui.settings import Settings

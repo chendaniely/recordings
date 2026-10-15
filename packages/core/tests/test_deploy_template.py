@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from recordings import config
 
 REPO = Path(__file__).resolve().parents[3]
@@ -33,7 +32,7 @@ def make_dry_run(*args: str) -> subprocess.CompletedProcess:
 
 def test_every_compose_variable_is_documented_in_the_template_or_set_by_make():
     used = set(re.findall(r"\$\{(\w+)", COMPOSE.read_text(encoding="utf-8")))
-    documented = set(re.findall(r"^(\w+)=", TEMPLATE.read_text(encoding="utf-8"), re.M))
+    documented = set(re.findall(r"^(\w+)=", TEMPLATE.read_text(encoding="utf-8"), re.MULTILINE))
     assert used, "compose.yml uses no variables?"
     assert used <= documented | SET_BY_MAKE, (
         f"undocumented: {sorted(used - documented - SET_BY_MAKE)}"
@@ -428,8 +427,8 @@ def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path)
 def test_every_base_image_is_pinned_by_digest():
     # why: a tag can be moved to other bytes; a digest can't. Dependabot moves the digests.
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    froms = re.findall(r"^FROM\s+(\S+)\s+AS\s+(\S+)", dockerfile, re.M)
-    assert len(froms) == len(re.findall(r"^FROM\s", dockerfile, re.M)), "a FROM without AS"
+    froms = re.findall(r"^FROM\s+(\S+)\s+AS\s+(\S+)", dockerfile, re.MULTILINE)
+    assert len(froms) == len(re.findall(r"^FROM\s", dockerfile, re.MULTILINE)), "a FROM without AS"
     for image, _ in froms:
         assert re.search(r":[\w.-]+@sha256:[0-9a-f]{64}$", image), image
     stages = {stage for _, stage in froms}
@@ -453,7 +452,9 @@ def test_the_images_restic_is_the_one_fetch_restic_pins():
     found = {
         arch: (sum_, bin_)
         for arch, sum_, bin_ in re.findall(
-            r"^\s+(amd64|arm64)\) sum=([0-9a-f]{64}); bin=([0-9a-f]{64}) ;;", dockerfile, re.M
+            r"^\s+(amd64|arm64)\) sum=([0-9a-f]{64}); bin=([0-9a-f]{64}) ;;",
+            dockerfile,
+            re.MULTILINE,
         )
     }
     assert found == {
@@ -564,7 +565,7 @@ def test_the_ntfy_token_is_an_optional_secret_in_backup_only():
     assert "ntfy_token" in doc["services"]["backup"]["secrets"]
     assert doc["secrets"]["ntfy_token"]["file"] == "${RECORDINGS_NTFY_AUTH_HOST:-/dev/null}"
     template = TEMPLATE.read_text(encoding="utf-8")
-    assert re.search(r"^RECORDINGS_NTFY_AUTH_HOST=$", template, re.M), "unset by default"
+    assert re.search(r"^RECORDINGS_NTFY_AUTH_HOST=$", template, re.MULTILINE), "unset by default"
 
 
 def test_the_example_config_backs_up_the_deploy_file_where_compose_mounts_it():

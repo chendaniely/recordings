@@ -1,13 +1,12 @@
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from recordings.archive import Archive, RawSource
 from recordings.models import Rendition
 
-T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 
 
 def test_a_broken_recording_json_is_reported_not_fatal(writer, make_incoming):

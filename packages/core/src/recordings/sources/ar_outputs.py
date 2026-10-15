@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_left
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from itertools import accumulate
 from pathlib import Path
 from typing import Any
@@ -83,9 +83,7 @@ def _times(rows: list[dict], start: float = 0.0) -> tuple[list[tuple[float, floa
 def ar_stamp(path: Path) -> datetime | None:
     """The UTC stamp a rendition's file name ends with (audio-router's store._rendition_stamp)."""
     try:
-        return datetime.strptime(path.stem.rsplit("-", 1)[-1], "%Y%m%dT%H%M%SZ").replace(
-            tzinfo=timezone.utc
-        )
+        return datetime.strptime(path.stem.rsplit("-", 1)[-1], "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     except ValueError:
         return None
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from recordings.selfdoc import write_docs
@@ -59,7 +59,7 @@ def init_archive(
         raise InitError(f"{state_dir / 'state.db'} already exists: init runs once per archive")
     identity = ArchiveIdentity(
         uuid=str(uuid.UUID(archive_uuid)) if archive_uuid else str(uuid.uuid4()),
-        created_at=created_at or datetime.now(timezone.utc),
+        created_at=created_at or datetime.now(UTC),
     )
     try:
         root.mkdir(parents=True, exist_ok=True)

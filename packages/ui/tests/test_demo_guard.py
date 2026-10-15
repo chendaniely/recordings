@@ -20,9 +20,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-
 from recordings.archive import Archive
-from recordings_ui import runtime, settings as settings_module, views
+from recordings_ui import runtime, views
+from recordings_ui import settings as settings_module
 from recordings_ui.app import create_app
 from recordings_ui.settings import find_demo_archive, from_env
 

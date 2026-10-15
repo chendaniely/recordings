@@ -3,10 +3,9 @@ import hashlib
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from recordings import media
 from recordings.archive import RawSource
 from recordings.index import Index
@@ -27,7 +26,7 @@ T = "9" * 32  # tagged private in audio-router's catalog
 X = "7" * 32  # on the consent list
 X2 = "6" * 32  # on the consent list, and only in audio-router's ledger
 UUID = "11111111-1111-4111-8111-111111111111"
-T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 NONE = ()  # an empty consent list, for the tests about everything else
 JA = "会議メモ / Q&A"  # Review Focus 4: a title outside ASCII
 

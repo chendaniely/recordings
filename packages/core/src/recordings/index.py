@@ -15,7 +15,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from recordings.archive import Archive
@@ -69,9 +69,8 @@ class Index:
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
-        with closing(sqlite3.connect(self.path, timeout=30)) as conn:
-            with conn:
-                yield conn
+        with closing(sqlite3.connect(self.path, timeout=30)) as conn, conn:
+            yield conn
 
     def exists(self) -> bool:
         return self.path.is_file()
@@ -200,7 +199,7 @@ class Index:
         before = self._stamp()
         if not self._readable() and self._stamp() == before:
             # Corrupted SQLite; rename aside with collision-safe timestamp
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
             # Find a collision-free suffix number for all siblings
             suffix_num = ""
             while True:

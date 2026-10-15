@@ -4,7 +4,6 @@ import tomllib
 from pathlib import Path
 
 import pytest
-
 from recordings.cli import main
 from recordings.config import SECRETS, ConfigError, load_config, secret
 from recordings.doctor import doctor

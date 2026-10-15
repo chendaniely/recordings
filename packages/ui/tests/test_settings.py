@@ -1,5 +1,4 @@
 import pytest
-
 from recordings_ui.settings import from_env
 
 
@@ -105,7 +104,6 @@ def _empty_config(tmp_path):
 
 def test_recordings_allowed_hosts_entries_are_checked_too():
     import pytest
-
     from recordings_ui.settings import env_hosts
 
     assert env_hosts({"RECORDINGS_ALLOWED_HOSTS": "A.example, b.example"}) == {
@@ -121,7 +119,6 @@ def test_demo_mode_serves_no_archive_but_the_demo(tmp_path, demo_archive):
     import shutil
 
     import pytest
-
     from recordings.sentinel import read_sentinel
     from recordings_ui.settings import DEMO_UUID, from_env
 
@@ -141,7 +138,6 @@ def test_demo_mode_serves_no_archive_but_the_demo(tmp_path, demo_archive):
 
 def test_base_urls_host_is_checked_like_an_allowed_hosts_entry(tmp_path):
     import pytest
-
     from recordings_ui.settings import from_env
 
     # why: browsers send the canonical form in Host, so that is what the allow-list must hold; and

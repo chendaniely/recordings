@@ -1,9 +1,8 @@
 import copy
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from recordings.plaud.normalise import (
     DROPPED_KEYS,
     NORMALISER_VERSION,
@@ -226,9 +225,9 @@ def test_a_legacy_snapshot_says_when_it_was_fetched(plaud_env):
     env = plaud_env()
     assert meta_fetched_at(env) is None
     env["_meta"] = {"fetched_at": "2025-03-01T04:00:00-08:00"}
-    assert meta_fetched_at(env) == datetime(2025, 3, 1, 12, tzinfo=timezone.utc)
+    assert meta_fetched_at(env) == datetime(2025, 3, 1, 12, tzinfo=UTC)
     env["_meta"] = {"fetched_at": "2025-03-01T12:00:00Z"}
-    assert meta_fetched_at(env) == datetime(2025, 3, 1, 12, tzinfo=timezone.utc)
+    assert meta_fetched_at(env) == datetime(2025, 3, 1, 12, tzinfo=UTC)
     for unusable in ("2025-03-01T12:00:00", "yesterday", 1740830400):  # no offset, not a time
         env["_meta"] = {"fetched_at": unusable}
         assert meta_fetched_at(env) is None

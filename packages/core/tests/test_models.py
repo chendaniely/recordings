@@ -1,16 +1,19 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib import resources
 
 import pytest
 from pydantic import ValidationError
-
 from recordings import schemas
 from recordings.cli import main
-from recordings.models import UNKNOWN_PERSON, Segment, SourceRef, Speakers, SpeakerSpan
 from recordings.models import (
+    UNKNOWN_PERSON,
     Recording,
     Rendition,
+    Segment,
+    SourceRef,
+    Speakers,
+    SpeakerSpan,
     TagRef,
     Word,
     dump_json,
@@ -104,7 +107,7 @@ def rendition(**over) -> Rendition:
         engine="canned",
         model="claude-opus-5-5",
         version="claude-opus-5-5@demo",
-        created_at=datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
         payload={"markdown": "# Notes"},
     )
     base.update(over)
@@ -247,7 +250,7 @@ def test_a_validation_error_never_echoes_the_input():
             kind="transcript",
             engine="plaud",
             version="plaud@1",
-            created_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+            created_at=datetime(2026, 10, 8, tzinfo=UTC),
             payload={"segments": [{"start": 0, "text": "Ada said something private."}]},
         )
     assert "something private" not in str(caught.value)
@@ -266,8 +269,8 @@ def test_plaud_segment_fields_and_snapshot_fields():
     ref = SourceRef(
         kind="plaud",
         ref="a" * 32,
-        added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
-        fetched_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        added_at=datetime(2026, 10, 8, tzinfo=UTC),
+        fetched_at=datetime(2026, 8, 1, tzinfo=UTC),
         sha256="b" * 64,
     )
     assert SourceRef.model_validate_json(ref.model_dump_json()) == ref
@@ -275,7 +278,7 @@ def test_plaud_segment_fields_and_snapshot_fields():
         SourceRef(
             kind="plaud",
             ref="x",
-            added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+            added_at=datetime(2026, 10, 8, tzinfo=UTC),
             sha256="not-a-hash",
         )
 

@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from recordings import cli, mirror
 from recordings.config import ConfigError, load_config
 from recordings.mirror import MirrorError, MirrorRefused, is_remote, rsync_command, run_mirror

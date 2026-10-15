@@ -7,11 +7,10 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 from recordings import writer as writer_module
 from recordings.archive import Archive, RawSource, sha256_file
 from recordings.config import load_config
@@ -31,7 +30,7 @@ from recordings.writer import (
     WriterError,
 )
 
-T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 NEXT_DAY = datetime.fromisoformat("2026-10-07T09:00:00-07:00")  # a second, different ID
 
 
@@ -409,7 +408,7 @@ def test_a_merge_killed_before_its_mutate_leaves_no_duplicate_source_on_the_reru
         kind="plaud",
         ref="a" * 32,
         added_at=T0,
-        fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc),
+        fetched_at=datetime(2026, 10, 9, tzinfo=UTC),
         payload=b'{"id": 2}',
     )
     real_mutate = Writer.mutate
@@ -436,7 +435,7 @@ def test_a_new_snapshot_of_the_same_source_is_kept_beside_the_first(writer, make
         kind="plaud",
         ref="a" * 32,
         added_at=T0,
-        fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc),
+        fetched_at=datetime(2026, 10, 9, tzinfo=UTC),
         payload=b'{"id": 2}',
     )
     added = writer.add(make_incoming(b"bytes", sources=(later,)))

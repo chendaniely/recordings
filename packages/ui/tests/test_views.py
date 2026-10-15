@@ -1,7 +1,6 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from recordings.archive import Archive, RawSource
 from recordings.models import Rendition
 from recordings.writer import Incoming
@@ -119,15 +118,13 @@ def test_a_recording_with_no_outputs_has_empty_tabs(tmp_path, writer):
     rec = writer.add(
         Incoming(
             media=media,
-            recorded_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
+            recorded_at=datetime(2026, 10, 1, 9, tzinfo=UTC),
             timezone_name="UTC",
             time_source="ingest",
             title="Fresh upload",
             kind="audio",
             sources=(
-                RawSource(
-                    kind="upload", ref="x.mp3", added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)
-                ),
+                RawSource(kind="upload", ref="x.mp3", added_at=datetime(2026, 10, 1, tzinfo=UTC)),
             ),
         )
     ).recording
@@ -141,7 +138,7 @@ def test_model_written_html_is_escaped(tmp_path, writer):
     assert "&lt;script&gt;" in render_markdown("hi <script>alert(1)</script>")
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    t = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 10, 1, tzinfo=UTC)
     rec = writer.add(
         Incoming(
             media=media,
@@ -227,7 +224,7 @@ def test_a_capitalised_private_tag_is_private_everywhere(tmp_path, writer):
 
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    t = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 10, 1, tzinfo=UTC)
     rec = writer.add(
         Incoming(
             media=media,
@@ -249,7 +246,7 @@ def test_a_capitalised_private_tag_is_private_everywhere(tmp_path, writer):
 def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    t = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    t = datetime(2026, 10, 1, tzinfo=UTC)
     rec = writer.add(
         Incoming(
             media=media,

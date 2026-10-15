@@ -27,7 +27,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from recordings.refs import canonical_plaud_id
@@ -47,7 +47,7 @@ PRESIGNED = "<presigned>"
 _QUERY_CHARS = r"(?:&amp;|[A-Za-z0-9\-._~%&=+/:@])*"
 _PRESIGNED_QUERY = re.compile(
     r"(https?://[^\s?#\"'\\]+)\?" + _QUERY_CHARS + r"X-Amz-" + _QUERY_CHARS + r"(?<=[A-Za-z0-9%=])",
-    re.I,
+    re.IGNORECASE,
 )
 # A note block's own fields. Any other key on one is unknown, so it goes to "other" and counts
 # towards the circuit breaker, while an edit to a known field is a notes edit (§9.1.1).
@@ -159,7 +159,7 @@ def meta_fetched_at(envelope: Any) -> datetime | None:
         when = datetime.fromisoformat(value.strip())
     except ValueError:
         return None
-    return when.astimezone(timezone.utc) if when.tzinfo is not None else None
+    return when.astimezone(UTC) if when.tzinfo is not None else None
 
 
 def link_errors(envelope: dict) -> list[str]:

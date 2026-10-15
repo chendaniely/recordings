@@ -3,17 +3,16 @@ import os
 import sqlite3
 import subprocess
 from contextlib import closing, contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from recordings import disk, ops
 from recordings.cli import main
 from recordings.config import load_config
 from recordings.locks import Locks
 from recordings.ops import Context, due, enabled_jobs, loop, run_due, run_job
 
-T0 = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 9, 8, 0, tzinfo=UTC)
 SUMMARY = json.dumps(
     {
         "message_type": "summary",
@@ -783,7 +782,6 @@ def test_a_read_only_state_never_creates_or_writes(writer, tmp_path):
     import sqlite3
 
     import pytest
-
     from recordings.state import State
 
     assert State.read_only(tmp_path / "nowhere") is None

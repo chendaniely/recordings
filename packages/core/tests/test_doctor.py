@@ -1,16 +1,16 @@
 import json
 import sqlite3
 import subprocess
+from datetime import UTC
 from pathlib import Path
 from zoneinfo import ZoneInfoNotFoundError
 
 import pytest
-
 from recordings import doctor as doctor_module
+from recordings.archive import Archive
 from recordings.cli import main
 from recordings.config import SECRETS
 from recordings.doctor import JOB_SECRETS, doctor, read_only_mount
-from recordings.archive import Archive
 from recordings.index import Index
 from recordings.init import init_archive
 from recordings.sentinel import MIRROR, SENTINEL, read_sentinel
@@ -608,7 +608,7 @@ def test_in_the_backup_role_a_missing_state_db_or_an_unconfigured_job_is_a_probl
     assert any("no state.db yet" in p for p in doctor(environ, role="backup")["problems"])
     assert any("no state.db yet" in w for w in doctor(environ, role="all")["warnings"])
     cfg.write_text(
-        good.replace(f'repository = "sftp:backup@nas:/volume1/backups/recordings"\n', "").replace(
+        good.replace('repository = "sftp:backup@nas:/volume1/backups/recordings"\n', "").replace(
             'target = "backup@nas:/volume1/recordings-mirror/"\n', ""
         ),
         encoding="utf-8",
@@ -676,7 +676,7 @@ def test_a_default_timezone_that_is_not_a_string_is_a_problem_not_a_crash(tmp_pa
 def test_a_job_running_now_owns_its_folders_and_doctor_says_to_leave_them(tmp_path):
     # why: the runbook runs doctor right after `up`, while the first check and restore test run;
     # deleting a live restore test's folder fails it.
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from recordings.locks import OPS_LOCK, Locks, announce
 
@@ -685,7 +685,7 @@ def test_a_job_running_now_owns_its_folders_and_doctor_says_to_leave_them(tmp_pa
     (tmp_path / "scratch" / "restore-20261009T080000Z").mkdir()
     folders = tmp_path / "state" / "locks"
     with Locks(folders, timeout=0).hold(OPS_LOCK):
-        with announce(folders, "check", datetime.now(timezone.utc)):
+        with announce(folders, "check", datetime.now(UTC)):
             report = doctor(environ, role="backup")
     assert not any("restic-check-cache-" in w for w in report["warnings"])
     assert any("restore-" in w and "unencrypted" in w for w in report["warnings"])  # not check's

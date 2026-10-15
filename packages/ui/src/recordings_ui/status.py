@@ -9,7 +9,7 @@ breaking the page. Demo mode has no settings, and shows no disk figure.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -67,7 +67,7 @@ def status_view(
         # Demo mode: its disk is a temporary copy, or on Pages, Pyodide's in-memory file system,
         # so any free-space figure would be made up (§17).
         return {"configured": False, "jobs": [], "attention": [], "flags": 0, "disk": None}
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     state_db = settings.state_path / "state.db" if settings.state_path else None
     state = None
     if state_db is not None and state_db.is_file():

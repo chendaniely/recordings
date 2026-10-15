@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from recordings import config
 
 # The test switches stay. CI sets RECORDINGS_REQUIRE_RESTIC=1, so a missing restic fails the

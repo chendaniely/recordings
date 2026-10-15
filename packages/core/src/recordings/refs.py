@@ -14,8 +14,7 @@ _PLAUD_HEX = re.compile(r"[0-9a-f]{32}")
 
 def canonical_plaud_id(ref: str) -> str:
     value = ref.strip().lower()
-    if value.startswith("of_"):
-        value = value[3:]
+    value = value.removeprefix("of_")
     return value if _PLAUD_HEX.fullmatch(value) else ref
 
 

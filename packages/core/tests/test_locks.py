@@ -4,10 +4,10 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import UTC
 
 import pytest
-
-from recordings.locks import Locks, LockOrderError, LockTimeout, lock_order
+from recordings.locks import LockOrderError, Locks, LockTimeout, lock_order
 
 A = "20261006T140003-0700_aaaaaaaa"
 B = "20261007T140003-0700_bbbbbbbb"
@@ -128,9 +128,8 @@ def test_no_file_descriptor_leaks_when_the_wait_is_interrupted(tmp_path, monkeyp
     before = set(os.listdir("/dev/fd"))
     with Locks(tmp_path).hold(A):  # another holder, so the second one waits and sleeps
         monkeypatch.setattr(time, "sleep", interrupted)
-        with pytest.raises(KeyboardInterrupt):
-            with Locks(tmp_path, timeout=10).hold(A):
-                pass
+        with pytest.raises(KeyboardInterrupt), Locks(tmp_path, timeout=10).hold(A):
+            pass
         monkeypatch.undo()
         assert len(set(os.listdir("/dev/fd")) - before) == 1  # only the holder's own lock file
     assert set(os.listdir("/dev/fd")) == before
@@ -139,9 +138,8 @@ def test_no_file_descriptor_leaks_when_the_wait_is_interrupted(tmp_path, monkeyp
 @pytest.mark.parametrize("key", ["a/b", "a b", "", "../x"])
 def test_a_key_that_is_not_a_plain_file_name_is_refused(tmp_path, key):
     # why: keys become file names. Substituting characters let "a/b" and "a b" share a lock file.
-    with pytest.raises(ValueError):
-        with Locks(tmp_path).hold(key):
-            pass
+    with pytest.raises(ValueError), Locks(tmp_path).hold(key):
+        pass
 
 
 def test_a_lock_is_released_when_its_process_dies(tmp_path):
@@ -170,11 +168,11 @@ def test_a_lock_is_released_when_its_process_dies(tmp_path):
 
 def test_a_held_ops_lock_says_which_job_runs_and_since_when(tmp_path):
     # why: spec §12.5. Status shows the running job and since when, read from another process.
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from recordings.locks import OPS_LOCK, announce, running
 
-    folder, since = tmp_path / "locks", datetime(2026, 10, 9, 7, 0, tzinfo=timezone.utc)
+    folder, since = tmp_path / "locks", datetime(2026, 10, 9, 7, 0, tzinfo=UTC)
     assert running(folder) is None  # no lock file yet
     with Locks(folder, timeout=0).hold(OPS_LOCK):
         assert running(folder) is None  # held, not announced

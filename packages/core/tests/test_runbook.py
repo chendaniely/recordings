@@ -5,7 +5,7 @@ REPO = Path(__file__).resolve().parents[3]
 RUNBOOK = REPO / "docs" / "runbooks" / "first-run.md"
 # A fenced block whose fences start their own lines. Pairing fence lines (rather than any
 # three backticks) keeps a json block from shifting every later block by one.
-FENCE = re.compile(r"^[ \t]*```(\w*)[ \t]*\n(.*?)^[ \t]*```[ \t]*$", re.S | re.M)
+FENCE = re.compile(r"^[ \t]*```(\w*)[ \t]*\n(.*?)^[ \t]*```[ \t]*$", re.DOTALL | re.MULTILINE)
 
 
 def _text() -> str:

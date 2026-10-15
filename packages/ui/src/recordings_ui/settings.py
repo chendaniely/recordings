@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from recordings.config import Config, ConfigError, load_config, normalise_host
 from recordings.sentinel import SentinelError, read_sentinel
+
 from recordings_ui.hosts import LOCAL_HOSTS
 
 

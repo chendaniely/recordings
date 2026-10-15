@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from recordings.archive import RawSource
 from recordings.index import Index
@@ -8,7 +8,7 @@ from recordings.selfdoc import layout_patterns, validate, write_docs
 from recordings.state import State
 from recordings.writer import Incoming, Writer
 
-T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 
 
 def build_one(tmp_path):

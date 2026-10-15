@@ -1,9 +1,8 @@
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from recordings.archive import RawSource
 from recordings.config import Config, ConfigError
 from recordings.models import MediaInfo, PlaudState, Recording, TagRef, is_private
@@ -21,7 +20,7 @@ from recordings.writer import NotTheWriter, Writer, rendition_filename
 
 HEX = "0123456789abcdef0123456789abcdef"
 OTHER = "fedcba9876543210fedcba9876543210"
-T1 = datetime(2026, 8, 1, 16, 10, tzinfo=timezone.utc)
+T1 = datetime(2026, 8, 1, 16, 10, tzinfo=UTC)
 
 
 def rec(**over) -> Recording:

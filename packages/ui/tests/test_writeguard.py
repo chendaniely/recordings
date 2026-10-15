@@ -1,13 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Route
-
 from recordings_ui import runtime
 from recordings_ui.app import create_app
 from recordings_ui.hosts import LOCAL_HOSTS, WriteGuard
 from recordings_ui.settings import Settings
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 
 async def echo(request):

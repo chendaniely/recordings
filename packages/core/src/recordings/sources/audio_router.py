@@ -31,7 +31,7 @@ import sqlite3
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import asdict, dataclass, field, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -1028,9 +1028,9 @@ def _fetched_at(path: Path) -> datetime:
         return legacy
     stamp, _, counter = path.stem.partition("-")
     try:
-        when = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        when = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     except ValueError:
-        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        return datetime.fromtimestamp(path.stat().st_mtime, UTC)
     return when + timedelta(microseconds=int(counter)) if counter.isdigit() else when
 
 

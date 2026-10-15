@@ -1,5 +1,4 @@
 import pytest
-
 import recordings
 from recordings.cli import main
 

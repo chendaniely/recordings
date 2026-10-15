@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from recordings.backends import Backend, BackendError, CannedBackend, CompletionRequest, model_slug
 
 RID = "20261006T140003-0700_3fa91c2e"

@@ -1,13 +1,13 @@
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from recordings import disk
 from recordings_ui.status import StatusSettings, status_view
 
-T0 = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 9, 8, 0, tzinfo=UTC)
 
 
 def test_the_demo_shows_no_disk_figure(demo_archive):

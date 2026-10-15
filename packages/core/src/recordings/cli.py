@@ -9,7 +9,7 @@ import os
 import sqlite3
 import sys
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from recordings import __version__, alerts, backup, config, ops, schemas, selfdoc
@@ -381,7 +381,7 @@ def cmd_import_audio_router(args: argparse.Namespace) -> int:
         result = run(
             the_plan,
             writer,
-            now=datetime.now(timezone.utc),
+            now=datetime.now(UTC),
             disk=guard,
             stop_free_percent=thresholds["stop"],
         )

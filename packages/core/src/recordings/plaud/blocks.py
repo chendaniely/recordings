@@ -35,7 +35,7 @@ def _stamp(ms: Any) -> str:
     """`[MM:SS]`, or `[--:--]` when there is no timing: never a made-up 00:00."""
     if isinstance(ms, bool) or not isinstance(ms, (int, float)):
         return "[--:--]"
-    if isinstance(ms, float) and not math.isfinite(ms) or abs(ms) >= 2**53:
+    if (isinstance(ms, float) and not math.isfinite(ms)) or abs(ms) >= 2**53:
         return "[--:--]"  # Infinity, NaN or an absurd integer: no made-up time either
     s = int(ms // 1000)
     return f"[{s // 60:02d}:{s % 60:02d}]"
