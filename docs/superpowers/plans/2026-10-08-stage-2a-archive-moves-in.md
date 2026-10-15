@@ -20077,7 +20077,7 @@ In `.github/workflows/ci.yml`, **add** this job after `docker`:
 - [ ] **Step 4: Run the tests and the smoke test**
 
 Run: `RECORDINGS_ARCHIVE=/nonexistent RESTIC_REPOSITORY=/nonexistent RECORDINGS_REQUIRE_RESTIC=1 uv run pytest packages/core/tests/test_deploy_template.py -v && uv run pytest && make deploy-smoke`
-Expected: 24 passed, then the whole suite passes (819 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 797 less the 2 old template tests plus these 24; a clone without a built frontend shows 818 and one skip).
+Expected: 24 passed, then the whole suite passes (820 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 798 less the 2 old template tests plus these 24; a clone without a built frontend shows 819 and one skip).
 Everything in `test_deploy_template.py` and the suite runs without Docker. The smoke test and the
 image build need a running Docker daemon (`docker info` must work) and fail, not skip, without
 one: run `make deploy-smoke` on such a machine, and CI's `docker` and `compose-smoke` jobs cover it
@@ -20131,7 +20131,7 @@ copy, or on Pages, Pyodide's in-memory file system, so any figure would be made 
 - Modify: `packages/core/src/recordings/disk.py` (`disk_view`), `ops.py` (`when_label`, `status_summary`, and `run_job`, which announces its job), `state.py` (`State.read_only`), `locks.py` (`announce`, `running`), `sources/audio_router.py` (the import announces itself)
 - Modify: `packages/ui/src/recordings_ui/runtime.py`, `views.py`, `shiny_app.py`, `app.py`
 - Modify: `packages/ui/frontend/src/App.tsx`, `components/TopBar.tsx`, `components/DetailsTab.tsx`, `components/RecordingPane.tsx` (the header's time), `types.ts`, `app.css`
-- Test: `packages/core/tests/test_ops.py` (the summary, the read-only state), `test_locks.py` (the running job), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
+- Test: `packages/core/tests/test_ops.py` (the summary, the read-only state), `test_locks.py` and `test_import_run.py` (the running job), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
 
 **Interfaces:**
 - Consumes:
@@ -20321,6 +20321,59 @@ def test_status_without_state_never_loads_sqlite(demo_archive):
     assert out.stdout.strip() == "[]"
 ```
 
+Add to `packages/core/tests/test_ops.py`, too:
+```python
+def test_run_job_announces_its_job_while_it_runs(tmp_path, writer, ntfy):
+    # why: spec §12.5. Status reads the running job from the held ops lock, so run_job must name it.
+    from recordings.locks import running
+    seen = []
+
+    def runner(cmd, **kwargs):
+        seen.append(running(writer.state.locks_dir))
+        return restic()(cmd, **kwargs)
+
+    run_job(context(tmp_path, writer, ntfy, runner=runner), "backup")
+    assert seen and set(seen) == {("backup", T0)}
+    assert running(writer.state.locks_dir) is None  # and says nothing once it is done
+```
+
+Add to `packages/core/tests/test_locks.py`:
+```python
+def test_a_held_ops_lock_says_which_job_runs_and_since_when(tmp_path):
+    # why: spec §12.5. Status shows the running job and since when, read from another process.
+    from datetime import datetime, timezone
+
+    from recordings.locks import OPS_LOCK, announce, running
+    folder, since = tmp_path / "locks", datetime(2026, 10, 9, 7, 0, tzinfo=timezone.utc)
+    assert running(folder) is None  # no lock file yet
+    with Locks(folder, timeout=0).hold(OPS_LOCK):
+        assert running(folder) is None  # held, not announced
+        with announce(folder, "restore-test", since):
+            assert running(folder) == ("restore-test", since)
+        assert running(folder) is None  # announce empties the file
+    (folder / "ops.lock").write_text('{"job": "check", "since": "2026-10-09T07:00:00+00:00"}')
+    assert running(folder) is None  # a crashed holder's leftover: the lock is free
+```
+
+Add to `packages/core/tests/test_import_run.py`:
+```python
+def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer):
+    # why: spec §12.5. Status says which job holds the ops lock and since when, the import included.
+    from recordings.locks import running
+    build(ar_archive, plaud_env)
+    seen = []
+    roomy = DiskStatus(path="x", marker=True, free_bytes=5 * 10**12, total_bytes=10**13, level="ok",
+                       message="50% free")
+
+    def disk():  # the run asks before each recording, inside its hold of the ops lock
+        seen.append(running(writer.state.locks_dir))
+        return roomy
+
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW, disk=disk)
+    assert seen and set(seen) == {("import", NOW)}
+    assert running(writer.state.locks_dir) is None
+```
+
 Add to `packages/ui/tests/test_shiny_server.py`:
 ```python
 def test_status_is_published_and_unconfigured_in_the_demo(local_server: TestServerSession):
@@ -20504,6 +20557,7 @@ Run each, from the repo root:
 ```bash
 uv run pytest packages/core/tests/test_ops.py -v
 uv run pytest packages/ui/tests/test_shiny_server.py packages/ui/tests/test_demo_guard.py -v
+uv run pytest packages/core/tests/test_locks.py packages/core/tests/test_import_run.py -v
 uv run pytest packages/ui/tests/test_status.py -v
 (cd packages/ui/frontend && npm test)
 ```
@@ -20513,6 +20567,8 @@ Expected:
 - The Shiny and demo-guard tests: FAIL. The demo guard fails after 20 s, `the demo's websocket sent
   only ['library']`, because the server function has no `status` output yet, and the session has
   none either. (The `views.status_view` AttributeError comes after it, once `status` is published.)
+- The three announce tests (`test_locks.py`, `test_import_run.py` and the one in `test_ops.py`): FAIL with
+  `ImportError: cannot import name 'announce'` (or `'running'`) `from 'recordings.locks'`.
 - `test_status.py`: an error at collection, `ModuleNotFoundError: No module named 'recordings_ui.status'`.
 - Vitest fails to resolve `./nav`, `./when` and `./StatusPage`.
 - The new Pages test is checked in Step 5, once `make pages` has built the site.
@@ -20565,24 +20621,6 @@ In `packages/core/src/recordings/state.py`:
            with closing(self._connect("ro" if self._read_only else "rw")) as conn:
    ```
    The next line, `PRAGMA synchronous=FULL`, is harmless on a read-only connection.
-
-Add to `packages/core/tests/test_locks.py` (Step 1's test, shown here beside the code it covers):
-```python
-def test_a_held_ops_lock_says_which_job_runs_and_since_when(tmp_path):
-    # why: spec §12.5. Status shows the running job and since when, read from another process.
-    from datetime import datetime, timezone
-
-    from recordings.locks import OPS_LOCK, announce, running
-    folder, since = tmp_path / "locks", datetime(2026, 10, 9, 7, 0, tzinfo=timezone.utc)
-    assert running(folder) is None  # no lock file yet
-    with Locks(folder, timeout=0).hold(OPS_LOCK):
-        assert running(folder) is None  # held, not announced
-        with announce(folder, "restore-test", since):
-            assert running(folder) == ("restore-test", since)
-        assert running(folder) is None  # announce empties the file
-    (folder / "ops.lock").write_text('{"job": "check", "since": "2026-10-09T07:00:00+00:00"}')
-    assert running(folder) is None  # a crashed holder's leftover: the lock is free
-```
 
 In `packages/core/src/recordings/locks.py`, **add** `import json` and `from datetime import datetime`, then at the end:
 ```python
@@ -20644,7 +20682,7 @@ In `packages/core/src/recordings/ops.py`'s `run_job`, **import** `announce` besi
 
 In `packages/core/src/recordings/sources/audio_router.py`, `run` holds `OPS_LOCK` with
 `with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):`; **import** `announce` beside `OPS_LOCK` and make the body run inside
-`with announce(writer.state.locks_dir, "import", now):` (the `now` argument `run` already takes). A test beside the import's lock tests: while the import runs (a hook that reads `running(writer.state.locks_dir)`), the answer's job is `"import"`.
+`with announce(writer.state.locks_dir, "import", now):` (the `now` argument `run` already takes). (Its test is in Step 1: the disk callback, which the run calls inside its hold, reads `running`.)
 
 In `packages/core/src/recordings/ops.py`, **add** `from pathlib import Path`,
 `from zoneinfo import ZoneInfo`, `from recordings.disk import disk_view` and `running` to the `recordings.locks` import, then:
@@ -21093,7 +21131,7 @@ Status output too, with no state folder, no `sqlite3` and no disk figure.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/core/src/recordings packages/core/tests/test_ops.py packages/ui
+git add packages/core/src/recordings packages/core/tests packages/ui
 git commit -m "feat(ui): the Status page's backup and disk panels, read-only; the header's offset
 
 Backups need attention after 2 hours (spec §12.5), and the disk warns below 20% and stops imports
@@ -21202,7 +21240,8 @@ def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings"
         f'[state]\npath = "{tmp_path / "state"}"\n[index]\npath = "{tmp_path / "index.db"}"\n'
         f'[nas]\nssh = "backup@nas"\n'
         f'[backup]\nrepository = "{repository}"\nrestore_scratch = "{tmp_path / "scratch"}"\n'
-        f'nas_repo_path = "/volume1/backups/recordings"\n{backup_extra}'
+        f'nas_repo_path = "/volume1/backups/recordings"\n'
+        f'extra_paths = ["/backup-extra/deploy.env"]\n{backup_extra}'
         f'[mirror]\ntarget = "backup@nas:/volume1/recordings-mirror/"\n'
         f'[alerts]\nntfy_server = "https://ntfy.sh"\n', encoding="utf-8")
     return {"RECORDINGS_CONFIG": str(cfg), "RESTIC_PASSWORD_FILE": str(secrets / "pw"),
@@ -21334,12 +21373,13 @@ def test_a_topic_with_no_server_is_a_warning(tmp_path):
 
 
 def test_the_backup_role_warns_when_deploy_env_is_not_backed_up(tmp_path):
-    environ = server(tmp_path)  # no extra_paths: the default
+    environ = server(tmp_path)  # the fixture names deploy.env in extra_paths, as the template does
+    assert not any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        'extra_paths = ["/backup-extra/deploy.env"]\n', ""), encoding="utf-8")
     assert any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
     assert not any("deploy.env" in w for w in doctor(environ, role="all")["warnings"])
-    (tmp_path / "other").mkdir()
-    named = server(tmp_path / "other", backup_extra='extra_paths = ["/backup-extra/deploy.env"]\n')
-    assert not any("deploy.env" in w for w in doctor(named, role="backup")["warnings"])
 
 
 def test_a_secret_file_others_can_read_is_a_warning(tmp_path):
