@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import json
 import os
 import re
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 from recordings.ids import ID_RE
@@ -113,3 +115,56 @@ class Locks:
         except BaseException:
             os.close(fd)  # on any exception, even KeyboardInterrupt; closing drops a flock too
             raise
+
+
+@contextmanager
+def announce(folder: Path, job: str, since: datetime, key: str = OPS_LOCK) -> Iterator[None]:
+    """Call while holding `key`: writes which job runs, and since when, into the lock file, for
+    Status (spec §12.5), and empties it again. Best effort: a full disk must not stop the job."""
+    path = Path(folder) / f"{key}.lock"
+    try:
+        _write(path, json.dumps({"job": job, "since": since.isoformat()}))
+    except OSError:
+        pass
+    try:
+        yield
+    finally:
+        try:
+            _write(path, "")
+        except OSError:
+            pass
+
+
+def _write(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+
+
+def running(folder: Path, key: str = OPS_LOCK) -> tuple[str, datetime] | None:
+    """Which job holds `key` now and since when, or None. It trusts the text only while the lock
+    is held (a probe with LOCK_SH | LOCK_NB, released at once), so a crashed holder's leftover
+    text means nothing. A reader in another container sees the same: flock is per host."""
+    try:
+        fd = os.open(Path(folder) / f"{key}.lock", os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in (errno.EAGAIN, errno.EACCES):
+                return None
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return None  # nobody holds it
+        try:
+            data = json.loads(os.pread(fd, 4096, 0).decode("utf-8"))
+            return str(data["job"]), datetime.fromisoformat(data["since"])
+        except (ValueError, KeyError, TypeError, OSError):
+            return None  # held, but not announced
+    finally:
+        os.close(fd)

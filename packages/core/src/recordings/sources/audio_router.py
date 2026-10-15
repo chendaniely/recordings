@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from recordings.archive import RawSource, sha256_file
 from recordings.disk import STOP_FREE_PERCENT, DiskStatus
 from recordings.index import Index, IndexRefused
-from recordings.locks import OPS_LOCK, Locks, LockTimeout
+from recordings.locks import OPS_LOCK, Locks, LockTimeout, announce
 from recordings.media import MEDIA_SUFFIXES, MediaProbe, media_kind, probe
 from recordings.models import Rendition, TagRef, is_private_tag
 from recordings.plaud.normalise import link_errors, meta_fetched_at
@@ -981,7 +981,8 @@ def run(plan: Plan, writer: Writer, *, now: datetime,
             f"media can't be measured for {unmeasured} of {len(todo)} recordings: anything but "
             "WAV needs ffprobe and ffmpeg (spec §9.1.1). Nothing was imported.", report)
     counted: set[tuple] = set()
-    with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):
+    with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK), \
+            announce(writer.state.locks_dir, "import", now):
         for item in todo:
             if disk is not None:
                 status = disk()

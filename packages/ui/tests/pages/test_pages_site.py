@@ -140,3 +140,15 @@ def test_the_dark_theme_toggle_works(page: Page, site_url, watch):
     expect(html).to_have_class(re.compile(r"\blight\b"), timeout=RENDER_TIMEOUT)
     expect(html).not_to_have_class(re.compile(r"\bdark\b"), timeout=RENDER_TIMEOUT)
     watch.assert_clean()
+
+
+def test_the_status_page_shows_no_made_up_disk(page: Page, site_url, watch):
+    # why: on Pages the "disk" is Pyodide's in-memory file system. Status opens, and says the free
+    # space is unknown rather than showing a figure for it.
+    app, _ = open_demo(page, site_url)
+    app.get_by_role("button", name="Status").click()
+    expect(app.get_by_test_id("status-page")).to_be_visible(timeout=RENDER_TIMEOUT)
+    expect(app.get_by_test_id("backups-unconfigured")).to_be_visible(timeout=RENDER_TIMEOUT)
+    expect(app.get_by_test_id("disk-unknown")).to_be_visible(timeout=RENDER_TIMEOUT)
+    expect(app.get_by_role("meter")).to_have_count(0)
+    watch.assert_clean()

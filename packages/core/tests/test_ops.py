@@ -591,3 +591,109 @@ def test_a_marker_failure_that_recovers_alone_is_cleared_and_said_again_when_it_
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == [
         "recordings: archive disk missing or changed", "recordings: disk recovered",
         "recordings: archive disk missing or changed"]
+
+
+def test_the_status_summary_flags_an_old_backup_a_failing_job_and_low_disk(writer, monkeypatch):
+    from types import SimpleNamespace
+
+    from recordings.ops import status_summary, when_label
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=150, f_frsize=1024, f_blocks=1000))
+    state = writer.state
+    state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "snapshot x")
+    # run_job's fixed failure template (Tasks 11 and 13): never the exception's own text
+    state.record_run("restore-test", T0, T0, False, "BackupError; exit 1")
+    summary = status_summary(state, archive_root=writer.root, now=T0,
+                             timezone_name="America/Vancouver", warn=20.0, stop=5.0,
+                             jobs=("disk", "backup", "restore-test"))
+    jobs = {j["job"]: j for j in summary["jobs"]}
+    assert set(jobs) == {"backup", "restore-test"}
+    assert jobs["backup"]["last_ok"] == "2026-10-08 22:00 (3 h ago)"  # 05:00 UTC is 22:00 PDT
+    assert jobs["backup"]["attention"] and not jobs["backup"]["failing"]
+    assert jobs["restore-test"]["failing"] and jobs["restore-test"]["last_ok"] is None
+    assert jobs["restore-test"]["detail"] == "BackupError; exit 1"
+    assert summary["attention"][0] == "The last backup is more than 2 hours old."
+    assert "Restore test failed: BackupError; exit 1" in summary["attention"]
+    assert summary["disk"]["level"] == "warn" and summary["disk"]["free_percent"] == 15.0
+    assert when_label(T0 - timedelta(seconds=20), T0, "UTC") == "2026-10-09 07:59 (just now)"
+    assert when_label(T0 - timedelta(days=3), T0, "UTC") == "2026-10-06 08:00 (3 days ago)"
+
+
+def test_status_shows_the_last_good_runs_detail_with_the_nas_free_space(writer):
+    # why: §15.1. "NAS free space unknown" is in a good backup's detail (Task 11), and Status must
+    # show it, not only a failing job's detail.
+    from recordings.ops import status_summary
+    detail = "snapshot 0123456789ab: 11 files, 4096 bytes added; NAS free space unknown"
+    writer.state.record_run("backup", T0 - timedelta(minutes=5), T0 - timedelta(minutes=5), True,
+                            detail)
+    writer.state.record_run("restore-test", T0, T0, False, "BackupError; exit 1")
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0, jobs=("backup", "restore-test"))
+    jobs = {j["job"]: j for j in summary["jobs"]}
+    assert jobs["backup"]["last_ok_detail"] == detail and jobs["backup"]["detail"] is None
+    assert jobs["restore-test"]["last_ok_detail"] is None
+
+
+def test_status_names_the_running_job_and_does_not_flag_the_backup_it_delays(writer):
+    # why: §12.5. A restore test holds the ops lock for hours, so the hourly backup's turns are
+    # skipped; that is not an outage, and Status says what is running and since when.
+    from recordings.locks import OPS_LOCK, Locks, announce
+    from recordings.ops import status_summary
+    writer.state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup", "restore-test"))
+    idle = status_summary(writer.state, **args)
+    assert idle["running"] is None
+    assert "The last backup is more than 2 hours old." in idle["attention"]
+    folder = writer.state.locks_dir
+    with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "restore-test",
+                                                           T0 - timedelta(minutes=50)):
+        busy = status_summary(writer.state, **args)
+    assert busy["running"] == {"job": "restore-test", "label": "Restore test",
+                               "since": "2026-10-09 07:10 (50 min ago)"}
+    assert "The last backup is more than 2 hours old." not in busy["attention"]
+
+
+def test_a_read_only_state_never_creates_or_writes(writer, tmp_path):
+    # why: Status and doctor read state.db while the writer uses it. A reader must never make an
+    # empty state.db where none exists, nor change one.
+    import sqlite3
+
+    import pytest
+
+    from recordings.state import State
+
+    assert State.read_only(tmp_path / "nowhere") is None
+    assert not (tmp_path / "nowhere").exists()
+    state = State.read_only(writer.state.path)
+    assert state.meta("archive_uuid") == writer.state.meta("archive_uuid")
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        state.set_meta("x", "y")
+
+
+def test_a_read_only_state_reads_what_a_live_writer_just_committed(writer):
+    # why: the backup service keeps writing state.db (WAL) while the web service reads it. A
+    # committed change in the -wal file, not yet checkpointed, must be visible to the reader.
+    from recordings.state import State
+
+    live = writer.state._connect("rw")  # holds the database open, so the WAL files exist
+    try:
+        live.execute("INSERT INTO meta (key, value) VALUES ('probe', 'wal')")
+        live.commit()
+        assert State.read_only(writer.state.path).meta("probe") == "wal"
+    finally:
+        live.close()
+
+
+def test_run_job_announces_its_job_while_it_runs(tmp_path, writer, ntfy):
+    # why: spec §12.5. Status reads the running job from the held ops lock, so run_job must name it.
+    from recordings.locks import running
+    seen = []
+
+    def runner(cmd, **kwargs):
+        seen.append(running(writer.state.locks_dir))
+        return restic()(cmd, **kwargs)
+
+    run_job(context(tmp_path, writer, ntfy, runner=runner), "backup")
+    assert seen and set(seen) == {("backup", T0)}
+    assert running(writer.state.locks_dir) is None  # and says nothing once it is done

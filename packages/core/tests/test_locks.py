@@ -156,3 +156,19 @@ def test_a_lock_is_released_when_its_process_dies(tmp_path):
     started = time.monotonic()
     with Locks(tmp_path, timeout=5).hold(A):
         assert time.monotonic() - started < 5
+
+
+def test_a_held_ops_lock_says_which_job_runs_and_since_when(tmp_path):
+    # why: spec §12.5. Status shows the running job and since when, read from another process.
+    from datetime import datetime, timezone
+
+    from recordings.locks import OPS_LOCK, announce, running
+    folder, since = tmp_path / "locks", datetime(2026, 10, 9, 7, 0, tzinfo=timezone.utc)
+    assert running(folder) is None  # no lock file yet
+    with Locks(folder, timeout=0).hold(OPS_LOCK):
+        assert running(folder) is None  # held, not announced
+        with announce(folder, "restore-test", since):
+            assert running(folder) == ("restore-test", since)
+        assert running(folder) is None  # announce empties the file
+    (folder / "ops.lock").write_text('{"job": "check", "since": "2026-10-09T07:00:00+00:00"}')
+    assert running(folder) is None  # a crashed holder's leftover: the lock is free

@@ -46,3 +46,8 @@ def test_the_configured_media_base_reaches_the_recording(local_server: TestServe
     local_server.set_inputs(selected_id=demo_ids["jfk-rice"])
     url = local_server.get_output("recording").value["media_url"]
     assert url == f"../media/{demo_ids['jfk-rice']}.mp3"
+
+
+def test_status_is_published_and_unconfigured_in_the_demo(local_server: TestServerSession):
+    status = local_server.get_output("status").value
+    assert status["configured"] is False and status["disk"] is None  # demo mode: no disk figure

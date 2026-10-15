@@ -39,13 +39,15 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from recordings import alerts, backup, mirror
 from recordings.alerts import AlertConfig
 from recordings.backup import BackupError, RestoreTestFailed
 from recordings.config import Config, ConfigError
-from recordings.disk import disk_status, disk_thresholds
-from recordings.locks import OPS_LOCK, Locks, LockTimeout
+from recordings.disk import disk_status, disk_thresholds, disk_view
+from recordings.locks import OPS_LOCK, Locks, LockTimeout, announce, running
 from recordings.mirror import MirrorError
 from recordings.sentinel import SentinelError
 from recordings.state import State, StateError
@@ -480,6 +482,7 @@ def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
     with ExitStack() as stack:
         try:
             stack.enter_context(Locks(ctx.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK))
+            stack.enter_context(announce(ctx.state.locks_dir, job, ctx.clock()))
         except LockTimeout:
             log.info("%s: %s", job, BUSY)
             return JobResult(job, False, BUSY)
@@ -533,3 +536,63 @@ def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: Fal
             log.warning("a pass of the loop failed (%s)", failure_detail(exc))
             log.debug("a pass of the loop failed", exc_info=True)  # the traceback, for --debug only
         sleep(tick)
+
+
+SHOWN = (("backup", "Backup", timedelta(hours=2)),
+         ("restore-test", "Restore test", timedelta(days=31)),
+         ("check", "Repository check", timedelta(days=8)),
+         ("mirror", "Mirror for the Mac", timedelta(hours=2)))
+RUNNING_LABELS = {**{job: label for job, label, _ in SHOWN}, "disk": "Disk check",
+                  "prune": "Retention", "import": "Import"}
+
+
+def when_label(t: datetime, now: datetime, timezone_name: str) -> str:
+    """`2026-10-08 14:05 (35 min ago)`: ISO 8601 dates and 24-hour times (spec §12)."""
+    minutes = int((now - t).total_seconds() // 60)
+    if minutes < 1:
+        ago = "just now"
+    elif minutes < 60:
+        ago = f"{minutes} min ago"
+    elif minutes < 48 * 60:
+        ago = f"{minutes // 60} h ago"
+    else:
+        ago = f"{minutes // 1440} days ago"
+    return f"{t.astimezone(ZoneInfo(timezone_name)):%Y-%m-%d %H:%M} ({ago})"
+
+
+def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_name: str,
+                   warn: float, stop: float, jobs: tuple[str, ...]) -> dict:
+    """Status's backup and disk panels (spec §12.5). The backup needs attention after 2 hours."""
+    disk = disk_view(disk_status(archive_root, expected_uuid=state.meta("archive_uuid"),
+                                 warn=warn, stop=stop))
+    flags = len(state.flags())
+    held = running(state.locks_dir)  # (job, since) while a job holds the ops lock
+    out: dict = {"configured": True, "jobs": [], "attention": [], "flags": flags, "disk": disk,
+                 "running": None if held is None else {
+                     "job": held[0], "label": RUNNING_LABELS.get(held[0], held[0]),
+                     "since": when_label(held[1], now, timezone_name)}}
+    for job, label, stale_after in SHOWN:
+        if job not in jobs:
+            continue
+        good, last = state.last_run(job, ok=True), state.last_run(job)
+        failing = last is not None and not last.ok
+        late = good is None or now - good.finished_at > stale_after
+        # §12.5: while a job holds the ops lock the hourly backup's turns are skipped, so a backup
+        # that is merely late is not an outage; the dead-man's grace decides when silence is.
+        stale = late and not (job == "backup" and good is not None and held is not None)
+        out["jobs"].append({
+            "job": job, "label": label,
+            "last_ok": when_label(good.finished_at, now, timezone_name) if good else None,
+            "last_ok_detail": good.detail if good else None,  # the NAS's free space, for a backup
+            "failing": failing, "detail": last.detail if failing else None,
+            "attention": failing or stale})
+        if job == "backup" and stale:
+            out["attention"].append("The last backup is more than 2 hours old." if good
+                                    else "No backup has finished yet.")
+        if failing:
+            out["attention"].append(f"{label} failed: {last.detail}")
+    if disk["level"] != "ok":
+        out["attention"].append(disk["message"])
+    if flags:
+        out["attention"].append(f"{flags} files need attention: run `recordings reindex`.")
+    return out

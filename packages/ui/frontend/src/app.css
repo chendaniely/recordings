@@ -89,3 +89,14 @@ h3 { font-weight: 700; margin: 12px 0 6px; }
   .sidebar, .list { border-right: 0; border-bottom: 1px solid var(--border); max-height: 40vh; }
   .notes-split, .compare { grid-template-columns: 1fr; }
 }
+button.nav { background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; padding: 0 0 2px; margin-right: 12px; }
+.status { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-content: start; }
+.status .problems { grid-column: 1 / -1; margin: 0; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.card h2 { margin: 0 0 8px; font-size: 15px; }
+tr.attn td { color: var(--destructive); }
+.meter { height: 10px; border-radius: 999px; background: var(--muted); overflow: hidden; margin: 6px 0; }
+.meter span { display: block; height: 100%; background: var(--primary); }
+.meter.warn span { background: var(--brand-orange); }
+.meter.stop span { background: var(--destructive); }
+.warn { color: var(--destructive); }

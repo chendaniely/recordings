@@ -75,3 +75,19 @@ def disk_status(archive_root: Path, *, expected_uuid: str | None,
         level, message = "ok", (f"{pct:.1f}% free" if pct is not None else "free space unknown")
     return DiskStatus(path=str(root), marker=marker, free_bytes=free, total_bytes=total,
                       level=level, message=message)
+
+
+def _size(n: int) -> str:
+    for unit, scale in (("TB", 10 ** 12), ("GB", 10 ** 9), ("MB", 10 ** 6)):
+        if n >= scale:
+            return f"{n / scale:.1f} {unit}"
+    return f"{n} bytes"
+
+
+def disk_view(status: DiskStatus) -> dict:
+    """What the Status page shows (spec §12.5): the level, the reason, and free space."""
+    pct = status.free_percent
+    label = (f"{_size(status.free_bytes)} free of {_size(status.total_bytes)}"
+             if status.free_bytes is not None and status.total_bytes else None)
+    return {"level": status.level, "message": status.message, "marker": status.marker,
+            "free_percent": round(pct, 1) if pct is not None else None, "free_label": label}

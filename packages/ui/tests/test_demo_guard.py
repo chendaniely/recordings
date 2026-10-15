@@ -3,6 +3,7 @@ opened, no other program runs, and nothing looks up or connects to another machi
 audit hooks see these whoever does them. SQLite opens its files from C, which the "open" event
 never sees, so "sqlite3.connect" is watched too."""
 
+import json
 import mimetypes
 import os
 import signal
@@ -11,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from collections.abc import Iterator
@@ -106,13 +108,30 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
                 for rid in demo_ids.values():
                     assert client.get(f"/media/{rid}", headers={"Range": "bytes=0-9"}).status_code == 206
                 with client.websocket_connect("ws://localhost/websocket/",
-                                              headers={"Origin": "http://localhost"}):
-                    pass  # connects only: Shiny runs the server function after the client's
-                    # `init` message, which Task 15 sends once Status joins the server function
+                                              headers={"Origin": "http://localhost"}) as ws:
+                    # Shiny runs the server function after the client's `init` message, and sends
+                    # an output only once the client says it is not hidden. So the guard sees what
+                    # the outputs read, init says so for each, and the test waits for their values.
+                    wanted = {"library", "status"}  # "recording" needs a selected_id
+                    ws.send_text(json.dumps({"method": "init", "data": {
+                        f".clientdata_output_{name}_hidden": False for name in wanted}}))
+                    seen: set[str] = set()
+
+                    def read() -> None:
+                        while not wanted <= seen:
+                            seen.update(json.loads(ws.receive_text()).get("values", {}))
+
+                    reader = threading.Thread(target=read, daemon=True)
+                    reader.start()
+                    reader.join(20)  # receive_text has no timeout: a missing output must not hang
+                    assert wanted <= seen, f"the demo's websocket sent only {sorted(seen)}"
             archive = Archive(settings.archive)
             views.library_view(archive)
             for rid in demo_ids.values():
                 views.recording_view(archive, rid)
+            # What create_app configured for Status in demo mode: if it ever read the real config's
+            # [state] path, opening the real state.db would show up in the audit hook's events.
+            views.status_view(archive, runtime.status_settings())
         finally:
             runtime.configure(None)
     assert [e for e in events if e[0] in PATH_EVENTS and str(real) in e[1]] == []

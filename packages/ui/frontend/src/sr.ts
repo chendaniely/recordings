@@ -5,10 +5,12 @@ import type * as SR from "@posit-dev/shinyreact";
 
 type Hooks = Pick<
   typeof SR,
-  "useShinyInput" | "useShinyOutputValue" | "useShinyOutputStatus" | "useShinyInitialized"
+  | "useShinyInput" | "useShinyOutputValue" | "useShinyOutputStatus" | "useShinyOutputError"
+  | "useShinyInitialized"
 >;
 
 const shinyreact = (window as unknown as { shinyreact: Hooks }).shinyreact;
 
-export const { useShinyInput, useShinyOutputValue, useShinyOutputStatus, useShinyInitialized } =
-  shinyreact;
+export const {
+  useShinyInput, useShinyOutputValue, useShinyOutputStatus, useShinyOutputError, useShinyInitialized,
+} = shinyreact;

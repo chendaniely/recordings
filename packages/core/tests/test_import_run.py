@@ -987,3 +987,20 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.failed == []
     assert {t.tag for t in writer.archive.load(rec.id).tags} == {"private/therapy"}
+
+
+def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer):
+    # why: spec §12.5. Status says which job holds the ops lock and since when, the import included.
+    from recordings.locks import running
+    build(ar_archive, plaud_env)
+    seen = []
+    roomy = DiskStatus(path="x", marker=True, free_bytes=5 * 10**12, total_bytes=10**13, level="ok",
+                       message="50% free")
+
+    def disk():  # the run asks before each recording, inside its hold of the ops lock
+        seen.append(running(writer.state.locks_dir))
+        return roomy
+
+    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW, disk=disk)
+    assert seen and set(seen) == {("import", NOW)}
+    assert running(writer.state.locks_dir) is None

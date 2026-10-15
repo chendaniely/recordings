@@ -15,6 +15,7 @@ from markdown_it import MarkdownIt
 from recordings.archive import Archive, Problem
 from recordings.ids import ID_RE
 from recordings.models import Recording, Rendition, is_private, is_private_tag, is_untagged
+from recordings_ui.status import StatusSettings, status_view as _status_view
 
 # html=False: any HTML in model-written notes is escaped, never rendered (review focus #4).
 # No images: an image would make the browser fetch it, and the app makes no external requests.
@@ -151,8 +152,8 @@ def recording_view(archive: Archive, rid: str, *, media_base: str | None = None)
         "private": is_private(rec),
         "media_url": media_url,
         "tags": _tags(rec),
-        "sources": [{"kind": s.kind, "ref": s.ref, "added_at": s.added_at.isoformat()}
-                    for s in rec.sources],
+        "sources": [{"kind": s.kind, "ref": s.ref,
+                     "added_at": (s.fetched_at or s.added_at).isoformat()} for s in rec.sources],
         "transcripts": transcripts,
         "chosen_transcript": chosen,
         "notes": [{"note_type": k, "outputs": v} for k, v in sorted(groups.items())],
@@ -169,3 +170,7 @@ def recording_view(archive: Archive, rid: str, *, media_base: str | None = None)
         ],
         "problems": [{"path": str(p.path), "message": p.message} for p in problems],
     }
+
+
+def status_view(archive: Archive, settings: StatusSettings | None) -> dict:
+    return _status_view(archive.root, settings)

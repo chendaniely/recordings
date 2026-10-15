@@ -132,3 +132,23 @@ def test_dark_mode_sticks_across_reloads(page: Page, server_url):
     page.reload()
     expect(page.get_by_test_id("recording-row")).to_have_count(4)
     expect(page.locator("html")).to_have_class(re.compile(r"\bdark\b"))
+
+
+def test_the_status_page_shows_backups_and_disk(page: Page, server_url):
+    page.goto(server_url)
+    page.get_by_role("button", name="Status").click()
+    expect(page.get_by_test_id("status-page")).to_be_visible()
+    expect(page.get_by_test_id("backups-unconfigured")).to_be_visible()
+    expect(page.get_by_role("heading", name="Disk")).to_be_visible()
+    expect(page.get_by_test_id("disk-unknown")).to_be_visible()  # the demo shows no disk figure
+    expect(page).to_have_url(re.compile(r"#/status$"))
+    page.get_by_role("button", name="Library").click()
+    expect(page.get_by_test_id("status-page")).to_have_count(0)
+
+
+def test_the_header_shows_the_local_time_with_its_offset(page: Page, server_url):
+    # why: the archive spans several time zones, so the header shows each recording's own local
+    # time and UTC offset (spec §12.1), whatever zone the browser is in.
+    open_library(page, server_url)
+    page.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    expect(page.get_by_test_id("recording-when")).to_have_text("1962-09-12 10:00 UTC-05:00")

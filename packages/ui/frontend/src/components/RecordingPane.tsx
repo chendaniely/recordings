@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+import { headerWhen } from "../lib/when";
 import { useShinyOutputStatus, useShinyOutputValue } from "../sr";
 import type { RecordingView } from "../types";
 import { DetailsTab } from "./DetailsTab";
@@ -35,7 +36,11 @@ function RecordingDetail({ rec, dimmed }: { rec: RecordingView; dimmed: boolean 
     <section className="pane" style={{ opacity: dimmed ? 0.6 : 1 }}>
       <div className="head">
         <h1>{rec.title} {rec.private && <Lock size={15} className="lock" data-testid="lock" aria-label="Private: Spark only" />}</h1>
-        <div className="meta">{[rec.when, rec.duration, rec.sources.map((s) => s.kind).join(", ")].filter(Boolean).join(" · ")} · <span className="mono">{rec.id}</span></div>
+        <div className="meta">
+          <time dateTime={rec.recorded_at} data-testid="recording-when">{headerWhen(rec.recorded_at)}</time>
+          {[rec.duration, [...new Set(rec.sources.map((s) => s.kind))].join(", ")].filter(Boolean).map((x) => ` · ${x}`).join("")}
+          {" · "}<span className="mono">{rec.id}</span>
+        </div>
         <div>{rec.tags.map((t) => <span key={t.tag} className={`chip${t.by === "auto" ? " auto" : ""}`}>{t.tag}</span>)}</div>
       </div>
       {rec.media_url && <Player url={rec.media_url} kind={rec.kind} mediaRef={mediaRef} onTime={setTime} />}

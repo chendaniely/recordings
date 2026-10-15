@@ -5,7 +5,7 @@ reads the immediate calling frame to do so, so ReactApp(...) must be called here
 
 from __future__ import annotations
 
-from shiny import Inputs, Outputs, Session
+from shiny import Inputs, Outputs, Session, reactive
 from shinyreact import ReactApp, reactive_output
 
 from recordings_ui import runtime, views
@@ -25,6 +25,11 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         # sees as "pending"; an explicit null clears the pane.
         rid = input.selected_id()
         return views.recording_view(archive, rid, media_base=media_base) if rid else None
+
+    @reactive_output
+    def status():
+        reactive.invalidate_later(60)  # backups finish and disks fill without anyone clicking
+        return views.status_view(archive, runtime.status_settings())
 
 
 app = ReactApp(server)

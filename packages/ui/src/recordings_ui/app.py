@@ -17,6 +17,7 @@ from recordings.writer import Writer, WriterError
 from recordings_ui import runtime
 from recordings_ui.hosts import HostGuard, WriteGuard
 from recordings_ui.settings import Settings
+from recordings_ui.status import status_settings
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def create_app(settings: Settings) -> HostGuard:
     if settings.config is not None:
         write_docs_at_startup(settings.config)
     archive = Archive(settings.archive)
-    runtime.configure(archive)
+    runtime.configure(archive, status=status_settings(settings.config) if settings.config else None)
     from recordings_ui.shiny_app import app as shiny_app  # after configure()
 
     api = FastAPI(title="recordings", docs_url=None, redoc_url=None, openapi_url=None)

@@ -107,6 +107,7 @@ def _now() -> str:
 class State:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        self._read_only = False  # read_only() sets it: every connection is then mode=ro
 
     @property
     def db_path(self) -> Path:
@@ -165,6 +166,22 @@ class State:
         state.locks_dir.mkdir(exist_ok=True)
         return state
 
+    @classmethod
+    def read_only(cls, path: Path) -> State | None:
+        """For readers (Status, doctor). It never creates, migrates or writes anything, and
+        returns None when there is no state.db to read.
+
+        state.db is in WAL mode, so a reader needs the -wal and -shm files: it finds them
+        while a writer has the database open, and otherwise creates them, so the folder must
+        be writable by the reader (Task 14 mounts /state read-write in `web`). In a read-only
+        folder with no writer connected it fails with "attempt to write a readonly database".
+        Never use immutable=1: it ignores the WAL and reads stale data."""
+        state = cls(path)
+        if not state.db_path.is_file():
+            return None
+        state._read_only = True
+        return state
+
     def _connect(self, mode: str) -> sqlite3.Connection:
         """A URI with an explicit mode: `rw` never creates a missing file, as a plain path would."""
         uri = f"{self.db_path.absolute().as_uri()}?mode={mode}"
@@ -176,7 +193,7 @@ class State:
 
         It opens an existing state.db only: a missing one is an error, never a new, empty file.
         """
-        with closing(self._connect("rw")) as conn:
+        with closing(self._connect("ro" if self._read_only else "rw")) as conn:
             conn.execute("PRAGMA synchronous=FULL")
             with conn:
                 yield conn
