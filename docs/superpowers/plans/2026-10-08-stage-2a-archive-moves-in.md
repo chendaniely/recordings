@@ -23932,8 +23932,12 @@ Then re-sync Task 1's fence with the runbook, and check they are byte-identical.
 - [ ] **Step 5: Run everything and scan for secrets**
 
 Run: `make test && make e2e && make deploy-smoke && gitleaks dir . --redact --no-banner && gitleaks git . --redact --no-banner`
-Expected: every test passes, with a passed count not lower than Task 16's; the compose smoke test
-passes; and both gitleaks scans report `no leaks found`.
+Expected: every test passes, with 924 pytest (Task 16's 911 plus this task's 13: 2 flow, 2 settings,
+1 runbook, 1 ops, 7 config cases) when `RECORDINGS_REQUIRE_RESTIC=1`, and Vitest, e2e and Pages
+counts not lower than Task 15's; the compose smoke test passes; and both gitleaks scans report
+`no leaks found`. Both scans read only the working directory; run them in a fresh
+`git clone --local` of the repo, never in the working tree, which also holds git-ignored folders
+(`.claude/`, `.superpowers/`, `.cache/`) and any real `config.toml` or `deploy.env`.
 
 - [ ] **Step 6: Commit**
 
@@ -24053,7 +24057,8 @@ more reviews checked the result:
   - Final, at that dry run: 614 pytest passed with real restic 0.19.1 and no skips, plus 21 Vitest, 9
     e2e and 5 Pages tests, `make deploy-smoke`, gitleaks and `validate --deep`. The counts have
     grown since; each task's gate records its own. After Task 15, in a clone with real restic:
-    851 pytest, 27 Vitest, 10 e2e and 5 Pages tests.
+    851 pytest, 27 Vitest, 10 e2e and 5 Pages tests; after Task 16, 911 pytest; after Task 17,
+    924 pytest.
   - Its fixes: Status shows a good backup's NAS free space, ssh gets a 10 s connect timeout, the
     Pages demo's Status reports its disk as unknown, two README rows, and the smoke test's secret
     files at mode 600.
