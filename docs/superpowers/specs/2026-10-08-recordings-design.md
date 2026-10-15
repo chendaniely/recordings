@@ -1684,11 +1684,28 @@ later" until its build stage (§20):
 - failed jobs, with reasons and Retry
 - Spark and Claude reachability
 - the date the Claude token expires, with a warning 30 days before
-- **Backups** (§15.1): when the last backup finished, and the last restore test. Needs
-  attention if the last backup is more than 2 hours old, except while a check or the restore
-  test is running: each holds the `ops` lock (§6.4), so the hourly backup's turns are skipped
-  until it ends. Status then says that job is running and since when, and the dead-man's grace
-  (§14), not this line, decides when the silence is an outage.
+- **Backups** (§15.1): a row for each of the backup, the restore test, the repository check,
+  retention and (when configured) the mirror, with when its last good run finished, its fixed
+  result text and, for the backup, the NAS's free space (or "unknown", §15.1). A row is Overdue
+  after 2 hours for the backup and the mirror, 2 days for retention, 8 days for the check and 31
+  days for the restore test, and Failing when its newest run failed. A run stamped in the future
+  counts as long ago, as in the loop (§15.1), and is shown as such, never as "just now".
+  - **"Needs attention"** at the top lists every Failing row and every Overdue one, with the
+    count of files the app has flagged (an outside edit it could not merge) and the command that
+    clears them, `recordings reindex`.
+  - **While a job holds the `ops` lock** (§6.4: a check, the restore test, retention, a first
+    mirror or an import), the hourly backup's and the mirror's turns are skipped until it ends,
+    so a late backup or mirror reads "Waiting", not Overdue. Status then says which job is
+    running and since when, and the dead-man's grace (§14), not this line, decides when the
+    silence is an outage. The hold excuses only a job that was not already late when it began,
+    and only for 12 hours: past that, or for a start stamped in the future, Status says the job
+    may be stuck and the late backup needs attention again.
+  - **The loop's heartbeat:** the backup service writes one at each pass, and Status shows when it
+    last reported. With no job holding `ops`, 15 minutes without a report need attention: the
+    loop has stopped, with or without a `[backup]`.
+  - **A server with a `[backup]` and no `state.db`** needs attention (`recordings init` was never
+    run, or the state folder is not mounted); so does a `state.db` that can't be read, with the
+    way back only if it is damaged.
 - **Disk space** on the homelab server: a warning below 20% free. Below 5% free, new imports stop,
   with the reason shown.
 - **Status is the pull view.** Alerts push the urgent problems to Dan's phone (§14).
@@ -2247,9 +2264,11 @@ come from that frame.
     backstop for a change made between the two passes. The target must be empty or carry a
     `MIRROR.md` mark with this archive's UUID, so an interrupted first run resumes.
 - **Capacity:** The NAS's free space is checked before backups start, over ssh `df`, or
-  sftp's `df` for an SFTP-only account; otherwise it is unknown, and Status and `doctor`
-  say so. The backup repository grows with the archive, and deduplication plus the
-  retention limits keep it close to the archive's size.
+  sftp's `df` for an SFTP-only account; otherwise it is unknown, and `doctor` says so. The
+  rest-server transport has neither, so there the space is always unknown: Status's backup row
+  shows the NAS's figure, or "unknown", only when the check ran over ssh, and with rest-server it
+  says nothing about the NAS. The backup repository grows with the archive, and deduplication
+  plus the retention limits keep it close to the archive's size.
 - **Later:** Hyper Backup of the backup share to an off-site target completes a 3-2-1
   setup. (Synology's snapshots need Btrfs; this NAS is ext4.)
 
