@@ -740,10 +740,11 @@ rc start backup
 ```
 Expected: the import reports no failures, `validate` reports no problems, and both backups, the
 restore test and the mirror print `ok: True`. The restore test now proves the imported data, not
-just an empty archive. Note how long the restore test took (Status shows when it started and
-finished): the loop runs it once a month with no backup in between, so if it took over 2 hours,
-raise the Healthchecks grace to that time plus 2 hours, or each month's restore test reads as an
-outage.
+just an empty archive. Note how long the restore test took: time its command (put `time` in
+front of it). Status shows when a job started only while it runs, in its "Running" line, and when
+it finished afterwards, never both. The loop runs the restore test once a month with no backup in
+between, so if it took over 2 hours, raise the Healthchecks grace to that time plus 2 hours, or
+each month's restore test reads as an outage.
 
 The mirror line makes the first full mirror of the imported archive here, not in the loop. The
 loop stops a mirror run after 6 hours and starts it again, and no backup runs while one does, so
