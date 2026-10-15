@@ -436,12 +436,8 @@ def _text() -> str:
 
 def _code_lines(text: str | None = None) -> list[str]:
     """Every line of the shell blocks (bash, sh or unmarked), in order."""
-    return [
-        line
-        for lang, body in FENCE.findall(_text() if text is None else text)
-        if lang in ("", "bash", "sh")
-        for line in body.splitlines()
-    ]
+    return [line for lang, body in FENCE.findall(_text() if text is None else text)
+            if lang in ("", "bash", "sh") for line in body.splitlines()]
 
 
 def _section(heading: str) -> str:
@@ -467,17 +463,11 @@ def test_the_runbook_covers_steps_one_to_four_and_a_real_restore():
     # why: whole lines, not substrings, so a heading quoted in prose or indented in a block
     # can't stand in for a real one.
     lines = set(_text().splitlines())
-    for heading in (
-        "## 1. Spikes",
-        "### 1a. Server facts",
-        "### 1b. NAS transport",
-        "### 1c. Before stage 2b (not needed for 2a)",
-        "## 2. Deploy 2a against an empty, initialised archive",
-        "## 3. Bring the source over",
-        "## 4. Import",
-        "## Restoring for real",
-        "## Checklist",
-    ):
+    for heading in ("## 1. Spikes", "### 1a. Server facts", "### 1b. NAS transport",
+                    "### 1c. Before stage 2b (not needed for 2a)",
+                    "## 2. Deploy 2a against an empty, initialised archive",
+                    "## 3. Bring the source over", "## 4. Import", "## Restoring for real",
+                    "## Checklist"):
         assert heading in lines, heading
     assert "| Fact | Answer |" in lines, "the Checklist table"
 
@@ -500,9 +490,7 @@ def test_no_secret_is_ever_typed_on_a_command_line():
         # RESTIC_REST_PASSWORD is fine when it is read from the file, never as a literal.
         assert not re.search(r'\bRESTIC_REST_PASSWORD=(?!"?\$)', line), line
         assert not re.search(r"\bcreate_user\s+\S+\s+\S", line), line  # user AND password
-        assert not re.search(r"\bhtpasswd\b.*\s-[A-Za-z]*b", line), (
-            line
-        )  # -b: password as an argument
+        assert not re.search(r"\bhtpasswd\b.*\s-[A-Za-z]*b", line), line  # -b: password as an argument
         assert not re.search(r"rest:https?://[^/\s]*:[^/\s]*@", line), line  # user:pass@ in a URL
 
 
@@ -536,10 +524,8 @@ def test_the_folders_are_private_before_anything_lands():
     # why: state.db keeps whole revisions of every recording.json, titles included, so it is
     # as private as the archive. Nobody but the owner gets into $RECORDINGS_HOME.
     lines = _code_lines(_section("### 1a. Server facts"))
-    assert any(
-        'chmod 700 "$RECORDINGS_HOME"' in line and '"$RECORDINGS_HOME/state"' in line
-        for line in lines
-    )
+    assert any('chmod 700 "$RECORDINGS_HOME"' in line and '"$RECORDINGS_HOME/state"' in line
+               for line in lines)
 
 
 def test_manual_runs_never_race_the_backup_loop():
@@ -552,8 +538,7 @@ def test_manual_runs_never_race_the_backup_loop():
         elif re.search(r"\brc (stop backup|kill backup|down)\b", line):
             running = False
         elif re.search(r"\brc run --rm backup\b", line) or (
-            "import-audio-router" in line and "--dry-run" not in line
-        ):
+                "import-audio-router" in line and "--dry-run" not in line):
             assert not running, line
     # §20 asks for a killed backup service to raise the alert, and a stop isn't a kill.
     assert any(re.search(r"\brc kill backup\b", line) for line in _code_lines())
@@ -575,17 +560,9 @@ def test_the_imported_data_is_restore_tested_before_the_import_copy_goes():
 
 def test_restoring_for_real_puts_every_piece_back():
     code = "\n".join(_code_lines(_section("## Restoring for real")))
-    for needed in (
-        'restore "$SNAP"',
-        "--tag recordings",
-        "--include",
-        "recordings reindex",
-        "recordings init --adopt",
-        "/archive",
-        "config.toml",
-        "deploy.env",
-        "state.db",
-    ):
+    for needed in ('restore "$SNAP"', "--tag recordings", "--include",
+                   "recordings reindex", "recordings init --adopt",
+                   "/archive", "config.toml", "deploy.env", "state.db"):
         assert needed in code, needed
 ```
 
@@ -1930,11 +1907,10 @@ In `packages/core/tests/test_archive.py`:
    comment `# Monkeypatch shutil.copy2 to fail` and `original_copy2 = shutil.copy2` through the
    `monkeypatch.setattr(...)` line) with:
    ```python
-   def failing_copy(*args, **kwargs):
-       raise OSError("Simulated copy failure")
+       def failing_copy(*args, **kwargs):
+           raise OSError("Simulated copy failure")
 
-
-   monkeypatch.setattr(archive_module, "copy_file_synced", failing_copy)
+       monkeypatch.setattr(archive_module, "copy_file_synced", failing_copy)
    ```
 
 - [ ] **Step 4: Run the tests to see them pass**
@@ -2030,22 +2006,14 @@ def test_the_sentinel_is_never_replaced(new_archive):
     assert (root / SENTINEL).read_bytes() == before
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "{",
-        "[]",
-        json.dumps({"format": "something-else@1", "uuid": UUID, "created_at": T0.isoformat()}),
-        json.dumps(
-            {"format": "recordings-archive@1", "uuid": "nope", "created_at": T0.isoformat()}
-        ),
-        json.dumps({"format": "recordings-archive@1", "uuid": 7, "created_at": T0.isoformat()}),
-        json.dumps(
-            {"format": "recordings-archive@1", "uuid": UUID, "created_at": "2026-10-08T12:00:00"}
-        ),
-    ],
-    ids=["truncated", "not-an-object", "wrong-format", "bad-uuid", "uuid-not-text", "naive-time"],
-)
+@pytest.mark.parametrize("text", [
+    "{",
+    "[]",
+    json.dumps({"format": "something-else@1", "uuid": UUID, "created_at": T0.isoformat()}),
+    json.dumps({"format": "recordings-archive@1", "uuid": "nope", "created_at": T0.isoformat()}),
+    json.dumps({"format": "recordings-archive@1", "uuid": 7, "created_at": T0.isoformat()}),
+    json.dumps({"format": "recordings-archive@1", "uuid": UUID, "created_at": "2026-10-08T12:00:00"}),
+], ids=["truncated", "not-an-object", "wrong-format", "bad-uuid", "uuid-not-text", "naive-time"])
 def test_a_damaged_sentinel_is_refused(tmp_path, text):
     (tmp_path / SENTINEL).write_text(text, encoding="utf-8")
     with pytest.raises(SentinelError):
@@ -2106,11 +2074,8 @@ def test_a_state_db_newer_than_the_code_is_refused(tmp_path):
 def test_open_runs_the_numbered_migrations_in_order(tmp_path, monkeypatch):
     # why: CREATE TABLE IF NOT EXISTS can't add a column, so a later stage changes a table this way.
     State.create(tmp_path / "state", archive_uuid=UUID, writer_id="test")
-    monkeypatch.setattr(
-        state_module,
-        "MIGRATIONS",
-        {2: ("CREATE TABLE extra (x TEXT)",), 3: ("ALTER TABLE extra ADD COLUMN y TEXT",)},
-    )
+    monkeypatch.setattr(state_module, "MIGRATIONS", {
+        2: ("CREATE TABLE extra (x TEXT)",), 3: ("ALTER TABLE extra ADD COLUMN y TEXT",)})
     monkeypatch.setattr(state_module, "SCHEMA_VERSION", 3)
     st = State.open(tmp_path / "state")
     State.open(tmp_path / "state")  # a second open finds nothing left to do
@@ -2204,9 +2169,7 @@ def _config(tmp_path, monkeypatch, *, writer_id="homelab"):
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         f'[archive]\npath = "{tmp_path / "archive"}"\nwriter_id = "{writer_id}"\n'
-        f'[state]\npath = "{tmp_path / "state"}"\n',
-        encoding="utf-8",
-    )
+        f'[state]\npath = "{tmp_path / "state"}"\n', encoding="utf-8")
     monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
     for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
         monkeypatch.delenv(name, raising=False)
@@ -2261,27 +2224,16 @@ def test_validate_reports_a_missing_sentinel(tmp_path):
 Add to `packages/core/tests/test_config.py`:
 ```python
 def test_writer_id_and_the_state_and_index_paths(tmp_path):
-    cfg_file = write(
-        tmp_path,
-        '[archive]\nwriter_id = "homelab"\n[state]\npath = "/s"\n[index]\npath = "/i/index.db"\n',
-    )
+    cfg_file = write(tmp_path, '[archive]\nwriter_id = "homelab"\n[state]\npath = "/s"\n'
+                               '[index]\npath = "/i/index.db"\n')
     cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file)})
-    assert (cfg.writer_id, cfg.state_path, cfg.index_path) == (
-        "homelab",
-        Path("/s"),
-        Path("/i/index.db"),
-    )
+    assert (cfg.writer_id, cfg.state_path, cfg.index_path) == ("homelab", Path("/s"), Path("/i/index.db"))
 
 
 def test_the_environment_overrides_the_state_and_index_paths(tmp_path):
     cfg_file = write(tmp_path, '[state]\npath = "/s"\n[index]\npath = "/i/index.db"\n')
-    cfg = load_config(
-        {
-            "RECORDINGS_CONFIG": str(cfg_file),
-            "RECORDINGS_STATE": "/state",
-            "RECORDINGS_INDEX": "/index/index.db",
-        }
-    )
+    cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_STATE": "/state",
+                       "RECORDINGS_INDEX": "/index/index.db"})
     assert (cfg.state_path, cfg.index_path) == (Path("/state"), Path("/index/index.db"))
 
 
@@ -2319,15 +2271,8 @@ def test_the_state_and_index_paths_are_absolute_text(tmp_path, line):
         load_config({"RECORDINGS_CONFIG": str(cfg), "RECORDINGS_STATE": "state"})
 
 
-@pytest.mark.parametrize(
-    "index",
-    [
-        "/srv/r/state/state.db",
-        "/srv/r/state/index.db",
-        "/srv/r/state/backup/state.db",
-        "/srv/r/state",
-    ],
-)
+@pytest.mark.parametrize("index", ["/srv/r/state/state.db", "/srv/r/state/index.db",
+                                   "/srv/r/state/backup/state.db", "/srv/r/state"])
 def test_the_index_never_lies_inside_the_state_folder(tmp_path, index):
     # why: §6.8. The state folder holds state.db, its backup copy, voice.db and the Plaud token, and
     # their writers don't take the index lock. A typo that points the index there is refused here,
@@ -2336,34 +2281,24 @@ def test_the_index_never_lies_inside_the_state_folder(tmp_path, index):
     with pytest.raises(ConfigError, match=r"\[index\] path .* inside \[state\] path"):
         load_config({"RECORDINGS_CONFIG": str(cfg_file)})
     with pytest.raises(ConfigError, match="RECORDINGS_INDEX"):
-        load_config(
-            {
-                "RECORDINGS_CONFIG": str(cfg_file),
-                "RECORDINGS_STATE": "/state",
-                "RECORDINGS_INDEX": "/state/state.db",
-            }
-        )
+        load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_STATE": "/state",
+                     "RECORDINGS_INDEX": "/state/state.db"})
 
 
 def test_the_index_inside_the_state_folder_through_a_symlink_is_refused(tmp_path):
     (tmp_path / "state").mkdir()
     (tmp_path / "index").symlink_to(tmp_path / "state")
-    cfg_file = write(
-        tmp_path,
-        f'[state]\npath = "{tmp_path / "state"}"\n'
-        f'[index]\npath = "{tmp_path / "index" / "index.db"}"\n',
-    )
+    cfg_file = write(tmp_path, f'[state]\npath = "{tmp_path / "state"}"\n'
+                               f'[index]\npath = "{tmp_path / "index" / "index.db"}"\n')
     with pytest.raises(ConfigError, match="inside"):
         load_config({"RECORDINGS_CONFIG": str(cfg_file)})
 
 
 def test_an_index_beside_the_state_folder_is_fine(tmp_path):
-    cfg_file = write(
-        tmp_path, '[state]\npath = "/srv/r/state"\n[index]\npath = "/srv/r/state-index/index.db"\n'
-    )
+    cfg_file = write(tmp_path, '[state]\npath = "/srv/r/state"\n'
+                               '[index]\npath = "/srv/r/state-index/index.db"\n')
     assert load_config({"RECORDINGS_CONFIG": str(cfg_file)}).index_path == Path(
-        "/srv/r/state-index/index.db"
-    )
+        "/srv/r/state-index/index.db")
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -2420,17 +2355,15 @@ def read_sentinel(root: Path) -> ArchiveIdentity:
     if not path.is_file():
         raise SentinelError(
             f"{root} has no {SENTINEL}, so it is not an initialised archive. Is the archive's "
-            "disk mounted? A new archive is set up once, with `recordings init`."
-        )
+            "disk mounted? A new archive is set up once, with `recordings init`.")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise ValueError("not a JSON object")
         if data.get("format") != FORMAT:
             raise ValueError(f"format is {data.get('format')!r}, not {FORMAT!r}")
-        identity = ArchiveIdentity(
-            uuid=str(uuid.UUID(data["uuid"])), created_at=datetime.fromisoformat(data["created_at"])
-        )
+        identity = ArchiveIdentity(uuid=str(uuid.UUID(data["uuid"])),
+                                   created_at=datetime.fromisoformat(data["created_at"]))
     except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise SentinelError(f"{path} is not a valid sentinel: {exc}") from None
     if identity.created_at.utcoffset() is None:
@@ -2445,17 +2378,8 @@ def is_mirror(root: Path) -> bool:
 
 def write_sentinel(root: Path, identity: ArchiveIdentity) -> Path:
     path = Path(root) / SENTINEL
-    text = (
-        json.dumps(
-            {
-                "format": FORMAT,
-                "uuid": identity.uuid,
-                "created_at": identity.created_at.isoformat(),
-            },
-            indent=2,
-        )
-        + "\n"
-    )
+    text = json.dumps({"format": FORMAT, "uuid": identity.uuid,
+                       "created_at": identity.created_at.isoformat()}, indent=2) + "\n"
     create_exclusive(path, text.encode("utf-8"))
     return path
 ```
@@ -2491,23 +2415,14 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {}
 RESTORE_HINT = (
     "restore state.db from the backup (runbook: Restoring for real). If no backup copy is usable, "
     "stop the app, move the whole state folder aside (never state.db alone: its -wal file holds "
-    "the latest commits), and run `recordings init --adopt`."
-)
+    "the latest commits), and run `recordings init --adopt`.")
 # SQLite's logs beside state.db hold commits not yet in it. SQLite replays a -wal over whatever
 # state.db is next put beside it, and deletes one it finds beside a new, empty state.db.
 LOGS = ("state.db-wal", "state.db-journal")
 # SQLite's codes for a sound state.db that can't be reached now: a mode, an owner or a missing
 # mount (CANTOPEN), a read-only folder, a lock held too long, a full disk, an I/O error.
-_NOT_DAMAGE = (
-    "SQLITE_CANTOPEN",
-    "SQLITE_READONLY",
-    "SQLITE_BUSY",
-    "SQLITE_LOCKED",
-    "SQLITE_FULL",
-    "SQLITE_IOERR",
-    "SQLITE_PERM",
-    "SQLITE_NOMEM",
-)
+_NOT_DAMAGE = ("SQLITE_CANTOPEN", "SQLITE_READONLY", "SQLITE_BUSY", "SQLITE_LOCKED",
+               "SQLITE_FULL", "SQLITE_IOERR", "SQLITE_PERM", "SQLITE_NOMEM")
 
 
 def unreadable(db_path: Path, exc: sqlite3.Error) -> str:
@@ -2516,11 +2431,9 @@ def unreadable(db_path: Path, exc: sqlite3.Error) -> str:
     merge base."""
     code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
     if code.startswith(_NOT_DAMAGE):
-        return (
-            f"{db_path} can't be opened now ({code}). That is not damage, so leave it where it "
-            "is: check that the state folder is mounted, owned by this user, writable and not "
-            "full, and that no other process holds it, then try again."
-        )
+        return (f"{db_path} can't be opened now ({code}). That is not damage, so leave it where it "
+                "is: check that the state folder is mounted, owned by this user, writable and not "
+                "full, and that no other process holds it, then try again.")
     return f"{db_path} can't be read ({code}). If it is damaged, {RESTORE_HINT}"
 
 
@@ -2555,8 +2468,7 @@ class State:
             raise StateError(
                 f"{state.path} still holds {', '.join(logs)}: an earlier state.db's latest "
                 "commits, which a new state.db would destroy. Move the whole state folder aside "
-                "first."
-            )
+                "first.")
         state.path.mkdir(parents=True, exist_ok=True)
         state.locks_dir.mkdir(exist_ok=True)
         try:
@@ -2565,14 +2477,11 @@ class State:
                 conn.execute("PRAGMA journal_mode=WAL")
                 with conn:
                     conn.executescript(SCHEMA)
-                    conn.executemany(
-                        "INSERT INTO meta (key, value) VALUES (?, ?)",
-                        [
-                            ("schema_version", "1"),
-                            ("archive_uuid", archive_uuid),
-                            ("writer_id", writer_id),
-                        ],
-                    )
+                    conn.executemany("INSERT INTO meta (key, value) VALUES (?, ?)", [
+                        ("schema_version", "1"),
+                        ("archive_uuid", archive_uuid),
+                        ("writer_id", writer_id),
+                    ])
                 state._upgrade(conn)
         except sqlite3.IntegrityError:  # another init got there between the check and the insert
             raise StateError(_already(state.db_path)) from None
@@ -2586,8 +2495,7 @@ class State:
         if not state.db_path.is_file():
             raise StateError(
                 f"no state.db in {state.path}, so this machine is not the archive's writer. "
-                "`recordings init` creates it, once, on the writer."
-            )
+                "`recordings init` creates it, once, on the writer.")
         try:
             with state.db() as db:
                 state._version(db)  # refuse a newer state.db before changing anything in it
@@ -2620,19 +2528,16 @@ class State:
         try:
             version = int(row[0])
         except (TypeError, ValueError):
-            raise StateError(
-                f"{self.db_path} has no readable schema_version, so it is damaged: {RESTORE_HINT}"
-            ) from None
+            raise StateError(f"{self.db_path} has no readable schema_version, so it is damaged: "
+                             f"{RESTORE_HINT}") from None
         if version < 1:
-            raise StateError(
-                f"{self.db_path} has schema version {version}, so it is damaged: {RESTORE_HINT}"
-            )
+            raise StateError(f"{self.db_path} has schema version {version}, so it is damaged: "
+                             f"{RESTORE_HINT}")
         if version > SCHEMA_VERSION:
             raise StateError(
                 f"{self.db_path} is at schema version {version}, newer than this release's "
                 f"{SCHEMA_VERSION}: a newer release wrote it, and this one can't read it. Deploy "
-                "that release again."
-            )
+                "that release again.")
         return version
 
     def _upgrade(self, conn: sqlite3.Connection) -> None:
@@ -2644,9 +2549,8 @@ class State:
             for n in range(self._version(conn) + 1, SCHEMA_VERSION + 1):
                 for statement in MIGRATIONS[n]:
                     conn.execute(statement)
-            conn.execute(
-                "UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),)
-            )
+            conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                         (str(SCHEMA_VERSION),))
 
     def meta(self, key: str) -> str | None:
         with self.db() as db:
@@ -2657,9 +2561,7 @@ class State:
         with self.db() as db:
             db.execute(
                 "INSERT INTO meta (key, value) VALUES (?, ?) "
-                "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-                (key, value),
-            )
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value))
 ```
 
 `packages/core/src/recordings/init.py`:
@@ -2707,14 +2609,9 @@ def _check_writer_id(writer_id: str) -> None:
         raise InitError(f"writer_id {writer_id!r} must be a short lowercase name, such as homelab")
 
 
-def init_archive(
-    archive_root: Path,
-    state_path: Path,
-    *,
-    writer_id: str,
-    archive_uuid: str | None = None,
-    created_at: datetime | None = None,
-) -> ArchiveIdentity:
+def init_archive(archive_root: Path, state_path: Path, *, writer_id: str,
+                 archive_uuid: str | None = None, created_at: datetime | None = None,
+                 ) -> ArchiveIdentity:
     root, state_dir = Path(archive_root), Path(state_path)
     _check_writer_id(writer_id)
     if root.exists() and not root.is_dir():
@@ -2725,8 +2622,7 @@ def init_archive(
         raise InitError(f"{state_dir / 'state.db'} already exists: init runs once per archive")
     identity = ArchiveIdentity(
         uuid=str(uuid.UUID(archive_uuid)) if archive_uuid else str(uuid.uuid4()),
-        created_at=created_at or datetime.now(timezone.utc),
-    )
+        created_at=created_at or datetime.now(timezone.utc))
     try:
         root.mkdir(parents=True, exist_ok=True)
         (root / "recordings").mkdir()
@@ -2738,8 +2634,7 @@ def init_archive(
         raise InitError(
             f"init stopped part-way ({exc}) and wrote no {SENTINEL}. Check that {root} and "
             f"{state_dir / 'state.db'} hold only what this init just wrote, then move both "
-            "aside and run init again."
-        ) from None
+            "aside and run init again.") from None
     return identity
 
 
@@ -2755,14 +2650,12 @@ def adopt_archive(archive_root: Path, state_path: Path, *, writer_id: str) -> Ar
         raise InitError(
             f"{root} holds {MIRROR}: it is the NAS mirror's copy, not the archive. Only the "
             "archive's writer writes (spec §3), so --adopt runs there; anywhere else, use the "
-            "app."
-        )
+            "app.")
     if (state_dir / "state.db").exists():
         raise InitError(
             f"{state_dir / 'state.db'} exists: --adopt only replaces a lost one. If it is damaged "
             "and no backup copy is usable, stop the app and move the whole state folder aside "
-            "first."
-        )
+            "first.")
     try:
         State.create(state_dir, archive_uuid=identity.uuid, writer_id=writer_id)
     except (OSError, StateError) as exc:
@@ -2796,16 +2689,14 @@ In `packages/core/src/recordings/config.py`:
        if "writer_host" in archive:
            raise ConfigError(
                "[archive] writer_host was renamed writer_id in stage 2a. It names the archive's "
-               'one writer and is not a host name: set writer_id = "homelab" (any short name).'
-           )
+               'one writer and is not a host name: set writer_id = "homelab" (any short name).')
        value = archive.get("writer_id")
        if value is None:
            return None
        if not isinstance(value, str) or not WRITER_ID_RE.fullmatch(value):
            raise ConfigError(
                '[archive] writer_id must be a short lowercase name such as "homelab": letters, '
-               "digits, '.', '_' or '-'"
-           )
+               "digits, '.', '_' or '-'")
        return value
 
 
@@ -2837,8 +2728,7 @@ In `packages/core/src/recordings/config.py`:
        if index is not None and state is not None and index.resolve().is_relative_to(state.resolve()):
            raise ConfigError(
                f"[index] path (or RECORDINGS_INDEX) {index} lies inside [state] path {state}, beside "
-               "state.db. Give the index a folder of its own, such as /srv/recordings/index/index.db."
-           )
+               "state.db. Give the index a folder of its own, such as /srv/recordings/index/index.db.")
    ```
 4. **Replace** the `return Config(...)` at the end of `load_config` with:
    ```python
@@ -2868,13 +2758,10 @@ In `packages/core/src/recordings/cli.py`:
    ```
 2. **Add** to `build_parser`, before the `schemas` parser:
    ```python
-   p = sub.add_parser("init", help="set up a new, empty archive, once: its sentinel and state.db")
-   p.add_argument(
-       "--adopt",
-       action="store_true",
-       help="recreate a lost state.db for the existing archive, from its archive.json",
-   )
-   p.add_argument("--json", action="store_true")
+       p = sub.add_parser("init", help="set up a new, empty archive, once: its sentinel and state.db")
+       p.add_argument("--adopt", action="store_true",
+                      help="recreate a lost state.db for the existing archive, from its archive.json")
+       p.add_argument("--json", action="store_true")
    ```
 3. **Add** after `_emit`:
    ```python
@@ -2897,15 +2784,9 @@ In `packages/core/src/recordings/cli.py`:
        cfg = _config(args.json)
        if isinstance(cfg, int):
            return cfg
-       missing = [
-           name
-           for name, value in (
-               ("[archive] path", cfg.archive_path),
-               ("[state] path", cfg.state_path),
-               ("[archive] writer_id", cfg.writer_id),
-           )
-           if value is None
-       ]
+       missing = [name for name, value in (("[archive] path", cfg.archive_path),
+                                           ("[state] path", cfg.state_path),
+                                           ("[archive] writer_id", cfg.writer_id)) if value is None]
        if missing:
            return _fail("set " + ", ".join(missing) + " in config.toml first", args.json, 78)
        setup = adopt_archive if args.adopt else init_archive
@@ -2913,15 +2794,8 @@ In `packages/core/src/recordings/cli.py`:
            identity = setup(cfg.archive_path, cfg.state_path, writer_id=cfg.writer_id)
        except (InitError, StateError) as exc:
            return _fail(str(exc), args.json, 1)
-       _emit(
-           {
-               "archive": str(cfg.archive_path),
-               "uuid": identity.uuid,
-               "writer_id": cfg.writer_id,
-               "adopted": args.adopt,
-           },
-           args.json,
-       )
+       _emit({"archive": str(cfg.archive_path), "uuid": identity.uuid,
+              "writer_id": cfg.writer_id, "adopted": args.adopt}, args.json)
        return 0
    ```
 4. **Replace** `cmd_docs` with:
@@ -3048,12 +2922,11 @@ In `demo/build.py`:
 3. **Replace** the first two lines of `build`'s body
    (`entries = …` and `archive = Archive(out)`) with:
    ```python
-   entries = tomllib.loads((HERE / "sources.toml").read_text())["recording"]
-   with tempfile.TemporaryDirectory(prefix="recordings-demo-state-") as state:
-       init_archive(
-           out, Path(state) / "state", writer_id="demo", archive_uuid=DEMO_UUID, created_at=BUILD_AT
-       )
-   archive = Archive(out)
+       entries = tomllib.loads((HERE / "sources.toml").read_text())["recording"]
+       with tempfile.TemporaryDirectory(prefix="recordings-demo-state-") as state:
+           init_archive(out, Path(state) / "state", writer_id="demo", archive_uuid=DEMO_UUID,
+                        created_at=BUILD_AT)
+       archive = Archive(out)
    ```
 4. **Delete** the line `write_docs(archive.root)` near the end of `build`: `init_archive` writes
    the docs.
@@ -3130,48 +3003,35 @@ def test_empty_speakers_still_serialise_as_an_empty_object():
 
 
 def test_the_speakers_shape_round_trips_with_not_spelled_not():
-    rec = recording(
-        speakers={
-            "source": "renditions/transcript-plaud-plaud@1-20261008T143000Z.json",
-            "labels": {
-                "Speaker 1": {"person": "ada-lovelace", "by": "you"},
-                "Speaker 2": {"person": "grace-hopper", "by": "you", "plaud_name_seen": "Ada"},
-                "Speaker 3": {"not": ["ada-lovelace"]},
-            },
-            "spans": [
-                {"start": 41.2, "end": 58.0, "person": "grace-hopper", "by": "you"},
-                {"start": 300.0, "end": 312.5, "person": UNKNOWN_PERSON, "by": "you"},
-            ],
-        }
-    )
+    rec = recording(speakers={
+        "source": "renditions/transcript-plaud-plaud@1-20261008T143000Z.json",
+        "labels": {"Speaker 1": {"person": "ada-lovelace", "by": "you"},
+                   "Speaker 2": {"person": "grace-hopper", "by": "you", "plaud_name_seen": "Ada"},
+                   "Speaker 3": {"not": ["ada-lovelace"]}},
+        "spans": [{"start": 41.2, "end": 58.0, "person": "grace-hopper", "by": "you"},
+                  {"start": 300.0, "end": 312.5, "person": UNKNOWN_PERSON, "by": "you"}]})
     data = json.loads(dump_json(rec))
     assert data["speakers"]["labels"]["Speaker 3"] == {"not": ["ada-lovelace"]}
     assert data["speakers"]["spans"][1]["person"] == "unknown"
     assert Recording.model_validate_json(dump_json(rec)) == rec
 
 
-@pytest.mark.parametrize(
-    "speakers, message",
-    [
-        ({"labels": {"Speaker 1": {"person": "Ada Lovelace", "by": "you"}}}, "pattern"),
-        ({"labels": {"Speaker 1": {"person": "ada"}}}, "person and by go together"),
-        ({"labels": {"Speaker 1": {"by": "you"}}}, "person and by go together"),
-        ({"labels": {"Speaker 1": {"person": "ada", "by": "auto"}}}, "you"),
-        ({"spans": [{"start": 5.0, "end": 5.0, "person": "ada"}]}, "end after it starts"),
-        ({"spans": [{"start": 1.0, "end": 2.0, "person": "ada", "from": "voice"}]}, "Extra inputs"),
-    ],
-)
+@pytest.mark.parametrize("speakers, message", [
+    ({"labels": {"Speaker 1": {"person": "Ada Lovelace", "by": "you"}}}, "pattern"),
+    ({"labels": {"Speaker 1": {"person": "ada"}}}, "person and by go together"),
+    ({"labels": {"Speaker 1": {"by": "you"}}}, "person and by go together"),
+    ({"labels": {"Speaker 1": {"person": "ada", "by": "auto"}}}, "you"),
+    ({"spans": [{"start": 5.0, "end": 5.0, "person": "ada"}]}, "end after it starts"),
+    ({"spans": [{"start": 1.0, "end": 2.0, "person": "ada", "from": "voice"}]}, "Extra inputs"),
+])
 def test_bad_speaker_decisions_are_rejected(speakers, message):
     with pytest.raises(ValidationError, match=message):
         recording(speakers=speakers)
 
 
 def test_rev_title_by_and_plaud_are_optional_and_validated():
-    rec = recording(
-        rev=7,
-        title_by="plaud",
-        plaud={"title_seen": "Week 4", "acknowledged_up_to": "source/plaud-x.json"},
-    )
+    rec = recording(rev=7, title_by="plaud",
+                    plaud={"title_seen": "Week 4", "acknowledged_up_to": "source/plaud-x.json"})
     assert Recording.model_validate_json(dump_json(rec)) == rec
     with pytest.raises(ValidationError):
         recording(rev=-1)
@@ -3192,13 +3052,9 @@ def test_a_validation_error_never_echoes_the_input():
         recording(title_by="会議メモ / Q&A")
     assert "会議メモ" not in str(caught.value)
     with pytest.raises(ValidationError) as caught:
-        Rendition(
-            kind="transcript",
-            engine="plaud",
-            version="plaud@1",
-            created_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
-            payload={"segments": [{"start": 0, "text": "Ada said something private."}]},
-        )
+        Rendition(kind="transcript", engine="plaud", version="plaud@1",
+                  created_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+                  payload={"segments": [{"start": 0, "text": "Ada said something private."}]})
     assert "something private" not in str(caught.value)
 
 
@@ -3229,43 +3085,20 @@ def test_validation_errors_never_quote_a_tag_or_an_id():
 
 
 def test_plaud_segment_fields_and_snapshot_fields():
-    seg = Segment(
-        start=0,
-        end=1.5,
-        speaker="Speaker 1",
-        speaker_name="Ada",
-        embedding_key="ek-1",
-        text="Hello.",
-    )
+    seg = Segment(start=0, end=1.5, speaker="Speaker 1", speaker_name="Ada",
+                  embedding_key="ek-1", text="Hello.")
     assert seg.model_dump(exclude_none=True)["speaker_name"] == "Ada"
-    ref = SourceRef(
-        kind="plaud",
-        ref="a" * 32,
-        added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
-        fetched_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
-        sha256="b" * 64,
-    )
+    ref = SourceRef(kind="plaud", ref="a" * 32, added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+                    fetched_at=datetime(2026, 8, 1, tzinfo=timezone.utc), sha256="b" * 64)
     assert SourceRef.model_validate_json(ref.model_dump_json()) == ref
     with pytest.raises(ValidationError):
-        SourceRef(
-            kind="plaud",
-            ref="x",
-            added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
-            sha256="not-a-hash",
-        )
+        SourceRef(kind="plaud", ref="x", added_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+                  sha256="not-a-hash")
 
 
 def test_media_info_keeps_sample_rate_and_channels():
-    rec = recording(
-        media={
-            "file": "x.mp3",
-            "sha256": SHA,
-            "kind": "audio",
-            "duration_ms": 1000,
-            "sample_rate": 44100,
-            "channels": 2,
-        }
-    )
+    rec = recording(media={"file": "x.mp3", "sha256": SHA, "kind": "audio", "duration_ms": 1000,
+                           "sample_rate": 44100, "channels": 2})
     assert (rec.media.sample_rate, rec.media.channels) == (44100, 2)
     with pytest.raises(ValidationError):
         recording(media={"file": "x.mp3", "sha256": SHA, "kind": "audio", "channels": 0})
@@ -3293,17 +3126,8 @@ def test_a_raw_source_needs_aware_times():
 def test_a_raw_source_records_its_hash_and_fetch_time(tmp_path):
     archive = Archive(tmp_path / "archive")
     fetched = datetime(2026, 8, 1, 9, 0, tzinfo=timezone.utc)
-    rec = add(
-        archive,
-        media(tmp_path),
-        source=RawSource(
-            kind="plaud",
-            ref="of_" + "a" * 32,
-            added_at=T0,
-            fetched_at=fetched,
-            payload=b'{"id": 1}',
-        ),
-    )
+    rec = add(archive, media(tmp_path), source=RawSource(
+        kind="plaud", ref="of_" + "a" * 32, added_at=T0, fetched_at=fetched, payload=b'{"id": 1}'))
     (ref,) = rec.sources
     assert ref.raw == "source/plaud-20260801T090000Z.json"  # named by when it was fetched
     assert ref.fetched_at == fetched
@@ -3320,10 +3144,8 @@ def test_validate_reports_a_missing_media_file_and_a_missing_source_file(tmp_pat
     (folder / rec.media.file).unlink()
     (folder / rec.sources[0].raw).unlink()
     messages = sorted(p["message"] for p in validate(archive.root))
-    assert messages == [
-        f"media.file {rec.media.file!r} is missing",
-        f"source file {rec.sources[0].raw} is missing",
-    ]
+    assert messages == [f"media.file {rec.media.file!r} is missing",
+                        f"source file {rec.sources[0].raw} is missing"]
 
 
 def test_validate_reports_a_span_past_the_end_of_the_media(tmp_path):
@@ -3346,33 +3168,19 @@ def test_validate_checks_renditions_even_when_recording_json_is_broken(tmp_path)
     (folder / "recording.json").write_text("{", encoding="utf-8")
     (folder / "renditions" / "broken.json").write_text("{", encoding="utf-8")
     paths = sorted(p["path"] for p in validate(archive.root))
-    assert paths == sorted(
-        [str(folder / "recording.json"), str(folder / "renditions" / "broken.json")]
-    )
+    assert paths == sorted([str(folder / "recording.json"), str(folder / "renditions" / "broken.json")])
 
 
 def test_the_docs_describe_rev_speakers_and_the_plaud_fields():
     from importlib import resources
 
     def read(doc):
-        return " ".join(
-            (resources.files("recordings") / "format" / doc).read_text(encoding="utf-8").split()
-        )
-
+        return " ".join((resources.files("recordings") / "format" / doc)
+                        .read_text(encoding="utf-8").split())
     fmt = read("FORMAT.md")
-    for needle in (
-        "`rev`",
-        "only `mutate`",
-        "`unknown`",
-        "`speaker_name`",
-        "`embedding_key`",
-        "`fetched_at`",
-        "`title_by`",
-        "`recorder`",
-        "acknowledged_up_to",
-        "stage 3a",
-        "only appends to `my-notes.md`",
-    ):
+    for needle in ("`rev`", "only `mutate`", "`unknown`", "`speaker_name`", "`embedding_key`",
+                   "`fetched_at`", "`title_by`", "`recorder`", "acknowledged_up_to", "stage 3a",
+                   "only appends to `my-notes.md`"):
         assert needle in fmt, needle
     assert "Never change `rev`" in read("AGENTS.md")
 ```
@@ -3385,35 +3193,13 @@ def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path):
     archive = Archive(tmp_path / "archive")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
     rec = archive.add_recording(
-        media=media,
-        recorded_at=t,
-        timezone_name="UTC",
-        time_source="plaud",
-        title="x",
-        kind="audio",
-        source=RawSource(kind="plaud", ref="x", added_at=t),
-        renditions=[
-            Rendition(
-                kind="transcript",
-                engine="plaud",
-                model="plaud",
-                version="plaud@1",
-                created_at=t,
-                payload={
-                    "segments": [
-                        {
-                            "start": 0,
-                            "end": 1,
-                            "speaker": "Speaker 1",
-                            "speaker_name": "Ada",
-                            "text": "Hello.",
-                        },
-                        {"start": 1, "end": 2, "speaker": "Speaker 2", "text": "Hi."},
-                    ]
-                },
-            )
-        ],
-    )
+        media=media, recorded_at=t, timezone_name="UTC", time_source="plaud", title="x",
+        kind="audio", source=RawSource(kind="plaud", ref="x", added_at=t),
+        renditions=[Rendition(kind="transcript", engine="plaud", model="plaud", version="plaud@1",
+                              created_at=t, payload={"segments": [
+                                  {"start": 0, "end": 1, "speaker": "Speaker 1",
+                                   "speaker_name": "Ada", "text": "Hello."},
+                                  {"start": 1, "end": 2, "speaker": "Speaker 2", "text": "Hi."}]})])
     turns = recording_view(archive, rec.id)["transcripts"][0]["turns"]
     assert [t["speaker"] for t in turns] == ["Ada", "Speaker 2"]
 ```
@@ -3696,22 +3482,16 @@ class RawSource:
 ```
 and **replace** `_write_raw` with:
 ```python
-def _write_raw(self, folder: Path, source: RawSource) -> SourceRef:
-    raw = sha = None
-    if source.payload is not None:
-        when = source.fetched_at or source.added_at
-        target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(when)}.json"
-        path = publish_exclusive(source.payload, target)
-        raw = path.relative_to(folder).as_posix()
-        sha = hashlib.sha256(source.payload).hexdigest()
-    return SourceRef(
-        kind=source.kind,
-        ref=source.ref,
-        added_at=source.added_at,
-        fetched_at=source.fetched_at,
-        raw=raw,
-        sha256=sha,
-    )
+    def _write_raw(self, folder: Path, source: RawSource) -> SourceRef:
+        raw = sha = None
+        if source.payload is not None:
+            when = source.fetched_at or source.added_at
+            target = folder / "source" / f"{_slug(source.kind)}-{utc_stamp(when)}.json"
+            path = publish_exclusive(source.payload, target)
+            raw = path.relative_to(folder).as_posix()
+            sha = hashlib.sha256(source.payload).hexdigest()
+        return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at,
+                         fetched_at=source.fetched_at, raw=raw, sha256=sha)
 ```
 
 In `packages/core/src/recordings/selfdoc.py`, **replace** everything in `validate` from
@@ -3763,18 +3543,14 @@ def _turns(r: Rendition) -> list[dict]:
         # Until people arrive (stage 3b), a turn shows the name Plaud gave its speaker, if any,
         # and otherwise the diarization label.
         speaker = seg.get("speaker_name") or seg.get("speaker")
-        out.append(
-            {
-                "start": seg["start"],
-                "end": seg["end"],
-                "speaker": speaker or None,
-                "text": seg["text"],
-                "words": [
-                    {"word": w["word"], "start": w["start"], "end": w["end"]}
-                    for w in seg.get("words", [])
-                ],
-            }
-        )
+        out.append({
+            "start": seg["start"],
+            "end": seg["end"],
+            "speaker": speaker or None,
+            "text": seg["text"],
+            "words": [{"word": w["word"], "start": w["start"], "end": w["end"]}
+                      for w in seg.get("words", [])],
+        })
     return out
 ```
 and in `recording_view`, **replace** `"turns": _turns(r, rec.speakers)}` with `"turns": _turns(r)}`.
@@ -3921,9 +3697,8 @@ T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 HEX = "0123456789abcdef0123456789abcdef"
 # The first 100 bytes of a file that says it is an index (its application_id at offset 68), with a
 # page size of 0, so SQLite can't read a page of it.
-INDEX_HEADER = (
-    b"SQLite format 3\x00" + bytes(52) + index_module.APPLICATION_ID.to_bytes(4, "big") + bytes(28)
-)
+INDEX_HEADER = (b"SQLite format 3\x00" + bytes(52) + index_module.APPLICATION_ID.to_bytes(4, "big")
+                + bytes(28))
 
 
 def put(root, *, when="2026-10-06T14:00:03-07:00", sha="a" * 64, sources=()) -> Recording:
@@ -3932,30 +3707,18 @@ def put(root, *, when="2026-10-06T14:00:03-07:00", sha="a" * 64, sources=()) -> 
     rid = make_id(recorded_at, sha)
     folder = root / relative_dir(rid)
     folder.mkdir(parents=True)
-    rec = Recording(
-        id=rid,
-        title="x",
-        recorded_at=recorded_at,
-        timezone="UTC",
-        time_source="ingest",
-        media=MediaInfo(file=f"{rid}.mp3", sha256=sha, kind="audio"),
-        sources=[SourceRef(kind=k, ref=r, added_at=T0) for k, r in sources],
-    )
+    rec = Recording(id=rid, title="x", recorded_at=recorded_at, timezone="UTC",
+                    time_source="ingest",
+                    media=MediaInfo(file=f"{rid}.mp3", sha256=sha, kind="audio"),
+                    sources=[SourceRef(kind=k, ref=r, added_at=T0) for k, r in sources])
     (folder / "recording.json").write_text(dump_json(rec), encoding="utf-8")
     return rec
 
 
-@pytest.mark.parametrize(
-    "ref, canonical",
-    [
-        (HEX, HEX),
-        ("of_" + HEX, HEX),
-        ("OF_" + HEX.upper(), HEX),
-        (" of_" + HEX + " ", HEX),
-        ("demo-apollo13", "demo-apollo13"),
-        ("of_xyz", "of_xyz"),
-    ],
-)
+@pytest.mark.parametrize("ref, canonical", [
+    (HEX, HEX), ("of_" + HEX, HEX), ("OF_" + HEX.upper(), HEX), (" of_" + HEX + " ", HEX),
+    ("demo-apollo13", "demo-apollo13"), ("of_xyz", "of_xyz"),
+])
 def test_both_plaud_id_forms_are_one_id(ref, canonical):
     # why: §6.3. Plaud's listing switched from bare hex to of_<hex> in September 2026.
     assert canonical_plaud_id(ref) == canonical
@@ -3969,12 +3732,8 @@ def test_other_sources_keep_their_references_as_they_are():
 def test_rebuild_then_look_up_by_hash_and_by_either_plaud_id_form(new_archive, tmp_path):
     root, _ = new_archive
     a = put(root, sha="a" * 64, sources=[("plaud", HEX), ("audio_router", f"plaud/{HEX}")])
-    b = put(
-        root,
-        when="2026-10-07T09:00:00-07:00",
-        sha="b" * 64,
-        sources=[("pocket", "11111111-1111-4111-8111-111111111111")],
-    )
+    b = put(root, when="2026-10-07T09:00:00-07:00", sha="b" * 64,
+            sources=[("pocket", "11111111-1111-4111-8111-111111111111")])
     index = Index(tmp_path / "index" / "index.db")
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 2
     assert (index.count(), index.archive_uuid()) == (2, "u-1")
@@ -4076,9 +3835,8 @@ def test_upsert_replaces_a_recordings_references(new_archive, tmp_path):
     rec = put(root, sources=[("plaud", HEX)])
     index = Index(tmp_path / "index.db")
     index.rebuild(Archive(root), archive_uuid="u-1")
-    moved = rec.model_copy(
-        update={"sources": [SourceRef(kind="recorder", ref="r-1", added_at=T0)], "rev": 3}
-    )
+    moved = rec.model_copy(update={"sources": [SourceRef(kind="recorder", ref="r-1", added_at=T0)],
+                                   "rev": 3})
     index.upsert(moved)
     assert index.find_by_source("plaud", HEX) == []
     assert index.find_by_source("recorder", "r-1") == [rec.id]
@@ -4142,7 +3900,6 @@ def test_quarantine_name_collision_is_avoided(new_archive, tmp_path, monkeypatch
     pre_existing.write_bytes(b"pre-existing data")
     # Patch the datetime module's now method to return a fixed timestamp
     import recordings.index
-
     fixed_dt = datetime(2026, 10, 9, 14, 35, 12, tzinfo=timezone.utc)
     mock_datetime = Mock()
     mock_datetime.now.return_value = fixed_dt
@@ -4175,7 +3932,7 @@ def test_corrupted_index_quarantines_every_sibling_untouched(new_archive, tmp_pa
     assert index.rebuild(Archive(root), archive_uuid="u-1") == 1
     main = list(tmp_path.glob("index.db.unreadable-*"))
     assert len(main) == 1
-    suffix = main[0].name[len("index.db") :]
+    suffix = main[0].name[len("index.db"):]
     assert suffix.startswith(".unreadable-")
     for sibling, data in original.items():
         assert (tmp_path / f"index.db{sibling}{suffix}").read_bytes() == data
@@ -4235,8 +3992,7 @@ def test_an_index_whose_header_lost_its_mark_is_not_this_archives(new_archive, t
 
 
 def test_an_index_written_during_the_probe_is_rebuilt_in_place_not_quarantined(
-    new_archive, tmp_path, monkeypatch
-):
+        new_archive, tmp_path, monkeypatch):
     # why: the immutable probe can misread a file that changes under it; the stamp check keeps an
     # index that is being written from being renamed aside.
     root, _ = new_archive
@@ -4255,9 +4011,8 @@ def test_an_index_written_during_the_probe_is_rebuilt_in_place_not_quarantined(
     assert index.find_by_sha256(rec.media.sha256) == rec.id
 
 
-def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(
-    new_archive, tmp_path, monkeypatch
-):
+def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(new_archive, tmp_path,
+                                                                   monkeypatch):
     # why: the siblings move first and the file last. A -wal or -journal left beside a new, empty
     # index.db is deleted by SQLite, so a rename that fails part-way must leave the file, not them.
     root, _ = new_archive
@@ -4282,8 +4037,7 @@ def test_a_quarantine_that_fails_part_way_never_leaves_a_wal_alone(
 
 
 def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
-    new_archive, tmp_path, monkeypatch
-):
+        new_archive, tmp_path, monkeypatch):
     # why: §6.4, §9.3 (the final review's minor 3). A lookup that waits out the busy timeout
     # answers "none", and the import's plan took that for an answer: a recording already here
     # planned as new, one the consent list now excludes left uncounted. strict raises SQLite's
@@ -4299,11 +4053,9 @@ def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
             yield conn
 
     monkeypatch.setattr(Index, "_db", at_once)
-    lookups = {
-        "find_by_source": lambda **kw: index.find_by_source("plaud", HEX, **kw),
-        "find_by_sha256": lambda **kw: index.find_by_sha256(rec.media.sha256, **kw),
-        "sha256_of": lambda **kw: index.sha256_of(rec.id, **kw),
-    }
+    lookups = {"find_by_source": lambda **kw: index.find_by_source("plaud", HEX, **kw),
+               "find_by_sha256": lambda **kw: index.find_by_sha256(rec.media.sha256, **kw),
+               "sha256_of": lambda **kw: index.sha256_of(rec.id, **kw)}
     holder = sqlite3.connect(index.path)
     holder.execute("BEGIN EXCLUSIVE")  # another process is writing the index
     try:
@@ -4316,10 +4068,7 @@ def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
         holder.rollback()
         holder.close()
     assert {name: lookup(strict=True) for name, lookup in lookups.items()} == {
-        "find_by_source": [rec.id],
-        "find_by_sha256": rec.id,
-        "sha256_of": rec.media.sha256,
-    }
+        "find_by_source": [rec.id], "find_by_sha256": rec.id, "sha256_of": rec.media.sha256}
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -4413,14 +4162,11 @@ class IndexRefused(RuntimeError):
 
 
 def _insert(db: sqlite3.Connection, rec: Recording) -> None:
-    db.execute(
-        "INSERT INTO recordings (id, folder, sha256, rev) VALUES (?, ?, ?, ?)",
-        (rec.id, relative_dir(rec.id).as_posix(), rec.media.sha256, rec.rev or 0),
-    )
+    db.execute("INSERT INTO recordings (id, folder, sha256, rev) VALUES (?, ?, ?, ?)",
+               (rec.id, relative_dir(rec.id).as_posix(), rec.media.sha256, rec.rev or 0))
     db.executemany(
         "INSERT OR IGNORE INTO source_refs (recording_id, kind, ref, canonical) VALUES (?, ?, ?, ?)",
-        [(rec.id, s.kind, s.ref, canonical_ref(s.kind, s.ref)) for s in rec.sources],
-    )
+        [(rec.id, s.kind, s.ref, canonical_ref(s.kind, s.ref)) for s in rec.sources])
 
 
 class Index:
@@ -4461,10 +4207,8 @@ class Index:
         # header) and is one (its meta) answers.
         if self._one("PRAGMA application_id") != APPLICATION_ID:
             return None
-        return self._one(
-            "SELECT value FROM meta WHERE key = 'archive_uuid' AND EXISTS "
-            "(SELECT 1 FROM meta WHERE key = 'index_version')"
-        )
+        return self._one("SELECT value FROM meta WHERE key = 'archive_uuid' AND EXISTS "
+                         "(SELECT 1 FROM meta WHERE key = 'index_version')")
 
     def rebuild(self, archive: Archive, *, archive_uuid: str, allow_empty: bool = False) -> int:
         recordings = list(archive.iter_recordings())
@@ -4476,32 +4220,25 @@ class Index:
                 db.execute("BEGIN IMMEDIATE")  # one writer; readers keep the old index until commit
                 tables = self._check_ours(db)
                 # Counted inside the lock, on this connection: outside it, a locked index read as 0.
-                held = (
-                    db.execute("SELECT count(*) FROM recordings").fetchone()[0]
-                    if "recordings" in tables
-                    else 0
-                )
+                held = (db.execute("SELECT count(*) FROM recordings").fetchone()[0]
+                        if "recordings" in tables else 0)
             except sqlite3.DatabaseError as exc:
                 if exc.sqlite_errorname not in _UNREADABLE:
                     raise
                 raise IndexRefused(
                     f"{self.path} can't be read ({exc.sqlite_errorname}) and doesn't say it is an "
                     "index, so rebuild leaves it alone. Check [index] path. If it is the index, "
-                    "move it aside and run `recordings reindex`."
-                ) from None
+                    "move it aside and run `recordings reindex`.") from None
             if not recordings and held and not allow_empty:
                 raise IndexRefused(
                     f"{archive.root} lists no recordings but the index holds {held}: refusing to "
-                    "empty it. Is the archive mounted? Pass --allow-empty if it really is empty."
-                )
+                    "empty it. Is the archive mounted? Pass --allow-empty if it really is empty.")
             for table in _TABLES:
                 db.execute(f"DROP TABLE IF EXISTS {table}")
             for statement in _SCHEMA:
                 db.execute(statement)
-            db.executemany(
-                "INSERT INTO meta (key, value) VALUES (?, ?)",
-                [("index_version", str(INDEX_VERSION)), ("archive_uuid", archive_uuid)],
-            )
+            db.executemany("INSERT INTO meta (key, value) VALUES (?, ?)",
+                           [("index_version", str(INDEX_VERSION)), ("archive_uuid", archive_uuid)])
             for rec in recordings:
                 _insert(db, rec)
         return len(recordings)
@@ -4545,14 +4282,11 @@ class Index:
             with self.path.open("rb") as f:
                 header = f.read(100)
         except OSError as exc:
-            raise IndexRefused(
-                f"{self.path} can't be read ({type(exc).__name__}): check its "
-                "owner and mode, and [index] path."
-            ) from None
+            raise IndexRefused(f"{self.path} can't be read ({type(exc).__name__}): check its "
+                               "owner and mode, and [index] path.") from None
         if header[:16] != b"SQLite format 3\x00":
-            raise IndexRefused(
-                f"{self.path} is not an index (SQLite header not found). Check [index] path."
-            )
+            raise IndexRefused(f"{self.path} is not an index (SQLite header not found). "
+                             "Check [index] path.")
         if header[68:72] != _MARK:
             return  # it doesn't say it is an index: never renamed; BEGIN IMMEDIATE decides
         # It says it is an index; can SQLite read it? A file written during the probe proves
@@ -4588,18 +4322,14 @@ class Index:
 
     def _check_ours(self, db: sqlite3.Connection) -> set[str]:
         """The file's tables, once it is known to be empty or an index."""
-        tables = {
-            row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
-        ours = (
-            "meta" in tables
-            and db.execute("SELECT 1 FROM meta WHERE key = 'index_version'").fetchone() is not None
-        )
+        tables = {row[0] for row in
+                  db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        ours = "meta" in tables and db.execute(
+            "SELECT 1 FROM meta WHERE key = 'index_version'").fetchone() is not None
         if tables and not ours:
             raise IndexRefused(
                 f"{self.path} is a database but not an index, so rebuild won't replace it. "
-                "Check [index] path."
-            )
+                "Check [index] path.")
         return tables
 
     def upsert(self, rec: Recording) -> None:
@@ -4610,24 +4340,19 @@ class Index:
 
     def find_by_sha256(self, sha: str, *, strict: bool = False) -> str | None:
         """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
-        return self._one(
-            "SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,), strict=strict
-        )
+        return self._one("SELECT id FROM recordings WHERE sha256 = ? ORDER BY id LIMIT 1", (sha,),
+                         strict=strict)
 
     def sha256_of(self, recording_id: str, *, strict: bool = False) -> str | None:
         """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
-        return self._one(
-            "SELECT sha256 FROM recordings WHERE id = ?", (recording_id,), strict=strict
-        )
+        return self._one("SELECT sha256 FROM recordings WHERE id = ?", (recording_id,),
+                         strict=strict)
 
     def find_by_source(self, kind: str, ref: str, *, strict: bool = False) -> list[str]:
         """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
         rows = self._rows(
             "SELECT DISTINCT recording_id FROM source_refs WHERE kind = ? AND canonical = ? "
-            "ORDER BY recording_id",
-            (kind, canonical_ref(kind, ref)),
-            strict=strict,
-        )
+            "ORDER BY recording_id", (kind, canonical_ref(kind, ref)), strict=strict)
         return [row[0] for row in rows]
 ```
 
@@ -4705,14 +4430,7 @@ B = "20261007T140003-0700_bbbbbbbb"
 def test_the_lock_order_is_people_then_tags_then_hashes_then_recordings():
     keys = ["index", B, "sha-" + "f" * 64, "tags.yaml", A, "people.private.yaml", "people.yaml"]
     assert sorted(keys, key=lock_order) == [
-        "people.yaml",
-        "people.private.yaml",
-        "tags.yaml",
-        "sha-" + "f" * 64,
-        A,
-        B,
-        "index",
-    ]
+        "people.yaml", "people.private.yaml", "tags.yaml", "sha-" + "f" * 64, A, B, "index"]
 
 
 def test_locks_taken_together_never_deadlock(tmp_path):
@@ -4835,14 +4553,11 @@ def test_a_key_that_is_not_a_plain_file_name_is_refused(tmp_path, key):
 
 def test_a_lock_is_released_when_its_process_dies(tmp_path):
     # why: §6.8. flock is released by the kernel, so a crash never leaves a stale lock.
-    script = (
-        "import sys,time; from pathlib import Path; from recordings.locks import Locks\n"
-        "with Locks(Path(sys.argv[1])).hold(sys.argv[2]):\n"
-        "    print('held', flush=True); time.sleep(60)\n"
-    )
-    with subprocess.Popen(
-        [sys.executable, "-c", script, str(tmp_path), A], stdout=subprocess.PIPE, text=True
-    ) as proc:
+    script = ("import sys,time; from pathlib import Path; from recordings.locks import Locks\n"
+              "with Locks(Path(sys.argv[1])).hold(sys.argv[2]):\n"
+              "    print('held', flush=True); time.sleep(60)\n")
+    with subprocess.Popen([sys.executable, "-c", script, str(tmp_path), A],
+                          stdout=subprocess.PIPE, text=True) as proc:
         try:
             assert select.select([proc.stdout], [], [], 10)[0], "the child never took the lock"
             assert proc.stdout.readline().strip() == "held"
@@ -4943,8 +4658,7 @@ class Locks:
         if new and held and lock_order(new[0]) < max(lock_order(k) for k in held):
             raise LockOrderError(
                 f"lock {new[0]!r} comes before one already held; take all of an operation's "
-                "locks together, in one hold()"
-            )
+                "locks together, in one hold()")
         counted: list[str] = []
         deadline = time.monotonic() + self.timeout  # one for the whole hold, not one per key
         try:
@@ -4977,7 +4691,7 @@ class Locks:
                     if time.monotonic() >= deadline:
                         raise LockTimeout(
                             f"{key} is held by another writer; gave up after {self.timeout:g} s"
-                        ) from None
+                            ) from None
                     time.sleep(0.02)
         except BaseException:
             os.close(fd)  # on any exception, even KeyboardInterrupt; closing drops a flock too
@@ -5113,13 +4827,8 @@ def make_writer(tmp_path):
     def make(name: str = "archive", writer_id: str = "test") -> Writer:
         root, state = tmp_path / name, tmp_path / f"{name}-state"
         init_archive(root, state, writer_id=writer_id)
-        return Writer(
-            root,
-            State.open(state),
-            Index(tmp_path / f"{name}-index" / "index.db"),
-            writer_id=writer_id,
-        )
-
+        return Writer(root, State.open(state), Index(tmp_path / f"{name}-index" / "index.db"),
+                      writer_id=writer_id)
     return make
 
 
@@ -5139,19 +4848,13 @@ def make_incoming(tmp_path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content if content is not None else f"ID3 fake audio {n}".encode())
         fields = dict(
-            media=path,
-            recorded_at=LOCAL,
-            timezone_name="America/Vancouver",
-            time_source="plaud",
-            title="Week 4",
-            kind="audio",
-            sources=(
-                RawSource(kind="plaud", ref="of_" + "a" * 32, added_at=T0, payload=b'{"id": 1}'),
-            ),
+            media=path, recorded_at=LOCAL, timezone_name="America/Vancouver",
+            time_source="plaud", title="Week 4", kind="audio",
+            sources=(RawSource(kind="plaud", ref="of_" + "a" * 32, added_at=T0,
+                               payload=b'{"id": 1}'),),
         )
         fields.update(over)
         return Incoming(**fields)
-
     return make
 ```
 
@@ -5195,15 +4898,8 @@ NEXT_DAY = datetime.fromisoformat("2026-10-07T09:00:00-07:00")  # a second, diff
 
 
 def notes(created_at=T0, model="qwen3.6-35b-a3b", markdown="# Notes") -> Rendition:
-    return Rendition(
-        kind="notes",
-        note_type="lecture",
-        engine="canned",
-        model=model,
-        version=f"{model}@demo",
-        created_at=created_at,
-        payload={"markdown": markdown},
-    )
+    return Rendition(kind="notes", note_type="lecture", engine="canned", model=model,
+                     version=f"{model}@demo", created_at=created_at, payload={"markdown": markdown})
 
 
 def test_add_lays_out_the_folder_and_starts_at_rev_1(writer, make_incoming):
@@ -5250,9 +4946,7 @@ def test_writer_open_says_which_settings_are_missing_and_writes_the_docs(writer,
         Writer.open(load_config({"RECORDINGS_CONFIG": str(cfg_file)}))
     cfg_file.write_text(
         f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n[state]\npath = "{writer.state.path}"\n'
-        f'[index]\npath = "{writer.index.path}"\n',
-        encoding="utf-8",
-    )
+        f'[index]\npath = "{writer.index.path}"\n', encoding="utf-8")
     (writer.root / "FORMAT.md").unlink()
     Writer.open(load_config({"RECORDINGS_CONFIG": str(cfg_file)}))
     assert (writer.root / "FORMAT.md").is_file()  # §6.7: the docs are written at startup
@@ -5262,9 +4956,7 @@ def test_a_damaged_state_db_is_not_the_writer_and_says_to_restore_it(writer, tmp
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
         f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n[state]\npath = "{writer.state.path}"\n'
-        f'[index]\npath = "{writer.index.path}"\n',
-        encoding="utf-8",
-    )
+        f'[index]\npath = "{writer.index.path}"\n', encoding="utf-8")
     for leftover in writer.state.path.glob("state.db-*"):  # WAL files: garbage stands alone
         leftover.unlink()
     writer.state.db_path.write_bytes(b"this is not a database\n" * 64)
@@ -5298,9 +4990,8 @@ def test_a_writer_rechecks_its_archive_before_each_write(writer, make_incoming, 
         writer.write_rendition(rec.id, notes())
     with pytest.raises(NotTheWriter, match="not mounted"):
         writer.reindex()
-    assert sorted(
-        p.relative_to(writer.root) for p in writer.root.rglob("*") if p.name != SENTINEL
-    ) == [p for p in before if p.name != SENTINEL]
+    assert sorted(p.relative_to(writer.root) for p in writer.root.rglob("*")
+                  if p.name != SENTINEL) == [p for p in before if p.name != SENTINEL]
     (tmp_path / "archive.json.away").rename(writer.root / SENTINEL)
     assert writer.mutate(rec.id, AddTags((TagRef(tag="talks"),))).rev == 2  # back: writes again
 
@@ -5309,9 +5000,7 @@ def test_a_writer_refuses_when_the_archives_uuid_has_changed(writer, make_incomi
     # why: §6.7. A different archive mounted at the same place has its own UUID.
     sentinel = writer.root / SENTINEL
     data = json.loads(sentinel.read_text(encoding="utf-8"))
-    sentinel.write_text(
-        json.dumps({**data, "uuid": "6f1c1c1e-5b0a-4a54-9d57-0c1c1c1c1c1c"}), encoding="utf-8"
-    )
+    sentinel.write_text(json.dumps({**data, "uuid": "6f1c1c1e-5b0a-4a54-9d57-0c1c1c1c1c1c"}), encoding="utf-8")
     with pytest.raises(NotTheWriter, match="UUID changed"):
         writer.add(make_incoming())
     assert list((writer.root / "recordings").glob("[0-9]*")) == []
@@ -5324,8 +5013,7 @@ def test_a_writer_refuses_once_its_folder_turns_out_to_be_the_mirror(writer, mak
 
 
 def test_a_mount_that_drops_while_the_media_is_hashed_creates_nothing(
-    writer, make_incoming, tmp_path, monkeypatch
-):
+        writer, make_incoming, tmp_path, monkeypatch):
     # why: the check at the top of add is not enough: hashing a long file takes time. The check
     # before the rename means the recording never lands on the bare mountpoint.
     calls = []
@@ -5341,10 +5029,7 @@ def test_a_mount_that_drops_while_the_media_is_hashed_creates_nothing(
     monkeypatch.setattr(writer_module, "sha256_file", hashing)
     with pytest.raises(NotTheWriter, match="not mounted"):
         writer.add(make_incoming())
-    assert (
-        list((writer.root / "recordings").glob("[0-9]*")) == []
-        and not (writer.root / ".tmp").exists()
-    )
+    assert list((writer.root / "recordings").glob("[0-9]*")) == [] and not (writer.root / ".tmp").exists()
     assert writer.state.committed_files() == []
 
 
@@ -5376,9 +5061,8 @@ def test_no_index_rebuild_runs_over_an_unreadable_year_folder(writer, make_incom
     # why: §6.4. A year folder that reads as empty made _holding rebuild a shrunken index, and
     # the same bytes then looked new: a second recording. Every rebuild is guarded. Another year
     # stays readable, so the archive is not empty and the empty-index guard can't be what stops it.
-    kept = writer.add(
-        make_incoming(b"kept", recorded_at=datetime.fromisoformat("2025-03-01T09:00:00-07:00"))
-    ).recording
+    kept = writer.add(make_incoming(b"kept", recorded_at=datetime.fromisoformat(
+        "2025-03-01T09:00:00-07:00"))).recording
     rec = writer.add(make_incoming(b"same bytes")).recording
     year = writer.root / "recordings" / "2026"
     before = sorted(p.relative_to(writer.root) for p in writer.root.rglob("*"))
@@ -5392,23 +5076,18 @@ def test_no_index_rebuild_runs_over_an_unreadable_year_folder(writer, make_incom
         assert "--allow-empty" not in str(caught.value)
         with pytest.raises(IndexRefused, match="can't be read"):
             writer.reindex(allow_missing=True)  # unreadable is not gone: never forgotten
-        assert (
-            writer.state.committed_files() != []
-            and writer._rel(rec.id) in writer.state.committed_files()
-        )
+        assert writer.state.committed_files() != [] and writer._rel(rec.id) in \
+            writer.state.committed_files()
     finally:
         year.chmod(0o755)
-    assert (
-        writer.index.count() == 2
-        and writer.index.find_by_sha256(writer.archive.load(rec.id).media.sha256) == rec.id
-    )
+    assert writer.index.count() == 2 and writer.index.find_by_sha256(
+        writer.archive.load(rec.id).media.sha256) == rec.id
     assert sorted(p.relative_to(writer.root) for p in writer.root.rglob("*")) == before
     assert {r.id for r in writer.archive.iter_recordings()} == {kept.id, rec.id}
 
 
 def test_a_start_with_no_committed_revisions_still_never_empties_the_index(
-    writer, make_incoming, tmp_path
-):
+        writer, make_incoming, tmp_path):
     # why: §6.7. A state.db recreated by `init --adopt` has no committed revisions, so the
     # missing-files guard has nothing to say; only allow_empty=foreign stands between a pending
     # mark and an index emptied by an archive that reads as empty.
@@ -5470,10 +5149,8 @@ def test_reindex_allow_missing_forgets_once(writer, make_incoming):
     shutil.rmtree(writer.archive.path_for(gone.id))
     report = writer.reindex(allow_missing=True)
     assert report.forgotten == (gone.id,) and report.to_dict()["forgotten"] == [gone.id]
-    assert (
-        writer.state.committed_files() != []
-        and writer._rel(gone.id) not in writer.state.committed_files()
-    )
+    assert writer.state.committed_files() != [] and writer._rel(gone.id) not in \
+        writer.state.committed_files()
     assert writer.state.flags() == [] and writer.reindex().forgotten == ()
 
 
@@ -5500,21 +5177,14 @@ def test_a_writer_never_takes_state_db_for_its_index(writer):
 
 
 def test_the_same_bytes_again_merge_and_keep_the_second_copys_outputs_tags_and_notes(
-    writer, make_incoming
-):
+        writer, make_incoming):
     # why: §6.4. The merge keeps the second copy's sources, outputs, decisions and notes.
     first = writer.add(make_incoming(b"same bytes", my_notes="first\n")).recording
-    second = writer.add(
-        make_incoming(
-            b"same bytes",
-            name="other.mp3",
-            sources=(RawSource(kind="upload", ref="other.mp3", added_at=T0),),
-            tags=(TagRef(tag="talks"),),
-            renditions=(notes(),),
-            my_notes="second\n",
-            excluded_note_types=("glossary",),
-        )
-    )
+    second = writer.add(make_incoming(
+        b"same bytes", name="other.mp3",
+        sources=(RawSource(kind="upload", ref="other.mp3", added_at=T0),),
+        tags=(TagRef(tag="talks"),), renditions=(notes(),), my_notes="second\n",
+        excluded_note_types=("glossary",)))
     assert not second.created and second.recording.id == first.id
     assert (second.sources_added, second.renditions_added) == (1, 1)
     rec = writer.archive.load(first.id)
@@ -5535,9 +5205,8 @@ def test_adding_the_same_thing_twice_adds_nothing(writer, make_incoming):
     assert writer.archive.read_my_notes(again.recording.id) == "mine\n"
 
 
-def test_a_private_tag_on_a_duplicate_lands_before_any_of_its_content(
-    writer, make_incoming, monkeypatch
-):
+def test_a_private_tag_on_a_duplicate_lands_before_any_of_its_content(writer, make_incoming,
+                                                                      monkeypatch):
     # why: §7.4. A merge killed after publishing must never leave private content in a
     # recording that isn't private yet.
     rec = writer.add(make_incoming(b"bytes")).recording
@@ -5547,30 +5216,19 @@ def test_a_private_tag_on_a_duplicate_lands_before_any_of_its_content(
 
     monkeypatch.setattr(Writer, "_publish_raw", staticmethod(killed))
     with pytest.raises(KeyboardInterrupt):
-        writer.add(
-            make_incoming(
-                b"bytes",
-                tags=(TagRef(tag="private"),),
-                renditions=(notes(),),
-                sources=(RawSource(kind="upload", ref="u", added_at=T0, payload=b"{}"),),
-            )
-        )
+        writer.add(make_incoming(
+            b"bytes", tags=(TagRef(tag="private"),), renditions=(notes(),),
+            sources=(RawSource(kind="upload", ref="u", added_at=T0, payload=b"{}"),)))
     assert is_private(writer.archive.load(rec.id))
 
 
 def test_a_merge_killed_before_its_mutate_leaves_no_duplicate_source_on_the_rerun(
-    writer, make_incoming, monkeypatch
-):
+        writer, make_incoming, monkeypatch):
     # Review Focus 2: the new snapshot is published, then the process dies before mutate records
     # it. Running the same add again must reuse that file, not publish a `-2` copy.
     writer.add(make_incoming(b"bytes"))
-    later = RawSource(
-        kind="plaud",
-        ref="a" * 32,
-        added_at=T0,
-        fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc),
-        payload=b'{"id": 2}',
-    )
+    later = RawSource(kind="plaud", ref="a" * 32, added_at=T0,
+                      fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc), payload=b'{"id": 2}')
     real_mutate = Writer.mutate
 
     def killed_in_the_merge(self, recording_id, op):
@@ -5591,19 +5249,12 @@ def test_a_merge_killed_before_its_mutate_leaves_no_duplicate_source_on_the_reru
 
 def test_a_new_snapshot_of_the_same_source_is_kept_beside_the_first(writer, make_incoming):
     writer.add(make_incoming(b"bytes"))
-    later = RawSource(
-        kind="plaud",
-        ref="a" * 32,
-        added_at=T0,
-        fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc),
-        payload=b'{"id": 2}',
-    )
+    later = RawSource(kind="plaud", ref="a" * 32, added_at=T0,
+                      fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc), payload=b'{"id": 2}')
     added = writer.add(make_incoming(b"bytes", sources=(later,)))
     assert added.sources_added == 1
     assert [s.raw for s in added.recording.sources] == [
-        "source/plaud-20261008T120000Z.json",
-        "source/plaud-20261009T000000Z.json",
-    ]
+        "source/plaud-20261008T120000Z.json", "source/plaud-20261009T000000Z.json"]
 
 
 def test_renditions_are_write_once_ordered_and_never_duplicated(writer, make_incoming):
@@ -5732,9 +5383,8 @@ def test_mutate_refuses_an_invalid_file_and_flags_it(writer, make_incoming):
     assert path.read_text(encoding="utf-8") == "{"  # §11: never overwritten or "fixed"
 
 
-def test_a_crash_before_the_file_is_replaced_loses_only_that_write(
-    writer, make_incoming, monkeypatch
-):
+def test_a_crash_before_the_file_is_replaced_loses_only_that_write(writer, make_incoming,
+                                                                   monkeypatch):
     # Review Focus 1: a pending revision whose file never landed is discarded, not "stale".
     rec = writer.add(make_incoming()).recording
 
@@ -5770,8 +5420,7 @@ def test_a_crash_after_the_file_is_replaced_keeps_the_write(writer, make_incomin
 
 
 def test_a_crash_after_a_new_recording_lands_but_before_its_commit_merges_on_the_next_add(
-    writer, make_incoming, monkeypatch
-):
+        writer, make_incoming, monkeypatch):
     # Review Focus 1, for add: the folder landed, its revision wasn't committed, and the index
     # never heard of it. The same bytes again, under another ID, merge into it without StaleFile.
     def power_cut(revision_id):
@@ -5782,13 +5431,8 @@ def test_a_crash_after_a_new_recording_lands_but_before_its_commit_merges_on_the
         writer.add(make_incoming(b"same bytes"))
     monkeypatch.undo()
     (folder,) = writer.archive.recording_dirs()
-    again = writer.add(
-        make_incoming(
-            b"same bytes",
-            recorded_at=NEXT_DAY,
-            sources=(RawSource(kind="upload", ref="u", added_at=T0),),
-        )
-    )
+    again = writer.add(make_incoming(b"same bytes", recorded_at=NEXT_DAY, sources=(
+        RawSource(kind="upload", ref="u", added_at=T0),)))
     assert not again.created and again.recording.id == folder.name
     assert again.sources_added == 1 and again.recording.rev == 2
 
@@ -5796,12 +5440,10 @@ def test_a_crash_after_a_new_recording_lands_but_before_its_commit_merges_on_the
 def test_an_index_left_behind_by_a_crash_never_causes_a_duplicate(writer, make_incoming):
     first = writer.add(make_incoming(b"bytes")).recording
     writer.index.path.unlink()  # as if the process died after the rename, before the index
-    Index(writer.index.path).rebuild(
-        Archive(writer.root / "nowhere"), archive_uuid=writer.identity.uuid, allow_empty=True
-    )
-    again = writer.add(
-        make_incoming(b"bytes", sources=(RawSource(kind="upload", ref="u", added_at=T0),))
-    )
+    Index(writer.index.path).rebuild(Archive(writer.root / "nowhere"),
+                                     archive_uuid=writer.identity.uuid, allow_empty=True)
+    again = writer.add(make_incoming(b"bytes", sources=(RawSource(kind="upload", ref="u",
+                                                                  added_at=T0),)))
     assert again.recording.id == first.id and not again.created
 
 
@@ -5815,8 +5457,7 @@ def test_an_index_that_cannot_answer_is_rebuilt_before_an_add_believes_it(writer
 
 
 def test_a_stuck_index_never_turns_the_same_bytes_into_a_second_recording(
-    writer, make_incoming, monkeypatch
-):
+        writer, make_incoming, monkeypatch):
     # why: the index answers "none" while it can't be updated, and its UUID still matches, so no
     # rebuild runs. The pending marks name the recordings it has not heard of: ask them too.
     def busy(rec):
@@ -5824,21 +5465,16 @@ def test_a_stuck_index_never_turns_the_same_bytes_into_a_second_recording(
 
     monkeypatch.setattr(writer.index, "upsert", busy)
     first = writer.add(make_incoming(b"same bytes")).recording
-    again = writer.add(
-        make_incoming(
-            b"same bytes",
-            recorded_at=NEXT_DAY,
-            sources=(RawSource(kind="upload", ref="u", added_at=T0),),
-        )
-    )
+    again = writer.add(make_incoming(
+        b"same bytes", recorded_at=NEXT_DAY,
+        sources=(RawSource(kind="upload", ref="u", added_at=T0),)))
     assert not again.created and again.recording.id == first.id
     assert len(list(writer.archive.recording_dirs())) == 1
     assert [s.kind for s in writer.archive.load(first.id).sources] == ["plaud", "upload"]
 
 
 def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recording(
-    writer, make_incoming, monkeypatch
-):
+        writer, make_incoming, monkeypatch):
     # why: another process's catch-up can finish a recording's update after this add asked the
     # index (which said none) and before it read the marks. The marks are read first.
     real_upsert = writer.index.upsert
@@ -5866,8 +5502,7 @@ def test_a_catch_up_between_the_index_answer_and_the_marks_cannot_hide_a_recordi
 
 
 def test_a_busy_index_is_never_read_as_no_recording_holding_the_bytes(
-    writer, make_incoming, monkeypatch
-):
+        writer, make_incoming, monkeypatch):
     # why: §6.4. Index._rows read every DatabaseError as "no rows". A lookup that waited out the
     # busy timeout behind another process, then an archive_uuid() that read fine, made add
     # believe nothing held these bytes: the same bytes under another recorded_at became a
@@ -5905,8 +5540,7 @@ def test_a_busy_index_is_never_read_as_no_recording_holding_the_bytes(
 
 
 def test_a_pending_recording_that_cannot_be_read_now_is_not_read_as_none(
-    writer, make_incoming, monkeypatch
-):
+        writer, make_incoming, monkeypatch):
     # why: §6.4. _pending_holding skipped every OSError, so an I/O error on a pending
     # recording's file read as "nothing holds these bytes", and the add made a second recording.
     def busy(rec):
@@ -5931,8 +5565,7 @@ def test_a_pending_recording_that_cannot_be_read_now_is_not_read_as_none(
 
 
 def test_a_stuck_index_costs_an_add_one_wait_not_one_per_pending_mark(
-    writer, make_incoming, monkeypatch
-):
+        writer, make_incoming, monkeypatch):
     # why: each add first retries every pending mark, and each retry can wait 30 s for the
     # index lock. With the index stuck, an import's adds slowed by 30 s more each time.
     tried = []
@@ -5954,8 +5587,7 @@ def test_a_stuck_index_costs_an_add_one_wait_not_one_per_pending_mark(
 
 
 def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up(
-    writer, make_incoming, monkeypatch
-):
+        writer, make_incoming, monkeypatch):
     # The write has landed, so a busy index must not report it as failed. The next add must
     # still find it, or the same bytes under another ID would become a second recording.
     def busy(rec):
@@ -5970,9 +5602,8 @@ def test_a_failed_index_update_never_fails_the_write_and_the_next_add_catches_up
     assert writer.state.index_pending() == []
 
 
-def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(
-    writer, make_incoming, monkeypatch
-):
+def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(writer, make_incoming,
+                                                                   monkeypatch):
     # why: a recording whose folder landed after the rebuild listed the archive still has its
     # mark. Clearing every mark at once left it out of the index until the next reindex.
     rec = writer.add(make_incoming(b"bytes")).recording
@@ -5980,9 +5611,8 @@ def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(
 
     def rebuild_that_missed_it(*args, **kwargs):
         count = real(*args, **kwargs)
-        Index(writer.index.path).rebuild(
-            Archive(writer.root / "nowhere"), archive_uuid=writer.identity.uuid, allow_empty=True
-        )
+        Index(writer.index.path).rebuild(Archive(writer.root / "nowhere"),
+                                         archive_uuid=writer.identity.uuid, allow_empty=True)
         return count
 
     monkeypatch.setattr(writer.index, "rebuild", rebuild_that_missed_it)
@@ -5992,7 +5622,8 @@ def test_a_rebuild_finishes_pending_marks_instead_of_clearing_them(
     assert writer.state.index_pending() == []
 
 
-def test_a_pending_mark_on_an_invalid_file_does_not_make_every_start_rebuild(writer, make_incoming):
+def test_a_pending_mark_on_an_invalid_file_does_not_make_every_start_rebuild(writer,
+                                                                             make_incoming):
     rec = writer.add(make_incoming()).recording
     writer.add(make_incoming(recorded_at=NEXT_DAY))
     (writer.archive.path_for(rec.id) / "recording.json").write_text("{", encoding="utf-8")
@@ -6002,8 +5633,7 @@ def test_a_pending_mark_on_an_invalid_file_does_not_make_every_start_rebuild(wri
 
 
 def test_an_index_entry_whose_folder_was_deleted_by_hand_asks_for_reindex_allow_missing(
-    writer, make_incoming
-):
+        writer, make_incoming):
     # why: a KeyError used to escape add() here, and the import doesn't catch KeyError. Now add
     # stops with IndexUnavailable, because a folder gone from the archive may be an unmounted
     # disk: a second recording of the same bytes is the harm (§6.4). `reindex --allow-missing`
@@ -6061,10 +5691,8 @@ def test_two_writer_processes_never_lose_an_update(writer, make_incoming):
     # why: §9.1.1 asks for a lost-update test with two writer processes.
     rec = writer.add(make_incoming()).recording
     args = [str(writer.root), str(writer.state.path), str(writer.index.path), rec.id]
-    procs = [
-        subprocess.Popen([sys.executable, "-c", SCRIPT, *args, prefix, "25"])
-        for prefix in ("a", "b")
-    ]
+    procs = [subprocess.Popen([sys.executable, "-c", SCRIPT, *args, prefix, "25"])
+             for prefix in ("a", "b")]
     assert [p.wait(timeout=120) for p in procs] == [0, 0]
     final = writer.archive.load(rec.id)
     assert len(final.tags) == 50 and final.rev == 51
@@ -6115,112 +5743,90 @@ In `packages/core/src/recordings/state.py`:
 4. **Add** these methods at the end of `State`, after `set_meta`. Each goes through `db()`, so
    through `_connect("rw")`, and never creates a missing `state.db`:
    ```python
-   # ---- revisions: the merge bases (§6.4), in two phases so a crash is recognisable --------
-   def _revision(self, sql: str, args: tuple) -> Revision | None:
-       with self.db() as db:
-           row = db.execute(
-               "SELECT id, file, rev, sha256, body, origin, committed FROM revisions " + sql, args
-           ).fetchone()
-       return Revision(*row[:6], committed=bool(row[6])) if row else None
+       # ---- revisions: the merge bases (§6.4), in two phases so a crash is recognisable --------
+       def _revision(self, sql: str, args: tuple) -> Revision | None:
+           with self.db() as db:
+               row = db.execute(
+                   "SELECT id, file, rev, sha256, body, origin, committed FROM revisions " + sql,
+                   args).fetchone()
+           return Revision(*row[:6], committed=bool(row[6])) if row else None
 
+       def last_committed(self, file: str) -> Revision | None:
+           return self._revision("WHERE file = ? AND committed = 1 ORDER BY id DESC LIMIT 1",
+                                 (file,))
 
-   def last_committed(self, file: str) -> Revision | None:
-       return self._revision("WHERE file = ? AND committed = 1 ORDER BY id DESC LIMIT 1", (file,))
+       def pending(self, file: str) -> Revision | None:
+           return self._revision("WHERE file = ? AND committed = 0 ORDER BY id DESC LIMIT 1",
+                                 (file,))
 
+       def begin(self, file: str, rev: int, sha256: str, body: bytes, origin: str) -> int:
+           with self.db() as db:
+               cur = db.execute(
+                   "INSERT INTO revisions (file, rev, sha256, body, origin, committed, written_at) "
+                   "VALUES (?, ?, ?, ?, ?, 0, ?)", (file, rev, sha256, body, origin, _now()))
+               return int(cur.lastrowid)
 
-   def pending(self, file: str) -> Revision | None:
-       return self._revision("WHERE file = ? AND committed = 0 ORDER BY id DESC LIMIT 1", (file,))
+       def commit(self, revision_id: int) -> None:
+           with self.db() as db:
+               (file,) = db.execute("SELECT file FROM revisions WHERE id = ?",
+                                    (revision_id,)).fetchone()
+               db.execute("UPDATE revisions SET committed = 1 WHERE id = ?", (revision_id,))
+               db.execute(
+                   "DELETE FROM revisions WHERE file = ? AND committed = 1 AND id NOT IN "
+                   "(SELECT id FROM revisions WHERE file = ? AND committed = 1 "
+                   " ORDER BY id DESC LIMIT ?)", (file, file, KEEP_REVISIONS))
 
+       def discard(self, revision_id: int) -> None:
+           with self.db() as db:
+               db.execute("DELETE FROM revisions WHERE id = ? AND committed = 0", (revision_id,))
 
-   def begin(self, file: str, rev: int, sha256: str, body: bytes, origin: str) -> int:
-       with self.db() as db:
-           cur = db.execute(
-               "INSERT INTO revisions (file, rev, sha256, body, origin, committed, written_at) "
-               "VALUES (?, ?, ?, ?, ?, 0, ?)",
-               (file, rev, sha256, body, origin, _now()),
-           )
-           return int(cur.lastrowid)
+       def adopt(self, file: str, rev: int, sha256: str, body: bytes) -> int:
+           revision_id = self.begin(file, rev, sha256, body, "adopted")
+           self.commit(revision_id)
+           return revision_id
 
+       # ---- flags: files that need attention (until stage 3's UI shows them) -----------------
+       def flag(self, file: str, kind: str, message: str) -> None:
+           with self.db() as db:
+               db.execute("INSERT OR REPLACE INTO flags (file, kind, message, at) VALUES (?, ?, ?, ?)",
+                          (file, kind, message, _now()))
 
-   def commit(self, revision_id: int) -> None:
-       with self.db() as db:
-           (file,) = db.execute("SELECT file FROM revisions WHERE id = ?", (revision_id,)).fetchone()
-           db.execute("UPDATE revisions SET committed = 1 WHERE id = ?", (revision_id,))
-           db.execute(
-               "DELETE FROM revisions WHERE file = ? AND committed = 1 AND id NOT IN "
-               "(SELECT id FROM revisions WHERE file = ? AND committed = 1 "
-               " ORDER BY id DESC LIMIT ?)",
-               (file, file, KEEP_REVISIONS),
-           )
+       def clear_flags(self, file: str) -> None:
+           with self.db() as db:
+               db.execute("DELETE FROM flags WHERE file = ?", (file,))
 
+       def flags(self) -> list[dict]:
+           with self.db() as db:
+               rows = db.execute(
+                   "SELECT file, kind, message, at FROM flags ORDER BY file, kind").fetchall()
+           return [{"file": f, "kind": k, "message": m, "at": a} for f, k, m, a in rows]
 
-   def discard(self, revision_id: int) -> None:
-       with self.db() as db:
-           db.execute("DELETE FROM revisions WHERE id = ? AND committed = 0", (revision_id,))
+       def committed_files(self) -> list[str]:
+           """Every recording.json the app has committed a revision of."""
+           with self.db() as db:
+               return [r[0] for r in db.execute(
+                   "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file")]
 
+       def forget(self, file: str) -> None:
+           """Drop everything state.db remembers about a file that was removed on purpose."""
+           with self.db() as db:
+               db.execute("DELETE FROM revisions WHERE file = ?", (file,))
+               db.execute("DELETE FROM flags WHERE file = ?", (file,))
 
-   def adopt(self, file: str, rev: int, sha256: str, body: bytes) -> int:
-       revision_id = self.begin(file, rev, sha256, body, "adopted")
-       self.commit(revision_id)
-       return revision_id
+       # ---- index updates not yet made: a crash between a write and its index update ---------
+       def mark_index_pending(self, recording_id: str) -> None:
+           with self.db() as db:
+               db.execute("INSERT OR IGNORE INTO index_pending (recording_id) VALUES (?)",
+                          (recording_id,))
 
+       def clear_index_pending(self, recording_id: str) -> None:
+           with self.db() as db:
+               db.execute("DELETE FROM index_pending WHERE recording_id = ?", (recording_id,))
 
-   # ---- flags: files that need attention (until stage 3's UI shows them) -----------------
-   def flag(self, file: str, kind: str, message: str) -> None:
-       with self.db() as db:
-           db.execute(
-               "INSERT OR REPLACE INTO flags (file, kind, message, at) VALUES (?, ?, ?, ?)",
-               (file, kind, message, _now()),
-           )
-
-
-   def clear_flags(self, file: str) -> None:
-       with self.db() as db:
-           db.execute("DELETE FROM flags WHERE file = ?", (file,))
-
-
-   def flags(self) -> list[dict]:
-       with self.db() as db:
-           rows = db.execute(
-               "SELECT file, kind, message, at FROM flags ORDER BY file, kind"
-           ).fetchall()
-       return [{"file": f, "kind": k, "message": m, "at": a} for f, k, m, a in rows]
-
-
-   def committed_files(self) -> list[str]:
-       """Every recording.json the app has committed a revision of."""
-       with self.db() as db:
-           return [
-               r[0]
-               for r in db.execute(
-                   "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file"
-               )
-           ]
-
-
-   def forget(self, file: str) -> None:
-       """Drop everything state.db remembers about a file that was removed on purpose."""
-       with self.db() as db:
-           db.execute("DELETE FROM revisions WHERE file = ?", (file,))
-           db.execute("DELETE FROM flags WHERE file = ?", (file,))
-
-
-   # ---- index updates not yet made: a crash between a write and its index update ---------
-   def mark_index_pending(self, recording_id: str) -> None:
-       with self.db() as db:
-           db.execute("INSERT OR IGNORE INTO index_pending (recording_id) VALUES (?)", (recording_id,))
-
-
-   def clear_index_pending(self, recording_id: str) -> None:
-       with self.db() as db:
-           db.execute("DELETE FROM index_pending WHERE recording_id = ?", (recording_id,))
-
-
-   def index_pending(self) -> list[str]:
-       with self.db() as db:
-           return [
-               r[0] for r in db.execute("SELECT recording_id FROM index_pending ORDER BY recording_id")
-           ]
+       def index_pending(self) -> list[str]:
+           with self.db() as db:
+               return [r[0] for r in db.execute(
+                   "SELECT recording_id FROM index_pending ORDER BY recording_id")]
    ```
 
 - [ ] **Step 4: Write the `Writer`**
@@ -6353,9 +5959,8 @@ class MergeIncoming:
         rec = AddTags(self.tags).apply(rec)
         excluded = list(rec.excluded_note_types)
         excluded += [n for n in dict.fromkeys(self.excluded_note_types) if n not in excluded]
-        return rec.model_copy(
-            update={"sources": [*rec.sources, *self.sources], "excluded_note_types": excluded}
-        )
+        return rec.model_copy(update={"sources": [*rec.sources, *self.sources],
+                                      "excluded_note_types": excluded})
 
 
 @dataclass(frozen=True)
@@ -6398,13 +6003,9 @@ class ReindexReport:
     forgotten: tuple[str, ...] = ()  # --allow-missing: recordings state.db no longer remembers
 
     def to_dict(self) -> dict:
-        return {
-            "recordings": self.recordings,
-            "adopted": list(self.adopted),
-            "invalid": list(self.invalid),
-            "problems": list(self.problems),
-            "forgotten": list(self.forgotten),
-        }
+        return {"recordings": self.recordings, "adopted": list(self.adopted),
+                "invalid": list(self.invalid), "problems": list(self.problems),
+                "forgotten": list(self.forgotten)}
 
 
 def _slug(value: str) -> str:
@@ -6414,12 +6015,8 @@ def _slug(value: str) -> str:
 def rendition_filename(rendition: Rendition) -> str:
     """`<kind>-<engine>-<version>-<UTC stamp>.json`; notes' kind part is `notes-<note type>`."""
     kind = f"notes-{rendition.note_type}" if rendition.kind == "notes" else rendition.kind
-    parts = [
-        _slug(kind),
-        _slug(rendition.engine),
-        _slug(rendition.version),
-        utc_stamp(rendition.created_at),
-    ]
+    parts = [_slug(kind), _slug(rendition.engine), _slug(rendition.version),
+             utc_stamp(rendition.created_at)]
     return "-".join(parts) + ".json"
 
 
@@ -6436,19 +6033,16 @@ def _rev_of(raw: bytes) -> int:
 
 
 class Writer:
-    def __init__(
-        self, root: Path, state: State, index: Index, *, writer_id: str, rebuild: bool = True
-    ) -> None:
+    def __init__(self, root: Path, state: State, index: Index, *, writer_id: str,
+                 rebuild: bool = True) -> None:
         self.root = Path(root)
         try:
             self.identity = read_sentinel(self.root)
         except SentinelError as exc:
             raise NotTheWriter(str(exc)) from None
         if is_mirror(self.root):  # §3: the mirror's copy carries archive.json, but is never written
-            raise NotTheWriter(
-                f"{self.root} holds {MIRROR}: it is the NAS mirror's copy, not the "
-                "archive. Only the archive's writer writes (spec §3)."
-            )
+            raise NotTheWriter(f"{self.root} holds {MIRROR}: it is the NAS mirror's copy, not the "
+                               "archive. Only the archive's writer writes (spec §3).")
         try:
             archive_uuid, recorded = state.meta("archive_uuid"), state.meta("writer_id")
         except StateError as exc:
@@ -6458,13 +6052,11 @@ class Writer:
         if archive_uuid != self.identity.uuid:
             raise NotTheWriter(
                 f"{state.db_path} belongs to another archive: the archive's UUID changed. "
-                "Refusing to write."
-            )
+                "Refusing to write.")
         if recorded != writer_id:
             raise NotTheWriter(
                 f"this process's writer_id {writer_id!r} is not the archive's writer "
-                f"({recorded!r}); only the writer writes (spec §3)"
-            )
+                f"({recorded!r}); only the writer writes (spec §3)")
         self.state, self.index, self.writer_id = state, index, writer_id
         self.archive = Archive(self.root)  # its own reader, never the UI's
         self.locks = Locks(state.locks_dir)
@@ -6476,44 +6068,32 @@ class Writer:
                 # §6.7: only an index that isn't this archive's may start out empty.
                 self.rebuild_index(allow_empty=foreign)
             except IndexRefused as exc:
-                hint = (
-                    ""
-                    if foreign or isinstance(exc, MissingRecordings)
-                    else (
-                        f" A writer can't start with --allow-empty: if the archive really is empty, "
-                        f"delete {index.path} (it is derived) and start again."
-                    )
-                )
+                hint = "" if foreign or isinstance(exc, MissingRecordings) else (
+                    f" A writer can't start with --allow-empty: if the archive really is empty, "
+                    f"delete {index.path} (it is derived) and start again.")
                 raise NotTheWriter(f"{exc}{hint}") from None
             except (sqlite3.DatabaseError, OSError) as exc:  # a mode, an owner, a full disk
                 code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
                 raise NotTheWriter(
                     f"rebuilding the index at {index.path} failed ({code}). Check that the archive "
                     "and the index's folder are mounted and belong to this user; the index is "
-                    "derived, so an empty folder for it will do."
-                ) from None
+                    "derived, so an empty folder for it will do.") from None
 
     @classmethod
     def open(cls, cfg: Config, *, docs: bool = True, rebuild: bool = True) -> Writer:
-        missing = [
-            name
-            for name, value in (
-                ("[archive] path", cfg.archive_path),
-                ("[state] path", cfg.state_path),
-                ("[index] path", cfg.index_path),
-                ("[archive] writer_id", cfg.writer_id),
-            )
-            if value is None
-        ]
+        missing = [name for name, value in (("[archive] path", cfg.archive_path),
+                                            ("[state] path", cfg.state_path),
+                                            ("[index] path", cfg.index_path),
+                                            ("[archive] writer_id", cfg.writer_id))
+                   if value is None]
         if missing:
             raise NotTheWriter("set " + ", ".join(missing) + " in config.toml to write the archive")
         try:
             state = State.open(cfg.state_path)
         except StateError as exc:
             raise NotTheWriter(str(exc)) from None
-        writer = cls(
-            cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id, rebuild=rebuild
-        )
+        writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
+                     rebuild=rebuild)
         if docs:
             writer.write_docs()  # §6.7: at startup, and only into an archive with its sentinel
         return writer
@@ -6539,8 +6119,7 @@ class Writer:
             raise MissingRecordings(
                 f"{len(unreadable)} recording file(s) state.db knows can't be read "
                 f"({self._shown(unreadable)}). Is the archive fully mounted and readable? "
-                "Nothing was changed."
-            )
+                "Nothing was changed.")
         return gone
 
     @staticmethod
@@ -6554,8 +6133,7 @@ class Writer:
                 f"{len(gone)} recording(s) state.db knows are not in the archive now "
                 f"({self._shown(gone)}). Is the archive fully mounted and readable? The index was "
                 "not rebuilt. If they were removed on purpose, run `recordings reindex "
-                "--allow-missing`."
-            )
+                "--allow-missing`.")
 
     def rebuild_index(self, *, allow_empty: bool = False, allow_missing: bool = False) -> int:
         # state.db knows every file the app committed. One that is no longer a file means a folder
@@ -6565,9 +6143,8 @@ class Writer:
         if not allow_missing:
             self._refuse_missing(self._missing())
         with self.locks.hold(INDEX_LOCK):
-            count = self.index.rebuild(
-                self.archive, archive_uuid=self.identity.uuid, allow_empty=allow_empty
-            )
+            count = self.index.rebuild(self.archive, archive_uuid=self.identity.uuid,
+                                       allow_empty=allow_empty)
         # Not a bulk clear: a recording that landed after the rebuild listed the archive still has
         # its mark. Each mark is finished, and cleared, under that recording's own lock, with
         # INDEX_LOCK released first (lock order: recordings come before the index).
@@ -6618,18 +6195,14 @@ class Writer:
         try:
             found = read_sentinel(self.root)
         except SentinelError:
-            raise NotTheWriter(
-                "archive.json is gone or unreadable: the archive is not mounted "
-                "now. Refusing to write."
-            ) from None
+            raise NotTheWriter("archive.json is gone or unreadable: the archive is not mounted "
+                               "now. Refusing to write.") from None
         if found.uuid != self.identity.uuid:
-            raise NotTheWriter(
-                "the archive's UUID changed since this writer opened it. Refusing to write."
-            )
+            raise NotTheWriter("the archive's UUID changed since this writer opened it. "
+                               "Refusing to write.")
         if is_mirror(self.root):
-            raise NotTheWriter(
-                "this folder is now the NAS mirror's copy, not the archive. Refusing to write."
-            )
+            raise NotTheWriter("this folder is now the NAS mirror's copy, not the archive. "
+                               "Refusing to write.")
 
     def mutate(self, recording_id: str, op: Op) -> Recording:
         self._check_sentinel()
@@ -6648,8 +6221,7 @@ class Writer:
                 new = Recording.model_validate({**new.model_dump(by_alias=True), "rev": rev})
             except ValidationError as exc:
                 raise InvalidFile(
-                    f"{op.name} would make {rel} invalid: {str(exc).splitlines()[0]}"
-                ) from None
+                    f"{op.name} would make {rel} invalid: {str(exc).splitlines()[0]}") from None
             self._write_recording(rel, new, origin=op.name)
             return new
 
@@ -6667,8 +6239,7 @@ class Writer:
             self.state.flag(rel, "invalid", message)
             raise InvalidFile(
                 f"{rel} does not validate ({message}). Fix it by hand: the app changes nothing "
-                "in a file that doesn't validate (§11)."
-            ) from None
+                "in a file that doesn't validate (§11).") from None
         self._check_fresh(rel, raw)
         return rec
 
@@ -6685,16 +6256,11 @@ class Writer:
             self.state.adopt(rel, _rev_of(raw), sha, raw)
             return
         if last.sha256 != sha:
-            self.state.flag(
-                rel,
-                "stale",
-                "edited outside the app since the app last wrote it; "
-                "run `recordings reindex` to accept the edit",
-            )
+            self.state.flag(rel, "stale", "edited outside the app since the app last wrote it; "
+                                          "run `recordings reindex` to accept the edit")
             raise StaleFile(
                 f"{rel} was edited outside the app since the app last wrote it. Run "
-                "`recordings reindex` to accept the edit, then try again."
-            )
+                "`recordings reindex` to accept the edit, then try again.")
 
     def _write_recording(self, rel: str, rec: Recording, *, origin: str) -> None:
         data = dump_json(rec).encode("utf-8")
@@ -6754,10 +6320,8 @@ class Writer:
             return self.index.find_by_sha256(sha, strict=True)
         except sqlite3.DatabaseError as exc:
             code = getattr(exc, "sqlite_errorname", None) or type(exc).__name__
-            raise IndexUnavailable(
-                f"the index at {self.index.path} can't answer now ({code}), "
-                "so nothing was written: try again"
-            ) from None
+            raise IndexUnavailable(f"the index at {self.index.path} can't answer now ({code}), "
+                                   "so nothing was written: try again") from None
 
     def _pending_holding(self, sha: str, pending: list[str]) -> str | None:
         """A recording among `pending` that holds these bytes. recording.json is replaced
@@ -6792,26 +6356,14 @@ class Writer:
                 if incoming.my_notes is not None:
                     write_text_atomic(tmp / "my-notes.md", incoming.my_notes)
                 rec = Recording(
-                    schema_ref=SCHEMA_REF,
-                    id=rid,
-                    rev=1,
-                    title=incoming.title,
-                    title_by=incoming.title_by,
-                    recorded_at=incoming.recorded_at,
-                    timezone=incoming.timezone_name,
-                    time_source=incoming.time_source,
-                    media=MediaInfo(
-                        file=media_name,
-                        sha256=sha,
-                        kind=incoming.kind,
-                        duration_ms=incoming.duration_ms,
-                        sample_rate=incoming.sample_rate,
-                        channels=incoming.channels,
-                    ),
-                    sources=sources,
-                    tags=list(incoming.tags),
-                    excluded_note_types=list(dict.fromkeys(incoming.excluded_note_types)),
-                )
+                    schema_ref=SCHEMA_REF, id=rid, rev=1, title=incoming.title,
+                    title_by=incoming.title_by, recorded_at=incoming.recorded_at,
+                    timezone=incoming.timezone_name, time_source=incoming.time_source,
+                    media=MediaInfo(file=media_name, sha256=sha, kind=incoming.kind,
+                                    duration_ms=incoming.duration_ms,
+                                    sample_rate=incoming.sample_rate, channels=incoming.channels),
+                    sources=sources, tags=list(incoming.tags),
+                    excluded_note_types=list(dict.fromkeys(incoming.excluded_note_types)))
                 data = dump_json(rec).encode("utf-8")
                 write_bytes_atomic(tmp / "recording.json", data)
                 rel = self._rel(rid)
@@ -6833,12 +6385,8 @@ class Writer:
             self.state.commit(revision)
             self._drop_empty_tmp()
             self._index(rec)
-            return Added(
-                rec,
-                created=True,
-                sources_added=len(sources),
-                renditions_added=len(incoming.renditions),
-            )
+            return Added(rec, created=True, sources_added=len(sources),
+                         renditions_added=len(incoming.renditions))
 
     def _merge(self, rid: str, sha: str, incoming: Incoming) -> Added:
         with self.locks.hold(rid):
@@ -6857,19 +6405,13 @@ class Writer:
                 if key not in have:
                     have.add(key)
                     new_sources.append(self._publish_raw(folder, source))
-            written = sum(
-                self._write_rendition_locked(folder, r) is not None for r in incoming.renditions
-            )
+            written = sum(self._write_rendition_locked(folder, r) is not None
+                          for r in incoming.renditions)
             self._merge_notes(folder, incoming.my_notes)
-            merged = self.mutate(
-                rid,
-                MergeIncoming(
-                    tuple(new_sources), tuple(incoming.tags), tuple(incoming.excluded_note_types)
-                ),
-            )
-            return Added(
-                merged, created=False, sources_added=len(new_sources), renditions_added=written
-            )
+            merged = self.mutate(rid, MergeIncoming(tuple(new_sources), tuple(incoming.tags),
+                                                    tuple(incoming.excluded_note_types)))
+            return Added(merged, created=False, sources_added=len(new_sources),
+                         renditions_added=written)
 
     @staticmethod
     def _merge_notes(folder: Path, notes: str | None) -> None:
@@ -6918,24 +6460,12 @@ class Writer:
             digest = _sha(source.payload)
             # A file with these bytes already there is reused: a merge killed between publishing
             # and recording its snapshot never leaves a duplicate (Review Focus 2).
-            same = next(
-                (
-                    p
-                    for p in sorted(target.parent.glob(f"{target.stem}*.json"))
-                    if _sha(p.read_bytes()) == digest
-                ),
-                None,
-            )
+            same = next((p for p in sorted(target.parent.glob(f"{target.stem}*.json"))
+                         if _sha(p.read_bytes()) == digest), None)
             path = same or publish_exclusive(source.payload, target)
             raw = path.relative_to(folder).as_posix()
-        return SourceRef(
-            kind=source.kind,
-            ref=source.ref,
-            added_at=source.added_at,
-            fetched_at=source.fetched_at,
-            raw=raw,
-            sha256=digest,
-        )
+        return SourceRef(kind=source.kind, ref=source.ref, added_at=source.added_at,
+                         fetched_at=source.fetched_at, raw=raw, sha256=digest)
 
     # ---- housekeeping ------------------------------------------------------------------------
     def _sweep_tmp(self) -> None:
@@ -6961,7 +6491,8 @@ class Writer:
             (self.root / ".tmp").rmdir()
 
     # ---- reindex: accept outside edits, rebuild the index (§6.4, §6.7, §11) -----------------
-    def reindex(self, *, allow_empty: bool = False, allow_missing: bool = False) -> ReindexReport:
+    def reindex(self, *, allow_empty: bool = False,
+                allow_missing: bool = False) -> ReindexReport:
         self._check_sentinel()
         # Before anything is adopted or reconciled: a refused reindex writes nothing.
         gone = self._missing()
@@ -6991,13 +6522,9 @@ class Writer:
         for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
             self.state.forget(rel)
         problems = tuple({"path": str(p.path), "message": p.message} for p in self.archive.problems)
-        return ReindexReport(
-            recordings=count,
-            adopted=tuple(adopted),
-            invalid=tuple(invalid),
-            problems=problems,
-            forgotten=tuple(Path(f).parent.name for f in gone),
-        )
+        return ReindexReport(recordings=count, adopted=tuple(adopted), invalid=tuple(invalid),
+                             problems=problems,
+                             forgotten=tuple(Path(f).parent.name for f in gone))
 
     def _accept(self, rel: str, raw: bytes) -> str:
         sha = _sha(raw)
@@ -7116,9 +6643,7 @@ In `packages/core/tests/test_cli.py`:
        cfg = tmp_path / "config.toml"
        cfg.write_text(
            f'[archive]\npath = "{archive}"\nwriter_id = "test"\n[state]\npath = "{state}"\n'
-           f'[index]\npath = "{index or tmp_path / "index.db"}"\n',
-           encoding="utf-8",
-       )
+           f'[index]\npath = "{index or tmp_path / "index.db"}"\n', encoding="utf-8")
        monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
        for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
            monkeypatch.delenv(name, raising=False)
@@ -7155,9 +6680,8 @@ In `packages/core/tests/test_cli.py`:
    def test_reindex_accepts_an_outside_edit(writer, make_incoming, tmp_path, monkeypatch, capsys):
        rec = writer.add(make_incoming(sources=())).recording  # no Plaud source to reconcile
        path = writer.archive.path_for(rec.id) / "recording.json"
-       path.write_text(
-           path.read_text(encoding="utf-8").replace('"Week 4"', '"Edited"'), encoding="utf-8"
-       )
+       path.write_text(path.read_text(encoding="utf-8").replace('"Week 4"', '"Edited"'),
+                       encoding="utf-8")
        _writer_config(tmp_path, monkeypatch, writer.root, writer.state.path, writer.index.path)
        assert main(["reindex", "--json"]) == 0
        out = json.loads(capsys.readouterr().out)
@@ -7166,8 +6690,7 @@ In `packages/core/tests/test_cli.py`:
 
 
    def test_reindex_exits_1_and_names_a_recording_the_rebuild_left_out(
-       writer, make_incoming, tmp_path, monkeypatch, capsys
-   ):
+           writer, make_incoming, tmp_path, monkeypatch, capsys):
        # why: §11. Index.rebuild drops a recording it can't list; reindex must say so, not exit 0.
        rec = writer.add(make_incoming(sources=())).recording
        folder = writer.archive.path_for(rec.id)
@@ -7179,10 +6702,8 @@ In `packages/core/tests/test_cli.py`:
        (problem,) = out["problems"]
        assert "does not match its folder" in problem["message"]
 
-
    def test_reindex_writes_no_docs_so_a_read_only_archive_cannot_stop_it(
-       writer, tmp_path, monkeypatch, capsys
-   ):
+           writer, tmp_path, monkeypatch, capsys):
        # why: reindex is the recovery command and writes nothing into the archive. A docs write
        # failure (read-only mount, full disk) must not stop it before it adopts anything.
        def refuse(root):
@@ -7207,8 +6728,7 @@ In `packages/core/tests/test_cli.py`:
 
 
    def test_reindex_refuses_when_recordings_state_db_knows_are_gone(
-       writer, make_incoming, tmp_path, monkeypatch, capsys
-   ):
+           writer, make_incoming, tmp_path, monkeypatch, capsys):
        # why: a half-mounted or partly restored archive lists fewer recordings, not none, so the
        # empty-index guard doesn't fire. Rebuilding would drop them from the index, and an import
        # could then make a second copy of their bytes (§6.4).
@@ -7236,8 +6756,7 @@ In `packages/core/tests/test_cli.py`:
 
 
    def test_reindex_allow_missing_works_when_index_db_is_gone(
-       writer, make_incoming, tmp_path, monkeypatch, capsys
-   ):
+           writer, make_incoming, tmp_path, monkeypatch, capsys):
        # why: the runbook's restore does not bring index.db back, and a hand deletion needs
        # --allow-missing. The command must not stop at the Writer's own start-up rebuild (exit 78).
        writer.add(make_incoming(sources=()))
@@ -7253,8 +6772,7 @@ In `packages/core/tests/test_cli.py`:
 
 
    def test_reindex_allow_missing_works_with_an_index_update_pending(
-       writer, make_incoming, tmp_path, monkeypatch, capsys
-   ):
+           writer, make_incoming, tmp_path, monkeypatch, capsys):
        keep = writer.add(make_incoming(sources=())).recording
        gone = writer.add(make_incoming(sources=())).recording
        shutil.rmtree(writer.archive.path_for(gone.id))
@@ -7278,9 +6796,7 @@ def test_docs_refuses_a_folder_without_a_sentinel(tmp_path, monkeypatch, capsys)
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         f'[archive]\npath = "{empty}"\nwriter_id = "test"\n[state]\npath = "{tmp_path / "state"}"\n'
-        f'[index]\npath = "{tmp_path / "index.db"}"\n',
-        encoding="utf-8",
-    )
+        f'[index]\npath = "{tmp_path / "index.db"}"\n', encoding="utf-8")
     monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
     for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
         monkeypatch.delenv(name, raising=False)
@@ -7300,8 +6816,7 @@ def test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write(tmp_p
     cfg_file.write_text(
         f'[archive]\npath = "{tmp_path / "archive"}"\nwriter_id = "test"\n'
         f'[state]\npath = "{tmp_path / "state"}"\n[index]\npath = "{tmp_path / "index.db"}"\n',
-        encoding="utf-8",
-    )
+        encoding="utf-8")
     cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file)})
     (tmp_path / "archive" / "FORMAT.md").unlink()
     create_app(Settings(archive=cfg.archive_path, demo=False, config=cfg))
@@ -7349,29 +6864,19 @@ In `packages/core/src/recordings/cli.py`:
    ```
    with:
    ```python
-   p = sub.add_parser("docs", help="write README/AGENTS/FORMAT and schemas into the archive")
-   p.add_argument(
-       "archive",
-       type=Path,
-       nargs="?",
-       help="optional: it must be this machine's archive, [archive] path",
-   )
+       p = sub.add_parser("docs", help="write README/AGENTS/FORMAT and schemas into the archive")
+       p.add_argument("archive", type=Path, nargs="?",
+                      help="optional: it must be this machine's archive, [archive] path")
    ```
 3. **Add** to `build_parser`, before the `doctor` parser:
    ```python
-   p = sub.add_parser("reindex", help="accept outside edits and rebuild the derived index.db")
-   p.add_argument(
-       "--allow-empty",
-       action="store_true",
-       help="let the index become empty (refused by default: is the archive mounted?)",
-   )
-   p.add_argument(
-       "--allow-missing",
-       action="store_true",
-       help="rebuild even though recordings state.db knows are gone from the archive "
-       "(needed after a deliberate deletion, until stage 3 adds forget)",
-   )
-   p.add_argument("--json", action="store_true")
+       p = sub.add_parser("reindex", help="accept outside edits and rebuild the derived index.db")
+       p.add_argument("--allow-empty", action="store_true",
+                      help="let the index become empty (refused by default: is the archive mounted?)")
+       p.add_argument("--allow-missing", action="store_true",
+                      help="rebuild even though recordings state.db knows are gone from the archive "
+                           "(needed after a deliberate deletion, until stage 3 adds forget)")
+       p.add_argument("--json", action="store_true")
    ```
 4. **Add** after `cmd_init`:
    ```python
@@ -7383,11 +6888,7 @@ In `packages/core/src/recordings/cli.py`:
            return Writer.open(cfg, docs=docs, rebuild=rebuild)
        except LockTimeout as exc:  # busy, not misconfigured: 75 (EX_TEMPFAIL), as the import uses
            return _fail(str(exc), as_json, 75)
-       except (
-           WriterError,
-           OSError,
-           sqlite3.Error,
-       ) as exc:  # docs write: a read-only mount, a full disk
+       except (WriterError, OSError, sqlite3.Error) as exc:  # docs write: a read-only mount, a full disk
            return _fail(str(exc), as_json, 78)
 
 
@@ -7416,14 +6917,9 @@ In `packages/core/src/recordings/cli.py`:
        if isinstance(cfg, int):
            return cfg
        if args.archive is not None and (
-           cfg.archive_path is None or args.archive.resolve() != cfg.archive_path.resolve()
-       ):
-           return _fail(
-               f"{args.archive} is not this machine's archive ([archive] path in "
-               "config.toml): only the archive's writer writes its docs",
-               args.json,
-               78,
-           )
+               cfg.archive_path is None or args.archive.resolve() != cfg.archive_path.resolve()):
+           return _fail(f"{args.archive} is not this machine's archive ([archive] path in "
+                        "config.toml): only the archive's writer writes its docs", args.json, 78)
        writer = _writer(args.json, docs=False)
        if isinstance(writer, int):
            return writer
@@ -7593,9 +7089,8 @@ class Archive:
     def media_path(self, rid: str) -> Path:
         return self.path_for(rid) / self.load(rid).media.file
 
-    def renditions(
-        self, rid: str, problems: list[Problem] | None = None
-    ) -> list[tuple[str, Rendition]]:
+    def renditions(self, rid: str, problems: list[Problem] | None = None
+                   ) -> list[tuple[str, Rendition]]:
         folder = self.path_for(rid)
         out = []
         for path in sorted((folder / "renditions").glob("*.json")):
@@ -7630,9 +7125,7 @@ T0 = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
 
 def test_a_broken_recording_json_is_reported_not_fatal(writer, make_incoming):
     good = writer.add(make_incoming()).recording
-    bad = writer.add(
-        make_incoming(recorded_at=datetime.fromisoformat("2026-10-07T09:00:00-07:00"))
-    ).recording
+    bad = writer.add(make_incoming(recorded_at=datetime.fromisoformat("2026-10-07T09:00:00-07:00"))).recording
     (writer.archive.path_for(bad.id) / "recording.json").write_text("{ truncated", encoding="utf-8")
     archive = Archive(writer.root)
     assert [r.id for r in archive.iter_recordings()] == [good.id]
@@ -7651,21 +7144,9 @@ def test_media_path_points_at_the_media_file(writer, make_incoming):
 
 
 def test_renditions_skips_corrupt_files_when_problems_given(writer, make_incoming):
-    rec = writer.add(
-        make_incoming(
-            renditions=(
-                Rendition(
-                    kind="notes",
-                    note_type="lecture",
-                    engine="canned",
-                    model="m",
-                    version="m@1",
-                    created_at=T0,
-                    payload={"markdown": "# Notes"},
-                ),
-            )
-        )
-    ).recording
+    rec = writer.add(make_incoming(renditions=(Rendition(
+        kind="notes", note_type="lecture", engine="canned", model="m", version="m@1",
+        created_at=T0, payload={"markdown": "# Notes"}),))).recording
     corrupt = writer.archive.path_for(rec.id) / "renditions" / "corrupt.json"
     corrupt.write_text("{", encoding="utf-8")
     problems = []
@@ -7681,20 +7162,14 @@ def _set_id(folder, rid: str) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-@pytest.mark.parametrize(
-    "wrong",
-    [
-        lambda rid: rid[:-1] + ("1" if rid[-1] == "0" else "0"),  # a typo in the hash
-        lambda rid: rid.replace("T140003", "T140004"),  # a typo in the time
-        lambda rid: "20261399T256199+0000_deadbeef",  # the right shape, but no such date
-    ],
-    ids=["hash", "time", "impossible-date"],
-)
+@pytest.mark.parametrize("wrong", [
+    lambda rid: rid[:-1] + ("1" if rid[-1] == "0" else "0"),  # a typo in the hash
+    lambda rid: rid.replace("T140003", "T140004"),  # a typo in the time
+    lambda rid: "20261399T256199+0000_deadbeef",  # the right shape, but no such date
+], ids=["hash", "time", "impossible-date"])
 def test_a_recording_whose_id_does_not_match_its_folder_is_reported(writer, make_incoming, wrong):
     good = writer.add(make_incoming()).recording
-    bad = writer.add(
-        make_incoming(recorded_at=datetime.fromisoformat("2026-10-07T14:00:03-07:00"))
-    ).recording
+    bad = writer.add(make_incoming(recorded_at=datetime.fromisoformat("2026-10-07T14:00:03-07:00"))).recording
     typo = wrong(bad.id)
     _set_id(writer.archive.path_for(bad.id), typo)
     archive = Archive(writer.root)
@@ -7746,37 +7221,23 @@ def build_one(tmp_path):
     root, state = tmp_path / "archive", tmp_path / "state"
     init_archive(root, state, writer_id="test")
     writer = Writer(root, State.open(state), Index(tmp_path / "index.db"), writer_id="test")
-    rec = writer.add(
-        Incoming(
-            media=media,
-            recorded_at=datetime.fromisoformat("2026-10-06T14:00:03-07:00"),
-            timezone_name="America/Vancouver",
-            time_source="plaud",
-            title="Week 4",
-            kind="audio",
-            sources=(RawSource(kind="plaud", ref="of_x", added_at=T0, payload=b"{}"),),
-            my_notes="mine\n",
-            renditions=(
-                Rendition(
-                    kind="transcript",
-                    engine="canned",
-                    model="whisper-large-v3-turbo",
-                    version="large-v3-turbo@a4aaeec",
-                    created_at=T0,
-                    payload={"segments": [{"start": 0, "end": 1, "text": "hi"}]},
-                ),
-                Rendition(
-                    kind="notes",
-                    note_type="lecture",
-                    engine="canned",
-                    model="m",
-                    version="m@demo",
-                    created_at=T0,
-                    payload={"markdown": "x"},
-                ),
-            ),
-        )
-    ).recording
+    rec = writer.add(Incoming(
+        media=media,
+        recorded_at=datetime.fromisoformat("2026-10-06T14:00:03-07:00"),
+        timezone_name="America/Vancouver",
+        time_source="plaud",
+        title="Week 4",
+        kind="audio",
+        sources=(RawSource(kind="plaud", ref="of_x", added_at=T0, payload=b"{}"),),
+        my_notes="mine\n",
+        renditions=(
+            Rendition(kind="transcript", engine="canned", model="whisper-large-v3-turbo",
+                      version="large-v3-turbo@a4aaeec", created_at=T0,
+                      payload={"segments": [{"start": 0, "end": 1, "text": "hi"}]}),
+            Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
+                      version="m@demo", created_at=T0, payload={"markdown": "x"}),
+        ),
+    )).recording
     write_docs(writer.root)
     return writer.archive, rec
 ```
@@ -7818,9 +7279,8 @@ def writer(tmp_path) -> Writer:
     demo_archive (which is tmp_path/"archive")."""
     root, state = tmp_path / "written-archive", tmp_path / "written-state"
     init_archive(root, state, writer_id="test")
-    return Writer(
-        root, State.open(state), Index(tmp_path / "written-index" / "index.db"), writer_id="test"
-    )
+    return Writer(root, State.open(state), Index(tmp_path / "written-index" / "index.db"),
+                  writer_id="test")
 ```
 
 In `packages/ui/tests/test_views.py`, **add** `from recordings.writer import Incoming` to the
@@ -7832,21 +7292,11 @@ imports, and **replace** the four tests that call `archive.add_recording`
 def test_a_recording_with_no_outputs_has_empty_tabs(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
-    rec = writer.add(
-        Incoming(
-            media=media,
-            recorded_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
-            timezone_name="UTC",
-            time_source="ingest",
-            title="Fresh upload",
-            kind="audio",
-            sources=(
-                RawSource(
-                    kind="upload", ref="x.mp3", added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)
-                ),
-            ),
-        )
-    ).recording
+    rec = writer.add(Incoming(
+        media=media, recorded_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
+        timezone_name="UTC", time_source="ingest", title="Fresh upload", kind="audio",
+        sources=(RawSource(kind="upload", ref="x.mp3",
+                           added_at=datetime(2026, 10, 1, tzinfo=timezone.utc)),))).recording
     view = recording_view(writer.archive, rec.id)
     assert view["transcripts"] == [] and view["chosen_transcript"] is None
     assert view["notes"] == [] and view["plaud_notes"] == [] and view["my_notes_html"] is None
@@ -7858,28 +7308,12 @@ def test_model_written_html_is_escaped(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = writer.add(
-        Incoming(
-            media=media,
-            recorded_at=t,
-            timezone_name="UTC",
-            time_source="ingest",
-            title="x",
-            kind="audio",
-            sources=(RawSource(kind="upload", ref="x", added_at=t),),
-            renditions=(
-                Rendition(
-                    kind="notes",
-                    note_type="lecture",
-                    engine="canned",
-                    model="m",
-                    version="m@1",
-                    created_at=t,
-                    payload={"markdown": "<img src=x onerror=alert(1)>"},
-                ),
-            ),
-        )
-    ).recording
+    rec = writer.add(Incoming(
+        media=media, recorded_at=t, timezone_name="UTC", time_source="ingest", title="x",
+        kind="audio", sources=(RawSource(kind="upload", ref="x", added_at=t),),
+        renditions=(Rendition(kind="notes", note_type="lecture", engine="canned", model="m",
+                              version="m@1", created_at=t,
+                              payload={"markdown": "<img src=x onerror=alert(1)>"}),))).recording
     html = recording_view(writer.archive, rec.id)["notes"][0]["outputs"][0]["html"]
     assert "<img" not in html
 
@@ -7890,18 +7324,10 @@ def test_a_capitalised_private_tag_is_private_everywhere(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = writer.add(
-        Incoming(
-            media=media,
-            recorded_at=t,
-            timezone_name="UTC",
-            time_source="ingest",
-            title="x",
-            kind="audio",
-            sources=(RawSource(kind="upload", ref="x", added_at=t),),
-            tags=(TagRef(tag="Private/Health"), TagRef(tag="notes/private")),
-        )
-    ).recording
+    rec = writer.add(Incoming(
+        media=media, recorded_at=t, timezone_name="UTC", time_source="ingest", title="x",
+        kind="audio", sources=(RawSource(kind="upload", ref="x", added_at=t),),
+        tags=(TagRef(tag="Private/Health"), TagRef(tag="notes/private")))).recording
     view = library_view(writer.archive)
     assert {t["tag"]: t["private"] for t in view["tags"]} == {"Private/Health": True}
     assert view["recordings"][0]["private"] is True
@@ -7912,38 +7338,15 @@ def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path, writer):
     media = tmp_path / "x.mp3"
     media.write_bytes(b"ID3")
     t = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    rec = writer.add(
-        Incoming(
-            media=media,
-            recorded_at=t,
-            timezone_name="UTC",
-            time_source="plaud",
-            title="x",
-            kind="audio",
-            sources=(RawSource(kind="plaud", ref="x", added_at=t),),
-            renditions=(
-                Rendition(
-                    kind="transcript",
-                    engine="plaud",
-                    model="plaud",
-                    version="plaud@1",
-                    created_at=t,
-                    payload={
-                        "segments": [
-                            {
-                                "start": 0,
-                                "end": 1,
-                                "speaker": "Speaker 1",
-                                "speaker_name": "Ada",
-                                "text": "Hello.",
-                            },
-                            {"start": 1, "end": 2, "speaker": "Speaker 2", "text": "Hi."},
-                        ]
-                    },
-                ),
-            ),
-        )
-    ).recording
+    rec = writer.add(Incoming(
+        media=media, recorded_at=t, timezone_name="UTC", time_source="plaud", title="x",
+        kind="audio", sources=(RawSource(kind="plaud", ref="x", added_at=t),),
+        renditions=(Rendition(kind="transcript", engine="plaud", model="plaud", version="plaud@1",
+                              created_at=t, payload={"segments": [
+                                  {"start": 0, "end": 1, "speaker": "Speaker 1",
+                                   "speaker_name": "Ada", "text": "Hello."},
+                                  {"start": 1, "end": 2, "speaker": "Speaker 2",
+                                   "text": "Hi."}]}),))).recording
     turns = recording_view(writer.archive, rec.id)["transcripts"][0]["turns"]
     assert [t["speaker"] for t in turns] == ["Ada", "Speaker 2"]
 ```
@@ -7965,112 +7368,58 @@ In `demo/build.py`:
            for n, entry in enumerate(entries):
                media = Path(media_dir) / f"{entry['slug']}.{entry['ext']}"
                recorded_at = datetime.fromisoformat(entry["recorded_at"]).replace(
-                   tzinfo=ZoneInfo(entry["timezone"])
-               )
+                   tzinfo=ZoneInfo(entry["timezone"]))
                sha = sha256_file(media)
                rid = make_id(recorded_at, sha)
                ids[rid] = entry["slug"]
                backend = CannedBackend(canned_dir, {rid: entry["slug"]})
                stamp = BUILD_AT + timedelta(minutes=n)
-               renditions = [
-                   Rendition(
-                       kind="transcript",
-                       engine="canned",
-                       model=WHISPER["model"],
-                       version=WHISPER["version"],
-                       created_at=stamp,
-                       inputs={"audio_sha256": sha},
-                       meta={"demo": True},
-                       payload=backend.transcribe(media, recording_id=rid).model_dump(
-                           exclude_none=True
-                       ),
-                   )
-               ]
+               renditions = [Rendition(
+                   kind="transcript", engine="canned", model=WHISPER["model"],
+                   version=WHISPER["version"], created_at=stamp,
+                   inputs={"audio_sha256": sha}, meta={"demo": True},
+                   payload=backend.transcribe(media, recording_id=rid).model_dump(exclude_none=True),
+               )]
                for i, note in enumerate(entry.get("notes", []), start=1):
-                   done = backend.complete(
-                       CompletionRequest(
-                           prompt="(canned)",
-                           model=note["model"],
-                           recording_id=rid,
-                           note_type=note["note_type"],
-                       )
-                   )
-                   renditions.append(
-                       Rendition(
-                           kind="notes",
-                           note_type=note["note_type"],
-                           engine="canned",
-                           model=done.model,
-                           version=f"{done.model}@demo",
-                           created_at=stamp + timedelta(seconds=i),
-                           inputs={"audio_sha256": sha},
-                           meta={"demo": True},
-                           payload={"markdown": done.text},
-                       )
-                   )
+                   done = backend.complete(CompletionRequest(
+                       prompt="(canned)", model=note["model"], recording_id=rid,
+                       note_type=note["note_type"]))
+                   renditions.append(Rendition(
+                       kind="notes", note_type=note["note_type"], engine="canned", model=done.model,
+                       version=f"{done.model}@demo", created_at=stamp + timedelta(seconds=i),
+                       inputs={"audio_sha256": sha}, meta={"demo": True},
+                       payload={"markdown": done.text}))
                payload = None
                if entry.get("plaud"):
                    transcript = renditions[0].payload
-                   renditions.append(
-                       Rendition(
-                           kind="transcript",
-                           engine="plaud",
-                           model="plaud",
-                           version="plaud@demo",
-                           created_at=stamp + timedelta(seconds=30),
-                           meta={"demo": True},
-                           payload=transcript,
-                       )
-                   )
-                   renditions.append(
-                       Rendition(
-                           kind="notes",
-                           note_type="plaud-summary",
-                           engine="plaud",
-                           model="plaud",
-                           version="plaud@demo",
-                           created_at=stamp + timedelta(seconds=31),
-                           meta={"demo": True},
-                           payload={
-                               "markdown": (
-                                   canned_dir / "notes" / entry["slug"] / "plaud.md"
-                               ).read_text(encoding="utf-8")
-                           },
-                       )
-                   )
-                   payload = (
-                       json.dumps(
-                           {"id": entry["source_ref"], "demo": True, "name": entry["title"]}, indent=2
-                       ).encode()
-                       + b"\n"
-                   )
+                   renditions.append(Rendition(
+                       kind="transcript", engine="plaud", model="plaud", version="plaud@demo",
+                       created_at=stamp + timedelta(seconds=30), meta={"demo": True},
+                       payload=transcript))
+                   renditions.append(Rendition(
+                       kind="notes", note_type="plaud-summary", engine="plaud", model="plaud",
+                       version="plaud@demo", created_at=stamp + timedelta(seconds=31),
+                       meta={"demo": True},
+                       payload={"markdown": (canned_dir / "notes" / entry["slug"] / "plaud.md")
+                                .read_text(encoding="utf-8")}))
+                   payload = json.dumps({"id": entry["source_ref"], "demo": True,
+                                         "name": entry["title"]}, indent=2).encode() + b"\n"
                my_notes_path = canned_dir / "my-notes" / f"{entry['slug']}.md"
-               writer.add(
-                   Incoming(
-                       media=media,
-                       recorded_at=recorded_at,
-                       timezone_name=entry["timezone"],
-                       time_source=entry["time_source"],
-                       title=entry["title"],
-                       kind=entry["kind"],
-                       duration_ms=entry["duration_ms"],
-                       sources=(
-                           RawSource(
-                               kind=entry["source_kind"],
-                               ref=entry["source_ref"],
-                               added_at=BUILD_AT,
-                               payload=payload,
-                           ),
-                       ),
-                       tags=tuple(TagRef(**t) for t in entry.get("tags", [])),
-                       renditions=tuple(renditions),
-                       my_notes=(
-                           my_notes_path.read_text(encoding="utf-8")
-                           if my_notes_path.is_file()
-                           else None
-                       ),
-                   )
-               )
+               writer.add(Incoming(
+                   media=media,
+                   recorded_at=recorded_at,
+                   timezone_name=entry["timezone"],
+                   time_source=entry["time_source"],
+                   title=entry["title"],
+                   kind=entry["kind"],
+                   duration_ms=entry["duration_ms"],
+                   sources=(RawSource(kind=entry["source_kind"], ref=entry["source_ref"],
+                                      added_at=BUILD_AT, payload=payload),),
+                   tags=tuple(TagRef(**t) for t in entry.get("tags", [])),
+                   renditions=tuple(renditions),
+                   my_notes=(my_notes_path.read_text(encoding="utf-8")
+                             if my_notes_path.is_file() else None),
+               ))
        return dict(sorted(ids.items()))
    ```
 
@@ -8213,113 +7562,45 @@ def plaud_env():
     """A synthetic Plaud `files/{id}` envelope, shaped like audio-router's raw snapshots: invented
     names, invented text, a rotating presigned URL and audio-router's own `_meta`. `polish` adds a
     `transaction_polish` block with the same rows, as Plaud's polished transcript has."""
-
-    def make(
-        fid: str = HEX,
-        *,
-        name: str = "Week 4",
-        segments=None,
-        notes=None,
-        outline: bool = True,
-        polish: bool = False,
-        duration: int = 2600,
-        link_error: bool = False,
-        presigned: str = "abc",
-    ) -> dict:
-        rows = (
-            segments
-            if segments is not None
-            else [
-                {
-                    "content": "Hello there.",
-                    "start_time": 0,
-                    "end_time": 1500,
-                    "speaker": "Ada",
-                    "original_speaker": "Speaker 1",
-                    "embeddingKey": "ek-1",
-                },
-                {
-                    "content": "Hi.",
-                    "start_time": 1500,
-                    "end_time": 2600,
-                    "speaker": "Speaker 2",
-                    "original_speaker": "Speaker 2",
-                },
-            ]
-        )
-        source_list = [
-            {
-                "data_type": "transaction",
-                "data_id": "t-1",
-                "data_tab_name": None,
-                "data_content": json.dumps(rows, ensure_ascii=False),
-            }
+    def make(fid: str = HEX, *, name: str = "Week 4", segments=None, notes=None,
+             outline: bool = True, polish: bool = False, duration: int = 2600,
+             link_error: bool = False, presigned: str = "abc") -> dict:
+        rows = segments if segments is not None else [
+            {"content": "Hello there.", "start_time": 0, "end_time": 1500, "speaker": "Ada",
+             "original_speaker": "Speaker 1", "embeddingKey": "ek-1"},
+            {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2",
+             "original_speaker": "Speaker 2"},
         ]
+        source_list = [{"data_type": "transaction", "data_id": "t-1", "data_tab_name": None,
+                        "data_content": json.dumps(rows, ensure_ascii=False)}]
         if outline:
-            source_list.append(
-                {
-                    "data_type": "outline",
-                    "data_id": "o-1",
-                    "data_tab_name": None,
-                    "data_content": json.dumps(
-                        [{"topic": "Greetings", "start_time": 0, "end_time": 2600}]
-                    ),
-                }
-            )
+            source_list.append({"data_type": "outline", "data_id": "o-1", "data_tab_name": None,
+                                "data_content": json.dumps(
+                                    [{"topic": "Greetings", "start_time": 0, "end_time": 2600}])})
         if polish:
-            source_list.append(
-                {
-                    "data_type": "transaction_polish",
-                    "data_id": "p-1",
-                    "data_tab_name": None,
-                    "data_content": json.dumps(rows, ensure_ascii=False),
-                }
-            )
-        note_list = (
-            notes
-            if notes is not None
-            else [
-                {
-                    "data_type": "auto_sum_note",
-                    "data_id": "n-1",
-                    "data_tab_name": "Summary",
-                    "data_content": "# Summary\n\nTwo people say hello.",
-                },
-                {
-                    "data_type": "high_light",
-                    "data_id": "h-1",
-                    "data_tab_name": None,
-                    "data_content": json.dumps(
-                        [{"timestamp": 1000, "title": "Key moment", "content": "A highlight"}]
-                    ),
-                },
-            ]
-        )
+            source_list.append({"data_type": "transaction_polish", "data_id": "p-1",
+                                "data_tab_name": None,
+                                "data_content": json.dumps(rows, ensure_ascii=False)})
+        note_list = notes if notes is not None else [
+            {"data_type": "auto_sum_note", "data_id": "n-1", "data_tab_name": "Summary",
+             "data_content": "# Summary\n\nTwo people say hello."},
+            {"data_type": "high_light", "data_id": "h-1", "data_tab_name": None,
+             "data_content": json.dumps([{"timestamp": 1000, "title": "Key moment",
+                                          "content": "A highlight"}])},
+        ]
         if link_error:
-            note_list = [
-                *note_list,
-                {
-                    "data_type": "auto_sum_note",
-                    "data_id": "n-2",
-                    "data_tab_name": "Action items",
-                    "data_content": "",
-                    "data_link": "https://notes.example/n2?X-Amz-Expires=300",
-                    "_data_link_error": "HTTP Error 403: Forbidden",
-                },
-            ]
+            note_list = [*note_list, {
+                "data_type": "auto_sum_note", "data_id": "n-2", "data_tab_name": "Action items",
+                "data_content": "", "data_link": "https://notes.example/n2?X-Amz-Expires=300",
+                "_data_link_error": "HTTP Error 403: Forbidden"}]
         return {
-            "id": fid,
-            "name": name,
-            "duration": duration,
-            "start_at": "2026-08-01T16:00:00Z",
-            "created_at": "2026-08-01T16:05:00Z",
+            "id": fid, "name": name, "duration": duration,
+            "start_at": "2026-08-01T16:00:00Z", "created_at": "2026-08-01T16:05:00Z",
             "serial_number": "TEST0001",
             "presigned_url": f"https://audio.example/x.mp3?X-Amz-Expires=300&X-Amz-Signature={presigned}",
-            "source_list": source_list,
-            "note_list": note_list,
+            "source_list": source_list, "note_list": note_list,
             "_meta": {"tool": "audio-router", "enriched_from_links": []},
         }
-
     return make
 ```
 
@@ -8350,24 +7631,14 @@ HEX = "0123456789abcdef0123456789abcdef"
 
 
 def test_a_rotating_presigned_url_is_not_a_change(plaud_env):
-    assert envelope_sha256(plaud_env(presigned="one")) == envelope_sha256(
-        plaud_env(presigned="two")
-    )
+    assert envelope_sha256(plaud_env(presigned="one")) == envelope_sha256(plaud_env(presigned="two"))
 
 
 def test_only_the_query_part_of_a_url_inside_text_is_replaced(plaud_env):
     # why: audio-router once replaced the whole string, which erased a note from the hash.
     text = "See https://notes.example/a.png?X-Amz-Signature=1 and then decide."
-    env = plaud_env(
-        notes=[
-            {
-                "data_type": "auto_sum_note",
-                "data_id": "n",
-                "data_tab_name": "S",
-                "data_content": text,
-            }
-        ]
-    )
+    env = plaud_env(notes=[{"data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
+                            "data_content": text}])
     (block,) = normalise(env)["note_list"]
     assert block["data_content"] == "See https://notes.example/a.png?<presigned> and then decide."
     edited = copy.deepcopy(env)
@@ -8404,8 +7675,7 @@ def test_the_transcripts_inner_json_is_compared_canonically(plaud_env):
     rows = json.loads(env["source_list"][0]["data_content"])
     spaced = copy.deepcopy(env)
     spaced["source_list"][0]["data_content"] = json.dumps(
-        [dict(reversed(list(r.items()))) for r in rows], indent=4
-    )
+        [dict(reversed(list(r.items()))) for r in rows], indent=4)
     assert envelope_sha256(spaced) == envelope_sha256(env)
 
 
@@ -8456,15 +7726,8 @@ def test_changing_any_field_off_the_drop_list_changes_the_hash(plaud_env):
 
 
 def _row(content):
-    return [
-        {
-            "content": content,
-            "start_time": 0,
-            "end_time": 900,
-            "speaker": "Ada",
-            "original_speaker": "Speaker 1",
-        }
-    ]
+    return [{"content": content, "start_time": 0, "end_time": 900, "speaker": "Ada",
+             "original_speaker": "Speaker 1"}]
 
 
 def _reversed_blocks(env):
@@ -8478,16 +7741,9 @@ _URL = "http://a.example/b?X-Amz-S=1"
 _IDEMPOTENCE_CASES = {
     "plain": lambda make: make(),
     "link error": lambda make: make(link_error=True),
-    "url in text": lambda make: make(
-        notes=[
-            {
-                "data_type": "auto_sum_note",
-                "data_id": "n",
-                "data_tab_name": "S",
-                "data_content": "See [x](https://n.example/a.png?X-Amz-Signature=1) now.",
-            }
-        ]
-    ),
+    "url in text": lambda make: make(notes=[{
+        "data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
+        "data_content": "See [x](https://n.example/a.png?X-Amz-Signature=1) now."}]),
     "polish": lambda make: make(polish=True),
     "of_ id": lambda make: make("of_" + HEX),
     "reversed blocks": lambda make: _reversed_blocks(make(polish=True)),
@@ -8524,19 +7780,13 @@ def test_a_snapshot_with_link_errors_is_incomplete(plaud_env):
     env = plaud_env(link_error=True)
     assert not is_complete(env) and link_errors(env) == ["auto_sum_note"]
     unfetched = plaud_env()
-    unfetched["note_list"][0] = {
-        **unfetched["note_list"][0],
-        "data_content": "",
-        "data_link": "https://x.example/y?X-Amz-Expires=300",
-    }
+    unfetched["note_list"][0] = {**unfetched["note_list"][0], "data_content": "",
+                                 "data_link": "https://x.example/y?X-Amz-Expires=300"}
     assert not is_complete(unfetched)
     # A link that answered with an empty body is no better than one that failed.
     empty_body = plaud_env()
-    empty_body["note_list"][0] = {
-        **empty_body["note_list"][0],
-        "data_content": " ",
-        "_fetched_from_data_link": True,
-    }
+    empty_body["note_list"][0] = {**empty_body["note_list"][0], "data_content": " ",
+                                  "_fetched_from_data_link": True}
     assert link_errors(empty_body) == ["auto_sum_note"]
 
 
@@ -8573,66 +7823,25 @@ def test_transcript_rows_and_their_absence(plaud_env):
 
 def test_note_types_are_plaud_and_the_tab_ascii_folded_and_numbered(plaud_env):
     # Review Focus 4: a tab name in another script, or with punctuation, gives a safe note type.
-    env = plaud_env(
-        notes=[
-            {
-                "data_type": "auto_sum_note",
-                "data_id": "a",
-                "data_tab_name": "Summary",
-                "data_content": "x",
-            },
-            {
-                "data_type": "auto_sum_note",
-                "data_id": "b",
-                "data_tab_name": "Summary",
-                "data_content": "y",
-            },
-            {
-                "data_type": "auto_sum_note",
-                "data_id": "c",
-                "data_tab_name": "会議メモ / Q&A",
-                "data_content": "z",
-            },
-            {
-                "data_type": "consumer_note",
-                "data_id": "d",
-                "data_tab_name": "会議",
-                "data_content": "w",
-            },
-            {
-                "data_type": "high_light",
-                "data_id": "e",
-                "data_tab_name": None,
-                "data_content": "[]",
-            },
-        ]
-    )
+    env = plaud_env(notes=[
+        {"data_type": "auto_sum_note", "data_id": "a", "data_tab_name": "Summary", "data_content": "x"},
+        {"data_type": "auto_sum_note", "data_id": "b", "data_tab_name": "Summary", "data_content": "y"},
+        {"data_type": "auto_sum_note", "data_id": "c", "data_tab_name": "会議メモ / Q&A", "data_content": "z"},
+        {"data_type": "consumer_note", "data_id": "d", "data_tab_name": "会議", "data_content": "w"},
+        {"data_type": "high_light", "data_id": "e", "data_tab_name": None, "data_content": "[]"},
+    ])
     types = [t for t, _, _ in note_blocks(env)]
     # The outline first, then note_list sorted by (type, tab, id): "Summary" sorts before "会議…".
-    assert types == [
-        "plaud-outline",
-        "plaud-summary",
-        "plaud-summary-2",
-        "plaud-q-a",
-        "plaud-consumer-note",
-        "plaud-high-light",
-    ]
+    assert types == ["plaud-outline", "plaud-summary", "plaud-summary-2", "plaud-q-a",
+                     "plaud-consumer-note", "plaud-high-light"]
     assert all(t.isascii() and " " not in t and "/" not in t for t in types)
 
 
 def test_note_blocks_pair_each_normalised_block_with_its_raw_one(plaud_env):
     # why: notes render from the raw block, never the normalised one.
     text = "See [the chart](https://notes.example/a.png?X-Amz-Signature=1) here."
-    env = plaud_env(
-        notes=[
-            {
-                "data_type": "auto_sum_note",
-                "data_id": "n",
-                "data_tab_name": "S",
-                "data_content": text,
-            }
-        ]
-    )
+    env = plaud_env(notes=[{"data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "S",
+                            "data_content": text}])
     _outline, (note_type, block, raw) = note_blocks(env)
     assert note_type == "plaud-s" and raw["data_content"] == text
     assert block["data_content"] == "See [the chart](https://notes.example/a.png?<presigned>) here."
@@ -8654,15 +7863,8 @@ def _parts_changed(before, after):
 
 def test_part_hashes_say_what_changed(plaud_env):
     env = plaud_env()
-    assert set(part_hashes(env)) == {
-        "title",
-        "transcript",
-        "speakers",
-        "notes:plaud-outline",
-        "notes:plaud-summary",
-        "notes:plaud-high-light",
-        "other",
-    }
+    assert set(part_hashes(env)) == {"title", "transcript", "speakers", "notes:plaud-outline",
+                                     "notes:plaud-summary", "notes:plaud-high-light", "other"}
     rows = json.loads(env["source_list"][0]["data_content"])
     assert _parts_changed(env, plaud_env(name="Week 5")) == {"title"}
     renamed = plaud_env(segments=[{**rows[0], "speaker": "Grace"}, rows[1]])
@@ -8707,17 +7909,8 @@ def test_every_field_lands_in_some_part_and_new_row_fields_are_other(plaud_env):
 
 
 def _note(text):
-    return {
-        "id": HEX,
-        "note_list": [
-            {
-                "data_type": "auto_sum_note",
-                "data_id": "n",
-                "data_tab_name": "S",
-                "data_content": text,
-            }
-        ],
-    }
+    return {"id": HEX, "note_list": [{"data_type": "auto_sum_note", "data_id": "n",
+                                      "data_tab_name": "S", "data_content": text}]}
 
 
 def test_text_glued_to_a_signed_link_is_still_compared():
@@ -8728,49 +7921,20 @@ def test_text_glued_to_a_signed_link_is_still_compared():
     images = "![a](http://h/x?X-Amz-S=1)![b](http://h/{}?X-Amz-S=2)"
     assert envelope_sha256(_note(images.format("y"))) != envelope_sha256(_note(images.format("z")))
     # The signature still goes, and a sentence's period stays.
-    assert (
-        normalise(_note("a http://h/q?a=1&X-Amz-Date=2%3A3. b"))["note_list"][0]["data_content"]
-        == "a http://h/q?<presigned>. b"
-    )
+    assert normalise(_note("a http://h/q?a=1&X-Amz-Date=2%3A3. b"))["note_list"][0][
+        "data_content"] == "a http://h/q?<presigned>. b"
 
 
-@pytest.mark.parametrize(
-    "hostile",
-    [
-        {"id": HEX, "name": "\ud800"},  # lone surrogate
-        {
-            "id": HEX,
-            "source_list": [
-                {
-                    "data_type": "transaction",
-                    "data_id": "t",
-                    "data_content": "[" * 5000 + "]" * 5000,
-                }
-            ],
-        },  # too deep
-        {
-            "id": HEX,
-            "source_list": [
-                {
-                    "data_type": "transaction",
-                    "data_id": "t",
-                    "data_content": '[{"start_time": ' + "9" * 5000 + "}]",
-                }
-            ],
-        },
-        {"id": HEX, "source_list": [{"data_type": ["x"], "data_id": "t"}]},  # unhashable type
-        {
-            "id": HEX,
-            "source_list": [
-                {
-                    "data_type": "transaction",
-                    "data_id": "t",
-                    "data_content": '[{"content": "x", "start_time": NaN}]',
-                }
-            ],
-        },
-    ],
-)
+@pytest.mark.parametrize("hostile", [
+    {"id": HEX, "name": "\ud800"},                                          # lone surrogate
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": "[" * 5000 + "]" * 5000}]},     # too deep
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": '[{"start_time": ' + "9" * 5000 + "}]"}]},
+    {"id": HEX, "source_list": [{"data_type": ["x"], "data_id": "t"}]},          # unhashable type
+    {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                 "data_content": '[{"content": "x", "start_time": NaN}]'}]},
+])
 def test_hostile_payloads_hash_instead_of_raising(hostile):
     # why: one odd snapshot from a third party must not abort a whole import or sync pass.
     assert envelope_sha256(hostile) == envelope_sha256(copy.deepcopy(hostile))
@@ -8779,32 +7943,24 @@ def test_hostile_payloads_hash_instead_of_raising(hostile):
 
 
 def _with_rows(rows):
-    return {
-        "id": HEX,
-        "source_list": [
-            {"data_type": "transaction", "data_id": "t", "data_content": json.dumps(rows)}
-        ],
-    }
+    return {"id": HEX, "source_list": [{"data_type": "transaction", "data_id": "t",
+                                        "data_content": json.dumps(rows)}]}
 
 
 def test_the_fingerprint_survives_a_rename_without_original_speaker_and_float_times():
     def rows(first, mid=1500, original=None):
-        out = [
-            {"content": "a", "start_time": 0, "end_time": mid, "speaker": first},
-            {"content": "b", "start_time": mid, "end_time": 2600, "speaker": "Speaker 2"},
-        ]
+        out = [{"content": "a", "start_time": 0, "end_time": mid, "speaker": first},
+               {"content": "b", "start_time": mid, "end_time": 2600, "speaker": "Speaker 2"}]
         if original:
             out[0]["original_speaker"] = original
         return out
-
     base = diarization_fingerprint(_with_rows(rows("Speaker 1")))
-    assert diarization_fingerprint(_with_rows(rows("Ada"))) == base  # named
-    assert diarization_fingerprint(_with_rows(rows("Grace"))) == base  # renamed
-    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1500.0))) == base  # 1500.0 is 1500
-    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1400))) != base  # re-segmented
-    assert diarization_fingerprint(
-        _with_rows(rows("Ada", original="Speaker 1"))
-    ) != diarization_fingerprint(_with_rows(rows("Ada", original="Speaker 3")))  # relabelled
+    assert diarization_fingerprint(_with_rows(rows("Ada"))) == base                 # named
+    assert diarization_fingerprint(_with_rows(rows("Grace"))) == base               # renamed
+    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1500.0))) == base   # 1500.0 is 1500
+    assert diarization_fingerprint(_with_rows(rows("Speaker 1", 1400))) != base     # re-segmented
+    assert (diarization_fingerprint(_with_rows(rows("Ada", original="Speaker 1")))
+            != diarization_fingerprint(_with_rows(rows("Ada", original="Speaker 3"))))  # relabelled
 
 
 def test_the_diarization_key_is_what_the_fingerprint_hashes():
@@ -8819,8 +7975,7 @@ def test_an_html_entity_signed_query_is_fully_stripped():
     # why: an <img src> in a note writes `&amp;` between the query's pairs; the signature must go.
     text = '<img src="http://h/x.png?X-Amz-Algorithm=A&amp;X-Amz-Signature=abc">'
     assert normalise(_note(text))["note_list"][0]["data_content"] == (
-        '<img src="http://h/x.png?<presigned>">'
-    )
+        '<img src="http://h/x.png?<presigned>">')
 
 
 @pytest.mark.parametrize("section", ["note_list", "source_list"])
@@ -8852,64 +8007,28 @@ def test_a_new_field_on_a_note_block_is_other_not_a_notes_edit(plaud_env):
 
 
 GOLDEN_ROWS = [
-    {
-        "content": "Hello \u00e9.",
-        "start_time": 0,
-        "end_time": 1500,
-        "speaker": "Ada",
-        "original_speaker": "Speaker 1",
-    },
-    {
-        "content": "Hi.",
-        "start_time": 1500,
-        "end_time": 2600,
-        "speaker": "Speaker 2",
-        "original_speaker": "Speaker 2",
-    },
-    {"content": "Bye.", "start_time": 2600.0, "end_time": 3000, "speaker": "spk_2"},
-]
+    {"content": "Hello \u00e9.", "start_time": 0, "end_time": 1500, "speaker": "Ada",
+     "original_speaker": "Speaker 1"},
+    {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2",
+     "original_speaker": "Speaker 2"},
+    {"content": "Bye.", "start_time": 2600.0, "end_time": 3000, "speaker": "spk_2"}]
 GOLDEN_ENVELOPE = {
-    "id": "of_0123456789abcdef0123456789abcdef",
-    "name": "Week 4 \u4f1a\u8b70",
-    "duration": 3000,
+    "id": "of_0123456789abcdef0123456789abcdef", "name": "Week 4 \u4f1a\u8b70", "duration": 3000,
     "presigned_url": "https://a.example/x.mp3?X-Amz-Signature=abc",
     "source_list": [
-        {
-            "data_type": "transaction",
-            "data_id": "t-1",
-            "data_tab_name": None,
-            "data_content": json.dumps(GOLDEN_ROWS),
-        },
-        {
-            "data_type": "transaction_polish",
-            "data_id": "t-2",
-            "data_tab_name": None,
-            "data_content": json.dumps(GOLDEN_ROWS),
-        },
-        {
-            "data_type": "outline",
-            "data_id": "o-1",
-            "data_tab_name": None,
-            "data_content": '[{"topic": "Hi", "start_time": 0}]',
-        },
-    ],
+        {"data_type": "transaction", "data_id": "t-1", "data_tab_name": None,
+         "data_content": json.dumps(GOLDEN_ROWS)},
+        {"data_type": "transaction_polish", "data_id": "t-2", "data_tab_name": None,
+         "data_content": json.dumps(GOLDEN_ROWS)},
+        {"data_type": "outline", "data_id": "o-1", "data_tab_name": None,
+         "data_content": '[{"topic": "Hi", "start_time": 0}]'}],
     "note_list": [
-        {
-            "data_type": "auto_sum_note",
-            "data_id": "n-1",
-            "data_tab_name": "Summary",
-            "data_title": "Recap",
-            "data_error_code": 0,
-            "data_content": "See [c](https://n.example/a.png?X-Amz-Signature=1) now. "
-            "Or http://n.example/b.png?X-Amz-Signature=2.",
-        },
-        {
-            "data_type": "auto_sum_note",
-            "data_id": "n-2",
-            "data_tab_name": "R\u00e9sum\u00e9",
-            "data_content": "![a](http://h/x?X-Amz-S=1)![b](http://h/y?X-Amz-S=2)",
-        },
-    ],
+        {"data_type": "auto_sum_note", "data_id": "n-1", "data_tab_name": "Summary",
+         "data_title": "Recap", "data_error_code": 0,
+         "data_content": "See [c](https://n.example/a.png?X-Amz-Signature=1) now. "
+                         "Or http://n.example/b.png?X-Amz-Signature=2."},
+        {"data_type": "auto_sum_note", "data_id": "n-2", "data_tab_name": "R\u00e9sum\u00e9",
+         "data_content": "![a](http://h/x?X-Amz-S=1)![b](http://h/y?X-Amz-S=2)"}],
     "_meta": {"tool": "x"},
 }
 
@@ -8920,8 +8039,7 @@ def test_the_normaliser_version_is_pinned_to_its_behaviour():
     # (or miss real edits). Change these only together with NORMALISER_VERSION.
     assert NORMALISER_VERSION == 1
     assert envelope_sha256(GOLDEN_ENVELOPE) == (
-        "e11df2135a32ff64a0130254c40c9c987534ebbecd11f87264b96d39f7371525"
-    )
+        "e11df2135a32ff64a0130254c40c9c987534ebbecd11f87264b96d39f7371525")
     assert part_hashes(GOLDEN_ENVELOPE) == {
         "title": "ffba669af7869bb0f89d4b48a826866cdb406fc6495268b43df7e97bdaff7161",
         "transcript": "f2297e1afec9413a533b6051b1607d399782f5e088e2b155fcfd1a0a9686cf7e",
@@ -8929,11 +8047,9 @@ def test_the_normaliser_version_is_pinned_to_its_behaviour():
         "notes:plaud-outline": "19c6f09bde57fc5e25d3ae808a508de00674a79d25fb87cd898a41305ae53855",
         "notes:plaud-resume": "3181d74088af69ce2ccd0dec8abe3513e6b2345d5852d5b325ce6b59d980ba02",
         "notes:plaud-summary": "d1816bd50f86a93da01915538d4904972de800c957d725616e18ddcf59a4d270",
-        "other": "a5afe73e3ace44be4eb81a0684a6aa0b96643fedb7c55b866157ab2db8cce54c",
-    }
+        "other": "a5afe73e3ace44be4eb81a0684a6aa0b96643fedb7c55b866157ab2db8cce54c"}
     assert diarization_fingerprint(GOLDEN_ENVELOPE) == (
-        "baae9531d588f19e7cff5149c7ad2c64314aa4c952767dbc1e0755382f441ec8"
-    )
+        "baae9531d588f19e7cff5149c7ad2c64314aa4c952767dbc1e0755382f441ec8")
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -8990,8 +8106,7 @@ from recordings.refs import canonical_plaud_id
 
 NORMALISER_VERSION = 1
 DROPPED_KEYS = frozenset(
-    {"presigned_url", "data_link", "_meta", "_fetched_from_data_link", "_data_link_error"}
-)
+    {"presigned_url", "data_link", "_meta", "_fetched_from_data_link", "_data_link_error"})
 SEGMENT_TYPES = frozenset({"transaction", "transaction_polish"})
 OWN_NOTE_TYPES = frozenset({"high_light", "consumer_note", "mark_memo"})  # Dan's own notes
 # What Plaud emits before it knows a person: "Speaker 1", "spk_2", bare numbers, "unknown".
@@ -9002,9 +8117,8 @@ PRESIGNED = "<presigned>"
 # `%` or `=`, so a sentence's final period survives. `&amp;` is an HTML-escaped `&`.
 _QUERY_CHARS = r"(?:&amp;|[A-Za-z0-9\-._~%&=+/:@])*"
 _PRESIGNED_QUERY = re.compile(
-    r"(https?://[^\s?#\"'\\]+)\?" + _QUERY_CHARS + r"X-Amz-" + _QUERY_CHARS + r"(?<=[A-Za-z0-9%=])",
-    re.I,
-)
+    r"(https?://[^\s?#\"'\\]+)\?" + _QUERY_CHARS + r"X-Amz-" + _QUERY_CHARS
+    + r"(?<=[A-Za-z0-9%=])", re.I)
 # A note block's own fields. Any other key on one is unknown, so it goes to "other" and counts
 # towards the circuit breaker, while an edit to a known field is a notes edit (§9.1.1).
 _NOTE_KEYS = frozenset({"data_type", "data_tab_name", "data_id", "data_title", "data_content"})
@@ -9015,10 +8129,7 @@ _NAME_KEYS = ("speaker", "embeddingKey")
 _ROW_KEYS = frozenset(_TEXT_KEYS + _NAME_KEYS)
 
 
-_UNPARSEABLE = (
-    ValueError,
-    RecursionError,
-)  # JSONDecodeError is a ValueError; so is the int-size limit
+_UNPARSEABLE = (ValueError, RecursionError)  # JSONDecodeError is a ValueError; so is the int-size limit
 
 
 def _is_segment(block: Any) -> bool:
@@ -9063,12 +8174,8 @@ def _scrub(obj: Any) -> Any:
 def _block_key(block: Any) -> tuple[str, str, str, str]:
     if not isinstance(block, dict):
         return ("", "", "", canonical_json(block))
-    return (
-        str(block.get("data_type") or ""),
-        str(block.get("data_tab_name") or ""),
-        str(block.get("data_id") or ""),
-        canonical_json(block),
-    )
+    return (str(block.get("data_type") or ""), str(block.get("data_tab_name") or ""),
+            str(block.get("data_id") or ""), canonical_json(block))
 
 
 def _canonical_block(block: Any) -> Any:
@@ -9177,11 +8284,8 @@ def _ascii_slug(text: str) -> str:
 
 
 def note_type_base(block: dict) -> str:
-    return (
-        _ascii_slug(str(block.get("data_tab_name") or ""))
-        or _ascii_slug(str(block.get("data_type") or ""))
-        or "note"
-    )
+    return (_ascii_slug(str(block.get("data_tab_name") or ""))
+            or _ascii_slug(str(block.get("data_type") or "")) or "note")
 
 
 def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
@@ -9189,11 +8293,8 @@ def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
     `outline`, then every `note_list` tab, Dan's own highlights and memos included. The note
     type is `plaud-<tab>` (§6.5); a second tab with the same name gets `-2`, then `-3`, and so
     on. Hash the normalised block. Render the raw one."""
-    outline = [
-        b
-        for b in _section(envelope, "source_list")
-        if isinstance(b, dict) and b.get("data_type") == "outline"
-    ]
+    outline = [b for b in _section(envelope, "source_list")
+               if isinstance(b, dict) and b.get("data_type") == "outline"]
     tabs = [b for b in _section(envelope, "note_list") if isinstance(b, dict)]
     out, seen = [], {}
     for blocks in (outline, tabs):
@@ -9254,11 +8355,8 @@ def part_hashes(envelope: dict) -> dict[str, str]:
             kind = block["data_type"]
             text.append([kind, [[r.get(k) for k in _TEXT_KEYS] for r in rows]])
             names.append([kind, [[r.get(k) for k in _NAME_KEYS] for r in rows]])
-            extra = [
-                [i, {k: v for k, v in r.items() if k not in _ROW_KEYS}]
-                for i, r in enumerate(rows)
-                if not _ROW_KEYS.issuperset(r)
-            ]
+            extra = [[i, {k: v for k, v in r.items() if k not in _ROW_KEYS}]
+                     for i, r in enumerate(rows) if not _ROW_KEYS.issuperset(r)]
             residue.append([{k: v for k, v in block.items() if k != "data_content"}, extra])
         elif not (isinstance(block, dict) and block.get("data_type") == "outline"):
             residue.append(block)  # the outline is a note tab; anything else stays here whole
@@ -9389,24 +8487,18 @@ T1 = datetime(2026, 8, 1, 16, 10, tzinfo=timezone.utc)
 
 
 def rec(**over) -> Recording:
-    fields = dict(
-        id="20260801T090000-0700_" + "a" * 8,
-        title="Week 4",
-        title_by="plaud",
-        recorded_at=datetime.fromisoformat("2026-08-01T09:00:00-07:00"),
-        timezone="America/Vancouver",
-        time_source="plaud",
-        media=MediaInfo(file="x.wav", sha256="a" * 64, kind="audio", duration_ms=2600),
-    )
+    fields = dict(id="20260801T090000-0700_" + "a" * 8, title="Week 4", title_by="plaud",
+                  recorded_at=datetime.fromisoformat("2026-08-01T09:00:00-07:00"),
+                  timezone="America/Vancouver", time_source="plaud",
+                  media=MediaInfo(file="x.wav", sha256="a" * 64, kind="audio", duration_ms=2600))
     fields.update(over)
     return Recording(**fields)
 
 
 def snap(env, n=0, *, ref=HEX) -> Snapshot:
     when = T1 + timedelta(days=n)
-    return Snapshot(
-        path=f"source/plaud-{when:%Y%m%dT%H%M%SZ}.json", ref=ref, fetched_at=when, envelope=env
-    )
+    return Snapshot(path=f"source/plaud-{when:%Y%m%dT%H%M%SZ}.json", ref=ref, fetched_at=when,
+                    envelope=env)
 
 
 def kinds(outputs):
@@ -9415,26 +8507,16 @@ def kinds(outputs):
 
 def test_the_first_snapshot_gives_a_transcript_and_a_notes_output_per_tab(plaud_env):
     result = reconcile(rec(), [snap(plaud_env())], [])
-    assert kinds(result.outputs) == [
-        ("notes", "plaud-high-light"),
-        ("notes", "plaud-outline"),
-        ("notes", "plaud-summary"),
-        ("transcript", None),
-    ]
+    assert kinds(result.outputs) == [("notes", "plaud-high-light"), ("notes", "plaud-outline"),
+                                     ("notes", "plaud-summary"), ("transcript", None)]
     transcript = next(o for o in result.outputs if o.kind == "transcript")
     assert transcript.version == PLAUD_VERSION == "plaud@1"
     assert transcript.created_at == T1
     assert transcript.inputs["source"] == "source/plaud-20260801T161000Z.json"
     assert len(transcript.inputs["part_sha256"]) == 64
     first, second = transcript.payload["segments"]
-    assert first == {
-        "start": 0.0,
-        "end": 1.5,
-        "text": "Hello there.",
-        "speaker": "Speaker 1",
-        "speaker_name": "Ada",
-        "embedding_key": "ek-1",
-    }
+    assert first == {"start": 0.0, "end": 1.5, "text": "Hello there.", "speaker": "Speaker 1",
+                     "speaker_name": "Ada", "embedding_key": "ek-1"}
     assert second == {"start": 1.5, "end": 2.6, "text": "Hi.", "speaker": "Speaker 2"}
     assert transcript.meta["timing"]["ok"] is True
     summary = next(o for o in result.outputs if o.note_type == "plaud-summary")
@@ -9461,31 +8543,13 @@ def test_notes_are_rendered_from_the_raw_block_and_hashed_from_the_normalised_on
     link = "https://notes.example/a.png?X-Amz-Expires=300&X-Amz-Signature={}"
 
     def envelope(signature):
-        return plaud_env(
-            notes=[
-                {
-                    "data_type": "auto_sum_note",
-                    "data_id": "n",
-                    "data_tab_name": "Summary",
-                    "data_content": f"See [the chart]({link.format(signature)}) here.",
-                },
-                {
-                    "data_type": "high_light",
-                    "data_id": "h",
-                    "data_tab_name": None,
-                    "data_content": json.dumps(
-                        [
-                            {
-                                "timestamp": 1000,
-                                "title": "Board",
-                                "content": "A sketch",
-                                "picture_link": link.format(signature),
-                            }
-                        ]
-                    ),
-                },
-            ]
-        )
+        return plaud_env(notes=[
+            {"data_type": "auto_sum_note", "data_id": "n", "data_tab_name": "Summary",
+             "data_content": f"See [the chart]({link.format(signature)}) here."},
+            {"data_type": "high_light", "data_id": "h", "data_tab_name": None,
+             "data_content": json.dumps([{"timestamp": 1000, "title": "Board",
+                                          "content": "A sketch",
+                                          "picture_link": link.format(signature)}])}])
 
     s1, s2 = snap(envelope("one")), snap(envelope("two"), 1)
     first = reconcile(rec(), [s1], [])
@@ -9493,8 +8557,7 @@ def test_notes_are_rendered_from_the_raw_block_and_hashed_from_the_normalised_on
     assert summary.payload["markdown"] == f"See [the chart]({link.format('one')}) here."
     highlight = next(o for o in first.outputs if o.note_type == "plaud-high-light")
     assert highlight.payload["markdown"] == (
-        f"**[00:01] Board**\n\nA sketch\n\n(image: {link.format('one')})"
-    )
+        f"**[00:01] Board**\n\nA sketch\n\n(image: {link.format('one')})")
     assert reconcile(rec(), [s1, s2], first.outputs).outputs == ()
 
 
@@ -9515,10 +8578,8 @@ def test_a_speaker_rename_writes_a_new_transcript_and_a_note_edit_only_that_note
     result = reconcile(rec(), [s1, s2], first.outputs)
     assert kinds(result.outputs) == [("notes", "plaud-summary"), ("transcript", None)]
     assert all(o.inputs["source"] == s2.path for o in result.outputs)
-    names = [
-        s.get("speaker_name")
-        for s in next(o for o in result.outputs if o.kind == "transcript").payload["segments"]
-    ]
+    names = [s.get("speaker_name") for s in next(o for o in result.outputs
+                                                 if o.kind == "transcript").payload["segments"]]
     assert names == ["Ada", "Grace"]
 
 
@@ -9530,8 +8591,7 @@ def test_a_vanished_note_tab_waits_for_review(plaud_env):
     result = reconcile(rec(), [s1, s2], first.outputs)
     assert result.outputs == ()
     assert [(h.snapshot, h.slot, h.reason) for h in result.held] == [
-        (s2.path, "notes:plaud-summary", "notes removed")
-    ]
+        (s2.path, "notes:plaud-summary", "notes removed")]
     reviewed = rec(plaud=PlaudState(acknowledged_up_to=s2.path))
     assert reconcile(reviewed, [s1, s2], first.outputs).held == ()
 
@@ -9552,10 +8612,8 @@ def test_names_reverting_to_speaker_n_wait_for_review(plaud_env):
 def test_names_reverting_wait_for_review_when_rows_have_no_original_speaker(plaud_env):
     # why: the diarization key must not depend on the current name, or "Ada" going back to
     # "Speaker 1" reads as a new diarization and the removal is applied without review.
-    rows = [
-        {"content": "Hello there.", "start_time": 0, "end_time": 1500, "speaker": "Ada"},
-        {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2"},
-    ]
+    rows = [{"content": "Hello there.", "start_time": 0, "end_time": 1500, "speaker": "Ada"},
+            {"content": "Hi.", "start_time": 1500, "end_time": 2600, "speaker": "Speaker 2"}]
     env = plaud_env(segments=rows)
     reverted = plaud_env(segments=[{**rows[0], "speaker": "Speaker 1"}, rows[1]])
     s1, s2 = snap(env), snap(reverted, 1)
@@ -9607,12 +8665,10 @@ def test_a_title_dan_edited_by_hand_is_not_reverted(plaud_env):
 
 def test_a_real_name_without_an_original_speaker_is_kept_as_speaker_name(plaud_env):
     # why: stage 3b links Plaud's names to people, so a named row must carry its name.
-    env = plaud_env(
-        segments=[
-            {"content": "Hello.", "start_time": 0, "end_time": 1000, "speaker": "Ada"},
-            {"content": "Hi.", "start_time": 1000, "end_time": 2000, "speaker": "Speaker 2"},
-        ]
-    )
+    env = plaud_env(segments=[{"content": "Hello.", "start_time": 0, "end_time": 1000,
+                               "speaker": "Ada"},
+                              {"content": "Hi.", "start_time": 1000, "end_time": 2000,
+                               "speaker": "Speaker 2"}])
     (transcript,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.kind == "transcript"]
     first, second = transcript.payload["segments"]
     assert (first["speaker"], first["speaker_name"]) == ("Ada", "Ada")
@@ -9629,10 +8685,9 @@ def test_a_difference_the_transcript_output_cant_show_writes_no_new_output(plaud
     # embeddingKey for none give the same output, so none may be written again.
     env = plaud_env()
     rows = json.loads(env["source_list"][0]["data_content"])
-    same = [
-        {**rows[0], "content": rows[0]["content"] + " ", "end_time": 1500.0},
-        {**rows[1], "start_time": 1500.0, "speaker": rows[1]["speaker"] + " ", "embeddingKey": ""},
-    ]
+    same = [{**rows[0], "content": rows[0]["content"] + " ", "end_time": 1500.0},
+            {**rows[1], "start_time": 1500.0, "speaker": rows[1]["speaker"] + " ",
+             "embeddingKey": ""}]
     s1, s2 = snap(env), snap(plaud_env(segments=same), 1)
     first = reconcile(rec(), [s1], [])
     assert reconcile(rec(), [s1, s2], first.outputs).outputs == ()
@@ -9656,10 +8711,8 @@ def test_a_private_tag_dan_removed_stays_removed_until_plauds_title_changes(plau
     # never on every reindex, which would undo Dan's decision each time.
     removed = rec(title="Interview: Ada", plaud=PlaudState(title_seen="Interview: Ada"))
     assert reconcile(removed, [snap(plaud_env(name="Interview: Ada"))], []).add_private is False
-    renamed = [
-        snap(plaud_env(name="Interview: Ada")),
-        snap(plaud_env(name="Interview: Ada, part 2"), 1),
-    ]
+    renamed = [snap(plaud_env(name="Interview: Ada")),
+               snap(plaud_env(name="Interview: Ada, part 2"), 1)]
     assert reconcile(removed, renamed, []).add_private is True
     assert reconcile(rec(), [snap(plaud_env(name="Interview: Ada"))], []).add_private is True
 
@@ -9668,12 +8721,11 @@ def test_a_new_title_under_either_id_or_in_a_degraded_snapshot_runs_the_patterns
     # why: privacy still errs towards private once Dan has removed a tag: a new title under the
     # other Plaud ID, or in a snapshot nothing is built from, is a title change.
     removed = rec(title="Week 4", plaud=PlaudState(title_seen="Week 4"))
-    other = [
-        snap(plaud_env(name="Week 4")),
-        snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER),
-    ]
+    other = [snap(plaud_env(name="Week 4")),
+             snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER)]
     assert reconcile(removed, other, []).add_private is True
-    degraded = [snap(plaud_env(name="Week 4")), snap(plaud_env(name="Private", link_error=True), 1)]
+    degraded = [snap(plaud_env(name="Week 4")),
+                snap(plaud_env(name="Private", link_error=True), 1)]
     assert reconcile(removed, degraded, []).add_private is True
 
 
@@ -9694,12 +8746,8 @@ def test_accepting_a_later_removal_never_rewrites_a_slot_that_came_back_as_it_wa
 def test_the_timing_check_catches_a_trim_without_plauds_duration():
     rows = [{"start_time": 0, "end_time": 5000}]
     trimmed = timing_check({}, rows, 3400)
-    assert trimmed == {
-        "rule": "timing@1",
-        "last_segment_end_ms": 5000,
-        "media_duration_ms": 3400,
-        "ok": False,
-    }
+    assert trimmed == {"rule": "timing@1", "last_segment_end_ms": 5000,
+                       "media_duration_ms": 3400, "ok": False}
     assert timing_check({}, [{"start_time": 0, "end_time": 3400}], 3400)["ok"] is True
     assert "ok" not in timing_check({}, [], 3400)
 
@@ -9710,24 +8758,15 @@ def test_odd_numbers_and_deep_nesting_never_raise(plaud_env):
     assert render_note({"data_type": "outline", "data_content": deep}) == deep
     assert render_note({"data_type": "high_light", "data_content": deep}) == deep
     huge = "1" + "0" * 4000
-    marks = json.loads(
-        '[{"timestamp": Infinity, "title": "A"}, {"timestamp": 1e400, "title": "B"}]'
-    )
+    marks = json.loads('[{"timestamp": Infinity, "title": "A"}, {"timestamp": 1e400, "title": "B"}]')
     assert render_note({"data_type": "high_light", "data_content": json.dumps(marks)}) == (
-        "**[--:--] A**\n\n**[--:--] B**"
-    )
-    assert (
-        render_note(
-            {"data_type": "outline", "data_content": '[{"topic": "T", "start_time": ' + huge + "}]"}
-        )
-        == "- [--:--] T"
-    )
+        "**[--:--] A**\n\n**[--:--] B**")
+    assert render_note({"data_type": "outline", "data_content":
+                        '[{"topic": "T", "start_time": ' + huge + "}]"}) == "- [--:--] T"
     check = timing_check({"duration": float("inf")}, [{"end_time": float("inf")}], 3400)
     assert check == {"rule": "timing@1", "media_duration_ms": 3400}
-    env = plaud_env(
-        duration=int(huge),
-        segments=[{"content": "x", "start_time": 0, "end_time": int(huge), "speaker": "Speaker 1"}],
-    )
+    env = plaud_env(duration=int(huge), segments=[
+        {"content": "x", "start_time": 0, "end_time": int(huge), "speaker": "Speaker 1"}])
     (transcript,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.kind == "transcript"]
     assert transcript.meta["untimed_segments"] == 1
     env = plaud_env(duration=0)
@@ -9769,12 +8808,8 @@ def test_a_degraded_or_unreadable_snapshot_is_skipped_and_reported(plaud_env):
     # isn't a JSON object.
     s1 = snap(plaud_env(link_error=True))
     s2 = snap(None, 1)
-    s3 = Snapshot(
-        path="source/plaud-x.json",
-        ref=HEX,
-        fetched_at=T1 + timedelta(days=2),
-        envelope=["not", "an", "object"],
-    )
+    s3 = Snapshot(path="source/plaud-x.json", ref=HEX, fetched_at=T1 + timedelta(days=2),
+                  envelope=["not", "an", "object"])
     result = reconcile(rec(), [s1, s2, s3], [])
     assert result.outputs == () and result.skipped == (s1.path, s2.path, s3.path)
 
@@ -9791,20 +8826,12 @@ def test_plaud_owns_the_title_only_while_title_by_is_plaud_or_absent(plaud_env):
     assert reconcile(dismissed, renamed, []).title_difference is None
 
 
-@pytest.mark.parametrize(
-    "title, private",
-    [
-        ("Private: therapy", True),
-        ("  private notes", True),
-        ("Interview: Grace", True),
-        ("10-06 Private session", True),
-        ("10-06-private notes", True),
-        ("1-2 Interview: Grace", True),
-        ("Consultation: Private Chef Charity", False),
-        ("10-06 Consultation: Private Chef", False),
-        ("Week 4", False),
-    ],
-)
+@pytest.mark.parametrize("title, private", [
+    ("Private: therapy", True), ("  private notes", True), ("Interview: Grace", True),
+    ("10-06 Private session", True), ("10-06-private notes", True),
+    ("1-2 Interview: Grace", True),
+    ("Consultation: Private Chef Charity", False), ("10-06 Consultation: Private Chef", False),
+    ("Week 4", False)])
 def test_the_auto_private_patterns_add_private(plaud_env, title, private):
     assert reconcile(rec(), [snap(plaud_env(name=title))], []).add_private is private
 
@@ -9824,17 +8851,14 @@ def test_plauds_date_prefix_is_stripped_before_matching():
 def test_auto_private_checks_every_snapshot_title_and_both_plaud_ids(plaud_env):
     # why: privacy errs towards private. A title Plaud has since changed, the other Plaud ID's
     # title, and a degraded snapshot's title all still count.
-    renamed_since = [
-        snap(plaud_env(name="10-06 Private session")),
-        snap(plaud_env(name="Week 4"), 1),
-    ]
+    renamed_since = [snap(plaud_env(name="10-06 Private session")),
+                     snap(plaud_env(name="Week 4"), 1)]
     assert reconcile(rec(), renamed_since, []).add_private is True
-    other_id = [
-        snap(plaud_env(name="Week 4")),
-        snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER),
-    ]
+    other_id = [snap(plaud_env(name="Week 4")),
+                snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER)]
     assert reconcile(rec(), other_id, []).add_private is True
-    degraded = [snap(plaud_env(name="Week 4")), snap(plaud_env(name="Private", link_error=True), 1)]
+    degraded = [snap(plaud_env(name="Week 4")),
+                snap(plaud_env(name="Private", link_error=True), 1)]
     assert reconcile(rec(), degraded, []).add_private is True
 
 
@@ -9856,49 +8880,27 @@ def test_the_timing_check_catches_a_trim():
     ok = timing_check({"duration": 3500}, rows, 3400)
     trimmed = timing_check({"duration": 5000}, rows, 3400)
     unknown = timing_check({"duration": 3500}, rows, None)
-    assert ok == {
-        "rule": "timing@1",
-        "plaud_duration_ms": 3500,
-        "last_segment_end_ms": 3500,
-        "media_duration_ms": 3400,
-        "ok": True,
-    }
+    assert ok == {"rule": "timing@1", "plaud_duration_ms": 3500, "last_segment_end_ms": 3500,
+                  "media_duration_ms": 3400, "ok": True}
     assert trimmed["ok"] is False
     assert "ok" not in unknown and "media_duration_ms" not in unknown
 
 
 def test_untimed_segments_are_kept_and_counted(plaud_env):
-    env = plaud_env(
-        segments=[
-            {"content": "No timing.", "speaker": "Speaker 1"},
-            {"content": "Timed.", "start_time": 1000, "end_time": 2000, "speaker": "Speaker 1"},
-        ]
-    )
+    env = plaud_env(segments=[{"content": "No timing.", "speaker": "Speaker 1"},
+                              {"content": "Timed.", "start_time": 1000, "end_time": 2000,
+                               "speaker": "Speaker 1"}])
     (transcript,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.kind == "transcript"]
-    assert [(s["start"], s["end"]) for s in transcript.payload["segments"]] == [
-        (0.0, 0.0),
-        (1.0, 2.0),
-    ]
+    assert [(s["start"], s["end"]) for s in transcript.payload["segments"]] == [(0.0, 0.0), (1.0, 2.0)]
     assert transcript.meta["untimed_segments"] == 1
 
 
 def test_a_tab_named_in_another_script_gives_a_safe_file_name(plaud_env):
     # Review Focus 4.
-    env = plaud_env(
-        notes=[
-            {
-                "data_type": "auto_sum_note",
-                "data_id": "n",
-                "data_tab_name": "会議メモ / Q&A",
-                "data_content": "x",
-            }
-        ]
-    )
-    (note,) = [
-        o
-        for o in reconcile(rec(), [snap(env)], []).outputs
-        if o.note_type != "plaud-outline" and o.kind == "notes"
-    ]
+    env = plaud_env(notes=[{"data_type": "auto_sum_note", "data_id": "n",
+                            "data_tab_name": "会議メモ / Q&A", "data_content": "x"}])
+    (note,) = [o for o in reconcile(rec(), [snap(env)], []).outputs if o.note_type != "plaud-outline"
+               and o.kind == "notes"]
     assert note.note_type == "plaud-q-a"
     name = rendition_filename(note)
     assert name.isascii() and "/" not in name and name.startswith("notes-plaud-q-a-plaud-plaud@1-")
@@ -9917,18 +8919,11 @@ def test_the_patterns_come_from_config_and_are_checked():
 
 # ---- through the Writer ----------------------------------------------------------------------
 
-
 def test_the_writer_reconciles_once_and_owns_the_plaud_fields(writer, make_incoming, plaud_env):
     payload = json.dumps(plaud_env(name="Interview: Ada")).encode()
-    added = writer.add(
-        make_incoming(
-            title="Interview: Ada",
-            title_by="plaud",
-            sources=(
-                RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),
-            ),
-        )
-    )
+    added = writer.add(make_incoming(
+        title="Interview: Ada", title_by="plaud",
+        sources=(RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),)))
     report = writer.reconcile_plaud(added.recording.id)
     assert report.written == 4 and report.held == () and report.skipped == ()
     recording = writer.archive.load(added.recording.id)
@@ -9939,21 +8934,13 @@ def test_the_writer_reconciles_once_and_owns_the_plaud_fields(writer, make_incom
     assert writer.archive.load(added.recording.id).rev == rev  # a second run changes nothing
 
 
-def test_the_private_tag_lands_before_any_plaud_output(
-    writer, make_incoming, plaud_env, monkeypatch
-):
+def test_the_private_tag_lands_before_any_plaud_output(writer, make_incoming, plaud_env,
+                                                        monkeypatch):
     # why: privacy first (§7.4). Were the outputs written first, a crash before the tag would
     # leave Plaud's transcript and notes in a recording nothing marks private.
     payload = json.dumps(plaud_env(name="10-06 Private session")).encode()
-    added = writer.add(
-        make_incoming(
-            title="Week 4",
-            title_by="plaud",
-            sources=(
-                RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),
-            ),
-        )
-    )
+    added = writer.add(make_incoming(title="Week 4", title_by="plaud", sources=(
+        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),)))
     private_at_each_output = []
     real = Writer._write_rendition_locked
 
@@ -9966,43 +8953,19 @@ def test_the_private_tag_lands_before_any_plaud_output(
     assert private_at_each_output == [True] * 4
 
 
-def test_reindex_finishes_an_update_interrupted_after_its_snapshot(
-    writer, make_incoming, plaud_env
-):
+def test_reindex_finishes_an_update_interrupted_after_its_snapshot(writer, make_incoming,
+                                                                    plaud_env):
     # why: §9.1.1. Reconcile runs on reindex, so a snapshot written before a crash is still built.
     env = plaud_env()
     rows = json.loads(env["source_list"][0]["data_content"])
-    first = writer.add(
-        make_incoming(
-            b"same",
-            title_by="plaud",
-            sources=(
-                RawSource(
-                    kind="plaud",
-                    ref=HEX,
-                    added_at=T1,
-                    fetched_at=T1,
-                    payload=json.dumps(env).encode(),
-                ),
-            ),
-        )
-    ).recording
+    first = writer.add(make_incoming(b"same", title_by="plaud", sources=(
+        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1,
+                  payload=json.dumps(env).encode()),))).recording
     writer.reconcile_plaud(first.id)
     later = plaud_env(segments=[{**rows[0], "content": "Hello!"}, rows[1]])
-    writer.add(
-        make_incoming(
-            b"same",
-            sources=(
-                RawSource(
-                    kind="plaud",
-                    ref="of_" + HEX,
-                    added_at=T1,
-                    fetched_at=T1 + timedelta(days=1),
-                    payload=json.dumps(later).encode(),
-                ),
-            ),
-        )
-    )
+    writer.add(make_incoming(b"same", sources=(
+        RawSource(kind="plaud", ref="of_" + HEX, added_at=T1, fetched_at=T1 + timedelta(days=1),
+                  payload=json.dumps(later).encode()),)))
     report = writer.reindex()
     (rec_report,) = report.reconciled
     assert rec_report.written == 1
@@ -10013,16 +8976,10 @@ def test_a_bad_pattern_in_config_refuses_the_writer_cleanly(new_archive, tmp_pat
     # why: a typo in [plaud] auto_private_patterns must give the CLI exit 78 and let the web
     # app start read-only, not a traceback: NotTheWriter is what both callers already handle.
     root, state = new_archive
-    cfg = Config(
-        path=None,
-        archive_path=root,
-        writer_id="test",
-        default_timezone="America/Vancouver",
-        base_url=None,
-        data={"plaud": {"auto_private_patterns": ["("]}},
-        state_path=state,
-        index_path=tmp_path / "index" / "index.db",
-    )
+    cfg = Config(path=None, archive_path=root, writer_id="test",
+                 default_timezone="America/Vancouver", base_url=None,
+                 data={"plaud": {"auto_private_patterns": ["("]}},
+                 state_path=state, index_path=tmp_path / "index" / "index.db")
     with pytest.raises(NotTheWriter, match="auto_private_patterns"):
         Writer.open(cfg)
 
@@ -10033,14 +8990,8 @@ def test_reindex_reconciles_after_it_rebuilds_the_index(writer, make_incoming, p
     for n in range(2):
         fid = HEX[:-1] + str(n)
         payload = json.dumps(plaud_env(fid, name="Interview: A")).encode()
-        writer.add(
-            make_incoming(
-                title_by="plaud",
-                sources=(
-                    RawSource(kind="plaud", ref=fid, added_at=T1, fetched_at=T1, payload=payload),
-                ),
-            )
-        )
+        writer.add(make_incoming(title_by="plaud", sources=(
+            RawSource(kind="plaud", ref=fid, added_at=T1, fetched_at=T1, payload=payload),)))
     writer.index.path.unlink()
     with caplog.at_level(logging.WARNING, logger="recordings.writer"):
         report = writer.reindex()
@@ -10052,14 +9003,8 @@ def test_reconcile_holds_no_lock_when_it_returns(writer, make_incoming, plaud_en
     # why: Task 5b. `add`, `rebuild_index` and `reindex` take locks that sort before a held
     # recording's, so reconcile must never call them, and must leave nothing held.
     payload = json.dumps(plaud_env(name="Week 4")).encode()
-    added = writer.add(
-        make_incoming(
-            title_by="plaud",
-            sources=(
-                RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),
-            ),
-        )
-    )
+    added = writer.add(make_incoming(title_by="plaud", sources=(
+        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),)))
     writer.reconcile_plaud(added.recording.id)
     assert not writer.locks._held()  # a released key is removed, so nothing is held
 
@@ -10068,14 +9013,9 @@ def test_an_output_that_cant_be_read_is_never_written_again(writer, make_incomin
     # why: write-once. An output that can't be read now (damaged, or an I/O error) isn't a
     # missing one: writing it again would leave a second, permanent copy beside it.
     payload = json.dumps(plaud_env()).encode()
-    rid = writer.add(
-        make_incoming(
-            title_by="plaud",
-            sources=(
-                RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1, payload=payload),
-            ),
-        )
-    ).recording.id
+    rid = writer.add(make_incoming(title_by="plaud", sources=(
+        RawSource(kind="plaud", ref=HEX, added_at=T1, fetched_at=T1,
+                  payload=payload),))).recording.id
     assert writer.reconcile_plaud(rid).written == 4
     renditions = writer.archive.path_for(rid) / "renditions"
     next(renditions.glob("transcript-*.json")).write_text("{damaged", encoding="utf-8")
@@ -10099,25 +9039,16 @@ from recordings.writer import Writer
 ```
 and **append**:
 ```python
+
+
 def test_reindex_exits_1_when_a_plaud_recording_could_not_be_reconciled(
-    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
-):
+        writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys):
     # why: that recording's outputs are missing, so a script must be told, as it is for an
     # invalid file. The message ("busy") must not reach the report.
     when = datetime(2026, 8, 1, 16, 10, tzinfo=timezone.utc)
-    writer.add(
-        make_incoming(
-            sources=(
-                RawSource(
-                    kind="plaud",
-                    ref="0123456789abcdef0123456789abcdef",
-                    added_at=when,
-                    fetched_at=when,
-                    payload=json.dumps(plaud_env()).encode(),
-                ),
-            )
-        )
-    )
+    writer.add(make_incoming(sources=(RawSource(
+        kind="plaud", ref="0123456789abcdef0123456789abcdef", added_at=when, fetched_at=when,
+        payload=json.dumps(plaud_env()).encode()),)))
 
     def refuse(self, recording_id):
         raise LockTimeout("busy")
@@ -10186,33 +9117,24 @@ def render_outline(raw: str) -> str | None:
     rows = _rows(raw)
     if rows is None or not any("topic" in r for r in rows):
         return None
-    lines = [
-        f"- {_stamp(r.get('start_time'))} {str(r.get('topic') or '').strip()}"
-        for r in rows
-        if str(r.get("topic") or "").strip()
-    ]
+    lines = [f"- {_stamp(r.get('start_time'))} {str(r.get('topic') or '').strip()}"
+             for r in rows if str(r.get("topic") or "").strip()]
     return "\n".join(lines) or None
 
 
 def render_marks(raw: str) -> str | None:
     rows = _rows(raw)
-    if rows is None or not any(
-        ("mark_content" in r or "content" in r or "title" in r) for r in rows
-    ):
+    if rows is None or not any(("mark_content" in r or "content" in r or "title" in r)
+                               for r in rows):
         return None
     out = []
     for r in rows:
         if r.get("is_user_deleted"):
             continue
         title = str(r.get("title") or "").strip()
-        body = next(
-            (
-                str(r.get(k) or "").strip()
-                for k in ("expanded_content", "content", "mark_content")
-                if str(r.get(k) or "").strip()
-            ),
-            "",
-        )
+        body = next((str(r.get(k) or "").strip() for k in ("expanded_content", "content",
+                                                           "mark_content")
+                     if str(r.get(k) or "").strip()), "")
         picture = str(r.get("picture_link") or r.get("picture_full_url") or "").strip()
         if not title and not body and not picture:
             continue
@@ -10356,9 +9278,8 @@ def patterns_from_config(data: dict) -> tuple[str, ...]:
         try:
             re.compile(pattern)
         except re.error as exc:
-            raise ConfigError(
-                f"[plaud] auto_private_patterns: {pattern!r} is not a regular expression ({exc})"
-            ) from None
+            raise ConfigError(f"[plaud] auto_private_patterns: {pattern!r} is not a regular "
+                              f"expression ({exc})") from None
     return tuple(value)
 
 
@@ -10366,19 +9287,15 @@ def strip_date_prefix(title: str) -> str:
     return TITLE_DATE_PREFIX.sub("", title, count=1).strip()
 
 
-def matches_auto_private(
-    titles: Iterable[str], patterns: Sequence[str] = DEFAULT_AUTO_PRIVATE
-) -> bool:
+def matches_auto_private(titles: Iterable[str],
+                         patterns: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> bool:
     """Whether any of these Plaud titles matches an auto-private pattern (§7.4). Each pattern is
     searched, ignoring case, in the title as given and with its "MM-DD " prefix stripped; trying
     both errs towards private. The import calls it to tag a recording when it is created, and
     reconcile on every snapshot's title."""
-    return any(
-        re.search(pattern, text, re.IGNORECASE)
-        for title in titles
-        for text in (title, strip_date_prefix(title))
-        for pattern in patterns
-    )
+    return any(re.search(pattern, text, re.IGNORECASE)
+               for title in titles for text in (title, strip_date_prefix(title))
+               for pattern in patterns)
 
 
 def _number(value: Any) -> bool:
@@ -10444,11 +9361,8 @@ def _segments(rows: list[dict]) -> tuple[list[dict], int]:
         previous_end = end
         name = str(row.get("speaker") or "").strip()
         label = str(row.get("original_speaker") or "").strip() or name
-        segment: dict[str, Any] = {
-            "start": start,
-            "end": end,
-            "text": str(row.get("content") or "").strip(),
-        }
+        segment: dict[str, Any] = {"start": start, "end": end,
+                                   "text": str(row.get("content") or "").strip()}
         if label:
             segment["speaker"] = label
         if name and (name != label or _named(row)):  # a real name is kept even without a label
@@ -10473,10 +9387,8 @@ def _slots(envelope: dict) -> dict[str, tuple[str, Any]]:
         # the diarization keys: everything the output takes from the rows.
         segments, untimed = _segments(rows)
         last_end = timing_check({}, rows, None).get("last_segment_end_ms")
-        out["transcript"] = (
-            sha256_of([segments, untimed, last_end, [diarization_key(r) for r in rows]]),
-            rows,
-        )
+        out["transcript"] = (sha256_of([segments, untimed, last_end,
+                                        [diarization_key(r) for r in rows]]), rows)
     for note_type, block, raw in note_blocks(envelope):
         if render_note(raw):
             # Rendered from the normalised block, so a rotating signature is never a change,
@@ -10487,53 +9399,33 @@ def _slots(envelope: dict) -> dict[str, tuple[str, Any]]:
     return out
 
 
-def _transcript(
-    rows: list[dict], digest: str, snap: Snapshot, env: dict, rec: Recording
-) -> Rendition:
+def _transcript(rows: list[dict], digest: str, snap: Snapshot, env: dict,
+                rec: Recording) -> Rendition:
     segments, untimed = _segments(rows)
-    meta: dict[str, Any] = {
-        "diarization": diarization_fingerprint(env),
-        "timing": timing_check(env, rows, rec.media.duration_ms),
-    }
+    meta: dict[str, Any] = {"diarization": diarization_fingerprint(env),
+                            "timing": timing_check(env, rows, rec.media.duration_ms)}
     if untimed:
         meta["untimed_segments"] = untimed
-    return Rendition(
-        kind="transcript",
-        engine="plaud",
-        model="plaud",
-        version=PLAUD_VERSION,
-        created_at=snap.fetched_at,
-        inputs={"source": snap.path, "part_sha256": digest},
-        meta=meta,
-        payload={"segments": segments},
-    )
+    return Rendition(kind="transcript", engine="plaud", model="plaud", version=PLAUD_VERSION,
+                     created_at=snap.fetched_at,
+                     inputs={"source": snap.path, "part_sha256": digest},
+                     meta=meta, payload={"segments": segments})
 
 
 def _notes(note_type: str, block: dict, digest: str, snap: Snapshot) -> Rendition:
-    return Rendition(
-        kind="notes",
-        note_type=note_type,
-        engine="plaud",
-        model="plaud",
-        version=PLAUD_VERSION,
-        created_at=snap.fetched_at,
-        inputs={"source": snap.path, "part_sha256": digest},
-        meta={"data_type": str(block.get("data_type") or "")},
-        payload={"markdown": render_note(block)},
-    )
+    return Rendition(kind="notes", note_type=note_type, engine="plaud", model="plaud",
+                     version=PLAUD_VERSION, created_at=snap.fetched_at,
+                     inputs={"source": snap.path, "part_sha256": digest},
+                     meta={"data_type": str(block.get("data_type") or "")},
+                     payload={"markdown": render_note(block)})
 
 
 def _identity(r: Rendition) -> tuple:
     return (r.kind, r.note_type, r.inputs.get("source"), r.inputs.get("part_sha256"), r.version)
 
 
-def reconcile(
-    rec: Recording,
-    snapshots: Sequence[Snapshot],
-    existing: Sequence[Rendition],
-    *,
-    auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE,
-) -> Reconciled:
+def reconcile(rec: Recording, snapshots: Sequence[Snapshot], existing: Sequence[Rendition], *,
+              auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> Reconciled:
     ordered = [s for _, s in sorted(enumerate(snapshots), key=lambda p: (p[1].fetched_at, p[0]))]
     ack = rec.plaud.acknowledged_up_to if rec.plaud else None
     ack_position = max((i for i, s in enumerate(ordered) if s.path == ack), default=-1)
@@ -10573,21 +9465,14 @@ def reconcile(
                 if slot not in applied and slot in gone and gone[slot][0] == digest:
                     applied[slot] = gone.pop(slot)  # back as it was: its output is already there
                     continue
-                if (
-                    slot == "transcript"
-                    and slot in applied
-                    and not reviewed
-                    and _names_removed(applied[slot][1], value)
-                ):
+                if (slot == "transcript" and slot in applied and not reviewed
+                        and _names_removed(applied[slot][1], value)):
                     held[(ref, slot)] = Held(snapshot.path, slot, "names removed")
                     continue
                 held.pop((ref, slot), None)
                 applied[slot] = (digest, value)
-                output = (
-                    _transcript(value, digest, snapshot, env, rec)
-                    if slot == "transcript"
-                    else _notes(slot.removeprefix("notes:"), value, digest, snapshot)
-                )
+                output = (_transcript(value, digest, snapshot, env, rec) if slot == "transcript"
+                          else _notes(slot.removeprefix("notes:"), value, digest, snapshot))
                 if _identity(output) not in have:
                     have.add(_identity(output))
                     outputs.append(output)
@@ -10616,15 +9501,9 @@ def reconcile(
             newest[canonical_plaud_id(snapshot.ref)] = name
     due = seen is None or any(name != seen for name in newest.values())
     add_private = due and not is_private(rec) and matches_auto_private(titles, auto_private)
-    return Reconciled(
-        outputs=tuple(outputs),
-        title=title,
-        title_seen=title_seen,
-        title_difference=difference,
-        add_private=add_private,
-        held=tuple(held.values()),
-        skipped=tuple(skipped),
-    )
+    return Reconciled(outputs=tuple(outputs), title=title, title_seen=title_seen,
+                      title_difference=difference, add_private=add_private,
+                      held=tuple(held.values()), skipped=tuple(skipped))
 ```
 
 - [ ] **Step 4: Reconcile through the `Writer`, and in `reindex`**
@@ -10680,16 +9559,11 @@ In `packages/core/src/recordings/writer.py`:
        problem: str | None = None  # a fixed phrase: never exception text, which can carry a title
 
        def to_dict(self) -> dict:
-           return {
-               "recording_id": self.recording_id,
-               "written": self.written,
-               "held": [
-                   {"snapshot": h.snapshot, "slot": h.slot, "reason": h.reason} for h in self.held
-               ],
-               "skipped": list(self.skipped),
-               "title_difference": self.title_difference,
-               "problem": self.problem,
-           }
+           return {"recording_id": self.recording_id, "written": self.written,
+                   "held": [{"snapshot": h.snapshot, "slot": h.slot, "reason": h.reason}
+                            for h in self.held],
+                   "skipped": list(self.skipped), "title_difference": self.title_difference,
+                   "problem": self.problem}
    ```
 3. **Replace** `ReindexReport` with:
    ```python
@@ -10703,92 +9577,69 @@ In `packages/core/src/recordings/writer.py`:
        reconciled: tuple[ReconcileReport, ...] = ()
 
        def to_dict(self) -> dict:
-           return {
-               "recordings": self.recordings,
-               "adopted": list(self.adopted),
-               "invalid": list(self.invalid),
-               "problems": list(self.problems),
-               "forgotten": list(self.forgotten),
-               "plaud": {
-                   "written": sum(r.written for r in self.reconciled),
-                   "held": sum(len(r.held) for r in self.reconciled),
-                   "skipped": sum(len(r.skipped) for r in self.reconciled),
-                   "problems": sum(r.problem is not None for r in self.reconciled),
-               },
-           }
+           return {"recordings": self.recordings, "adopted": list(self.adopted),
+                   "invalid": list(self.invalid), "problems": list(self.problems),
+                   "forgotten": list(self.forgotten),
+                   "plaud": {"written": sum(r.written for r in self.reconciled),
+                             "held": sum(len(r.held) for r in self.reconciled),
+                             "skipped": sum(len(r.skipped) for r in self.reconciled),
+                             "problems": sum(r.problem is not None for r in self.reconciled)}}
    ```
 4. **Change** the `Writer.__init__` signature to
    `def __init__(self, root: Path, state: State, index: Index, *, writer_id: str, rebuild: bool = True, auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE) -> None:`,
    and **add** `self.auto_private = tuple(auto_private)` beside `self.state, self.index, …`.
 5. In `Writer.open`, **replace** the `writer = cls(...)` line with:
    ```python
-   try:
-       patterns = patterns_from_config(cfg.data)
-   except ConfigError as exc:  # a bad regex must not crash the CLI or stop the web app
-       raise NotTheWriter(str(exc)) from None
-   writer = cls(
-       cfg.archive_path,
-       state,
-       Index(cfg.index_path),
-       writer_id=cfg.writer_id,
-       rebuild=rebuild,
-       auto_private=patterns,
-   )
+           try:
+               patterns = patterns_from_config(cfg.data)
+           except ConfigError as exc:  # a bad regex must not crash the CLI or stop the web app
+               raise NotTheWriter(str(exc)) from None
+           writer = cls(cfg.archive_path, state, Index(cfg.index_path), writer_id=cfg.writer_id,
+                        rebuild=rebuild, auto_private=patterns)
    ```
    (The test for this is `test_a_bad_pattern_in_config_refuses_the_writer_cleanly` in Step 1.)
 6. **Add** this method after `_publish_raw`:
    ```python
-   def reconcile_plaud(self, recording_id: str) -> ReconcileReport:
-       """Build any Plaud outputs this recording's snapshots imply, and apply the fields Plaud
-       owns (§9.1.1). Writes nothing when there is nothing new.
+       def reconcile_plaud(self, recording_id: str) -> ReconcileReport:
+           """Build any Plaud outputs this recording's snapshots imply, and apply the fields Plaud
+           owns (§9.1.1). Writes nothing when there is nothing new.
 
-       Privacy first: Plaud's fields, an auto-private tag among them, land in one `mutate`
-       before any output is published. A crash in between leaves a tagged recording whose
-       outputs the next reconcile writes."""
-       self._check_sentinel()  # outputs are written even when no field changes, so check here
-       with self.locks.hold(recording_id):
-           rec = self._load_fresh(self._rel(recording_id))
-           folder = self.archive.path_for(recording_id)
-           snapshots = []
-           for source in rec.sources:
-               if source.kind != "plaud" or not source.raw:
-                   continue
-               try:
-                   envelope = json.loads((folder / source.raw).read_text(encoding="utf-8"))
-               except (OSError, UnicodeDecodeError, ValueError, RecursionError):
-                   envelope = None
-               snapshots.append(
-                   Snapshot(
-                       path=source.raw,
-                       ref=source.ref,
-                       fetched_at=source.fetched_at or source.added_at,
-                       envelope=envelope,
-                   )
-               )
-           if not snapshots:
-               return ReconcileReport(recording_id, 0, (), (), False)
-           unreadable: list = []
-           existing = [r for _, r in self.archive.renditions(recording_id, problems=unreadable)]
-           result = reconcile(rec, snapshots, existing, auto_private=self.auto_private)
-           if result.title is not None or result.title_seen is not None or result.add_private:
-               self.mutate(
-                   recording_id, SetPlaudFields(result.title, result.title_seen, result.add_private)
-               )
-           if unreadable:
-               # An output that can't be read now (damaged, or an I/O error) isn't a missing
-               # one: writing it again would leave a second, permanent copy beside it.
-               return ReconcileReport(
-                   recording_id,
-                   0,
-                   result.held,
-                   result.skipped,
-                   result.title_difference is not None,
-                   problem="an output can't be read: not reconciled",
-               )
-           written = sum(self._write_rendition_locked(folder, r) is not None for r in result.outputs)
-           return ReconcileReport(
-               recording_id, written, result.held, result.skipped, result.title_difference is not None
-           )
+           Privacy first: Plaud's fields, an auto-private tag among them, land in one `mutate`
+           before any output is published. A crash in between leaves a tagged recording whose
+           outputs the next reconcile writes."""
+           self._check_sentinel()  # outputs are written even when no field changes, so check here
+           with self.locks.hold(recording_id):
+               rec = self._load_fresh(self._rel(recording_id))
+               folder = self.archive.path_for(recording_id)
+               snapshots = []
+               for source in rec.sources:
+                   if source.kind != "plaud" or not source.raw:
+                       continue
+                   try:
+                       envelope = json.loads((folder / source.raw).read_text(encoding="utf-8"))
+                   except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+                       envelope = None
+                   snapshots.append(Snapshot(path=source.raw, ref=source.ref,
+                                             fetched_at=source.fetched_at or source.added_at,
+                                             envelope=envelope))
+               if not snapshots:
+                   return ReconcileReport(recording_id, 0, (), (), False)
+               unreadable: list = []
+               existing = [r for _, r in self.archive.renditions(recording_id, problems=unreadable)]
+               result = reconcile(rec, snapshots, existing, auto_private=self.auto_private)
+               if result.title is not None or result.title_seen is not None or result.add_private:
+                   self.mutate(recording_id, SetPlaudFields(result.title, result.title_seen,
+                                                            result.add_private))
+               if unreadable:
+                   # An output that can't be read now (damaged, or an I/O error) isn't a missing
+                   # one: writing it again would leave a second, permanent copy beside it.
+                   return ReconcileReport(recording_id, 0, result.held, result.skipped,
+                                          result.title_difference is not None,
+                                          problem="an output can't be read: not reconciled")
+               written = sum(self._write_rendition_locked(folder, r) is not None
+                             for r in result.outputs)
+               return ReconcileReport(recording_id, written, result.held, result.skipped,
+                                      result.title_difference is not None)
    ```
 7. In `reindex`, **replace** everything from
    `count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)` to the end of
@@ -10797,45 +9648,34 @@ In `packages/core/src/recordings/writer.py`:
    reconciled nothing. Reconcile runs after the rebuild, so with `index.db` absent each `mutate`
    upserts into a fresh index instead of logging "left pending" once per recording:
    ```python
-   count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
-   reconciled = []
-   for rec in list(self.archive.iter_recordings()):
-       if not any(s.kind == "plaud" for s in rec.sources):
-           continue
-       try:
-           reconciled.append(self.reconcile_plaud(rec.id))
-       except (
-           WriterError,
-           KeyError,
-           LockTimeout,
-           OSError,
-           ValueError,
-           TypeError,
-           RecursionError,
-           ArithmeticError,
-       ) as exc:  # ValueError: a payload the
-           # renditions can't encode; RecursionError: a payload nested too deep to parse
-           log.debug("reconcile of %s failed", rec.id, exc_info=True)
-           # A fixed phrase, never the exception's text, which can carry a title.
-           problem = f"{type(exc).__name__}: not reconciled"
-           reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
-   for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
-       self.state.forget(rel)
-   problems = tuple({"path": str(p.path), "message": p.message} for p in self.archive.problems)
-   return ReindexReport(
-       recordings=count,
-       adopted=tuple(adopted),
-       invalid=tuple(invalid),
-       problems=problems,
-       forgotten=tuple(Path(f).parent.name for f in gone),
-       reconciled=tuple(reconciled),
-   )
+           count = self.rebuild_index(allow_empty=allow_empty, allow_missing=allow_missing)
+           reconciled = []
+           for rec in list(self.archive.iter_recordings()):
+               if not any(s.kind == "plaud" for s in rec.sources):
+                   continue
+               try:
+                   reconciled.append(self.reconcile_plaud(rec.id))
+               except (WriterError, KeyError, LockTimeout, OSError, ValueError, TypeError,
+                       RecursionError, ArithmeticError) as exc:  # ValueError: a payload the
+                   # renditions can't encode; RecursionError: a payload nested too deep to parse
+                   log.debug("reconcile of %s failed", rec.id, exc_info=True)
+                   # A fixed phrase, never the exception's text, which can carry a title.
+                   problem = f"{type(exc).__name__}: not reconciled"
+                   reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
+           for rel in gone:  # --allow-missing means "removed on purpose": state.db forgets them
+               self.state.forget(rel)
+           problems = tuple({"path": str(p.path), "message": p.message}
+                            for p in self.archive.problems)
+           return ReindexReport(recordings=count, adopted=tuple(adopted), invalid=tuple(invalid),
+                                problems=problems, forgotten=tuple(Path(f).parent.name for f in gone),
+                                reconciled=tuple(reconciled))
    ```
 8. In `packages/core/src/recordings/cli.py`:
    - In `cmd_reindex`, **replace** `    return 1 if report.invalid or report.problems else 0` with
      ```python
-     # A Plaud recording that could not be reconciled is a failure too: its outputs are missing.
-     return 1 if report.invalid or report.problems or any(r.problem for r in report.reconciled) else 0
+         # A Plaud recording that could not be reconciled is a failure too: its outputs are missing.
+         return 1 if report.invalid or report.problems or any(
+             r.problem for r in report.reconciled) else 0
      ```
    - **Replace** `help="accept outside edits and rebuild the derived index.db")` with
      ```python
@@ -10866,47 +9706,27 @@ In `demo/build.py`:
        for seg in transcript["segments"]:
            raw_label = seg.get("speaker") or "SPEAKER_00"
            label = labels.setdefault(raw_label, f"Speaker {len(labels) + 1}")
-           rows.append(
-               {
-                   "content": seg["text"],
-                   "start_time": round(seg["start"] * 1000),
-                   "end_time": round(seg["end"] * 1000),
-                   "speaker": label,
-                   "original_speaker": label,
-               }
-           )
-       return {
-           "id": entry["source_ref"],
-           "name": entry["title"],
-           "duration": entry["duration_ms"],
-           "demo": True,
-           "source_list": [
-               {
-                   "data_type": "transaction",
-                   "data_id": "demo-transaction",
-                   "data_tab_name": None,
-                   "data_content": json.dumps(rows, ensure_ascii=False),
-               }
-           ],
-           "note_list": [
-               {
-                   "data_type": "auto_sum_note",
-                   "data_id": "demo-summary",
-                   "data_tab_name": "Summary",
-                   "data_content": summary_md,
-               }
-           ],
-       }
+           rows.append({"content": seg["text"], "start_time": round(seg["start"] * 1000),
+                        "end_time": round(seg["end"] * 1000), "speaker": label,
+                        "original_speaker": label})
+       return {"id": entry["source_ref"], "name": entry["title"], "duration": entry["duration_ms"],
+               "demo": True,
+               "source_list": [{"data_type": "transaction", "data_id": "demo-transaction",
+                                "data_tab_name": None,
+                                "data_content": json.dumps(rows, ensure_ascii=False)}],
+               "note_list": [{"data_type": "auto_sum_note", "data_id": "demo-summary",
+                              "data_tab_name": "Summary", "data_content": summary_md}]}
    ```
 2. In `build`, **replace** the whole `if entry.get("plaud"):` block (the two `renditions.append`
    calls and the `payload = json.dumps(...)` line) with:
    ```python
-   fetched_at = None
-   if entry.get("plaud"):
-       summary = (canned_dir / "notes" / entry["slug"] / "plaud.md").read_text(encoding="utf-8")
-       envelope = plaud_envelope(entry, renditions[0].payload, summary)
-       payload = json.dumps(envelope, indent=2, ensure_ascii=False).encode() + b"\n"
-       fetched_at = stamp + timedelta(seconds=30)
+               fetched_at = None
+               if entry.get("plaud"):
+                   summary = (canned_dir / "notes" / entry["slug"] / "plaud.md").read_text(
+                       encoding="utf-8")
+                   envelope = plaud_envelope(entry, renditions[0].payload, summary)
+                   payload = json.dumps(envelope, indent=2, ensure_ascii=False).encode() + b"\n"
+                   fetched_at = stamp + timedelta(seconds=30)
    ```
 3. In the `writer.add(Incoming(...))` call, **replace** the `sources=` argument with
    `sources=(RawSource(kind=entry["source_kind"], ref=entry["source_ref"], added_at=BUILD_AT, fetched_at=fetched_at, payload=payload),),`,
@@ -11121,9 +9941,8 @@ def _stand_ins(tmp_path, monkeypatch, *, pcm_bytes, streams):
 
 def test_a_wav_file_is_measured_without_ffmpeg(tmp_path, monkeypatch):
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
-    assert probe(_wav(tmp_path / "a.wav")) == MediaProbe(
-        duration_ms=1500, sample_rate=22050, channels=2, method="wave"
-    )
+    assert probe(_wav(tmp_path / "a.wav")) == MediaProbe(duration_ms=1500, sample_rate=22050,
+                                                         channels=2, method="wave")
 
 
 def test_anything_else_needs_ffmpeg_and_is_never_guessed(tmp_path, monkeypatch):
@@ -11137,30 +9956,20 @@ def test_anything_else_needs_ffmpeg_and_is_never_guessed(tmp_path, monkeypatch):
 def test_the_duration_is_decoded_never_the_containers_claim(tmp_path, monkeypatch):
     # why: §9.1.1. reconcile's timing check compares Plaud's duration against this one, and an
     # mp3's or m4a's container duration is only an estimate. 64000 bytes of PCM is 2000 ms.
-    _stand_ins(
-        tmp_path,
-        monkeypatch,
-        pcm_bytes=64000,
-        streams=[{"codec_type": "audio", "sample_rate": "44100", "channels": 1}],
-    )
+    _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000,
+               streams=[{"codec_type": "audio", "sample_rate": "44100", "channels": 1}])
     (tmp_path / "a.m4a").write_bytes(b"not really")
-    assert probe(tmp_path / "a.m4a") == MediaProbe(
-        duration_ms=2000, sample_rate=44100, channels=1, has_video=False, method="decoded"
-    )
+    assert probe(tmp_path / "a.m4a") == MediaProbe(duration_ms=2000, sample_rate=44100,
+                                                   channels=1, has_video=False, method="decoded")
 
 
 def test_a_failed_decode_or_a_file_with_no_audio_is_not_measured(tmp_path, monkeypatch):
-    _stand_ins(
-        tmp_path,
-        monkeypatch,
-        pcm_bytes=0,
-        streams=[{"codec_type": "audio", "sample_rate": "44100", "channels": 1}],
-    )
+    _stand_ins(tmp_path, monkeypatch, pcm_bytes=0,
+               streams=[{"codec_type": "audio", "sample_rate": "44100", "channels": 1}])
     (tmp_path / "a.m4a").write_bytes(b"not really")
     assert probe(tmp_path / "a.m4a") is None
     (tmp_path / "bin" / "ffprobe").write_text(
-        '#!/bin/sh\necho \'{"streams": [{"codec_type": "video"}]}\'\n', encoding="utf-8"
-    )
+        "#!/bin/sh\necho '{\"streams\": [{\"codec_type\": \"video\"}]}'\n", encoding="utf-8")
     assert probe(tmp_path / "a.m4a") is None
 
 
@@ -11175,20 +9984,10 @@ def test_the_kind_comes_from_the_suffix_and_for_mp4_from_the_streams(tmp_path):
 def _wav_declaring(path, declared_seconds, actual_seconds, rate=16000):
     """A WAV whose data chunk declares more audio than the file holds."""
     import struct
-
     body = b"\x01\x00" * int(actual_seconds * rate)
     fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 2, 2, 16)
-    data = (
-        b"RIFF"
-        + struct.pack("<I", 36 + len(body))
-        + b"WAVE"
-        + b"fmt "
-        + struct.pack("<I", 16)
-        + fmt
-        + b"data"
-        + struct.pack("<I", int(declared_seconds * rate) * 2)
-        + body
-    )
+    data = (b"RIFF" + struct.pack("<I", 36 + len(body)) + b"WAVE" + b"fmt " + struct.pack("<I", 16)
+            + fmt + b"data" + struct.pack("<I", int(declared_seconds * rate) * 2) + body)
     path.write_bytes(data)
     return path
 
@@ -11196,32 +9995,24 @@ def _wav_declaring(path, declared_seconds, actual_seconds, rate=16000):
 def test_a_wavs_duration_is_the_frames_read_never_its_headers_claim(tmp_path, monkeypatch):
     # why: §9.1.1. A file holding 2 s that declares 60 s is decoded instead, and a WAV with no
     # frames at all is not measured.
-    _stand_ins(
-        tmp_path,
-        monkeypatch,
-        pcm_bytes=64000,
-        streams=[{"codec_type": "audio", "sample_rate": "16000", "channels": 1}],
-    )
+    _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000,
+               streams=[{"codec_type": "audio", "sample_rate": "16000", "channels": 1}])
     liar = _wav_declaring(tmp_path / "liar.wav", declared_seconds=60, actual_seconds=2)
-    assert probe(liar) == MediaProbe(
-        duration_ms=2000, sample_rate=16000, channels=1, has_video=False, method="decoded"
-    )
+    assert probe(liar) == MediaProbe(duration_ms=2000, sample_rate=16000, channels=1,
+                                     has_video=False, method="decoded")
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     assert probe(liar) is None
     assert probe(_wav_declaring(tmp_path / "empty.wav", 0, 0)) is None
 
 
-def test_a_malformed_wav_or_non_utf8_ffprobe_output_is_not_measured_never_raised(
-    tmp_path, monkeypatch
-):
+def test_a_malformed_wav_or_non_utf8_ffprobe_output_is_not_measured_never_raised(tmp_path,
+                                                                                 monkeypatch):
     import struct
-
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     # A chunk that runs past the end of the file: wave raises RuntimeError, not wave.Error.
     bad = tmp_path / "bad.wav"
-    bad.write_bytes(
-        b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6) + b"abc"
-    )
+    bad.write_bytes(b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6)
+                    + b"abc")
     assert probe(bad) is None
     monkeypatch.undo()
     _stand_ins(tmp_path, monkeypatch, pcm_bytes=64000, streams=[])
@@ -11234,20 +10025,15 @@ def test_a_long_decode_that_keeps_going_is_never_cut_short(tmp_path, monkeypatch
     # why: §9.1.1, Task 8's council. The timeout is for a decode that stalls: a multi-hour
     # recording on a slow or busy host must not come back unmeasured, which stops the import.
     import time
-
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     steady = bin_dir / "ffmpeg"
-    steady.write_text(
-        "#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 65536 /dev/zero; sleep 0.3; done\n",
-        encoding="utf-8",
-    )
+    steady.write_text("#!/bin/sh\nfor i in 1 2 3 4 5 6; do head -c 65536 /dev/zero; sleep 0.3; "
+                      "done\n", encoding="utf-8")
     steady.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     (tmp_path / "a.m4a").write_bytes(b"not really")
-    assert (
-        media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 12288
-    )  # 1.8 s in all, a 64 KiB read each step
+    assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) == 12288  # 1.8 s in all, a 64 KiB read each step
     steady.write_text("#!/bin/sh\nhead -c 32000 /dev/zero\nexec sleep 30\n", encoding="utf-8")
     started = time.monotonic()
     assert media.decoded_ms(tmp_path / "a.m4a", timeout=1) is None  # stalled: killed
@@ -11328,31 +10114,16 @@ def _wave(path: Path) -> MediaProbe | None:
         return None  # wave raises RuntimeError for a chunk that overruns the file
     if not rate or not frame_size or frames == 0 or frames != declared:
         return None
-    return MediaProbe(
-        duration_ms=round(frames * 1000 / rate),
-        sample_rate=rate,
-        channels=channels or None,
-        method="wave",
-    )
+    return MediaProbe(duration_ms=round(frames * 1000 / rate), sample_rate=rate,
+                      channels=channels or None, method="wave")
 
 
 def _streams(exe: str, path: Path, timeout: float) -> list[dict] | None:
     try:
         proc = subprocess.run(
-            [
-                exe,
-                "-v",
-                "error",
-                "-show_entries",
-                "stream=codec_type,sample_rate,channels",
-                "-of",
-                "json",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+            [exe, "-v", "error", "-show_entries", "stream=codec_type,sample_rate,channels",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=timeout)
         data = json.loads(proc.stdout) if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError):  # ValueError: bad JSON or bad UTF-8
         return None
@@ -11371,28 +10142,9 @@ def decoded_ms(path: Path, *, ffmpeg: str = "ffmpeg", timeout: float = 600) -> i
         return None
     try:
         proc = subprocess.Popen(
-            [
-                exe,
-                "-nostdin",
-                "-v",
-                "error",
-                "-i",
-                str(path),
-                "-map",
-                "0:a:0",
-                "-ac",
-                "1",
-                "-ar",
-                str(DECODE_RATE),
-                "-c:a",
-                "pcm_s16le",
-                "-f",
-                "s16le",
-                "-",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
+            [exe, "-nostdin", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1",
+             "-ar", str(DECODE_RATE), "-c:a", "pcm_s16le", "-f", "s16le", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except OSError:
         return None
     last = time.monotonic()
@@ -11419,9 +10171,8 @@ def decoded_ms(path: Path, *, ffmpeg: str = "ffmpeg", timeout: float = 600) -> i
     return round((total // 2) * 1000 / DECODE_RATE)
 
 
-def probe(
-    path: Path, *, ffprobe: str = "ffprobe", ffmpeg: str = "ffmpeg", timeout: float = 600
-) -> MediaProbe | None:
+def probe(path: Path, *, ffprobe: str = "ffprobe", ffmpeg: str = "ffmpeg",
+          timeout: float = 600) -> MediaProbe | None:
     path = Path(path)
     if path.suffix.lower() == ".wav":
         measured = _wave(path)
@@ -11437,13 +10188,10 @@ def probe(
     duration_ms = decoded_ms(path, ffmpeg=ffmpeg, timeout=timeout)
     if duration_ms is None:
         return None
-    return MediaProbe(
-        duration_ms=duration_ms,
-        sample_rate=_int(audio.get("sample_rate")),
-        channels=_int(audio.get("channels")),
-        has_video=any(s.get("codec_type") == "video" for s in streams),
-        method="decoded",
-    )
+    return MediaProbe(duration_ms=duration_ms, sample_rate=_int(audio.get("sample_rate")),
+                      channels=_int(audio.get("channels")),
+                      has_video=any(s.get("codec_type") == "video" for s in streams),
+                      method="decoded")
 
 
 def media_kind(path: Path, probed: MediaProbe | None) -> Literal["audio", "video"] | None:
@@ -11470,30 +10218,11 @@ Add to `packages/core/tests/conftest.py` (with `import csv`, `import hashlib`, `
 ```python
 # audio-router's catalog@5 columns, in order (scripts/build_catalog.py, COLUMNS).
 AR_COLUMNS = [
-    "uri",
-    "source",
-    "file_id",
-    "recorded_at_local",
-    "timezone",
-    "time_source",
-    "duration_ms",
-    "audio_rel",
-    "audio_sha256",
-    "dup_of",
-    "ledger_status",
-    "transcript_source",
-    "transcript_len",
-    "transcript_payload_chars",
-    "segments",
-    "speakers_named",
-    "has_vendor_transcript",
-    "has_vendor_notes",
-    "vendor_note_kinds",
-    "has_local_transcript",
-    "has_local_summary",
-    "rendition_kinds",
-    "tags",
-    "access",
+    "uri", "source", "file_id", "recorded_at_local", "timezone", "time_source", "duration_ms",
+    "audio_rel", "audio_sha256", "dup_of", "ledger_status", "transcript_source", "transcript_len",
+    "transcript_payload_chars", "segments", "speakers_named", "has_vendor_transcript",
+    "has_vendor_notes", "vendor_note_kinds", "has_local_transcript", "has_local_summary",
+    "rendition_kinds", "tags", "access",
 ]
 
 
@@ -11527,9 +10256,7 @@ class ARArchive:
 
     def _audio(self, rel: str, seconds: float) -> str:
         self._seed += 1
-        return hashlib.sha256(
-            self._write(rel, wav_bytes(self._seed, seconds)).read_bytes()
-        ).hexdigest()
+        return hashlib.sha256(self._write(rel, wav_bytes(self._seed, seconds)).read_bytes()).hexdigest()
 
     def _row(self, **cells) -> dict:
         row = {c: "" for c in AR_COLUMNS}
@@ -11537,77 +10264,41 @@ class ARArchive:
         self.rows.append(row)
         return row
 
-    def plaud(
-        self,
-        fid: str,
-        *,
-        envelopes=(),
-        stamps=None,
-        derived=None,
-        audio=True,
-        recorded_at="2026-08-01T09:00:00-07:00",
-        dup_of="",
-        seconds=2.6,
-        same_audio_as: str | None = None,
-        tags=(),
-        ext=".wav",
-    ) -> dict:
+    def plaud(self, fid: str, *, envelopes=(), stamps=None, derived=None, audio=True,
+              recorded_at="2026-08-01T09:00:00-07:00", dup_of="", seconds=2.6,
+              same_audio_as: str | None = None, tags=(), ext=".wav") -> dict:
         """Snapshots in plaud/raw/<fid>/<stamp>.json (oldest first; a str is written as is), audio
         in plaud/audio/2026/08/<fid><ext> (WAV bytes, whatever the suffix), outputs in
         plaud/derived/<fid>/. `tags` are the row's authored labels (catalog/tags.jsonl)."""
         for i, env in enumerate(envelopes):
             stamp = stamps[i] if stamps else f"2026080{i + 1}T161000Z"
-            self._write(
-                f"plaud/raw/{fid}/{stamp}.json",
-                env if isinstance(env, str) else json.dumps(env, indent=1, ensure_ascii=False),
-            )
+            self._write(f"plaud/raw/{fid}/{stamp}.json",
+                        env if isinstance(env, str) else json.dumps(env, indent=1, ensure_ascii=False))
         for name, doc in (derived or {}).items():
-            self._write(
-                f"plaud/derived/{fid}/{name}", json.dumps(doc, indent=1, ensure_ascii=False)
-            )
+            self._write(f"plaud/derived/{fid}/{name}",
+                        json.dumps(doc, indent=1, ensure_ascii=False))
         rel, sha = "", ""
         if audio:
             rel = f"plaud/audio/2026/08/{fid}{ext}"
             if same_audio_as:
-                sha = hashlib.sha256(
-                    self._write(rel, (self.root / same_audio_as).read_bytes()).read_bytes()
-                ).hexdigest()
+                sha = hashlib.sha256(self._write(rel, (self.root / same_audio_as).read_bytes())
+                                     .read_bytes()).hexdigest()
             else:
                 sha = self._audio(rel, seconds)
-        return self._row(
-            uri=f"plaud/{fid}",
-            source="plaud",
-            file_id=fid,
-            recorded_at_local=recorded_at,
-            timezone="America/Vancouver",
-            time_source="start_at",
-            duration_ms=str(int(seconds * 1000)),
-            audio_rel=rel,
-            audio_sha256=sha,
-            dup_of=dup_of,
-            tags=";".join(sorted(tags)),
-        )
+        return self._row(uri=f"plaud/{fid}", source="plaud", file_id=fid,
+                         recorded_at_local=recorded_at, timezone="America/Vancouver",
+                         time_source="start_at", duration_ms=str(int(seconds * 1000)),
+                         audio_rel=rel, audio_sha256=sha, dup_of=dup_of,
+                         tags=";".join(sorted(tags)))
 
     def orphan(self, fid: str) -> dict:
         """A Plaud row build_catalog.py builds from the audio alone: no snapshot, and no time."""
         rel = f"plaud/audio/2026/08/{fid}.wav"
-        return self._row(
-            uri=f"plaud/{fid}",
-            source="plaud",
-            file_id=fid,
-            audio_rel=rel,
-            audio_sha256=self._audio(rel, 2.0),
-            ledger_status="rendered",
-        )
+        return self._row(uri=f"plaud/{fid}", source="plaud", file_id=fid, audio_rel=rel,
+                         audio_sha256=self._audio(rel, 2.0), ledger_status="rendered")
 
-    def private(
-        self,
-        *,
-        name: str = "Aug 3 at 10-00",
-        text: str | None = "Speaker 1: Hello.\n",
-        tags=("therapy",),
-        recorded_at="2026-08-03T10:00:00-07:00",
-    ) -> dict:
+    def private(self, *, name: str = "Aug 3 at 10-00", text: str | None = "Speaker 1: Hello.\n",
+                tags=("therapy",), recorded_at="2026-08-03T10:00:00-07:00") -> dict:
         """The private tier as audio-router's catalog/private.jsonl registers it: a Recorder export
         that keeps its export name (a title), registered by its audio's SHA-256, with Recorder's
         prose transcript beside it as a .txt of the same stem. No raw/ and no derived/ folders,
@@ -11618,112 +10309,52 @@ class ARArchive:
         self._write(f"private/recorder-exports/{name}.wav", data)
         if text is not None:
             self._write(f"private/recorder-exports/{name}.txt", text)
-        return self._row(
-            uri=f"private/{fid}",
-            source="private",
-            file_id=fid,
-            recorded_at_local=recorded_at,
-            timezone="America/Vancouver",
-            time_source="filename",
-            duration_ms="2000",
-            access="restricted",
-            tags=";".join(sorted(tags)),
-        )
+        return self._row(uri=f"private/{fid}", source="private", file_id=fid,
+                         recorded_at_local=recorded_at, timezone="America/Vancouver",
+                         time_source="filename", duration_ms="2000", access="restricted",
+                         tags=";".join(sorted(tags)))
 
-    def recorder(
-        self,
-        *,
-        transcript="Speaker 1: Hello.\nSpeaker 2: Hi.\n",
-        recorded_at="2026-07-15T16:17:00-07:00",
-    ) -> dict:
+    def recorder(self, *, transcript="Speaker 1: Hello.\nSpeaker 2: Hi.\n",
+                 recorded_at="2026-07-15T16:17:00-07:00") -> dict:
         self._seed += 1
         data = wav_bytes(self._seed, 2.0)
         fid = hashlib.sha256(data).hexdigest()
         self._write(f"recorder/audio/2026/07/{fid}.wav", data)
         envelope = {  # recorder.envelope_for: a Plaud-shaped envelope around a prose transcript
-            "id": fid,
-            "name": "Jul 15 at 16-17",
-            "duration": 2000,
-            "start_at": "2026-07-15T16:17:00",
-            "created_at": "2026-07-15T16:17:00",
-            "source_list": [
-                {"data_type": "transaction", "data_content": transcript, "data_tab_name": None}
-            ],
-            "note_list": [],
-            "_meta": {"source": "recorder", "tool": "audio-router"},
-        }
+            "id": fid, "name": "Jul 15 at 16-17", "duration": 2000,
+            "start_at": "2026-07-15T16:17:00", "created_at": "2026-07-15T16:17:00",
+            "source_list": [{"data_type": "transaction", "data_content": transcript,
+                             "data_tab_name": None}],
+            "note_list": [], "_meta": {"source": "recorder", "tool": "audio-router"}}
         self._write(f"recorder/raw/{fid}/20260716T000000Z.json", json.dumps(envelope, indent=1))
-        return self._row(
-            uri=f"recorder/{fid}",
-            source="recorder",
-            file_id=fid,
-            recorded_at_local=recorded_at,
-            timezone="America/Vancouver",
-            time_source="filename",
-            duration_ms="2000",
-            audio_rel=f"recorder/audio/2026/07/{fid}.wav",
-            audio_sha256=fid,
-        )
+        return self._row(uri=f"recorder/{fid}", source="recorder", file_id=fid,
+                         recorded_at_local=recorded_at, timezone="America/Vancouver",
+                         time_source="filename", duration_ms="2000",
+                         audio_rel=f"recorder/audio/2026/07/{fid}.wav", audio_sha256=fid)
 
-    def pocket(
-        self,
-        uuid: str,
-        *,
-        title="Pocket chat",
-        recorded_at="2026-08-02T10:00:00-07:00",
-        segments=None,
-        summaries=None,
-    ) -> dict:
-        doc = {
-            "id": uuid,
-            "title": title,
-            "duration": 2.0,
-            "recording_at": "2026-08-02T10:00:00",
-            "created_at": "2026-08-02T10:05:00",
-            "language": "en",
-            "state": "done",
-            "tags": [],
-            "transcript": {
-                "metadata": {},
-                "text": "Hi there.",
-                "segments": segments
-                if segments is not None
-                else [
-                    {"start": 0, "end": 1, "text": "Hi", "speaker": "A"},
-                    {"start": 1, "end": 2, "text": "there."},
-                ],
-            },
-            "summarizations": summaries
-            if summaries is not None
-            else {"sid-1": {"text": "A chat."}},
-        }
+    def pocket(self, uuid: str, *, title="Pocket chat", recorded_at="2026-08-02T10:00:00-07:00",
+               segments=None, summaries=None) -> dict:
+        doc = {"id": uuid, "title": title, "duration": 2.0, "recording_at": "2026-08-02T10:00:00",
+               "created_at": "2026-08-02T10:05:00", "language": "en", "state": "done", "tags": [],
+               "transcript": {"metadata": {}, "text": "Hi there.", "segments": segments if segments
+                              is not None else [{"start": 0, "end": 1, "text": "Hi", "speaker": "A"},
+                                                {"start": 1, "end": 2, "text": "there."}]},
+               "summarizations": summaries if summaries is not None else {"sid-1": {"text": "A chat."}}}
         self._write(f"pocket/raw/{uuid}.json", json.dumps(doc, indent=1))
         sha = self._audio(f"pocket/audio/2026/08/{uuid}.wav", 2.0)
-        return self._row(
-            uri=f"pocket/{uuid}",
-            source="pocket",
-            file_id=uuid,
-            recorded_at_local=recorded_at,
-            timezone="America/Vancouver",
-            time_source="recording_at",
-            duration_ms="2000",
-            audio_rel=f"pocket/audio/2026/08/{uuid}.wav",
-            audio_sha256=sha,
-        )
+        return self._row(uri=f"pocket/{uuid}", source="pocket", file_id=uuid,
+                         recorded_at_local=recorded_at, timezone="America/Vancouver",
+                         time_source="recording_at", duration_ms="2000",
+                         audio_rel=f"pocket/audio/2026/08/{uuid}.wav", audio_sha256=sha)
 
     def pocket_without_audio(self, stem: str = "getting_started") -> dict:
         """audio-router's one audio-less Pocket item: its native id is a title slug, so the
         catalog keys it on sha256(stem)[:32], and that slug must never reach any output."""
         self._write(f"pocket/raw/{stem}.json", json.dumps({"id": stem, "title": "Getting Started"}))
         fid = hashlib.sha256(stem.encode("utf-8")).hexdigest()[:32]
-        return self._row(
-            uri=f"pocket/{fid}",
-            source="pocket",
-            file_id=fid,
-            recorded_at_local="2026-08-01T08:00:00-07:00",
-            timezone="America/Vancouver",
-            time_source="created_at",
-        )
+        return self._row(uri=f"pocket/{fid}", source="pocket", file_id=fid,
+                         recorded_at_local="2026-08-01T08:00:00-07:00",
+                         timezone="America/Vancouver", time_source="created_at")
 
     def write_catalog(self, *, provenance_rows: int | None = None) -> None:
         cat = self.root / "catalog"
@@ -11732,12 +10363,10 @@ class ARArchive:
             writer = csv.DictWriter(fh, fieldnames=AR_COLUMNS, lineterminator="\n")
             writer.writeheader()
             writer.writerows(sorted(self.rows, key=lambda r: r["uri"]))
-        provenance = {
-            "schema": "audio-router/catalog@5",
-            "rows": len(self.rows) if provenance_rows is None else provenance_rows,
-            "ledger_only_no_media": self.ledger_only,
-            "per_source": {"plaud": {"held_count": self.held}},
-        }
+        provenance = {"schema": "audio-router/catalog@5",
+                      "rows": len(self.rows) if provenance_rows is None else provenance_rows,
+                      "ledger_only_no_media": self.ledger_only,
+                      "per_source": {"plaud": {"held_count": self.held}}}
         (cat / "provenance.json").write_text(json.dumps(provenance, indent=1), encoding="utf-8")
 
     def tree_hash(self) -> str:
@@ -11791,22 +10420,14 @@ JA = "会議メモ / Q&A"  # Review Focus 4: a title outside ASCII
 
 def full(ar, plaud_env):
     """Every kind of row audio-router's catalog holds (spec §9.3's mapping table)."""
-    ar.plaud(
-        A,
-        envelopes=[plaud_env(A, name="A PRIVATE TITLE"), plaud_env(A, name="Interview: Grace")],
-        tags=("lecture",),
-    )
-    ar.plaud(
-        B,
-        envelopes=[plaud_env(B)],
-        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
-        dup_of=f"plaud/{A}",
-    )
+    ar.plaud(A, envelopes=[plaud_env(A, name="A PRIVATE TITLE"),
+                           plaud_env(A, name="Interview: Grace")], tags=("lecture",))
+    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+             dup_of=f"plaud/{A}")
     ar.plaud(C, envelopes=[plaud_env(C, name=JA)], recorded_at="2026-08-03T11:00:00-07:00")
     ar.plaud(D, envelopes=[plaud_env(D)], audio=False)  # no audio: arrives through the sync
-    ar.plaud(
-        T, envelopes=[plaud_env(T)], recorded_at="2026-08-04T11:00:00-07:00", tags=("private",)
-    )
+    ar.plaud(T, envelopes=[plaud_env(T)], recorded_at="2026-08-04T11:00:00-07:00",
+             tags=("private",))
     ar.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00")
     ar.orphan(O)
     ar.recorder()
@@ -11822,16 +10443,9 @@ def test_the_dry_run_accounts_for_every_catalog_row(ar_archive, plaud_env):
     full(ar_archive, plaud_env)
     the_plan = plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver")
     assert sorted(i.row.uri for i in the_plan.items) == sorted(r["uri"] for r in ar_archive.rows)
-    assert the_plan.counts() == {
-        "new": 4,
-        "new-private": 2,
-        "duplicate": 1,
-        "present": 0,
-        "no-audio": 2,
-        "deferred-to-2b": 1,
-        "consent-excluded": 1,
-        "unplaced": 0,
-    }
+    assert the_plan.counts() == {"new": 4, "new-private": 2, "duplicate": 1, "present": 0,
+                                 "no-audio": 2, "deferred-to-2b": 1, "consent-excluded": 1,
+                                 "unplaced": 0}
     assert sum(the_plan.counts().values()) == len(ar_archive.rows)
     assert set(the_plan.counts()) == set(DISPOSITIONS)
     assert the_plan.ok and the_plan.problems == ()  # deferred rows never block a real run
@@ -11856,21 +10470,9 @@ def test_the_dry_run_never_names_a_title_and_never_changes_the_source(ar_archive
     # Review Focus 4, and §9.3: it reads audio-router's archive and never changes it.
     full(ar_archive, plaud_env)
     before = ar_archive.tree_hash()
-    text = json.dumps(
-        plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver").report(),
-        ensure_ascii=False,
-    )
-    for title in (
-        "A PRIVATE TITLE",
-        "Interview: Grace",
-        "Getting Started",
-        "getting_started",
-        "Pocket chat",
-        "Jul 15",
-        JA,
-        "会議メモ",
-        "Aug 3 at 10-00",
-    ):
+    text = json.dumps(plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver").report(), ensure_ascii=False)
+    for title in ("A PRIVATE TITLE", "Interview: Grace", "Getting Started", "getting_started",
+                  "Pocket chat", "Jul 15", JA, "会議メモ", "Aug 3 at 10-00"):
         assert title not in text
     assert ar_archive.tree_hash() == before
 
@@ -11883,21 +10485,13 @@ def test_audio_routers_privacy_labels_make_a_recording_private(ar_archive, plaud
     ar_archive.plaud(C, envelopes=[plaud_env(C)])["access"] = "restricted"
     ar_archive.plaud(D, envelopes=[plaud_env(D)], tags=("lecture", "therapy"))
     ar_archive.write_catalog()
-    by_id = {
-        i.row.file_id: i
-        for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
-    }
+    by_id = {i.row.file_id: i for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items}
     assert (by_id[A].disposition, by_id[A].tags, by_id[A].private) == ("new", ("lecture",), False)
     assert (by_id[B].disposition, by_id[B].tags) == ("new-private", ("private",))
     assert (by_id[C].disposition, by_id[C].tags) == ("new-private", ("private",))
     assert (by_id[D].disposition, by_id[D].tags) == ("new-private", ("lecture", "private/therapy"))
     assert map_tags(["medical", "journal", "students", "private", "lecture"]) == (
-        "private/medical",
-        "private/journal",
-        "private/students",
-        "private",
-        "lecture",
-    )
+        "private/medical", "private/journal", "private/students", "private", "lecture")
     # One tag per meaning: therapy and counselling fold together, and the generic markers are
     # `private`.
     folded = ["counseling", "therapy", "counselling", "personal", "voiceprints", "private"]
@@ -11974,38 +10568,27 @@ def test_recordings_on_disk_that_the_catalog_misses_are_reported_by_id(ar_archiv
         return hashlib.sha256(name.encode("utf-8")).hexdigest()[:32]
 
     assert set(the_plan.unlisted) == {
-        f"plaud/{B}",
-        f"plaud/{C}",
-        f"recorder/{'9' * 64}",
-        f"pocket/{surrogate('my_secret_slug')}",
-        f"plaud/{surrogate('My secret title')}",
-    }
+        f"plaud/{B}", f"plaud/{C}", f"recorder/{'9' * 64}",
+        f"pocket/{surrogate('my_secret_slug')}", f"plaud/{surrogate('My secret title')}"}
     text = json.dumps(the_plan.report(), ensure_ascii=False)
     assert "my_secret_slug" not in text and "My secret title" not in text and X not in text
 
 
 def test_snapshots_keep_audio_routers_order_within_one_second(ar_archive, plaud_env):
     # why: audio-router suffixes same-second snapshots -01, -02, and "-" sorts before "." .
-    ar_archive.plaud(
-        A,
-        envelopes=[plaud_env(A), plaud_env(A, name="second"), plaud_env(A, name="third")],
-        stamps=["20260801T161000Z", "20260801T161000Z-01", "20260801T161000Z-02"],
-    )
+    ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, name="second"), plaud_env(A, name="third")],
+                     stamps=["20260801T161000Z", "20260801T161000Z-01", "20260801T161000Z-02"])
     ar_archive.write_catalog()
     (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert [p.name for p in item.snapshots] == [
-        "20260801T161000Z.json",
-        "20260801T161000Z-01.json",
-        "20260801T161000Z-02.json",
-    ]
+        "20260801T161000Z.json", "20260801T161000Z-01.json", "20260801T161000Z-02.json"]
 
 
 def test_media_that_cant_be_measured_is_reported(ar_archive, plaud_env, monkeypatch):
     # why: §9.1.1. Without ffprobe and ffmpeg, anything but WAV has no decoded duration.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
-    ar_archive.plaud(
-        B, envelopes=[plaud_env(B)], ext=".m4a", recorded_at="2026-08-02T09:00:00-07:00"
-    )
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], ext=".m4a",
+                     recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
@@ -12013,31 +10596,17 @@ def test_media_that_cant_be_measured_is_reported(ar_archive, plaud_env, monkeypa
     assert {i.row.file_id: i.probed.method for i in the_plan.items if i.probed} == {A: "wave"}
 
 
-def test_a_row_already_in_the_archive_is_present_by_either_plaud_id_form(
-    ar_archive, plaud_env, writer, make_incoming
-):
+def test_a_row_already_in_the_archive_is_present_by_either_plaud_id_form(ar_archive, plaud_env,
+                                                                         writer, make_incoming):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.plaud(B, envelopes=[plaud_env(B)])
     ar_archive.write_catalog()
     audio_a = ar_archive.root / f"plaud/audio/2026/08/{A}.wav"
-    writer.add(
-        make_incoming(
-            audio_a.read_bytes(),
-            name="a.wav",
-            sources=(RawSource(kind="plaud", ref="of_" + A, added_at=T0),),
-        )
-    )
-    writer.add(
-        make_incoming(
-            b"other audio", name="b.wav", sources=(RawSource(kind="plaud", ref=B, added_at=T0),)
-        )
-    )
-    by_uri = {
-        i.row.uri: i
-        for i in plan(
-            ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver"
-        ).items
-    }
+    writer.add(make_incoming(audio_a.read_bytes(), name="a.wav", sources=(
+        RawSource(kind="plaud", ref="of_" + A, added_at=T0),)))
+    writer.add(make_incoming(b"other audio", name="b.wav", sources=(
+        RawSource(kind="plaud", ref=B, added_at=T0),)))
+    by_uri = {i.row.uri: i for i in plan(ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver").items}
     assert by_uri[f"plaud/{A}"].disposition == "present"
     assert by_uri[f"plaud/{B}"].disposition == "unplaced"
     assert "different audio" in by_uri[f"plaud/{B}"].reason
@@ -12048,17 +10617,14 @@ def test_incomplete_snapshots_are_counted_by_reason_and_never_hidden(ar_archive,
     # legitimately empty block that kept its data_link looks the same: the dry run says how
     # many, why, and which recordings would get no Plaud outputs at all.
     ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True), "{not json"])
-    ar_archive.plaud(
-        B, envelopes=[plaud_env(B, link_error=True)], recorded_at="2026-08-02T09:00:00-07:00"
-    )
+    ar_archive.plaud(B, envelopes=[plaud_env(B, link_error=True)],
+                     recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
     ar_archive.write_catalog()
     the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     report = the_plan.report()
     assert report["incomplete_snapshots"] == {
-        "total": 3,
-        "by_reason": {"auto_sum_note": 2, "unreadable": 1},
-    }
+        "total": 3, "by_reason": {"auto_sum_note": 2, "unreadable": 1}}
     assert report["all_snapshots_incomplete"] == [f"plaud/{B}"]
     assert the_plan.ok  # reported, not refused: an empty block may be real
 
@@ -12070,17 +10636,11 @@ def _wav_of(ar, fid):
 def _consent_family(ar, plaud_env):
     """X, and every kind of row that carries X's recording: a copy that duplicates it, the
     original it duplicates, a Recorder copy, and a private-tier copy found by hash."""
-    ar.plaud(
-        X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00", dup_of=f"plaud/{A}"
-    )
+    ar.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00",
+             dup_of=f"plaud/{A}")
     ar.plaud(A, envelopes=[plaud_env(A)], same_audio_as=f"plaud/audio/2026/08/{X}.wav")
-    ar.plaud(
-        B,
-        envelopes=[plaud_env(B)],
-        same_audio_as=f"plaud/audio/2026/08/{X}.wav",
-        dup_of=f"plaud/{X}",
-        recorded_at="2026-08-06T11:00:00-07:00",
-    )
+    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{X}.wav",
+             dup_of=f"plaud/{X}", recorded_at="2026-08-06T11:00:00-07:00")
     x_sha = next(r["audio_sha256"] for r in ar.rows if r["file_id"] == X)
     rec = ar.recorder()
     (ar.root / rec["audio_rel"]).write_bytes(_wav_of(ar, X))
@@ -12113,10 +10673,7 @@ def test_a_consent_listed_recording_excludes_every_row_that_carries_it(ar_archiv
 def test_without_the_id_on_the_consent_list_the_same_rows_import(ar_archive, plaud_env):
     # The control for the test above: the exclusion comes from the list, nothing else.
     rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
-    by_uri = {
-        i.row.uri: i
-        for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
-    }
+    by_uri = {i.row.uri: i for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items}
     assert by_uri[f"plaud/{B}"].disposition == "duplicate"
     assert by_uri[rec_uri].disposition == "duplicate"
     assert by_uri[priv_uri].disposition == "new-private"
@@ -12126,7 +10683,6 @@ def test_without_the_id_on_the_consent_list_the_same_rows_import(ar_archive, pla
 
 def test_a_private_file_named_by_a_listed_id_is_never_read(ar_archive, monkeypatch):
     from recordings.sources import audio_router
-
     ar_archive.private()
     ar_archive._write(f"private/recorder-exports/of_{X}.wav", b"never to be read")
     ar_archive._write(f"private/recorder-exports/{X2}.wav", b"never to be read either")
@@ -12166,11 +10722,9 @@ def test_one_unreadable_file_does_not_stop_the_dry_run(ar_archive, plaud_env):
 
 def test_a_malformed_wav_is_unprobed_not_fatal(ar_archive, plaud_env, monkeypatch):
     import struct
-
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(
-        b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6) + b"abc"
-    )
+        b"RIFF" + struct.pack("<I", 100) + b"WAVE" + b"LIST" + struct.pack("<I", 10**6) + b"abc")
     ar_archive.rows[0]["audio_sha256"] = ""
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
@@ -12180,7 +10734,6 @@ def test_a_malformed_wav_is_unprobed_not_fatal(ar_archive, plaud_env, monkeypatc
 
 def test_every_path_the_plan_returns_is_inside_the_source(ar_archive, plaud_env, tmp_path):
     import shutil
-
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
     outside = tmp_path / "elsewhere"
@@ -12205,13 +10758,8 @@ def test_the_pocket_listing_honours_the_consent_list(ar_archive):
     ar_archive.rows.clear()
     ar_archive.write_catalog()
     surrogate = hashlib.sha256(b"my_secret_slug").hexdigest()[:32]
-    assert plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").unlisted == (
-        f"pocket/{surrogate}",
-    )
-    assert (
-        plan(ar_archive.root, consent={surrogate}, default_timezone="America/Vancouver").unlisted
-        == ()
-    )
+    assert plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").unlisted == (f"pocket/{surrogate}",)
+    assert plan(ar_archive.root, consent={surrogate}, default_timezone="America/Vancouver").unlisted == ()
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root lists every folder")
@@ -12221,24 +10769,16 @@ def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_e
     # without its transcript, or without its local outputs for a locked derived/<id>/, with
     # `ok` True. A row whose time came from a snapshot but whose snapshots are gone is the same.
     import shutil
-
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
-    ar_archive.plaud(
-        B,
-        envelopes=[plaud_env(B)],
-        recorded_at="2026-08-02T09:00:00-07:00",
-        derived={"merged-whisper-1-20260802T170000Z.json": {"payload": {"text": "x"}}},
-    )
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], recorded_at="2026-08-02T09:00:00-07:00",
+                     derived={"merged-whisper-1-20260802T170000Z.json": {"payload": {"text": "x"}}})
     ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
     ar_archive.plaud(D, envelopes=[plaud_env(D)], recorded_at="2026-08-04T09:00:00-07:00")
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
     shutil.rmtree(ar_archive.root / "plaud" / "raw" / C)
-    locked = [
-        ar_archive.root / "plaud" / "raw" / A,
-        ar_archive.root / "plaud" / "derived" / B,
-        ar_archive.root / "pocket" / "raw",
-    ]
+    locked = [ar_archive.root / "plaud" / "raw" / A, ar_archive.root / "plaud" / "derived" / B,
+              ar_archive.root / "pocket" / "raw"]
     for folder in locked:
         folder.chmod(0)
     try:
@@ -12264,11 +10804,8 @@ def test_a_source_folder_that_cant_be_listed_is_a_problem_not_a_crash(ar_archive
     ar_archive.private()
     ar_archive._write("private/other/A Stray Title.wav", b"RIFF not a row")
     ar_archive.write_catalog()
-    locked = [
-        ar_archive.root / "plaud" / "raw",
-        ar_archive.root / "plaud" / "audio" / "2026",
-        ar_archive.root / "private" / "other",
-    ]
+    locked = [ar_archive.root / "plaud" / "raw", ar_archive.root / "plaud" / "audio" / "2026",
+              ar_archive.root / "private" / "other"]
     for folder in locked:
         folder.chmod(0o311)  # can be passed through, not listed
     try:
@@ -12288,20 +10825,11 @@ def test_rows_with_the_same_audio_wait_for_each_other(ar_archive, plaud_env):
     # with the whole group's privacy. Imported without a row that can't be placed, the
     # recording would lack its private label (and --allow-unplaced would import it so).
     ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("therapy",))
-    ar_archive.plaud(
-        B,
-        envelopes=[plaud_env(B)],
-        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
-        dup_of=f"plaud/{A}",
-    )
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+                     dup_of=f"plaud/{A}")
     ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
-    ar_archive.plaud(
-        D,
-        envelopes=[plaud_env(D)],
-        same_audio_as=f"plaud/audio/2026/08/{C}.wav",
-        dup_of=f"plaud/{C}",
-        tags=("private",),
-    )["time_source"] = ""
+    ar_archive.plaud(D, envelopes=[plaud_env(D)], same_audio_as=f"plaud/audio/2026/08/{C}.wav",
+                     dup_of=f"plaud/{C}", tags=("private",))["time_source"] = ""
     ar_archive.plaud(T, envelopes=[plaud_env(T)], recorded_at="2026-08-05T09:00:00-07:00")
     ar_archive.write_catalog()
     (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(b"damaged in the copy")
@@ -12313,49 +10841,25 @@ def test_rows_with_the_same_audio_wait_for_each_other(ar_archive, plaud_env):
     assert by_id[T].disposition == "new"
 
 
-@pytest.mark.parametrize(
-    "recorded_at, zone, default, expected",
-    [
-        # Every main-tier row: its offset and zone agree, whatever zone audio-router's config named.
-        (
-            "2026-08-01T09:00:00-07:00",
-            "America/Vancouver",
-            "America/Vancouver",
-            ("2026-08-01T09:00:00-07:00", "America/Vancouver"),
-        ),
-        (
-            "2026-08-02T01:00:00+09:00",
-            "Asia/Seoul",
-            "America/Vancouver",  # a trip: kept as it is
-            ("2026-08-02T01:00:00+09:00", "Asia/Seoul"),
-        ),
-        (
-            "2026-08-01T17:00:00+01:00",
-            "",
-            "Europe/London",  # no zone: the default, which agrees
-            ("2026-08-01T17:00:00+01:00", "Europe/London"),
-        ),
-        # A naive time is wall-clock in the row's zone, or the default's.
-        ("2026-08-01T09:00:00", "", "Asia/Seoul", ("2026-08-01T09:00:00+09:00", "Asia/Seoul")),
-        (
-            "2026-03-08T02:30:00",
-            "America/Vancouver",
-            "UTC",
-            ("2026-03-08T02:30:00-08:00", "America/Vancouver"),
-        ),
-        # An offset the zone contradicts keeps the offset, the clock the source wrote, and no zone.
-        (
-            "2026-08-02T10:00:00+09:00",
-            "America/Vancouver",
-            "America/Vancouver",
-            ("2026-08-02T10:00:00+09:00", ""),
-        ),
-        ("2026-08-01T09:00:00-04:00", "", "Europe/London", ("2026-08-01T09:00:00-04:00", "")),
-    ],
-)
+@pytest.mark.parametrize("recorded_at, zone, default, expected", [
+    # Every main-tier row: its offset and zone agree, whatever zone audio-router's config named.
+    ("2026-08-01T09:00:00-07:00", "America/Vancouver", "America/Vancouver",
+     ("2026-08-01T09:00:00-07:00", "America/Vancouver")),
+    ("2026-08-02T01:00:00+09:00", "Asia/Seoul", "America/Vancouver",  # a trip: kept as it is
+     ("2026-08-02T01:00:00+09:00", "Asia/Seoul")),
+    ("2026-08-01T17:00:00+01:00", "", "Europe/London",  # no zone: the default, which agrees
+     ("2026-08-01T17:00:00+01:00", "Europe/London")),
+    # A naive time is wall-clock in the row's zone, or the default's.
+    ("2026-08-01T09:00:00", "", "Asia/Seoul", ("2026-08-01T09:00:00+09:00", "Asia/Seoul")),
+    ("2026-03-08T02:30:00", "America/Vancouver", "UTC",
+     ("2026-03-08T02:30:00-08:00", "America/Vancouver")),
+    # An offset the zone contradicts keeps the offset, the clock the source wrote, and no zone.
+    ("2026-08-02T10:00:00+09:00", "America/Vancouver", "America/Vancouver",
+     ("2026-08-02T10:00:00+09:00", "")),
+    ("2026-08-01T09:00:00-04:00", "", "Europe/London", ("2026-08-01T09:00:00-04:00", "")),
+])
 def test_a_recording_keeps_its_own_offset_and_a_zone_only_when_they_agree(
-    ar_archive, plaud_env, recorded_at, zone, default, expected
-):
+        ar_archive, plaud_env, recorded_at, zone, default, expected):
     # why: §6.2 (the ID is local time with its offset) and Task 8's council: Dan records in
     # several zones, so no offset is ever changed and no trip is refused.
     row = ar_archive.plaud(A, envelopes=[plaud_env(A)], recorded_at=recorded_at)
@@ -12381,14 +10885,10 @@ def test_a_private_rows_hand_written_time_keeps_its_offset(ar_archive):
 
 def test_a_zone_or_offset_a_recording_cant_carry_is_unplaced(ar_archive, plaud_env):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])["timezone"] = "Mars/Olympus"
-    ar_archive.plaud(B, envelopes=[plaud_env(B)], recorded_at="2026-08-02T09:00:00+05:30:15")
+    ar_archive.plaud(B, envelopes=[plaud_env(B)],
+                     recorded_at="2026-08-02T09:00:00+05:30:15")
     ar_archive.write_catalog()
-    reasons = {
-        u["uri"]: u["reason"]
-        for u in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").report()[
-            "unplaced"
-        ]
-    }
+    reasons = {u["uri"]: u["reason"] for u in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").report()["unplaced"]}
     assert "unknown time zone 'Mars/Olympus'" in reasons[f"plaud/{A}"]
     assert "offset in seconds" in reasons[f"plaud/{B}"]
 
@@ -12403,21 +10903,13 @@ def test_a_private_file_named_by_its_hash_must_have_that_hash(ar_archive):
     assert item.disposition == "unplaced" and "damaged" in item.reason
 
 
-def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(
-    ar_archive, writer, make_incoming
-):
+def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(ar_archive, writer,
+                                                                      make_incoming):
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
-    writer.add(
-        make_incoming(
-            b"other audio",
-            name="p.wav",
-            sources=(RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),),
-        )
-    )
-    (item,) = plan(
-        ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver"
-    ).items
+    writer.add(make_incoming(b"other audio", name="p.wav", sources=(
+        RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),)))
+    (item,) = plan(ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver").items
     assert item.disposition == "unplaced" and "different audio" in item.reason
 
 
@@ -12433,17 +10925,13 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
     assert [p for p in the_plan.problems if "consent-listed" in p] == [
         "1 consent-listed rows have no catalog audio hash, so copies of them can't be "
-        "recognised: rebuild the catalog"
-    ]
+        "recognised: rebuild the catalog"]
     text = json.dumps(the_plan.report(), ensure_ascii=False)
     assert X not in text and str(ar_archive.root) not in text and not the_plan.ok
     assert the_plan.counts()["consent-excluded"] == 1 and the_plan.counts()["new"] == 1
     ar_archive.rows[0]["audio_sha256"] = hashlib.sha256(b"x").hexdigest()
     ar_archive.write_catalog()
-    assert not any(
-        "consent-listed" in p
-        for p in plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver").problems
-    )
+    assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver").problems)
 
 
 def _deferred_twin(ar, *, linked_by: str, label: str):
@@ -12466,18 +10954,11 @@ def _deferred_twin(ar, *, linked_by: str, label: str):
     return orphan, twin
 
 
-@pytest.mark.parametrize(
-    "linked_by, label",
-    [
-        ("the twin's dup_of", "tags"),
-        ("the orphan's dup_of", "tags"),
-        ("the audio hash", "tags"),
-        ("the twin's dup_of", "access"),
-    ],
-)
-def test_a_deferred_rows_privacy_reaches_the_row_that_imports_its_audio(
-    ar_archive, linked_by, label
-):
+@pytest.mark.parametrize("linked_by, label", [
+    ("the twin's dup_of", "tags"), ("the orphan's dup_of", "tags"), ("the audio hash", "tags"),
+    ("the twin's dup_of", "access")])
+def test_a_deferred_rows_privacy_reaches_the_row_that_imports_its_audio(ar_archive, linked_by,
+                                                                        label):
     # why: §7.4, §9.3 (the final review's Important 1). A row deferred to 2b returned before its
     # labels were read, and a same-audio group took its tags only from the rows that import: the
     # Pocket twin created the recording untagged, and the dry run said ok, with 0 private. Only
@@ -12515,7 +10996,6 @@ def test_a_row_waits_for_an_unplaced_row_linked_to_it_through_a_deferred_one(ar_
 def _busy(index, monkeypatch):
     """Another process is writing the index, and lookups don't wait for it (the real ones wait 30 s
     for the lock, then fail just the same)."""
-
     @contextlib.contextmanager
     def at_once(self):
         with contextlib.closing(sqlite3.connect(self.path, timeout=0)) as conn:
@@ -12531,9 +11011,8 @@ def _busy(index, monkeypatch):
         holder.close()
 
 
-def test_a_busy_index_fails_the_plan_instead_of_answering_none(
-    ar_archive, plaud_env, writer, make_incoming, monkeypatch
-):
+def test_a_busy_index_fails_the_plan_instead_of_answering_none(ar_archive, plaud_env, writer,
+                                                              make_incoming, monkeypatch):
     # why: §6.4, §9.1 (the final review's minor 3; FIX BEFORE THE REAL IMPORT). The plan read the
     # index without strict, so a busy one read as empty: A, already here, was planned as new (its
     # media decoded again, its labels merged again against S2(b)), and X, imported before its ID
@@ -12542,17 +11021,11 @@ def test_a_busy_index_fails_the_plan_instead_of_answering_none(
     ar_archive.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T11:00:00-07:00")
     ar_archive.write_catalog()
     for fid in (A, X):
-        writer.add(
-            make_incoming(
-                _wav_of(ar_archive, fid),
-                name=f"{fid}.wav",
-                sources=(RawSource(kind="plaud", ref=fid, added_at=T0),),
-            )
-        )
+        writer.add(make_incoming(_wav_of(ar_archive, fid), name=f"{fid}.wav", sources=(
+            RawSource(kind="plaud", ref=fid, added_at=T0),)))
     with _busy(writer.index, monkeypatch):
-        the_plan = plan(
-            ar_archive.root, writer.index, consent={X}, default_timezone="America/Vancouver"
-        )
+        the_plan = plan(ar_archive.root, writer.index, consent={X},
+                        default_timezone="America/Vancouver")
     by_uri = {i.row.uri: i for i in the_plan.items}
     assert by_uri[f"plaud/{A}"].disposition == "unplaced"
     assert "the index can't answer now" in by_uri[f"plaud/{A}"].reason
@@ -12625,40 +11098,18 @@ from recordings.refs import canonical_plaud_id
 
 CATALOG = Path("catalog") / "catalog.csv"
 PROVENANCE = Path("catalog") / "provenance.json"
-REQUIRED_COLUMNS = (
-    "uri",
-    "source",
-    "file_id",
-    "recorded_at_local",
-    "timezone",
-    "time_source",
-    "audio_rel",
-    "audio_sha256",
-    "dup_of",
-    "tags",
-    "access",
-)
+REQUIRED_COLUMNS = ("uri", "source", "file_id", "recorded_at_local", "timezone", "time_source",
+                    "audio_rel", "audio_sha256", "dup_of", "tags", "access")
 SOURCES = ("plaud", "recorder", "pocket")
 # audio-router's time_source, per source, as recordings' (§6.2); anything else is unplaced.
 TIME_SOURCES = {
-    ("plaud", "start_at"): "plaud",
-    ("plaud", "created_at"): "plaud",
-    ("recorder", "filename"): "metadata",
-    ("recorder", "file mtime (inferred)"): "mtime",
-    ("pocket", "recording_at"): "metadata",
-    ("pocket", "created_at"): "ingest",
+    ("plaud", "start_at"): "plaud", ("plaud", "created_at"): "plaud",
+    ("recorder", "filename"): "metadata", ("recorder", "file mtime (inferred)"): "mtime",
+    ("pocket", "recording_at"): "metadata", ("pocket", "created_at"): "ingest",
     ("private", "filename"): "metadata",
 }
-DISPOSITIONS = (
-    "new",
-    "new-private",
-    "duplicate",
-    "present",
-    "no-audio",
-    "deferred-to-2b",
-    "consent-excluded",
-    "unplaced",
-)
+DISPOSITIONS = ("new", "new-private", "duplicate", "present", "no-audio", "deferred-to-2b",
+                "consent-excluded", "unplaced")
 IMPORTED = ("new", "new-private", "duplicate", "present")  # the dispositions a run imports
 # audio-router's privacy labels: the protected markers in its sources/local_.py at 64612df
 # (PROTECTED_SEGMENTS, and the markers it checks in file names only), and the one tag each
@@ -12683,10 +11134,8 @@ _HEX32 = re.compile(r"[0-9a-f]{32}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 # A row the index can't answer for now is unplaced with this reason, and plan() makes it a
 # problem too, so not even --allow-unplaced imports past a busy index (§6.4).
-INDEX_BUSY = (
-    "the index can't answer now (busy, or an I/O error), so whether this archive holds "
-    "it is unknown: run the import again"
-)
+INDEX_BUSY = ("the index can't answer now (busy, or an I/O error), so whether this archive holds "
+              "it is unknown: run the import again")
 
 
 class CatalogError(RuntimeError):
@@ -12751,51 +11200,34 @@ class Plan:
         """Rows to import whose media couldn't be measured: a real run refuses them all. A
         `present` row isn't measured again: its recording holds the decoded duration of the same
         bytes (§9.1.1), so a re-run decodes only what it would create."""
-        return [
-            i.row.uri
-            for i in self.items
-            if i.disposition in IMPORTED and i.disposition != "present" and i.probed is None
-        ]
+        return [i.row.uri for i in self.items if i.disposition in IMPORTED
+                and i.disposition != "present" and i.probed is None]
 
     def incomplete_snapshots(self) -> dict:
         """Plaud snapshots reconcile will skip, counted by reason (a snapshot with two reasons
         counts under both), for rows a run imports."""
-        bad = [
-            reasons
-            for i in self.items
-            if i.disposition in IMPORTED
-            for reasons in i.snapshot_problems
-            if reasons
-        ]
+        bad = [reasons for i in self.items if i.disposition in IMPORTED
+               for reasons in i.snapshot_problems if reasons]
         by_reason = Counter(r for reasons in bad for r in set(reasons))
         return {"total": len(bad), "by_reason": dict(sorted(by_reason.items()))}
 
     def all_snapshots_incomplete(self) -> list[str]:
         """Rows whose every snapshot is incomplete: they would get no Plaud outputs at all."""
-        return [
-            i.row.uri
-            for i in self.items
-            if i.disposition in IMPORTED and i.snapshot_problems and all(i.snapshot_problems)
-        ]
+        return [i.row.uri for i in self.items if i.disposition in IMPORTED
+                and i.snapshot_problems and all(i.snapshot_problems)]
 
     def offset_only(self) -> list[str]:
         """Rows to import whose time keeps its offset but no zone name, because the zone the
         catalog gives contradicts it: reported, not refused, and fixable in recording.json."""
-        return [
-            i.row.uri
-            for i in self.items
-            if i.disposition in IMPORTED and i.recorded_at is not None and not i.timezone
-        ]
+        return [i.row.uri for i in self.items if i.disposition in IMPORTED
+                and i.recorded_at is not None and not i.timezone]
 
     def zones(self) -> dict[str, dict[str, int]]:
         """Rows to import by source and zone name ("" for offset only). audio-router stamps a
         Recorder, Pocket or private row with the zone its config named when its index or catalog
         was built, not where it was recorded: a zone wrong for a whole source shows here."""
-        found = Counter(
-            (i.row.source, i.timezone)
-            for i in self.items
-            if i.disposition in IMPORTED and i.recorded_at is not None
-        )
+        found = Counter((i.row.source, i.timezone) for i in self.items
+                        if i.disposition in IMPORTED and i.recorded_at is not None)
         out: dict[str, dict[str, int]] = {}
         for (source, zone), n in sorted(found.items()):
             out.setdefault(source, {})[zone] = n
@@ -12803,11 +11235,8 @@ class Plan:
 
     @property
     def ok(self) -> bool:
-        return (
-            not self.problems
-            and not self.unprobed()
-            and not any(i.disposition == "unplaced" for i in self.items)
-        )
+        return (not self.problems and not self.unprobed()
+                and not any(i.disposition == "unplaced" for i in self.items))
 
     def report(self) -> dict:
         """Counts, URIs and IDs: never a title or a transcript, and never a consent-listed ID."""
@@ -12815,19 +11244,14 @@ class Plan:
             "catalog_rows": len(self.items),
             "by_disposition": self.counts(),
             # Rows to import whose recording will be private: by their own labels or their group's.
-            "private": sum(
-                bool(i.private or i.group_privacy) for i in self.items if i.disposition in IMPORTED
-            ),
-            "unplaced": [
-                {"uri": i.row.uri, "reason": i.reason}
-                for i in self.items
-                if i.disposition == "unplaced"
-            ],
+            "private": sum(bool(i.private or i.group_privacy) for i in self.items
+                           if i.disposition in IMPORTED),
+            "unplaced": [{"uri": i.row.uri, "reason": i.reason}
+                         for i in self.items if i.disposition == "unplaced"],
             "no_audio": [i.row.uri for i in self.items if i.disposition == "no-audio"],
             # Plaud IDs, so stage 2b's sync can match them (Dan, 2026-10-09).
-            "deferred_to_2b": [
-                i.row.file_id for i in self.items if i.disposition == "deferred-to-2b"
-            ],
+            "deferred_to_2b": [i.row.file_id for i in self.items
+                               if i.disposition == "deferred-to-2b"],
             "unprobed": self.unprobed(),
             "incomplete_snapshots": self.incomplete_snapshots(),
             "all_snapshots_incomplete": self.all_snapshots_incomplete(),
@@ -12864,15 +11288,13 @@ def read_catalog(root: Path) -> list[Row]:
     if not path.is_file():
         raise CatalogError(
             f"{path}: catalog.csv is missing. The import is driven by audio-router's catalog: "
-            "build it there with scripts/build_catalog.py, then copy the archive again."
-        )
+            "build it there with scripts/build_catalog.py, then copy the archive again.")
     with path.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
         missing = [c for c in REQUIRED_COLUMNS if c not in (reader.fieldnames or [])]
         if missing:
-            raise CatalogError(
-                f"{path} is not audio-router's catalog@5: missing columns " + ", ".join(missing)
-            )
+            raise CatalogError(f"{path} is not audio-router's catalog@5: missing columns "
+                               + ", ".join(missing))
         rows = [_row(r) for r in reader]
     repeated = sorted(u for u, n in Counter(r.uri for r in rows).items() if n > 1)
     if repeated:
@@ -12944,15 +11366,8 @@ def _when(row: Row, default_tz: str) -> tuple[datetime | None, str, str, str]:
     elif when.utcoffset() != when.astimezone(zone).utcoffset():
         name = ""
     if when.utcoffset().total_seconds() % 60:
-        return (
-            None,
-            "",
-            "",
-            (
-                f"recording time {row.recorded_at_local!r} has an offset in "
-                "seconds, which a recording ID can't carry"
-            ),
-        )
+        return None, "", "", (f"recording time {row.recorded_at_local!r} has an offset in "
+                              "seconds, which a recording ID can't carry")
     return when, name, time_source, ""
 
 
@@ -12974,9 +11389,8 @@ def _walk(top: Path) -> tuple[list[Path], int]:
     skips those without a word on Python 3.13+, so a recording in one would look absent instead
     of unreadable. Symlinked folders aren't followed, as `rglob` doesn't follow them."""
     errors: list[OSError] = []
-    files = [
-        folder / name for folder, _, names in top.walk(on_error=errors.append) for name in names
-    ]
+    files = [folder / name for folder, _, names in top.walk(on_error=errors.append)
+             for name in names]
     return sorted(files), len(errors)
 
 
@@ -13014,12 +11428,9 @@ def _private_media(root: Path, consent: frozenset[str]) -> tuple[dict[str, list[
     if tier.is_dir():
         paths, skipped = _walk(tier)  # a folder that can't be listed counts as one
         for path in paths:
-            if (
-                path.is_file()
-                and not path.name.startswith(".")
-                and path.suffix.lower() in MEDIA_SUFFIXES
-                and canonical_plaud_id(path.stem) not in consent
-            ):
+            if (path.is_file() and not path.name.startswith(".")
+                    and path.suffix.lower() in MEDIA_SUFFIXES
+                    and canonical_plaud_id(path.stem) not in consent):
                 try:
                     if not _all_inside(root, [path]):
                         skipped += 1
@@ -13044,13 +11455,8 @@ def _find_private(root: Path, fid: str, media_by_sha: dict[str, list[Path]]):
     kind = _kind_from_id(fid)
     if not kind:
         return f"can't tell which source private recording {fid} came from"
-    texts = tuple(
-        sorted(
-            p
-            for p in found.parent.iterdir()
-            if p.is_file() and p.stem == found.stem and p.suffix.lower() == ".txt"
-        )
-    )
+    texts = tuple(sorted(p for p in found.parent.iterdir()
+                         if p.is_file() and p.stem == found.stem and p.suffix.lower() == ".txt"))
     return kind, found, texts
 
 
@@ -13081,10 +11487,8 @@ def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | 
     if kind == "plaud":
         for rid in index.find_by_source("plaud", row.file_id, strict=True):
             if index.sha256_of(rid, strict=True) != sha:
-                return None, (
-                    f"Plaud ID {row.file_id} is already in this archive ({rid}) "
-                    "with different audio"
-                )
+                return None, (f"Plaud ID {row.file_id} is already in this archive ({rid}) "
+                              "with different audio")
             return rid, ""
     for rid in index.find_by_source("audio_router", row.uri, strict=True):
         # The same source row with other bytes: never a second copy.
@@ -13094,9 +11498,7 @@ def _present(index: Index | None, kind: str, row: Row, sha: str) -> tuple[str | 
     return index.find_by_sha256(sha, strict=True), ""
 
 
-def _consent_closure(
-    rows: list[Row], consent: frozenset[str]
-) -> tuple[frozenset[str], frozenset[str]]:
+def _consent_closure(rows: list[Row], consent: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
     """The recordings Dan's consent list excludes (§9.1, §9.3): the list excludes the recording,
     not only its ID. Returns (URIs, audio SHA-256s), closed over catalog data alone, so no
     excluded row's files are read. A row is excluded when its own ID is listed, when its `dup_of`
@@ -13121,9 +11523,8 @@ def _consent_closure(
     return frozenset(uris), frozenset(shas)
 
 
-def _consent_kept(
-    index: Index | None, rows: list[Row], excluded: tuple[frozenset[str], frozenset[str]]
-) -> int:
+def _consent_kept(index: Index | None, rows: list[Row],
+                  excluded: tuple[frozenset[str], frozenset[str]]) -> int:
     """How many recordings this archive already holds that the consent list now excludes: an ID
     listed after its import. Found by Plaud ID, audio-router's reference and audio hash, from
     catalog data alone, so no file of theirs is opened. The lookups are strict: an index that
@@ -13140,16 +11541,9 @@ def _consent_kept(
     return len(found)
 
 
-def _place(
-    root: Path,
-    row: Row,
-    *,
-    excluded: tuple[frozenset[str], frozenset[str]],
-    by_uri: dict[str, Row],
-    index: Index | None,
-    default_tz: str,
-    private_media: dict[str, list[Path]],
-) -> Item:
+def _place(root: Path, row: Row, *, excluded: tuple[frozenset[str], frozenset[str]],
+           by_uri: dict[str, Row], index: Index | None, default_tz: str,
+           private_media: dict[str, list[Path]]) -> Item:
     """One row, one disposition. An excluded row is never read; any other row whose files can't
     be read is `unplaced`, naming the exception's type and never a path (a private-tier file
     name is an export title). So is one the index can't answer for now, and plan() makes that a
@@ -13157,14 +11551,8 @@ def _place(
     if row.uri in excluded[0]:
         return Item(row, "consent-excluded")
     try:
-        item = _place_row(
-            root,
-            row,
-            by_uri=by_uri,
-            index=index,
-            default_tz=default_tz,
-            private_media=private_media,
-        )
+        item = _place_row(root, row, by_uri=by_uri, index=index, default_tz=default_tz,
+                          private_media=private_media)
     except sqlite3.DatabaseError:  # a strict lookup in _present (§6.4)
         return Item(row, "unplaced", INDEX_BUSY)
     except (OSError, ValueError, RuntimeError) as exc:
@@ -13174,23 +11562,13 @@ def _place(
     return item
 
 
-def _place_row(
-    root: Path,
-    row: Row,
-    *,
-    by_uri: dict[str, Row],
-    index: Index | None,
-    default_tz: str,
-    private_media: dict[str, list[Path]],
-) -> Item:
+def _place_row(root: Path, row: Row, *, by_uri: dict[str, Row], index: Index | None,
+               default_tz: str, private_media: dict[str, list[Path]]) -> Item:
     if row.source not in (*SOURCES, "private"):
         return Item(row, "unplaced", f"unknown source {row.source!r}")
     if not all(_TAG.fullmatch(label) for label in row.tags):
-        return Item(
-            row,
-            "unplaced",
-            "a tag isn't a lowercase slug, as audio-router's catalog/tags.jsonl requires",
-        )
+        return Item(row, "unplaced",
+                    "a tag isn't a lowercase slug, as audio-router's catalog/tags.jsonl requires")
     # Its labels first, from the catalog alone: a row that doesn't import keeps them too, so its
     # privacy reaches the row of its same-audio group that creates the recording (§7.4).
     tags = map_tags(row.tags)
@@ -13201,14 +11579,9 @@ def _place_row(
         snapshots, _ = _store_files(root, "plaud", row.file_id)
         if not snapshots:  # build_catalog.py's orphans: audio alone (Dan, 2026-10-09). Its audio
             # is never read; only its labels count, for its same-audio group.
-            return Item(
-                row,
-                "deferred-to-2b",
-                "no snapshot and no recording time: stage 2b's sync matches it by its Plaud ID",
-                kind="plaud",
-                private=private,
-                tags=tags,
-            )
+            return Item(row, "deferred-to-2b", "no snapshot and no recording time: stage 2b's "
+                        "sync matches it by its Plaud ID", kind="plaud", private=private,
+                        tags=tags)
     when, zone, time_source, why = _when(row, default_tz)
     if when is None:
         return Item(row, "unplaced", why)
@@ -13223,62 +11596,36 @@ def _place_row(
         kind = row.source
         if not row.audio_rel:
             later = "; Plaud's copy arrives through the sync" if kind == "plaud" else ""
-            return Item(
-                row,
-                "no-audio",
-                f"no audio in audio-router{later}",
-                kind=kind,
-                private=private,
-                tags=tags,
-            )
+            return Item(row, "no-audio", f"no audio in audio-router{later}", kind=kind,
+                        private=private, tags=tags)
         audio = _inside(root, row.audio_rel)
         if audio is None or not audio.is_file():
             return Item(row, "unplaced", f"audio {row.audio_rel} is missing from the copy")
         snapshots, renditions = _store_files(root, kind, row.file_id)
         if not snapshots:  # build_catalog built this row from one: its time, or pocket/raw/
-            return Item(
-                row,
-                "unplaced",
-                "the copy has no snapshot of it, though the catalog "
-                "was built from one: the copy is incomplete",
-            )
+            return Item(row, "unplaced", "the copy has no snapshot of it, though the catalog "
+                        "was built from one: the copy is incomplete")
     if not _all_inside(root, [audio, *snapshots, *renditions, *texts]):
         return Item(row, "unplaced", "a file resolves outside the source root")
     sha = sha256_file(audio)
     # A private row's 64-hex ID is its audio's hash, as the catalog's column is a main-tier row's.
-    expected = row.audio_sha256 or (
-        row.file_id if row.source == "private" and _HEX64.fullmatch(row.file_id) else ""
-    )
+    expected = row.audio_sha256 or (row.file_id if row.source == "private"
+                                    and _HEX64.fullmatch(row.file_id) else "")
     if expected and sha != expected:
-        return Item(
-            row, "unplaced", "the audio's SHA-256 differs from the catalog's: the copy is damaged"
-        )
+        return Item(row, "unplaced",
+                    "the audio's SHA-256 differs from the catalog's: the copy is damaged")
     if row.dup_of and row.dup_of not in by_uri:
         return Item(row, "unplaced", f"dup_of names {row.dup_of}, which the catalog doesn't list")
     present, conflict = _present(index, kind, row, sha)
     if conflict:
         return Item(row, "unplaced", conflict)
-    disposition = (
-        "present" if present else "duplicate" if row.dup_of else "new-private" if private else "new"
-    )
-    return Item(
-        row,
-        disposition,
-        kind=kind,
-        audio=audio,
-        sha256=sha,
-        recorded_at=when,
-        timezone=zone,
-        time_source=time_source,
-        snapshots=snapshots,
-        renditions=renditions,
-        texts=texts,
-        present_id=present,
-        private=private,
-        tags=tags,
-        probed=None if present else probe(audio),
-        snapshot_problems=_snapshot_problems(kind, snapshots),
-    )
+    disposition = ("present" if present else "duplicate" if row.dup_of
+                   else "new-private" if private else "new")
+    return Item(row, disposition, kind=kind, audio=audio, sha256=sha, recorded_at=when,
+                timezone=zone, time_source=time_source, snapshots=snapshots,
+                renditions=renditions, texts=texts, present_id=present, private=private,
+                tags=tags, probed=None if present else probe(audio),
+                snapshot_problems=_snapshot_problems(kind, snapshots))
 
 
 def _ids_on_disk(root: Path, source: str) -> tuple[set[str], int]:
@@ -13290,11 +11637,8 @@ def _ids_on_disk(root: Path, source: str) -> tuple[set[str], int]:
     audio = root / source / "audio"
     if audio.is_dir():
         files, unlistable = _walk(audio)
-        names |= {
-            p.stem
-            for p in files
-            if p.is_file() and not p.name.startswith(".") and p.suffix not in (".part", ".tmp")
-        }
+        names |= {p.stem for p in files if p.is_file()
+                  and not p.name.startswith(".") and p.suffix not in (".part", ".tmp")}
     for folder in ("raw", "derived"):
         base = root / source / folder
         try:
@@ -13386,17 +11730,10 @@ def _hold_groups(items: list[Item], groups: dict[str, str]) -> list[Item]:
     for item in items:
         if item.disposition == "unplaced":
             waits.setdefault(groups[item.row.uri], item.row.uri)
-    return [
-        Item(
-            item.row,
-            "unplaced",
-            f"{waits[groups[item.row.uri]]} has the same audio and "
-            "can't be placed: the recording waits for it",
-        )
-        if item.disposition in IMPORTED and groups[item.row.uri] in waits
-        else item
-        for item in items
-    ]
+    return [Item(item.row, "unplaced", f"{waits[groups[item.row.uri]]} has the same audio and "
+                 "can't be placed: the recording waits for it")
+            if item.disposition in IMPORTED and groups[item.row.uri] in waits else item
+            for item in items]
 
 
 def _share_privacy(items: list[Item], groups: dict[str, str]) -> list[Item]:
@@ -13408,19 +11745,13 @@ def _share_privacy(items: list[Item], groups: dict[str, str]) -> list[Item]:
     for item in items:
         if item.row.uri in groups:
             privacy.setdefault(groups[item.row.uri], {}).update(
-                dict.fromkeys(t for t in item.tags if is_private_tag(t))
-            )
-    return [
-        replace(item, group_privacy=tuple(privacy[groups[item.row.uri]]))
-        if item.disposition in IMPORTED
-        else item
-        for item in items
-    ]
+                dict.fromkeys(t for t in item.tags if is_private_tag(t)))
+    return [replace(item, group_privacy=tuple(privacy[groups[item.row.uri]]))
+            if item.disposition in IMPORTED else item for item in items]
 
 
-def plan(
-    root: Path, index: Index | None = None, *, consent: Collection[str], default_timezone: str
-) -> Plan:
+def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
+         default_timezone: str) -> Plan:
     """The dry run (§9.3). `consent` is Dan's consent list (§9.1), which the caller reads
     fail-closed with `recordings.plaud.consent`. `default_timezone` is `[archive] default_timezone`
     (it places a time the source gave without an offset). Neither has a default, so no caller
@@ -13431,94 +11762,59 @@ def plan(
     excluded = _consent_closure(rows, listed)
     provenance, problems = _provenance(root)
     if isinstance(provenance.get("rows"), int) and provenance["rows"] != len(rows):
-        problems.append(
-            f"catalog.csv has {len(rows)} rows but provenance.json says "
-            f"{provenance['rows']}: the copy may be incomplete"
-        )
+        problems.append(f"catalog.csv has {len(rows)} rows but provenance.json says "
+                        f"{provenance['rows']}: the copy may be incomplete")
     # The list excludes a recording's copies by its audio hash (§9.1). A listed row with none
     # (its private-tier file ID is its hash, so that one counts) can't have its copies
     # recognised: the run stops, saying how many and never which.
-    blind = sum(
-        1
-        for r in rows
-        if canonical_plaud_id(r.file_id) in listed
-        and not r.audio_sha256
-        and not (r.source == "private" and _HEX64.fullmatch(r.file_id))
-    )
+    blind = sum(1 for r in rows if canonical_plaud_id(r.file_id) in listed and not r.audio_sha256
+                and not (r.source == "private" and _HEX64.fullmatch(r.file_id)))
     if blind:
-        problems.append(
-            f"{blind} consent-listed rows have no catalog audio hash, so copies of "
-            "them can't be recognised: rebuild the catalog"
-        )
+        problems.append(f"{blind} consent-listed rows have no catalog audio hash, so copies of "
+                        "them can't be recognised: rebuild the catalog")
     # An ID listed after its recording was imported: 2a can't take the recording out, so the
     # run stops until Dan does (§9.1). Counted, never named, and found from catalog data alone.
     try:
         kept = _consent_kept(index, rows, excluded)
     except sqlite3.DatabaseError:  # a busy index never counts none (§6.4)
         kept = 0
-        problems.append(
-            "the index can't answer now (busy, or an I/O error), so recordings "
-            "already here that the consent list now excludes can't be counted: run "
-            "the import again"
-        )
+        problems.append("the index can't answer now (busy, or an I/O error), so recordings "
+                        "already here that the consent list now excludes can't be counted: run "
+                        "the import again")
     if kept:
-        problems.append(
-            f"{kept} recordings already in this archive are now on the consent "
-            "list: 2a can't remove them, so take them out by hand (then `recordings "
-            "reindex --allow-missing`) before importing again"
-        )
+        problems.append(f"{kept} recordings already in this archive are now on the consent "
+                        "list: 2a can't remove them, so take them out by hand (then `recordings "
+                        "reindex --allow-missing`) before importing again")
     by_uri = {r.uri: r for r in rows}
     private_media, skipped = _private_media(root, listed)
     if skipped:
-        problems.append(
-            f"{skipped} private-tier files or folders couldn't be read or sit "
-            "outside the source: they are not matched to any row"
-        )
+        problems.append(f"{skipped} private-tier files or folders couldn't be read or sit "
+                        "outside the source: they are not matched to any row")
     named = {r.file_id for r in rows if r.source == "private"}
-    unlisted_private = sum(
-        1
-        for sha, paths in private_media.items()
-        for p in paths
-        if sha not in named and p.stem not in named
-    )
+    unlisted_private = sum(1 for sha, paths in private_media.items() for p in paths
+                           if sha not in named and p.stem not in named)
     # Rows that are nobody's duplicate first, so a duplicate always merges into its original.
-    placed = [
-        _place(
-            root,
-            row,
-            excluded=excluded,
-            by_uri=by_uri,
-            index=index,
-            default_tz=default_timezone,
-            private_media=private_media,
-        )
-        for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))
-    ]
+    placed = [_place(root, row, excluded=excluded, by_uri=by_uri, index=index,
+                     default_tz=default_timezone, private_media=private_media)
+              for row in sorted(rows, key=lambda r: (bool(r.dup_of), r.uri))]
     busy = sum(1 for i in placed if i.reason == INDEX_BUSY)
     if busy:
-        problems.append(
-            f"the index can't answer now (busy, or an I/O error) for {busy} rows, so "
-            "the plan can't tell which are already here: run the import again"
-        )
+        problems.append(f"the index can't answer now (busy, or an I/O error) for {busy} rows, so "
+                        "the plan can't tell which are already here: run the import again")
     groups = _groups(placed)
     items = _share_privacy(_hold_groups(placed, groups), groups)
     unlisted, unlistable = _unlisted(root, rows, listed)
     if unlistable:
-        problems.append(
-            f"{unlistable} store folders couldn't be listed: recordings in them can't "
-            "be found, so the copy can't be checked against the catalog"
-        )
+        problems.append(f"{unlistable} store folders couldn't be listed: recordings in them can't "
+                        "be found, so the copy can't be checked against the catalog")
     ledger = [str(x) for x in provenance.get("ledger_only_no_media") or []]
     held = ((provenance.get("per_source") or {}).get("plaud") or {}).get("held_count")
-    return Plan(
-        root=root,
-        items=tuple(items),
-        ledger_only=tuple(sorted(x for x in ledger if canonical_plaud_id(x) not in listed)),
-        unlisted=tuple(unlisted),
-        held_on_plaud=held if isinstance(held, int) else None,
-        problems=tuple(problems),
-        unlisted_private=unlisted_private,
-    )
+    return Plan(root=root, items=tuple(items),
+                ledger_only=tuple(sorted(x for x in ledger
+                                         if canonical_plaud_id(x) not in listed)),
+                unlisted=tuple(unlisted),
+                held_on_plaud=held if isinstance(held, int) else None, problems=tuple(problems),
+                unlisted_private=unlisted_private)
 ```
 
 - [ ] **Step 8: Run the tests to see them pass**
@@ -13620,9 +11916,8 @@ from recordings.sentinel import SENTINEL
 
 
 def fake_statvfs(free_percent):
-    return lambda path: SimpleNamespace(
-        f_bavail=int(free_percent * 10), f_frsize=1024, f_blocks=1000
-    )
+    return lambda path: SimpleNamespace(f_bavail=int(free_percent * 10), f_frsize=1024,
+                                        f_blocks=1000)
 
 
 @pytest.mark.parametrize("free, level", [(50.0, "ok"), (19.9, "warn"), (4.9, "stop")])
@@ -13647,13 +11942,9 @@ def test_a_missing_or_changed_marker_stops_everything(new_archive, monkeypatch):
 
 def test_the_thresholds_come_from_config(tmp_path):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(
-        "[disk]\nwarn_free_percent = 30\nstop_free_percent = 10\n", encoding="utf-8"
-    )
+    cfg_file.write_text("[disk]\nwarn_free_percent = 30\nstop_free_percent = 10\n", encoding="utf-8")
     assert disk_thresholds(load_config({"RECORDINGS_CONFIG": str(cfg_file)})) == {
-        "warn": 30.0,
-        "stop": 10.0,
-    }
+        "warn": 30.0, "stop": 10.0}
     cfg_file.write_text("[disk]\nwarn_free_percent = 5\nstop_free_percent = 10\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="stop_free_percent"):
         disk_thresholds(load_config({"RECORDINGS_CONFIG": str(cfg_file)}))
@@ -13698,107 +11989,47 @@ NOW = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
 JA = "会議メモ / Q&A"  # Review Focus 4: a title outside ASCII
 CONSENT = f"# Never mirror\n- `{X}` — excluded\n"
 
-WORDS = {
-    "schema": "audio-router/rendition@1",
-    "kind": "words",
-    "engine": "mlx-whisper",
-    "version": "large-v3-turbo@a4aaeec",
-    "file_id": A,
-    "inputs": {"audio_sha256": "x", "sample_rate": 16000},
-    "meta": {"model": "mlx-community/whisper-large-v3-turbo", "language": "en"},
-    "payload": {
-        "words": [
-            {"word": "Hello", "start": 0.0, "end": 0.5, "prob": 0.9},
-            {"word": "there.", "start": 0.5, "end": 1.4, "prob": 0.9},
-            {"word": "Hi.", "start": 1.6, "end": 2.4, "prob": 0.9},
-        ],
-        "segments": [
-            {"id": 0, "start": 0.0, "end": 1.5, "text": " Hello there."},
-            {"id": 1, "start": 1.5, "end": 2.6, "text": " Hi."},
-        ],
-    },
-}
-TURNS = {
-    "kind": "turns",
-    "engine": "pyannote",
-    "version": "community-1@abc",
-    "inputs": {},
-    "payload": {
-        "turns": [{"start": 0.0, "end": 1.5, "speaker": "SPEAKER_00"}],
-        "overlap_turns": [],
-    },
-}
-MERGED = {
-    "kind": "merged",
-    "engine": "audio-router",
-    "version": "m2+x+y",
-    "inputs": {},
-    "payload": {
-        "turns": [
-            {
-                "speaker": "SPEAKER_00",
-                "start": 0.0,
-                "end": 1.5,
-                "text": "Hello there.",
-                "inferred": False,
-                "words": [{"word": "Hello", "start": 0.0, "end": 0.5}],
-            }
-        ],
-        "text": "[00:00] SPEAKER_00: Hello there.",
-    },
-}
-SUMMARY = {
-    "kind": "summary",
-    "engine": "local/qwen3.6-35b-a3b",
-    "version": "qwen+p3",
-    "inputs": {},
-    "payload": {
-        "title": "Greetings",
-        "summary_md": "Two people meet.",
-        "actions": [{"owner_raw": "Ada", "text": "Say goodbye"}],
-    },
-}
-HUMAN = {
-    "kind": "speakers",
-    "engine": "human",
-    "version": "m2+x+y",
-    "file_id": A,
-    "inputs": {"audio_sha256": "x"},
-    "meta": {"labels": 1},
-    "payload": {"names": {"SPEAKER_00": "Ada"}},
-}  # audio-router's relabel: names Dan typed
+WORDS = {"schema": "audio-router/rendition@1", "kind": "words", "engine": "mlx-whisper",
+         "version": "large-v3-turbo@a4aaeec", "file_id": A, "inputs": {"audio_sha256": "x",
+                                                                        "sample_rate": 16000},
+         "meta": {"model": "mlx-community/whisper-large-v3-turbo", "language": "en"},
+         "payload": {"words": [{"word": "Hello", "start": 0.0, "end": 0.5, "prob": 0.9},
+                               {"word": "there.", "start": 0.5, "end": 1.4, "prob": 0.9},
+                               {"word": "Hi.", "start": 1.6, "end": 2.4, "prob": 0.9}],
+                     "segments": [{"id": 0, "start": 0.0, "end": 1.5, "text": " Hello there."},
+                                  {"id": 1, "start": 1.5, "end": 2.6, "text": " Hi."}]}}
+TURNS = {"kind": "turns", "engine": "pyannote", "version": "community-1@abc", "inputs": {},
+         "payload": {"turns": [{"start": 0.0, "end": 1.5, "speaker": "SPEAKER_00"}],
+                     "overlap_turns": []}}
+MERGED = {"kind": "merged", "engine": "audio-router", "version": "m2+x+y", "inputs": {},
+          "payload": {"turns": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.5,
+                                 "text": "Hello there.", "inferred": False,
+                                 "words": [{"word": "Hello", "start": 0.0, "end": 0.5}]}],
+                      "text": "[00:00] SPEAKER_00: Hello there."}}
+SUMMARY = {"kind": "summary", "engine": "local/qwen3.6-35b-a3b", "version": "qwen+p3",
+           "inputs": {}, "payload": {"title": "Greetings", "summary_md": "Two people meet.",
+                                     "actions": [{"owner_raw": "Ada", "text": "Say goodbye"}]}}
+HUMAN = {"kind": "speakers", "engine": "human", "version": "m2+x+y", "file_id": A,
+         "inputs": {"audio_sha256": "x"}, "meta": {"labels": 1},
+         "payload": {"names": {"SPEAKER_00": "Ada"}}}  # audio-router's relabel: names Dan typed
 PLAUD_TURNS = {"kind": "turns", "engine": "plaud", "version": "v1", "inputs": {}, "payload": {}}
-EMBEDDINGS = {
-    "kind": "embeddings",
-    "engine": "pyannote",
-    "version": "x",
-    "inputs": {},
-    "payload": {},
-}
+EMBEDDINGS = {"kind": "embeddings", "engine": "pyannote", "version": "x", "inputs": {},
+              "payload": {}}
 HUMAN_FILE = "speakers-human-m2+x+y-20260801T170600Z.json"
 
 
 def build(ar, plaud_env):
-    ar.plaud(
-        A,
-        envelopes=[plaud_env(A, name="Week 4"), plaud_env(A, name="Week 4, edited")],
-        tags=("lecture",),
-        derived={
-            "words-mlx_whisper-large_v3_turbo@a4aaeec-20260801T170000Z.json": WORDS,
-            "turns-pyannote-community_1@abc-20260801T170100Z.json": TURNS,
-            "merged-audio_router-m2+x+y-20260801T170200Z.json": MERGED,
-            "summary-local_qwen3.6_35b_a3b-qwen+p3-20260801T170300Z.json": SUMMARY,
-            "turns-plaud-v1-20260801T170400Z.json": PLAUD_TURNS,
-            "embeddings-pyannote-x-20260801T170500Z.json": EMBEDDINGS,
-            HUMAN_FILE: HUMAN,
-        },
-    )
-    ar.plaud(
-        B,
-        envelopes=[plaud_env(B)],
-        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
-        dup_of=f"plaud/{A}",
-    )
+    ar.plaud(A, envelopes=[plaud_env(A, name="Week 4"), plaud_env(A, name="Week 4, edited")],
+             tags=("lecture",),
+             derived={"words-mlx_whisper-large_v3_turbo@a4aaeec-20260801T170000Z.json": WORDS,
+                      "turns-pyannote-community_1@abc-20260801T170100Z.json": TURNS,
+                      "merged-audio_router-m2+x+y-20260801T170200Z.json": MERGED,
+                      "summary-local_qwen3.6_35b_a3b-qwen+p3-20260801T170300Z.json": SUMMARY,
+                      "turns-plaud-v1-20260801T170400Z.json": PLAUD_TURNS,
+                      "embeddings-pyannote-x-20260801T170500Z.json": EMBEDDINGS,
+                      HUMAN_FILE: HUMAN})
+    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+             dup_of=f"plaud/{A}")
     ar.plaud(C, envelopes=[plaud_env(C)], audio=False)
     ar.plaud(J, envelopes=[plaud_env(J, name=JA)], recorded_at="2026-08-04T09:00:00-07:00")
     ar.recorder()
@@ -13818,11 +12049,7 @@ def _files(root):
 def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
     build(ar_archive, plaud_env)
     before = ar_archive.tree_hash()
-    report = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert (report.created, report.merged) == (5, 1)  # B's audio is A's: one recording, two IDs
     assert report.measured == {"wave": 6}  # every duration measured, and how
@@ -13832,11 +12059,7 @@ def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
 
     a = recs[A]
     assert {(s.kind, s.ref) for s in a.sources} == {
-        ("plaud", A),
-        ("plaud", B),
-        ("audio_router", f"plaud/{A}"),
-        ("audio_router", f"plaud/{B}"),
-    }
+        ("plaud", A), ("plaud", B), ("audio_router", f"plaud/{A}"), ("audio_router", f"plaud/{B}")}
     assert a.title == "Week 4, edited" and a.title_by == "plaud" and a.plaud.title_seen
     assert [(t.tag, t.by) for t in a.tags] == [("lecture", "you")]
     assert (a.media.duration_ms, a.media.sample_rate, a.media.channels) == (2600, 16000, 1)
@@ -13845,24 +12068,16 @@ def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
     assert ("transcript", "audio-router", None) in outputs
     assert ("speakers", "pyannote", None) in outputs
     assert ("notes", "local/qwen3.6-35b-a3b", "audio-router-summary") in outputs
-    assert ("transcript", "plaud", None) in outputs and (
-        "notes",
-        "plaud",
-        "plaud-summary",
-    ) in outputs
-    assert not any(
-        r.kind == "speakers" and r.engine in ("plaud", "human")
-        for _, r in writer.archive.renditions(a.id)
-    )  # never outputs
+    assert ("transcript", "plaud", None) in outputs and ("notes", "plaud", "plaud-summary") in outputs
+    assert not any(r.kind == "speakers" and r.engine in ("plaud", "human")
+                   for _, r in writer.archive.renditions(a.id))  # never outputs
     (typed,) = [s for s in a.sources if s.kind == "audio_router" and s.raw]
     assert typed.raw == "source/audio_router-20260801T170600Z.json"  # Dan's names, verbatim
-    assert (writer.archive.path_for(a.id) / typed.raw).read_bytes() == (
-        ar_archive.root / "plaud" / "derived" / A / HUMAN_FILE
-    ).read_bytes()
+    assert ((writer.archive.path_for(a.id) / typed.raw).read_bytes()
+            == (ar_archive.root / "plaud" / "derived" / A / HUMAN_FILE).read_bytes())
     assert report.skipped_outputs == {
         "audio-router's Plaud outputs are rebuilt by reconcile": 1,
-        "voice data never enters the archive (spec §7.6)": 1,
-    }
+        "voice data never enters the archive (spec §7.6)": 1}
 
     assert (recs[J].title, recs[J].title_by) == (JA, "plaud")
     private = recs[_fid(ar_archive, "private")]
@@ -13870,9 +12085,8 @@ def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
     assert (private.title, private.title_by) == ("Aug 3 at 10-00", "recorder")
     (txt,) = [s for s in private.sources if s.raw and s.raw.endswith(".txt")]
     assert txt.kind == "recorder" and txt.ref == private.media.sha256
-    assert (writer.archive.path_for(private.id) / txt.raw).read_bytes() == (
-        ar_archive.root / "private/recorder-exports/Aug 3 at 10-00.txt"
-    ).read_bytes()
+    assert ((writer.archive.path_for(private.id) / txt.raw).read_bytes()
+            == (ar_archive.root / "private/recorder-exports/Aug 3 at 10-00.txt").read_bytes())
     pocket = recs[UUID]
     assert (pocket.title, pocket.title_by) == ("Pocket chat", "pocket")
     assert pocket.time_source == "metadata"
@@ -13885,23 +12099,12 @@ def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
 
 def test_running_the_import_again_adds_nothing(ar_archive, plaud_env, writer):
     build(ar_archive, plaud_env)
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     files = _files(writer.root)
-    again_plan = plan(
-        ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"
-    )
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.counts()["present"] == 6
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
-    assert (again.created, again.sources_added, again.renditions_added, again.plaud_outputs) == (
-        0,
-        0,
-        0,
-        0,
-    )
+    assert (again.created, again.sources_added, again.renditions_added, again.plaud_outputs) == (0, 0, 0, 0)
     assert _files(writer.root) == files
 
 
@@ -13977,43 +12180,22 @@ run(plan(Path(source), writer.index, consent=(), default_timezone="America/Vanco
 
 
 @pytest.mark.parametrize("point", ["copy", "commit", "merge", "reconcile"])
-def test_an_import_killed_anywhere_ends_as_a_clean_run_does(
-    ar_archive, plaud_env, make_writer, point
-):
+def test_an_import_killed_anywhere_ends_as_a_clean_run_does(ar_archive, plaud_env, make_writer,
+                                                             point):
     # Review Focus 2: killed inside the writer's own code, then run again with a fresh Writer and
     # the same `now`, the archive holds exactly the files a clean run gives, no source twice.
     build(ar_archive, plaud_env)
     clean = make_writer("clean")
-    run(
-        plan(ar_archive.root, clean.index, consent=(), default_timezone="America/Vancouver"),
-        clean,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, clean.index, consent=(), default_timezone="America/Vancouver"), clean, now=NOW)
     killed = make_writer("killed")
     child = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            KILL,
-            str(killed.root),
-            str(killed.state.path),
-            str(killed.index.path),
-            str(ar_archive.root),
-            point,
-            NOW.isoformat(),
-        ],
-        capture_output=True,
-        timeout=300,
-    )
+        [sys.executable, "-c", KILL, str(killed.root), str(killed.state.path),
+         str(killed.index.path), str(ar_archive.root), point, NOW.isoformat()],
+        capture_output=True, timeout=300)
     assert child.returncode == 137, child.stderr.decode(errors="replace")  # it died there
-    fresh = Writer(
-        killed.root, State.open(killed.state.path), Index(killed.index.path), writer_id="test"
-    )
-    report = run(
-        plan(ar_archive.root, fresh.index, consent=(), default_timezone="America/Vancouver"),
-        fresh,
-        now=NOW,
-    )
+    fresh = Writer(killed.root, State.open(killed.state.path), Index(killed.index.path),
+                   writer_id="test")
+    report = run(plan(ar_archive.root, fresh.index, consent=(), default_timezone="America/Vancouver"), fresh, now=NOW)
     assert report.failed == []
     assert _files(fresh.root) == _files(clean.root)
     assert not (fresh.root / ".tmp").exists()
@@ -14027,22 +12209,13 @@ def test_a_degraded_or_unreadable_snapshot_is_kept_but_never_used(ar_archive, pl
     # Review Focus 3.
     ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True), "{not json"])
     ar_archive.write_catalog()
-    report = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
     assert sum(s.kind == "plaud" for s in rec.sources) == 3  # raw is raw: all three are kept
     assert report.skipped_snapshots == 2
-    transcripts = [
-        r
-        for _, r in writer.archive.renditions(rec.id)
-        if r.kind == "transcript" and r.engine == "plaud"
-    ]
-    assert len(transcripts) == 1 and transcripts[0].inputs["source"].endswith(
-        "20260801T161000Z.json"
-    )
+    transcripts = [r for _, r in writer.archive.renditions(rec.id)
+                   if r.kind == "transcript" and r.engine == "plaud"]
+    assert len(transcripts) == 1 and transcripts[0].inputs["source"].endswith("20260801T161000Z.json")
 
 
 def test_same_second_snapshots_keep_their_order_in_the_outputs(ar_archive, plaud_env, writer):
@@ -14051,48 +12224,28 @@ def test_same_second_snapshots_keep_their_order_in_the_outputs(ar_archive, plaud
     # `x.json`, and the older transcript would be the one shown (§6.5).
     rows = json.loads(plaud_env(A)["source_list"][0]["data_content"])
     edited = plaud_env(A, segments=[{**rows[0], "content": "Edited."}, *rows[1:]])
-    ar_archive.plaud(
-        A, envelopes=[plaud_env(A), edited], stamps=["20260801T161000Z", "20260801T161000Z-01"]
-    )
+    ar_archive.plaud(A, envelopes=[plaud_env(A), edited],
+                     stamps=["20260801T161000Z", "20260801T161000Z-01"])
     ar_archive.write_catalog()
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
-    transcripts = [
-        r
-        for _, r in writer.archive.renditions(rec.id)
-        if r.kind == "transcript" and r.engine == "plaud"
-    ]
+    transcripts = [r for _, r in writer.archive.renditions(rec.id)
+                   if r.kind == "transcript" and r.engine == "plaud"]
     assert [t.payload["segments"][0]["text"] for t in transcripts] == ["Hello there.", "Edited."]
 
 
 def test_the_import_stops_when_the_disk_guard_says_stop(ar_archive, plaud_env, writer):
     build(ar_archive, plaud_env)
-    stop = DiskStatus(
-        path="x",
-        marker=True,
-        free_bytes=1,
-        total_bytes=100,
-        level="stop",
-        message="1.0% free: below 5%, new imports stop",
-    )
+    stop = DiskStatus(path="x", marker=True, free_bytes=1, total_bytes=100, level="stop",
+                      message="1.0% free: below 5%, new imports stop")
     with pytest.raises(ImportStopped, match="new imports stop") as caught:
-        run(
-            plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-            writer,
-            now=NOW,
-            disk=lambda: stop,
-        )
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW, disk=lambda: stop)
     assert caught.value.report.created == 0
     assert list(writer.archive.iter_recordings()) == []
 
 
 def test_a_full_disk_stops_the_import_instead_of_filling_it_again_for_every_row(
-    ar_archive, plaud_env, writer, monkeypatch
-):
+        ar_archive, plaud_env, writer, monkeypatch):
     # why: ENOSPC is an OSError, which the run reported per row before going on, so every later
     # row copied its media until the disk filled again. state.db shares that disk.
     build(ar_archive, plaud_env)
@@ -14102,34 +12255,23 @@ def test_a_full_disk_stops_the_import_instead_of_filling_it_again_for_every_row(
 
     monkeypatch.setattr("recordings.writer.copy_file_synced", full)
     with pytest.raises(ImportStopped, match="disk is full") as caught:
-        run(
-            plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-            writer,
-            now=NOW,
-        )
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
-        "OSError: a file could not be read or written"
-    ]
+        "OSError: a file could not be read or written"]
     assert list(writer.archive.iter_recordings()) == []
     assert not (writer.root / ".tmp").exists()
 
 
 def test_an_archive_that_drops_off_stops_the_import_instead_of_failing_every_row(
-    ar_archive, plaud_env, writer, tmp_path
-):
+        ar_archive, plaud_env, writer, tmp_path):
     # why: §6.7. The Writer re-checks archive.json before each write and raises NotTheWriter. That
     # is not a per-row failure: going on would only fail every later row the same way.
     build(ar_archive, plaud_env)
     (writer.root / "archive.json").rename(tmp_path / "archive.json.away")
     with pytest.raises(ImportStopped, match="archive has dropped off") as caught:
-        run(
-            plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-            writer,
-            now=NOW,
-        )
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
-        "NotTheWriter: this process may not write the archive now"
-    ]
+        "NotTheWriter: this process may not write the archive now"]
     assert caught.value.report.created == 0
 
 
@@ -14137,32 +12279,24 @@ def test_a_real_run_refuses_media_it_cannot_measure(ar_archive, plaud_env, write
     # why: §9.1.1. Reconcile stores its timing check for good, so an import without a decoded
     # duration would store it without one. The run stops before it writes anything.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
-    ar_archive.plaud(
-        B, envelopes=[plaud_env(B)], ext=".m4a", recorded_at="2026-08-02T09:00:00-07:00"
-    )
+    ar_archive.plaud(B, envelopes=[plaud_env(B)], ext=".m4a",
+                     recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     with pytest.raises(ImportStopped, match="can't be measured for 1 of 2"):
-        run(
-            plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-            writer,
-            now=NOW,
-        )
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert list(writer.archive.iter_recordings()) == []
 
 
-def test_privacy_is_in_place_when_a_recording_is_created(
-    ar_archive, plaud_env, writer, monkeypatch
-):
+def test_privacy_is_in_place_when_a_recording_is_created(ar_archive, plaud_env, writer,
+                                                          monkeypatch):
     # why: §7.4. A private tag is never a second write after the content: a catalog label, and a
     # Plaud title that matches the auto-private patterns (in any snapshot, date prefix and all),
     # are both in Incoming.tags when the recording is created.
     ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("private",))  # the main tier, tagged
-    ar_archive.plaud(
-        B,
-        envelopes=[plaud_env(B, name="10-06 Private catch-up"), plaud_env(B, name="Catch-up")],
-        recorded_at="2026-08-02T09:00:00-07:00",
-    )
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name="10-06 Private catch-up"),
+                                   plaud_env(B, name="Catch-up")],
+                     recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.write_catalog()
     seen = {}
     real_add = Writer.add
@@ -14172,28 +12306,19 @@ def test_privacy_is_in_place_when_a_recording_is_created(
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == {A: [("private", "you")], B: [("private", "auto")]}
 
 
 def test_privacy_covers_every_copy_of_the_audio_before_the_first_is_created(
-    ar_archive, plaud_env, writer, monkeypatch
-):
+        ar_archive, plaud_env, writer, monkeypatch):
     # why: §7.4. B is A's duplicate (the same audio, so one recording), and B's title is
     # auto-private. A is added first. It must be created private, never made private by B's
     # merge after A's content and outputs are already in the archive.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
-    ar_archive.plaud(
-        B,
-        envelopes=[plaud_env(B, name="Interview: Grace")],
-        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
-        dup_of=f"plaud/{A}",
-    )
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name="Interview: Grace")],
+                     same_audio_as=f"plaud/audio/2026/08/{A}.wav", dup_of=f"plaud/{A}")
     ar_archive.write_catalog()
     seen = []
     real_add = Writer.add
@@ -14203,11 +12328,7 @@ def test_privacy_covers_every_copy_of_the_audio_before_the_first_is_created(
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == [(A, [("private", "auto")]), (B, [("private", "auto")])]
 
@@ -14232,20 +12353,15 @@ def test_a_failure_is_reported_in_fixed_words(ar_archive, plaud_env, writer, mon
         raise ValueError(f"input_value={incoming.title!r}")
 
     monkeypatch.setattr(Writer, "add", refuse)
-    report = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert {f["reason"] for f in report.failed} == {"ValueError: a value did not validate"}
     text = json.dumps(report.to_dict(), ensure_ascii=False)
     for title in (JA, "会議メモ", "Week 4", "Pocket chat", "Aug 3 at 10-00", "Jul 15"):
         assert title not in text
 
 
-def test_an_archive_that_reads_as_empty_stops_the_import(
-    ar_archive, plaud_env, writer, monkeypatch
-):
+def test_an_archive_that_reads_as_empty_stops_the_import(ar_archive, plaud_env, writer,
+                                                          monkeypatch):
     # why: §6.7. add refuses when the archive reads as empty (its disk unmounted, most likely),
     # and the run stops there, in fixed words, rather than going on into it.
     build(ar_archive, plaud_env)
@@ -14260,14 +12376,9 @@ def test_an_archive_that_reads_as_empty_stops_the_import(
 
     monkeypatch.setattr(Writer, "add", unmounted)
     with pytest.raises(ImportStopped, match="reads as empty") as caught:
-        run(
-            plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-            writer,
-            now=NOW,
-        )
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
-        "IndexRefused: the archive reads as empty or unreadable"
-    ]
+        "IndexRefused: the archive reads as empty or unreadable"]
     text = str(caught.value) + json.dumps(caught.value.report.to_dict(), ensure_ascii=False)
     assert titles and all(title not in text and "canary" not in text for title in titles)
 
@@ -14289,13 +12400,10 @@ def test_mapping_audio_routers_outputs(tmp_path):
     assert words.model == "mlx-community/whisper-large-v3-turbo"
     assert words.inputs == {"audio_sha256": "x", "sample_rate": "16000"}
     assert [[w["word"] for w in s["words"]] for s in words.payload["segments"]] == [
-        ["Hello", "there."],
-        ["Hi."],
-    ]
+        ["Hello", "there."], ["Hi."]]
     summary = map_rendition(tmp_path / "summary-x-v-20260801T170300Z.json", SUMMARY).rendition
-    assert summary.payload["markdown"] == (
-        "# Greetings\n\nTwo people meet.\n\n## Actions\n\n- Say goodbye (Ada)"
-    )
+    assert summary.payload["markdown"] == ("# Greetings\n\nTwo people meet.\n\n## Actions\n\n"
+                                           "- Say goodbye (Ada)")
     assert map_rendition(tmp_path / HUMAN_FILE, HUMAN).keep_raw
     assert map_rendition(tmp_path / "words-x-v-nostamp.json", WORDS).skipped
     assert map_rendition(tmp_path / "x-20260801T170000Z.json", ["not", "a", "dict"]).skipped
@@ -14306,54 +12414,26 @@ def test_untimed_turns_words_and_segments_are_kept(tmp_path):
     # why: audio-router keeps an untimed word where it arrived, and one can open a merged turn
     # (its MergedTurn has a nullable start and end). Its text must survive, as reconcile keeps
     # Plaud's untimed segments.
-    merged = {
-        **MERGED,
-        "payload": {
-            "turns": [
-                {
-                    "speaker": "SPEAKER_UNKNOWN",
-                    "start": None,
-                    "end": None,
-                    "text": "Um",
-                    "words": [{"word": "Um", "start": None, "end": None}],
-                    "inferred": False,
-                },
-                *MERGED["payload"]["turns"],
-            ]
-        },
-    }
+    merged = {**MERGED, "payload": {"turns": [
+        {"speaker": "SPEAKER_UNKNOWN", "start": None, "end": None, "text": "Um",
+         "words": [{"word": "Um", "start": None, "end": None}], "inferred": False},
+        *MERGED["payload"]["turns"]]}}
     out = map_rendition(tmp_path / "merged-x-v-20260801T170200Z.json", merged).rendition
     assert [(s["text"], s["start"], s["end"]) for s in out.payload["segments"]] == [
-        ("Um", 0.0, 0.0),
-        ("Hello there.", 0.0, 1.5),
-    ]
+        ("Um", 0.0, 0.0), ("Hello there.", 0.0, 1.5)]
     assert out.payload["segments"][0]["words"] == [{"word": "Um", "start": 0.0, "end": 0.0}]
     assert (out.meta["untimed_segments"], out.meta["untimed_words"]) == (1, 1)
-    words = {
-        **WORDS,
-        "payload": {
-            **WORDS["payload"],
-            "segments": [
-                *WORDS["payload"]["segments"],
-                {"id": 2, "start": None, "end": None, "text": " Bye."},
-            ],
-        },
-    }
+    words = {**WORDS, "payload": {**WORDS["payload"], "segments": [
+        *WORDS["payload"]["segments"], {"id": 2, "start": None, "end": None, "text": " Bye."}]}}
     out = map_rendition(tmp_path / "words-x-v-20260801T170000Z.json", words).rendition
     assert [(s["text"], s["start"]) for s in out.payload["segments"]] == [
-        ("Hello there.", 0.0),
-        ("Hi.", 1.5),
-        ("Bye.", 2.6),
-    ]
+        ("Hello there.", 0.0), ("Hi.", 1.5), ("Bye.", 2.6)]
     assert out.meta["untimed_segments"] == 1
 
 
 def test_pocket_segments_in_milliseconds_are_recognised():
-    doc = {
-        "duration": 2.0,
-        "transcript": {"segments": [{"start": 0, "end": 1500, "text": "Hi"}]},
-        "summarizations": {},
-    }
+    doc = {"duration": 2.0, "transcript": {"segments": [{"start": 0, "end": 1500, "text": "Hi"}]},
+           "summarizations": {}}
     (transcript,) = pocket_outputs(doc, "source/pocket-x.json", NOW)
     assert transcript.payload["segments"][0]["end"] == 1.5 and transcript.meta["time_unit"] == "ms"
 
@@ -14362,18 +12442,13 @@ def test_a_pocket_outputs_identity_hashes_what_it_carries():
     # why: Task 7's ruling. part_sha256 is the hash of what the output carries, so a difference
     # it can't show (a number spelled 1500.0, a trailing space, an unknown field, a summary's
     # model) is never a new write-once output.
-    doc = {
-        "duration": 2.0,
-        "transcript": {"segments": [{"start": 0, "end": 1500, "text": "Hi", "id": 1}]},
-        "summarizations": {"a": {"text": " A chat. ", "model": "x"}},
-    }
-    same = {
-        "duration": 2.0,
-        "transcript": {
-            "segments": [{"start": 0.0, "end": 1500.0, "text": "Hi ", "id": 2, "extra": True}]
-        },
-        "summarizations": {"a": {"text": "A chat.", "model": "y"}},
-    }
+    doc = {"duration": 2.0,
+           "transcript": {"segments": [{"start": 0, "end": 1500, "text": "Hi", "id": 1}]},
+           "summarizations": {"a": {"text": " A chat. ", "model": "x"}}}
+    same = {"duration": 2.0,
+            "transcript": {"segments": [{"start": 0.0, "end": 1500.0, "text": "Hi ", "id": 2,
+                                         "extra": True}]},
+            "summarizations": {"a": {"text": "A chat.", "model": "y"}}}
     other = {**doc, "summarizations": {"a": {"text": "A different chat."}}}
     one = pocket_outputs(doc, "source/pocket-1.json", NOW)
     two = pocket_outputs(same, "source/pocket-2.json", NOW)
@@ -14387,21 +12462,14 @@ def test_a_pocket_outputs_identity_hashes_what_it_carries():
 def test_two_pocket_snapshots_that_carry_the_same_output_give_one(ar_archive, writer):
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     raw = ar_archive.root / "pocket" / "raw" / f"{UUID}.json"
     doc = json.loads(raw.read_text(encoding="utf-8"))
     doc["state"] = "processed"  # nothing an output carries
     doc["transcript"]["segments"][0]["end"] = 1.0  # spelled as a float, as it was an int
     raw.write_text(json.dumps(doc, indent=1), encoding="utf-8")
-    again = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=datetime(2026, 10, 10, tzinfo=timezone.utc),
-    )
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
+                now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.sources_added, again.renditions_added, again.failed) == (1, 0, [])
     (rec,) = writer.archive.iter_recordings()
     assert sum(s.kind == "pocket" for s in rec.sources) == 2  # raw is raw: both are kept
@@ -14409,23 +12477,16 @@ def test_two_pocket_snapshots_that_carry_the_same_output_give_one(ar_archive, wr
 
 
 def test_a_consent_listed_recording_is_never_imported_through_its_copy_either(
-    ar_archive, plaud_env, writer
-):
+        ar_archive, plaud_env, writer):
     # why: §9.1. The list excludes the recording, not only its ID: B's catalog row says it is
     # X's duplicate, and it carries X's audio. The run imports neither, and B's title, which
     # would be auto-private, never reaches a group's tags.
     ar_archive.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T09:00:00-07:00")
-    ar_archive.plaud(
-        B,
-        envelopes=[plaud_env(B, name="Interview: Grace")],
-        same_audio_as=f"plaud/audio/2026/08/{X}.wav",
-        dup_of=f"plaud/{X}",
-    )
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name="Interview: Grace")],
+                     same_audio_as=f"plaud/audio/2026/08/{X}.wav", dup_of=f"plaud/{X}")
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    the_plan = plan(
-        ar_archive.root, writer.index, consent={X}, default_timezone="America/Vancouver"
-    )
+    the_plan = plan(ar_archive.root, writer.index, consent={X}, default_timezone="America/Vancouver")
     assert the_plan.counts()["consent-excluded"] == 2
     report = run(the_plan, writer, now=NOW)
     assert (report.created, report.failed) == (1, [])
@@ -14435,14 +12496,11 @@ def test_a_consent_listed_recording_is_never_imported_through_its_copy_either(
 
 def test_the_consent_list_is_read_as_audio_router_reads_it(tmp_path):
     path = tmp_path / "consent.md"
-    path.write_text(
-        "# Never mirror\n"
-        f"- `{X}` — a recording Dan excluded\n"
-        f"{'6' * 32}\n"
-        f"We kept {'5' * 32} on purpose, so it is named in a sentence.\n"
-        f"# - {'4' * 32} is a comment\n",
-        encoding="utf-8",
-    )
+    path.write_text("# Never mirror\n"
+                    f"- `{X}` — a recording Dan excluded\n"
+                    f"{'6' * 32}\n"
+                    f"We kept {'5' * 32} on purpose, so it is named in a sentence.\n"
+                    f"# - {'4' * 32} is a comment\n", encoding="utf-8")
     assert load_consent_list(path) == {X, "6" * 32}
     assert consent_list_path({"plaud": {"consent_list": str(path)}}) == path
 
@@ -14461,10 +12519,8 @@ def test_the_consent_list_fails_closed(tmp_path, content):
 
 
 def _cli_config(tmp_path, monkeypatch, *, consent: str | None = CONSENT):
-    text = (
-        f'[archive]\npath = "{tmp_path / "archive"}"\nwriter_id = "test"\n'
-        f'[state]\npath = "{tmp_path / "state"}"\n[index]\npath = "{tmp_path / "index.db"}"\n'
-    )
+    text = (f'[archive]\npath = "{tmp_path / "archive"}"\nwriter_id = "test"\n'
+            f'[state]\npath = "{tmp_path / "state"}"\n[index]\npath = "{tmp_path / "index.db"}"\n')
     if consent is not None:
         (tmp_path / "consent.md").write_text(consent, encoding="utf-8")
         text += f'[plaud]\nconsent_list = "{tmp_path / "consent.md"}"\n'
@@ -14494,9 +12550,8 @@ def test_the_cli_dry_run_then_import(ar_archive, plaud_env, tmp_path, monkeypatc
         assert title not in text
 
 
-def test_the_cli_reads_the_consent_list_and_fails_closed(
-    ar_archive, plaud_env, tmp_path, monkeypatch, capsys
-):
+def test_the_cli_reads_the_consent_list_and_fails_closed(ar_archive, plaud_env, tmp_path,
+                                                         monkeypatch, capsys):
     build(ar_archive, plaud_env)
     ar_archive.plaud(X, envelopes=[plaud_env(X)], recorded_at="2026-08-05T09:00:00-07:00")
     ar_archive.write_catalog()
@@ -14518,14 +12573,12 @@ def test_the_cli_reads_the_consent_list_and_fails_closed(
     assert X not in refs
 
 
-def test_the_cli_refuses_unplaced_rows_unless_told(
-    ar_archive, plaud_env, tmp_path, monkeypatch, capsys
-):
+def test_the_cli_refuses_unplaced_rows_unless_told(ar_archive, plaud_env, tmp_path, monkeypatch,
+                                                    capsys):
     build(ar_archive, plaud_env)
     # A row of no known source, with no audio: it shares nothing with A, so A still imports.
-    ar_archive.rows.append(
-        {**ar_archive.rows[0], "uri": "zoom/z1", "source": "zoom", "audio_sha256": ""}
-    )
+    ar_archive.rows.append({**ar_archive.rows[0], "uri": "zoom/z1", "source": "zoom",
+                            "audio_sha256": ""})
     ar_archive.write_catalog()
     _cli_config(tmp_path, monkeypatch)
     main(["init", "--json"])
@@ -14538,29 +12591,15 @@ def test_the_cli_refuses_unplaced_rows_unless_told(
 
 def test_the_run_module_reports_counts_only():
     assert set(audio_router.RunReport().to_dict()) == {
-        "created",
-        "merged",
-        "sources_added",
-        "renditions_added",
-        "plaud_outputs",
-        "held_removals",
-        "skipped_snapshots",
-        "skipped_outputs",
-        "measured",
-        "failed",
-    }
+        "created", "merged", "sources_added", "renditions_added", "plaud_outputs",
+        "held_removals", "skipped_snapshots", "skipped_outputs", "measured", "failed"}
 
 
 def _group(ar, plaud_env, *, b_tags=()):
     """A with a good and a degraded snapshot, and B, A's byte-identical duplicate."""
     ar.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True)])
-    ar.plaud(
-        B,
-        envelopes=[plaud_env(B)],
-        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
-        dup_of=f"plaud/{A}",
-        tags=b_tags,
-    )
+    ar.plaud(B, envelopes=[plaud_env(B)], same_audio_as=f"plaud/audio/2026/08/{A}.wav",
+             dup_of=f"plaud/{A}", tags=b_tags)
     ar.write_catalog()
 
 
@@ -14572,9 +12611,7 @@ def test_a_same_audio_group_counts_each_skipped_snapshot_once(ar_archive, plaud_
     assert the_plan.incomplete_snapshots()["total"] == 1
     first = run(the_plan, writer, now=NOW)
     assert (first.created, first.merged, first.skipped_snapshots) == (1, 1, 1)
-    again_plan = plan(
-        ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"
-    )
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.incomplete_snapshots()["total"] == 1
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.skipped_snapshots == again_plan.incomplete_snapshots()["total"] == 1
@@ -14583,34 +12620,20 @@ def test_a_same_audio_group_counts_each_skipped_snapshot_once(ar_archive, plaud_
 def test_held_removals_are_counted_once_per_recording(ar_archive, plaud_env, writer, monkeypatch):
     _group(ar_archive, plaud_env)
     held = (Held("source/plaud-20260801T161000Z.json", "transcript", "transcript removed"),)
-    monkeypatch.setattr(
-        Writer,
-        "reconcile_plaud",
-        lambda self, rid: SimpleNamespace(written=0, held=held, skipped=()),
-    )
-    report = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    monkeypatch.setattr(Writer, "reconcile_plaud",
+                        lambda self, rid: SimpleNamespace(written=0, held=held, skipped=()))
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert (report.merged, report.held_removals) == (1, 1)
 
 
-def test_a_degraded_snapshot_never_names_the_recording(ar_archive, plaud_env, writer, monkeypatch):
+def test_a_degraded_snapshot_never_names_the_recording(ar_archive, plaud_env, writer,
+                                                       monkeypatch):
     # why: §9.1.1. Reconcile names a recording from complete snapshots only, so the import
     # must not feed a Plaud field from a degraded one, even for a moment.
-    ar_archive.plaud(
-        A,
-        envelopes=[
-            plaud_env(A, name="Good title"),
-            plaud_env(A, name="Degraded title", link_error=True),
-        ],
-    )
-    ar_archive.plaud(
-        B,
-        envelopes=[plaud_env(B, name="Only degraded", link_error=True)],
-        recorded_at="2026-08-02T09:00:00-07:00",
-    )
+    ar_archive.plaud(A, envelopes=[plaud_env(A, name="Good title"),
+                                   plaud_env(A, name="Degraded title", link_error=True)])
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name="Only degraded", link_error=True)],
+                     recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.write_catalog()
     seen = {}
     real_add = Writer.add
@@ -14620,11 +12643,7 @@ def test_a_degraded_snapshot_never_names_the_recording(ar_archive, plaud_env, wr
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == {A: ("Good title", "plaud"), B: ("Untitled recording", None)}
 
@@ -14634,38 +12653,23 @@ def test_a_skipped_outputs_reason_never_carries_text_from_the_file(tmp_path):
     # only when it is a short slug.
     path = tmp_path / "x-20260801T170000Z.json"
     assert map_rendition(path, {**WORDS, "kind": "Week 4 secret"}).skipped == (
-        "an output kind recordings has no place for (other)"
-    )
+        "an output kind recordings has no place for (other)")
     assert map_rendition(path, {**WORDS, "kind": "novel"}).skipped == (
-        "an output kind recordings has no place for (novel)"
-    )
+        "an output kind recordings has no place for (novel)")
 
 
 def test_a_word_in_a_gap_between_segments_goes_to_the_nearest_one(tmp_path):
     # why: a timed word between two whisper segments is kept, never dropped: with the nearer
     # segment, and the earlier one on a tie.
-    words = [
-        {"word": "One", "start": 0.1, "end": 0.9},
-        {"word": "gap", "start": 1.1, "end": 1.3},
-        {"word": "tie", "start": 1.25, "end": 1.75},
-        {"word": "near", "start": 1.6, "end": 1.8},
-        {"word": "Two", "start": 2.1, "end": 2.9},
-    ]
-    doc = {
-        **WORDS,
-        "payload": {
-            "words": words,
-            "segments": [
-                {"id": 0, "start": 0.0, "end": 1.0, "text": " One"},
-                {"id": 1, "start": 2.0, "end": 3.0, "text": " Two"},
-            ],
-        },
-    }
+    words = [{"word": "One", "start": 0.1, "end": 0.9}, {"word": "gap", "start": 1.1, "end": 1.3},
+             {"word": "tie", "start": 1.25, "end": 1.75}, {"word": "near", "start": 1.6, "end": 1.8},
+             {"word": "Two", "start": 2.1, "end": 2.9}]
+    doc = {**WORDS, "payload": {"words": words, "segments": [
+        {"id": 0, "start": 0.0, "end": 1.0, "text": " One"},
+        {"id": 1, "start": 2.0, "end": 3.0, "text": " Two"}]}}
     out = map_rendition(tmp_path / "words-x-v-20260801T170000Z.json", doc).rendition
     assert [[w["word"] for w in s["words"]] for s in out.payload["segments"]] == [
-        ["One", "gap", "tie"],
-        ["near", "Two"],
-    ]
+        ["One", "gap", "tie"], ["near", "Two"]]
 
 
 def test_run_itself_refuses_a_plan_with_problems(ar_archive, plaud_env, writer):
@@ -14673,10 +12677,8 @@ def test_run_itself_refuses_a_plan_with_problems(ar_archive, plaud_env, writer):
     # so the guarantee must not depend on the caller having checked. It stops before the lock.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    the_plan = dataclasses.replace(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        problems=("a problem naming Week 4",),
-    )
+    the_plan = dataclasses.replace(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
+                                   problems=("a problem naming Week 4",))
     with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
         with pytest.raises(ImportStopped, match="the plan has 1 problem") as caught:
             run(the_plan, writer, now=NOW, lock_timeout=0.1)
@@ -14685,20 +12687,13 @@ def test_run_itself_refuses_a_plan_with_problems(ar_archive, plaud_env, writer):
 
 
 def test_the_disk_guard_counts_the_size_of_the_recording_about_to_be_copied(
-    ar_archive, plaud_env, writer
-):
+        ar_archive, plaud_env, writer):
     # why: §12.5. Free space is judged after the copy, not before it.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
     size = (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").stat().st_size
-    tight = DiskStatus(
-        path="x",
-        marker=True,
-        free_bytes=size * 11 // 2,
-        total_bytes=size * 100,
-        level="ok",
-        message="5.5% free",
-    )  # 4.5% free once the copy is in
+    tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
+                       level="ok", message="5.5% free")  # 4.5% free once the copy is in
     the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     with pytest.raises(ImportStopped, match="would leave less than 5% free") as caught:
         run(the_plan, writer, now=NOW, disk=lambda: tight)
@@ -14708,9 +12703,8 @@ def test_the_disk_guard_counts_the_size_of_the_recording_about_to_be_copied(
     assert run(the_plan, writer, now=NOW, disk=lambda: roomy).created == 1
 
 
-def test_a_bad_disk_config_exits_78_like_every_config_error(
-    ar_archive, plaud_env, tmp_path, monkeypatch, capsys
-):
+def test_a_bad_disk_config_exits_78_like_every_config_error(ar_archive, plaud_env, tmp_path,
+                                                            monkeypatch, capsys):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
     _cli_config(tmp_path, monkeypatch)
@@ -14722,29 +12716,23 @@ def test_a_bad_disk_config_exits_78_like_every_config_error(
     assert "stop_free_percent" in json.loads(capsys.readouterr().out)["error"]
 
 
-def test_the_cli_stops_on_plan_problems_even_with_allow_unplaced(
-    ar_archive, plaud_env, tmp_path, monkeypatch, capsys
-):
+def test_the_cli_stops_on_plan_problems_even_with_allow_unplaced(ar_archive, plaud_env, tmp_path,
+                                                                 monkeypatch, capsys):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
     _cli_config(tmp_path, monkeypatch)
     assert main(["init", "--json"]) == 0
     capsys.readouterr()
     real_plan = audio_router.plan
-    monkeypatch.setattr(
-        "recordings.cli.plan",
-        lambda *args, **kwargs: dataclasses.replace(
-            real_plan(*args, **kwargs), problems=("a plan problem",)
-        ),
-    )
+    monkeypatch.setattr("recordings.cli.plan", lambda *args, **kwargs: dataclasses.replace(
+        real_plan(*args, **kwargs), problems=("a plan problem",)))
     assert main(["import-audio-router", str(ar_archive.root), "--allow-unplaced", "--json"]) == 1
     assert json.loads(capsys.readouterr().out)["error"] == "a plan problem"
     assert list(Archive(tmp_path / "archive").iter_recordings()) == []
 
 
 def test_a_duplicates_catalog_label_is_on_the_recording_when_it_is_created(
-    ar_archive, plaud_env, writer, monkeypatch
-):
+        ar_archive, plaud_env, writer, monkeypatch):
     # why: §7.4. B carries the label, A is added first, and A is created with it.
     _group(ar_archive, plaud_env, b_tags=("private",))
     seen = []
@@ -14755,74 +12743,51 @@ def test_a_duplicates_catalog_label_is_on_the_recording_when_it_is_created(
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == [(A, [("private", "you")]), (B, [("private", "you")])]
 
 
-def test_a_re_run_never_decodes_what_the_archive_already_holds(
-    ar_archive, plaud_env, writer, monkeypatch
-):
+def test_a_re_run_never_decodes_what_the_archive_already_holds(ar_archive, plaud_env, writer,
+                                                              monkeypatch):
     # why: §9.1.1, Task 9's council. A present row's recording holds the decoded duration of the
     # same bytes, so a re-run measures only what it would create: decoding about 3,000
     # recordings again on every re-run took hours.
     build(ar_archive, plaud_env)
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     decoded = []
     real_probe = audio_router.probe
-    monkeypatch.setattr(
-        audio_router, "probe", lambda path, **kw: decoded.append(path) or real_probe(path, **kw)
-    )
-    again_plan = plan(
-        ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"
-    )
+    monkeypatch.setattr(audio_router, "probe",
+                        lambda path, **kw: decoded.append(path) or real_probe(path, **kw))
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.counts()["present"] == 6 and again_plan.unprobed() == []
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.failed, again.measured, decoded) == ([], {}, [])
 
 
 def test_a_present_row_whose_recording_has_gone_fails_and_is_never_created_unmeasured(
-    ar_archive, plaud_env, writer
-):
+        ar_archive, plaud_env, writer):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     (item,) = the_plan.items
     assert item.disposition == "present" and item.probed is None
     shutil.rmtree(writer.archive.path_for(item.present_id))  # removed by hand after the plan
     report = run(the_plan, writer, now=NOW)
-    assert report.failed == [
-        {"uri": f"plaud/{A}", "reason": "KeyError: a recording folder is missing"}
-    ]
+    assert report.failed == [{"uri": f"plaud/{A}",
+                              "reason": "KeyError: a recording folder is missing"}]
     assert list(writer.archive.iter_recordings()) == []
 
 
 def test_a_re_run_never_writes_an_imported_output_twice_whatever_its_bytes(
-    ar_archive, plaud_env, writer, monkeypatch
-):
+        ar_archive, plaud_env, writer, monkeypatch):
     # why: §6.4, Task 9's council. Outputs are write-once and each audio-router file is imported
     # once. Compared by bytes, a later change to this mapping, or to how an output is written,
     # would leave a second copy of every output on the next re-run, and the first, x.json,
     # would stay the one shown (x-2.json sorts before it).
     build(ar_archive, plaud_env)
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     files = _files(writer.root)
     real_map, real_pocket = audio_router.map_rendition, audio_router.pocket_outputs
 
@@ -14836,65 +12801,39 @@ def test_a_re_run_never_writes_an_imported_output_twice_whatever_its_bytes(
         return dataclasses.replace(found, rendition=changed(found.rendition))
 
     monkeypatch.setattr(audio_router, "map_rendition", mapped)
-    monkeypatch.setattr(
-        audio_router, "pocket_outputs", lambda *args: [changed(r) for r in real_pocket(*args)]
-    )
-    again = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=datetime(2026, 10, 10, tzinfo=timezone.utc),
-    )
+    monkeypatch.setattr(audio_router, "pocket_outputs",
+                        lambda *args: [changed(r) for r in real_pocket(*args)])
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
+                now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.failed, again.renditions_added) == ([], 0)
     assert _files(writer.root) == files
 
 
-def test_an_import_version_bump_writes_each_pocket_output_once_more(
-    ar_archive, writer, monkeypatch
-):
+def test_an_import_version_bump_writes_each_pocket_output_once_more(ar_archive, writer,
+                                                                    monkeypatch):
     # why: §6.5, Task 9's council. A bump writes Pocket's outputs again as pocket@2, beside the
     # old ones (write-once), the newer shown; the re-run after it writes nothing.
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     monkeypatch.setattr(ar_outputs, "IMPORT_VERSION", 2)
-    first = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
-    second = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    first = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
+    second = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert (first.renditions_added, second.renditions_added) == (2, 0)
     (rec,) = writer.archive.iter_recordings()
     versions = [(r.kind, r.version) for _, r in writer.archive.renditions(rec.id)]
-    assert sorted(versions) == [
-        ("notes", "pocket@1"),
-        ("notes", "pocket@2"),
-        ("transcript", "pocket@1"),
-        ("transcript", "pocket@2"),
-    ]
+    assert sorted(versions) == [("notes", "pocket@1"), ("notes", "pocket@2"),
+                                ("transcript", "pocket@1"), ("transcript", "pocket@2")]
     assert [v for k, v in versions if k == "transcript"][-1] == "pocket@2"
 
 
-def test_a_recording_imported_before_its_id_was_listed_stops_the_next_run(
-    ar_archive, plaud_env, writer
-):
+def test_a_recording_imported_before_its_id_was_listed_stops_the_next_run(ar_archive, plaud_env,
+                                                                          writer):
     # why: §9.1, Task 9's council. The consent list is a hard rule and 2a can't remove a
     # recording: one imported before its ID was listed must not stay silently, counted among
     # the rows the list kept out. Counted by recording, never named.
     _group(ar_archive, plaud_env)
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     later = plan(ar_archive.root, writer.index, consent={B}, default_timezone="America/Vancouver")
     assert later.counts()["consent-excluded"] == 2 and not later.ok
     (problem,) = later.problems
@@ -14905,18 +12844,13 @@ def test_a_recording_imported_before_its_id_was_listed_stops_the_next_run(
 
 
 def test_a_label_added_since_reaches_a_recording_here_even_when_the_run_stops(
-    ar_archive, plaud_env, writer
-):
+        ar_archive, plaud_env, writer):
     # why: §7.4, Task 9's council. A privacy label added in audio-router after the import lands
     # on the next run. Recordings already here go first, so a new recording that stops the run
     # (here the disk guard) never leaves it public until the run after.
     row = ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     row["tags"] = "therapy"
     first = "1" * 32  # sorts before A
     ar_archive.plaud(first, envelopes=[plaud_env(first)], recorded_at="2026-08-02T09:00:00-07:00")
@@ -14924,14 +12858,8 @@ def test_a_label_added_since_reaches_a_recording_here_even_when_the_run_stops(
     the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert [i.disposition for i in the_plan.items] == ["new", "present"]
     size = (ar_archive.root / f"plaud/audio/2026/08/{first}.wav").stat().st_size
-    tight = DiskStatus(
-        path="x",
-        marker=True,
-        free_bytes=size * 11 // 2,
-        total_bytes=size * 100,
-        level="ok",
-        message="5.5% free",
-    )
+    tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
+                       level="ok", message="5.5% free")
     with pytest.raises(ImportStopped, match="would leave less than 5% free"):
         run(the_plan, writer, now=NOW, disk=lambda: tight)
     (rec,) = writer.archive.iter_recordings()
@@ -14951,14 +12879,8 @@ def test_the_disk_guard_counts_a_duplicate_that_creates_the_recording(ar_archive
     the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert [i.disposition for i in the_plan.items] == ["deferred-to-2b", "duplicate"]
     size = audio.stat().st_size
-    tight = DiskStatus(
-        path="x",
-        marker=True,
-        free_bytes=size * 11 // 2,
-        total_bytes=size * 100,
-        level="ok",
-        message="5.5% free",
-    )
+    tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
+                       level="ok", message="5.5% free")
     with pytest.raises(ImportStopped, match="would leave less than 5% free"):
         run(the_plan, writer, now=NOW, disk=lambda: tight)
     assert list(writer.archive.iter_recordings()) == []
@@ -14967,33 +12889,21 @@ def test_the_disk_guard_counts_a_duplicate_that_creates_the_recording(ar_archive
 def test_a_word_stays_with_the_segment_that_holds_it_when_whisper_ends_go_backwards(tmp_path):
     # why: Task 9's council. bisect needs ordered segment ends, and whisper's nearly always are.
     # When one ends before an earlier one, a word inside the earlier segment still goes there.
-    doc = {
-        **WORDS,
-        "payload": {
-            "words": [{"word": "mid", "start": 2.8, "end": 3.2}],
-            "segments": [
-                {"id": 0, "start": 0.0, "end": 5.0, "text": " a"},
-                {"id": 1, "start": 1.0, "end": 2.0, "text": " b"},
-                {"id": 2, "start": 5.0, "end": 8.0, "text": " c"},
-            ],
-        },
-    }
+    doc = {**WORDS, "payload": {"words": [{"word": "mid", "start": 2.8, "end": 3.2}],
+                                "segments": [{"id": 0, "start": 0.0, "end": 5.0, "text": " a"},
+                                             {"id": 1, "start": 1.0, "end": 2.0, "text": " b"},
+                                             {"id": 2, "start": 5.0, "end": 8.0, "text": " c"}]}}
     out = map_rendition(tmp_path / "words-x-v-20260801T170000Z.json", doc).rendition
     assert [[w["word"] for w in s["words"]] for s in out.payload["segments"]] == [["mid"], [], []]
 
 
 def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_privacy(
-    ar_archive, plaud_env, writer
-):
+        ar_archive, plaud_env, writer):
     # why: §7.4, Task 9's council. A recording that exists keeps the tags Dan left it: a catalog
     # label he removed stays removed, and only a privacy label (which fails closed) merges again.
     ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("lecture", "therapy"))
     ar_archive.write_catalog()
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
     assert {t.tag for t in rec.tags} == {"lecture", "private/therapy"}
 
@@ -15006,19 +12916,15 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
             return rec.model_copy(update={"tags": [t for t in rec.tags if t.tag != self.tag]})
 
     writer.mutate(rec.id, RemoveTag("lecture"))
-    again = run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=datetime(2026, 10, 10, tzinfo=timezone.utc),
-    )
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
+                now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.failed == []
     assert {t.tag for t in writer.archive.load(rec.id).tags} == {"private/therapy"}
 
 
 @pytest.mark.parametrize("duplicate", ["the twin", "the orphan"])
 def test_a_deferred_orphans_private_label_is_on_the_recording_its_twin_creates(
-    ar_archive, writer, monkeypatch, duplicate
-):
+        ar_archive, writer, monkeypatch, duplicate):
     # why: §7.4, §9.3 (the final review's Important 1, from its probe). An orphan deferred to 2b,
     # tagged private in audio-router's catalog, and a Pocket row with its audio, either one the
     # other's dup_of: the Pocket row creates the recording, and it was created with no tags. Only
@@ -15027,8 +12933,7 @@ def test_a_deferred_orphans_private_label_is_on_the_recording_its_twin_creates(
     orphan["tags"] = "lecture;private"
     twin = ar_archive.pocket(UUID)
     (ar_archive.root / twin["audio_rel"]).write_bytes(
-        (ar_archive.root / orphan["audio_rel"]).read_bytes()
-    )
+        (ar_archive.root / orphan["audio_rel"]).read_bytes())
     twin["audio_sha256"] = orphan["audio_sha256"]
     if duplicate == "the twin":
         twin["dup_of"] = orphan["uri"]
@@ -15051,9 +12956,7 @@ def test_a_deferred_orphans_private_label_is_on_the_recording_its_twin_creates(
     (rec,) = writer.archive.iter_recordings()
     assert is_private(rec)
     assert {(s.kind, s.ref) for s in rec.sources} == {
-        ("pocket", UUID),
-        ("audio_router", f"pocket/{UUID}"),
-    }  # nothing of the orphan's
+        ("pocket", UUID), ("audio_router", f"pocket/{UUID}")}  # nothing of the orphan's
 ```
 
 The kill-point test runs the import in a child process, which dies with `os._exit(137)` at one of
@@ -15121,20 +13024,13 @@ def disk_thresholds(cfg: Config) -> dict[str, float]:
     stop = section.get("stop_free_percent", STOP_FREE_PERCENT)
     numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (warn, stop))
     if not numbers or not 0 < stop < warn < 100:
-        raise ConfigError(
-            "[disk] stop_free_percent and warn_free_percent must be numbers with "
-            "0 < stop_free_percent < warn_free_percent < 100"
-        )
+        raise ConfigError("[disk] stop_free_percent and warn_free_percent must be numbers with "
+                          "0 < stop_free_percent < warn_free_percent < 100")
     return {"warn": float(warn), "stop": float(stop)}
 
 
-def disk_status(
-    archive_root: Path,
-    *,
-    expected_uuid: str | None,
-    warn: float = WARN_FREE_PERCENT,
-    stop: float = STOP_FREE_PERCENT,
-) -> DiskStatus:
+def disk_status(archive_root: Path, *, expected_uuid: str | None,
+                warn: float = WARN_FREE_PERCENT, stop: float = STOP_FREE_PERCENT) -> DiskStatus:
     root = Path(archive_root)
     marker, message = True, ""
     try:
@@ -15149,9 +13045,8 @@ def disk_status(
         free, total = st.f_bavail * st.f_frsize, st.f_blocks * st.f_frsize
     except (OSError, AttributeError):  # missing folder, or no statvfs (the Pages demo)
         pass
-    status = DiskStatus(
-        path=str(root), marker=marker, free_bytes=free, total_bytes=total, level="ok", message=""
-    )
+    status = DiskStatus(path=str(root), marker=marker, free_bytes=free, total_bytes=total,
+                        level="ok", message="")
     pct = status.free_percent
     if not marker:
         level = "stop"
@@ -15161,14 +13056,8 @@ def disk_status(
         level, message = "warn", f"{pct:.1f}% free: below {warn:g}%"
     else:
         level, message = "ok", (f"{pct:.1f}% free" if pct is not None else "free space unknown")
-    return DiskStatus(
-        path=str(root),
-        marker=marker,
-        free_bytes=free,
-        total_bytes=total,
-        level=level,
-        message=message,
-    )
+    return DiskStatus(path=str(root), marker=marker, free_bytes=free, total_bytes=total,
+                      level=level, message=message)
 ```
 
 In `config.example.toml`, **add** after the `[index]` section (after its line
@@ -15212,8 +13101,7 @@ def consent_list_path(data: dict) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ConsentListError(
             "[plaud] consent_list is not set in config.toml. It names Dan's consent list, and "
-            "the import refuses to run without it (spec §9.1)."
-        )
+            "the import refuses to run without it (spec §9.1).")
     return Path(value).expanduser()
 
 
@@ -15225,27 +13113,19 @@ def load_consent_list(path: Path) -> frozenset[str]:
     except FileNotFoundError:
         raise ConsentListError(
             f"the consent list {path} is missing: refusing, because a missing list would "
-            "exclude nothing"
-        ) from None
+            "exclude nothing") from None
     except (OSError, UnicodeDecodeError) as exc:
         raise ConsentListError(
-            f"the consent list {path} can't be read ({type(exc).__name__}): refusing"
-        ) from None
+            f"the consent list {path} can't be read ({type(exc).__name__}): refusing") from None
     if not text.strip():
         raise ConsentListError(
-            f"the consent list {path} is empty (a placeholder, or a truncated copy?): refusing"
-        )
-    ids = frozenset(
-        canonical_plaud_id(m.group(1))
-        for line in text.splitlines()
-        if not line.lstrip().startswith("#")
-        for m in [ENTRY_RE.match(line)]
-        if m
-    )
+            f"the consent list {path} is empty (a placeholder, or a truncated copy?): refusing")
+    ids = frozenset(canonical_plaud_id(m.group(1)) for line in text.splitlines()
+                    if not line.lstrip().startswith("#")
+                    for m in [ENTRY_RE.match(line)] if m)
     if not ids:
         raise ConsentListError(
-            f"the consent list {path} holds no IDs, so it is the wrong file: refusing"
-        )
+            f"the consent list {path} holds no IDs, so it is the wrong file: refusing")
     return ids
 ```
 
@@ -15386,12 +13266,8 @@ def _number(value: Any) -> bool:
 
 
 def _timed(item: Any) -> bool:
-    return (
-        isinstance(item, dict)
-        and _number(item.get("start"))
-        and _number(item.get("end"))
-        and 0 <= item["start"] <= item["end"]
-    )
+    return (isinstance(item, dict) and _number(item.get("start")) and _number(item.get("end"))
+            and 0 <= item["start"] <= item["end"])
 
 
 def _times(rows: list[dict], start: float = 0.0) -> tuple[list[tuple[float, float]], int]:
@@ -15413,8 +13289,7 @@ def ar_stamp(path: Path) -> datetime | None:
     """The UTC stamp a rendition's file name ends with (audio-router's store._rendition_stamp)."""
     try:
         return datetime.strptime(path.stem.rsplit("-", 1)[-1], "%Y%m%dT%H%M%SZ").replace(
-            tzinfo=timezone.utc
-        )
+            tzinfo=timezone.utc)
     except ValueError:
         return None
 
@@ -15423,10 +13298,8 @@ def _words(items: Any, start: float) -> tuple[list[dict], int]:
     """Every word of a merged turn, in order, the untimed ones included and counted."""
     rows = [w for w in items or [] if isinstance(w, dict)]
     times, untimed = _times(rows, start)
-    return [
-        {"word": str(w.get("word") or ""), "start": begin, "end": end}
-        for w, (begin, end) in zip(rows, times)
-    ], untimed
+    return [{"word": str(w.get("word") or ""), "start": begin, "end": end}
+            for w, (begin, end) in zip(rows, times)], untimed
 
 
 def _words_transcript(payload: dict) -> tuple[dict, int] | None:
@@ -15438,14 +13311,9 @@ def _words_transcript(payload: dict) -> tuple[dict, int] | None:
     if not rows:
         return None
     times, untimed = _times(rows)
-    words = sorted(
-        (
-            {"word": str(w.get("word") or ""), "start": float(w["start"]), "end": float(w["end"])}
-            for w in payload.get("words") or []
-            if _timed(w)
-        ),
-        key=lambda w: (w["start"] + w["end"]) / 2,
-    )
+    words = sorted(({"word": str(w.get("word") or ""), "start": float(w["start"]),
+                     "end": float(w["end"])} for w in payload.get("words") or [] if _timed(w)),
+                   key=lambda w: (w["start"] + w["end"]) / 2)
     # bisect needs ordered ends. whisper's nearly always are; when one ends before an earlier
     # one, the running maximum keeps a word with the segment that contains it.
     starts, ends = [start for start, _ in times], list(accumulate((e for _, e in times), max))
@@ -15458,10 +13326,8 @@ def _words_transcript(payload: dict) -> tuple[dict, int] | None:
         elif n and middle - ends[n - 1] <= max(0.0, starts[n] - middle):
             n -= 1  # in the gap, and no nearer to the next segment than to the one before
         inside[n].append(word)
-    out = [
-        {"start": start, "end": end, "text": str(seg.get("text") or "").strip(), "words": found}
-        for seg, (start, end), found in zip(rows, times, inside)
-    ]
+    out = [{"start": start, "end": end, "text": str(seg.get("text") or "").strip(),
+            "words": found} for seg, (start, end), found in zip(rows, times, inside)]
     return {"segments": out}, untimed
 
 
@@ -15474,15 +13340,9 @@ def _merged_transcript(payload: dict) -> tuple[dict, int, int] | None:
     for turn, (start, end) in zip(turns, times):
         words, missing = _words(turn.get("words"), start)
         untimed_words += missing
-        segments.append(
-            {
-                "start": start,
-                "end": end,
-                "text": str(turn.get("text") or "").strip(),
-                **({"speaker": str(turn["speaker"])} if turn.get("speaker") else {}),
-                "words": words,
-            }
-        )
+        segments.append({"start": start, "end": end, "text": str(turn.get("text") or "").strip(),
+                         **({"speaker": str(turn["speaker"])} if turn.get("speaker") else {}),
+                         "words": words})
     return {"segments": segments}, untimed, untimed_words
 
 
@@ -15492,11 +13352,8 @@ def _summary_markdown(payload: dict) -> str:
         parts.append(f"# {payload['title'].strip()}")
     if isinstance(payload.get("summary_md"), str) and payload["summary_md"].strip():
         parts.append(payload["summary_md"].strip())
-    actions = [
-        a
-        for a in payload.get("actions") or []
-        if isinstance(a, dict) and str(a.get("text") or "").strip()
-    ]
+    actions = [a for a in payload.get("actions") or []
+               if isinstance(a, dict) and str(a.get("text") or "").strip()]
     if actions:
         lines = []
         for action in actions:
@@ -15528,18 +13385,11 @@ def map_rendition(path: Path, doc: object) -> Mapped:
         return Mapped(skipped="no UTC stamp in its file name")
     payload = doc["payload"] if isinstance(doc.get("payload"), dict) else {}
     meta_in = doc["meta"] if isinstance(doc.get("meta"), dict) else {}
-    inputs = {
-        k: str(v)
-        for k, v in (doc.get("inputs") or {}).items()
-        if isinstance(v, (str, int, float)) and not isinstance(v, bool)
-    }
-    common = dict(
-        engine=engine,
-        version=version,
-        created_at=created,
-        inputs=inputs,
-        meta={"imported_from": "audio-router", "file": path.name, "audio_router_meta": meta_in},
-    )
+    inputs = {k: str(v) for k, v in (doc.get("inputs") or {}).items()
+              if isinstance(v, (str, int, float)) and not isinstance(v, bool)}
+    common = dict(engine=engine, version=version, created_at=created, inputs=inputs,
+                  meta={"imported_from": "audio-router", "file": path.name,
+                        "audio_router_meta": meta_in})
     try:
         if kind == "words":
             built = _words_transcript(payload)
@@ -15547,52 +13397,26 @@ def map_rendition(path: Path, doc: object) -> Mapped:
                 return Mapped(skipped="a transcript with no segments")
             body, untimed = built
             model = meta_in.get("model") if isinstance(meta_in.get("model"), str) else None
-            return Mapped(
-                Rendition(
-                    kind="transcript",
-                    model=model,
-                    payload=body,
-                    **_counted(common, untimed_segments=untimed),
-                )
-            )
+            return Mapped(Rendition(kind="transcript", model=model, payload=body,
+                                    **_counted(common, untimed_segments=untimed)))
         if kind == "merged":
             built = _merged_transcript(payload)
             if built is None:
                 return Mapped(skipped="a transcript with no segments")
             body, untimed, untimed_words = built
-            return Mapped(
-                Rendition(
-                    kind="transcript",
-                    payload=body,
-                    **_counted(common, untimed_segments=untimed, untimed_words=untimed_words),
-                )
-            )
+            return Mapped(Rendition(kind="transcript", payload=body,
+                                    **_counted(common, untimed_segments=untimed,
+                                               untimed_words=untimed_words)))
         if kind == "turns":
-            return Mapped(
-                Rendition(
-                    kind="speakers",
-                    payload={
-                        "turns": list(payload.get("turns") or []),
-                        "overlap_turns": list(payload.get("overlap_turns") or []),
-                    },
-                    **common,
-                )
-            )
+            return Mapped(Rendition(kind="speakers", payload={
+                "turns": list(payload.get("turns") or []),
+                "overlap_turns": list(payload.get("overlap_turns") or [])}, **common))
         if kind == "summary":
             markdown = _summary_markdown(payload)
-            return (
-                Mapped(
-                    Rendition(
-                        kind="notes",
-                        note_type="audio-router-summary",
-                        model=engine.split("/")[-1],
-                        payload={"markdown": markdown},
-                        **common,
-                    )
-                )
-                if markdown
-                else Mapped(skipped="an empty summary")
-            )
+            return (Mapped(Rendition(kind="notes", note_type="audio-router-summary",
+                                     model=engine.split("/")[-1], payload={"markdown": markdown},
+                                     **common))
+                    if markdown else Mapped(skipped="an empty summary"))
     except ValidationError:
         return Mapped(skipped="does not fit the output schema")
     shown = kind if re.fullmatch(r"[a-z_]{1,40}", kind) else "other"  # a file's text is never shown
@@ -15613,57 +13437,33 @@ def pocket_outputs(doc: dict, raw: str, fetched_at: datetime) -> list[Rendition]
         in_ms = _number(duration) and duration > 0 and bool(ends) and max(ends) > 2 * duration
         scale = 1000.0 if in_ms else 1.0
         times, untimed = _times(rows)
-        segments = [
-            {
-                "start": start / scale,
-                "end": end / scale,
-                "text": str(r.get("text") or "").strip(),
-                **({"speaker": str(r["speaker"])} if r.get("speaker") else {}),
-            }
-            for r, (start, end) in zip(rows, times)
-        ]
+        segments = [{"start": start / scale, "end": end / scale,
+                     "text": str(r.get("text") or "").strip(),
+                     **({"speaker": str(r["speaker"])} if r.get("speaker") else {})}
+                    for r, (start, end) in zip(rows, times)]
         meta: dict[str, Any] = {"time_unit": "ms" if in_ms else "s"}
         if untimed:
             meta["untimed_segments"] = untimed
-        out.append(
-            Rendition(
-                kind="transcript",
-                engine="pocket",
-                model="pocket",
-                version=version,
-                created_at=fetched_at,
-                inputs={
-                    "source": raw,
-                    "part_sha256": sha256_of([segments, untimed, meta["time_unit"]]),
-                },
-                meta=meta,
-                payload={"segments": segments},
-            )
-        )
+        out.append(Rendition(kind="transcript", engine="pocket", model="pocket", version=version,
+                             created_at=fetched_at,
+                             inputs={"source": raw, "part_sha256": sha256_of(
+                                 [segments, untimed, meta["time_unit"]])},
+                             meta=meta, payload={"segments": segments}))
     summaries = doc.get("summarizations") if isinstance(doc.get("summarizations"), dict) else {}
     n = 0
     for key in sorted(summaries):
         value = summaries[key]
-        text = (
-            value["text"]
-            if isinstance(value, dict) and isinstance(value.get("text"), str)
-            else canonical_json(value)
-        )
+        text = (value["text"] if isinstance(value, dict) and isinstance(value.get("text"), str)
+                else canonical_json(value))
         if not text.strip():
             continue
         n += 1
-        out.append(
-            Rendition(
-                kind="notes",
-                note_type="pocket-summary" if n == 1 else f"pocket-summary-{n}",
-                engine="pocket",
-                model="pocket",
-                version=version,
-                created_at=fetched_at,
-                inputs={"source": raw, "part_sha256": sha256_of(text.strip())},
-                payload={"markdown": text.strip()},
-            )
-        )
+        out.append(Rendition(kind="notes",
+                             note_type="pocket-summary" if n == 1 else f"pocket-summary-{n}",
+                             engine="pocket", model="pocket", version=version,
+                             created_at=fetched_at,
+                             inputs={"source": raw, "part_sha256": sha256_of(text.strip())},
+                             payload={"markdown": text.strip()}))
     return out
 ```
 
@@ -15794,16 +13594,10 @@ def _titles(item: Item, *, complete_only: bool = False) -> list[str]:
     (which uses them all, erring private), never into a report."""
     key = "title" if item.kind == "pocket" else "name"
     problems = item.snapshot_problems or ((),) * len(item.snapshots)
-    docs = [
-        _read_json(path)
-        for path, bad in zip(item.snapshots, problems)
-        if not (complete_only and bad)
-    ]
-    return [
-        d[key].strip()
-        for d in docs
-        if isinstance(d, dict) and isinstance(d.get(key), str) and d[key].strip()
-    ]
+    docs = [_read_json(path) for path, bad in zip(item.snapshots, problems)
+            if not (complete_only and bad)]
+    return [d[key].strip() for d in docs
+            if isinstance(d, dict) and isinstance(d.get(key), str) and d[key].strip()]
 
 
 def _identity(rendition: Rendition) -> tuple:
@@ -15812,13 +13606,8 @@ def _identity(rendition: Rendition) -> tuple:
     snapshot, the hash of what it carries and its `version`, which carries IMPORT_VERSION."""
     if rendition.meta.get("imported_from") == "audio-router":
         return ("audio-router", rendition.meta.get("file"))
-    return (
-        rendition.kind,
-        rendition.note_type,
-        rendition.inputs.get("source"),
-        rendition.inputs.get("part_sha256"),
-        rendition.version,
-    )
+    return (rendition.kind, rendition.note_type, rendition.inputs.get("source"),
+            rendition.inputs.get("part_sha256"), rendition.version)
 
 
 def _imported(writer: Writer, rid: str) -> set[tuple]:
@@ -15826,11 +13615,8 @@ def _imported(writer: Writer, rid: str) -> set[tuple]:
     identity: compared by bytes, a change to the mapping, or to how an output is written, would
     leave a second, permanent copy of each on the next re-run, and the first would stay the one
     shown (`x-2.json` sorts before `x.json`)."""
-    return {
-        _identity(r)
-        for _, r in writer.archive.renditions(rid, problems=[])
-        if r.engine == "pocket" or r.meta.get("imported_from") == "audio-router"
-    }
+    return {_identity(r) for _, r in writer.archive.renditions(rid, problems=[])
+            if r.engine == "pocket" or r.meta.get("imported_from") == "audio-router"}
 
 
 def _title(item: Item) -> tuple[str, bool]:
@@ -15853,49 +13639,24 @@ def _recorded(writer: Writer, item: Item) -> MediaProbe:
     fails and is never created unmeasured."""
     media = writer.archive.load(item.present_id or "").media
     if media.sha256 == item.sha256 and media.duration_ms is not None:
-        return MediaProbe(
-            duration_ms=media.duration_ms,
-            sample_rate=media.sample_rate,
-            channels=media.channels,
-            has_video=media.kind == "video",
-            method="recorded",
-        )
+        return MediaProbe(duration_ms=media.duration_ms, sample_rate=media.sample_rate,
+                          channels=media.channels, has_video=media.kind == "video",
+                          method="recorded")
     measured = probe(item.audio) if item.audio is not None else None
     if measured is None:
         raise WriterError("its media can't be measured (spec §9.1.1)")
     return measured
 
 
-def _import_one(
-    item: Item,
-    writer: Writer,
-    *,
-    now: datetime,
-    report: RunReport,
-    group: list[Item],
-    counted: set[tuple],
-) -> None:
-    sources = [
-        RawSource(
-            kind=item.kind,
-            ref=item.row.file_id,
-            added_at=now,
-            fetched_at=_fetched_at(path),
-            payload=path.read_bytes(),
-        )
-        for path in item.snapshots
-    ]
-    sources += [
-        RawSource(
-            kind=item.kind,
-            ref=item.row.file_id,
-            added_at=now,
-            fetched_at=_fetched_at(path),
-            payload=path.read_bytes(),
-            suffix=path.suffix.lower(),
-        )
-        for path in item.texts
-    ]  # Recorder's prose transcript, kept as it came (§9.3)
+def _import_one(item: Item, writer: Writer, *, now: datetime, report: RunReport,
+                group: list[Item], counted: set[tuple]) -> None:
+    sources = [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
+                         fetched_at=_fetched_at(path), payload=path.read_bytes())
+               for path in item.snapshots]
+    sources += [RawSource(kind=item.kind, ref=item.row.file_id, added_at=now,
+                          fetched_at=_fetched_at(path), payload=path.read_bytes(),
+                          suffix=path.suffix.lower())
+                for path in item.texts]  # Recorder's prose transcript, kept as it came (§9.3)
     if not sources:  # the source's own ID is always kept, so a later sync can match it
         sources.append(RawSource(kind=item.kind, ref=item.row.file_id, added_at=now))
     sources.append(RawSource(kind="audio_router", ref=item.row.uri, added_at=now))
@@ -15907,58 +13668,30 @@ def _import_one(
             if _identity(mapped.rendition) not in have:  # each audio-router file goes in once
                 renditions.append(mapped.rendition)
         elif mapped.keep_raw:  # the speaker names Dan typed: verbatim in source/ (§9.3)
-            sources.append(
-                RawSource(
-                    kind="audio_router",
-                    ref=item.row.uri,
-                    added_at=now,
-                    fetched_at=ar_stamp(path),
-                    payload=path.read_bytes(),
-                )
-            )
+            sources.append(RawSource(kind="audio_router", ref=item.row.uri, added_at=now,
+                                     fetched_at=ar_stamp(path), payload=path.read_bytes()))
         else:
-            report.skipped_outputs[mapped.skipped] = (
-                report.skipped_outputs.get(mapped.skipped, 0) + 1
-            )
+            report.skipped_outputs[mapped.skipped] = report.skipped_outputs.get(mapped.skipped, 0) + 1
     # Privacy first (§7.4): every private tag is in place when the recording is created, never
     # a second write after its content. The group's privacy (group_privacy) includes the rows
     # that don't import: one deferred to 2b, or with no audio.
-    tags = [
-        TagRef(tag=tag, by="you")
-        for tag in dict.fromkeys(
-            [
-                *(t for member in group for t in member.tags),
-                *(t for member in group for t in member.group_privacy),
-            ]
-        )
-    ]
+    tags = [TagRef(tag=tag, by="you") for tag in dict.fromkeys(
+        [*(t for member in group for t in member.tags),
+         *(t for member in group for t in member.group_privacy)])]
     if item.disposition == "present":  # its recording exists: a label Dan removed stays removed,
         tags = [t for t in tags if is_private_tag(t.tag)]  # and only privacy is merged again
     titles = [t for member in group if member.kind == "plaud" for t in _titles(member)]
-    if not any(is_private_tag(t.tag) for t in tags) and matches_auto_private(
-        titles, writer.auto_private
-    ):
+    if (not any(is_private_tag(t.tag) for t in tags)
+            and matches_auto_private(titles, writer.auto_private)):
         tags.append(TagRef(tag="private", by="auto"))
     title, from_source = _title(item)
     probed = item.probed if item.probed is not None else _recorded(writer, item)
-    added = writer.add(
-        Incoming(
-            media=item.audio,
-            recorded_at=item.recorded_at,
-            timezone_name=item.timezone,
-            time_source=item.time_source,
-            title=title,
-            title_by=item.kind if from_source else None,
-            kind=media_kind(item.audio, probed) or "audio",
-            sources=tuple(sources),
-            duration_ms=probed.duration_ms,
-            sample_rate=probed.sample_rate,
-            channels=probed.channels,
-            tags=tuple(tags),
-            renditions=tuple(renditions),
-            sha256=item.sha256,
-        )
-    )
+    added = writer.add(Incoming(
+        media=item.audio, recorded_at=item.recorded_at, timezone_name=item.timezone,
+        time_source=item.time_source, title=title, title_by=item.kind if from_source else None,
+        kind=media_kind(item.audio, probed) or "audio", sources=tuple(sources),
+        duration_ms=probed.duration_ms, sample_rate=probed.sample_rate, channels=probed.channels,
+        tags=tuple(tags), renditions=tuple(renditions), sha256=item.sha256))
     if item.probed is not None:  # a present row was measured when its recording was created
         report.measured[probed.method] = report.measured.get(probed.method, 0) + 1
     report.created += added.created
@@ -15983,24 +13716,13 @@ def _import_one(
         rec = writer.archive.load(rid)
         folder = writer.archive.path_for(rid)
         have = _imported(writer, rid)
-        last: dict[
-            tuple, str
-        ] = {}  # each slot's part hash at the previous snapshot, as reconcile's `applied`
+        last: dict[tuple, str] = {}  # each slot's part hash at the previous snapshot, as reconcile's `applied`
         for source in rec.sources:
-            doc = (
-                _read_json(folder / source.raw) if source.kind == "pocket" and source.raw else None
-            )
+            doc = _read_json(folder / source.raw) if source.kind == "pocket" and source.raw else None
             if isinstance(doc, dict):
-                for rendition in pocket_outputs(
-                    doc, source.raw, source.fetched_at or source.added_at
-                ):
-                    slot, part = (
-                        (rendition.kind, rendition.note_type),
-                        rendition.inputs["part_sha256"],
-                    )
-                    if (
-                        last.get(slot) == part
-                    ):  # the same output as the last snapshot's: no new file
+                for rendition in pocket_outputs(doc, source.raw, source.fetched_at or source.added_at):
+                    slot, part = (rendition.kind, rendition.note_type), rendition.inputs["part_sha256"]
+                    if last.get(slot) == part:  # the same output as the last snapshot's: no new file
                         continue
                     last[slot] = part
                     if _identity(rendition) in have:  # written before, whatever its bytes now
@@ -16009,11 +13731,13 @@ def _import_one(
                         report.renditions_added += 1
 
 
-def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float, *, creates: bool) -> bool:
+def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float, *,
+                creates: bool) -> bool:
     """Whether copying the item's media would leave less than the stop margin free. Only the row
     that creates a recording copies media: the first of its same-audio group not yet here, which
     is a `duplicate` when its original is deferred to 2b. The rest merge into it."""
-    if not creates or item.audio is None or status.free_bytes is None or not status.total_bytes:
+    if (not creates or item.audio is None
+            or status.free_bytes is None or not status.total_bytes):
         return False
     try:
         size = item.audio.stat().st_size
@@ -16022,15 +13746,9 @@ def _would_fill(status: DiskStatus, item: Item, stop_free_percent: float, *, cre
     return (status.free_bytes - size) * 100 / status.total_bytes < stop_free_percent
 
 
-def run(
-    plan: Plan,
-    writer: Writer,
-    *,
-    now: datetime,
-    disk: Callable[[], DiskStatus] | None = None,
-    stop_free_percent: float = STOP_FREE_PERCENT,
-    lock_timeout: float = 600,
-) -> RunReport:
+def run(plan: Plan, writer: Writer, *, now: datetime,
+        disk: Callable[[], DiskStatus] | None = None, stop_free_percent: float = STOP_FREE_PERCENT,
+        lock_timeout: float = 600) -> RunReport:
     """Import every placeable row. Re-runnable: what is already there is matched and skipped.
 
     It holds the ops lock throughout, so a backup or the mirror never runs half-way through it.
@@ -16045,15 +13763,11 @@ def run(
     if plan.problems:
         raise ImportStopped(
             f"the plan has {len(plan.problems)} problem{'s' if len(plan.problems) != 1 else ''} "
-            "(see --dry-run): nothing was imported",
-            report,
-        )
+            "(see --dry-run): nothing was imported", report)
     # Recordings already here go first: a label added in audio-router since (a privacy label
     # among them) lands even when a later new recording stops the run.
-    todo = sorted(
-        (item for item in plan.items if item.disposition in IMPORTED),
-        key=lambda item: item.disposition != "present",
-    )
+    todo = sorted((item for item in plan.items if item.disposition in IMPORTED),
+                  key=lambda item: item.disposition != "present")
     # Rows with the same audio become one recording, whichever is added first. Each is added
     # with its whole group's privacy, so a duplicate's label or title is never a late write.
     by_sha: dict[str, list[Item]] = {}
@@ -16063,9 +13777,7 @@ def run(
     if unmeasured:
         raise ImportStopped(
             f"media can't be measured for {unmeasured} of {len(todo)} recordings: anything but "
-            "WAV needs ffprobe and ffmpeg (spec §9.1.1). Nothing was imported.",
-            report,
-        )
+            "WAV needs ffprobe and ffmpeg (spec §9.1.1). Nothing was imported.", report)
     counted: set[tuple] = set()
     with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):
         for item in todo:
@@ -16075,42 +13787,24 @@ def run(
                     raise ImportStopped(status.message, report)
                 creates = item.disposition != "present" and by_sha[item.sha256][0] is item
                 if _would_fill(status, item, stop_free_percent, creates=creates):
-                    raise ImportStopped(
-                        f"the next recording would leave less than "
-                        f"{stop_free_percent:g}% free: new imports stop",
-                        report,
-                    )
+                    raise ImportStopped(f"the next recording would leave less than "
+                                        f"{stop_free_percent:g}% free: new imports stop", report)
             try:
-                _import_one(
-                    item, writer, now=now, report=report, group=by_sha[item.sha256], counted=counted
-                )
+                _import_one(item, writer, now=now, report=report, group=by_sha[item.sha256],
+                            counted=counted)
             except IndexRefused as exc:  # the archive reads as empty: unmounted, most likely
                 _log.debug("importing %s stopped the run", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
-                raise ImportStopped(
-                    "the archive reads as empty or unreadable (is its disk "
-                    "mounted?): the import stopped",
-                    report,
-                ) from None
-            except (
-                WriterError,
-                LockTimeout,
-                KeyError,
-                OSError,
-                ValueError,
-                TypeError,
-                RecursionError,
-                ArithmeticError,
-                sqlite3.Error,
-            ) as exc:
+                raise ImportStopped("the archive reads as empty or unreadable (is its disk "
+                                    "mounted?): the import stopped", report) from None
+            except (WriterError, LockTimeout, KeyError, OSError, ValueError, TypeError,
+                    RecursionError, ArithmeticError, sqlite3.Error) as exc:
                 _log.debug("importing %s failed", item.row.uri, exc_info=True)
                 report.failed.append({"uri": item.row.uri, "reason": _failure(exc)})
                 if _stops_the_run(exc):
-                    raise ImportStopped(
-                        "the disk is full, the archive has dropped off, or state.db "
-                        "or the index can't be used now: the import stopped",
-                        report,
-                    ) from None
+                    raise ImportStopped("the disk is full, the archive has dropped off, or state.db "
+                                        "or the index can't be used now: the import stopped",
+                                        report) from None
     return report
 ```
 
@@ -16129,17 +13823,13 @@ In `packages/core/src/recordings/cli.py`:
    Task 5c already imports `LockTimeout`, and Task 2 `read_sentinel` and `SentinelError`.
 2. **Add** to `build_parser`:
    ```python
-   p = sub.add_parser(
-       "import-audio-router", help="import a read-only copy of audio-router's archive (dry run first)"
-   )
-   p.add_argument("path", type=Path, help="the copy of audio-router's media root")
-   p.add_argument("--dry-run", action="store_true", help="report what would happen; write nothing")
-   p.add_argument(
-       "--allow-unplaced",
-       action="store_true",
-       help="import what can be placed even when some rows can't",
-   )
-   p.add_argument("--json", action="store_true")
+       p = sub.add_parser("import-audio-router",
+                          help="import a read-only copy of audio-router's archive (dry run first)")
+       p.add_argument("path", type=Path, help="the copy of audio-router's media root")
+       p.add_argument("--dry-run", action="store_true", help="report what would happen; write nothing")
+       p.add_argument("--allow-unplaced", action="store_true",
+                      help="import what can be placed even when some rows can't")
+       p.add_argument("--json", action="store_true")
    ```
 3. **Add**:
    ```python
@@ -16166,15 +13856,12 @@ In `packages/core/src/recordings/cli.py`:
        if args.dry_run:
            index = _matching_index(cfg)
            try:
-               the_plan = plan(
-                   args.path, index, consent=consent, default_timezone=cfg.default_timezone
-               )
+               the_plan = plan(args.path, index, consent=consent,
+                               default_timezone=cfg.default_timezone)
            except CatalogError as exc:
                return _fail(str(exc), args.json, 1)
-           _emit(
-               {**the_plan.report(), "dry_run": True, "matched_against_archive": index is not None},
-               args.json,
-           )
+           _emit({**the_plan.report(), "dry_run": True,
+                  "matched_against_archive": index is not None}, args.json)
            return 0 if the_plan.ok else 1
        try:
            thresholds = disk_thresholds(cfg)
@@ -16184,45 +13871,30 @@ In `packages/core/src/recordings/cli.py`:
        if isinstance(writer, int):
            return writer
        try:
-           the_plan = plan(
-               args.path, writer.index, consent=consent, default_timezone=cfg.default_timezone
-           )
+           the_plan = plan(args.path, writer.index, consent=consent,
+                           default_timezone=cfg.default_timezone)
        except CatalogError as exc:
            return _fail(str(exc), args.json, 1)
        if the_plan.problems:
            return _fail("; ".join(the_plan.problems), args.json, 1)
        unplaced = the_plan.counts()["unplaced"]
        if unplaced and not args.allow_unplaced:
-           return _fail(
-               f"{unplaced} catalog rows can't be placed (see --dry-run): fix them, or "
-               "pass --allow-unplaced to import the rest",
-               args.json,
-               1,
-           )
+           return _fail(f"{unplaced} catalog rows can't be placed (see --dry-run): fix them, or "
+                        "pass --allow-unplaced to import the rest", args.json, 1)
 
        def guard():
            return disk_status(writer.root, expected_uuid=writer.identity.uuid, **thresholds)
 
        try:
-           result = run(
-               the_plan,
-               writer,
-               now=datetime.now(timezone.utc),
-               disk=guard,
-               stop_free_percent=thresholds["stop"],
-           )
+           result = run(the_plan, writer, now=datetime.now(timezone.utc), disk=guard,
+                        stop_free_percent=thresholds["stop"])
        except ImportStopped as exc:
-           _emit(
-               {**the_plan.report(), "imported": exc.report.to_dict(), "stopped": str(exc)}, args.json
-           )
+           _emit({**the_plan.report(), "imported": exc.report.to_dict(), "stopped": str(exc)},
+                 args.json)
            return 1
        except LockTimeout:
-           return _fail(
-               "another job holds the ops lock (a backup, the mirror or a check): run "
-               "the import again when it finishes",
-               args.json,
-               75,
-           )
+           return _fail("another job holds the ops lock (a backup, the mirror or a check): run "
+                        "the import again when it finishes", args.json, 75)
        _emit({**the_plan.report(), "imported": result.to_dict()}, args.json)
        return 1 if result.failed else 0
    ```
@@ -16332,14 +14004,8 @@ JSON = {"Content-Type": "application/json"}
 
 
 def test_a_same_origin_json_write_passes(client):
-    assert (
-        client.post(
-            "/api/thing",
-            json={},
-            headers={"Origin": "http://localhost:8000", "Sec-Fetch-Site": "same-origin"},
-        ).status_code
-        == 200
-    )
+    assert client.post("/api/thing", json={}, headers={"Origin": "http://localhost:8000",
+                                                       "Sec-Fetch-Site": "same-origin"}).status_code == 200
 
 
 def test_a_write_from_no_browser_passes(client):
@@ -16347,29 +14013,17 @@ def test_a_write_from_no_browser_passes(client):
     assert client.post("/api/thing", content=b"{}", headers=JSON).status_code == 200
 
 
-@pytest.mark.parametrize(
-    "headers",
-    [
-        {"Sec-Fetch-Site": "cross-site"},
-        {"Sec-Fetch-Site": "same-site"},  # a sibling subdomain is another origin
-        {"Origin": "https://evil.example"},
-        {"Origin": "null"},
-        {"Origin": "http://localhost:9999"},  # the same name at another port: maybe another program
-        {"Origin": "https://localhost:8000"},  # another scheme
-        {"Origin": "http://127.0.0.1:8000"},  # an allowed name, but not the page's own origin
-        {"Origin": "http://localhost:8000", "Sec-Fetch-Site": "cross-site"},
-    ],
-    ids=[
-        "cross-site",
-        "same-site",
-        "foreign-origin",
-        "null-origin",
-        "other-port",
-        "other-scheme",
-        "other-allowed-name",
-        "mixed",
-    ],
-)
+@pytest.mark.parametrize("headers", [
+    {"Sec-Fetch-Site": "cross-site"},
+    {"Sec-Fetch-Site": "same-site"},  # a sibling subdomain is another origin
+    {"Origin": "https://evil.example"},
+    {"Origin": "null"},
+    {"Origin": "http://localhost:9999"},  # the same name at another port: maybe another program
+    {"Origin": "https://localhost:8000"},  # another scheme
+    {"Origin": "http://127.0.0.1:8000"},  # an allowed name, but not the page's own origin
+    {"Origin": "http://localhost:8000", "Sec-Fetch-Site": "cross-site"},
+], ids=["cross-site", "same-site", "foreign-origin", "null-origin", "other-port", "other-scheme",
+        "other-allowed-name", "mixed"])
 def test_a_cross_site_write_is_refused(client, headers):
     # why: §15. A page on another site, or another port of this host, can post to the app's name.
     response = client.post("/api/thing", content=b"{}", headers={**JSON, **headers})
@@ -16378,24 +14032,14 @@ def test_a_cross_site_write_is_refused(client, headers):
 
 def test_a_write_to_an_unknown_host_is_refused_even_from_that_origin(client):
     # why: DNS rebinding. Host and Origin both name the attacker's site, so they agree.
-    response = client.post(
-        "/api/thing",
-        content=b"{}",
-        headers={**JSON, "Host": "evil.example", "Origin": "http://evil.example"},
-    )
+    response = client.post("/api/thing", content=b"{}", headers={
+        **JSON, "Host": "evil.example", "Origin": "http://evil.example"})
     assert response.status_code == 403
 
 
-@pytest.mark.parametrize(
-    "ctype",
-    [
-        "text/plain",
-        "application/x-www-form-urlencoded",
-        "multipart/form-data; boundary=x",
-        "application/json; charset=utf-8",
-        "",
-    ],
-)
+@pytest.mark.parametrize("ctype", ["text/plain", "application/x-www-form-urlencoded",
+                                   "multipart/form-data; boundary=x",
+                                   "application/json; charset=utf-8", ""])
 def test_anything_but_exactly_json_is_refused(client, ctype):
     # why: §15. A browser sends text/plain or a form cross-site without a CORS preflight.
     headers = {"Content-Type": ctype} if ctype else {}
@@ -16409,13 +14053,11 @@ def test_reads_are_not_affected(client):
     assert client.get("/api/thing", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
 
 
-KEPT_TO_THIS_ORIGIN = {
-    "cross-origin-resource-policy": "same-origin",
-    "content-security-policy": "frame-ancestors 'none'",
-    "x-frame-options": "DENY",
-    "cross-origin-opener-policy": "same-origin",
-    "referrer-policy": "same-origin",
-}
+KEPT_TO_THIS_ORIGIN = {"cross-origin-resource-policy": "same-origin",
+                       "content-security-policy": "frame-ancestors 'none'",
+                       "x-frame-options": "DENY",
+                       "cross-origin-opener-policy": "same-origin",
+                       "referrer-policy": "same-origin"}
 
 
 def test_every_response_keeps_its_resources_to_this_origin(client):
@@ -16424,9 +14066,7 @@ def test_every_response_keeps_its_resources_to_this_origin(client):
     # page could frame the app, whose own websocket passes every check, under a decoy. Without
     # the opener and referrer policies, a page that opens the app shares its browsing context,
     # and a link in a note sends the app's address to the site it opens.
-    refused = client.post(
-        "/api/thing", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"}
-    )
+    refused = client.post("/api/thing", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"})
     for response in (client.get("/api/thing"), refused):
         assert {k: response.headers.get(k) for k in KEPT_TO_THIS_ORIGIN} == KEPT_TO_THIS_ORIGIN
 
@@ -16435,20 +14075,9 @@ def test_the_real_app_is_wrapped(demo_archive, demo_ids):
     app = create_app(Settings(archive=demo_archive, demo=True))
     try:
         with TestClient(app, base_url="http://localhost:8000") as c:
-            assert (
-                c.post(
-                    "/", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"}
-                ).status_code
-                == 403
-            )
-            assert (
-                c.post("/healthz", json={}, headers={"Origin": "http://localhost:9999"}).status_code
-                == 403
-            )
-            assert (
-                c.post("/healthz", content=b"x", headers={"Content-Type": "text/plain"}).status_code
-                == 415
-            )
+            assert c.post("/", content=b"{}", headers={**JSON, "Sec-Fetch-Site": "cross-site"}).status_code == 403
+            assert c.post("/healthz", json={}, headers={"Origin": "http://localhost:9999"}).status_code == 403
+            assert c.post("/healthz", content=b"x", headers={"Content-Type": "text/plain"}).status_code == 415
             media = c.get(f"/media/{demo_ids['fdr-fireside-1']}", headers={"Range": "bytes=0-9"})
             assert media.status_code == 206
             assert media.headers["cross-origin-resource-policy"] == "same-origin"
@@ -16467,34 +14096,28 @@ def test_the_real_app_is_wrapped(demo_archive, demo_ids):
 
 In `packages/ui/tests/test_hosts.py`, **replace**:
 ```python
-@pytest.mark.parametrize(
-    "origin",
-    ["http://localhost:8000", "http://127.0.0.1:8000", "http://[::1]:8000", "HTTP://LOCALHOST"],
-)
+@pytest.mark.parametrize("origin", ["http://localhost:8000", "http://127.0.0.1:8000",
+                                    "http://[::1]:8000", "HTTP://LOCALHOST"])
 def test_a_websocket_from_an_allowed_origin_is_accepted(origin):
     with guarded().websocket_connect("ws://localhost:8000/ws", headers={"Origin": origin}) as ws:
         assert ws.receive_text() == "hello"
 ```
 with:
 ```python
-@pytest.mark.parametrize(
-    "url, origin",
-    [
-        ("ws://localhost:8000/ws", "http://localhost:8000"),
-        ("ws://127.0.0.1:8000/ws", "http://127.0.0.1:8000"),
-        ("ws://[::1]:8000/ws", "http://[::1]:8000"),
-        ("ws://localhost/ws", "HTTP://LOCALHOST"),
-    ],
-)
+@pytest.mark.parametrize("url, origin", [
+    ("ws://localhost:8000/ws", "http://localhost:8000"),
+    ("ws://127.0.0.1:8000/ws", "http://127.0.0.1:8000"),
+    ("ws://[::1]:8000/ws", "http://[::1]:8000"),
+    ("ws://localhost/ws", "HTTP://LOCALHOST"),
+])
 def test_a_websocket_from_its_own_origin_is_accepted(url, origin):
     # The page's own origin: the scheme, host name and port of the Host it connects to.
     with guarded().websocket_connect(url, headers={"Origin": origin}) as ws:
         assert ws.receive_text() == "hello"
 
 
-@pytest.mark.parametrize(
-    "origin", ["http://localhost:9999", "https://localhost:8000", "http://127.0.0.1:8000"]
-)
+@pytest.mark.parametrize("origin", ["http://localhost:9999", "https://localhost:8000",
+                                    "http://127.0.0.1:8000"])
 def test_a_websocket_from_another_port_scheme_or_name_of_this_host_is_refused(origin):
     # why: an origin is a scheme, a host name and a port (RFC 6454). A page at
     # http://localhost:9999 is another program, though its host name is allowed.
@@ -16503,14 +14126,8 @@ def test_a_websocket_from_another_port_scheme_or_name_of_this_host_is_refused(or
 
 @pytest.mark.parametrize("site", ["cross-site", "same-site"])
 def test_a_websocket_the_browser_marks_as_another_sites_is_refused(site):
-    assert (
-        _refused(
-            guarded(),
-            "ws://localhost:8000/ws",
-            {"Origin": "http://localhost:8000", "Sec-Fetch-Site": site},
-        )
-        == 1008
-    )
+    assert _refused(guarded(), "ws://localhost:8000/ws",
+                    {"Origin": "http://localhost:8000", "Sec-Fetch-Site": site}) == 1008
 ```
 **add** before `test_an_unknown_host_is_400`'s `@pytest.mark.parametrize`:
 ```python
@@ -16527,10 +14144,8 @@ and **add** after `test_the_app_refuses_a_cross_site_websocket`:
 ```python
 def test_the_app_refuses_a_websocket_from_another_port_of_this_host(app_client):
     # The council's finding: a page at http://localhost:9999 passed the host-name-only check.
-    assert (
-        _refused(app_client, "ws://localhost:8000/websocket/", {"Origin": "http://localhost:9999"})
-        == 1008
-    )
+    assert _refused(app_client, "ws://localhost:8000/websocket/",
+                    {"Origin": "http://localhost:9999"}) == 1008
 ```
 
 `packages/ui/tests/test_demo_guard.py`:
@@ -16562,21 +14177,10 @@ from recordings_ui.app import create_app
 from recordings_ui.settings import find_demo_archive, from_env
 
 PATH_EVENTS = ("open", "sqlite3.connect", "os.scandir", "os.listdir")
-ANY_EVENTS = (
-    "socket.connect",
-    "socket.getaddrinfo",
-    "socket.gethostbyname",
-    "socket.gethostbyname_ex",
-    "socket.gethostbyaddr",
-    "socket.getnameinfo",
-    "subprocess.Popen",
-    "_posixsubprocess.fork_exec",
-    "os.exec",
-    "os.posix_spawn",
-    "os.spawn",
-    "os.system",
-    "os.fork",
-)
+ANY_EVENTS = ("socket.connect", "socket.getaddrinfo", "socket.gethostbyname",
+              "socket.gethostbyname_ex", "socket.gethostbyaddr", "socket.getnameinfo",
+              "subprocess.Popen", "_posixsubprocess.fork_exec", "os.exec", "os.posix_spawn",
+              "os.spawn", "os.system", "os.fork")
 _events: list[tuple[str, str]] | None = None
 
 
@@ -16628,19 +14232,9 @@ def test_the_hook_sees_sqlite_listings_other_programs_and_name_lookups(tmp_path)
     # os.spawn is Windows-only (POSIX spawnv forks and execs); gethostbyname_ex raises
     # socket.gethostbyname. Both stay watched.
     assert {e[0] for e in events} >= {
-        "os.listdir",
-        "os.scandir",
-        "subprocess.Popen",
-        "_posixsubprocess.fork_exec",
-        "socket.getaddrinfo",
-        "socket.gethostbyname",
-        "socket.gethostbyaddr",
-        "socket.getnameinfo",
-        "os.system",
-        "os.posix_spawn",
-        "os.exec",
-        "os.fork",
-    }
+        "os.listdir", "os.scandir", "subprocess.Popen", "_posixsubprocess.fork_exec",
+        "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr",
+        "socket.getnameinfo", "os.system", "os.posix_spawn", "os.exec", "os.fork"}
 
 
 def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, monkeypatch):
@@ -16649,12 +14243,9 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
     for name in ("config.toml", "secret"):
         (real / name).write_text("x\n", encoding="utf-8")
     environ = {
-        "RECORDINGS_CONFIG": str(real / "config.toml"),
-        "RECORDINGS_ARCHIVE": str(real / "archive"),
-        "RECORDINGS_STATE": str(real / "state"),
-        "RECORDINGS_INDEX": str(real / "index.db"),
-        "RESTIC_PASSWORD_FILE": str(real / "secret"),
-        "RECORDINGS_NTFY_TOPIC_FILE": str(real / "secret"),
+        "RECORDINGS_CONFIG": str(real / "config.toml"), "RECORDINGS_ARCHIVE": str(real / "archive"),
+        "RECORDINGS_STATE": str(real / "state"), "RECORDINGS_INDEX": str(real / "index.db"),
+        "RESTIC_PASSWORD_FILE": str(real / "secret"), "RECORDINGS_NTFY_TOPIC_FILE": str(real / "secret"),
         "RECORDINGS_DEADMAN_URL_FILE": str(real / "secret"),
     }
     for name, value in environ.items():  # code reading os.environ itself must find them too
@@ -16665,13 +14256,9 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
             with TestClient(create_app(settings), base_url="http://localhost") as client:
                 assert client.get("/healthz").json() == {"ok": True, "demo": True}
                 for rid in demo_ids.values():
-                    assert (
-                        client.get(f"/media/{rid}", headers={"Range": "bytes=0-9"}).status_code
-                        == 206
-                    )
-                with client.websocket_connect(
-                    "ws://localhost/websocket/", headers={"Origin": "http://localhost"}
-                ):
+                    assert client.get(f"/media/{rid}", headers={"Range": "bytes=0-9"}).status_code == 206
+                with client.websocket_connect("ws://localhost/websocket/",
+                                              headers={"Origin": "http://localhost"}):
                     pass  # connects only: Shiny runs the server function after the client's
                     # `init` message, which Task 15 sends once Status joins the server function
             archive = Archive(settings.archive)
@@ -16687,37 +14274,24 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
     # don't know about. Three kinds of path are allowed by name, found when this was written:
     # the system's MIME tables (mimetypes, for /media), and Shiny's per-session upload folder in
     # the system temp folder (created when a session starts, never written to).
-    roots = [
-        os.path.realpath(p)
-        for p in (
-            settings.archive.parent,
-            find_demo_archive({}),
-            sys.prefix,
-            sys.base_prefix,
-            Path(views.__file__).parent,
-        )
-    ]
+    roots = [os.path.realpath(p) for p in (
+        settings.archive.parent, find_demo_archive({}), sys.prefix, sys.base_prefix,
+        Path(views.__file__).parent)]
     mime_tables = {os.path.realpath(p) for p in mimetypes.knownfiles}
     temp = os.path.realpath(tempfile.gettempdir())
 
     def allowed(path: str) -> bool:
         path = os.path.realpath(path)
-        return (
-            any(os.path.commonpath([path, r]) == r for r in roots)
-            or path in mime_tables
-            or (os.path.dirname(path) == temp and os.path.basename(path).startswith("fileupload-"))
-        )
+        return (any(os.path.commonpath([path, r]) == r for r in roots) or path in mime_tables
+                or (os.path.dirname(path) == temp and os.path.basename(path).startswith("fileupload-")))
 
     assert [e for e in events if e[0] in PATH_EVENTS and not allowed(e[1])] == []
 
 
 def test_demo_mode_removes_its_temporary_copy_at_exit(monkeypatch):
     registered = []
-    monkeypatch.setattr(
-        settings_module.atexit,
-        "register",
-        lambda fn, *args, **kwargs: registered.append((fn, args, kwargs)),
-    )
+    monkeypatch.setattr(settings_module.atexit, "register",
+                        lambda fn, *args, **kwargs: registered.append((fn, args, kwargs)))
     settings = from_env({}, demo=True)
     assert settings.archive.is_dir()
     for fn, args, kwargs in registered:
@@ -16737,10 +14311,7 @@ def test_demo_mode_removes_its_temporary_copy_on_sigterm(tmp_path):
     with log.open("wb") as out:
         proc = subprocess.Popen(
             [sys.executable, "-m", "recordings_ui", "--demo", "--port", str(port)],
-            env={**os.environ, "TMPDIR": str(scratch)},
-            stdout=out,
-            stderr=out,
-        )
+            env={**os.environ, "TMPDIR": str(scratch)}, stdout=out, stderr=out)
     try:
         deadline = time.monotonic() + 30
         while True:
@@ -16760,40 +14331,17 @@ def test_demo_mode_removes_its_temporary_copy_on_sigterm(tmp_path):
 
 Add to `packages/core/tests/test_config.py`:
 ```python
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        ("My-Homelab", "my-homelab"),
-        (" 100.64.0.1 ", "100.64.0.1"),
-        ("[fd7a::1]", "fd7a::1"),
-        ("fd7a::1", "fd7a::1"),
-        ("fd7a:0:0::1", "fd7a::1"),
-        ("My.Home-lab.example", "my.home-lab.example"),
-    ],
-)
+@pytest.mark.parametrize("value, expected", [
+    ("My-Homelab", "my-homelab"), (" 100.64.0.1 ", "100.64.0.1"), ("[fd7a::1]", "fd7a::1"),
+    ("fd7a::1", "fd7a::1"), ("fd7a:0:0::1", "fd7a::1"), ("My.Home-lab.example", "my.home-lab.example")])
 def test_host_names_are_normalised(value, expected):
     from recordings.config import normalise_host
-
     assert normalise_host(value) == expected
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        "my-homelab:8000",
-        "http://my-homelab",
-        "my-homelab/x",
-        "",
-        "a b",
-        "a\\tb",
-        "user@my-homelab",
-        "my-homelab?x",
-        "my-homelab.",
-        "-my-homelab",
-        "my-homelab-",
-        "my..homelab",
-    ],
-)
+@pytest.mark.parametrize("value", ["my-homelab:8000", "http://my-homelab", "my-homelab/x", "", "a b",
+                                   "a\\tb", "user@my-homelab", "my-homelab?x", "my-homelab.",
+                                   "-my-homelab", "my-homelab-", "my..homelab"])
 def test_allowed_hosts_with_a_port_scheme_or_path_are_refused(tmp_path, value):
     # why: stage-1 carry-over. They passed validation, never matched, and gave a bare 400.
     cfg_file = write(tmp_path, f'[server]\nallowed_hosts = ["{value}"]\n')
@@ -16807,11 +14355,7 @@ def test_recordings_allowed_hosts_entries_are_checked_too():
     import pytest
 
     from recordings_ui.settings import env_hosts
-
-    assert env_hosts({"RECORDINGS_ALLOWED_HOSTS": "A.example, b.example"}) == {
-        "a.example",
-        "b.example",
-    }
+    assert env_hosts({"RECORDINGS_ALLOWED_HOSTS": "A.example, b.example"}) == {"a.example", "b.example"}
     with pytest.raises(SystemExit, match="RECORDINGS_ALLOWED_HOSTS"):
         env_hosts({"RECORDINGS_ALLOWED_HOSTS": "host:8000"})
 ```
@@ -16826,7 +14370,6 @@ def test_demo_mode_serves_no_archive_but_the_demo(tmp_path, demo_archive):
 
     from recordings.sentinel import read_sentinel
     from recordings_ui.settings import DEMO_UUID, from_env
-
     # why: spec §17. RECORDINGS_DEMO_ARCHIVE could name the real archive, which demo mode would
     # copy to the temp folder and serve.
     assert read_sentinel(demo_archive).uuid == DEMO_UUID
@@ -16845,14 +14388,12 @@ def test_base_urls_host_is_checked_like_an_allowed_hosts_entry(tmp_path):
     import pytest
 
     from recordings_ui.settings import from_env
-
     # why: browsers send the canonical form in Host, so that is what the allow-list must hold; and
     # a name the other lists refuse (an underscore) should stop the app the same way.
     def settings_for(url):
         cfg = tmp_path / "config.toml"
-        cfg.write_text(
-            f'[archive]\npath = "{tmp_path}"\n[server]\nbase_url = "{url}"\n', encoding="utf-8"
-        )
+        cfg.write_text(f'[archive]\npath = "{tmp_path}"\n[server]\nbase_url = "{url}"\n',
+                       encoding="utf-8")
         return from_env({"RECORDINGS_CONFIG": str(cfg)})
 
     assert "fd7a::1" in settings_for("http://[fd7a:0:0::1]:8000").allowed_hosts
@@ -16923,9 +14464,8 @@ In `packages/ui/src/recordings_ui/hosts.py`:
    ```
 4. In `HostGuard.__call__`, **replace** `await PlainTextResponse("unknown host", status_code=400)(scope, receive, send)` with:
    ```python
-   await PlainTextResponse("unknown host", status_code=400)(
-       scope, receive, _keep_to_this_origin(scope, send)
-   )
+                   await PlainTextResponse("unknown host", status_code=400)(
+                       scope, receive, _keep_to_this_origin(scope, send))
    ```
    and **replace**:
    ```python
@@ -16948,16 +14488,12 @@ In `packages/ui/src/recordings_ui/hosts.py`:
    # A framed app is this origin, so its websocket passes every check above: a page that framed it
    # under a decoy could steer Dan's clicks (clickjacking). CSP for current browsers, X-Frame-Options
    # for older ones.
-   NO_FRAMING = (
-       (b"content-security-policy", b"frame-ancestors 'none'"),
-       (b"x-frame-options", b"DENY"),
-   )
+   NO_FRAMING = ((b"content-security-policy", b"frame-ancestors 'none'"),
+                 (b"x-frame-options", b"DENY"))
    # A page that opens the app in a window doesn't share its browsing context group (and so its
    # process); a link in a note doesn't send the app's address to the site it opens.
-   NO_OPENER_OR_REFERRER = (
-       (b"cross-origin-opener-policy", b"same-origin"),
-       (b"referrer-policy", b"same-origin"),
-   )
+   NO_OPENER_OR_REFERRER = ((b"cross-origin-opener-policy", b"same-origin"),
+                            (b"referrer-policy", b"same-origin"))
    # /media only: a private recording's audio would otherwise sit in the disk cache of every device
    # that played it. Range requests still seek.
    NO_STORE = (b"cache-control", b"no-store")
@@ -16976,7 +14512,6 @@ In `packages/ui/src/recordings_ui/hosts.py`:
            if message["type"] == "http.response.start":
                message = {**message, "headers": [*message.get("headers", []), *extra]}
            await send(message)
-
        return wrapped
 
 
@@ -17009,18 +14544,14 @@ In `packages/ui/src/recordings_ui/hosts.py`:
                await self.app(scope, receive, send)
                return
            origin = _header(scope, b"origin")
-           own = origin is None or (
-               same_origin(scope, origin) and host_name(_header(scope, b"host") or "") in self.allowed
-           )
+           own = origin is None or (same_origin(scope, origin)
+                                    and host_name(_header(scope, b"host") or "") in self.allowed)
            if not (own and sent_by_this_site(scope)):
-               await PlainTextResponse("cross-site request refused", status_code=403)(
-                   scope, receive, send
-               )
+               await PlainTextResponse("cross-site request refused", status_code=403)(scope, receive, send)
                return
            if (_header(scope, b"content-type") or "").strip().lower() != "application/json":
-               await PlainTextResponse("send Content-Type exactly application/json", status_code=415)(
-                   scope, receive, send
-               )
+               await PlainTextResponse("send Content-Type exactly application/json",
+                                       status_code=415)(scope, receive, send)
                return
            await self.app(scope, receive, send)
    ```
@@ -17067,8 +14598,7 @@ def _allowed_hosts(server: dict[str, Any]) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(h, str) for h in value):
         raise ConfigError(
             "[server] allowed_hosts must be a list of host names, "
-            'for example ["my-homelab", "100.64.0.1"]'
-        )
+            'for example ["my-homelab", "100.64.0.1"]')
     try:
         return tuple(normalise_host(h) for h in value)
     except ValueError as exc:
@@ -17120,10 +14650,8 @@ def _only_the_demo(path: Path) -> Path:
     except SentinelError:
         ok = False
     if not ok:
-        raise SystemExit(
-            f"{path} is not the demo archive (its archive.json lacks the demo's "
-            "UUID); demo mode serves nothing else"
-        )
+        raise SystemExit(f"{path} is not the demo archive (its archive.json lacks the demo's "
+                         "UUID); demo mode serves nothing else")
     return path
 ```
 and in the non-demo branch, so `base_url`'s host follows the same rules as the other lists,
@@ -17330,30 +14858,20 @@ def config(tmp_path, writer, **backup_keys) -> tuple:
     deploy = tmp_path / "deploy.env"
     deploy.write_text("RECORDINGS_PORT=8000\n", encoding="utf-8")
     (tmp_path / "scratch").mkdir(exist_ok=True)
-    keys = {
-        "repository": str(tmp_path / "repo"),
-        "extra_paths": [str(deploy)],
-        "restore_scratch": str(tmp_path / "scratch"),
-        "cache_dir": str(tmp_path / "cache"),
-        **backup_keys,
-    }
+    keys = {"repository": str(tmp_path / "repo"), "extra_paths": [str(deploy)],
+            "restore_scratch": str(tmp_path / "scratch"), "cache_dir": str(tmp_path / "cache"),
+            **backup_keys}
     lines = "\n".join(f"{k} = {json.dumps(v)}" for k, v in keys.items())
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
         f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
         f'[state]\npath = "{writer.state.path}"\n[index]\npath = "{writer.index.path}"\n'
-        f"[backup]\n{lines}\n",
-        encoding="utf-8",
-    )
+        f"[backup]\n{lines}\n", encoding="utf-8")
     (tmp_path / "pw").write_text("a test password\n", encoding="utf-8")
     (tmp_path / "known_hosts").write_text("nas ssh-ed25519 AAAAexample\n", encoding="utf-8")
-    environ = {
-        "PATH": os.environ["PATH"],
-        "HOME": str(tmp_path),
-        "RECORDINGS_CONFIG": str(cfg_file),
-        "RESTIC_PASSWORD_FILE": str(tmp_path / "pw"),
-        "RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(tmp_path / "known_hosts"),
-    }
+    environ = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "RECORDINGS_CONFIG": str(cfg_file),
+               "RESTIC_PASSWORD_FILE": str(tmp_path / "pw"),
+               "RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(tmp_path / "known_hosts")}
     return load_config(environ), environ
 
 
@@ -17400,21 +14918,15 @@ def restore_like_restic(writer, bc, cmd, *, state_copy=None) -> tuple[Path, Path
     return target, copy
 
 
-SUMMARY = json.dumps(
-    {
-        "message_type": "summary",
-        "snapshot_id": "f" * 64,
-        "total_files_processed": 12,
-        "data_added": 4096,
-    }
-)
+SUMMARY = json.dumps({"message_type": "summary", "snapshot_id": "f" * 64,
+                      "total_files_processed": 12, "data_added": 4096})
 
 
 def test_the_backup_names_its_paths_and_never_the_password(tmp_path, writer, make_incoming):
     writer.add(make_incoming())
     cfg, environ = config(tmp_path, writer)
     bc = backup.from_config(cfg, environ)
-    fake = FakeRestic(stdout='{"message_type":"status"}\n' + SUMMARY + "\n")
+    fake = FakeRestic(stdout="{\"message_type\":\"status\"}\n" + SUMMARY + "\n")
     result = backup.run_backup(bc, writer.state, environ, tags=("pre-import",), runner=fake)
     assert result == backup.BackupResult(snapshot_id="f" * 64, files=12, data_added=4096)
     (unlock, _), (cmd, env) = fake.calls
@@ -17423,37 +14935,22 @@ def test_the_backup_names_its_paths_and_never_the_password(tmp_path, writer, mak
     assert cmd[:3] == [bc.restic, "backup", "--json"]
     assert cmd[cmd.index("--host") + 1] == "test"
     assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "--tag"] == ["recordings", "pre-import"]
-    assert cmd[-4:] == [
-        str(writer.root),
-        str(cfg.path),
-        str(tmp_path / "deploy.env"),
-        str(state_copy),
-    ]
+    assert cmd[-4:] == [str(writer.root), str(cfg.path), str(tmp_path / "deploy.env"), str(state_copy)]
     assert str(writer.root / ".tmp") in cmd and ".*.tmp" in cmd
     assert "a test password" not in " ".join(cmd)  # it reaches restic only through its environment
     assert env["RESTIC_PASSWORD_FILE"] == str(tmp_path / "pw")
     assert env["RESTIC_REPOSITORY"] == str(tmp_path / "repo")
-    assert set(env) <= {
-        "PATH",
-        "HOME",
-        "RESTIC_REPOSITORY",
-        "RESTIC_PASSWORD_FILE",
-        "RESTIC_PASSWORD",
-        "RESTIC_CACHE_DIR",
-        "RESTIC_REST_USERNAME",
-        "RESTIC_REST_PASSWORD",
-    }
+    assert set(env) <= {"PATH", "HOME", "RESTIC_REPOSITORY", "RESTIC_PASSWORD_FILE",
+                        "RESTIC_PASSWORD", "RESTIC_CACHE_DIR", "RESTIC_REST_USERNAME",
+                        "RESTIC_REST_PASSWORD"}
     assert state_copy.is_file()
-    assert "voice.db" not in " ".join(cmd) and "plaud" not in " ".join(
-        cmd
-    )  # §15.1: never backed up
+    assert "voice.db" not in " ".join(cmd) and "plaud" not in " ".join(cmd)  # §15.1: never backed up
 
 
 def test_the_state_db_copy_is_a_consistent_sqlite_backup(writer):
     writer.state.set_meta("marker", "copied")
     copy = writer.state.backup_to(writer.state.path / "backup" / "state.db")
     import sqlite3
-
     with sqlite3.connect(copy) as db:
         assert db.execute("SELECT value FROM meta WHERE key = 'marker'").fetchone() == ("copied",)
 
@@ -17480,22 +14977,14 @@ def test_a_missing_path_or_password_is_refused_before_restic_runs(tmp_path, writ
     cfg, environ = config(tmp_path, writer)
     del environ["RESTIC_PASSWORD_FILE"]
     with pytest.raises(BackupError, match="password"):
-        backup.run_backup(
-            backup.from_config(cfg, environ),
-            writer.state,
-            environ,
-            runner=FakeRestic(stdout=SUMMARY),
-        )
+        backup.run_backup(backup.from_config(cfg, environ), writer.state, environ,
+                          runner=FakeRestic(stdout=SUMMARY))
 
 
-@pytest.mark.parametrize(
-    "returncode, stderr",
-    [
-        (1, "Fatal: unable to open repository at rest:https://recordings:hunter2@nas:8000/r/\n"),
-        (-9, ""),  # killed: §20 "a killed backup raises an alert" starts here
-        (12, "Fatal: wrong password or no key found\n"),
-    ],
-)
+@pytest.mark.parametrize("returncode, stderr", [
+    (1, "Fatal: unable to open repository at rest:https://recordings:hunter2@nas:8000/r/\n"),
+    (-9, ""),  # killed: §20 "a killed backup raises an alert" starts here
+    (12, "Fatal: wrong password or no key found\n")])
 def test_a_failed_restic_is_an_error_with_no_secret_in_it(tmp_path, writer, returncode, stderr):
     cfg, environ = config(tmp_path, writer)
     fake = FakeRestic(returncode=returncode, stderr=stderr, only=("backup",))
@@ -17505,13 +14994,8 @@ def test_a_failed_restic_is_an_error_with_no_secret_in_it(tmp_path, writer, retu
     assert caught.value.returncode == returncode
 
 
-@pytest.mark.parametrize(
-    "repository",
-    [
-        "rest:https://recordings:hunter2@nas:8000/recordings/",
-        "sftp://backup:hunter2@nas//backups/recordings",
-    ],
-)
+@pytest.mark.parametrize("repository", ["rest:https://recordings:hunter2@nas:8000/recordings/",
+                                        "sftp://backup:hunter2@nas//backups/recordings"])
 def test_a_repository_with_a_password_in_it_is_refused(tmp_path, writer, repository):
     # why: config.toml is not a secret (§5). The password goes in RESTIC_REST_PASSWORD_FILE.
     cfg, environ = config(tmp_path, writer, repository=repository)
@@ -17523,19 +15007,10 @@ def test_a_repository_with_a_password_in_it_is_refused(tmp_path, writer, reposit
 def test_retention_keeps_the_spec_counts_and_the_milestones(tmp_path, writer):
     cfg, environ = config(tmp_path, writer)
     cmd = backup.forget_command(backup.from_config(cfg, environ))
-    for flag, value in (
-        ("--keep-hourly", "24"),
-        ("--keep-daily", "14"),
-        ("--keep-weekly", "8"),
-        ("--keep-monthly", "12"),
-        ("--host", "test"),
-        ("--tag", "recordings"),
-    ):
+    for flag, value in (("--keep-hourly", "24"), ("--keep-daily", "14"), ("--keep-weekly", "8"),
+                        ("--keep-monthly", "12"), ("--host", "test"), ("--tag", "recordings")):
         assert cmd[cmd.index(flag) + 1] == value, flag
-    assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "--keep-tag"] == [
-        "pre-import",
-        "post-import",
-    ]
+    assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "--keep-tag"] == ["pre-import", "post-import"]
     assert "--prune" in cmd
     assert backup.from_config(cfg, environ).keep == Keep()
 
@@ -17551,13 +15026,7 @@ def test_unlock_runs_before_every_job_that_locks_the_repository(tmp_path, writer
     backup.run_check(bc, environ, now=NOW, runner=fake)
     backup.run_forget(bc, environ, runner=fake)
     assert [verb(cmd) for cmd, _ in fake.calls] == [
-        "unlock",
-        "backup",
-        "unlock",
-        "check",
-        "unlock",
-        "forget",
-    ]
+        "unlock", "backup", "unlock", "check", "unlock", "forget"]
     check = fake.calls[3][0]
     assert f"--read-data-subset={backup.check_subset(NOW)}" in check
 
@@ -17566,11 +15035,7 @@ def test_the_weekly_check_reads_a_different_quarter_each_week():
     # why: a plain `restic check` never reads the pack files back; a quarter a week reads them all
     # every four weeks.
     assert {backup.check_subset(NOW + timedelta(weeks=w)) for w in range(4)} == {
-        "1/4",
-        "2/4",
-        "3/4",
-        "4/4",
-    }
+        "1/4", "2/4", "3/4", "4/4"}
 
 
 def test_a_failed_check_reads_the_same_quarter_again_until_it_passes(tmp_path, writer):
@@ -17587,24 +15052,17 @@ def test_a_failed_check_reads_the_same_quarter_again_until_it_passes(tmp_path, w
     assert run_job(ctx, "check").ok and run_job(ctx, "check").ok
     first = backup.check_subset(NOW)
     after = ops.QUARTERS[(ops.QUARTERS.index(first) + 1) % 4]
-    assert [
-        a.removeprefix("--read-data-subset=")
-        for cmd, _ in fake.calls
-        if verb(cmd) == "check"
-        for a in cmd
-        if a.startswith("--read-data-subset=")
-    ] == [first, first, first, after]
+    assert [a.removeprefix("--read-data-subset=") for cmd, _ in fake.calls if verb(cmd) == "check"
+            for a in cmd if a.startswith("--read-data-subset=")] == [first, first, first, after]
 
 
 def test_restics_whole_report_reaches_the_debug_log_and_nowhere_else(tmp_path, writer, caplog):
     # why: restic check names the damaged packs and the repair command on lines before its last,
     # which says only "Fatal: repository contains errors". `backup check --debug` must show them.
     cfg, environ = config(tmp_path, writer)
-    report = (
-        "pack f5261ce8 contains 2 errors\nrestic repair packs f5261ce8\n"
-        "rest:https://recordings:hunter2@nas:8000/ answered 500\n"
-        "Fatal: repository contains errors\n"
-    )
+    report = ("pack f5261ce8 contains 2 errors\nrestic repair packs f5261ce8\n"
+              "rest:https://recordings:hunter2@nas:8000/ answered 500\n"
+              "Fatal: repository contains errors\n")
     fake = FakeRestic(returncode=1, stderr=report, only=("check",))
     with caplog.at_level("DEBUG", logger="recordings.backup"), pytest.raises(BackupError) as caught:
         backup.run_check(backup.from_config(cfg, environ), environ, now=NOW, runner=fake)
@@ -17616,13 +15074,8 @@ def test_restics_whole_report_reaches_the_debug_log_and_nowhere_else(tmp_path, w
 def test_retry_lock_and_the_rest_server_certificate_reach_restic(tmp_path, writer):
     cert = tmp_path / "rest-server.crt"
     cert.write_text("not a real certificate\n", encoding="utf-8")
-    cfg, environ = config(
-        tmp_path,
-        writer,
-        repository="rest:https://nas:8000/recordings/",
-        rest_username="recordings",
-        cacert=str(cert),
-    )
+    cfg, environ = config(tmp_path, writer, repository="rest:https://nas:8000/recordings/",
+                          rest_username="recordings", cacert=str(cert))
     bc = backup.from_config(cfg, environ)
     base = backup.restic_base(replace(bc, retry_lock="5m"))
     assert base[base.index("--cacert") + 1] == str(cert)
@@ -17634,9 +15087,7 @@ def test_retry_lock_and_the_rest_server_certificate_reach_restic(tmp_path, write
 
 def test_the_runbook_downloads_the_restic_the_tests_pin():
     # why: two copies of one checksum drift apart. The runbook's spike fetches restic itself.
-    spec = importlib.util.spec_from_file_location(
-        "fetch_restic", REPO / "scripts" / "fetch_restic.py"
-    )
+    spec = importlib.util.spec_from_file_location("fetch_restic", REPO / "scripts" / "fetch_restic.py")
     fetch_restic = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fetch_restic)
     pinned = dict(fetch_restic.PINNED.values())
@@ -17681,25 +15132,18 @@ def test_too_little_space_on_the_nas_stops_the_backup(tmp_path, writer):
 
     def df(cmd, **kwargs):
         if cmd[0] == "ssh":
-            return subprocess.CompletedProcess(
-                cmd,
-                0,
-                "Filesystem 1024-blocks Used Available "
-                "Capacity Mounted on\n"
-                "/dev/md2 100 90 1048576 90% /volume1\n",
-                "",
-            )
+            return subprocess.CompletedProcess(cmd, 0, "Filesystem 1024-blocks Used Available "
+                                               "Capacity Mounted on\n"
+                                               "/dev/md2 100 90 1048576 90% /volume1\n", "")
         return subprocess.CompletedProcess(cmd, 0, SUMMARY, "")
 
     with pytest.raises(backup.NasLowOnSpace, match="free on the NAS"):
         backup.run_backup(bc, writer.state, environ, runner=df)
 
 
-SFTP_DF = (
-    'sftp> df "/recordings-mirror"\n'
-    "        Size         Used        Avail       (root)    %Capacity\n"
-    "  1048576000   1047527424      1048576      1048576          99%\n"
-)
+SFTP_DF = ('sftp> df "/recordings-mirror"\n'
+           "        Size         Used        Avail       (root)    %Capacity\n"
+           "  1048576000   1047527424      1048576      1048576          99%\n")
 
 
 def test_without_a_shell_the_free_space_comes_from_sftp_df():
@@ -17729,9 +15173,8 @@ def test_the_free_space_is_unknown_when_neither_df_answers():
     assert calls == []  # a newline would start another sftp command
 
 
-def test_the_backup_says_how_much_the_nas_has_free_or_that_it_is_unknown(
-    tmp_path, writer, make_incoming
-):
+def test_the_backup_says_how_much_the_nas_has_free_or_that_it_is_unknown(tmp_path, writer,
+                                                                          make_incoming):
     # why: §15.1. When neither ssh's df nor sftp's df answers, the NAS's free space is "unknown",
     # and the backup's recorded detail says so rather than nothing.
     writer.add(make_incoming())
@@ -17741,28 +15184,21 @@ def test_the_backup_says_how_much_the_nas_has_free_or_that_it_is_unknown(
     def runner(answers):
         def run(cmd, **kwargs):
             if cmd[0] in ("ssh", "sftp"):
-                return subprocess.CompletedProcess(
-                    cmd, 0 if answers else 255, answers if cmd[0] == "ssh" else "", ""
-                )
+                return subprocess.CompletedProcess(cmd, 0 if answers else 255,
+                                                   answers if cmd[0] == "ssh" else "", "")
             return subprocess.CompletedProcess(cmd, 0, SUMMARY, "")
-
         return run
 
-    df = (
-        "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
-        "/dev/md2 100 90 20971520 10% /volume1\n"
-    )
+    df = ("Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+          "/dev/md2 100 90 20971520 10% /volume1\n")
     for answers, ending in (("", "; NAS free space unknown"), (df, "; 20 GB free on the NAS")):
-        ctx = Context(
-            cfg=cfg, environ=environ, state=writer.state, clock=lambda: NOW, runner=runner(answers)
-        )
+        ctx = Context(cfg=cfg, environ=environ, state=writer.state, clock=lambda: NOW,
+                      runner=runner(answers))
         result = run_job(ctx, "backup")
         assert result.ok and result.detail.endswith(ending), result.detail
 
 
-def test_a_restored_copy_with_a_truncated_file_fails_the_restore_test(
-    tmp_path, writer, make_incoming
-):
+def test_a_restored_copy_with_a_truncated_file_fails_the_restore_test(tmp_path, writer, make_incoming):
     # Review Focus 5: a restore must be proven byte for byte, not by the files being there.
     rec = writer.add(make_incoming(b"ID3 " + b"x" * 4096)).recording
     cfg, environ = config(tmp_path, writer)
@@ -17775,13 +15211,8 @@ def test_a_restored_copy_with_a_truncated_file_fails_the_restore_test(
             media.write_bytes(media.read_bytes()[:100])
 
     fake = FakeRestic(on_call=restore)
-    result = backup.run_restore_test(
-        backup.from_config(cfg, environ),
-        environ,
-        expected_uuid=writer.identity.uuid,
-        now=NOW,
-        runner=fake,
-    )
+    result = backup.run_restore_test(backup.from_config(cfg, environ), environ,
+                                     expected_uuid=writer.identity.uuid, now=NOW, runner=fake)
     assert not result.ok and "SHA-256" in result.problems[0]["message"]
     assert [verb(cmd) for cmd, _ in fake.calls] == ["unlock", "restore"]
     assert "--verify" in fake.calls[1][0]  # restic reads each restored file back too
@@ -17792,9 +15223,8 @@ def test_a_restored_copy_with_a_truncated_file_fails_the_restore_test(
     assert writer.state.last_run("restore-test").ok is False
 
 
-def test_the_restore_test_clears_old_copies_then_checks_the_space(
-    tmp_path, writer, make_incoming, monkeypatch
-):
+def test_the_restore_test_clears_old_copies_then_checks_the_space(tmp_path, writer, make_incoming,
+                                                                  monkeypatch):
     # why: a killed restore test leaves a full plaintext copy behind; and a restore onto the
     # archive's disk must not take it below the warning (or the stop) threshold.
     writer.add(make_incoming())
@@ -17802,21 +15232,13 @@ def test_the_restore_test_clears_old_copies_then_checks_the_space(
     old = tmp_path / "scratch" / "restore-20261001T000000Z"
     (old / "archive").mkdir(parents=True)
     (tmp_path / "scratch" / "notes.txt").write_text("not ours\n", encoding="utf-8")
-    gib = 1024**3
-    monkeypatch.setattr(
-        backup.shutil,
-        "disk_usage",
-        lambda path: SimpleNamespace(total=100 * gib, used=80 * gib - 1, free=20 * gib + 1),
-    )  # just above 20% free
+    gib = 1024 ** 3
+    monkeypatch.setattr(backup.shutil, "disk_usage", lambda path: SimpleNamespace(
+        total=100 * gib, used=80 * gib - 1, free=20 * gib + 1))  # just above 20% free
     fake = FakeRestic()
     with pytest.raises(backup.ScratchTooSmall, match="below 20% free"):
-        backup.run_restore_test(
-            backup.from_config(cfg, environ),
-            environ,
-            expected_uuid=writer.identity.uuid,
-            now=NOW,
-            runner=fake,
-        )
+        backup.run_restore_test(backup.from_config(cfg, environ), environ,
+                                expected_uuid=writer.identity.uuid, now=NOW, runner=fake)
     assert fake.calls == [] and not old.exists()
     assert (tmp_path / "scratch" / "notes.txt").is_file()
     # the archive outgrows the disk one day: Status and the alert must say that, not just
@@ -17825,9 +15247,8 @@ def test_the_restore_test_clears_old_copies_then_checks_the_space(
     assert run_job(ctx, "restore-test").detail == "ScratchTooSmall"
 
 
-def test_a_restored_copy_left_behind_fails_the_restore_test(
-    tmp_path, writer, make_incoming, monkeypatch
-):
+def test_a_restored_copy_left_behind_fails_the_restore_test(tmp_path, writer, make_incoming,
+                                                            monkeypatch):
     # why: rmtree(ignore_errors=True) alone would hide a full plaintext copy left on the disk.
     writer.add(make_incoming())
     cfg, environ = config(tmp_path, writer)
@@ -17839,13 +15260,9 @@ def test_a_restored_copy_left_behind_fails_the_restore_test(
 
     monkeypatch.setattr(backup.shutil, "rmtree", lambda path, ignore_errors=False: None)
     with pytest.raises(backup.RestoreCopyLeftBehind):
-        backup.run_restore_test(
-            backup.from_config(cfg, environ),
-            environ,
-            expected_uuid=writer.identity.uuid,
-            now=NOW,
-            runner=FakeRestic(on_call=restore),
-        )
+        backup.run_restore_test(backup.from_config(cfg, environ), environ,
+                                expected_uuid=writer.identity.uuid, now=NOW,
+                                runner=FakeRestic(on_call=restore))
 
 
 def test_validate_deep_checks_every_hash(writer, make_incoming):
@@ -17862,37 +15279,20 @@ def test_validate_deep_checks_every_hash(writer, make_incoming):
 def test_run_job_records_each_run(tmp_path, writer, make_incoming):
     writer.add(make_incoming())
     cfg, environ = config(tmp_path, writer)
-    ctx = Context(
-        cfg=cfg,
-        environ=environ,
-        state=writer.state,
-        clock=lambda: NOW,
-        runner=FakeRestic(stdout=SUMMARY),
-    )
-    assert run_job(ctx, "backup").ok and writer.state.last_run("backup", ok=True).detail.startswith(
-        "snapshot"
-    )
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, clock=lambda: NOW,
+                  runner=FakeRestic(stdout=SUMMARY))
+    assert run_job(ctx, "backup").ok and writer.state.last_run("backup", ok=True).detail.startswith("snapshot")
     off, _ = config(tmp_path, writer, prune=False)
-    assert (
-        run_job(
-            Context(
-                cfg=off, environ=environ, state=writer.state, clock=lambda: NOW, runner=FakeRestic()
-            ),
-            "prune",
-        ).detail
-        == "prune is off: retention runs on the NAS"
-    )
+    assert run_job(Context(cfg=off, environ=environ, state=writer.state, clock=lambda: NOW,
+                           runner=FakeRestic()), "prune").detail == "prune is off: retention runs on the NAS"
 
 
 def test_a_failure_is_recorded_as_its_type_and_exit_code_only(tmp_path, writer, make_incoming):
     # why: Review Focus 4. restic's stderr can name a file, and a file name can carry a title.
     writer.add(make_incoming())
     cfg, environ = config(tmp_path, writer)
-    fake = FakeRestic(
-        returncode=3,
-        stderr="Fatal: /archive/会議メモ / Q&A.json: permission denied\n",
-        only=("backup",),
-    )
+    fake = FakeRestic(returncode=3, stderr="Fatal: /archive/会議メモ / Q&A.json: permission denied\n",
+                      only=("backup",))
     ctx = Context(cfg=cfg, environ=environ, state=writer.state, clock=lambda: NOW, runner=fake)
     result = run_job(ctx, "backup")
     assert result.detail == "BackupError; exit 3" == writer.state.last_run("backup").detail
@@ -17915,8 +15315,7 @@ def test_a_job_holds_the_ops_lock_and_the_loop_skips_a_busy_turn(tmp_path, write
 
 
 def test_a_job_cannot_take_the_ops_lock_again_so_none_may_call_the_import(
-    tmp_path, writer, monkeypatch
-):
+        tmp_path, writer, monkeypatch):
     # why: run_job holds "ops", and Locks is re-entrant only within one instance. The import
     # builds its own, so a job that called it would wait lock_timeout (600 s) on this process's
     # own hold, then raise LockTimeout, which is not in FAILURES. Imports run from the CLI alone.
@@ -17951,13 +15350,11 @@ def test_sigterm_reaches_the_running_child_before_the_job_stops(tmp_path):
     # why: `docker stop` sends SIGTERM. restic must get it too, so it stops cleanly and removes
     # its lock; killed instead, its lock fails every later check and backup until an unlock.
     ready, got = tmp_path / "ready", tmp_path / "got-sigterm"
-    child = (
-        "import pathlib, signal, sys, time\n"
-        f"def stop(*_):\n    pathlib.Path({str(got)!r}).touch()\n    sys.exit(3)\n"
-        "signal.signal(signal.SIGTERM, stop)\n"
-        f"pathlib.Path({str(ready)!r}).touch()\n"
-        "time.sleep(30)\n"
-    )
+    child = ("import pathlib, signal, sys, time\n"
+             f"def stop(*_):\n    pathlib.Path({str(got)!r}).touch()\n    sys.exit(3)\n"
+             "signal.signal(signal.SIGTERM, stop)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(30)\n")
     main_thread = threading.main_thread().ident
 
     def send_sigterm():
@@ -18005,17 +15402,15 @@ def test_with_a_real_restic_backup_check_forget_and_restore(tmp_path, writer, ma
     assert not any((tmp_path / "scratch").iterdir())
 
 
-CLEANS_UP = (
-    "import pathlib, signal, sys, time\n"
-    "def stop(*_):\n"
-    "    time.sleep(0.5)  # restic's cleanup: it reports on stderr, then removes its lock\n"
-    "    sys.stderr.write('cleaning up\\n'); sys.stderr.flush()  # BrokenPipeError if closed\n"
-    "    pathlib.Path(%(cleaned)r).touch()\n"
-    "    sys.exit(0)\n"
-    "signal.signal(signal.SIGTERM, stop)\n"
-    "pathlib.Path(%(ready)r).touch()\n"
-    "time.sleep(30)\n"
-)
+CLEANS_UP = ("import pathlib, signal, sys, time\n"
+             "def stop(*_):\n"
+             "    time.sleep(0.5)  # restic's cleanup: it reports on stderr, then removes its lock\n"
+             "    sys.stderr.write('cleaning up\\n'); sys.stderr.flush()  # BrokenPipeError if closed\n"
+             "    pathlib.Path(%(cleaned)r).touch()\n"
+             "    sys.exit(0)\n"
+             "signal.signal(signal.SIGTERM, stop)\n"
+             "pathlib.Path(%(ready)r).touch()\n"
+             "time.sleep(30)\n")
 
 
 def sigterm_when_ready(ready: Path, signum: int = signal.SIGTERM) -> None:
@@ -18065,12 +15460,8 @@ def test_a_sigterm_while_the_child_is_starting_still_reaches_it(monkeypatch):
 
     monkeypatch.setattr(ops.subprocess, "Popen", popen_then_sigterm)
     with pytest.raises(SystemExit) as stopped, ops.sigterm_forwarded():
-        ops.run_child(
-            [sys.executable, "-c", "import time; time.sleep(30)"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        ops.run_child([sys.executable, "-c", "import time; time.sleep(30)"], capture_output=True,
+                      text=True, timeout=60)
     assert stopped.value.code == 128 + signal.SIGTERM
     try:
         assert children[0].wait(timeout=10) != 0  # the child was told to stop, not left running
@@ -18084,13 +15475,11 @@ def test_ctrl_c_waits_for_the_child_to_finish_its_cleanup_before_it_propagates(t
     # closed the pipes before waiting, so restic could die of SIGPIPE in the middle of its
     # cleanup and leave its repository lock behind (the SIGTERM fault again, by another route).
     ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
-    child = (
-        "import pathlib, sys, time\n"
-        f"pathlib.Path({str(ready)!r}).touch()\n"
-        "time.sleep(1.0)  # the child's own SIGINT cleanup begins; its pipes must still be open\n"
-        "sys.stderr.write('cleaning up\\n'); sys.stderr.flush()\n"
-        f"pathlib.Path({str(cleaned)!r}).touch()\n"
-    )
+    child = ("import pathlib, sys, time\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(1.0)  # the child's own SIGINT cleanup begins; its pipes must still be open\n"
+             "sys.stderr.write('cleaning up\\n'); sys.stderr.flush()\n"
+             f"pathlib.Path({str(cleaned)!r}).touch()\n")
     sigterm_when_ready(ready, signal.SIGINT)
     with pytest.raises(KeyboardInterrupt):
         ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=60)
@@ -18114,12 +15503,10 @@ def test_a_forwarded_sigterm_is_honoured_when_the_child_then_times_out(tmp_path)
     # why: communicate() raised TimeoutExpired past the check, so the earlier handler never ran
     # and the stop was held back until the next run_child or the end of the block.
     ready = tmp_path / "ready"
-    child = (
-        "import pathlib, signal, time\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        f"pathlib.Path({str(ready)!r}).touch()\n"
-        "time.sleep(30)\n"
-    )
+    child = ("import pathlib, signal, time\n"
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(30)\n")
     seen = []
     before = signal.signal(signal.SIGTERM, lambda signum, frame: seen.append(signum))
     try:
@@ -18148,19 +15535,13 @@ def test_sigterm_forwarded_can_nest_and_copes_with_a_handler_python_cannot_see(m
 
 
 def test_errors_from_the_state_copy_or_the_ops_lock_are_recorded_not_raised(
-    tmp_path, writer, make_incoming, monkeypatch
-):
+        tmp_path, writer, make_incoming, monkeypatch):
     # why: a full state disk (sqlite3.OperationalError) or a lock file that can't be opened
     # (OSError) used to escape run_job as a traceback, unrecorded.
     writer.add(make_incoming())
     cfg, environ = config(tmp_path, writer)
-    ctx = Context(
-        cfg=cfg,
-        environ=environ,
-        state=writer.state,
-        clock=lambda: NOW,
-        runner=FakeRestic(stdout=SUMMARY),
-    )
+    ctx = Context(cfg=cfg, environ=environ, state=writer.state, clock=lambda: NOW,
+                  runner=FakeRestic(stdout=SUMMARY))
 
     def full(dest):
         raise sqlite3.OperationalError("database or disk is full: /some/place/Q&A.db")
@@ -18183,8 +15564,7 @@ def test_errors_from_the_state_copy_or_the_ops_lock_are_recorded_not_raised(
 
 
 def test_host_keys_are_always_checked_and_a_nas_without_a_known_hosts_file_is_refused(
-    tmp_path, writer
-):
+        tmp_path, writer):
     # why: without StrictHostKeyChecking=yes, a host's ssh_config (accept-new) or ~/.ssh/known_hosts
     # decides, and the mirror sends the plaintext archive over these options.
     options = ssh_options(None, None, None)
@@ -18228,36 +15608,21 @@ def test_a_key_path_with_a_space_survives_restics_sftp_args(tmp_path, writer):
     environ |= {"RECORDINGS_NAS_SSH_KEY_FILE": str(key)}
     base = backup.restic_base(backup.from_config(cfg, environ))
     (option,) = [a for a in base if a.startswith("sftp.args=")]
-    assert (
-        shlex.split(option.removeprefix("sftp.args="))
-        == backup.from_config(cfg, environ).nas.options()
-    )  # restic splits the value like a shell does
+    assert shlex.split(option.removeprefix("sftp.args=")) == backup.from_config(
+        cfg, environ).nas.options()  # restic splits the value like a shell does
 
 
 def test_a_direct_ssh_key_value_is_refused_and_a_stray_variable_never_reaches_restic(
-    tmp_path, writer
-):
+        tmp_path, writer):
     cfg, environ = config(tmp_path, writer)
     with pytest.raises(ConfigError, match="RECORDINGS_NAS_SSH_KEY_FILE"):
         secret_path("nas_ssh_key", environ | {"RECORDINGS_NAS_SSH_KEY": "-----BEGIN fixture-----"})
-    env = backup.restic_env(
-        backup.from_config(cfg, environ),
-        environ
-        | {
-            "RESTIC_PASSWORD_COMMAND": "echo hunter2",
-            "RESTIC_PROGRESS_FPS": "1",
-            "RESTIC_REPOSITORY_FILE": "/elsewhere",
-            "RECORDINGS_PLAUD_TOKEN": "token",
-            "AWS_SECRET_ACCESS_KEY": "aws",
-        },
-    )
-    assert set(env) <= {
-        "PATH",
-        "HOME",
-        "RESTIC_REPOSITORY",
-        "RESTIC_PASSWORD_FILE",
-        "RESTIC_CACHE_DIR",
-    }
+    env = backup.restic_env(backup.from_config(cfg, environ), environ | {
+        "RESTIC_PASSWORD_COMMAND": "echo hunter2", "RESTIC_PROGRESS_FPS": "1",
+        "RESTIC_REPOSITORY_FILE": "/elsewhere", "RECORDINGS_PLAUD_TOKEN": "token",
+        "AWS_SECRET_ACCESS_KEY": "aws"})
+    assert set(env) <= {"PATH", "HOME", "RESTIC_REPOSITORY", "RESTIC_PASSWORD_FILE",
+                        "RESTIC_CACHE_DIR"}
 
 
 def test_a_missing_sentinel_in_the_restored_copy_is_reported_once(tmp_path, writer, make_incoming):
@@ -18269,19 +15634,14 @@ def test_a_missing_sentinel_in_the_restored_copy_is_reported_once(tmp_path, writ
             _, copy = restore_like_restic(writer, backup.from_config(cfg, environ), cmd)
             (copy / SENTINEL).unlink()
 
-    result = backup.run_restore_test(
-        backup.from_config(cfg, environ),
-        environ,
-        expected_uuid=writer.identity.uuid,
-        now=NOW,
-        runner=FakeRestic(on_call=restore),
-    )
+    result = backup.run_restore_test(backup.from_config(cfg, environ), environ,
+                                     expected_uuid=writer.identity.uuid, now=NOW,
+                                     runner=FakeRestic(on_call=restore))
     assert len(result.problems) == 1
 
 
 def test_a_snapshot_missing_a_recording_or_a_backed_up_file_fails_the_restore_test(
-    tmp_path, writer, make_incoming
-):
+        tmp_path, writer, make_incoming):
     # why: --verify and the hashes prove what was restored, not that everything was: a snapshot
     # missing a whole recording folder passes both. The snapshot's own state.db copy, taken
     # before restic read the archive, names every recording.json it must hold.
@@ -18295,14 +15655,8 @@ def test_a_snapshot_missing_a_recording_or_a_backed_up_file_fails_the_restore_te
         def restore(cmd):
             if "restore" in cmd:
                 change(*restore_like_restic(writer, bc, cmd, state_copy=state_copy))
-
-        return backup.run_restore_test(
-            bc,
-            environ,
-            expected_uuid=writer.identity.uuid,
-            now=NOW,
-            runner=FakeRestic(on_call=restore),
-        )
+        return backup.run_restore_test(bc, environ, expected_uuid=writer.identity.uuid, now=NOW,
+                                       runner=FakeRestic(on_call=restore))
 
     def drop_first_and_the_config(target, copy):
         shutil.rmtree(copy / writer.archive.path_for(first.id).relative_to(writer.root))
@@ -18310,20 +15664,16 @@ def test_a_snapshot_missing_a_recording_or_a_backed_up_file_fails_the_restore_te
 
     result = run(drop_first_and_the_config)
     assert result.recordings == 1
-    assert sorted((p["path"], p["message"]) for p in result.problems) == sorted(
-        [
-            (str(cfg.path), "is not in the snapshot"),
-            (str(writer.archive.path_for(first.id) / "recording.json"), "is not in the snapshot"),
-        ]
-    )
+    assert sorted((p["path"], p["message"]) for p in result.problems) == sorted([
+        (str(cfg.path), "is not in the snapshot"),
+        (str(writer.archive.path_for(first.id) / "recording.json"), "is not in the snapshot")])
 
     def drop_the_state_copy(target, copy):
         (target / backup.state_copy_path(bc).relative_to(bc.state.anchor)).unlink()
 
     result = run(drop_the_state_copy)
     assert [(p["path"], p["message"]) for p in result.problems] == [
-        (str(backup.state_copy_path(bc)), "is not in the snapshot")
-    ]
+        (str(backup.state_copy_path(bc)), "is not in the snapshot")]
 
     # `later` was added after this snapshot's state copy: there or not, it is no problem
     result = run(lambda target, copy: None, state_copy=early)
@@ -18338,8 +15688,7 @@ def test_a_snapshot_missing_a_recording_or_a_backed_up_file_fails_the_restore_te
 
 
 def test_backup_init_prints_fixed_text_and_a_missing_restic_is_a_clean_error(
-    tmp_path, writer, monkeypatch, capsys
-):
+        tmp_path, writer, monkeypatch, capsys):
     # why: restic's own words can carry a path or a server's reply; and a restic that is not
     # installed used to end in a traceback.
     cfg, environ = config(tmp_path, writer)
@@ -18356,9 +15705,7 @@ def test_backup_init_prints_fixed_text_and_a_missing_restic_is_a_clean_error(
 
 
 def test_fetch_restic_checks_the_binary_it_has_not_just_its_version(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location(
-        "fetch_restic", REPO / "scripts" / "fetch_restic.py"
-    )
+    spec = importlib.util.spec_from_file_location("fetch_restic", REPO / "scripts" / "fetch_restic.py")
     fetch = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fetch)
     assert set(fetch.BINARY_SHA256) == {name for name, _ in fetch.PINNED.values()}
@@ -18376,13 +15723,11 @@ Also add this test to `packages/core/tests/test_import_run.py`, before
 `test_the_cli_stops_on_plan_problems_even_with_allow_unplaced` (it uses that file's `_cli_config`,
 `A`, `Locks` and `main`):
 ```python
-def test_a_busy_ops_lock_stops_the_import_before_it_plans(
-    ar_archive, plaud_env, tmp_path, monkeypatch, capsys
-):
+def test_a_busy_ops_lock_stops_the_import_before_it_plans(ar_archive, plaud_env, tmp_path,
+                                                          monkeypatch, capsys):
     # why: plan() decodes every file, which takes hours on the real archive. A backup holding
     # "ops" must be found out at once (75), not after the plan, when run() would wait 600 s.
     import os
-
     for name in [n for n in os.environ if n.startswith(("RECORDINGS_", "RESTIC_"))]:
         monkeypatch.delenv(name)  # nothing from this machine: its own secrets and settings included
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
@@ -18431,48 +15776,42 @@ In `packages/core/src/recordings/state.py`:
 3. **Add** to `State`, at the end of the class (the block below is indented 3 more spaces than the
    file needs, for this list; remove them):
    ```python
-   # ---- operations: each run of a scheduled job (§14, §15.1); Status reads these ----------
-   def record_run(
-       self, job: str, started_at: datetime, finished_at: datetime, ok: bool, detail: str
-   ) -> None:
-       with self.db() as db:
-           db.execute(
-               "INSERT INTO ops_runs (job, started_at, finished_at, ok, detail) "
-               "VALUES (?, ?, ?, ?, ?)",
-               (job, started_at.isoformat(), finished_at.isoformat(), int(ok), detail),
-           )
+       # ---- operations: each run of a scheduled job (§14, §15.1); Status reads these ----------
+       def record_run(self, job: str, started_at: datetime, finished_at: datetime, ok: bool,
+                      detail: str) -> None:
+           with self.db() as db:
+               db.execute("INSERT INTO ops_runs (job, started_at, finished_at, ok, detail) "
+                          "VALUES (?, ?, ?, ?, ?)",
+                          (job, started_at.isoformat(), finished_at.isoformat(), int(ok), detail))
 
+       def last_run(self, job: str, *, ok: bool | None = None) -> Run | None:
+           sql = "SELECT job, started_at, finished_at, ok, detail FROM ops_runs WHERE job = ?"
+           args: tuple = (job,)
+           if ok is not None:
+               sql, args = sql + " AND ok = ?", (job, int(ok))
+           with self.db() as db:
+               row = db.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
+           if row is None:
+               return None
+           return Run(row[0], datetime.fromisoformat(row[1]), datetime.fromisoformat(row[2]),
+                      bool(row[3]), row[4])
 
-   def last_run(self, job: str, *, ok: bool | None = None) -> Run | None:
-       sql = "SELECT job, started_at, finished_at, ok, detail FROM ops_runs WHERE job = ?"
-       args: tuple = (job,)
-       if ok is not None:
-           sql, args = sql + " AND ok = ?", (job, int(ok))
-       with self.db() as db:
-           row = db.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
-       if row is None:
-           return None
-       return Run(
-           row[0], datetime.fromisoformat(row[1]), datetime.fromisoformat(row[2]), bool(row[3]), row[4]
-       )
-
-
-   def backup_to(self, dest: Path) -> Path:
-       """A consistent copy of state.db, with SQLite's own backup command (§15.1), even while
-       another process writes it. Replaced atomically, so a half copy is never backed up. The
-       source opens with mode=rw (_connect), so a missing state.db is never created here."""
-       dest = Path(dest)
-       dest.parent.mkdir(parents=True, exist_ok=True)
-       tmp = temp_name(dest)
-       try:
-           with closing(self._connect("rw")) as src, closing(sqlite3.connect(tmp)) as dst:
-               src.backup(dst)
-           os.replace(tmp, dest)
-       except BaseException:
-           tmp.unlink(missing_ok=True)
-           raise
-       fsync_dir(dest.parent)
-       return dest
+       def backup_to(self, dest: Path) -> Path:
+           """A consistent copy of state.db, with SQLite's own backup command (§15.1), even while
+           another process writes it. Replaced atomically, so a half copy is never backed up. The
+           source opens with mode=rw (_connect), so a missing state.db is never created here."""
+           dest = Path(dest)
+           dest.parent.mkdir(parents=True, exist_ok=True)
+           tmp = temp_name(dest)
+           try:
+               with closing(self._connect("rw")) as src, closing(sqlite3.connect(tmp)) as dst:
+                   src.backup(dst)
+               os.replace(tmp, dest)
+           except BaseException:
+               tmp.unlink(missing_ok=True)
+               raise
+           fsync_dir(dest.parent)
+           return dest
    ```
 
 In `packages/core/src/recordings/config.py`:
@@ -18506,10 +15845,8 @@ In `packages/core/src/recordings/config.py`:
    def _no_such_file(env: str) -> ConfigError:
        """NAME_FILE names nothing that exists. Its value is never repeated: it may be the secret
        itself, put where the path belongs, and doctor's output is pasted into issues and chats."""
-       return ConfigError(
-           f"{env}_FILE names a file that does not exist. Its value is not shown: give "
-           "the path to the secret's file there, never the secret itself"
-       )
+       return ConfigError(f"{env}_FILE names a file that does not exist. Its value is not shown: give "
+                          "the path to the secret's file there, never the secret itself")
 
 
    def secret_path(name: str, environ: Mapping[str, str]) -> Path | None:
@@ -18570,24 +15907,11 @@ def ssh_options(key: Path | None, known_hosts: Path | None, port: int | None) ->
     (require_known_hosts)."""
     # ConnectTimeout: a NAS that is off is given up on in seconds, not after TCP's own timeout
     # (minutes), which doctor and every backup's free-space check would otherwise wait out.
-    out = [
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "ServerAliveInterval=60",
-        "-o",
-        "ServerAliveCountMax=240",
-        # Outside Docker the user's ~/.ssh/config applies too: never ride a connection it
-        # opened (a shared one skips the host-key check), nor hand the NAS its agent.
-        "-o",
-        "ControlPath=none",
-        "-o",
-        "ForwardAgent=no",
-        "-o",
-        "ClearAllForwardings=yes",
-    ]
+    out = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=60",
+           "-o", "ServerAliveCountMax=240",
+           # Outside Docker the user's ~/.ssh/config applies too: never ride a connection it
+           # opened (a shared one skips the host-key check), nor hand the NAS its agent.
+           "-o", "ControlPath=none", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"]
     if key is not None:
         out += ["-i", str(key), "-o", "IdentitiesOnly=yes"]
     out += ["-o", "StrictHostKeyChecking=yes"]  # always: a host's ssh_config must not relax it
@@ -18613,20 +15937,13 @@ class Nas:
 def nas_from_config(cfg: Config, environ: Mapping[str, str]) -> Nas:
     section = cfg.data.get("nas", {})
     ssh, port = section.get("ssh"), section.get("port")
-    if ssh is not None and (
-        not isinstance(ssh, str) or not ssh.strip() or ssh.strip().startswith("-")
-    ):  # ssh would read it as an option
+    if ssh is not None and (not isinstance(ssh, str) or not ssh.strip()
+                            or ssh.strip().startswith("-")):  # ssh would read it as an option
         raise ConfigError('[nas] ssh must be an ssh destination, such as "mirror@nas"')
-    if port is not None and (
-        not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536
-    ):
+    if port is not None and (not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536):
         raise ConfigError("[nas] port must be a port number")
-    nas = Nas(
-        ssh=ssh,
-        port=port,
-        key=secret_path("nas_ssh_key", environ),
-        known_hosts=secret_path("nas_known_hosts", environ),
-    )
+    nas = Nas(ssh=ssh, port=port, key=secret_path("nas_ssh_key", environ),
+              known_hosts=secret_path("nas_known_hosts", environ))
     if ssh is not None:
         require_known_hosts(nas)
     return nas
@@ -18636,10 +15953,8 @@ def require_known_hosts(nas: Nas) -> None:
     """Every use of ssh to the NAS pins its host key to the secret file (§15.1): the mirror sends
     the plaintext archive, private recordings included, over these options."""
     if nas.known_hosts is None:
-        raise ConfigError(
-            "ssh to the NAS needs its host key: give RECORDINGS_NAS_KNOWN_HOSTS_FILE, "
-            "the path to a file of known hosts"
-        )
+        raise ConfigError("ssh to the NAS needs its host key: give RECORDINGS_NAS_KNOWN_HOSTS_FILE, "
+                          "the path to a file of known hosts")
 
 
 def _avail_kib(text: str) -> int | None:
@@ -18814,20 +16129,11 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
     if not isinstance(repository, str) or not repository.strip():
         raise ConfigError("[backup] repository is not set (see config.example.toml)")
     if _PASSWORD_IN_URL.search(repository):  # the message never repeats the URL
-        raise ConfigError(
-            "[backup] repository: the repository URL carries credentials; put the "
-            "password in the secret file (RESTIC_REST_PASSWORD_FILE) and the user "
-            "in [backup] rest_username"
-        )
-    missing = [
-        n
-        for n, v in (
-            ("[archive] path", cfg.archive_path),
-            ("[state] path", cfg.state_path),
-            ("[archive] writer_id", cfg.writer_id),
-        )
-        if v is None
-    ]
+        raise ConfigError("[backup] repository: the repository URL carries credentials; put the "
+                          "password in the secret file (RESTIC_REST_PASSWORD_FILE) and the user "
+                          "in [backup] rest_username")
+    missing = [n for n, v in (("[archive] path", cfg.archive_path), ("[state] path", cfg.state_path),
+                              ("[archive] writer_id", cfg.writer_id)) if v is None]
     if missing:
         raise ConfigError("set " + ", ".join(missing) + " before backing up")
     extra = section.get("extra_paths", [])
@@ -18837,11 +16143,7 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
     if not isinstance(prune, bool):
         raise ConfigError("[backup] prune must be true or false")
     min_free_gb = section.get("min_nas_free_gb", 10)
-    if (
-        not isinstance(min_free_gb, (int, float))
-        or isinstance(min_free_gb, bool)
-        or min_free_gb < 0
-    ):
+    if not isinstance(min_free_gb, (int, float)) or isinstance(min_free_gb, bool) or min_free_gb < 0:
         raise ConfigError("[backup] min_nas_free_gb must be a number")
     nas = nas_from_config(cfg, environ)
     if repository.strip().startswith("sftp:"):
@@ -18856,40 +16158,25 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
     except OSError:
         pass  # a missing file stays named, and restic says it can't read it
     paths = ([cfg.path] if cfg.path else []) + [Path(p) for p in extra]
-    keep = Keep(
-        **{
-            k: _positive_int(section, f"keep_{k}", d)
-            for k, d in (("hourly", 24), ("daily", 14), ("weekly", 8), ("monthly", 12))
-        }
-    )
+    keep = Keep(**{k: _positive_int(section, f"keep_{k}", d)
+                   for k, d in (("hourly", 24), ("daily", 14), ("weekly", 8), ("monthly", 12))})
     return BackupConfig(
-        repository=repository.strip(),
-        host=cfg.writer_id,
-        archive=cfg.archive_path,
-        state=cfg.state_path,
-        paths=tuple(paths),
-        keep=keep,
-        prune=prune,
+        repository=repository.strip(), host=cfg.writer_id, archive=cfg.archive_path,
+        state=cfg.state_path, paths=tuple(paths), keep=keep, prune=prune,
         restic=str(section.get("restic", "restic")),
         cache_dir=Path(section["cache_dir"]) if section.get("cache_dir") else None,
-        restore_scratch=Path(section["restore_scratch"])
-        if section.get("restore_scratch")
-        else None,
+        restore_scratch=Path(section["restore_scratch"]) if section.get("restore_scratch") else None,
         nas=nas,
         nas_repo_path=section.get("nas_repo_path") or None,
-        min_nas_free_bytes=int(min_free_gb * 1024**3),
+        min_nas_free_bytes=int(min_free_gb * 1024 ** 3),
         rest_username=section.get("rest_username") or None,
-        cacert=cacert_path,
-    )
+        cacert=cacert_path)
 
 
 def restic_env(bc: BackupConfig, environ: Mapping[str, str]) -> dict[str, str]:
     """restic's whole environment: nothing from ours but these, so no stray variable leaks in."""
-    env = {
-        "PATH": environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        "HOME": environ.get("HOME", "/tmp"),
-        "RESTIC_REPOSITORY": bc.repository,
-    }
+    env = {"PATH": environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+           "HOME": environ.get("HOME", "/tmp"), "RESTIC_REPOSITORY": bc.repository}
     if environ.get("RESTIC_PASSWORD_FILE"):
         env["RESTIC_PASSWORD_FILE"] = environ["RESTIC_PASSWORD_FILE"]
     elif environ.get("RESTIC_PASSWORD"):
@@ -18926,43 +16213,17 @@ def state_copy_path(bc: BackupConfig) -> Path:
 
 def backup_command(bc: BackupConfig, state_copy: Path, *, tags: Sequence[str] = ()) -> list[str]:
     tag_args = [x for t in (TAG, *tags) for x in ("--tag", t)]
-    return [
-        *restic_base(bc),
-        "backup",
-        "--json",
-        "--host",
-        bc.host,
-        *tag_args,
-        "--exclude",
-        str(bc.archive / ".tmp"),
-        "--exclude",
-        ".*.tmp",
-        str(bc.archive),
-        *(str(p) for p in bc.paths),
-        str(state_copy),
-    ]
+    return [*restic_base(bc), "backup", "--json", "--host", bc.host, *tag_args,
+            "--exclude", str(bc.archive / ".tmp"), "--exclude", ".*.tmp",
+            str(bc.archive), *(str(p) for p in bc.paths), str(state_copy)]
 
 
 def forget_command(bc: BackupConfig) -> list[str]:
     keep_tags = [x for t in MILESTONE_TAGS for x in ("--keep-tag", t)]
-    return [
-        *restic_base(bc),
-        "forget",
-        "--host",
-        bc.host,
-        "--tag",
-        TAG,
-        "--keep-hourly",
-        str(bc.keep.hourly),
-        "--keep-daily",
-        str(bc.keep.daily),
-        "--keep-weekly",
-        str(bc.keep.weekly),
-        "--keep-monthly",
-        str(bc.keep.monthly),
-        *keep_tags,
-        "--prune",
-    ]
+    return [*restic_base(bc), "forget", "--host", bc.host, "--tag", TAG,
+            "--keep-hourly", str(bc.keep.hourly), "--keep-daily", str(bc.keep.daily),
+            "--keep-weekly", str(bc.keep.weekly), "--keep-monthly", str(bc.keep.monthly),
+            *keep_tags, "--prune"]
 
 
 def unlock_command(bc: BackupConfig) -> list[str]:
@@ -18981,48 +16242,27 @@ def check_command(bc: BackupConfig, *, subset: str | None = None) -> list[str]:
 
 def restore_command(bc: BackupConfig, target: Path) -> list[str]:
     # --verify reads every restored file back and compares it with the repository.
-    return [
-        *restic_base(bc),
-        "restore",
-        "latest",
-        "--host",
-        bc.host,
-        "--tag",
-        TAG,
-        "--target",
-        str(target),
-        "--verify",
-    ]
+    return [*restic_base(bc), "restore", "latest", "--host", bc.host, "--tag", TAG,
+            "--target", str(target), "--verify"]
 
 
 def init_command(bc: BackupConfig) -> list[str]:
     return [*restic_base(bc), "init"]
 
 
-def _run(
-    bc: BackupConfig,
-    cmd: list[str],
-    environ: Mapping[str, str],
-    what: str,
-    runner,
-    timeout: float | None = None,
-) -> subprocess.CompletedProcess:
-    proc = runner(cmd, env=restic_env(bc, environ), capture_output=True, text=True, timeout=timeout)
+def _run(bc: BackupConfig, cmd: list[str], environ: Mapping[str, str], what: str, runner,
+         timeout: float | None = None) -> subprocess.CompletedProcess:
+    proc = runner(cmd, env=restic_env(bc, environ), capture_output=True, text=True,
+                  timeout=timeout)
     if proc.returncode != 0:
         lines = (proc.stderr or "").strip().splitlines()
         # restic's whole report, for --debug only: a failed check names the damaged packs and the
         # `restic repair packs` line to run; its last line says only that there are errors.
-        log.debug(
-            "restic %s exited %d:\n%s",
-            what,
-            proc.returncode,
-            _USERINFO.sub(r"\1***@", "\n".join(lines)),
-        )
-        raise BackupError(
-            f"restic {what} failed (exit {proc.returncode}): "
-            + _USERINFO.sub(r"\1***@", (lines or ["no message"])[-1])[:300],
-            returncode=proc.returncode,
-        )
+        log.debug("restic %s exited %d:\n%s", what, proc.returncode,
+                  _USERINFO.sub(r"\1***@", "\n".join(lines)))
+        raise BackupError(f"restic {what} failed (exit {proc.returncode}): "
+                          + _USERINFO.sub(r"\1***@", (lines or ["no message"])[-1])[:300],
+                          returncode=proc.returncode)
     return proc
 
 
@@ -19036,9 +16276,7 @@ def _check_archive(bc: BackupConfig, state: State) -> str:
     except SentinelError as exc:
         raise BackupRefused(f"refusing to back up: {exc}") from None
     if state.meta("archive_uuid") != identity.uuid:
-        raise BackupRefused(
-            "refusing to back up: the archive's UUID changed since `recordings init`"
-        )
+        raise BackupRefused("refusing to back up: the archive's UUID changed since `recordings init`")
     return identity.uuid
 
 
@@ -19055,14 +16293,8 @@ def run_init(bc: BackupConfig, environ: Mapping[str, str], *, runner=subprocess.
     return "repository initialised"
 
 
-def run_backup(
-    bc: BackupConfig,
-    state: State,
-    environ: Mapping[str, str],
-    *,
-    tags: Sequence[str] = (),
-    runner=subprocess.run,
-) -> BackupResult:
+def run_backup(bc: BackupConfig, state: State, environ: Mapping[str, str], *,
+               tags: Sequence[str] = (), runner=subprocess.run) -> BackupResult:
     _check_archive(bc, state)
     for path in bc.paths:
         if not path.is_file():
@@ -19071,9 +16303,7 @@ def run_backup(
     if bc.nas_repo_path and bc.nas.ssh:
         free = nas_free_bytes(bc.nas, bc.nas_repo_path, runner=runner)
         if free is not None and free < bc.min_nas_free_bytes:
-            raise NasLowOnSpace(
-                f"refusing to back up: only {free / 1024**3:.1f} GB free on the NAS"
-            )
+            raise NasLowOnSpace(f"refusing to back up: only {free / 1024 ** 3:.1f} GB free on the NAS")
     state_copy = state.backup_to(state_copy_path(bc))
     _unlock(bc, environ, runner)
     proc = _run(bc, backup_command(bc, state_copy, tags=tags), environ, "backup", runner)
@@ -19087,12 +16317,9 @@ def run_backup(
             summary = message
     if not summary or not summary.get("snapshot_id"):
         raise BackupError("restic backup finished without a snapshot")
-    return BackupResult(
-        snapshot_id=summary["snapshot_id"],
-        files=int(summary.get("total_files_processed") or 0),
-        data_added=int(summary.get("data_added") or 0),
-        nas_free=free,
-    )
+    return BackupResult(snapshot_id=summary["snapshot_id"],
+                        files=int(summary.get("total_files_processed") or 0),
+                        data_added=int(summary.get("data_added") or 0), nas_free=free)
 
 
 def run_forget(bc: BackupConfig, environ: Mapping[str, str], *, runner=subprocess.run) -> str:
@@ -19101,14 +16328,8 @@ def run_forget(bc: BackupConfig, environ: Mapping[str, str], *, runner=subproces
     return "retention applied"
 
 
-def run_check(
-    bc: BackupConfig,
-    environ: Mapping[str, str],
-    *,
-    now: datetime | None = None,
-    subset: str | None = None,
-    runner=subprocess.run,
-) -> str:
+def run_check(bc: BackupConfig, environ: Mapping[str, str], *, now: datetime | None = None,
+              subset: str | None = None, runner=subprocess.run) -> str:
     """`restic check`; given `subset` ("2/4"), or `now` for this week's quarter, it also reads
     back that part of the data."""
     subset = subset or (check_subset(now) if now is not None else None)
@@ -19145,17 +16366,12 @@ def _check_scratch_space(bc: BackupConfig, keep_free_percents: Sequence[float]) 
     needed = _tree_bytes(bc.archive) + sum(p.stat().st_size for p in bc.paths if p.is_file())
     usage = shutil.disk_usage(bc.restore_scratch)
     after = usage.free - needed
-    crossed = [
-        t
-        for t in sorted(keep_free_percents, reverse=True)
-        if usage.free * 100 >= t * usage.total > after * 100
-    ]
+    crossed = [t for t in sorted(keep_free_percents, reverse=True)
+               if usage.free * 100 >= t * usage.total > after * 100]
     if after <= 0 or crossed:
         where = f"below {crossed[0]:g}% free" if crossed else "past full"
-        raise ScratchTooSmall(
-            f"refusing the restore test: restoring {needed / 1024**3:.1f} GB "
-            f"would take the scratch folder's disk {where}"
-        )
+        raise ScratchTooSmall(f"refusing the restore test: restoring {needed / 1024 ** 3:.1f} GB "
+                              f"would take the scratch folder's disk {where}")
 
 
 def _in_restore(target: Path, path: Path) -> Path:
@@ -19170,45 +16386,26 @@ def _not_in_snapshot(bc: BackupConfig, target: Path, restored: Path) -> list[dic
     committed must be in the snapshot; recordings added since are allowed. config.toml, the extra
     paths and the copy itself must be there too."""
     copy = state_copy_path(bc)
-    problems = [
-        {"path": str(p), "message": "is not in the snapshot"}
-        for p in (*bc.paths, copy)
-        if not _in_restore(target, p).is_file()
-    ]
+    problems = [{"path": str(p), "message": "is not in the snapshot"}
+                for p in (*bc.paths, copy) if not _in_restore(target, p).is_file()]
     if not _in_restore(target, copy).is_file():
         return problems
     uri = f"{_in_restore(target, copy).absolute().as_uri()}?mode=ro&immutable=1"
     try:
         with closing(sqlite3.connect(uri, uri=True)) as db:
-            files = [
-                r[0]
-                for r in db.execute(
-                    "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file"
-                )
-            ]
+            files = [r[0] for r in db.execute(
+                "SELECT DISTINCT file FROM revisions WHERE committed = 1 ORDER BY file")]
     except sqlite3.Error as exc:
-        return problems + [
-            {
-                "path": str(copy),
-                "message": f"the snapshot's copy can't be read ({type(exc).__name__})",
-            }
-        ]
-    return problems + [
-        {"path": str(bc.archive / f), "message": "is not in the snapshot"}
-        for f in files
-        if not (restored / f).is_file()
-    ]
+        return problems + [{"path": str(copy), "message": "the snapshot's copy can't be read "
+                                                          f"({type(exc).__name__})"}]
+    return problems + [{"path": str(bc.archive / f), "message": "is not in the snapshot"}
+                       for f in files if not (restored / f).is_file()]
 
 
-def run_restore_test(
-    bc: BackupConfig,
-    environ: Mapping[str, str],
-    *,
-    expected_uuid: str,
-    now: datetime,
-    keep_free_percents: Sequence[float] = (WARN_FREE_PERCENT, STOP_FREE_PERCENT),
-    runner=subprocess.run,
-) -> RestoreResult:
+def run_restore_test(bc: BackupConfig, environ: Mapping[str, str], *, expected_uuid: str,
+                     now: datetime,
+                     keep_free_percents: Sequence[float] = (WARN_FREE_PERCENT, STOP_FREE_PERCENT),
+                     runner=subprocess.run) -> RestoreResult:
     """Restore the newest snapshot into scratch and prove it (§15.1): restic's --verify, then
     `recordings validate` with every hash checked, the same archive UUID, and every recording
     the snapshot's own state.db copy knows.
@@ -19242,9 +16439,8 @@ def run_restore_test(
     finally:
         shutil.rmtree(target, ignore_errors=True)
     if target.exists():  # checked here, so the error a failed restore raised isn't masked above
-        raise RestoreCopyLeftBehind(
-            f"the restored copy at {target} could not be removed: delete it by hand"
-        )
+        raise RestoreCopyLeftBehind(f"the restored copy at {target} could not be removed: "
+                                    "delete it by hand")
     return RestoreResult(recordings=count, problems=tuple(problems))
 ```
 
@@ -19308,14 +16504,8 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def run_child(
-    cmd: list[str],
-    *,
-    input: str | bytes | None = None,
-    timeout: float | None = None,
-    capture_output: bool = False,
-    **popen_kwargs,
-) -> subprocess.CompletedProcess:
+def run_child(cmd: list[str], *, input: str | bytes | None = None, timeout: float | None = None,
+              capture_output: bool = False, **popen_kwargs) -> subprocess.CompletedProcess:
     """subprocess.run, except for SIGTERM inside sigterm_forwarded: it goes on to the child, and
     this process stops only once the child has exited and its pipes are drained. Then the handler
     that was there before runs (it may raise), or, with none, this process exits. Calling that
@@ -19362,9 +16552,7 @@ def run_child(
         if _stopping:
             _stopping = False
             if _previous is not None:
-                _previous(
-                    signal.SIGTERM, None
-                )  # the child is done: now the caller's handler decides
+                _previous(signal.SIGTERM, None)  # the child is done: now the caller's handler decides
             else:
                 raise SystemExit(128 + signal.SIGTERM)  # no one else decides when to stop: stop now
 
@@ -19444,15 +16632,11 @@ def backup_config(ctx: Context) -> backup.BackupConfig:
 def _backup(ctx: Context, tags: tuple[str, ...]) -> str:
     bc = backup_config(ctx)
     result = backup.run_backup(bc, ctx.state, ctx.environ, tags=tags, runner=ctx.runner)
-    detail = (
-        f"snapshot {result.snapshot_id[:12]}: {result.files} files, {result.data_added} bytes added"
-    )
+    detail = (f"snapshot {result.snapshot_id[:12]}: {result.files} files, "
+              f"{result.data_added} bytes added")
     if bc.nas_repo_path and bc.nas.ssh:  # §15.1: the NAS's free space, or "unknown"
-        detail += (
-            "; NAS free space unknown"
-            if result.nas_free is None
-            else f"; {result.nas_free / 1024**3:.0f} GB free on the NAS"
-        )
+        detail += ("; NAS free space unknown" if result.nas_free is None
+                   else f"; {result.nas_free / 1024 ** 3:.0f} GB free on the NAS")
     return detail
 
 
@@ -19482,42 +16666,26 @@ def _check(ctx: Context, tags: tuple[str, ...]) -> str:
 
 def _restore_test(ctx: Context, tags: tuple[str, ...]) -> str:
     result = backup.run_restore_test(
-        backup_config(ctx),
-        ctx.environ,
-        expected_uuid=ctx.state.meta("archive_uuid") or "",
-        now=ctx.clock(),
-        keep_free_percents=tuple(disk_thresholds(ctx.cfg).values()),
-        runner=ctx.runner,
-    )
+        backup_config(ctx), ctx.environ, expected_uuid=ctx.state.meta("archive_uuid") or "",
+        now=ctx.clock(), keep_free_percents=tuple(disk_thresholds(ctx.cfg).values()),
+        runner=ctx.runner)
     if not result.ok:
         first = result.problems[0]
-        raise RestoreTestFailed(
-            f"restore test failed: {len(result.problems)} problems; first: "
-            f"{first['message']} ({first['path']})"
-        )
+        raise RestoreTestFailed(f"restore test failed: {len(result.problems)} problems; first: "
+                                f"{first['message']} ({first['path']})")
     return f"restored and validated {result.recordings} recordings"
 
 
 JOBS: dict[str, Callable[[Context, tuple[str, ...]], str]] = {
-    "backup": _backup,
-    "prune": _prune,
-    "check": _check,
-    "restore-test": _restore_test,
+    "backup": _backup, "prune": _prune, "check": _check, "restore-test": _restore_test,
 }
 FAILURES: tuple[type[BaseException], ...] = (
-    BackupError,
-    ConfigError,
-    SentinelError,
-    StateError,
-    OSError,
-    sqlite3.Error,
-    subprocess.TimeoutExpired,
-)
+    BackupError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
+    subprocess.TimeoutExpired)
 
 
-def run_job(
-    ctx: Context, job: str, *, tags: tuple[str, ...] = (), lock_timeout: float = CLI_WAIT
-) -> JobResult:
+def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
+            lock_timeout: float = CLI_WAIT) -> JobResult:
     """Run one job under the ops lock, and record it. The CLI waits for the lock (the default);
     the loop passes 0. A lock still held means another run is busy: BUSY, not recorded."""
     with ExitStack() as stack:
@@ -19551,22 +16719,16 @@ In `packages/core/src/recordings/selfdoc.py`:
    `def _recording_problems(archive: Archive, rec, *, deep: bool = False) -> list[dict]:`, and
    **add** before its `return problems`:
    ```python
-   if deep:  # every byte, as the restore test needs: a file that's there isn't proof enough
-       if present and sha256_file(media) != rec.media.sha256:
-           problems.append(
-               {"path": here, "message": f"media.file {rec.media.file!r} does not match its SHA-256"}
-           )
-       for source in rec.sources:
-           path = folder / source.raw if source.raw else None
-           if (
-               source.sha256
-               and path is not None
-               and path.is_file()
-               and sha256_file(path) != source.sha256
-           ):
-               problems.append(
-                   {"path": here, "message": f"source file {source.raw} does not match its SHA-256"}
-               )
+       if deep:  # every byte, as the restore test needs: a file that's there isn't proof enough
+           if present and sha256_file(media) != rec.media.sha256:
+               problems.append({"path": here, "message": f"media.file {rec.media.file!r} does not "
+                                                         "match its SHA-256"})
+           for source in rec.sources:
+               path = folder / source.raw if source.raw else None
+               if source.sha256 and path is not None and path.is_file() \
+                       and sha256_file(path) != source.sha256:
+                   problems.append({"path": here, "message": f"source file {source.raw} does not "
+                                                             "match its SHA-256"})
    ```
 
 
@@ -19578,20 +16740,13 @@ In `packages/core/src/recordings/cli.py`:
    `problems = selfdoc.validate(args.archive, deep=args.deep)`.
 3. **Add** to `build_parser`:
    ```python
-   p = sub.add_parser("backup", help="restic backups to the NAS (spec §15.1)")
-   p.add_argument("action", choices=["init", "run", "check", "prune", "restore-test"])
-   p.add_argument(
-       "--tag",
-       action="append",
-       default=[],
-       help="an extra snapshot tag, such as pre-import (with run)",
-   )
-   p.add_argument("--json", action="store_true")
-   p.add_argument(
-       "--debug",
-       action="store_true",
-       help="print a failed job's full error (Status and alerts carry its type only)",
-   )
+       p = sub.add_parser("backup", help="restic backups to the NAS (spec §15.1)")
+       p.add_argument("action", choices=["init", "run", "check", "prune", "restore-test"])
+       p.add_argument("--tag", action="append", default=[],
+                      help="an extra snapshot tag, such as pre-import (with run)")
+       p.add_argument("--json", action="store_true")
+       p.add_argument("--debug", action="store_true",
+                      help="print a failed job's full error (Status and alerts carry its type only)")
    ```
 4. **Add**:
    ```python
@@ -19639,12 +16794,8 @@ In `packages/core/src/recordings/cli.py`:
                    # Fixed text, never restic's own words (a path, a server's reply); a restic that
                    # isn't installed is an OSError, not a traceback. --debug prints the full error.
                    logging.getLogger(__name__).debug("backup init failed", exc_info=True)
-                   return _fail(
-                       f"backup init failed ({ops.failure_detail(exc)}); run with --debug "
-                       "for the full error",
-                       args.json,
-                       1,
-                   )
+                   return _fail(f"backup init failed ({ops.failure_detail(exc)}); run with --debug "
+                                "for the full error", args.json, 1)
                _emit({"job": "backup init", "ok": True, "detail": detail}, args.json)
                return 0
            job = "backup" if args.action == "run" else args.action
@@ -19660,10 +16811,8 @@ In `packages/core/src/recordings/cli.py`:
    `from recordings.locks import LockTimeout` to `from recordings.locks import OPS_LOCK, Locks, LockTimeout`,
    **add** above `cmd_import_audio_router`:
    ```python
-   OPS_BUSY = (
-       "another job holds the ops lock (a backup, the mirror or a check): run the import "
-       "again when it finishes"
-   )
+   OPS_BUSY = ("another job holds the ops lock (a backup, the mirror or a check): run the import "
+               "again when it finishes")
    ```
    **replace** the `except LockTimeout:` return at the end of that command with
    `return _fail(OPS_BUSY, args.json, 75)`, and **add** after the `writer = _writer(args.json)` check
@@ -19753,18 +16902,9 @@ from pathlib import Path
 
 VERSION = "0.19.1"
 PINNED = {
-    ("linux", "x86_64"): (
-        "linux_amd64",
-        "f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c",
-    ),
-    ("linux", "aarch64"): (
-        "linux_arm64",
-        "a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465",
-    ),
-    ("darwin", "arm64"): (
-        "darwin_arm64",
-        "7be0a144ccc377880f294204aa271d76e4b79554b42a751151d425ce6ebac143",
-    ),
+    ("linux", "x86_64"): ("linux_amd64", "f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c"),
+    ("linux", "aarch64"): ("linux_arm64", "a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465"),
+    ("darwin", "arm64"): ("darwin_arm64", "7be0a144ccc377880f294204aa271d76e4b79554b42a751151d425ce6ebac143"),
 }
 BINARY_SHA256 = {  # the decompressed restic, by the first element of each PINNED value
     "linux_amd64": "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639",
@@ -19794,23 +16934,17 @@ def main() -> int:
     if installed(BINARY_SHA256[name]):
         print(f"restic {VERSION} already in {TARGET.relative_to(REPO)}")
         return 0
-    url = (
-        f"https://github.com/restic/restic/releases/download/v{VERSION}/restic_{VERSION}_{name}.bz2"
-    )
+    url = f"https://github.com/restic/restic/releases/download/v{VERSION}/restic_{VERSION}_{name}.bz2"
     with urllib.request.urlopen(url, timeout=120) as response:
         data = response.read(MAX_DOWNLOAD + 1)
     if len(data) > MAX_DOWNLOAD or hashlib.sha256(data).hexdigest() != expected:
-        print(
-            "fetch_restic: the download is too large or does not match its pinned SHA-256",
-            file=sys.stderr,
-        )
+        print("fetch_restic: the download is too large or does not match its pinned SHA-256",
+              file=sys.stderr)
         return 1
     binary = bz2.BZ2Decompressor().decompress(data, MAX_BINARY + 1)
     if len(binary) > MAX_BINARY or hashlib.sha256(binary).hexdigest() != BINARY_SHA256[name]:
-        print(
-            "fetch_restic: the decompressed binary does not match its pinned SHA-256",
-            file=sys.stderr,
-        )
+        print("fetch_restic: the decompressed binary does not match its pinned SHA-256",
+              file=sys.stderr)
         return 1
     TARGET.parent.mkdir(parents=True, exist_ok=True)
     tmp = TARGET.with_suffix(".part")
@@ -19930,12 +17064,9 @@ OTHER_UUID = "00000000-0000-4000-8000-000000000000"
 
 def setup(tmp_path, writer, target, extra="", known_hosts=True):
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(
-        f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
-        f'[state]\npath = "{writer.state.path}"\n'
-        f'[mirror]\ntarget = "{target}"\n{extra}',
-        encoding="utf-8",
-    )
+    cfg_file.write_text(f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
+                        f'[state]\npath = "{writer.state.path}"\n'
+                        f'[mirror]\ntarget = "{target}"\n{extra}', encoding="utf-8")
     environ = {"RECORDINGS_CONFIG": str(cfg_file), "PATH": os.environ["PATH"]}
     if known_hosts:  # fixtures only: the real RECORDINGS_* and RESTIC_* never reach this module
         (tmp_path / "known_hosts").write_text("nas ssh-ed25519 AAAAexample\n", encoding="utf-8")
@@ -19979,24 +17110,13 @@ class FakeRsync:
 
 
 def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_skips_work_in_progress(
-    tmp_path, writer
-):
+        tmp_path, writer):
     mc = mirror_config(tmp_path, writer, "recordings-mirror@nas:/volume1/recordings-mirror/")
     cmd = rsync_command(mc)
-    for flag in (
-        "-a",
-        "--delete",
-        "--delete-delay",
-        "--delay-updates",
-        "--max-delete=50",
-        "--exclude=/.tmp/",
-        "--exclude=.*.tmp",
-        "--filter=-p .~tmp~/",
-        "--exclude=/#recycle/",
-        "--filter=-p @eaDir/",
-        f"--exclude=/{MIRROR}",
-        "--timeout=600",
-    ):  # a stalled NAS ends the run (exit 30), not the loop's cap
+    for flag in ("-a", "--delete", "--delete-delay", "--delay-updates", "--max-delete=50",
+                 "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
+                 "--exclude=/#recycle/", "--filter=-p @eaDir/", f"--exclude=/{MIRROR}",
+                 "--timeout=600"):  # a stalled NAS ends the run (exit 30), not the loop's cap
         assert flag in cmd, flag
     assert "--no-perms" not in cmd
     assert cmd[-2:] == [f"{writer.root}/", "recordings-mirror@nas:/volume1/recordings-mirror/"]
@@ -20012,9 +17132,7 @@ def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_
 
 
 def test_the_deletion_limit_and_no_perms_come_from_config(tmp_path, writer):
-    mc = mirror_config(
-        tmp_path, writer, str(tmp_path / "mirror"), "max_delete = 500\nno_perms = true\n"
-    )
+    mc = mirror_config(tmp_path, writer, str(tmp_path / "mirror"), "max_delete = 500\nno_perms = true\n")
     cmd = rsync_command(mc)
     assert "--max-delete=500" in cmd and "--no-perms" in cmd  # a share with Windows ACLs
     for bad in ("max_delete = -1\n", 'max_delete = "50"\n', 'no_perms = "yes"\n'):
@@ -20032,10 +17150,8 @@ def test_a_remote_target_needs_the_known_hosts_file_even_without_nas_ssh(tmp_pat
     assert mirror.from_config(cfg, environ).target  # a local target needs none
 
 
-@pytest.mark.parametrize(
-    "target, remote",
-    [("nas:/x", True), ("backup@nas:/x/", True), ("/mnt/mirror", False), ("./x:y", False)],
-)
+@pytest.mark.parametrize("target, remote", [("nas:/x", True), ("backup@nas:/x/", True),
+                                            ("/mnt/mirror", False), ("./x:y", False)])
 def test_is_remote(target, remote):
     assert is_remote(target) is remote
 
@@ -20121,11 +17237,8 @@ def test_a_dry_run_it_cannot_read_stops_the_mirror(tmp_path, writer):
     target.mkdir()
     fake = FakeRsync(target)
     mc = mirror_config(tmp_path, writer, str(target))
-    for dry in (
-        subprocess.CompletedProcess([], 0, "what is this\n", ""),
-        subprocess.CompletedProcess([], 23, "", "rsync: some error\n"),
-    ):
-
+    for dry in (subprocess.CompletedProcess([], 0, "what is this\n", ""),
+                subprocess.CompletedProcess([], 23, "", "rsync: some error\n")):
         def runner(cmd, dry=dry, **kwargs):
             return dry if "--dry-run" in cmd else fake(cmd, **kwargs)
 
@@ -20158,11 +17271,8 @@ def test_a_failed_rsync_is_an_error(tmp_path, writer):
     target.mkdir()
     mc = mirror_config(tmp_path, writer, str(target))
     with pytest.raises(MirrorError, match="exit 23") as caught:
-        run_mirror(
-            mc,
-            expected_uuid=writer.identity.uuid,
-            runner=FakeRsync(target, returncode=23, stderr="rsync: some error\n"),
-        )
+        run_mirror(mc, expected_uuid=writer.identity.uuid,
+                   runner=FakeRsync(target, returncode=23, stderr="rsync: some error\n"))
     assert caught.value.returncode == 23
 
 
@@ -20174,16 +17284,13 @@ def test_more_deletions_than_the_limit_stop_the_mirror(tmp_path, writer):
     cfg, environ = setup(tmp_path, writer, str(target))
     fake = FakeRsync(target, returncode=25)
     with pytest.raises(MirrorError, match="max_delete"):
-        run_mirror(
-            mirror.from_config(cfg, environ), expected_uuid=writer.identity.uuid, runner=fake
-        )
+        run_mirror(mirror.from_config(cfg, environ), expected_uuid=writer.identity.uuid, runner=fake)
     ctx = Context(cfg=cfg, environ=environ, state=writer.state, runner=fake)
     assert run_job(ctx, "mirror").detail == "MirrorError; exit 25"
 
 
 def test_the_loop_caps_a_run_and_a_run_from_the_cli_may_finish_a_first_mirror(
-    tmp_path, writer, monkeypatch
-):
+        tmp_path, writer, monkeypatch):
     # why: a first mirror can outlast the loop's cap. Stopped and started again every 6 hours, it
     # holds the backups off each time, and rsync 3.x on the NAS reads and rewrites every file
     # staged in .~tmp~ before it moves on, so a big one over a slow link may never finish. From a
@@ -20207,8 +17314,7 @@ def test_the_loop_caps_a_run_and_a_run_from_the_cli_may_finish_a_first_mirror(
 
 
 def test_a_refusal_names_recordings_only_under_debug_and_the_cli_allows_more_for_one_run(
-    tmp_path, writer, monkeypatch, caplog
-):
+        tmp_path, writer, monkeypatch, caplog):
     # why: "if they are meant, raise it for one run" must not need a config edit that outlives
     # the run, and Dan must first see what would go: recording IDs and counts, at debug level only
     # (the loop logs at INFO), never a name, since a file left in the mirror could be called
@@ -20217,10 +17323,8 @@ def test_a_refusal_names_recordings_only_under_debug_and_the_cli_allows_more_for
     target.mkdir()
     cfg, environ = setup(tmp_path, writer, str(target), "max_delete = 2\n")
     rid = "20261008T143512+0200_0123abcd"
-    gone = "".join(
-        f"*deleting   recordings/2026/10/{rid}/{name}\n"
-        for name in ("audio.m4a", "recording.json", "")
-    )  # "": the folder itself
+    gone = "".join(f"*deleting   recordings/2026/10/{rid}/{name}\n"
+                   for name in ("audio.m4a", "recording.json", ""))  # "": the folder itself
     gone += "*deleting   Grace and Ada.m4a\n"
     fake = FakeRsync(target)
 
@@ -20290,13 +17394,11 @@ def test_a_first_mirror_cut_short_is_resumed(tmp_path, writer):
     (target / "recordings").mkdir()
     assert run_mirror(mc, expected_uuid=writer.identity.uuid) == "mirrored"
     assert (target / SENTINEL).read_text(encoding="utf-8") == (writer.root / SENTINEL).read_text(
-        encoding="utf-8"
-    )
+        encoding="utf-8")
 
 
 def test_real_rsync_refuses_another_archives_mark_a_foreign_folder_and_the_archive_itself(
-    tmp_path, writer
-):
+        tmp_path, writer):
     target, mc = _real_rsync_mirror(tmp_path, writer)
     (target / MIRROR).write_text(mirror.mark_text(OTHER_UUID), encoding="utf-8")
     with pytest.raises(MirrorRefused, match="another archive's mirror"):
@@ -20461,17 +17563,10 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> MirrorConfig:
         raise ConfigError("[mirror] no_perms must be true or false")
     nas = nas_from_config(cfg, environ)
     if is_remote(target.strip()):
-        require_known_hosts(
-            nas
-        )  # also when [nas] ssh is unset: the plaintext archive goes over ssh
-    return MirrorConfig(
-        target=target.strip(),
-        archive=cfg.archive_path,
-        rsync=str(section.get("rsync", "rsync")),
-        nas=nas,
-        max_delete=max_delete,
-        no_perms=no_perms,
-    )
+        require_known_hosts(nas)  # also when [nas] ssh is unset: the plaintext archive goes over ssh
+    return MirrorConfig(target=target.strip(), archive=cfg.archive_path,
+                        rsync=str(section.get("rsync", "rsync")), nas=nas,
+                        max_delete=max_delete, no_perms=no_perms)
 
 
 def is_remote(target: str) -> bool:
@@ -20491,21 +17586,12 @@ def _folder(mc: MirrorConfig) -> str:
 def rsync_command(mc: MirrorConfig, *, dry_run: bool = False) -> list[str]:
     """The mirror run, or with `dry_run` its dry run: it lists what would change and what would be
     deleted, and has no --max-delete, which would stop the count at the limit."""
-    cmd = [
-        mc.rsync,
-        "-a",
-        "--delete",
-        "--delete-delay",
-        "--delay-updates",
-        f"--timeout={IO_TIMEOUT}",
-        *(["--dry-run", "--itemize-changes"] if dry_run else [f"--max-delete={mc.max_delete}"]),
-        "--exclude=/.tmp/",
-        "--exclude=.*.tmp",
-        "--filter=-p .~tmp~/",
-        "--exclude=/#recycle/",
-        "--filter=-p @eaDir/",
-        f"--exclude=/{MIRROR}",
-    ]  # the mark: never copied over, never deleted by --delete
+    cmd = [mc.rsync, "-a", "--delete", "--delete-delay", "--delay-updates",
+           f"--timeout={IO_TIMEOUT}",
+           *(["--dry-run", "--itemize-changes"] if dry_run else [f"--max-delete={mc.max_delete}"]),
+           "--exclude=/.tmp/", "--exclude=.*.tmp", "--filter=-p .~tmp~/",
+           "--exclude=/#recycle/", "--filter=-p @eaDir/",
+           f"--exclude=/{MIRROR}"]  # the mark: never copied over, never deleted by --delete
     if mc.no_perms:
         cmd.append("--no-perms")
     return [*cmd, *_ssh(mc), f"{mc.archive}/", mc.target]
@@ -20513,19 +17599,12 @@ def rsync_command(mc: MirrorConfig, *, dry_run: bool = False) -> list[str]:
 
 def _target_names(mc: MirrorConfig, runner) -> list[str]:
     """What the target folder holds at its top, from `rsync --list-only`, which needs no shell."""
-    proc = runner(
-        [mc.rsync, "--list-only", *_ssh(mc), _folder(mc)],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+    proc = runner([mc.rsync, "--list-only", *_ssh(mc), _folder(mc)], capture_output=True,
+                  text=True, timeout=600)
     if proc.returncode != 0:
-        raise MirrorRefused(
-            f"refusing to mirror: the target can't be listed (rsync exit "
-            f"{proc.returncode}); check that its folder exists and that the "
-            "account can reach it",
-            returncode=proc.returncode,
-        )
+        raise MirrorRefused(f"refusing to mirror: the target can't be listed (rsync exit "
+                            f"{proc.returncode}); check that its folder exists and that the "
+                            "account can reach it", returncode=proc.returncode)
     names = []
     for line in proc.stdout.splitlines():
         if not line.strip():
@@ -20567,31 +17646,21 @@ def _check_target(mc: MirrorConfig, expected_uuid: str, runner) -> None:
     names = _target_names(mc, runner)
     if MIRROR not in names:
         if names:
-            raise MirrorRefused(
-                f"refusing to mirror: the target holds other files and no {MIRROR} of this archive"
-            )
+            raise MirrorRefused("refusing to mirror: the target holds other files and no "
+                                f"{MIRROR} of this archive")
         return  # empty: the first mirror
     with tempfile.TemporaryDirectory(prefix="recordings-mirror-") as tmp:
-        proc = runner(
-            [mc.rsync, *_ssh(mc), _folder(mc) + MIRROR, f"{tmp}/"],
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+        proc = runner([mc.rsync, *_ssh(mc), _folder(mc) + MIRROR, f"{tmp}/"],
+                      capture_output=True, text=True, timeout=600)
         if proc.returncode != 0:
-            raise MirrorRefused(
-                f"refusing to mirror: the target's {MIRROR} can't be read (rsync "
-                f"exit {proc.returncode})",
-                returncode=proc.returncode,
-            )
+            raise MirrorRefused(f"refusing to mirror: the target's {MIRROR} can't be read (rsync "
+                                f"exit {proc.returncode})", returncode=proc.returncode)
         uuid = _mark_uuid(Path(tmp) / MIRROR)
     if uuid is None:
         raise MirrorRefused(f"refusing to mirror: the target's {MIRROR} is not valid")
     if uuid != expected_uuid:
-        raise MirrorRefused(
-            "refusing to mirror: the target is another archive's mirror (its UUID "
-            "differs). If that archive is gone for good, empty the target first"
-        )
+        raise MirrorRefused("refusing to mirror: the target is another archive's mirror (its UUID "
+                            "differs). If that archive is gone for good, empty the target first")
 
 
 def _mark(mc: MirrorConfig, uuid: str, runner) -> None:
@@ -20600,17 +17669,11 @@ def _mark(mc: MirrorConfig, uuid: str, runner) -> None:
     with tempfile.TemporaryDirectory(prefix="recordings-mirror-") as tmp:
         mark = Path(tmp) / MIRROR
         mark.write_text(mark_text(uuid), encoding="utf-8")
-        proc = runner(
-            [mc.rsync, "-c", *_ssh(mc), str(mark), _folder(mc)],
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+        proc = runner([mc.rsync, "-c", *_ssh(mc), str(mark), _folder(mc)], capture_output=True,
+                      text=True, timeout=600)
     if proc.returncode != 0:
-        raise MirrorError(
-            f"the target's {MIRROR} could not be written (rsync exit {proc.returncode})",
-            returncode=proc.returncode,
-        )
+        raise MirrorError(f"the target's {MIRROR} could not be written (rsync exit "
+                          f"{proc.returncode})", returncode=proc.returncode)
 
 
 def _where(path: str) -> str:
@@ -20624,12 +17687,11 @@ def _check_deletions(mc: MirrorConfig, runner, timeout: float | None) -> None:
     """Count what the run would delete, and refuse, deleting nothing, past [mirror] max_delete.
     A dry run it can't read stops the mirror too. No path leaves this function: the refusal
     carries the count, and the debug log (`recordings mirror --debug`) recording IDs and counts."""
-    proc = runner(rsync_command(mc, dry_run=True), capture_output=True, text=True, timeout=timeout)
+    proc = runner(rsync_command(mc, dry_run=True), capture_output=True, text=True,
+                  timeout=timeout)
     if proc.returncode != 0:
-        raise MirrorError(
-            f"the rsync dry run failed (exit {proc.returncode}); nothing was deleted",
-            returncode=proc.returncode,
-        )
+        raise MirrorError(f"the rsync dry run failed (exit {proc.returncode}); nothing was "
+                          "deleted", returncode=proc.returncode)
     gone: Counter[str] = Counter()
     for line in proc.stdout.splitlines():
         if not line.strip():
@@ -20642,17 +17704,14 @@ def _check_deletions(mc: MirrorConfig, runner, timeout: float | None) -> None:
     if gone.total() > mc.max_delete:
         for where, count in sorted(gone.items()):  # the loop logs at INFO: --debug only
             log.debug("the mirror would delete, %s: %d", where, count)
-        raise MirrorRefused(
-            f"the mirror would delete {gone.total()} files and folders, over the "
-            f"limit of {mc.max_delete} ([mirror] max_delete): nothing was deleted. "
-            "`recordings mirror --debug` shows where; if they are meant, "
-            "`recordings mirror --max-delete N` allows N for one run"
-        )
+        raise MirrorRefused(f"the mirror would delete {gone.total()} files and folders, over the "
+                            f"limit of {mc.max_delete} ([mirror] max_delete): nothing was deleted. "
+                            "`recordings mirror --debug` shows where; if they are meant, "
+                            "`recordings mirror --max-delete N` allows N for one run")
 
 
-def run_mirror(
-    mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run, timeout: float | None = TIMEOUT
-) -> str:
+def run_mirror(mc: MirrorConfig, *, expected_uuid: str, runner=subprocess.run,
+               timeout: float | None = TIMEOUT) -> str:
     """One mirror run. `timeout` caps the dry run and the run each (the loop's TIMEOUT); None, for
     the CLI, lets a big first mirror finish, and rsync's --timeout still ends a stall."""
     try:
@@ -20660,24 +17719,19 @@ def run_mirror(
     except SentinelError as exc:
         raise MirrorRefused(f"refusing to mirror: {exc}") from None
     if identity.uuid != expected_uuid:
-        raise MirrorRefused(
-            "refusing to mirror: the archive's UUID changed since `recordings init`"
-        )
+        raise MirrorRefused("refusing to mirror: the archive's UUID changed since `recordings init`")
     _check_target(mc, expected_uuid, runner)
     _mark(mc, identity.uuid, runner)
     _check_deletions(mc, runner, timeout)
     proc = runner(rsync_command(mc), capture_output=True, text=True, timeout=timeout)
     if proc.returncode == 25:
-        raise MirrorError(
-            f"rsync stopped deleting at {mc.max_delete} ([mirror] max_delete): the "
-            "archive changed since the dry run. The next run counts again",
-            returncode=25,
-        )
+        raise MirrorError(f"rsync stopped deleting at {mc.max_delete} ([mirror] max_delete): the "
+                          "archive changed since the dry run. The next run counts again",
+                          returncode=25)
     if proc.returncode != 0:
         last = (proc.stderr or "").strip().splitlines()[-1:] or ["no message"]
-        raise MirrorError(
-            f"rsync failed (exit {proc.returncode}): {last[0][:300]}", returncode=proc.returncode
-        )
+        raise MirrorError(f"rsync failed (exit {proc.returncode}): {last[0][:300]}",
+                          returncode=proc.returncode)
     return "mirrored"
 ```
 
@@ -20696,20 +17750,13 @@ In `packages/core/src/recordings/ops.py`:
        mc = mirror.from_config(ctx.cfg, ctx.environ)
        if ctx.mirror_max_delete is not None:
            mc = replace(mc, max_delete=ctx.mirror_max_delete)
-       return mirror.run_mirror(
-           mc,
-           expected_uuid=ctx.state.meta("archive_uuid") or "",
-           runner=ctx.runner,
-           timeout=ctx.mirror_timeout,
-       )
+       return mirror.run_mirror(mc, expected_uuid=ctx.state.meta("archive_uuid") or "",
+                                runner=ctx.runner, timeout=ctx.mirror_timeout)
    ```
 3. **Add** `"mirror": _mirror,` to `JOBS`, after `"restore-test": _restore_test,`:
    ```python
    JOBS: dict[str, Callable[[Context, tuple[str, ...]], str]] = {
-       "backup": _backup,
-       "prune": _prune,
-       "check": _check,
-       "restore-test": _restore_test,
+       "backup": _backup, "prune": _prune, "check": _check, "restore-test": _restore_test,
        "mirror": _mirror,
    }
    ```
@@ -20717,33 +17764,18 @@ In `packages/core/src/recordings/ops.py`:
    `    BackupError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,`
    with:
    ```python
-   (
-       BackupError,
-       MirrorError,
-       ConfigError,
-       SentinelError,
-       StateError,
-       OSError,
-       sqlite3.Error,
-   )
+       BackupError, MirrorError, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
    ```
 
 In `packages/core/src/recordings/cli.py`, **add** to `build_parser`:
 ```python
-p = sub.add_parser("mirror", help="rsync the archive to the NAS's read-only mirror, now")
-p.add_argument("--json", action="store_true")
-p.add_argument(
-    "--debug",
-    action="store_true",
-    help="print a failed run's full error, and for a refused run the recordings it "
-    "would delete from (Status and alerts carry the error's type only)",
-)
-p.add_argument(
-    "--max-delete",
-    type=int,
-    metavar="N",
-    help="allow up to N deletions in this run only ([mirror] max_delete stays)",
-)
+    p = sub.add_parser("mirror", help="rsync the archive to the NAS's read-only mirror, now")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--debug", action="store_true",
+                   help="print a failed run's full error, and for a refused run the recordings it "
+                        "would delete from (Status and alerts carry the error's type only)")
+    p.add_argument("--max-delete", type=int, metavar="N",
+                   help="allow up to N deletions in this run only ([mirror] max_delete stays)")
 ```
 and:
 ```python
@@ -20860,14 +17892,9 @@ class FakeNtfy:
         class Handler(BaseHTTPRequestHandler):
             def _record(self):
                 length = int(self.headers.get("Content-Length") or 0)
-                outer.requests.append(
-                    {
-                        "method": self.command,
-                        "path": self.path,
-                        "headers": dict(self.headers),
-                        "body": self.rfile.read(length).decode("utf-8"),
-                    }
-                )
+                outer.requests.append({"method": self.command, "path": self.path,
+                                       "headers": dict(self.headers),
+                                       "body": self.rfile.read(length).decode("utf-8")})
                 if outer.redirect:
                     self.send_response(outer.redirect_code)
                     self.send_header("Location", f"{outer.redirect}{self.path}")
@@ -20920,11 +17947,8 @@ from recordings.config import ConfigError, load_config
 
 def test_an_alert_posts_to_the_topic_with_title_priority_and_tags(ntfy):
     ac = AlertConfig(ntfy_server=ntfy.url, topic="topic-do-not-print_1", deadman_url=None)
-    assert send(
-        ac,
-        title="recordings: backup failed",
-        message="backup failed (BackupError; exit 1). See Status.",
-    )
+    assert send(ac, title="recordings: backup failed",
+                message="backup failed (BackupError; exit 1). See Status.")
     (req,) = ntfy.requests
     assert (req["method"], req["path"]) == ("POST", "/topic-do-not-print_1")
     assert req["headers"]["Title"] == "recordings: backup failed"
@@ -20948,9 +17972,7 @@ def test_a_failed_delivery_never_raises_and_never_logs_the_topic(ntfy, caplog):
         s.bind(("127.0.0.1", 0))
         closed = f"http://127.0.0.1:{s.getsockname()[1]}"
     with caplog.at_level("WARNING"):
-        assert (
-            send(AlertConfig(closed, "topic-do-not-print", None), title="t", message="m") is False
-        )
+        assert send(AlertConfig(closed, "topic-do-not-print", None), title="t", message="m") is False
     assert "topic-do-not-print" not in caplog.text and "HTTP 500" in caplog.text
 
 
@@ -20962,11 +17984,8 @@ def test_the_dead_mans_switch_speaks_healthchecks(ntfy):
     assert ping_deadman(ac, "fail", message="backup failed (BackupError; exit 1). See Status.")
     assert ping_deadman(ac, "log", message="recordings alert-test")
     assert [(r["method"], r["path"]) for r in ntfy.requests] == [
-        ("POST", "/ping/abc-do-not-print/start"),
-        ("POST", "/ping/abc-do-not-print"),
-        ("POST", "/ping/abc-do-not-print/fail"),
-        ("POST", "/ping/abc-do-not-print/log"),
-    ]
+        ("POST", "/ping/abc-do-not-print/start"), ("POST", "/ping/abc-do-not-print"),
+        ("POST", "/ping/abc-do-not-print/fail"), ("POST", "/ping/abc-do-not-print/log")]
     assert ntfy.requests[2]["body"] == "backup failed (BackupError; exit 1). See Status."
     assert not ping_deadman(AlertConfig(None, None, None))
 
@@ -20976,17 +17995,12 @@ def test_the_config_reads_the_secrets_from_files_and_hides_them(tmp_path):
     (tmp_path / "ping").write_text("https://hc.example/ping/do-not-print\n", encoding="utf-8")
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text('[alerts]\nntfy_server = "https://ntfy.sh/"\n', encoding="utf-8")
-    environ = {
-        "RECORDINGS_CONFIG": str(cfg_file),
-        "RECORDINGS_NTFY_TOPIC_FILE": str(tmp_path / "topic"),
-        "RECORDINGS_DEADMAN_URL_FILE": str(tmp_path / "ping"),
-    }
+    environ = {"RECORDINGS_CONFIG": str(cfg_file),
+               "RECORDINGS_NTFY_TOPIC_FILE": str(tmp_path / "topic"),
+               "RECORDINGS_DEADMAN_URL_FILE": str(tmp_path / "ping")}
     ac = alerts.from_config(load_config(environ), environ)
     assert (ac.ntfy_server, ac.topic, ac.enabled) == (
-        "https://ntfy.sh",
-        "topic-do-not-print-20",
-        True,
-    )
+        "https://ntfy.sh", "topic-do-not-print-20", True)
     assert "do-not-print" not in repr(ac) and "do-not-print" not in str(ac)
     for server in ("ntfy.sh", "http://ntfy.example"):
         cfg_file.write_text(f'[alerts]\nntfy_server = "{server}"\n', encoding="utf-8")
@@ -20998,29 +18012,23 @@ def test_an_ntfy_token_goes_in_a_bearer_header_and_nowhere_else(tmp_path, ntfy):
     (tmp_path / "token").write_text("tk_do-not-print\n", encoding="utf-8")
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(f'[alerts]\nntfy_server = "{ntfy.url}"\n', encoding="utf-8")
-    environ = {
-        "RECORDINGS_CONFIG": str(cfg_file),
-        "RECORDINGS_NTFY_TOPIC": "alerts-topic",
-        "RECORDINGS_NTFY_TOKEN_FILE": str(tmp_path / "token"),
-    }
+    environ = {"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_NTFY_TOPIC": "alerts-topic",
+               "RECORDINGS_NTFY_TOKEN_FILE": str(tmp_path / "token")}
     ac = alerts.from_config(load_config(environ), environ)
     assert send(ac, title="recordings: test alert", message="m")
     assert ntfy.requests[0]["headers"]["Authorization"] == "Bearer tk_do-not-print"
     assert "do-not-print" not in repr(ac)
 
 
-@pytest.mark.parametrize(
-    "field, value",
-    [
-        ("ntfy_server", "ntfy.sh"),
-        ("ntfy_server", "http://ntfy.example"),
-        ("ntfy_server", "https://user:do-not-print@ntfy.example"),
-        ("deadman_url", "http://hc-ping.example/do-not-print"),
-        ("deadman_url", "hc-ping.com/do-not-print"),
-        ("topic", "do-not-print/1"),
-        ("topic", "x" * 65),
-    ],
-)
+@pytest.mark.parametrize("field, value", [
+    ("ntfy_server", "ntfy.sh"),
+    ("ntfy_server", "http://ntfy.example"),
+    ("ntfy_server", "https://user:do-not-print@ntfy.example"),
+    ("deadman_url", "http://hc-ping.example/do-not-print"),
+    ("deadman_url", "hc-ping.com/do-not-print"),
+    ("topic", "do-not-print/1"),
+    ("topic", "x" * 65),
+])
 def test_plain_http_credentials_in_a_url_and_odd_topics_are_refused(field, value):
     # why: https keeps the topic and the ping URL's token off the wire in clear (security review);
     # ntfy topics are [-_A-Za-z0-9]{1,64} (ops review). The error never repeats the value.
@@ -21033,8 +18041,7 @@ def test_plain_http_credentials_in_a_url_and_odd_topics_are_refused(field, value
 
 @pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
 def test_a_redirect_is_never_followed_and_the_alert_is_not_delivered(
-    ntfy, other_ntfy, caplog, code
-):
+        ntfy, other_ntfy, caplog, code):
     # why: urlopen's default opener follows a 301, 302 or 303 answer to a POST as a GET, to any host
     # and even from https down to http, with the Authorization and Title headers (security review).
     # Here nothing may reach the second server, and a redirected alert is not a delivered one.
@@ -21047,18 +18054,15 @@ def test_a_redirect_is_never_followed_and_the_alert_is_not_delivered(
     assert f"HTTP {code}" in caplog.text and "do-not-print" not in caplog.text
 
 
-@pytest.mark.parametrize(
-    "field, value",
-    [
-        ("deadman_url", "https://hc-ping.example/key/do-not-print?create=1"),
-        ("deadman_url", "https://hc-ping.example/do-not-print?"),
-        ("deadman_url", "https://hc-ping.example/do-not-print#x"),
-        ("ntfy_server", "https://ntfy.example/?do-not-print"),
-        ("ntfy_server", "https://ntfy.example\tdo-not-print"),
-        ("ntfy_server", "https://ntfy.example:do-not-print"),
-        ("ntfy_server", "https://ntf\u0443.example/do-not-print"),
-    ],
-)
+@pytest.mark.parametrize("field, value", [
+    ("deadman_url", "https://hc-ping.example/key/do-not-print?create=1"),
+    ("deadman_url", "https://hc-ping.example/do-not-print?"),
+    ("deadman_url", "https://hc-ping.example/do-not-print#x"),
+    ("ntfy_server", "https://ntfy.example/?do-not-print"),
+    ("ntfy_server", "https://ntfy.example\tdo-not-print"),
+    ("ntfy_server", "https://ntfy.example:do-not-print"),
+    ("ntfy_server", "https://ntf\u0443.example/do-not-print"),
+])
 def test_a_url_whose_suffix_would_not_land_on_its_path_is_refused(field, value):
     # why: /start, /fail and the topic are added to the end of the URL. After a ? or a # they land
     # in the query or are dropped, and Healthchecks takes ".../slug?create=1/fail" as a plain
@@ -21088,8 +18092,7 @@ def test_a_topic_that_is_the_only_lock_is_long_and_a_token_is_one_visible_word()
 
 
 def test_an_http_proxy_never_carries_an_alert_and_nothing_secret_is_logged(
-    ntfy, other_ntfy, monkeypatch, caplog
-):
+        ntfy, other_ntfy, monkeypatch, caplog):
     # why: urllib sends plain http through HTTP_PROXY as the whole URL with every header, the topic,
     # the ping URL and the token in clear. Only an https proxy is used, and through it an alert
     # travels in a CONNECT tunnel that shows the proxy the host name alone (security council).
@@ -21098,9 +18101,8 @@ def test_an_http_proxy_never_carries_an_alert_and_nothing_secret_is_logged(
     for name in ("NO_PROXY", "no_proxy"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(alerts, "_OPENER", alerts._build_opener())
-    ac = AlertConfig(
-        ntfy.url, "topic-do-not-print", f"{ntfy.url}/ping/do-not-print", token="tk_do-not-print"
-    )
+    ac = AlertConfig(ntfy.url, "topic-do-not-print", f"{ntfy.url}/ping/do-not-print",
+                     token="tk_do-not-print")
     with caplog.at_level("DEBUG"):
         assert send(ac, title="recordings: test alert", message="m")
         assert ping_deadman(ac, "fail", message="m")
@@ -21128,14 +18130,8 @@ from recordings.locks import Locks
 from recordings.ops import Context, due, enabled_jobs, loop, run_due, run_job
 
 T0 = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
-SUMMARY = json.dumps(
-    {
-        "message_type": "summary",
-        "snapshot_id": "f" * 64,
-        "total_files_processed": 1,
-        "data_added": 1,
-    }
-)
+SUMMARY = json.dumps({"message_type": "summary", "snapshot_id": "f" * 64,
+                      "total_files_processed": 1, "data_added": 1})
 TITLE = "会議メモ / Q&A"  # Review Focus 4: a synthetic non-ASCII title
 
 
@@ -21149,17 +18145,13 @@ class Clock:
 
 def restic(returncode=0, stderr=""):
     def run(cmd, **kwargs):
-        return subprocess.CompletedProcess(
-            cmd, returncode, SUMMARY if returncode == 0 else "", stderr
-        )
-
+        return subprocess.CompletedProcess(cmd, returncode, SUMMARY if returncode == 0 else "", stderr)
     return run
 
 
 def raising(exc):
     def run(cmd, **kwargs):
         raise exc
-
     return run
 
 
@@ -21174,24 +18166,12 @@ def context(tmp_path, writer, ntfy, *, clock=None, runner=None, mirror=False):
         f'[state]\npath = "{writer.state.path}"\n'
         f'[backup]\nrepository = "{tmp_path / "repo"}"\nextra_paths = ["{deploy}"]\n'
         f'restore_scratch = "{tmp_path / "scratch"}"\n'
-        f'[alerts]\nntfy_server = "{ntfy.url}"\n{mirror_section}',
-        encoding="utf-8",
-    )
-    environ = {
-        "RECORDINGS_CONFIG": str(cfg_file),
-        "RESTIC_PASSWORD_FILE": str(tmp_path / "pw"),
-        "RECORDINGS_NTFY_TOPIC": "alerts-topic",
-        "RECORDINGS_DEADMAN_URL": f"{ntfy.url}/ping",
-        "PATH": "/usr/bin:/bin",
-        "HOME": str(tmp_path),
-    }
-    return Context(
-        cfg=load_config(environ),
-        environ=environ,
-        state=writer.state,
-        clock=clock or Clock(),
-        runner=runner or restic(),
-    )
+        f'[alerts]\nntfy_server = "{ntfy.url}"\n{mirror_section}', encoding="utf-8")
+    environ = {"RECORDINGS_CONFIG": str(cfg_file), "RESTIC_PASSWORD_FILE": str(tmp_path / "pw"),
+               "RECORDINGS_NTFY_TOPIC": "alerts-topic", "RECORDINGS_DEADMAN_URL": f"{ntfy.url}/ping",
+               "PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    return Context(cfg=load_config(environ), environ=environ, state=writer.state,
+                   clock=clock or Clock(), runner=runner or restic())
 
 
 def own_environment(ctx, monkeypatch):
@@ -21215,12 +18195,7 @@ def pings(ntfy):
 
 def test_which_jobs_run_comes_from_config(tmp_path, writer, ntfy):
     assert enabled_jobs(context(tmp_path, writer, ntfy).cfg) == (
-        "disk",
-        "backup",
-        "prune",
-        "check",
-        "restore-test",
-    )
+        "disk", "backup", "prune", "check", "restore-test")
     assert "mirror" in enabled_jobs(context(tmp_path, writer, ntfy, mirror=True).cfg)
 
 
@@ -21259,8 +18234,7 @@ def test_a_good_backup_pings_the_dead_mans_switch(tmp_path, writer, make_incomin
 
 
 def test_a_killed_backup_alerts_once_reminds_daily_and_says_when_it_recovers(
-    tmp_path, writer, make_incoming, ntfy
-):
+        tmp_path, writer, make_incoming, ntfy):
     # why: §20, "a killed backup raises an alert". A killed restic exits -9.
     writer.add(make_incoming())
     clock = Clock()
@@ -21277,31 +18251,17 @@ def test_a_killed_backup_alerts_once_reminds_daily_and_says_when_it_recovers(
     assert [(r["headers"]["Title"], r["body"]) for r in pushes(ntfy)] == [
         ("recordings: backup failed", "backup failed (BackupError; exit -9). See Status."),
         ("recordings: backup failed", "backup failed (BackupError; exit -9). See Status."),
-        ("recordings: backup recovered", "backup works again. See Status."),
-    ]
+        ("recordings: backup recovered", "backup works again. See Status.")]
     assert pings(ntfy) == ["/ping/start", "/ping/fail"] * 3 + ["/ping/start", "/ping"]
 
 
-@pytest.mark.parametrize(
-    "runner, detail",
-    [
-        (
-            restic(
-                returncode=1,
-                stderr=f"Fatal: open /archive/recordings/2026/10/x/{TITLE}.md: permission denied\n",
-            ),
-            "BackupError; exit 1",
-        ),
-        (
-            raising(PermissionError(13, "Permission denied", f"/archive/{TITLE}.md")),
-            "PermissionError",
-        ),
-    ],
-    ids=["restic-stderr", "oserror-path"],
-)
+@pytest.mark.parametrize("runner, detail", [
+    (restic(returncode=1, stderr=f"Fatal: open /archive/recordings/2026/10/x/{TITLE}.md: "
+                                 "permission denied\n"), "BackupError; exit 1"),
+    (raising(PermissionError(13, "Permission denied", f"/archive/{TITLE}.md")), "PermissionError"),
+], ids=["restic-stderr", "oserror-path"])
 def test_no_alert_or_stored_run_carries_an_exceptions_text(
-    tmp_path, writer, ntfy, caplog, runner, detail
-):
+        tmp_path, writer, ntfy, caplog, runner, detail):
     # why: Review Focus 4. An exception's text can hold a title, a path or a tool's own output.
     # Alerts go to third parties (ntfy.sh, Healthchecks.io), and Status shows the stored detail.
     # Only the container's debug log may carry the full text.
@@ -21319,10 +18279,8 @@ def test_no_alert_or_stored_run_carries_an_exceptions_text(
 
 def test_low_disk_space_raises_an_alert(tmp_path, writer, ntfy, monkeypatch):
     from types import SimpleNamespace
-
-    monkeypatch.setattr(
-        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=150, f_frsize=1024, f_blocks=1000)
-    )
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=150, f_frsize=1024, f_blocks=1000))
     result = run_job(context(tmp_path, writer, ntfy), "disk")
     assert (result.ok, result.detail) == (False, "DiskWarning")
     (req,) = pushes(ntfy)
@@ -21355,8 +18313,7 @@ def test_a_busy_ops_lock_skips_quietly(tmp_path, writer, make_incoming, ntfy):
 
 
 def test_an_unopenable_lock_file_or_state_is_a_recorded_failure_not_a_crash(
-    tmp_path, writer, ntfy, monkeypatch
-):
+        tmp_path, writer, ntfy, monkeypatch):
     # why: run_job replaces Task 11's, whose lock-file handling must survive: an OSError opening
     # the lock (permissions, a full disk) escaping here would crash the backup service on a loop.
     ctx = context(tmp_path, writer, ntfy)
@@ -21382,8 +18339,7 @@ def test_an_unopenable_lock_file_or_state_is_a_recorded_failure_not_a_crash(
 
 
 def test_a_state_disk_that_cannot_write_or_read_never_stops_a_job_an_alert_or_the_loop(
-    tmp_path, writer, ntfy, monkeypatch
-):
+        tmp_path, writer, ntfy, monkeypatch):
     # why: a broken state.db reached the loop three more ways than record_run: the alert state's
     # read and write, the heartbeat, and due()'s own reads. None may end the backup service.
     ctx = context(tmp_path, writer, ntfy, runner=restic(returncode=1))
@@ -21410,10 +18366,10 @@ def test_old_runs_are_trimmed_daily_but_each_jobs_newest_good_run_stays(tmp_path
     # after a long failing streak, so that row is kept however old it is.
     state = writer.state
     old = T0 - timedelta(days=200)
-    state.record_run("backup", old, old, True, "snapshot a")  # newest good: kept
-    state.record_run("check", old, old, True, "old good, superseded")  # dropped
+    state.record_run("backup", old, old, True, "snapshot a")                   # newest good: kept
+    state.record_run("check", old, old, True, "old good, superseded")           # dropped
     state.record_run("check", old + timedelta(days=1), old + timedelta(days=1), True, "kept")
-    for day in range(2, 150):  # a failing streak
+    for day in range(2, 150):                                                  # a failing streak
         at = old + timedelta(days=day)
         state.record_run("backup", at, at, False, "BackupError; exit 1")
     recent = T0 - timedelta(days=3)
@@ -21433,21 +18389,16 @@ def test_old_runs_are_trimmed_daily_but_each_jobs_newest_good_run_stays(tmp_path
     ctx.clock.now += timedelta(hours=1)
     ops._trim_runs(ctx)  # not again within a day
     with closing(sqlite3.connect(state.db_path)) as db:
-        assert (
-            db.execute("SELECT COUNT(*) FROM ops_runs WHERE detail = 'ancient'").fetchone()[0] == 1
-        )
+        assert db.execute("SELECT COUNT(*) FROM ops_runs WHERE detail = 'ancient'").fetchone()[0] == 1
     ctx.clock.now += timedelta(days=1)
     ops._trim_runs(ctx)
     with closing(sqlite3.connect(state.db_path)) as db:
-        assert (
-            db.execute("SELECT COUNT(*) FROM ops_runs WHERE detail = 'ancient'").fetchone()[0] == 0
-        )
+        assert db.execute("SELECT COUNT(*) FROM ops_runs WHERE detail = 'ancient'").fetchone()[0] == 0
 
 
 def test_only_restics_exit_11_is_busy_rsyncs_is_a_failure(tmp_path, writer, ntfy, monkeypatch):
     # why: rsync's exit 11 is a file I/O error. Only a BackupError with restic's 11 is "locked".
     from recordings.mirror import MirrorError
-
     ctx = context(tmp_path, writer, ntfy, mirror=True)
 
     def rsync_io_error(ctx, tags):
@@ -21462,9 +18413,8 @@ def test_only_restics_exit_11_is_busy_rsyncs_is_a_failure(tmp_path, writer, ntfy
 
 def test_a_locked_repository_is_busy_not_a_failure(tmp_path, writer, ntfy):
     # why: the NAS's weekly forget --prune holds restic's lock (exit 11). That is not an outage.
-    ctx = context(
-        tmp_path, writer, ntfy, runner=restic(11, "Fatal: repository is already locked exclusively")
-    )
+    ctx = context(tmp_path, writer, ntfy,
+                  runner=restic(11, "Fatal: repository is already locked exclusively"))
     result = run_job(ctx, "backup", lock_timeout=0)
     assert result.detail == "skipped: busy (repository locked)" and not result.ok
     assert writer.state.last_run("backup") is None and pushes(ntfy) == []
@@ -21494,16 +18444,14 @@ def test_the_loop_runs_with_sigterm_forwarded(tmp_path, writer, ntfy, monkeypatc
 
     monkeypatch.setattr(ops, "sigterm_forwarded", forwarded)
     # the CLI waits for restic's lock (5m); the loop never does (§15.1): it is None by then
-    monkeypatch.setattr(
-        ops, "loop", lambda ctx, **kwargs: events.append(f"loop retry_lock={ctx.retry_lock}")
-    )
+    monkeypatch.setattr(ops, "loop", lambda ctx, **kwargs: events.append(
+        f"loop retry_lock={ctx.retry_lock}"))
     assert main(["ops", "--loop"]) == 0
     assert events == ["forwarding", "loop retry_lock=None", "restored"]
 
 
 def test_alert_test_sends_one_logs_the_check_and_never_prints_the_topic(
-    tmp_path, writer, ntfy, monkeypatch, capsys
-):
+        tmp_path, writer, ntfy, monkeypatch, capsys):
     ctx = context(tmp_path, writer, ntfy)
     own_environment(ctx, monkeypatch)
     assert main(["alert-test", "--json"]) == 0
@@ -21515,8 +18463,7 @@ def test_alert_test_sends_one_logs_the_check_and_never_prints_the_topic(
 
 
 def test_alert_test_can_test_the_dead_mans_switch_alone_and_fails_when_a_ping_fails(
-    tmp_path, writer, ntfy, monkeypatch, capsys
-):
+        tmp_path, writer, ntfy, monkeypatch, capsys):
     ctx = context(tmp_path, writer, ntfy)
     own_environment(ctx, monkeypatch)
     monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
@@ -21547,10 +18494,8 @@ def test_a_full_state_disk_alerts_once_not_every_minute(tmp_path, writer, ntfy, 
     # why: a state.db that reads but can't write (a full disk) left every failing job due at every
     # tick and its alert unsaved: one push a minute until ntfy.sh refused them all (Task 13 review).
     from types import SimpleNamespace
-
-    monkeypatch.setattr(
-        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=0, f_frsize=1024, f_blocks=1000)
-    )
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
     clock = Clock()
     ctx = context(tmp_path, writer, ntfy, clock=clock)
 
@@ -21563,9 +18508,7 @@ def test_a_full_state_disk_alerts_once_not_every_minute(tmp_path, writer, ntfy, 
     titles = [r["headers"]["Title"] for r in pushes(ntfy)]
     assert titles.count("recordings: disk space low") == 1
     sent, pinged = len(ntfy.requests), pings(ntfy)
-    for _ in range(
-        30
-    ):  # past RETRY_AFTER (15 min), so the alert memory is what holds, not only the attempts
+    for _ in range(30):  # past RETRY_AFTER (15 min), so the alert memory is what holds, not only the attempts
         clock.now += timedelta(minutes=1)
         run_due(ctx)
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == titles
@@ -21595,8 +18538,7 @@ def test_a_locked_repository_is_not_retried_every_minute(tmp_path, writer, ntfy)
 
 
 def test_a_job_that_raises_anything_is_a_failure_and_the_loop_carries_on(
-    tmp_path, writer, ntfy, monkeypatch
-):
+        tmp_path, writer, ntfy, monkeypatch):
     # why: only FAILURES were caught, so a bug in one job ended the loop, and on restart the same
     # unrecorded job was due first again and the jobs after it never ran (Task 13 review).
     ctx = context(tmp_path, writer, ntfy)
@@ -21614,8 +18556,7 @@ def test_a_job_that_raises_anything_is_a_failure_and_the_loop_carries_on(
 
 
 def test_the_loop_logs_a_fixed_line_and_keeps_the_traceback_for_debug(
-    tmp_path, writer, ntfy, monkeypatch, caplog
-):
+        tmp_path, writer, ntfy, monkeypatch, caplog):
     ctx = context(tmp_path, writer, ntfy)
 
     def broken(*args, **kwargs):
@@ -21631,8 +18572,7 @@ def test_the_loop_logs_a_fixed_line_and_keeps_the_traceback_for_debug(
 
 
 def test_an_unopenable_lock_file_alerts_and_a_backup_pings_fail(
-    tmp_path, writer, ntfy, monkeypatch
-):
+        tmp_path, writer, ntfy, monkeypatch):
     # why: §14, a failed backup raises an alert. This failure was recorded but never said, so only
     # the dead-man's switch noticed, after its period and grace.
     class Unopenable:
@@ -21660,9 +18600,8 @@ def test_a_missing_or_changed_archive_marker_has_its_own_title(tmp_path, writer,
 
 
 def test_a_reminder_is_not_held_back_by_an_alert_stamped_in_the_future(tmp_path, writer, ntfy):
-    writer.state.set_alert_state(
-        "job:backup", failing=True, last_sent_at=T0 + timedelta(days=400)
-    )  # a clock that ran ahead
+    writer.state.set_alert_state("job:backup", failing=True,
+                                 last_sent_at=T0 + timedelta(days=400))  # a clock that ran ahead
     run_job(context(tmp_path, writer, ntfy, runner=restic(returncode=1)), "backup")
     assert len(pushes(ntfy)) == 1
 
@@ -21683,8 +18622,7 @@ def test_an_undelivered_alert_is_sent_again_at_the_next_failure(tmp_path, writer
 
 
 def test_alert_test_refuses_a_topic_with_no_server_but_not_a_server_with_no_topic(
-    tmp_path, writer, ntfy, monkeypatch, capsys
-):
+        tmp_path, writer, ntfy, monkeypatch, capsys):
     # why: a topic with no ntfy_server silently drops every alert; a server with no topic is the
     # template's normal dead-man-only setup and must keep working (Task 13 council)
     ctx = context(tmp_path, writer, ntfy)
@@ -21696,10 +18634,8 @@ def test_alert_test_refuses_a_topic_with_no_server_but_not_a_server_with_no_topi
     assert json.loads(capsys.readouterr().out) == {"ntfy": None, "deadman": True}
     monkeypatch.setenv("RECORDINGS_NTFY_TOPIC", "alerts-topic")
     cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(
-        cfg_file.read_text(encoding="utf-8").replace(f'ntfy_server = "{ntfy.url}"\n', ""),
-        encoding="utf-8",
-    )
+    cfg_file.write_text(cfg_file.read_text(encoding="utf-8").replace(
+        f'ntfy_server = "{ntfy.url}"\n', ""), encoding="utf-8")
     assert main(["alert-test", "--json"]) == 78  # topic, no server
     out = capsys.readouterr().out
     assert "ntfy_server" in out and "alerts-topic" not in out
@@ -21707,15 +18643,12 @@ def test_alert_test_refuses_a_topic_with_no_server_but_not_a_server_with_no_topi
 
 
 def test_a_failure_with_a_title_of_its_own_is_said_at_once_and_one_recovery_clears_all(
-    tmp_path, writer, ntfy, monkeypatch
-):
+        tmp_path, writer, ntfy, monkeypatch):
     # why: the disk job shared one alert state between a low disk and a missing marker, so the
     # flip from one to the other waited for the daily reminder (Task 13 re-review)
     from types import SimpleNamespace
-
-    monkeypatch.setattr(
-        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=0, f_frsize=1024, f_blocks=1000)
-    )
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
     clock = Clock()
     ctx = context(tmp_path, writer, ntfy, clock=clock)
     run_job(ctx, "disk")
@@ -21730,10 +18663,8 @@ def test_a_failure_with_a_title_of_its_own_is_said_at_once_and_one_recovery_clea
     clock.now += timedelta(minutes=20)
     run_job(ctx, "disk")
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == [
-        "recordings: disk space low",
-        "recordings: archive disk missing or changed",
-        "recordings: disk recovered",
-    ]
+        "recordings: disk space low", "recordings: archive disk missing or changed",
+        "recordings: disk recovered"]
 
 
 def test_a_future_stamp_and_a_full_state_disk_still_alert_once(tmp_path, writer, ntfy, monkeypatch):
@@ -21741,10 +18672,8 @@ def test_a_future_stamp_and_a_full_state_disk_still_alert_once(tmp_path, writer,
     # right) were taken as newer than the process's own memory, so a full state disk brought back
     # a push a minute (Task 13 re-review)
     from types import SimpleNamespace
-
-    monkeypatch.setattr(
-        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=0, f_frsize=1024, f_blocks=1000)
-    )
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
     future = T0 + timedelta(days=2)
     writer.state.record_run("disk", future - timedelta(minutes=1), future, False, "DiskWarning")
     writer.state.set_alert_state("job:disk", failing=True, last_sent_at=future)
@@ -21765,8 +18694,7 @@ def test_a_future_stamp_and_a_full_state_disk_still_alert_once(tmp_path, writer,
 
 
 def test_a_marker_failure_that_recovers_alone_is_cleared_and_said_again_when_it_returns(
-    tmp_path, writer, ntfy
-):
+        tmp_path, writer, ntfy):
     # why: one recovery must clear the marker failure's own alert key, not only job:disk's, or the
     # next marker failure within 24 hours is taken for the same one and not said (Task 13 re-review)
     clock = Clock()
@@ -21777,10 +18705,8 @@ def test_a_marker_failure_that_recovers_alone_is_cleared_and_said_again_when_it_
         run_job(ctx, "disk")
         clock.now += timedelta(minutes=20)
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == [
-        "recordings: archive disk missing or changed",
-        "recordings: disk recovered",
-        "recordings: archive disk missing or changed",
-    ]
+        "recordings: archive disk missing or changed", "recordings: disk recovered",
+        "recordings: archive disk missing or changed"]
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -21869,8 +18795,8 @@ def _build_opener() -> urllib.request.OpenerDirector:
     never end (and makes a later fork() warn)."""
     proxies = urllib.request.getproxies_environment()
     return urllib.request.build_opener(
-        urllib.request.ProxyHandler({k: v for k, v in proxies.items() if k == "https"}), _NoRedirect
-    )
+        urllib.request.ProxyHandler({k: v for k, v in proxies.items() if k == "https"}),
+        _NoRedirect)
 
 
 _OPENER = _build_opener()
@@ -21882,28 +18808,18 @@ def _check_url(url: object, what: str) -> None:
     (Healthchecks takes it as a plain success ping) or be dropped. Visible ASCII only, so the URL
     checked is the URL sent (urlsplit drops a tab or a newline the request keeps) and a host can't
     be a look-alike. The error names the setting, never the URL, which may be a secret."""
-    plain = (
-        isinstance(url, str)
-        and url.isascii()
-        and url.isprintable()
-        and not any(c in url for c in " ?#")
-    )
+    plain = isinstance(url, str) and url.isascii() and url.isprintable() and not any(
+        c in url for c in " ?#")
     try:
         parts = urlsplit(url) if plain else None
         host = parts.hostname if parts else None
         _ = parts.port if parts else None  # a port that isn't a number raises ValueError
     except ValueError:  # a malformed IPv6 address, or port
         parts, host = None, None
-    if (
-        parts is None
-        or not host
-        or "@" in parts.netloc
-        or not (parts.scheme == "https" or (parts.scheme == "http" and host in _LOOPBACK))
-    ):
-        raise ConfigError(
-            f"{what} must be an https:// URL in plain ASCII, with no user name, "
-            "password, query (?) or fragment (#) in it"
-        )
+    if parts is None or not host or "@" in parts.netloc or not (
+            parts.scheme == "https" or (parts.scheme == "http" and host in _LOOPBACK)):
+        raise ConfigError(f"{what} must be an https:// URL in plain ASCII, with no user name, "
+                          "password, query (?) or fragment (#) in it")
 
 
 @dataclass(frozen=True)
@@ -21922,41 +18838,31 @@ class AlertConfig:
             raise ConfigError("RECORDINGS_NTFY_TOPIC must be 1 to 64 letters, digits, '-' or '_'")
         if self.token is not None and not TOKEN_RE.fullmatch(self.token):
             raise ConfigError("RECORDINGS_NTFY_TOKEN must be one word of visible ASCII")
-        if (
-            self.topic is not None
-            and self.token is None
-            and self.ntfy_server is not None
-            and urlsplit(self.ntfy_server).hostname not in _LOOPBACK
-            and len(self.topic) < MIN_OPEN_TOPIC
-        ):
-            raise ConfigError(
-                f"RECORDINGS_NTFY_TOPIC must be {MIN_OPEN_TOPIC} or more random "
-                "characters: with no token, it is all that keeps the alerts private"
-            )
+        if (self.topic is not None and self.token is None and self.ntfy_server is not None
+                and urlsplit(self.ntfy_server).hostname not in _LOOPBACK
+                and len(self.topic) < MIN_OPEN_TOPIC):
+            raise ConfigError(f"RECORDINGS_NTFY_TOPIC must be {MIN_OPEN_TOPIC} or more random "
+                              "characters: with no token, it is all that keeps the alerts private")
 
     @property
     def enabled(self) -> bool:
         return bool(self.ntfy_server and self.topic)
 
     def __repr__(self) -> str:  # never the topic, the ping URL or the token
-        return (
-            f"AlertConfig(ntfy_server={self.ntfy_server!r}, "
-            f"topic={'set' if self.topic else None}, "
-            f"deadman_url={'set' if self.deadman_url else None}, "
-            f"token={'set' if self.token else None})"
-        )
+        return (f"AlertConfig(ntfy_server={self.ntfy_server!r}, "
+                f"topic={'set' if self.topic else None}, "
+                f"deadman_url={'set' if self.deadman_url else None}, "
+                f"token={'set' if self.token else None})")
 
     __str__ = __repr__
 
 
 def from_config(cfg: Config, environ: Mapping[str, str]) -> AlertConfig:
     server = cfg.data.get("alerts", {}).get("ntfy_server")
-    return AlertConfig(
-        ntfy_server=server.rstrip("/") if isinstance(server, str) else server,
-        topic=secret("ntfy_topic", environ),
-        deadman_url=secret("deadman_url", environ),
-        token=secret("ntfy_token", environ),
-    )
+    return AlertConfig(ntfy_server=server.rstrip("/") if isinstance(server, str) else server,
+                       topic=secret("ntfy_topic", environ),
+                       deadman_url=secret("deadman_url", environ),
+                       token=secret("ntfy_token", environ))
 
 
 def _deliver(request: urllib.request.Request) -> bool:
@@ -21971,33 +18877,18 @@ def _deliver(request: urllib.request.Request) -> bool:
     return False
 
 
-def send(
-    ac: AlertConfig,
-    *,
-    title: str,
-    message: str,
-    priority: int = 4,
-    tags: Sequence[str] = ("warning",),
-) -> bool:
+def send(ac: AlertConfig, *, title: str, message: str, priority: int = 4,
+         tags: Sequence[str] = ("warning",)) -> bool:
     """Push one alert. The title and the message come from fixed templates (Review Focus 4)."""
     if not ac.enabled:
         return False
-    headers = {
-        "Title": title,
-        "Priority": str(priority),
-        "Tags": ",".join(tags),
-        "User-Agent": f"recordings/{__version__}",
-    }
+    headers = {"Title": title, "Priority": str(priority), "Tags": ",".join(tags),
+               "User-Agent": f"recordings/{__version__}"}
     if ac.token:
         headers["Authorization"] = f"Bearer {ac.token}"
-    delivered = _deliver(
-        urllib.request.Request(
-            f"{ac.ntfy_server}/{ac.topic}",
-            data=message.encode("utf-8"),
-            method="POST",
-            headers=headers,
-        )
-    )
+    delivered = _deliver(urllib.request.Request(
+        f"{ac.ntfy_server}/{ac.topic}", data=message.encode("utf-8"), method="POST",
+        headers=headers))
     if not delivered:
         log.warning("alert %r was not delivered", title)
     return delivered
@@ -22007,14 +18898,9 @@ def ping_deadman(ac: AlertConfig, kind: str = "success", *, message: str = "") -
     """One Healthchecks ping, `kind` being a key of PINGS. The body is a fixed text."""
     if not ac.deadman_url:
         return False
-    return _deliver(
-        urllib.request.Request(
-            ac.deadman_url.rstrip("/") + PINGS[kind],
-            data=message.encode("utf-8"),
-            method="POST",
-            headers={"User-Agent": f"recordings/{__version__}"},
-        )
-    )
+    return _deliver(urllib.request.Request(
+        ac.deadman_url.rstrip("/") + PINGS[kind], data=message.encode("utf-8"), method="POST",
+        headers={"User-Agent": f"recordings/{__version__}"}))
 ```
 
 In `packages/core/src/recordings/state.py`, **append** to `SCHEMA`:
@@ -22024,37 +18910,31 @@ CREATE TABLE IF NOT EXISTS alerts (
 ```
 and **add** to `State`:
 ```python
-# ---- alert state: one alert per failure, a daily reminder, and "recovered" ---------------
-def alert_state(self, key: str) -> tuple[bool, datetime | None]:
-    with self.db() as db:
-        row = db.execute(
-            "SELECT failing, last_sent_at FROM alerts WHERE key = ?", (key,)
-        ).fetchone()
-    if row is None:
-        return False, None
-    return bool(row[0]), datetime.fromisoformat(row[1]) if row[1] else None
+    # ---- alert state: one alert per failure, a daily reminder, and "recovered" ---------------
+    def alert_state(self, key: str) -> tuple[bool, datetime | None]:
+        with self.db() as db:
+            row = db.execute("SELECT failing, last_sent_at FROM alerts WHERE key = ?",
+                             (key,)).fetchone()
+        if row is None:
+            return False, None
+        return bool(row[0]), datetime.fromisoformat(row[1]) if row[1] else None
 
+    def set_alert_state(self, key: str, *, failing: bool, last_sent_at: datetime | None) -> None:
+        with self.db() as db:
+            db.execute("INSERT OR REPLACE INTO alerts (key, failing, last_sent_at) VALUES (?, ?, ?)",
+                       (key, int(failing), last_sent_at.isoformat() if last_sent_at else None))
 
-def set_alert_state(self, key: str, *, failing: bool, last_sent_at: datetime | None) -> None:
-    with self.db() as db:
-        db.execute(
-            "INSERT OR REPLACE INTO alerts (key, failing, last_sent_at) VALUES (?, ?, ?)",
-            (key, int(failing), last_sent_at.isoformat() if last_sent_at else None),
-        )
-
-
-# ---- ops_runs retention: the loop trims it once a day (ops._trim_runs) ---------------------
-def prune_runs(self, before: datetime) -> int:
-    """Delete the runs that finished before `before`, except each job's newest run and its
-    newest good one (what Status and the schedule read, however long a job has been failing).
-    Returns how many rows went."""
-    with self.db() as db:
-        return db.execute(
-            "DELETE FROM ops_runs WHERE datetime(finished_at) < datetime(?) "
-            "AND id NOT IN (SELECT MAX(id) FROM ops_runs WHERE ok = 1 GROUP BY job) "
-            "AND id NOT IN (SELECT MAX(id) FROM ops_runs GROUP BY job)",
-            (before.isoformat(),),
-        ).rowcount
+    # ---- ops_runs retention: the loop trims it once a day (ops._trim_runs) ---------------------
+    def prune_runs(self, before: datetime) -> int:
+        """Delete the runs that finished before `before`, except each job's newest run and its
+        newest good one (what Status and the schedule read, however long a job has been failing).
+        Returns how many rows went."""
+        with self.db() as db:
+            return db.execute(
+                "DELETE FROM ops_runs WHERE datetime(finished_at) < datetime(?) "
+                "AND id NOT IN (SELECT MAX(id) FROM ops_runs WHERE ok = 1 GROUP BY job) "
+                "AND id NOT IN (SELECT MAX(id) FROM ops_runs GROUP BY job)",
+                (before.isoformat(),)).rowcount
 ```
 
 - [ ] **Step 4: Add the schedule, the disk job, alerting and the loop to `ops.py`**
@@ -22082,11 +18962,8 @@ In `packages/core/src/recordings/ops.py`:
    def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
        if ctx.cfg.archive_path is None:
            raise ConfigError("set [archive] path")
-       status = disk_status(
-           ctx.cfg.archive_path,
-           expected_uuid=ctx.state.meta("archive_uuid"),
-           **disk_thresholds(ctx.cfg),
-       )
+       status = disk_status(ctx.cfg.archive_path, expected_uuid=ctx.state.meta("archive_uuid"),
+                            **disk_thresholds(ctx.cfg))
        if not status.marker:
            raise ArchiveMarkerError(status.message)
        if status.level != "ok":
@@ -22111,14 +18988,9 @@ In `packages/core/src/recordings/ops.py`:
    ```
 4. **Add** after `FAILURES`:
    ```python
-   INTERVALS = {
-       "disk": timedelta(minutes=10),
-       "backup": timedelta(hours=1),
-       "mirror": timedelta(hours=1),
-       "prune": timedelta(days=1),
-       "check": timedelta(days=7),
-       "restore-test": timedelta(days=30),
-   }
+   INTERVALS = {"disk": timedelta(minutes=10), "backup": timedelta(hours=1),
+                "mirror": timedelta(hours=1), "prune": timedelta(days=1),
+                "check": timedelta(days=7), "restore-test": timedelta(days=30)}
    ORDER = ("disk", "backup", "mirror", "prune", "check", "restore-test")
    RETRY_AFTER = timedelta(minutes=15)
    # A failed check reads a quarter of the repository again, and a failed restore test all of it,
@@ -22126,29 +18998,17 @@ In `packages/core/src/recordings/ops.py`:
    # it failed. (Task 11's ops council.) A failed mirror walks both trees twice to fail again, and
    # one short of space first reads and rewrites all it staged: its own hour is soon enough.
    # (Task 12's ops council)
-   RETRY_HEAVY_AFTER = {
-       "check": timedelta(hours=24),
-       "restore-test": timedelta(hours=24),
-       "mirror": timedelta(hours=1),
-   }
+   RETRY_HEAVY_AFTER = {"check": timedelta(hours=24), "restore-test": timedelta(hours=24),
+                        "mirror": timedelta(hours=1)}
    REMIND_EVERY = timedelta(hours=24)
    KEEP_RUNS = timedelta(days=90)  # ops_runs gets about 70,000 rows a year; older ones go, daily
    PRUNE_RUNS_EVERY = timedelta(days=1)
-   REPO_LOCKED = (
-       11  # restic's exit status for a repository another process holds (the NAS's retention)
-   )
+   REPO_LOCKED = 11  # restic's exit status for a repository another process holds (the NAS's retention)
    LOCKED = f"{BUSY} (repository locked)"
-   TITLES = {
-       "disk": "disk space low",
-       "backup": "backup failed",
-       "mirror": "mirror failed",
-       "prune": "backup retention failed",
-       "check": "backup check failed",
-       "restore-test": "restore test failed",
-   }
-   DETAIL_TITLES = {
-       "ArchiveMarkerError": "archive disk missing or changed"
-   }  # a failure of its own kind
+   TITLES = {"disk": "disk space low", "backup": "backup failed", "mirror": "mirror failed",
+             "prune": "backup retention failed", "check": "backup check failed",
+             "restore-test": "restore test failed"}
+   DETAIL_TITLES = {"ArchiveMarkerError": "archive disk missing or changed"}  # a failure of its own kind
 
 
    def enabled_jobs(cfg: Config) -> tuple[str, ...]:
@@ -22160,12 +19020,8 @@ In `packages/core/src/recordings/ops.py`:
        return tuple(j for j in ORDER if j in jobs)
 
 
-   def due(
-       state: State,
-       now: datetime,
-       jobs: tuple[str, ...],
-       attempts: Mapping[str, tuple[datetime, bool]] | None = None,
-   ) -> list[str]:
+   def due(state: State, now: datetime, jobs: tuple[str, ...],
+           attempts: Mapping[str, tuple[datetime, bool]] | None = None) -> list[str]:
        """A run stamped in the future (a clock that ran ahead and was put right) counts as long
        ago: otherwise every job, backups included, would wait for the clock to catch up. `attempts`
        are the runs this process could not record (a full state disk): one newer than state.db's
@@ -22210,24 +19066,17 @@ In `packages/core/src/recordings/ops.py`:
            keys = [f"job:{job}", *(f"job:{job}:{kind}" for kind in DETAIL_TITLES)]
            failing = [key for key in keys if _known(ctx, key)[0]]
            if failing:
-               alerts.send(
-                   ac,
-                   title=f"recordings: {job} recovered",
-                   message=f"{job} works again. See Status.",
-                   priority=3,
-                   tags=("white_check_mark",),
-               )
+               alerts.send(ac, title=f"recordings: {job} recovered",
+                           message=f"{job} works again. See Status.", priority=3,
+                           tags=("white_check_mark",))
            for key in failing:
                _remember(ctx, key, failing=False, last_sent_at=now)
            return
        key = f"job:{job}:{detail}" if detail in DETAIL_TITLES else f"job:{job}"
        failing, last_sent = _known(ctx, key)
        if not failing or last_sent is None or not timedelta(0) <= now - last_sent < REMIND_EVERY:
-           delivered = alerts.send(
-               ac,
-               title=f"recordings: {DETAIL_TITLES.get(detail, TITLES[job])}",
-               message=f"{job} failed ({detail}). See Status.",
-           )
+           delivered = alerts.send(ac, title=f"recordings: {DETAIL_TITLES.get(detail, TITLES[job])}",
+                                   message=f"{job} failed ({detail}). See Status.")
            last_sent = now if delivered else last_sent
        _remember(ctx, key, failing=True, last_sent_at=last_sent)
 
@@ -22245,9 +19094,8 @@ In `packages/core/src/recordings/ops.py`:
            return mine or (False, None)
        if mine is None:
            return saved
-       newer = (
-           saved[1] is not None and saved[1] <= ctx.clock() and (mine[1] is None or saved[1] > mine[1])
-       )
+       newer = (saved[1] is not None and saved[1] <= ctx.clock()
+                and (mine[1] is None or saved[1] > mine[1]))
        return saved if newer else mine
 
 
@@ -22259,9 +19107,8 @@ In `packages/core/src/recordings/ops.py`:
            log.warning("%s: could not save the alert state", key)
 
 
-   def _conclude(
-       ctx: Context, ac: AlertConfig | None, job: str, started: datetime, ok: bool, detail: str
-   ) -> JobResult:
+   def _conclude(ctx: Context, ac: AlertConfig | None, job: str, started: datetime, ok: bool,
+                 detail: str) -> JobResult:
        """Record a run, alert, and for a backup ping the dead-man's switch: the URL itself or /fail.
        A state.db that can't record it leaves the attempt in ctx.attempts, for due()."""
        try:
@@ -22272,11 +19119,8 @@ In `packages/core/src/recordings/ops.py`:
        if ac is not None:
            _alert(ctx, ac, job, ok, detail)
            if job == "backup":
-               alerts.ping_deadman(
-                   ac,
-                   "success" if ok else "fail",
-                   message="" if ok else f"{job} failed ({detail}). See Status.",
-               )
+               alerts.ping_deadman(ac, "success" if ok else "fail",
+                                   message="" if ok else f"{job} failed ({detail}). See Status.")
        return JobResult(job, ok, detail)
 
 
@@ -22302,9 +19146,8 @@ In `packages/core/src/recordings/ops.py`:
    ```
 5. **Replace** `run_job` (Task 11's, with its ops lock and the same signature) with:
    ```python
-   def run_job(
-       ctx: Context, job: str, *, tags: tuple[str, ...] = (), lock_timeout: float = CLI_WAIT
-   ) -> JobResult:
+   def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
+               lock_timeout: float = CLI_WAIT) -> JobResult:
        """Run one job under the ops lock, record it, alert, and for a backup ping the dead-man's
        switch: /start first, then the URL itself or /fail. The CLI waits for the lock (the default);
        the loop passes 0. A lock still held means another run is busy: BUSY. A restic exit 11 (the
@@ -22350,11 +19193,9 @@ In `packages/core/src/recordings/ops.py`:
            log.warning("could not write the heartbeat")
        _trim_runs(ctx)
        now = ctx.clock()
-       return [
-           run_job(ctx, job, lock_timeout=0)
-           for job in due(ctx.state, now, enabled_jobs(ctx.cfg), ctx.attempts)
-           if not (job in ctx.locked and timedelta(0) <= now - ctx.locked[job] < RETRY_AFTER)
-       ]
+       return [run_job(ctx, job, lock_timeout=0)
+               for job in due(ctx.state, now, enabled_jobs(ctx.cfg), ctx.attempts)
+               if not (job in ctx.locked and timedelta(0) <= now - ctx.locked[job] < RETRY_AFTER)]
 
 
    def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: False) -> None:
@@ -22375,9 +19216,7 @@ In `packages/core/src/recordings/ops.py`:
    timeout. restic handles INT then TERM cleanly (exit 130, no lock left).
    - **Add** before `def run_child(`:
      ```python
-     INTERRUPT_GRACE = (
-         120.0  # seconds a child gets to clean up after Ctrl-C when the caller set no timeout
-     )
+     INTERRUPT_GRACE = 120.0  # seconds a child gets to clean up after Ctrl-C when the caller set no timeout
 
 
      def _stop_child(proc: subprocess.Popen, deadline: float | None) -> None:
@@ -22473,12 +19312,8 @@ def test_ctrl_c_stops_the_child_with_sigterm_and_waits_for_its_cleanup(tmp_path)
     ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
     sigterm_when_ready(ready, signal.SIGINT)
     with pytest.raises(KeyboardInterrupt):
-        ops.run_child(
-            [sys.executable, "-c", CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        ops.run_child([sys.executable, "-c", CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}],
+                      capture_output=True, text=True, timeout=60)
     assert cleaned.exists()  # run_child told it to stop, waited, and only then let Ctrl-C through
 
 
@@ -22488,9 +19323,8 @@ def test_a_second_ctrl_c_does_not_abandon_a_child_that_is_cleaning_up(tmp_path):
     # _stop_child waits (Popen.communicate has its own 0.25 s wait after the first one).
     ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
     stopping = tmp_path / "stopping"
-    announced = CLEANS_UP.replace(
-        "def stop(*_):\n", "def stop(*_):\n    pathlib.Path(%(stopping)r).touch()\n"
-    )
+    announced = CLEANS_UP.replace("def stop(*_):\n",
+                                  "def stop(*_):\n    pathlib.Path(%(stopping)r).touch()\n")
     child = announced % {"ready": str(ready), "cleaned": str(cleaned), "stopping": str(stopping)}
     sigterm_when_ready(ready, signal.SIGINT)  # the first, as soon as the child is up
     main_thread = threading.main_thread().ident
@@ -22512,12 +19346,10 @@ def test_ctrl_c_keeps_the_callers_timeout_and_kills_a_child_that_ignores_sigterm
     # why: the wait after Ctrl-C was unbounded and dropped the caller's timeout, so a hung child
     # held the CLI for ever.
     ready = tmp_path / "ready"
-    child = (
-        "import pathlib, signal, time\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        f"pathlib.Path({str(ready)!r}).touch()\n"
-        "time.sleep(60)\n"
-    )
+    child = ("import pathlib, signal, time\n"
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(60)\n")
     sigterm_when_ready(ready, signal.SIGINT)
     began = time.monotonic()
     with pytest.raises(KeyboardInterrupt):
@@ -22526,16 +19358,13 @@ def test_ctrl_c_keeps_the_callers_timeout_and_kills_a_child_that_ignores_sigterm
 
 
 def test_ctrl_c_with_no_timeout_waits_only_interrupt_grace_for_a_child_that_ignores_sigterm(
-    tmp_path, monkeypatch
-):
+        tmp_path, monkeypatch):
     monkeypatch.setattr(ops, "INTERRUPT_GRACE", 1.0)
     ready = tmp_path / "ready"
-    child = (
-        "import pathlib, signal, time\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        f"pathlib.Path({str(ready)!r}).touch()\n"
-        "time.sleep(60)\n"
-    )
+    child = ("import pathlib, signal, time\n"
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(60)\n")
     sigterm_when_ready(ready, signal.SIGINT)
     began = time.monotonic()
     with pytest.raises(KeyboardInterrupt):
@@ -22593,28 +19422,14 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
     if ac.topic and not ac.ntfy_server:
         return _fail("RECORDINGS_NTFY_TOPIC is set but [alerts] ntfy_server is not", args.json, 78)
     if not ac.enabled and not ac.deadman_url:
-        return _fail(
-            "set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
-            "RECORDINGS_DEADMAN_URL_FILE, first",
-            args.json,
-            78,
-        )
+        return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
+                     "RECORDINGS_DEADMAN_URL_FILE, first", args.json, 78)
     # Each part is tested when it is set up: null is "not configured", false is "failed".
-    sent = (
-        alerts.send(
-            ac,
-            title="recordings: test alert",
-            message="If you see this, alerts work.",
-            priority=3,
-            tags=("white_check_mark",),
-        )
-        if ac.enabled
-        else None
-    )
+    sent = alerts.send(ac, title="recordings: test alert", message="If you see this, alerts work.",
+                       priority=3, tags=("white_check_mark",)) if ac.enabled else None
     # /log records the test without changing the check's state, so it can never hide an outage.
-    logged = (
-        alerts.ping_deadman(ac, "log", message="recordings alert-test") if ac.deadman_url else None
-    )
+    logged = (alerts.ping_deadman(ac, "log", message="recordings alert-test")
+              if ac.deadman_url else None)
     _emit({"ntfy": sent, "deadman": logged}, args.json)
     return 0 if sent is not False and logged is not False else 1
 ```
@@ -22735,9 +19550,7 @@ def test_every_compose_variable_is_documented_in_the_template_or_set_by_make():
     used = set(re.findall(r"\$\{(\w+)", COMPOSE.read_text(encoding="utf-8")))
     documented = set(re.findall(r"^(\w+)=", TEMPLATE.read_text(encoding="utf-8"), re.M))
     assert used, "compose.yml uses no variables?"
-    assert used <= documented | SET_BY_MAKE, (
-        f"undocumented: {sorted(used - documented - SET_BY_MAKE)}"
-    )
+    assert used <= documented | SET_BY_MAKE, f"undocumented: {sorted(used - documented - SET_BY_MAKE)}"
 
 
 def test_the_web_service_takes_its_trusted_proxy_from_the_deploy_variable():
@@ -22804,9 +19617,7 @@ def test_the_image_has_a_passwd_entry_for_the_deploy_uid():
     assert 'useradd --uid "$APP_UID" --gid "$APP_GID"' in dockerfile
     assert "USER ${APP_UID}:${APP_GID}\n" in dockerfile
     assert compose()["services"]["web"]["build"]["args"] == {
-        "APP_UID": "${RECORDINGS_UID:?}",
-        "APP_GID": "${RECORDINGS_GID:?}",
-    }
+        "APP_UID": "${RECORDINGS_UID:?}", "APP_GID": "${RECORDINGS_GID:?}"}
 
 
 def test_each_service_names_its_role_and_backup_has_time_to_stop():
@@ -22873,19 +19684,13 @@ def test_the_smoke_script_parses_and_creates_every_compose_secret():
 
 def test_the_boot_unit_waits_for_docker_the_disk_and_tailscale():
     unit = UNIT.read_text(encoding="utf-8")
-    for line in (
-        "Requires=docker.service",
-        "After=docker.service tailscaled.service",
-        "RequiresMountsFor=/srv/recordings",
-        "Type=oneshot",
-        "RemainAfterExit=yes",
-        "WorkingDirectory=/srv/recordings/repo",
-        "WantedBy=multi-user.target",
-        "ExecStart=/bin/sh docker/up-deployed.sh up -d --no-build",
-    ):
+    for line in ("Requires=docker.service", "After=docker.service tailscaled.service",
+                 "RequiresMountsFor=/srv/recordings", "Type=oneshot", "RemainAfterExit=yes",
+                 "WorkingDirectory=/srv/recordings/repo", "WantedBy=multi-user.target",
+                 "ExecStart=/bin/sh docker/up-deployed.sh up -d --no-build"):
         assert f"\n{line}\n" in unit, line
     (pre,) = [line for line in unit.splitlines() if line.startswith("ExecStartPre=")]
-    assert "tailscale0" in pre and "-ge 120 ]" in pre
+    assert "tailscale0" in pre and '-ge 120 ]' in pre
 
 
 def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
@@ -22893,37 +19698,23 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
     # tag the web container runs is the deployed one, however it was started.
     fake = tmp_path / "docker"
     # `ps -q` lists container IDs; `inspect` prints the image reference the container was created from
-    fake.write_text(
-        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
-        'if [ "$1" = ps ]; then [ "$FAKE_IMAGE" ] && echo abc123; exit 0; fi\n'
-        'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
-        'echo "RECORDINGS_IMAGE_TAG=$RECORDINGS_IMAGE_TAG $*"\n',
-        encoding="utf-8",
-    )
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1" = ps ]; then [ "$FAKE_IMAGE" ] && echo abc123; exit 0; fi\n'
+                    'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
+                    'echo "RECORDINGS_IMAGE_TAG=$RECORDINGS_IMAGE_TAG $*"\n', encoding="utf-8")
     fake.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_IMAGE": "recordings:0123456789ab"}
     script = str(REPO / "docker" / "up-deployed.sh")
-    up = subprocess.run(
-        ["sh", script, "up", "-d", "--no-build"], env=env, capture_output=True, text=True
-    )
+    up = subprocess.run(["sh", script, "up", "-d", "--no-build"], env=env, capture_output=True,
+                        text=True)
     assert up.returncode == 0, up.stderr
-    assert up.stdout == (
-        "RECORDINGS_IMAGE_TAG=0123456789ab compose --env-file docker/deploy.env "
-        "-f docker/compose.yml up -d --no-build\n"
-    )
-    none = subprocess.run(
-        ["sh", script, "up", "-d", "--no-build"],
-        env={**env, "FAKE_IMAGE": ""},
-        capture_output=True,
-        text=True,
-    )
+    assert up.stdout == ("RECORDINGS_IMAGE_TAG=0123456789ab compose --env-file docker/deploy.env "
+                         "-f docker/compose.yml up -d --no-build\n")
+    none = subprocess.run(["sh", script, "up", "-d", "--no-build"], env={**env, "FAKE_IMAGE": ""},
+                          capture_output=True, text=True)
     assert none.returncode != 0 and "make deploy" in none.stderr and none.stdout == ""
-    down = subprocess.run(
-        ["sh", script, "up", "-d", "--no-build"],
-        env={**env, "FAKE_DOWN": "1"},
-        capture_output=True,
-        text=True,
-    )
+    down = subprocess.run(["sh", script, "up", "-d", "--no-build"], env={**env, "FAKE_DOWN": "1"},
+                          capture_output=True, text=True)
     assert down.returncode != 0 and "make deploy" not in down.stderr and down.stdout == ""
     assert "docker" in down.stderr and "daemon" in down.stderr
 
@@ -22932,26 +19723,15 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
 def ops_lock_held(folder: Path, announced: str):
     """Another process holds the ops lock, as the loop's run_job does, with `announced` in the lock
     file, as Task 15's announce writes it."""
-    holder = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            (
-                "import pathlib, sys\n"
-                "from recordings.locks import OPS_LOCK, Locks\n"
-                "folder = pathlib.Path(sys.argv[1])\n"
-                "with Locks(folder, timeout=0).hold(OPS_LOCK):\n"
-                "    (folder / f'{OPS_LOCK}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
-                "    print('held', flush=True)\n"
-                "    sys.stdin.read()\n"
-            ),
-            str(folder),
-            announced,
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-    )
+    holder = subprocess.Popen([sys.executable, "-c", (
+        "import pathlib, sys\n"
+        "from recordings.locks import OPS_LOCK, Locks\n"
+        "folder = pathlib.Path(sys.argv[1])\n"
+        "with Locks(folder, timeout=0).hold(OPS_LOCK):\n"
+        "    (folder / f'{OPS_LOCK}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
+        "    print('held', flush=True)\n"
+        "    sys.stdin.read()\n"), str(folder), announced],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
         assert holder.stdout.readline() == "held\n"
         yield
@@ -22976,28 +19756,17 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
     fake = tmp_path / "docker"
     # `ps -q` lists the running backup container. The guard pipes docker/ops-busy.py into that
     # container's python; the fake runs it here instead, on the test's own lock folder.
-    fake.write_text(
-        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
-        'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
-        'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
-        '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
-        encoding="utf-8",
-    )
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
+                    'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
+                    '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n', encoding="utf-8")
     fake.chmod(0o755)
-    env = {
-        "PATH": f"{tmp_path}:/usr/bin:/bin",
-        "FAKE_ID": "abc123",
-        "FAKE_PYTHON": sys.executable,
-        "FAKE_LOCKS": str(tmp_path / "locks"),
-    }
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_ID": "abc123", "FAKE_PYTHON": sys.executable,
+           "FAKE_LOCKS": str(tmp_path / "locks")}
 
     def guard(**extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["sh", str(REPO / "docker" / "deploy-guard.sh")],
-            env={**env, **extra},
-            capture_output=True,
-            text=True,
-        )
+        return subprocess.run(["sh", str(REPO / "docker" / "deploy-guard.sh")],
+                              env={**env, **extra}, capture_output=True, text=True)
 
     assert guard().returncode == 0  # idle
     assert guard(FAKE_ID="").returncode == 0  # no backup container: no job to stop
@@ -23030,32 +19799,21 @@ def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(t
     # `ps -q` lists running containers (none), `ps -a -q` stopped ones too, and `inspect` the image
     # one was made from. The one-off `compose run` gets docker/ops-busy.py on stdin; the fake runs
     # it here instead, on the test's own lock folder.
-    fake.write_text(
-        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
-        'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
-        'if [ "$1" = ps ]; then exit 0; fi\n'
-        'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
-        'if [ "$RECORDINGS_IMAGE_TAG $*" = "0123456789ab compose --env-file docker/deploy.env '
-        '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks" ]; then\n'
-        '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
-        encoding="utf-8",
-    )
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
+                    'if [ "$1" = ps ]; then exit 0; fi\n'
+                    'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
+                    'if [ "$RECORDINGS_IMAGE_TAG $*" = "0123456789ab compose --env-file docker/deploy.env '
+                    '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks" ]; then\n'
+                    '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n', encoding="utf-8")
     fake.chmod(0o755)
-    env = {
-        "PATH": f"{tmp_path}:/usr/bin:/bin",
-        "FAKE_STOPPED": "def456",
-        "FAKE_IMAGE": "recordings:0123456789ab",
-        "FAKE_PYTHON": sys.executable,
-        "FAKE_LOCKS": str(tmp_path / "locks"),
-    }
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_STOPPED": "def456",
+           "FAKE_IMAGE": "recordings:0123456789ab", "FAKE_PYTHON": sys.executable,
+           "FAKE_LOCKS": str(tmp_path / "locks")}
 
     def guard(**extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["sh", str(REPO / "docker" / "deploy-guard.sh")],
-            env={**env, **extra},
-            capture_output=True,
-            text=True,
-        )
+        return subprocess.run(["sh", str(REPO / "docker" / "deploy-guard.sh")],
+                              env={**env, **extra}, capture_output=True, text=True)
 
     assert guard().returncode == 0  # stopped, and nothing holds the lock
     with ops_lock_held(tmp_path / "locks", '{"job": "import"}'):
@@ -23073,24 +19831,16 @@ def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(t
 def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path):
     # why: each make deploy leaves an image, with its own venv, on the system disk, and
     # `docker image prune -a` would take every rollback target with it (ops council, Task 14).
-    listed = (
-        "2026-10-01 09:00:00 +0000 UTC|00000000000a",
-        "2026-10-12 09:00:00 +0000 UTC|00000000000d",
-        "2026-10-05 09:00:00 +0000 UTC|00000000000b",
-        "2026-10-09 09:00:00 +0000 UTC|00000000000c",
-        "2026-10-13 09:00:00 +0000 UTC|smoke",
-        "2026-10-02 09:00:00 +0000 UTC|0123456789ab-dirty",
-    )
+    listed = ("2026-10-01 09:00:00 +0000 UTC|00000000000a", "2026-10-12 09:00:00 +0000 UTC|00000000000d",
+              "2026-10-05 09:00:00 +0000 UTC|00000000000b", "2026-10-09 09:00:00 +0000 UTC|00000000000c",
+              "2026-10-13 09:00:00 +0000 UTC|smoke", "2026-10-02 09:00:00 +0000 UTC|0123456789ab-dirty")
     fake = tmp_path / "docker"
-    fake.write_text(
-        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
-        'if [ "$1 $2" = "image ls" ]; then printf "%s\\n" '
-        + " ".join(f"'{line}'" for line in listed)
-        + "; exit 0; fi\n"
-        'if [ "$1" = ps ]; then echo recordings:00000000000a; exit 0; fi\n'
-        'if [ "$1 $2" = "image rm" ]; then echo "removed $3"; exit 0; fi\nexit 99\n',
-        encoding="utf-8",
-    )
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1 $2" = "image ls" ]; then printf "%s\\n" '
+                    + " ".join(f"'{line}'" for line in listed) + "; exit 0; fi\n"
+                    'if [ "$1" = ps ]; then echo recordings:00000000000a; exit 0; fi\n'
+                    'if [ "$1 $2" = "image rm" ]; then echo "removed $3"; exit 0; fi\nexit 99\n',
+                    encoding="utf-8")
     fake.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
     script = str(REPO / "docker" / "prune-images.sh")
@@ -23099,12 +19849,10 @@ def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path)
     # d and c are the newest two; a is older, but a container was made from it; smoke and the
     # -dirty tag aren't commit tags
     assert [line for line in run.stdout.splitlines() if line.startswith("removed")] == [
-        "removed recordings:00000000000b"
-    ]
+        "removed recordings:00000000000b"]
     assert subprocess.run(["sh", script, "five"], env=env, capture_output=True).returncode == 2
-    down = subprocess.run(
-        ["sh", script], env={**env, "FAKE_DOWN": "1"}, capture_output=True, text=True
-    )
+    down = subprocess.run(["sh", script], env={**env, "FAKE_DOWN": "1"}, capture_output=True,
+                          text=True)
     assert down.returncode != 0 and "daemon" in down.stderr
     assert "sh docker/prune-images.sh 5" in make_dry_run("prune-images").stdout
     assert "sh docker/prune-images.sh 1" in make_dry_run("prune-images", "KEEP=1").stdout
@@ -23130,29 +19878,18 @@ def test_every_base_image_is_pinned_by_digest():
 def test_the_images_restic_is_the_one_fetch_restic_pins():
     # why: one restic, checked against one release's SHA256SUMS, in CI, on the Mac, in the image
     # and in the runbook's spike (security review).
-    spec = importlib.util.spec_from_file_location(
-        "fetch_restic", REPO / "scripts" / "fetch_restic.py"
-    )
+    spec = importlib.util.spec_from_file_location("fetch_restic", REPO / "scripts" / "fetch_restic.py")
     fetch_restic = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fetch_restic)
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     assert f"ARG RESTIC_VERSION={fetch_restic.VERSION}\n" in dockerfile
-    found = {
-        arch: (sum_, bin_)
-        for arch, sum_, bin_ in re.findall(
-            r"^\s+(amd64|arm64)\) sum=([0-9a-f]{64}); bin=([0-9a-f]{64}) ;;", dockerfile, re.M
-        )
-    }
+    found = {arch: (sum_, bin_) for arch, sum_, bin_ in re.findall(
+        r"^\s+(amd64|arm64)\) sum=([0-9a-f]{64}); bin=([0-9a-f]{64}) ;;", dockerfile, re.M)}
     assert found == {
-        "amd64": (
-            fetch_restic.PINNED[("linux", "x86_64")][1],
-            fetch_restic.BINARY_SHA256["linux_amd64"],
-        ),
-        "arm64": (
-            fetch_restic.PINNED[("linux", "aarch64")][1],
-            fetch_restic.BINARY_SHA256["linux_arm64"],
-        ),
-    }
+        "amd64": (fetch_restic.PINNED[("linux", "x86_64")][1],
+                  fetch_restic.BINARY_SHA256["linux_amd64"]),
+        "arm64": (fetch_restic.PINNED[("linux", "aarch64")][1],
+                  fetch_restic.BINARY_SHA256["linux_arm64"])}
     runbook = (REPO / "docs" / "runbooks" / "first-run.md").read_text(encoding="utf-8")
     for arch, (sum_, _) in found.items():
         # each sum sits on the case arm of its own architecture: x86_64 is amd64, aarch64 arm64
@@ -23165,7 +19902,7 @@ def test_the_runtime_image_has_the_time_zone_database():
     # why: zoneinfo reads the system's database and uv.lock has no tzdata wheel. Without it every
     # ZoneInfo(...) fails: the import places no row, and Status shows no local time.
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    runtime = dockerfile[dockerfile.index("AS runtime") :]
+    runtime = dockerfile[dockerfile.index("AS runtime"):]
     install = re.search(r"apt-get install[^;]*;", runtime)
     assert install and "tzdata" in install.group(0).split()
 
@@ -23178,15 +19915,9 @@ def test_the_backup_service_reads_the_archive_and_takes_secrets_only_from_files(
     for key, value in env.items():
         if key.endswith("_FILE"):
             # the optional ntfy token's path appears only when deploy.env sets its host file
-            assert value.removeprefix("${RECORDINGS_NTFY_AUTH_HOST:+").startswith(
-                "/run/secrets/"
-            ), key
-    for leaked in (
-        "RESTIC_PASSWORD",
-        "RECORDINGS_NTFY_TOPIC",
-        "RECORDINGS_DEADMAN_URL",
-        "RECORDINGS_NTFY_TOKEN",
-    ):
+            assert value.removeprefix("${RECORDINGS_NTFY_AUTH_HOST:+").startswith("/run/secrets/"), key
+    for leaked in ("RESTIC_PASSWORD", "RECORDINGS_NTFY_TOPIC", "RECORDINGS_DEADMAN_URL",
+                   "RECORDINGS_NTFY_TOKEN"):
         assert leaked not in env
     assert "secrets" not in compose()["services"]["web"], "a secret mounted in web"
     assert service["command"] == ["recordings", "ops", "--loop"]
@@ -23205,12 +19936,8 @@ def test_the_writer_identity_comes_from_config_never_the_host_name():
 def test_no_test_sees_this_machines_settings():
     # why: the server's checkout holds a real config.toml, and a shell can export RECORDINGS_* or
     # RESTIC_* variables; the root conftest.py hides both from every test (security review).
-    leaked = [
-        name
-        for name in os.environ
-        if name.startswith(("RECORDINGS_", "RESTIC_"))
-        and name not in ("RECORDINGS_REQUIRE_RESTIC", "RECORDINGS_TEST_RESTIC")
-    ]
+    leaked = [name for name in os.environ if name.startswith(("RECORDINGS_", "RESTIC_"))
+              and name not in ("RECORDINGS_REQUIRE_RESTIC", "RECORDINGS_TEST_RESTIC")]
     assert leaked == []
     assert config.DEFAULT_PATH.is_absolute() and not config.DEFAULT_PATH.exists()
 
@@ -23219,13 +19946,9 @@ def test_the_ci_switches_survive_the_fixture(no_settings_from_this_machine):
     # why: CI sets RECORDINGS_REQUIRE_RESTIC=1 (Task 11), so a missing restic fails the
     # real-restic tests instead of skipping them. The fixture must never hide it.
     hide = no_settings_from_this_machine
-    environ = {
-        "RECORDINGS_REQUIRE_RESTIC": "1",
-        "RECORDINGS_TEST_RESTIC": "/opt/restic",
-        "RECORDINGS_ARCHIVE": "/srv/archive",
-        "RESTIC_PASSWORD_FILE": "/run/pw",
-        "PATH": "/usr/bin",
-    }
+    environ = {"RECORDINGS_REQUIRE_RESTIC": "1", "RECORDINGS_TEST_RESTIC": "/opt/restic",
+               "RECORDINGS_ARCHIVE": "/srv/archive", "RESTIC_PASSWORD_FILE": "/run/pw",
+               "PATH": "/usr/bin"}
     assert hide(environ) == ["RECORDINGS_ARCHIVE", "RESTIC_PASSWORD_FILE"]
 
 
@@ -23233,7 +19956,7 @@ def test_the_readme_names_every_secret_and_environment_setting():
     # why: a setting only the code knows about is one nobody sets. Every secret's variable, later
     # stages' included, and RECORDINGS_ALLOWED_HOSTS have a row in the README's settings table.
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    table = readme[readme.index("## Configuration and secrets") :]
+    table = readme[readme.index("## Configuration and secrets"):]
     for spec in config.SECRETS.values():
         assert f"`{spec.env}`" in table, spec.env
     assert "`RECORDINGS_ALLOWED_HOSTS`" in table
@@ -23245,9 +19968,7 @@ def test_the_ntfy_token_is_an_optional_secret_in_backup_only():
     # secret is mounted and named only when deploy.env sets RECORDINGS_NTFY_AUTH_HOST.
     doc = compose()
     env = doc["services"]["backup"]["environment"]
-    assert (
-        env["RECORDINGS_NTFY_TOKEN_FILE"] == "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
-    )
+    assert env["RECORDINGS_NTFY_TOKEN_FILE"] == "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
     assert "ntfy_token" in doc["services"]["backup"]["secrets"]
     assert doc["secrets"]["ntfy_token"]["file"] == "${RECORDINGS_NTFY_AUTH_HOST:-/dev/null}"
     template = TEMPLATE.read_text(encoding="utf-8")
@@ -23258,12 +19979,9 @@ def test_the_example_config_backs_up_the_deploy_file_where_compose_mounts_it():
     # why: [backup] extra_paths defaults to [], so a config.toml written without this line would
     # silently leave deploy.env (the UID, the paths: what a restore needs) out of every backup.
     import tomllib
-
     example = tomllib.loads((REPO / "config.example.toml").read_text(encoding="utf-8"))
     mounts = {v["source"]: v["target"] for v in compose()["services"]["backup"]["volumes"]}
-    target = mounts[
-        "${RECORDINGS_DEPLOY_ENV_HOST:?set RECORDINGS_DEPLOY_ENV_HOST in docker/deploy.env}"
-    ]
+    target = mounts["${RECORDINGS_DEPLOY_ENV_HOST:?set RECORDINGS_DEPLOY_ENV_HOST in docker/deploy.env}"]
     assert target in example["backup"]["extra_paths"]
 ```
 
@@ -23759,9 +20477,8 @@ NO_CONFIG = Path("/nonexistent/recordings-tests/config.toml")
 
 def host_settings(environ) -> list[str]:
     """The variables to hide: every RECORDINGS_* and RESTIC_* one, except the switches in KEEP."""
-    return sorted(
-        name for name in environ if name.startswith(("RECORDINGS_", "RESTIC_")) and name not in KEEP
-    )
+    return sorted(name for name in environ
+                  if name.startswith(("RECORDINGS_", "RESTIC_")) and name not in KEEP)
 
 
 @pytest.fixture(autouse=True)
@@ -23812,15 +20529,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PORT = 18000
-SECRETS = (
-    "restic_password",
-    "rest_password",
-    "nas_cacert",
-    "nas_ssh_key",
-    "nas_known_hosts",
-    "ntfy_topic",
-    "deadman_url",
-)
+SECRETS = ("restic_password", "rest_password", "nas_cacert", "nas_ssh_key", "nas_known_hosts",
+           "ntfy_topic", "deadman_url")
 CONFIG = """\
 [archive]
 writer_id = "smoke"
@@ -23873,50 +20583,27 @@ def main() -> int:
             # Mode 600, as the runbook makes them. The ping URL has the form alerts and doctor check
             # (https): a closed port on the container's own loopback, so a ping fails at once and
             # nothing leaves the machine.
-            value = (
-                "https://127.0.0.1:9/smoke" if name == "deadman_url" else "smoke-test-placeholder"
-            )
+            value = ("https://127.0.0.1:9/smoke" if name == "deadman_url"
+                     else "smoke-test-placeholder")
             path = base / "secrets" / name
             path.write_text(value + "\n", encoding="utf-8")
             path.chmod(0o600)
         (base / "config.toml").write_text(CONFIG, encoding="utf-8")
         deploy = base / "deploy.env"
-        deploy.write_text(
-            "\n".join(
-                [
-                    f"RECORDINGS_ARCHIVE_HOST={base / 'archive'}",
-                    f"RECORDINGS_STATE_HOST={base / 'state'}",
-                    f"RECORDINGS_RESTORE_HOST={base / 'restore'}",
-                    f"RECORDINGS_SECRETS_HOST={base / 'secrets'}",
-                    f"RECORDINGS_CONFIG_HOST={base / 'config.toml'}",
-                    f"RECORDINGS_DEPLOY_ENV_HOST={deploy}",
-                    "RECORDINGS_BIND=127.0.0.1",
-                    f"RECORDINGS_PORT={PORT}",
-                    f"RECORDINGS_UID={os.getuid()}",
-                    f"RECORDINGS_GID={os.getgid()}",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        deploy.write_text("\n".join([
+            f"RECORDINGS_ARCHIVE_HOST={base / 'archive'}", f"RECORDINGS_STATE_HOST={base / 'state'}",
+            f"RECORDINGS_RESTORE_HOST={base / 'restore'}", f"RECORDINGS_SECRETS_HOST={base / 'secrets'}",
+            f"RECORDINGS_CONFIG_HOST={base / 'config.toml'}", f"RECORDINGS_DEPLOY_ENV_HOST={deploy}",
+            "RECORDINGS_BIND=127.0.0.1", f"RECORDINGS_PORT={PORT}",
+            f"RECORDINGS_UID={os.getuid()}", f"RECORDINGS_GID={os.getgid()}"]) + "\n",
+            encoding="utf-8")
         # Compose lets a shell variable beat --env-file, so an exported RECORDINGS_* would point the
         # smoke at real data: drop them all, as the root conftest does, and set the tag.
-        env = {
-            name: value
-            for name, value in os.environ.items()
-            if not name.startswith(("RECORDINGS_", "RESTIC_"))
-        }
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(("RECORDINGS_", "RESTIC_"))}
         env["RECORDINGS_IMAGE_TAG"] = "smoke"
-        compose = [
-            "docker",
-            "compose",
-            "-p",
-            "recordings-smoke",
-            "--env-file",
-            str(deploy),
-            "-f",
-            str(REPO / "docker" / "compose.yml"),
-        ]
+        compose = ["docker", "compose", "-p", "recordings-smoke", "--env-file", str(deploy),
+                   "-f", str(REPO / "docker" / "compose.yml")]
         try:
             compose_run(compose, env, "build", "web")
             compose_run(compose, env, "run", "--rm", "web", "recordings", "init", "--json")
@@ -23926,10 +20613,9 @@ def main() -> int:
             compose_run(compose, env, "up", "-d", "--wait", "--wait-timeout", "120", "web")
             wait_for_healthz(compose, env)
             for path, what in (
-                (base / "archive" / "archive.json", "recordings init wrote no sentinel"),
-                (base / "restore" / "smoke-repo" / "config", "restic made no repository"),
-                (base / "restore" / "smoke-mirror" / "archive.json", "the mirror copied nothing"),
-            ):
+                    (base / "archive" / "archive.json", "recordings init wrote no sentinel"),
+                    (base / "restore" / "smoke-repo" / "config", "restic made no repository"),
+                    (base / "restore" / "smoke-mirror" / "archive.json", "the mirror copied nothing")):
                 if not path.is_file():
                     raise SmokeFailed(what)
             if list((base / "restore").glob("restore-*")):
@@ -23941,10 +20627,8 @@ def main() -> int:
             # --rmi all removes recordings:smoke (an image with a custom tag, which --rmi local
             # keeps), so it never shows among `docker image ls recordings`' rollback tags.
             subprocess.run([*compose, "down", "-v", "--rmi", "all"], env=env)
-        print(
-            "compose smoke: init, ssh, backup, restore test and mirror ran, and web answered "
-            "/healthz, as this machine's user"
-        )
+        print("compose smoke: init, ssh, backup, restore test and mirror ran, and web answered "
+              "/healthz, as this machine's user")
         return 0
 
 
@@ -24219,23 +20903,15 @@ def test_the_status_summary_flags_an_old_backup_a_failing_job_and_low_disk(write
     from types import SimpleNamespace
 
     from recordings.ops import status_summary, when_label
-
-    monkeypatch.setattr(
-        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=150, f_frsize=1024, f_blocks=1000)
-    )
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=150, f_frsize=1024, f_blocks=1000))
     state = writer.state
     state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "snapshot x")
     # run_job's fixed failure template (Tasks 11 and 13): never the exception's own text
     state.record_run("restore-test", T0, T0, False, "BackupError; exit 1")
-    summary = status_summary(
-        state,
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="America/Vancouver",
-        warn=20.0,
-        stop=5.0,
-        jobs=("disk", "backup", "restore-test"),
-    )
+    summary = status_summary(state, archive_root=writer.root, now=T0,
+                             timezone_name="America/Vancouver", warn=20.0, stop=5.0,
+                             jobs=("disk", "backup", "restore-test"))
     jobs = {j["job"]: j for j in summary["jobs"]}
     assert set(jobs) == {"backup", "restore-test"}
     assert jobs["backup"]["last_ok"] == "2026-10-08 22:00 (3 h ago)"  # 05:00 UTC is 22:00 PDT
@@ -24253,21 +20929,12 @@ def test_status_shows_the_last_good_runs_detail_with_the_nas_free_space(writer):
     # why: §15.1. "NAS free space unknown" is in a good backup's detail (Task 11), and Status must
     # show it, not only a failing job's detail.
     from recordings.ops import status_summary
-
     detail = "snapshot 0123456789ab: 11 files, 4096 bytes added; NAS free space unknown"
-    writer.state.record_run(
-        "backup", T0 - timedelta(minutes=5), T0 - timedelta(minutes=5), True, detail
-    )
+    writer.state.record_run("backup", T0 - timedelta(minutes=5), T0 - timedelta(minutes=5), True,
+                            detail)
     writer.state.record_run("restore-test", T0, T0, False, "BackupError; exit 1")
-    summary = status_summary(
-        writer.state,
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("backup", "restore-test"),
-    )
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0, jobs=("backup", "restore-test"))
     jobs = {j["job"]: j for j in summary["jobs"]}
     assert jobs["backup"]["last_ok_detail"] == detail and jobs["backup"]["detail"] is None
     assert jobs["restore-test"]["last_ok_detail"] is None
@@ -24278,31 +20945,19 @@ def test_status_names_the_running_job_and_does_not_flag_the_backup_it_delays(wri
     # skipped; that is not an outage, and Status says what is running and since when.
     from recordings.locks import OPS_LOCK, Locks, announce
     from recordings.ops import status_summary
-
     writer.state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
-    args = dict(
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("backup", "restore-test"),
-    )
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup", "restore-test"))
     idle = status_summary(writer.state, **args)
     assert idle["running"] is None
     assert "The last backup is more than 2 hours old." in idle["attention"]
     folder = writer.state.locks_dir
     # the backup turned late at T0 - 1 h; this hold began before that, so it explains the delay
-    with (
-        Locks(folder, timeout=0).hold(OPS_LOCK),
-        announce(folder, "restore-test", T0 - timedelta(minutes=90)),
-    ):
+    with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "restore-test",
+                                                           T0 - timedelta(minutes=90)):
         busy = status_summary(writer.state, **args)
-    assert busy["running"] == {
-        "job": "restore-test",
-        "label": "Restore test",
-        "since": "2026-10-09 06:30 (1 h ago)",
-    }
+    assert busy["running"] == {"job": "restore-test", "label": "Restore test",
+                               "since": "2026-10-09 06:30 (1 h ago)"}
     assert "The last backup is more than 2 hours old." not in busy["attention"]
 
 
@@ -24342,36 +20997,22 @@ def test_status_says_when_the_backup_service_last_reported(writer):
     # healthcheck. A stopped loop must show on Status within minutes, not only once the backup is
     # 2 hours late, and also where no backup is set up.
     from recordings.ops import status_summary
-
-    args = dict(
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("disk", "backup", "restore-test"),
-    )
-    writer.state.record_run(
-        "backup", T0 - timedelta(minutes=50), T0 - timedelta(minutes=50), True, "x"
-    )
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("disk", "backup", "restore-test"))
+    writer.state.record_run("backup", T0 - timedelta(minutes=50), T0 - timedelta(minutes=50), True,
+                            "x")
     writer.state.set_meta("ops_heartbeat", (T0 - timedelta(minutes=1)).isoformat())
     live = status_summary(writer.state, **args)
     assert live["reported"] == "2026-10-09 07:59 (1 min ago)"
     assert not any("backup service" in a for a in live["attention"])
     writer.state.set_meta("ops_heartbeat", (T0 - timedelta(minutes=50)).isoformat())
     quiet = status_summary(writer.state, **args)
-    assert (
-        "The backup service last reported 2026-10-09 07:10 (50 min ago): check that it is running."
-    ) in quiet["attention"]
+    assert ("The backup service last reported 2026-10-09 07:10 (50 min ago): check that it is "
+            "running.") in quiet["attention"]
     assert "The last backup is more than 2 hours old." not in quiet["attention"]
     # A long job leaves the heartbeat old until the next pass, but its own run has just reported.
-    writer.state.record_run(
-        "restore-test",
-        T0 - timedelta(hours=3),
-        T0 - timedelta(minutes=1),
-        True,
-        "restored and validated 3 recordings",
-    )
+    writer.state.record_run("restore-test", T0 - timedelta(hours=3), T0 - timedelta(minutes=1),
+                            True, "restored and validated 3 recordings")
     after = status_summary(writer.state, **args)
     assert after["reported"] == "2026-10-09 07:59 (1 min ago)"
     assert not any("backup service" in a for a in after["attention"])
@@ -24380,9 +21021,8 @@ def test_status_says_when_the_backup_service_last_reported(writer):
     writer.state.set_meta("ops_heartbeat", (T0 + timedelta(days=1)).isoformat())
     alone = status_summary(writer.state, **{**args, "jobs": ("disk",)})
     assert alone["reported"] is None
-    assert (
-        "The backup service has not reported yet: check that it is running." in alone["attention"]
-    )
+    assert ("The backup service has not reported yet: check that it is running."
+            in alone["attention"])
 
 
 def test_a_job_holding_ops_excuses_a_late_backup_for_12_hours_at_most(writer):
@@ -24390,17 +21030,12 @@ def test_a_job_holding_ops_excuses_a_late_backup_for_12_hours_at_most(writer):
     # dead-man's switch alerts after its grace (§14); Status must not stay green for days.
     from recordings.locks import OPS_LOCK, Locks, announce
     from recordings.ops import status_summary
-
     writer.state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
-    args = dict(
-        archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0, jobs=("backup",)
-    )
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup",))
     folder = writer.state.locks_dir
-    for held_for, excused in (
-        (timedelta(hours=11), True),
-        (timedelta(hours=13), False),
-        (-timedelta(hours=1), False),
-    ):  # a start in the future: long ago
+    for held_for, excused in ((timedelta(hours=11), True), (timedelta(hours=13), False),
+                              (-timedelta(hours=1), False)):  # a start in the future: long ago
         with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "check", T0 - held_for):
             summary = status_summary(writer.state, **args)
         (backup,) = summary["jobs"]
@@ -24409,28 +21044,16 @@ def test_a_job_holding_ops_excuses_a_late_backup_for_12_hours_at_most(writer):
         stuck = [a for a in summary["attention"] if a.startswith("Repository check has been")]
         assert bool(stuck) is not excused
         assert not any("backup service" in a for a in summary["attention"])  # the hold explains it
-    assert stuck == [
-        (
-            "Repository check has been running since 2026-10-09 09:00 (clock ahead), and "
-            "no backup runs until it ends: check that it isn't stuck."
-        )
-    ]
+    assert stuck == [("Repository check has been running since 2026-10-09 09:00 (clock ahead), and "
+                      "no backup runs until it ends: check that it isn't stuck.")]
 
 
 def test_status_shows_retention_whose_alert_says_see_status(writer):
     # why: every alert ends "See Status" (§14), and a failed retention alerts.
     from recordings.ops import status_summary
-
     writer.state.record_run("prune", T0, T0, False, "BackupError; exit 1")
-    summary = status_summary(
-        writer.state,
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("backup", "prune"),
-    )
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0, jobs=("backup", "prune"))
     jobs = {j["job"]: j for j in summary["jobs"]}
     assert jobs["prune"]["label"] == "Retention" and jobs["prune"]["failing"]
     assert "Retention failed: BackupError; exit 1" in summary["attention"]
@@ -24440,32 +21063,18 @@ def test_every_overdue_shown_job_says_so_in_needs_attention(writer):
     # why: a red "Overdue" row with nothing in the box above it leaves Dan to find it. The box
     # lists every row that is red (Task 15's council).
     from recordings.ops import status_summary
-
     old = T0 - timedelta(days=40)  # past 2 hours, 8 days and 31 days
     for job in ("restore-test", "check", "mirror"):
         writer.state.record_run(job, old, old, True, "x")
-    summary = status_summary(
-        writer.state,
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("mirror", "prune", "check", "restore-test"),
-    )
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0,
+                             jobs=("mirror", "prune", "check", "restore-test"))
     last = "2026-08-30 08:00 (40 days ago)"
     for label in ("Mirror for the Mac", "Repository check", "Restore test"):
         assert f"{label} is overdue: it last worked {last}." in summary["attention"]
     assert "Retention has not worked yet." in summary["attention"]
-    fresh = status_summary(
-        writer.state,
-        archive_root=writer.root,
-        now=old + timedelta(hours=1),
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("check", "mirror"),
-    )
+    fresh = status_summary(writer.state, archive_root=writer.root, now=old + timedelta(hours=1),
+                           timezone_name="UTC", warn=20.0, stop=5.0, jobs=("check", "mirror"))
     assert not any("overdue" in a for a in fresh["attention"])
 
 
@@ -24475,17 +21084,10 @@ def test_a_hold_excuses_the_mirror_too_and_only_if_it_began_before_the_job_was_l
     # nothing: only the lateness that came first is excused (Task 15's council).
     from recordings.locks import OPS_LOCK, Locks, announce
     from recordings.ops import status_summary
-
     for job in ("backup", "mirror"):
         writer.state.record_run(job, T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
-    args = dict(
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("backup", "mirror"),
-    )
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup", "mirror"))
     folder = writer.state.locks_dir
     # Both turned late at T0 - 1 h. A hold from before that excuses them; one from after doesn't.
     for since, excused in ((T0 - timedelta(minutes=90), True), (T0 - timedelta(minutes=30), False)):
@@ -24494,10 +21096,8 @@ def test_a_hold_excuses_the_mirror_too_and_only_if_it_began_before_the_job_was_l
         for row in summary["jobs"]:
             assert row["waiting"] is excused and row["attention"] is not excused, row["job"]
         assert ("The last backup is more than 2 hours old." in summary["attention"]) is not excused
-        assert (
-            any(a.startswith("Mirror for the Mac is overdue") for a in summary["attention"])
+        assert any(a.startswith("Mirror for the Mac is overdue") for a in summary["attention"]) \
             is not excused
-        )
         # a hold that is merely recent is not "stuck": only a long or future one is
         assert not any("check that it isn't stuck" in a for a in summary["attention"])
 
@@ -24506,17 +21106,9 @@ def test_a_future_stamp_counts_as_long_ago_and_is_not_just_now(writer):
     # why: due() and §15.1 treat a run stamped in the future (a clock put right) as long ago.
     # Status must too: otherwise it shows "OK, just now" for a loop that has stopped recording.
     from recordings.ops import status_summary, when_label
-
     writer.state.record_run("backup", T0 + timedelta(days=1), T0 + timedelta(days=1), True, "x")
-    summary = status_summary(
-        writer.state,
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("backup",),
-    )
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0, jobs=("backup",))
     (backup,) = summary["jobs"]
     assert backup["attention"] and "just now" not in backup["last_ok"]
     assert "The last backup is more than 2 hours old." in summary["attention"]
@@ -24526,10 +21118,8 @@ def test_a_future_stamp_counts_as_long_ago_and_is_not_just_now(writer):
 def test_the_flags_line_agrees_in_number_and_has_no_markup(writer):
     # why: the line is shown as plain text, so a backtick would appear literally.
     from recordings.ops import status_summary
-
-    args = dict(
-        archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0, jobs=("disk",)
-    )
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("disk",))
     writer.state.flag("recordings/a/recording.json", "outside-edit", "x")
     one = status_summary(writer.state, **args)
     assert "1 file needs attention: run recordings reindex." in one["attention"]
@@ -24541,7 +21131,6 @@ def test_the_flags_line_agrees_in_number_and_has_no_markup(writer):
 def test_a_read_only_state_makes_every_connection_read_only(writer, tmp_path, monkeypatch):
     # why: State.read_only promises that no connection it makes can write, backup_to's too.
     from recordings.state import State
-
     state = State.read_only(writer.state.path)
     modes = []
     real = State._connect
@@ -24562,10 +21151,8 @@ def test_web_reads_the_state_folder_the_backup_service_writes():
     # why: Status (web) reads the state.db and the ops lock that the loop (backup) writes. Two
     # folders would show, for ever, the last runs Status saw before they split.
     doc = compose()
-    mounts = {
-        name: {v["target"]: v for v in service["volumes"]}
-        for name, service in doc["services"].items()
-    }
+    mounts = {name: {v["target"]: v for v in service["volumes"]}
+              for name, service in doc["services"].items()}
     assert mounts["web"]["/state"]["source"] == mounts["backup"]["/state"]["source"]
     for name in ("web", "backup"):
         assert doc["services"][name]["environment"]["RECORDINGS_STATE"] == "/state", name
@@ -24593,12 +21180,10 @@ def test_the_demo_shows_no_disk_figure(demo_archive):
 
 
 def test_without_a_state_folder_status_shows_disk_only(demo_archive, monkeypatch):
-    monkeypatch.setattr(
-        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=150, f_frsize=1024, f_blocks=1000)
-    )
-    settings = StatusSettings(
-        state_path=None, timezone_name="UTC", warn=20.0, stop=5.0, jobs=("disk",)
-    )
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=150, f_frsize=1024, f_blocks=1000))
+    settings = StatusSettings(state_path=None, timezone_name="UTC", warn=20.0, stop=5.0,
+                              jobs=("disk",))
     view = status_view(demo_archive, settings, now=T0)
     assert view["configured"] is False and view["jobs"] == [] and view["attention"] == []
     assert view["disk"]["marker"] is True
@@ -24609,13 +21194,8 @@ def test_a_server_with_a_backup_but_no_state_db_needs_attention(demo_archive, tm
     # why: "Backups aren't set up here" is true of a laptop, not of a server whose config has a
     # [backup]: there the missing state.db means `recordings init` was never run (or the state
     # folder is not mounted), and every backup since has had nowhere to be recorded.
-    settings = StatusSettings(
-        state_path=tmp_path / "state",
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("disk", "backup"),
-    )
+    settings = StatusSettings(state_path=tmp_path / "state", timezone_name="UTC", warn=20.0,
+                              stop=5.0, jobs=("disk", "backup"))
     view = status_view(demo_archive, settings, now=T0)
     assert view["configured"] is False and view["disk"] is not None
     assert any("no state.db" in a for a in view["attention"])
@@ -24624,31 +21204,19 @@ def test_a_server_with_a_backup_but_no_state_db_needs_attention(demo_archive, tm
 def test_a_state_db_that_vanishes_after_the_check_is_treated_as_missing(writer, monkeypatch):
     # why: State.read_only returns None when state.db is gone, and Status must not raise.
     from recordings.state import State
-
     monkeypatch.setattr(State, "read_only", classmethod(lambda cls, path: None))
-    settings = StatusSettings(
-        state_path=writer.state.path,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("disk", "backup"),
-    )
+    settings = StatusSettings(state_path=writer.state.path, timezone_name="UTC", warn=20.0,
+                              stop=5.0, jobs=("disk", "backup"))
     view = status_view(writer.root, settings, now=T0)
     assert view["configured"] is False and view["disk"] is not None
     assert any("no state.db" in a for a in view["attention"])
 
 
 def test_with_state_status_reads_the_runs(writer):
-    writer.state.record_run(
-        "backup", T0 - timedelta(minutes=30), T0 - timedelta(minutes=30), True, "snapshot x"
-    )
-    settings = StatusSettings(
-        state_path=writer.state.path,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("disk", "backup"),
-    )
+    writer.state.record_run("backup", T0 - timedelta(minutes=30), T0 - timedelta(minutes=30), True,
+                            "snapshot x")
+    settings = StatusSettings(state_path=writer.state.path, timezone_name="UTC", warn=20.0,
+                              stop=5.0, jobs=("disk", "backup"))
     view = status_view(writer.root, settings, now=T0)
     (job,) = view["jobs"]
     assert view["configured"] and job["last_ok"] == "2026-10-09 07:30 (30 min ago)"
@@ -24658,13 +21226,8 @@ def test_with_state_status_reads_the_runs(writer):
 def test_a_damaged_state_db_needs_attention_rather_than_breaking_the_page(writer):
     # why: Status is where Dan looks when something is wrong; a traceback there hides the rest.
     writer.state.db_path.write_bytes(b"not a database, " * 64)
-    settings = StatusSettings(
-        state_path=writer.state.path,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("disk", "backup"),
-    )
+    settings = StatusSettings(state_path=writer.state.path, timezone_name="UTC", warn=20.0,
+                              stop=5.0, jobs=("disk", "backup"))
     view = status_view(writer.root, settings, now=T0)
     assert view["configured"] is True and view["jobs"] == []
     assert any("restore state.db from the backup" in a for a in view["attention"])
@@ -24683,13 +21246,8 @@ def test_a_state_db_that_is_sound_but_unreachable_gets_no_restore_advice(writer,
         raise exc
 
     monkeypatch.setattr(recordings.ops, "status_summary", busy)
-    settings = StatusSettings(
-        state_path=writer.state.path,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("disk", "backup"),
-    )
+    settings = StatusSettings(state_path=writer.state.path, timezone_name="UTC", warn=20.0,
+                              stop=5.0, jobs=("disk", "backup"))
     view = status_view(writer.root, settings, now=T0)
     (line,) = view["attention"]
     assert "SQLITE_BUSY" in line and "not damage" in line and "restore" not in line
@@ -24701,14 +21259,12 @@ def test_status_without_state_never_loads_sqlite(demo_archive):
     # Nor may the reading path load the writer, the locks (flock) or state.db: the Pages demo has
     # no write path, so it needs no no-op lock (spec §6.8) as long as this holds. fcntl is not
     # tested for: a third-party import loads it.
-    code = (
-        "import sys; from pathlib import Path; from recordings.archive import Archive; "
-        "import recordings_ui.settings, recordings_ui.runtime; "
-        "import recordings_ui.views as v; "
-        f"v.status_view(Archive(Path({str(demo_archive)!r})), None); "
-        "print(sorted(m for m in ('sqlite3', 'recordings.writer', 'recordings.locks', "
-        "'recordings.state') if m in sys.modules))"
-    )
+    code = ("import sys; from pathlib import Path; from recordings.archive import Archive; "
+            "import recordings_ui.settings, recordings_ui.runtime; "
+            "import recordings_ui.views as v; "
+            f"v.status_view(Archive(Path({str(demo_archive)!r})), None); "
+            "print(sorted(m for m in ('sqlite3', 'recordings.writer', 'recordings.locks', "
+            "'recordings.state') if m in sys.modules))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
 ```
@@ -24718,7 +21274,6 @@ Add to `packages/core/tests/test_ops.py`, too:
 def test_run_job_announces_its_job_while_it_runs(tmp_path, writer, ntfy):
     # why: spec §12.5. Status reads the running job from the held ops lock, so run_job must name it.
     from recordings.locks import running
-
     seen = []
 
     def runner(cmd, **kwargs):
@@ -24731,8 +21286,7 @@ def test_run_job_announces_its_job_while_it_runs(tmp_path, writer, ntfy):
 
 
 def test_a_restore_copy_left_behind_alerts_once_but_a_running_tests_own_never(
-    tmp_path, writer, ntfy, monkeypatch
-):
+        tmp_path, writer, ntfy, monkeypatch):
     # why: §15.1 (the final review's minor 2). A SIGKILL, the OOM killer (backup's oom_score_adj
     # makes it the first choice, and a restore is its heaviest job) or a power cut leaves the
     # restore test's copy, the whole archive unencrypted, in restore_scratch. Only the next restore
@@ -24740,10 +21294,8 @@ def test_a_restore_copy_left_behind_alerts_once_but_a_running_tests_own_never(
     from types import SimpleNamespace
 
     from recordings.locks import OPS_LOCK, announce
-
-    monkeypatch.setattr(
-        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=900, f_frsize=1024, f_blocks=1000)
-    )  # 90% free: only the copy is wrong
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=900, f_frsize=1024, f_blocks=1000))  # 90% free: only the copy is wrong
     clock = Clock()
     ctx = context(tmp_path, writer, ntfy, clock=clock)
     left = tmp_path / "scratch" / "restore-20261009T060000Z"
@@ -24759,8 +21311,7 @@ def test_a_restore_copy_left_behind_alerts_once_but_a_running_tests_own_never(
     assert run_job(ctx, "disk").ok
     assert [(r["headers"]["Title"], r["body"]) for r in pushes(ntfy)] == [
         ("recordings: restore copy left behind", "disk failed (RestoreCopyLeft). See Status."),
-        ("recordings: disk recovered", "disk works again. See Status."),
-    ]
+        ("recordings: disk recovered", "disk works again. See Status.")]
 ```
 
 Add to `packages/core/tests/test_locks.py`:
@@ -24770,7 +21321,6 @@ def test_a_held_ops_lock_says_which_job_runs_and_since_when(tmp_path):
     from datetime import datetime, timezone
 
     from recordings.locks import OPS_LOCK, announce, running
-
     folder, since = tmp_path / "locks", datetime(2026, 10, 9, 7, 0, tzinfo=timezone.utc)
     assert running(folder) is None  # no lock file yet
     with Locks(folder, timeout=0).hold(OPS_LOCK):
@@ -24787,28 +21337,16 @@ Add to `packages/core/tests/test_import_run.py`:
 def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer):
     # why: spec §12.5. Status says which job holds the ops lock and since when, the import included.
     from recordings.locks import running
-
     build(ar_archive, plaud_env)
     seen = []
-    roomy = DiskStatus(
-        path="x",
-        marker=True,
-        free_bytes=5 * 10**12,
-        total_bytes=10**13,
-        level="ok",
-        message="50% free",
-    )
+    roomy = DiskStatus(path="x", marker=True, free_bytes=5 * 10**12, total_bytes=10**13, level="ok",
+                       message="50% free")
 
     def disk():  # the run asks before each recording, inside its hold of the ops lock
         seen.append(running(writer.state.locks_dir))
         return roomy
 
-    run(
-        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
-        writer,
-        now=NOW,
-        disk=disk,
-    )
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW, disk=disk)
     assert seen and set(seen) == {("import", NOW)}
     assert running(writer.state.locks_dir) is None
 ```
@@ -24827,37 +21365,31 @@ left this for here). Shiny sends an output only once the client says it isn't hi
 output fails the test instead of hanging CI. **Add** `import json` (before `import mimetypes`) and
 `import threading` (after `import tempfile`), and **replace**:
 ```python
-with client.websocket_connect("ws://localhost/websocket/", headers={"Origin": "http://localhost"}):
-    pass  # connects only: Shiny runs the server function after the client's
-    # `init` message, which Task 15 sends once Status joins the server function
+                with client.websocket_connect("ws://localhost/websocket/",
+                                              headers={"Origin": "http://localhost"}):
+                    pass  # connects only: Shiny runs the server function after the client's
+                    # `init` message, which Task 15 sends once Status joins the server function
 ```
 with:
 ```python
-with client.websocket_connect(
-    "ws://localhost/websocket/", headers={"Origin": "http://localhost"}
-) as ws:
-    # Shiny runs the server function after the client's `init` message, and sends
-    # an output only once the client says it is not hidden. So the guard sees what
-    # the outputs read, init says so for each, and the test waits for their values.
-    wanted = {"library", "status"}  # "recording" needs a selected_id
-    ws.send_text(
-        json.dumps(
-            {
-                "method": "init",
-                "data": {f".clientdata_output_{name}_hidden": False for name in wanted},
-            }
-        )
-    )
-    seen: set[str] = set()
+                with client.websocket_connect("ws://localhost/websocket/",
+                                              headers={"Origin": "http://localhost"}) as ws:
+                    # Shiny runs the server function after the client's `init` message, and sends
+                    # an output only once the client says it is not hidden. So the guard sees what
+                    # the outputs read, init says so for each, and the test waits for their values.
+                    wanted = {"library", "status"}  # "recording" needs a selected_id
+                    ws.send_text(json.dumps({"method": "init", "data": {
+                        f".clientdata_output_{name}_hidden": False for name in wanted}}))
+                    seen: set[str] = set()
 
-    def read() -> None:
-        while not wanted <= seen:
-            seen.update(json.loads(ws.receive_text()).get("values", {}))
+                    def read() -> None:
+                        while not wanted <= seen:
+                            seen.update(json.loads(ws.receive_text()).get("values", {}))
 
-    reader = threading.Thread(target=read, daemon=True)
-    reader.start()
-    reader.join(20)  # receive_text has no timeout: a missing output must not hang
-    assert wanted <= seen, f"the demo's websocket sent only {sorted(seen)}"
+                    reader = threading.Thread(target=read, daemon=True)
+                    reader.start()
+                    reader.join(20)  # receive_text has no timeout: a missing output must not hang
+                    assert wanted <= seen, f"the demo's websocket sent only {sorted(seen)}"
 ```
 Then **add** after the `views.recording_view` loop, at the loop's own indentation (12 spaces:
 inside `with _watching() as events:` and its `try`, before `finally: runtime.configure(None)`):
@@ -25074,7 +21606,7 @@ Expected:
 In `packages/core/src/recordings/disk.py`, **add**:
 ```python
 def _size(n: int) -> str:
-    for unit, scale in (("TB", 10**12), ("GB", 10**9), ("MB", 10**6)):
+    for unit, scale in (("TB", 10 ** 12), ("GB", 10 ** 9), ("MB", 10 ** 6)):
         if n >= scale:
             return f"{n / scale:.1f} {unit}"
     return f"{n} bytes"
@@ -25083,18 +21615,10 @@ def _size(n: int) -> str:
 def disk_view(status: DiskStatus) -> dict:
     """What the Status page shows (spec §12.5): the level, the reason, and free space."""
     pct = status.free_percent
-    label = (
-        f"{_size(status.free_bytes)} free of {_size(status.total_bytes)}"
-        if status.free_bytes is not None and status.total_bytes
-        else None
-    )
-    return {
-        "level": status.level,
-        "message": status.message,
-        "marker": status.marker,
-        "free_percent": round(pct, 1) if pct is not None else None,
-        "free_label": label,
-    }
+    label = (f"{_size(status.free_bytes)} free of {_size(status.total_bytes)}"
+             if status.free_bytes is not None and status.total_bytes else None)
+    return {"level": status.level, "message": status.message, "marker": status.marker,
+            "free_percent": round(pct, 1) if pct is not None else None, "free_label": label}
 ```
 
 In `packages/core/src/recordings/state.py` (the three code blocks below are indented 3 spaces for the
@@ -25208,18 +21732,13 @@ In `packages/core/src/recordings/sources/audio_router.py`, `run` holds `OPS_LOCK
 In `packages/core/src/recordings/ops.py`, **add** `from pathlib import Path`,
 `from zoneinfo import ZoneInfo`, `from recordings.disk import disk_view` and `running` to the `recordings.locks` import, then:
 ```python
-SHOWN = (
-    ("backup", "Backup", timedelta(hours=2)),
-    ("restore-test", "Restore test", timedelta(days=31)),
-    ("check", "Repository check", timedelta(days=8)),
-    ("mirror", "Mirror for the Mac", timedelta(hours=2)),
-    ("prune", "Retention", timedelta(days=2)),
-)  # its alert says "See Status" too (§14)
-RUNNING_LABELS = {
-    **{job: label for job, label, _ in SHOWN},
-    "disk": "Disk check",
-    "import": "Import",
-}
+SHOWN = (("backup", "Backup", timedelta(hours=2)),
+         ("restore-test", "Restore test", timedelta(days=31)),
+         ("check", "Repository check", timedelta(days=8)),
+         ("mirror", "Mirror for the Mac", timedelta(hours=2)),
+         ("prune", "Retention", timedelta(days=2)))  # its alert says "See Status" too (§14)
+RUNNING_LABELS = {**{job: label for job, label, _ in SHOWN}, "disk": "Disk check",
+                  "import": "Import"}
 # The loop writes its heartbeat at each pass, about once a minute (Task 13). Between passes only a
 # job holding "ops" keeps it quiet, and that job's run reports when it ends.
 QUIET_AFTER = timedelta(minutes=15)
@@ -25253,39 +21772,20 @@ def when_label(t: datetime, now: datetime, timezone_name: str) -> str:
     return f"{t.astimezone(ZoneInfo(timezone_name)):%Y-%m-%d %H:%M} ({ago})"
 
 
-def status_summary(
-    state: State,
-    *,
-    archive_root: Path,
-    now: datetime,
-    timezone_name: str,
-    warn: float,
-    stop: float,
-    jobs: tuple[str, ...],
-) -> dict:
+def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_name: str,
+                   warn: float, stop: float, jobs: tuple[str, ...]) -> dict:
     """Status's backup and disk panels (spec §12.5). The backup needs attention after 2 hours."""
-    disk = disk_view(
-        disk_status(archive_root, expected_uuid=state.meta("archive_uuid"), warn=warn, stop=stop)
-    )
+    disk = disk_view(disk_status(archive_root, expected_uuid=state.meta("archive_uuid"),
+                                 warn=warn, stop=stop))
     flags = len(state.flags())
     held = running(state.locks_dir)  # (job, since) while a job holds the ops lock
     # A hold can excuse a late job for HOLD_LIMIT at most. A start in the future (a clock put
     # right) counts as long ago, as in due().
     hold_ok = held is not None and timedelta(0) <= now - held[1] <= HOLD_LIMIT
-    out: dict = {
-        "configured": True,
-        "jobs": [],
-        "attention": [],
-        "flags": flags,
-        "disk": disk,
-        "running": None
-        if held is None
-        else {
-            "job": held[0],
-            "label": RUNNING_LABELS.get(held[0], held[0]),
-            "since": when_label(held[1], now, timezone_name),
-        },
-    }
+    out: dict = {"configured": True, "jobs": [], "attention": [], "flags": flags, "disk": disk,
+                 "running": None if held is None else {
+                     "job": held[0], "label": RUNNING_LABELS.get(held[0], held[0]),
+                     "since": when_label(held[1], now, timezone_name)}}
     reports = [_stamp(state.meta("ops_heartbeat"))]  # the loop's heartbeat, and each job's last run
     for job, label, stale_after in SHOWN:
         if job not in jobs:
@@ -25299,48 +21799,28 @@ def status_summary(
         # §12.5: while a job holds the ops lock the backup's and the mirror's turns are skipped,
         # so one that is merely late is waiting, not an outage, for HOLD_LIMIT at most, and only
         # if the hold began before the job turned late: a hold that began after explains nothing.
-        waiting = (
-            late
-            and job in ("backup", "mirror")
-            and ago is not None
-            and hold_ok
-            and held[1] <= good.finished_at + stale_after
-        )
+        waiting = (late and job in ("backup", "mirror") and ago is not None and hold_ok
+                   and held[1] <= good.finished_at + stale_after)
         stale = late and not waiting
         last_ok = when_label(good.finished_at, now, timezone_name) if good else None
-        out["jobs"].append(
-            {
-                "job": job,
-                "label": label,
-                "last_ok": last_ok,
-                "last_ok_detail": good.detail
-                if good
-                else None,  # the NAS's free space, for a backup
-                "failing": failing,
-                "detail": last.detail if failing else None,
-                "attention": failing or stale,
-                "waiting": waiting,
-            }
-        )
+        out["jobs"].append({
+            "job": job, "label": label, "last_ok": last_ok,
+            "last_ok_detail": good.detail if good else None,  # the NAS's free space, for a backup
+            "failing": failing, "detail": last.detail if failing else None,
+            "attention": failing or stale, "waiting": waiting})
         if job == "backup" and stale:
-            out["attention"].append(
-                "The last backup is more than 2 hours old."
-                if good
-                else "No backup has finished yet."
-            )
+            out["attention"].append("The last backup is more than 2 hours old." if good
+                                    else "No backup has finished yet.")
         elif stale and not failing:  # a failing job has its line below
             out["attention"].append(
-                f"{label} is overdue: it last worked {last_ok}."
-                if good
-                else f"{label} has not worked yet."
-            )
+                f"{label} is overdue: it last worked {last_ok}." if good
+                else f"{label} has not worked yet.")
         if failing:
             out["attention"].append(f"{label} failed: {last.detail}")
     if held is not None and not hold_ok:
         out["attention"].append(
             f"{out['running']['label']} has been running since {out['running']['since']}, and no "
-            "backup runs until it ends: check that it isn't stuck."
-        )
+            "backup runs until it ends: check that it isn't stuck.")
     # Silence with nothing holding "ops" means the backup service has stopped, whatever the
     # backup's own age says, and also where no backup is set up. A future stamp proves nothing.
     seen = max((t for t in reports if t is not None and t <= now), default=None)
@@ -25348,17 +21828,13 @@ def status_summary(
     if held is None and (seen is None or now - seen > QUIET_AFTER):
         out["attention"].append(
             f"The backup service last reported {out['reported']}: check that it is running."
-            if seen
-            else "The backup service has not reported yet: check that it is running."
-        )
+            if seen else "The backup service has not reported yet: check that it is running.")
     if disk["level"] != "ok":
         out["attention"].append(disk["message"])
     if flags:
         out["attention"].append(
-            f"{flags} file needs attention: run recordings reindex."
-            if flags == 1
-            else f"{flags} files need attention: run recordings reindex."
-        )
+            f"{flags} file needs attention: run recordings reindex." if flags == 1
+            else f"{flags} files need attention: run recordings reindex.")
     return out
 ```
 
@@ -25393,10 +21869,8 @@ In `_disk`, **add** between the marker check (`raise ArchiveMarkerError(status.m
 And **replace** the `DETAIL_TITLES` line (Task 13's) with:
 ```python
 # Failures of their own kind: each has its own title and its own alert state.
-DETAIL_TITLES = {
-    "ArchiveMarkerError": "archive disk missing or changed",
-    "RestoreCopyLeft": "restore copy left behind",
-}
+DETAIL_TITLES = {"ArchiveMarkerError": "archive disk missing or changed",
+                 "RestoreCopyLeft": "restore copy left behind"}
 ```
 
 `packages/ui/src/recordings_ui/status.py`:
@@ -25435,37 +21909,28 @@ def status_settings(cfg) -> StatusSettings:
         thresholds = disk_thresholds(cfg)
     except ConfigError:
         thresholds = {"warn": WARN_FREE_PERCENT, "stop": STOP_FREE_PERCENT}
-    return StatusSettings(
-        state_path=cfg.state_path,
-        timezone_name=cfg.default_timezone,
-        warn=thresholds["warn"],
-        stop=thresholds["stop"],
-        jobs=enabled_jobs(cfg),
-    )
+    return StatusSettings(state_path=cfg.state_path, timezone_name=cfg.default_timezone,
+                          warn=thresholds["warn"], stop=thresholds["stop"],
+                          jobs=enabled_jobs(cfg))
 
 
-NO_STATE_DB = (
-    "There is no state.db yet, so no backup can be recorded: run recordings init once, "
-    "on the homelab server, and check that its state folder is mounted."
-)
+NO_STATE_DB = ("There is no state.db yet, so no backup can be recorded: run recordings init once, "
+               "on the homelab server, and check that its state folder is mounted.")
 
 
-def _without_state(
-    archive_root: Path, settings: StatusSettings, attention: list[str], *, configured: bool
-) -> dict:
+def _without_state(archive_root: Path, settings: StatusSettings, attention: list[str], *,
+                   configured: bool) -> dict:
     """Status with no backup records: the disk alone, and why (no state.db, or one that can't be
     read)."""
     from recordings.disk import disk_status, disk_view
 
-    disk = disk_view(
-        disk_status(archive_root, expected_uuid=None, warn=settings.warn, stop=settings.stop)
-    )
+    disk = disk_view(disk_status(archive_root, expected_uuid=None, warn=settings.warn,
+                                 stop=settings.stop))
     return {"configured": configured, "jobs": [], "attention": attention, "flags": 0, "disk": disk}
 
 
-def status_view(
-    archive_root: Path, settings: StatusSettings | None, *, now: datetime | None = None
-) -> dict:
+def status_view(archive_root: Path, settings: StatusSettings | None, *,
+                now: datetime | None = None) -> dict:
     if settings is None:
         # Demo mode: its disk is a temporary copy, or on Pages, Pyodide's in-memory file system,
         # so any free-space figure would be made up (§17).
@@ -25487,15 +21952,9 @@ def status_view(
     from recordings.state import unreadable
 
     try:
-        return status_summary(
-            state,
-            archive_root=archive_root,
-            now=now,
-            timezone_name=settings.timezone_name,
-            warn=settings.warn,
-            stop=settings.stop,
-            jobs=settings.jobs,
-        )
+        return status_summary(state, archive_root=archive_root, now=now,
+                              timezone_name=settings.timezone_name, warn=settings.warn,
+                              stop=settings.stop, jobs=settings.jobs)
     except sqlite3.DatabaseError as exc:
         # Only damage gets the way back: restoring over a sound state.db that is merely busy,
         # unmounted or not writable would throw away its queue and merge bases.
@@ -25516,9 +21975,8 @@ _media_base: str | None = None
 _status: StatusSettings | None = None
 
 
-def configure(
-    archive: Archive | None, *, media_base: str | None = None, status: StatusSettings | None = None
-) -> None:
+def configure(archive: Archive | None, *, media_base: str | None = None,
+              status: StatusSettings | None = None) -> None:
     """media_base: where the browser finds media files, as `<media_base><media.file>`.
 
     None (the server) links the FastAPI route /media/{id}. The static Pages demo, which has no
@@ -25953,40 +22411,26 @@ from recordings.sentinel import MIRROR, SENTINEL, read_sentinel
 from recordings.ssh import nas_free_bytes
 from recordings.state import SCHEMA_VERSION
 
-NAS_FREE = 500 * 1024**3
+NAS_FREE = 500 * 1024 ** 3
 
-SENTINELS = (
-    "pw-do-not-print",
-    "key-do-not-print",
-    "topic-do-not-print",
-    "ping-do-not-print",
-    "rest-do-not-print",
-    "hunter2",
-)
-SECRET_ENV = (
-    "RESTIC_PASSWORD_FILE",
-    "RESTIC_REST_PASSWORD_FILE",
-    "RECORDINGS_NAS_SSH_KEY_FILE",
-    "RECORDINGS_NAS_KNOWN_HOSTS_FILE",
-    "RECORDINGS_NTFY_TOPIC_FILE",
-    "RECORDINGS_NTFY_TOKEN_FILE",
-    "RECORDINGS_DEADMAN_URL_FILE",
-)
+SENTINELS = ("pw-do-not-print", "key-do-not-print", "topic-do-not-print", "ping-do-not-print",
+             "rest-do-not-print", "hunter2")
+SECRET_ENV = ("RESTIC_PASSWORD_FILE", "RESTIC_REST_PASSWORD_FILE", "RECORDINGS_NAS_SSH_KEY_FILE",
+              "RECORDINGS_NAS_KNOWN_HOSTS_FILE", "RECORDINGS_NTFY_TOPIC_FILE",
+              "RECORDINGS_NTFY_TOKEN_FILE", "RECORDINGS_DEADMAN_URL_FILE")
 
 
-def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings", backup_extra=""):
+def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings",
+           backup_extra=""):
     init_archive(tmp_path / "archive", tmp_path / "state", writer_id="homelab")
     (tmp_path / "scratch").mkdir()
     secrets = tmp_path / "secrets"
     secrets.mkdir()
-    for name, value in (
-        ("pw", "pw-do-not-print"),
-        ("key", "key-do-not-print"),
-        ("known_hosts", "nas ssh-ed25519 AAAAexample"),
-        ("topic", "topic-do-not-print-20"),
-        ("ping", "https://hc.example/ping-do-not-print"),
-        ("rest_password", "rest-do-not-print"),
-    ):
+    for name, value in (("pw", "pw-do-not-print"), ("key", "key-do-not-print"),
+                        ("known_hosts", "nas ssh-ed25519 AAAAexample"),
+                        ("topic", "topic-do-not-print-20"),
+                        ("ping", "https://hc.example/ping-do-not-print"),
+                        ("rest_password", "rest-do-not-print")):
         (secrets / name).write_text(value + "\n", encoding="utf-8")
         (secrets / name).chmod(0o600)  # as the runbook makes them
     cfg = tmp_path / "config.toml"
@@ -25999,17 +22443,12 @@ def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings"
         f'extra_paths = ["/backup-extra/deploy.env"]\n'
         f'cache_dir = "{tmp_path / "cache"}"\n{backup_extra}'
         f'[mirror]\ntarget = "backup@nas:/volume1/recordings-mirror/"\n'
-        f'[alerts]\nntfy_server = "https://ntfy.sh"\n',
-        encoding="utf-8",
-    )
-    return {
-        "RECORDINGS_CONFIG": str(cfg),
-        "RESTIC_PASSWORD_FILE": str(secrets / "pw"),
-        "RECORDINGS_NAS_SSH_KEY_FILE": str(secrets / "key"),
-        "RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(secrets / "known_hosts"),
-        "RECORDINGS_NTFY_TOPIC_FILE": str(secrets / "topic"),
-        "RECORDINGS_DEADMAN_URL_FILE": str(secrets / "ping"),
-    }
+        f'[alerts]\nntfy_server = "https://ntfy.sh"\n', encoding="utf-8")
+    return {"RECORDINGS_CONFIG": str(cfg), "RESTIC_PASSWORD_FILE": str(secrets / "pw"),
+            "RECORDINGS_NAS_SSH_KEY_FILE": str(secrets / "key"),
+            "RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(secrets / "known_hosts"),
+            "RECORDINGS_NTFY_TOPIC_FILE": str(secrets / "topic"),
+            "RECORDINGS_DEADMAN_URL_FILE": str(secrets / "ping")}
 
 
 def web_only(environ):
@@ -26040,16 +22479,10 @@ def test_a_fully_configured_writer_has_no_problems(tmp_path):
     assert report["archive"]["sentinel"] and report["archive"]["hard_links"]
     assert report["archive"]["read_only"] is False
     assert report["state"]["matches"] is True
-    assert report["backup"] == {
-        "transport": "sftp",
-        "password_set": True,
-        "prune": True,
-        "cacert_exists": None,
-        "restore_scratch_exists": True,
-        "nas_free_check": True,
-        "nas_free_bytes": NAS_FREE,
-        "restic_installed": True,
-    }
+    assert report["backup"] == {"transport": "sftp", "password_set": True, "prune": True,
+                                "cacert_exists": None, "restore_scratch_exists": True,
+                                "nas_free_check": True, "nas_free_bytes": NAS_FREE,
+                                "restic_installed": True}
     assert report["mirror"] == {"remote": True, "rsync_installed": True}
     assert report["alerts"] == {"ntfy_server_set": True, "topic_set": True, "deadman_set": True}
     for name in ("restic_password", "nas_ssh_key", "nas_known_hosts", "ntfy_topic", "deadman_url"):
@@ -26065,9 +22498,8 @@ def test_doctor_never_prints_a_secret_or_the_repository(tmp_path):
     text = json.dumps(report, ensure_ascii=False)
     # A topic ntfy would refuse and a ping URL without https: their errors must not echo them.
     (tmp_path / "secrets" / "topic").write_text("topic-do-not-print!\n", encoding="utf-8")
-    (tmp_path / "secrets" / "ping").write_text(
-        "http://hc.example/ping-do-not-print\n", encoding="utf-8"
-    )
+    (tmp_path / "secrets" / "ping").write_text("http://hc.example/ping-do-not-print\n",
+                                               encoding="utf-8")
     text += json.dumps(doctor(environ), ensure_ascii=False)
     for value in SENTINELS:
         assert value not in text
@@ -26090,9 +22522,8 @@ def test_state_from_another_writer_is_a_problem(tmp_path):
     assert any("another archive or another writer_id" in p for p in report["problems"])
 
 
-def test_a_state_db_that_vanishes_between_the_check_and_the_open_is_not_a_crash(
-    tmp_path, monkeypatch
-):
+def test_a_state_db_that_vanishes_between_the_check_and_the_open_is_not_a_crash(tmp_path,
+                                                                                 monkeypatch):
     # why: State.read_only returns None when state.db is gone (Task 15's council, minor 6).
     environ = server(tmp_path)
     monkeypatch.setattr(doctor_module.State, "read_only", classmethod(lambda cls, path: None))
@@ -26153,10 +22584,8 @@ def test_leftover_job_folders_and_an_unset_cache_dir_are_warnings(tmp_path):
     web = doctor(web_only(environ), role="web")["warnings"]
     assert not any("restic-check-cache-" in w or "restore-" in w for w in web)  # not its job
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace(f'cache_dir = "{tmp_path / "cache"}"\n', ""),
-        encoding="utf-8",
-    )
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        f'cache_dir = "{tmp_path / "cache"}"\n', ""), encoding="utf-8")
     assert any("cache_dir" in w and "/tmp" in w for w in doctor(environ, role="backup")["warnings"])
 
 
@@ -26213,10 +22642,8 @@ def test_a_topic_with_no_server_is_a_warning(tmp_path):
     # silence. The reverse (a server, no topic) is the template's normal dead-man-only setup.
     environ = server(tmp_path)
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace('ntfy_server = "https://ntfy.sh"\n', ""),
-        encoding="utf-8",
-    )
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace('ntfy_server = "https://ntfy.sh"\n', ""),
+                   encoding="utf-8")
     report = doctor(environ)
     assert report["problems"] == []
     assert any("ntfy_server" in w and "no alert is sent" in w for w in report["warnings"])
@@ -26227,10 +22654,8 @@ def test_the_backup_role_warns_when_deploy_env_is_not_backed_up(tmp_path):
     environ = server(tmp_path)  # the fixture names deploy.env in extra_paths, as the template does
     assert not any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace('extra_paths = ["/backup-extra/deploy.env"]\n', ""),
-        encoding="utf-8",
-    )
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        'extra_paths = ["/backup-extra/deploy.env"]\n', ""), encoding="utf-8")
     assert any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
     assert not any("deploy.env" in w for w in doctor(environ, role="all")["warnings"])
 
@@ -26243,8 +22668,7 @@ def test_a_secret_file_others_can_read_is_a_warning(tmp_path):
     assert report["problems"] == []
     assert [w for w in report["warnings"] if "chmod 600" in w] == [
         "RECORDINGS_NAS_SSH_KEY_FILE names a file that group or others can open (mode 644): "
-        "chmod 600 it"
-    ]
+        "chmod 600 it"]
     assert "key-do-not-print" not in json.dumps(report)
 
 
@@ -26264,13 +22688,8 @@ def test_missing_tools_and_alerts_are_reported(tmp_path, monkeypatch):
     monkeypatch.setattr(doctor_module.shutil, "which", lambda name: None)
     environ = {k: v for k, v in server(tmp_path).items() if "DEADMAN" not in k}
     report = doctor(environ)
-    assert report["tools"] == {
-        "restic": False,
-        "rsync": False,
-        "ssh": False,
-        "ffprobe": False,
-        "ffmpeg": False,
-    }
+    assert report["tools"] == {"restic": False, "rsync": False, "ssh": False, "ffprobe": False,
+                               "ffmpeg": False}
     assert any("restic is not installed" in p for p in report["problems"])
     assert any("dead-man" in w for w in report["warnings"])
     assert any("ffprobe and ffmpeg not installed" in w for w in report["warnings"])
@@ -26280,7 +22699,8 @@ def test_retention_off_here_is_a_warning_in_every_role(tmp_path):
     # why: with rest-server --append-only, the server can't prune, so retention runs on the NAS.
     # If that task is missing, nothing else says so, and the repository grows without limit.
     environ = server(tmp_path, backup_extra="prune = false\n")
-    warning = "retention is off here: it must run on the NAS, or the repository grows without limit"
+    warning = ("retention is off here: it must run on the NAS, or the repository grows without "
+               "limit")
     for role, env in (("all", environ), ("backup", environ), ("web", web_only(environ))):
         report = doctor(env, role=role)
         assert report["problems"] == [] and report["warnings"] == [warning], role
@@ -26298,10 +22718,8 @@ def test_a_consent_list_mounted_only_for_imports_is_information(tmp_path):
         report = doctor(env, role=role)
         assert report["problems"] == [] and report["warnings"] == [], role
         assert report["consent_list"] == {
-            "path": "/consent/consent-list.md",
-            "here": False,
-            "note": "not mounted here; the import reads it and fails closed",
-        }
+            "path": "/consent/consent-list.md", "here": False,
+            "note": "not mounted here; the import reads it and fails closed"}
     listed = tmp_path / "consent-list.md"
     listed.write_text("- " + "d" * 32 + "\n", encoding="utf-8")
     cfg.write_text(base + f'[plaud]\nconsent_list = "{listed}"\n', encoding="utf-8")
@@ -26317,14 +22735,9 @@ def test_an_unknown_default_timezone_is_a_problem_in_every_role(tmp_path, monkey
     cfg = tmp_path / "config.toml"
     good = cfg.read_text(encoding="utf-8")
     assert doctor(environ, role="backup")["problems"] == []  # the default, America/Vancouver
-    cfg.write_text(
-        good.replace(
-            'writer_id = "homelab"\n',
-            'writer_id = "homelab"\ndefault_timezone = "Mars/Olympus"\n',
-            1,
-        ),
-        encoding="utf-8",
-    )
+    cfg.write_text(good.replace('writer_id = "homelab"\n',
+                                'writer_id = "homelab"\ndefault_timezone = "Mars/Olympus"\n', 1),
+                   encoding="utf-8")
     for role, env in (("web", web_only(environ)), ("backup", environ)):
         (problem,) = doctor(env, role=role)["problems"]
         assert "default_timezone" in problem and "Mars/Olympus" in problem, role
@@ -26341,11 +22754,8 @@ def test_a_bad_disk_threshold_pair_is_a_problem(tmp_path):
     # why: the import exits 78 on it and Status quietly uses the defaults (Task 9, Task 15).
     environ = server(tmp_path)
     cfg = tmp_path / "config.toml"
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8")
-        + "[disk]\nwarn_free_percent = 20\nstop_free_percent = 30\n",
-        encoding="utf-8",
-    )
+    cfg.write_text(cfg.read_text(encoding="utf-8")
+                   + "[disk]\nwarn_free_percent = 20\nstop_free_percent = 30\n", encoding="utf-8")
     (problem,) = doctor(web_only(environ), role="web")["problems"]
     assert "stop_free_percent" in problem
 
@@ -26353,14 +22763,9 @@ def test_a_bad_disk_threshold_pair_is_a_problem(tmp_path):
 def test_the_rest_server_setup_has_no_problems(tmp_path):
     # why: rest-server --append-only is the primary transport (council ruling, 2026-10-09).
     (tmp_path / "rest-server.crt").write_text("a test certificate\n", encoding="utf-8")
-    environ = server(
-        tmp_path,
-        repository="rest:https://nas:8000/recordings/",
-        backup_extra=(
-            f'rest_username = "recordings"\nprune = false\n'
-            f'cacert = "{tmp_path / "rest-server.crt"}"\n'
-        ),
-    )
+    environ = server(tmp_path, repository="rest:https://nas:8000/recordings/", backup_extra=(
+        f'rest_username = "recordings"\nprune = false\n'
+        f'cacert = "{tmp_path / "rest-server.crt"}"\n'))
     environ["RESTIC_REST_PASSWORD_FILE"] = str(tmp_path / "secrets" / "rest_password")
     report = doctor(environ)
     assert report["problems"] == []
@@ -26369,20 +22774,14 @@ def test_the_rest_server_setup_has_no_problems(tmp_path):
 
 
 def test_a_missing_cacert_is_a_problem(tmp_path):
-    environ = server(
-        tmp_path,
-        repository="rest:https://nas:8000/recordings/",
-        backup_extra=f'cacert = "{tmp_path / "missing.crt"}"\n',
-    )
+    environ = server(tmp_path, repository="rest:https://nas:8000/recordings/",
+                     backup_extra=f'cacert = "{tmp_path / "missing.crt"}"\n')
     assert any("cacert" in p for p in doctor(environ)["problems"])
 
 
 def test_a_rest_user_without_its_password_is_a_problem(tmp_path):
-    environ = server(
-        tmp_path,
-        repository="rest:https://nas:8000/recordings/",
-        backup_extra='rest_username = "recordings"\n',
-    )
+    environ = server(tmp_path, repository="rest:https://nas:8000/recordings/",
+                     backup_extra='rest_username = "recordings"\n')
     assert any("RESTIC_REST_PASSWORD_FILE" in p for p in doctor(environ)["problems"])
 
 
@@ -26395,17 +22794,13 @@ def test_a_nas_whose_free_space_cant_be_read_is_a_warning(tmp_path, monkeypatch)
         calls.append(cmd[0])
         return subprocess.CompletedProcess(cmd, 255, "", "")
 
-    monkeypatch.setattr(
-        doctor_module,
-        "nas_free_bytes",
-        lambda nas, path: nas_free_bytes(nas, path, runner=neither_answers),
-    )
+    monkeypatch.setattr(doctor_module, "nas_free_bytes",
+                        lambda nas, path: nas_free_bytes(nas, path, runner=neither_answers))
     report = doctor(server(tmp_path), role="backup")
     assert calls == ["ssh", "sftp"]
     assert report["problems"] == [] and report["backup"]["nas_free_bytes"] is None
     assert report["warnings"] == [
-        "the NAS's free space is unknown: neither ssh df nor sftp df answered"
-    ]
+        "the NAS's free space is unknown: neither ssh df nor sftp df answered"]
 
 
 def test_the_web_role_needs_no_secrets_and_refuses_any(tmp_path):
@@ -26413,9 +22808,8 @@ def test_the_web_role_needs_no_secrets_and_refuses_any(tmp_path):
     report = doctor(web_only(full), role="web")
     assert report["problems"] == [] and report["role"] == "web" and report["user"] is None
     assert report["backup"] is None and report["mirror"] is None and report["alerts"] is None
-    report = doctor(
-        web_only(full) | {"RESTIC_PASSWORD_FILE": full["RESTIC_PASSWORD_FILE"]}, role="web"
-    )
+    report = doctor(web_only(full) | {"RESTIC_PASSWORD_FILE": full["RESTIC_PASSWORD_FILE"]},
+                    role="web")
     assert any("restic_password" in p and "web" in p for p in report["problems"])
     assert "pw-do-not-print" not in json.dumps(report)
     for name in JOB_SECRETS:  # the optional ntfy_token included
@@ -26433,9 +22827,8 @@ def test_every_job_secret_is_a_known_secret():
 def test_the_backup_role_skips_the_hard_link_probe_on_a_read_only_archive(tmp_path, monkeypatch):
     environ = server(tmp_path)
     monkeypatch.setattr(doctor_module, "read_only_mount", lambda root: True)
-    monkeypatch.setattr(
-        doctor_module, "hard_links_work", lambda root: pytest.fail("probed a read-only archive")
-    )
+    monkeypatch.setattr(doctor_module, "hard_links_work",
+                        lambda root: pytest.fail("probed a read-only archive"))
     report = doctor(environ, role="backup")
     assert report["problems"] == [] and report["index"] is None
     assert report["archive"]["read_only"] is True and report["archive"]["hard_links"] is None
@@ -26481,13 +22874,8 @@ def test_the_cli_exits_0_when_all_is_well(tmp_path, monkeypatch, capsys):
 def test_the_cli_takes_the_role(tmp_path, monkeypatch, capsys):
     for key, value in web_only(server(tmp_path)).items():
         monkeypatch.setenv(key, value)
-    for name in (
-        "RECORDINGS_ARCHIVE",
-        "RECORDINGS_STATE",
-        "RECORDINGS_INDEX",
-        "RECORDINGS_ROLE",
-        *SECRET_ENV,
-    ):
+    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE",
+                 *SECRET_ENV):
         monkeypatch.delenv(name, raising=False)
     assert main(["doctor", "--role", "web", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["role"] == "web"
@@ -26495,9 +22883,8 @@ def test_the_cli_takes_the_role(tmp_path, monkeypatch, capsys):
     assert "RESTIC_PASSWORD_FILE" in " ".join(json.loads(capsys.readouterr().out)["problems"])
 
 
-def test_an_empty_named_token_file_is_a_problem_because_no_alert_is_ever_sent(
-    tmp_path, monkeypatch, capsys
-):
+def test_an_empty_named_token_file_is_a_problem_because_no_alert_is_ever_sent(tmp_path, monkeypatch,
+                                                                              capsys):
     # why: the loop reads any alerts.from_config failure as "alerts off": no alert and no dead-man
     # ping is sent, so doctor, the deploy gate, must say so and exit 78 (Task 16 review).
     environ = server(tmp_path)
@@ -26506,13 +22893,8 @@ def test_an_empty_named_token_file_is_a_problem_because_no_alert_is_ever_sent(
     token.chmod(0o600)
     environ["RECORDINGS_NTFY_TOKEN_FILE"] = str(token)
     report = doctor(environ)
-    assert [
-        p
-        for p in report["problems"]
-        if "alerts and dead-man pings are off" in p
-        and "RECORDINGS_NTFY_TOKEN_FILE" in p
-        and "is empty" in p
-    ]
+    assert [p for p in report["problems"] if "alerts and dead-man pings are off" in p
+            and "RECORDINGS_NTFY_TOKEN_FILE" in p and "is empty" in p]
     assert not any("is empty" in w for w in report["warnings"])  # moved, not repeated
     for key, value in environ.items():
         monkeypatch.setenv(key, value)
@@ -26543,12 +22925,9 @@ def test_in_the_backup_role_a_missing_state_db_or_an_unconfigured_job_is_a_probl
     (tmp_path / "state" / "state.db").unlink()
     assert any("no state.db yet" in p for p in doctor(environ, role="backup")["problems"])
     assert any("no state.db yet" in w for w in doctor(environ, role="all")["warnings"])
-    cfg.write_text(
-        good.replace(f'repository = "sftp:backup@nas:/volume1/backups/recordings"\n', "").replace(
-            'target = "backup@nas:/volume1/recordings-mirror/"\n', ""
-        ),
-        encoding="utf-8",
-    )
+    cfg.write_text(good.replace(f'repository = "sftp:backup@nas:/volume1/backups/recordings"\n', "")
+                   .replace('target = "backup@nas:/volume1/recordings-mirror/"\n', ""),
+                   encoding="utf-8")
     problems = doctor(environ, role="backup")["problems"]
     assert any("backups aren't configured" in p for p in problems)
     assert any("the mirror isn't configured" in p for p in problems)
@@ -26558,9 +22937,8 @@ def test_in_the_backup_role_a_missing_state_db_or_an_unconfigured_job_is_a_probl
 
 def test_a_missing_ssh_is_a_problem_when_something_needs_it(tmp_path, monkeypatch):
     environ = server(tmp_path)
-    monkeypatch.setattr(
-        doctor_module.shutil, "which", lambda name: None if name == "ssh" else f"/usr/bin/{name}"
-    )
+    monkeypatch.setattr(doctor_module.shutil, "which",
+                        lambda name: None if name == "ssh" else f"/usr/bin/{name}")
     assert any("ssh is not installed" in p for p in doctor(environ, role="backup")["problems"])
     assert doctor(web_only(environ), role="web")["problems"] == []  # web runs no ssh
 
@@ -26577,12 +22955,8 @@ def test_state_from_another_archive_is_a_problem(tmp_path):
     environ = server(tmp_path)
     init_archive(tmp_path / "archive2", tmp_path / "state2", writer_id="homelab")
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace(
-            f'path = "{tmp_path / "state"}"', f'path = "{tmp_path / "state2"}"'
-        ),
-        encoding="utf-8",
-    )
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        f'path = "{tmp_path / "state"}"', f'path = "{tmp_path / "state2"}"'), encoding="utf-8")
     report = doctor(environ)
     assert report["state"]["matches"] is False
     assert any("another archive or another writer_id" in p for p in report["problems"])
@@ -26600,12 +22974,9 @@ def test_an_empty_restic_password_file_is_not_also_reported_unset(tmp_path):
 def test_a_default_timezone_that_is_not_a_string_is_a_problem_not_a_crash(tmp_path, value):
     environ = server(tmp_path)
     cfg = tmp_path / "config.toml"
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace(
-            'writer_id = "homelab"\n', f'writer_id = "homelab"\ndefault_timezone = {value}\n', 1
-        ),
-        encoding="utf-8",
-    )
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        'writer_id = "homelab"\n', f'writer_id = "homelab"\ndefault_timezone = {value}\n', 1),
+        encoding="utf-8")
     assert any("default_timezone" in p for p in doctor(web_only(environ), role="web")["problems"])
 
 
@@ -26632,11 +23003,8 @@ def test_the_mirror_and_a_reader_are_never_written(tmp_path, monkeypatch):
     # why: spec §3, the mirror's copy is never written, and a reader writes nothing; doctor's
     # hard-link probe wrote .tmp/ in both (Task 16's council).
     environ = server(tmp_path)
-    monkeypatch.setattr(
-        doctor_module,
-        "hard_links_work",
-        lambda root: pytest.fail("probed an archive this machine never writes"),
-    )
+    monkeypatch.setattr(doctor_module, "hard_links_work",
+                        lambda root: pytest.fail("probed an archive this machine never writes"))
     cfg = Path(environ["RECORDINGS_CONFIG"])
     writer = cfg.read_text(encoding="utf-8")
     cfg.write_text(writer.replace('writer_id = "homelab"\n', "", 1), encoding="utf-8")  # a reader
@@ -26655,10 +23023,8 @@ def test_a_crash_is_one_line_naming_the_check_never_a_traceback(tmp_path, monkey
     # nas_repo_path or extra_paths) ended doctor in a traceback, with no report (Task 16's council).
     environ = server(tmp_path)
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(
-        'plaud = "rest:https://u:pw-do-not-print@nas:8000/"\n' + cfg.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
+    cfg.write_text('plaud = "rest:https://u:pw-do-not-print@nas:8000/"\n'
+                   + cfg.read_text(encoding="utf-8"), encoding="utf-8")
     for key, value in environ.items():
         monkeypatch.setenv(key, value)
     for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE"):
@@ -26675,14 +23041,12 @@ def test_a_state_db_from_a_newer_release_is_a_problem_as_state_open_refuses_it(t
     environ = server(tmp_path)
     assert doctor(environ)["problems"] == []
     with sqlite3.connect(tmp_path / "state" / "state.db") as conn:
-        conn.execute(
-            "UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION + 1),)
-        )
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                     (str(SCHEMA_VERSION + 1),))
     for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
         problems = doctor(env, role=role)["problems"]
-        assert any(
-            f"schema version {SCHEMA_VERSION + 1}" in p and "newer" in p for p in problems
-        ), role
+        assert any(f"schema version {SCHEMA_VERSION + 1}" in p and "newer" in p
+                   for p in problems), role
     with sqlite3.connect(tmp_path / "state" / "state.db") as conn:
         conn.execute("DELETE FROM meta WHERE key = 'schema_version'")
     assert any("schema_version" in p for p in doctor(environ)["problems"])  # damaged, as open says
@@ -26696,9 +23060,8 @@ def test_an_archive_that_is_the_mirrors_copy_is_a_problem_for_a_writer(tmp_path)
     problems = doctor(environ)["problems"]
     assert any(MIRROR in p and "never written" in p for p in problems)
     reader = Path(environ["RECORDINGS_CONFIG"])  # a machine with no writer_id only reads it
-    reader.write_text(
-        reader.read_text(encoding="utf-8").replace('writer_id = "homelab"\n', ""), encoding="utf-8"
-    )
+    reader.write_text(reader.read_text(encoding="utf-8").replace('writer_id = "homelab"\n', ""),
+                      encoding="utf-8")
     assert not any(MIRROR in p for p in doctor(web_only(environ), role="web")["problems"])
 
 
@@ -26729,16 +23092,13 @@ def test_a_missing_or_unusable_index_is_a_warning(tmp_path):
     assert report["index"]["matches"] is False
     index_path.unlink()
     init_archive(tmp_path / "other", tmp_path / "other-state", writer_id="homelab")
-    Index(index_path).rebuild(
-        Archive(tmp_path / "other"), archive_uuid="another-archive", allow_empty=True
-    )  # foreign
+    Index(index_path).rebuild(Archive(tmp_path / "other"), archive_uuid="another-archive",
+                              allow_empty=True)  # foreign
     report = doctor(environ)
     assert any("index" in w and "reindex" in w for w in report["warnings"])
-    Index(index_path).rebuild(
-        Archive(tmp_path / "archive"),
-        archive_uuid=read_sentinel(tmp_path / "archive").uuid,
-        allow_empty=True,
-    )  # this archive's own
+    Index(index_path).rebuild(Archive(tmp_path / "archive"),
+                              archive_uuid=read_sentinel(tmp_path / "archive").uuid,
+                              allow_empty=True)  # this archive's own
     report = doctor(environ)
     assert report["warnings"] == [] and report["index"]["matches"] is True
     cfg.write_text(good.replace(f'[index]\npath = "{index_path}"\n', ""), encoding="utf-8")
@@ -26758,9 +23118,8 @@ def test_an_unset_consent_list_is_a_note_not_a_warning(tmp_path):
         assert any("consent_list is not set" in n and "import" in n for n in report["notes"]), role
         assert report["consent_list"] is None
     cfg = Path(environ["RECORDINGS_CONFIG"])
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8") + '[plaud]\nconsent_list = "   "\n', encoding="utf-8"
-    )
+    cfg.write_text(cfg.read_text(encoding="utf-8") + '[plaud]\nconsent_list = "   "\n',
+                   encoding="utf-8")
     assert any("consent_list is not set" in n for n in doctor(environ)["notes"])  # blank is unset
 
 
@@ -26793,16 +23152,11 @@ and in `test_doctor_reports_presence_never_values`, **replace** the two lines
 and **add** at the end of the file (a secret put where its path belongs is never repeated, by
 `secret` or `secret_path`, nor in doctor's report; Task 16's council):
 ```python
-@pytest.mark.parametrize(
-    "name, value",
-    [
-        ("restic_password", "hunter2-do-not-print"),
-        ("nas_ssh_key", "b3BlbnNzaC1rZXktdjE-do-not-print\nAAAABG5vbmUAAAAEbm9uZQ\n"),
-        ("deadman_url", "https://hc-ping.com/uuid-do-not-print"),
-        ("ntfy_topic", "topic-do-not-print"),
-    ],
-    ids=["password", "key", "ping-url", "topic"],
-)
+@pytest.mark.parametrize("name, value", [
+    ("restic_password", "hunter2-do-not-print"),
+    ("nas_ssh_key", "b3BlbnNzaC1rZXktdjE-do-not-print\nAAAABG5vbmUAAAAEbm9uZQ\n"),
+    ("deadman_url", "https://hc-ping.com/uuid-do-not-print"),
+    ("ntfy_topic", "topic-do-not-print")], ids=["password", "key", "ping-url", "topic"])
 def test_a_secret_put_where_its_path_belongs_is_never_repeated(tmp_path, name, value):
     # why: doctor's output is pasted into issues and chats (Task 16's council). With the secret
     # itself in NAME_FILE, the error repeated it: "RESTIC_PASSWORD_FILE points at hunter2, which
@@ -26901,15 +23255,8 @@ TOOLS = ("restic", "rsync", "ssh", "ffprobe", "ffmpeg")
 ROLES = ("web", "backup", "all")
 # The backup service's secrets: docker/compose.yml gives them to it alone. The web service faces
 # the browser and never backs up, mirrors or alerts, so it must hold none of them.
-JOB_SECRETS = (
-    "restic_password",
-    "rest_password",
-    "nas_ssh_key",
-    "nas_known_hosts",
-    "ntfy_topic",
-    "ntfy_token",
-    "deadman_url",
-)
+JOB_SECRETS = ("restic_password", "rest_password", "nas_ssh_key", "nas_known_hosts",
+               "ntfy_topic", "ntfy_token", "deadman_url")
 SECRETS_DIR = Path("/run/secrets")  # where Docker mounts a service's secrets, by name
 OPEN_TO_OTHERS = 0o077  # ssh refuses a key with any of these bits set; doctor warns for any secret
 
@@ -26928,33 +23275,21 @@ def _secrets(environ: Mapping[str, str], problems: list[str], warnings: list[str
             with contextlib.suppress(OSError):
                 mode = Path(environ[file_var]).stat().st_mode & 0o777
                 if mode & OPEN_TO_OTHERS:
-                    warnings.append(
-                        f"{file_var} names a file that group or others can open "
-                        f"(mode {mode:o}): chmod 600 it"
-                    )
-        out[name] = {
-            "env": file_var if spec.file_only else spec.env,
-            "set": present,
-            "needed_from_stage": spec.stage,
-            "purpose": spec.purpose,
-        }
+                    warnings.append(f"{file_var} names a file that group or others can open "
+                                    f"(mode {mode:o}): chmod 600 it")
+        out[name] = {"env": file_var if spec.file_only else spec.env, "set": present,
+                     "needed_from_stage": spec.stage, "purpose": spec.purpose}
     return out
 
 
 def _no_job_secrets(environ: Mapping[str, str], problems: list[str]) -> None:
-    held = [
-        name
-        for name in JOB_SECRETS
-        if environ.get(SECRETS[name].env)
-        or environ.get(f"{SECRETS[name].env}_FILE")
-        or _mounted(SECRETS_DIR / name)
-    ]
+    held = [name for name in JOB_SECRETS
+            if environ.get(SECRETS[name].env) or environ.get(f"{SECRETS[name].env}_FILE")
+            or _mounted(SECRETS_DIR / name)]
     if held:
-        problems.append(
-            "the web service must hold no backup, mirror or alert secret, but it "
-            "has " + ", ".join(held) + ": docker/compose.yml gives them to `backup` "
-            "only"
-        )
+        problems.append("the web service must hold no backup, mirror or alert secret, but it "
+                        "has " + ", ".join(held) + ": docker/compose.yml gives them to `backup` "
+                        "only")
 
 
 def _mounted(path: Path) -> bool:
@@ -26973,11 +23308,9 @@ def _user(problems: list[str]) -> dict:
     try:
         pwd.getpwuid(uid)
     except KeyError:
-        problems.append(
-            f"uid {uid} has no passwd entry, and ssh exits without one: rebuild the "
-            "image, whose APP_UID and APP_GID build args come from deploy.env's "
-            "RECORDINGS_UID and RECORDINGS_GID"
-        )
+        problems.append(f"uid {uid} has no passwd entry, and ssh exits without one: rebuild the "
+                        "image, whose APP_UID and APP_GID build args come from deploy.env's "
+                        "RECORDINGS_UID and RECORDINGS_GID")
         return {"uid": uid, "passwd_entry": False}
     return {"uid": uid, "passwd_entry": True}
 
@@ -27017,13 +23350,8 @@ def _archive(cfg: Config, role: str, report: dict, problems: list[str]) -> str |
     if cfg.archive_path is None:
         problems.append("no archive path: set [archive] path in config.toml, or RECORDINGS_ARCHIVE")
         return None
-    info = {
-        "path": str(cfg.archive_path),
-        "exists": cfg.archive_path.is_dir(),
-        "sentinel": False,
-        "read_only": None,
-        "hard_links": None,
-    }
+    info = {"path": str(cfg.archive_path), "exists": cfg.archive_path.is_dir(),
+            "sentinel": False, "read_only": None, "hard_links": None}
     report["archive"] = info
     if not info["exists"]:
         problems.append(f"archive folder {cfg.archive_path} does not exist")
@@ -27036,35 +23364,26 @@ def _archive(cfg: Config, role: str, report: dict, problems: list[str]) -> str |
     info["sentinel"] = True
     if is_mirror(cfg.archive_path):  # §3: the mirror's copy is never written, by doctor neither
         if cfg.writer_id is not None:
-            problems.append(
-                f"the archive path holds {MIRROR}: it is the NAS mirror's copy, which "
-                "is never written. Point [archive] path at the archive itself"
-            )
+            problems.append(f"the archive path holds {MIRROR}: it is the NAS mirror's copy, which "
+                            "is never written. Point [archive] path at the archive itself")
         return identity.uuid
     info["read_only"] = read_only_mount(cfg.archive_path)
     if cfg.writer_id is None:  # a reader writes nothing, so it needs no hard links: no probe
         return identity.uuid
     if info["read_only"]:
         if role != "backup":  # the backup service mounts it read-only on purpose
-            problems.append("the archive is mounted read-only here, so this machine can't write it")
+            problems.append("the archive is mounted read-only here, so this machine can't "
+                            "write it")
         return identity.uuid
     info["hard_links"] = hard_links_work(cfg.archive_path)
     if not info["hard_links"]:
-        problems.append(
-            "hard links don't work on the archive's disk, and write-once publishing "
-            "needs them: is it a network share?"
-        )
+        problems.append("hard links don't work on the archive's disk, and write-once publishing "
+                        "needs them: is it a network share?")
     return identity.uuid
 
 
-def _state(
-    cfg: Config,
-    archive_uuid: str | None,
-    role: str,
-    report: dict,
-    problems: list[str],
-    warnings: list[str],
-) -> None:
+def _state(cfg: Config, archive_uuid: str | None, role: str, report: dict, problems: list[str],
+           warnings: list[str]) -> None:
     # Without state.db, `ops --loop` exits 78 and the backup service crash-loops.
     missing = problems if role == "backup" else warnings
     if cfg.writer_id is None:
@@ -27072,12 +23391,8 @@ def _state(
     if cfg.state_path is None:
         warnings.append("no [state] path: this machine can't write the archive")
         return
-    info = {
-        "path": str(cfg.state_path),
-        "state_db": (cfg.state_path / "state.db").is_file(),
-        "writer_id": cfg.writer_id,
-        "matches": None,
-    }
+    info = {"path": str(cfg.state_path), "state_db": (cfg.state_path / "state.db").is_file(),
+            "writer_id": cfg.writer_id, "matches": None}
     report["state"] = info
     if not info["state_db"]:
         missing.append("no state.db yet: run `recordings init` once, on the writer")
@@ -27104,10 +23419,8 @@ def _state(
         return
     info["matches"] = found_uuid == archive_uuid and found_writer == cfg.writer_id
     if not info["matches"]:
-        problems.append(
-            "state.db belongs to another archive or another writer_id: this machine "
-            "must not write here"
-        )
+        problems.append("state.db belongs to another archive or another writer_id: this machine "
+                        "must not write here")
 
 
 def _index(cfg: Config, archive_uuid: str | None, report: dict, warnings: list[str]) -> None:
@@ -27115,26 +23428,18 @@ def _index(cfg: Config, archive_uuid: str | None, report: dict, warnings: list[s
     costs a `recordings reindex`, not data: a warning. Index.count() answers 0 for a damaged file,
     so whose index it is must be asked."""
     if cfg.index_path is None:
-        warnings.append(
-            "no [index] path: the Library can't list recordings, and the writer "
-            "refuses to open (config.example.toml has the line)"
-        )
+        warnings.append("no [index] path: the Library can't list recordings, and the writer "
+                        "refuses to open (config.example.toml has the line)")
         return
     index = Index(cfg.index_path)
-    info = {
-        "path": str(cfg.index_path),
-        "exists": index.exists(),
-        "recordings": index.count(),
-        "matches": None,
-    }
+    info = {"path": str(cfg.index_path), "exists": index.exists(), "recordings": index.count(),
+            "matches": None}
     report["index"] = info
     if info["exists"] and archive_uuid is not None:
         info["matches"] = index.archive_uuid() == archive_uuid
         if not info["matches"]:
-            warnings.append(
-                "the index is damaged or belongs to another archive, so the Library "
-                "lists nothing: `recordings reindex` rebuilds it"
-            )
+            warnings.append("the index is damaged or belongs to another archive, so the Library "
+                            "lists nothing: `recordings reindex` rebuilds it")
 
 
 def _left_behind(cfg: Config, bc: backup.BackupConfig, report: dict, warnings: list[str]) -> None:
@@ -27145,41 +23450,29 @@ def _left_behind(cfg: Config, bc: backup.BackupConfig, report: dict, warnings: l
     job = held[0] if held else None
     notes = report["notes"]
     if bc.cache_dir is None:
-        warnings.append(
-            "[backup] cache_dir is not set, so restic's cache goes under $HOME/.cache: "
-            "in the container that is the memory-backed /tmp, lost at every restart "
-            '(config.example.toml: cache_dir = "/state/cache/restic")'
-        )
+        warnings.append("[backup] cache_dir is not set, so restic's cache goes under $HOME/.cache: "
+                        "in the container that is the memory-backed /tmp, lost at every restart "
+                        "(config.example.toml: cache_dir = \"/state/cache/restic\")")
     else:
         if cfg.state_path is not None and _device(bc.cache_dir) != _device(cfg.state_path):
-            warnings.append(
-                f"[backup] cache_dir {bc.cache_dir} is not on the disk [state] path is "
-                "on, so restic's cache (about 0.03% of the repository) is lost at a "
-                "restart or fills the wrong disk: put it under the state folder "
-                '(config.example.toml: cache_dir = "/state/cache/restic")'
-            )
+            warnings.append(f"[backup] cache_dir {bc.cache_dir} is not on the disk [state] path is "
+                            "on, so restic's cache (about 0.03% of the repository) is lost at a "
+                            "restart or fills the wrong disk: put it under the state folder "
+                            "(config.example.toml: cache_dir = \"/state/cache/restic\")")
         if _has(bc.cache_dir, "restic-check-cache-*") and job == "check":
-            notes.append(
-                f"{bc.cache_dir} holds a restic-check-cache-* folder that belongs to "
-                "check, running now: leave it"
-            )
+            notes.append(f"{bc.cache_dir} holds a restic-check-cache-* folder that belongs to "
+                         "check, running now: leave it")
         elif _has(bc.cache_dir, "restic-check-cache-*"):
-            warnings.append(
-                f"{bc.cache_dir} holds restic-check-cache-* folders, which a killed "
-                "repository check leaves behind: delete them"
-            )
+            warnings.append(f"{bc.cache_dir} holds restic-check-cache-* folders, which a killed "
+                            "repository check leaves behind: delete them")
     if bc.restore_scratch is not None and _has(bc.restore_scratch, "restore-*"):
         if job == "restore-test":
-            notes.append(
-                f"{bc.restore_scratch} holds a restore-* folder that belongs to "
-                "restore-test, running now: leave it"
-            )
+            notes.append(f"{bc.restore_scratch} holds a restore-* folder that belongs to "
+                         "restore-test, running now: leave it")
         else:
-            warnings.append(
-                f"{bc.restore_scratch} holds a restore-* folder, an unencrypted copy of the "
-                "archive that a killed restore test left behind: the next restore "
-                "test removes it, or delete it now"
-            )
+            warnings.append(f"{bc.restore_scratch} holds a restore-* folder, an unencrypted copy of the "
+                            "archive that a killed restore test left behind: the next restore "
+                            "test removes it, or delete it now")
 
 
 def _device(path: Path) -> int | None:
@@ -27206,38 +23499,30 @@ def _transport(repository: str) -> str:
     return "other"
 
 
-def _backup(
-    cfg: Config,
-    environ: Mapping[str, str],
-    role: str,
-    report: dict,
-    problems: list[str],
-    warnings: list[str],
-) -> None:
+def _backup(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
+            problems: list[str], warnings: list[str]) -> None:
     if not cfg.data.get("backup", {}).get("repository"):
         # the backup service exists to run them; elsewhere it is a choice
         (problems if role == "backup" else warnings).append(
-            "backups aren't configured: set [backup] repository"
-        )
+            "backups aren't configured: set [backup] repository")
         return
     # before from_config, which may refuse first; a named but empty file is already reported
-    if not report["secrets"]["restic_password"]["set"] and not environ.get("RESTIC_PASSWORD_FILE"):
+    if (not report["secrets"]["restic_password"]["set"]
+            and not environ.get("RESTIC_PASSWORD_FILE")):
         problems.append("RESTIC_PASSWORD_FILE is not set, so backups can't run")
     try:
         bc = backup.from_config(cfg, environ)
     except ConfigError as exc:
         problems.append(str(exc))
         return
-    info = {
-        "transport": _transport(bc.repository),
-        "password_set": report["secrets"]["restic_password"]["set"],
-        "prune": bc.prune,
-        "cacert_exists": bc.cacert.is_file() if bc.cacert is not None else None,
-        "restore_scratch_exists": bool(bc.restore_scratch and bc.restore_scratch.is_dir()),
-        "nas_free_check": bool(bc.nas.ssh and bc.nas_repo_path),
-        "nas_free_bytes": None,
-        "restic_installed": shutil.which(bc.restic) is not None,
-    }
+    info = {"transport": _transport(bc.repository),
+            "password_set": report["secrets"]["restic_password"]["set"],
+            "prune": bc.prune,
+            "cacert_exists": bc.cacert.is_file() if bc.cacert is not None else None,
+            "restore_scratch_exists": bool(bc.restore_scratch and bc.restore_scratch.is_dir()),
+            "nas_free_check": bool(bc.nas.ssh and bc.nas_repo_path),
+            "nas_free_bytes": None,
+            "restic_installed": shutil.which(bc.restic) is not None}
     report["backup"] = info
     if info["transport"] == "rest" and environ.get("RESTIC_REST_PASSWORD_FILE"):
         try:  # a named but broken file refuses every backup, with or without a username
@@ -27246,46 +23531,32 @@ def _backup(
             if str(exc) in warnings:
                 warnings.remove(str(exc))
             problems.append(str(exc))
-    elif (
-        info["transport"] == "rest"
-        and bc.rest_username
-        and not report["secrets"]["rest_password"]["set"]
-    ):
-        problems.append(
-            "a rest-server repository with [backup] rest_username needs RESTIC_REST_PASSWORD_FILE"
-        )
+    elif (info["transport"] == "rest" and bc.rest_username
+            and not report["secrets"]["rest_password"]["set"]):
+        problems.append("a rest-server repository with [backup] rest_username needs "
+                        "RESTIC_REST_PASSWORD_FILE")
     if info["cacert_exists"] is False:
-        problems.append(
-            f"[backup] cacert names {bc.cacert}, which is not a file, so restic "
-            "can't check rest-server's certificate"
-        )
+        problems.append(f"[backup] cacert names {bc.cacert}, which is not a file, so restic "
+                        "can't check rest-server's certificate")
     if not info["restic_installed"]:
         problems.append(f"{bc.restic} is not installed")
     if not info["restore_scratch_exists"]:
         warnings.append("[backup] restore_scratch doesn't exist, so the restore test can't run")
     _left_behind(cfg, bc, report, warnings)
     if not info["nas_free_check"]:
-        warnings.append(
-            "the NAS's free space isn't checked: set [nas] ssh and [backup] nas_repo_path"
-        )
+        warnings.append("the NAS's free space isn't checked: set [nas] ssh and [backup] "
+                        "nas_repo_path")
     else:  # §15.1: ssh df, else sftp df; if neither answers, it is unknown and doctor says so
         info["nas_free_bytes"] = nas_free_bytes(bc.nas, bc.nas_repo_path)
         if info["nas_free_bytes"] is None:
             warnings.append("the NAS's free space is unknown: neither ssh df nor sftp df answered")
 
 
-def _mirror(
-    cfg: Config,
-    environ: Mapping[str, str],
-    role: str,
-    report: dict,
-    problems: list[str],
-    warnings: list[str],
-) -> None:
+def _mirror(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
+            problems: list[str], warnings: list[str]) -> None:
     if not cfg.data.get("mirror", {}).get("target"):
         (problems if role == "backup" else warnings).append(
-            "the mirror isn't configured: set [mirror] target"
-        )
+            "the mirror isn't configured: set [mirror] target")
         return
     try:
         mc = mirror.from_config(cfg, environ)
@@ -27293,10 +23564,8 @@ def _mirror(
         if str(exc) not in problems:  # the backup check says the same of a missing host key
             problems.append(str(exc))
         return
-    info = {
-        "remote": mirror.is_remote(mc.target),
-        "rsync_installed": shutil.which(mc.rsync) is not None,
-    }
+    info = {"remote": mirror.is_remote(mc.target),
+            "rsync_installed": shutil.which(mc.rsync) is not None}
     report["mirror"] = info
     if not info["rsync_installed"]:
         problems.append(f"{mc.rsync} is not installed")
@@ -27306,9 +23575,8 @@ def _retention(cfg: Config, warnings: list[str]) -> None:
     """Config only, so every role says it: the runbook expects it from web and backup alike."""
     section = cfg.data.get("backup", {})
     if section.get("repository") and section.get("prune") is False:
-        warnings.append(
-            "retention is off here: it must run on the NAS, or the repository grows without limit"
-        )
+        warnings.append("retention is off here: it must run on the NAS, or the repository "
+                        "grows without limit")
 
 
 def _consent(cfg: Config, report: dict) -> None:
@@ -27317,18 +23585,14 @@ def _consent(cfg: Config, report: dict) -> None:
     try:
         resolved = consent_list_path(cfg.data)  # as the import reads it: blank is unset
     except ConsentListError:
-        report["notes"].append(
-            "[plaud] consent_list is not set, so the import refuses to run "
-            "(spec §9.1); the services that stay up don't need it"
-        )
+        report["notes"].append("[plaud] consent_list is not set, so the import refuses to run "
+                               "(spec §9.1); the services that stay up don't need it")
         return
     path = cfg.data["plaud"]["consent_list"]  # shown as configured, not expanded
     here = resolved.is_file()
     report["consent_list"] = {
-        "path": path,
-        "here": here,
-        "note": None if here else "not mounted here; the import reads it and fails closed",
-    }
+        "path": path, "here": here,
+        "note": None if here else "not mounted here; the import reads it and fails closed"}
 
 
 def _timezone(cfg: Config, problems: list[str]) -> None:
@@ -27338,11 +23602,9 @@ def _timezone(cfg: Config, problems: list[str]) -> None:
     try:
         ZoneInfo(cfg.default_timezone)
     except (ZoneInfoNotFoundError, ValueError, OSError, TypeError):
-        problems.append(
-            f"[archive] default_timezone {cfg.default_timezone!r} is not a time zone "
-            "this machine knows: check the name, and that the system's tzdata is "
-            "installed"
-        )
+        problems.append(f"[archive] default_timezone {cfg.default_timezone!r} is not a time zone "
+                        "this machine knows: check the name, and that the system's tzdata is "
+                        "installed")
 
 
 def _disk(cfg: Config, problems: list[str]) -> None:
@@ -27354,9 +23616,8 @@ def _disk(cfg: Config, problems: list[str]) -> None:
         problems.append(str(exc))
 
 
-def _alerts(
-    cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str], warnings: list[str]
-) -> None:
+def _alerts(cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str],
+            warnings: list[str]) -> None:
     try:
         ac = alerts.from_config(cfg, environ)
     except ConfigError as exc:
@@ -27368,36 +23629,26 @@ def _alerts(
                 found.remove(str(exc))
         problems.append(f"alerts and dead-man pings are off: {exc}")
         return
-    report["alerts"] = {
-        "ntfy_server_set": bool(ac.ntfy_server),
-        "topic_set": bool(ac.topic),
-        "deadman_set": bool(ac.deadman_url),
-    }
+    report["alerts"] = {"ntfy_server_set": bool(ac.ntfy_server), "topic_set": bool(ac.topic),
+                        "deadman_set": bool(ac.deadman_url)}
     if ac.topic and not ac.ntfy_server:  # the template presets ntfy_server, so a deleted line
-        warnings.append(
-            "RECORDINGS_NTFY_TOPIC_FILE is set but [alerts] ntfy_server is not, so no "
-            "alert is sent: set ntfy_server"
-        )
+        warnings.append("RECORDINGS_NTFY_TOPIC_FILE is set but [alerts] ntfy_server is not, so no "
+                        "alert is sent: set ntfy_server")
     elif not ac.enabled:
         warnings.append("alerts are off: set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE")
     if not ac.deadman_url:
-        warnings.append(
-            "no dead-man's switch, so a stopped server or backup goes unnoticed: "
-            "set RECORDINGS_DEADMAN_URL_FILE"
-        )
+        warnings.append("no dead-man's switch, so a stopped server or backup goes unnoticed: "
+                        "set RECORDINGS_DEADMAN_URL_FILE")
 
 
 def _ssh(report: dict, problems: list[str]) -> None:
     """An SFTP repository, a remote mirror and the NAS's free-space check all run ssh."""
     info, mirror_info = report["backup"], report["mirror"]
-    needs = (info is not None and (info["transport"] == "sftp" or info["nas_free_check"])) or (
-        mirror_info is not None and mirror_info["remote"]
-    )
+    needs = ((info is not None and (info["transport"] == "sftp" or info["nas_free_check"]))
+             or (mirror_info is not None and mirror_info["remote"]))
     if needs and not report["tools"]["ssh"]:
-        problems.append(
-            "ssh is not installed, and the SFTP repository, the remote mirror or the "
-            "NAS's free-space check needs it"
-        )
+        problems.append("ssh is not installed, and the SFTP repository, the remote mirror or the "
+                        "NAS's free-space check needs it")
 
 
 def _extra_paths(cfg: Config, warnings: list[str]) -> None:
@@ -27406,12 +23657,9 @@ def _extra_paths(cfg: Config, warnings: list[str]) -> None:
     section = cfg.data.get("backup", {})
     paths = section.get("extra_paths", [])
     if section.get("repository") and not any(
-        isinstance(p, str) and Path(p).name == "deploy.env" for p in paths
-    ):
-        warnings.append(
-            "deploy.env is not in [backup] extra_paths, so no backup carries it "
-            "(config.example.toml has the line)"
-        )
+            isinstance(p, str) and Path(p).name == "deploy.env" for p in paths):
+        warnings.append("deploy.env is not in [backup] extra_paths, so no backup carries it "
+                        "(config.example.toml has the line)")
 
 
 def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, Any]:
@@ -27423,21 +23671,12 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
             problems.append(f"RECORDINGS_ROLE must be one of {', '.join(ROLES)}: checking all")
             role = "all"
     report: dict[str, Any] = {
-        "role": role,
-        "config": None,
-        "user": None,
-        "archive": None,
-        "state": None,
-        "index": None,
-        "backup": None,
-        "mirror": None,
-        "alerts": None,
-        "consent_list": None,
+        "role": role, "config": None, "user": None, "archive": None, "state": None,
+        "index": None, "backup": None, "mirror": None, "alerts": None, "consent_list": None,
         "notes": [],
         "tools": {tool: shutil.which(tool) is not None for tool in TOOLS},
         "secrets": _secrets(environ, problems, warnings),
-        "problems": problems,
-        "warnings": warnings,
+        "problems": problems, "warnings": warnings,
     }
     if role == "web":
         _no_job_secrets(environ, problems)
@@ -27466,10 +23705,8 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
     _consent(cfg, report)
     missing = [tool for tool in ("ffprobe", "ffmpeg") if not report["tools"][tool]]
     if role != "backup" and missing:  # web runs the import, which decodes media to measure it
-        warnings.append(
-            " and ".join(missing) + " not installed, so the import can't measure "
-            "media that isn't a plain WAV file, and refuses to import it"
-        )
+        warnings.append(" and ".join(missing) + " not installed, so the import can't measure "
+                        "media that isn't a plain WAV file, and refuses to import it")
     return report
 ```
 
@@ -27488,38 +23725,25 @@ carries the list's 3-space indent: strip those 3 spaces; the parser lines end at
    ```
    with:
    ```python
-   p = sub.add_parser(
-       "doctor", help="check config.toml, the archive, state and secrets (presence only)"
-   )
-   p.add_argument(
-       "--role",
-       choices=ROLES,
-       help="the service it checks: web, backup or all (default: $RECORDINGS_ROLE, else all)",
-   )
-   p.add_argument("--json", action="store_true")
+       p = sub.add_parser("doctor", help="check config.toml, the archive, state and secrets "
+                          "(presence only)")
+       p.add_argument("--role", choices=ROLES,
+                      help="the service it checks: web, backup or all (default: $RECORDINGS_ROLE, "
+                      "else all)")
+       p.add_argument("--json", action="store_true")
    ```
 3. **Replace** `report = config.doctor(os.environ)` with:
    ```python
-   try:
-       report = doctor(os.environ, role=args.role)
-   except Exception as exc:  # a config shape no check expects: one line, never a traceback
-       # Its output is pasted into issues and chats, so the error's type and the check it
-       # stopped in, never its text (as ops.failure_detail does).
-       where = next(
-           (
-               frame.name
-               for frame in reversed(traceback.extract_tb(exc.__traceback__))
-               if frame.filename.endswith("doctor.py")
-           ),
-           "doctor",
-       )
-       return _fail(
-           f"doctor stopped in {where} on {type(exc).__name__}: a setting in "
-           "config.toml may have the wrong type (compare it with "
-           "config.example.toml)",
-           args.json,
-           70,
-       )
+       try:
+           report = doctor(os.environ, role=args.role)
+       except Exception as exc:  # a config shape no check expects: one line, never a traceback
+           # Its output is pasted into issues and chats, so the error's type and the check it
+           # stopped in, never its text (as ops.failure_detail does).
+           where = next((frame.name for frame in reversed(traceback.extract_tb(exc.__traceback__))
+                         if frame.filename.endswith("doctor.py")), "doctor")
+           return _fail(f"doctor stopped in {where} on {type(exc).__name__}: a setting in "
+                        "config.toml may have the wrong type (compare it with "
+                        "config.example.toml)", args.json, 70)
    ```
 4. In `cmd_ops`, **replace**
    ```python
@@ -27527,9 +23751,8 @@ carries the list's 3-space indent: strip those 3 spaces; the parser lines end at
    ```
    with
    ```python
-   logging.basicConfig(
-       level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%S%z"
-   )  # the container clock is UTC: say so
+           logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s",
+                               datefmt="%Y-%m-%dT%H:%M:%S%z")  # the container clock is UTC: say so
    ```
 
 In `scripts/compose_smoke.py`, so the smoke test proves doctor's backup role in the real, hardened
@@ -27551,13 +23774,8 @@ entry.
    `BACKUP_COMMANDS = (("backup", "init"), ("backup", "run"), ("backup", "restore-test"), ("mirror",))`
    with:
    ```python
-   BACKUP_COMMANDS = (
-       ("backup", "init"),
-       ("backup", "run"),
-       ("backup", "restore-test"),
-       ("mirror",),
-       ("doctor", "--role", "backup"),
-   )
+   BACKUP_COMMANDS = (("backup", "init"), ("backup", "run"), ("backup", "restore-test"), ("mirror",),
+                      ("doctor", "--role", "backup"))
    ```
 
 In `docs/runbooks/first-run.md`, step 2.4's "Expected:" list, **delete** the sentence "`doctor --role`
@@ -27676,23 +23894,15 @@ def restic_or_skip() -> str:
 
 def setup(tmp_path, monkeypatch, ar, plaud_env, restic="restic"):
     ar.plaud(A, envelopes=[plaud_env(A), plaud_env(A, name="Week 4, edited")])
-    ar.plaud(
-        B,
-        envelopes=[plaud_env(B, name="会議メモ / Q&A")],
-        same_audio_as=f"plaud/audio/2026/08/{A}.wav",
-        dup_of=f"plaud/{A}",
-    )
+    ar.plaud(B, envelopes=[plaud_env(B, name="会議メモ / Q&A")],
+             same_audio_as=f"plaud/audio/2026/08/{A}.wav", dup_of=f"plaud/{A}")
     ar.plaud(C, envelopes=[plaud_env(C)], audio=False)
     ar.plaud(D, envelopes=[plaud_env(D)], recorded_at="2026-08-03T11:00:00-07:00")
     ar.recorder()
     ar.pocket(UUID)
     # A main-tier row that audio-router's own catalog tags private (the council's Task 8 blocker).
-    ar.plaud(
-        P,
-        envelopes=[plaud_env(P, name="A PRIVATE TITLE")],
-        recorded_at="2026-08-04T15:00:00-07:00",
-        tags=("private",),
-    )
+    ar.plaud(P, envelopes=[plaud_env(P, name="A PRIVATE TITLE")],
+             recorded_at="2026-08-04T15:00:00-07:00", tags=("private",))
     ar.private(name="A PRIVATE EXPORT")  # the private tier: matched by SHA-256, tagged therapy
     ar.orphan(O)  # audio, but no snapshot and no time: deferred to 2b
     ar.ledger_only = ["f" * 32]
@@ -27709,20 +23919,12 @@ def setup(tmp_path, monkeypatch, ar, plaud_env, restic="restic"):
         f'[plaud]\nconsent_list = "{tmp_path / "consent.md"}"\n'
         f'[backup]\nrepository = "{tmp_path / "repo"}"\nrestic = "{restic}"\n'
         f'extra_paths = ["{tmp_path / "deploy.env"}"]\nrestore_scratch = "{tmp_path / "scratch"}"\n'
-        f'cache_dir = "{tmp_path / "cache"}"\n',
-        encoding="utf-8",
-    )
+        f'cache_dir = "{tmp_path / "cache"}"\n', encoding="utf-8")
     monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
     monkeypatch.setenv("RESTIC_PASSWORD_FILE", str(tmp_path / "pw"))
     monkeypatch.setenv("HOME", str(tmp_path))
-    for name in (
-        "RECORDINGS_ARCHIVE",
-        "RECORDINGS_STATE",
-        "RECORDINGS_INDEX",
-        "RECORDINGS_ROLE",
-        "RESTIC_PASSWORD",
-        "RESTIC_REPOSITORY",
-    ):
+    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE",
+                 "RESTIC_PASSWORD", "RESTIC_REPOSITORY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -27755,9 +23957,8 @@ def test_init_import_and_validate(tmp_path, monkeypatch, capsys, caplog, ar_arch
     assert len(recordings) == 5 and sum(is_private(r) for r in recordings) == 2
     # Which two: the main-tier row that audio-router tagged private (by its Plaud ID), and the
     # private tier's (by the hash of its audio). Not a count that any two recordings could meet.
-    (by_plaud,) = [
-        r for r in recordings if any(s.kind == "plaud" and s.ref.endswith(P) for s in r.sources)
-    ]
+    (by_plaud,) = [r for r in recordings if any(s.kind == "plaud" and s.ref.endswith(P)
+                                                 for s in r.sources)]
     tier = next(row["file_id"] for row in ar_archive.rows if row["source"] == "private")
     (by_hash,) = [r for r in recordings if r.media.sha256 == tier]
     assert by_plaud is not by_hash
@@ -27765,10 +23966,7 @@ def test_init_import_and_validate(tmp_path, monkeypatch, capsys, caplog, ar_arch
     # The consent-listed recording never came in: its ID is in no recording.json.
     written = list((tmp_path / "archive" / "recordings").rglob("recording.json"))
     assert len(written) == 5 and [f for f in written if D in f.read_text(encoding="utf-8")] == []
-    assert run(capsys, caplog, "validate", str(tmp_path / "archive"), "--deep") == (
-        0,
-        {"problems": []},
-    )
+    assert run(capsys, caplog, "validate", str(tmp_path / "archive"), "--deep") == (0, {"problems": []})
     code, again = run(capsys, caplog, "import-audio-router", str(ar_archive.root))
     assert code == 0 and again["imported"]["created"] == 0
     assert again["imported"]["sources_added"] == 0
@@ -27776,9 +23974,7 @@ def test_init_import_and_validate(tmp_path, monkeypatch, capsys, caplog, ar_arch
     assert code == 0 and reindexed["recordings"] == 5 and reindexed["plaud"]["written"] == 0
 
 
-def test_back_up_and_prove_the_restore(
-    tmp_path, monkeypatch, capsys, caplog, ar_archive, plaud_env
-):
+def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, caplog, ar_archive, plaud_env):
     exe = restic_or_skip()
     setup(tmp_path, monkeypatch, ar_archive, plaud_env, restic=exe)
     assert run(capsys, caplog, "init")[0] == 0
@@ -27786,23 +23982,15 @@ def test_back_up_and_prove_the_restore(
     assert run(capsys, caplog, "backup", "run", "--tag", "pre-import")[1]["ok"] is True
     assert run(capsys, caplog, "import-audio-router", str(ar_archive.root))[0] == 0
     assert run(capsys, caplog, "backup", "run", "--tag", "post-import")[1]["ok"] is True
-    code, restored = run(
-        capsys, caplog, "backup", "restore-test"
-    )  # after the import, as the runbook does
+    code, restored = run(capsys, caplog, "backup", "restore-test")  # after the import, as the runbook does
     assert code == 0 and restored["detail"] == "restored and validated 5 recordings"
     state = State.open(tmp_path / "state")
     assert state.last_run("restore-test", ok=True) is not None
     assert not any((tmp_path / "scratch").iterdir())
     # Status (spec §12.5) reads what the runs just recorded, as the web service does: read-only.
-    summary = status_summary(
-        State.read_only(tmp_path / "state"),
-        archive_root=tmp_path / "archive",
-        now=datetime.now(timezone.utc),
-        timezone_name="UTC",
-        warn=0.0,
-        stop=0.0,
-        jobs=("disk", "backup", "restore-test"),
-    )
+    summary = status_summary(State.read_only(tmp_path / "state"), archive_root=tmp_path / "archive",
+                             now=datetime.now(timezone.utc), timezone_name="UTC", warn=0.0, stop=0.0,
+                             jobs=("disk", "backup", "restore-test"))
     jobs = {j["job"]: j for j in summary["jobs"]}
     assert jobs["backup"]["last_ok"] and jobs["backup"]["last_ok_detail"].startswith("snapshot ")
     assert jobs["restore-test"]["last_ok_detail"] == "restored and validated 5 recordings"
@@ -27835,11 +24023,8 @@ from recordings_ui.status import status_settings
 REPO = Path(__file__).resolve().parents[3]
 TEMPLATE = REPO / "config.example.toml"
 LATER_SECTIONS = {"spark": "4", "models": "4", "prompts": "4", "watched_folder": "5"}
-LATER = {
-    ("plaud", "schedule_minutes"): "2b",
-    ("plaud", "auto_import"): "2b",
-    ("plaud", "recheck_days"): "2b",
-}
+LATER = {("plaud", "schedule_minutes"): "2b", ("plaud", "auto_import"): "2b",
+         ("plaud", "recheck_days"): "2b"}
 LATER_SECRETS = {"plaud_token": "2b", "spark_api_key": "4", "claude_oauth_token": "4"}
 SECRET_VALUES = {"ntfy_topic": "topic-7", "deadman_url": "https://hc-7.example/ping/7"}
 
@@ -27847,98 +24032,53 @@ SECRET_VALUES = {"ntfy_topic": "topic-7", "deadman_url": "https://hc-7.example/p
 def table(tmp: Path) -> dict:
     """(section, key) -> (the value written, how to read it back, what the reader must return)."""
     return {
-        ("archive", "path"): (
-            str(tmp / "archive-7"),
-            lambda r: r.cfg.archive_path,
-            tmp / "archive-7",
-        ),
+        ("archive", "path"): (str(tmp / "archive-7"), lambda r: r.cfg.archive_path,
+                              tmp / "archive-7"),
         ("archive", "writer_id"): ("writer-7", lambda r: r.cfg.writer_id, "writer-7"),
-        ("archive", "default_timezone"): (
-            "Asia/Kathmandu",
-            lambda r: r.status.timezone_name,
-            "Asia/Kathmandu",
-        ),
-        ("server", "base_url"): (
-            "https://rec-7.example:8443",
-            lambda r: r.cfg.base_url,
-            "https://rec-7.example:8443",
-        ),
-        ("server", "allowed_hosts"): (
-            ["rec-7.example"],
-            lambda r: r.cfg.allowed_hosts,
-            ("rec-7.example",),
-        ),
+        ("archive", "default_timezone"): ("Asia/Kathmandu", lambda r: r.status.timezone_name,
+                                          "Asia/Kathmandu"),
+        ("server", "base_url"): ("https://rec-7.example:8443", lambda r: r.cfg.base_url,
+                                 "https://rec-7.example:8443"),
+        ("server", "allowed_hosts"): (["rec-7.example"], lambda r: r.cfg.allowed_hosts,
+                                      ("rec-7.example",)),
         ("state", "path"): (str(tmp / "state-7"), lambda r: r.status.state_path, tmp / "state-7"),
-        ("index", "path"): (
-            str(tmp / "index-7.db"),
-            lambda r: r.cfg.index_path,
-            tmp / "index-7.db",
-        ),
+        ("index", "path"): (str(tmp / "index-7.db"), lambda r: r.cfg.index_path,
+                            tmp / "index-7.db"),
         ("disk", "warn_free_percent"): (37.5, lambda r: r.disk["warn"], 37.5),
         ("disk", "stop_free_percent"): (3.25, lambda r: r.status.stop, 3.25),
         ("nas", "ssh"): ("mirror-7@nas-7", lambda r: r.backup.nas.ssh, "mirror-7@nas-7"),
         ("nas", "port"): (2207, lambda r: r.mirror.nas.port, 2207),
-        ("backup", "repository"): (
-            "rest:https://nas-7:8007/rec-7/",
-            lambda r: r.backup.repository,
-            "rest:https://nas-7:8007/rec-7/",
-        ),
-        ("backup", "rest_username"): (
-            "rest-user-7",
-            lambda r: r.backup.rest_username,
-            "rest-user-7",
-        ),
-        ("backup", "cacert"): (
-            str(tmp / "rest-server-7.crt"),
-            lambda r: r.backup.cacert,
-            tmp / "rest-server-7.crt",
-        ),
+        ("backup", "repository"): ("rest:https://nas-7:8007/rec-7/",
+                                   lambda r: r.backup.repository, "rest:https://nas-7:8007/rec-7/"),
+        ("backup", "rest_username"): ("rest-user-7", lambda r: r.backup.rest_username,
+                                      "rest-user-7"),
+        ("backup", "cacert"): (str(tmp / "rest-server-7.crt"), lambda r: r.backup.cacert,
+                               tmp / "rest-server-7.crt"),
         ("backup", "restic"): ("/opt/restic-7", lambda r: r.backup.restic, "/opt/restic-7"),
-        ("backup", "extra_paths"): (
-            [str(tmp / "deploy-7.env")],
-            lambda r: tmp / "deploy-7.env" in r.backup.paths,
-            True,
-        ),
+        ("backup", "extra_paths"): ([str(tmp / "deploy-7.env")],
+                                    lambda r: tmp / "deploy-7.env" in r.backup.paths, True),
         ("backup", "keep_hourly"): (23, lambda r: r.backup.keep.hourly, 23),
         ("backup", "keep_daily"): (13, lambda r: r.backup.keep.daily, 13),
         ("backup", "keep_weekly"): (7, lambda r: r.backup.keep.weekly, 7),
         ("backup", "keep_monthly"): (11, lambda r: r.backup.keep.monthly, 11),
         ("backup", "prune"): (False, lambda r: r.backup.prune, False),
         ("backup", "nas_repo_path"): ("/rec-7", lambda r: r.backup.nas_repo_path, "/rec-7"),
-        ("backup", "min_nas_free_gb"): (17, lambda r: r.backup.min_nas_free_bytes, 17 * 1024**3),
-        ("backup", "restore_scratch"): (
-            str(tmp / "restore-7"),
-            lambda r: r.backup.restore_scratch,
-            tmp / "restore-7",
-        ),
-        ("backup", "cache_dir"): (
-            str(tmp / "cache-7"),
-            lambda r: r.backup.cache_dir,
-            tmp / "cache-7",
-        ),
-        ("mirror", "target"): (
-            "mirror-7@nas-7:/mirror-7/",
-            lambda r: r.mirror.target,
-            "mirror-7@nas-7:/mirror-7/",
-        ),
+        ("backup", "min_nas_free_gb"): (17, lambda r: r.backup.min_nas_free_bytes, 17 * 1024 ** 3),
+        ("backup", "restore_scratch"): (str(tmp / "restore-7"), lambda r: r.backup.restore_scratch,
+                                        tmp / "restore-7"),
+        ("backup", "cache_dir"): (str(tmp / "cache-7"), lambda r: r.backup.cache_dir,
+                                  tmp / "cache-7"),
+        ("mirror", "target"): ("mirror-7@nas-7:/mirror-7/", lambda r: r.mirror.target,
+                               "mirror-7@nas-7:/mirror-7/"),
         ("mirror", "rsync"): ("/opt/rsync-7", lambda r: r.mirror.rsync, "/opt/rsync-7"),
         ("mirror", "max_delete"): (7, lambda r: r.mirror.max_delete, 7),
         ("mirror", "no_perms"): (True, lambda r: r.mirror.no_perms, True),
-        ("alerts", "ntfy_server"): (
-            "https://ntfy-7.example",
-            lambda r: r.alerts.ntfy_server,
-            "https://ntfy-7.example",
-        ),
-        ("plaud", "auto_private_patterns"): (
-            ["^\\s*secret-7"],
-            lambda r: r.patterns,
-            ("^\\s*secret-7",),
-        ),
-        ("plaud", "consent_list"): (
-            str(tmp / "consent-7.md"),
-            lambda r: r.consent,
-            tmp / "consent-7.md",
-        ),
+        ("alerts", "ntfy_server"): ("https://ntfy-7.example", lambda r: r.alerts.ntfy_server,
+                                    "https://ntfy-7.example"),
+        ("plaud", "auto_private_patterns"): (["^\\s*secret-7"], lambda r: r.patterns,
+                                             ("^\\s*secret-7",)),
+        ("plaud", "consent_list"): (str(tmp / "consent-7.md"), lambda r: r.consent,
+                                    tmp / "consent-7.md"),
     }
 
 
@@ -27949,10 +24089,8 @@ def write_config(tmp: Path, rows: dict) -> Path:
     for (section, key), (value, _read, _want) in rows.items():
         sections.setdefault(section, []).append(f"{key} = {json.dumps(value)}")
     path = tmp / "config.toml"
-    path.write_text(
-        "".join(f"[{name}]\n" + "\n".join(lines) + "\n" for name, lines in sections.items()),
-        encoding="utf-8",
-    )
+    path.write_text("".join(f"[{name}]\n" + "\n".join(lines) + "\n"
+                            for name, lines in sections.items()), encoding="utf-8")
     return path
 
 
@@ -27960,39 +24098,25 @@ def read_all(config: Path, environ: dict[str, str]) -> SimpleNamespace:
     env = {"RECORDINGS_CONFIG": str(config), **environ}
     cfg = load_config(env)
     return SimpleNamespace(
-        env=env,
-        cfg=cfg,
-        status=status_settings(cfg),
-        disk=disk_thresholds(cfg),
-        patterns=patterns_from_config(cfg.data),
-        consent=consent_list_path(cfg.data),
+        env=env, cfg=cfg, status=status_settings(cfg), disk=disk_thresholds(cfg),
+        patterns=patterns_from_config(cfg.data), consent=consent_list_path(cfg.data),
         backup=backup.from_config(cfg, env),
-        mirror=mirror.from_config(cfg, env),
-        alerts=alerts.from_config(cfg, env),
-    )
+        mirror=mirror.from_config(cfg, env), alerts=alerts.from_config(cfg, env))
 
 
 def test_every_template_setting_reaches_its_reader(tmp_path):
     rows = table(tmp_path)
     template = tomllib.loads(TEMPLATE.read_text(encoding="utf-8"))
-    keys = {
-        (section, key)
-        for section, body in template.items()
-        if section not in LATER_SECTIONS
-        for key in body
-    }
+    keys = {(section, key) for section, body in template.items()
+            if section not in LATER_SECTIONS for key in body}
     missing = sorted(keys - rows.keys() - LATER.keys())
     assert missing == [], "give each a row in table(), with its reader, or list it in LATER"
     known_hosts = tmp_path / "known_hosts"  # [nas] ssh and a remote mirror need the pinned host key
     known_hosts.write_text("nas-7 ssh-ed25519 AAAAexample\n", encoding="utf-8")
-    r = read_all(
-        write_config(tmp_path, rows), {"RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(known_hosts)}
-    )
-    wrong = {
-        f"[{section}] {key}": read(r)
-        for (section, key), (_value, read, want) in rows.items()
-        if read(r) != want
-    }
+    r = read_all(write_config(tmp_path, rows),
+                 {"RECORDINGS_NAS_KNOWN_HOSTS_FILE": str(known_hosts)})
+    wrong = {f"[{section}] {key}": read(r) for (section, key), (_value, read, want) in rows.items()
+             if read(r) != want}
     assert wrong == {}
 
 
@@ -28020,8 +24144,7 @@ def test_every_secret_reaches_its_reader(tmp_path):
         "deadman_url": r.alerts.deadman_url == values["deadman_url"],
     }
     assert set(SECRETS) == reaches.keys() | LATER_SECRETS.keys(), (
-        "give each secret a reader check here, or list it in LATER_SECRETS with its stage"
-    )
+        "give each secret a reader check here, or list it in LATER_SECRETS with its stage")
     assert [name for name, ok in reaches.items() if not ok] == []
 ```
 
@@ -28037,9 +24160,8 @@ def test_every_recordings_command_the_runbook_names_parses():
 
     # The fenced blocks, and the commands the prose names in `inline code` (`mirror --debug`).
     prose = FENCE.sub("", _text())
-    lines = "\n".join(_code_lines()).replace("\\\n", " ").splitlines() + re.findall(
-        r"`([^`\n]+)`", prose
-    )
+    lines = ("\n".join(_code_lines()).replace("\\\n", " ").splitlines()
+             + re.findall(r"`([^`\n]+)`", prose))
     commands = []
     for line in lines:
         if not re.search(r"\brecordings [a-z]", line):
@@ -28049,12 +24171,11 @@ def test_every_recordings_command_the_runbook_names_parses():
         for i, token in enumerate(tokens):
             # The command itself: first on the line, or after a service name, `run` or `exec`.
             # Not `--tag recordings` or a path.
-            if token != "recordings" or (
-                i and tokens[i - 1] not in ("web", "backup", "run", "exec")
-            ):
+            if token != "recordings" or (i and tokens[i - 1] not in ("web", "backup", "run",
+                                                                       "exec")):
                 continue
             command = []
-            for t in tokens[i + 1 :]:
+            for t in tokens[i + 1:]:
                 if t in ("|", "||", "&&", ";", "&") or t.startswith((">", "2>")):
                     break
                 command.append(t)
@@ -28068,20 +24189,11 @@ def test_every_recordings_command_the_runbook_names_parses():
             unparsed.append("recordings " + shlex.join(command))
     assert unparsed == []
     named = {c[0] for c in commands}
-    assert {
-        "init",
-        "doctor",
-        "backup",
-        "mirror",
-        "import-audio-router",
-        "validate",
-        "reindex",
-        "alert-test",
-    } <= named, sorted(named)
+    assert {"init", "doctor", "backup", "mirror", "import-audio-router", "validate", "reindex",
+            "alert-test"} <= named, sorted(named)
     assert any(c[0] == "init" and "--adopt" in c for c in commands)
-    assert {"web", "backup"} <= {
-        c[c.index("--role") + 1] for c in commands if c[0] == "doctor" and "--role" in c[:-1]
-    }
+    assert {"web", "backup"} <= {c[c.index("--role") + 1] for c in commands
+                                 if c[0] == "doctor" and "--role" in c[:-1]}
     assert any(c[:2] == ["backup", "restore-test"] for c in commands)
     # Two commands the runbook names only in prose, where the parse used to skip them.
     assert ["mirror", "--max-delete", "1"] in commands and ["mirror", "--debug"] in commands
@@ -28230,9 +24342,8 @@ without a failing test. In `plan`'s signature **remove** ` = "America/Vancouver"
 
 **Add** to `packages/core/tests/test_ops.py`:
 ```python
-def test_a_full_state_disk_warns_about_the_heartbeat_once_an_hour(
-    tmp_path, writer, ntfy, monkeypatch, caplog
-):
+def test_a_full_state_disk_warns_about_the_heartbeat_once_an_hour(tmp_path, writer, ntfy,
+                                                                 monkeypatch, caplog):
     # why: a full state disk fails the heartbeat and the trim at every tick; the log said so every
     # minute, which buries the one line that matters (Task 13's council).
     import logging
@@ -28253,9 +24364,8 @@ def test_a_full_state_disk_warns_about_the_heartbeat_once_an_hour(
         assert len([r for r in warned if r.getMessage() == text]) == 2, text  # minute 0 and 60
 
 
-def test_the_hourly_warnings_start_again_once_the_state_disk_recovers(
-    tmp_path, writer, ntfy, monkeypatch, caplog
-):
+def test_the_hourly_warnings_start_again_once_the_state_disk_recovers(tmp_path, writer, ntfy,
+                                                                    monkeypatch, caplog):
     # why: a second full-disk episode within the hour of the first must still say so once.
     import logging
 
@@ -28266,7 +24376,6 @@ def test_the_hourly_warnings_start_again_once_the_state_disk_recovers(
             if broken["on"]:
                 raise sqlite3.OperationalError("database or disk is full")
             return real(*args, **kwargs)
-
         return call
 
     clock = Clock()
@@ -28293,9 +24402,8 @@ def test_the_hourly_warnings_start_again_once_the_state_disk_recovers(
     assert [w for w in warnings() if w in texts] == [*texts, texts[0]]
 
 
-def test_a_full_state_disk_logs_each_jobs_unrecorded_run_once_an_hour(
-    tmp_path, writer, ntfy, monkeypatch, caplog
-):
+def test_a_full_state_disk_logs_each_jobs_unrecorded_run_once_an_hour(tmp_path, writer, ntfy,
+                                                                    monkeypatch, caplog):
     # why: _conclude's "could not record the run" repeated at every attempt (every 10 minutes for
     # the disk job); the runbook says these lines come once an hour.
     import logging
@@ -28311,11 +24419,8 @@ def test_a_full_state_disk_logs_each_jobs_unrecorded_run_once_an_hour(
         for _ in range(90):
             run_due(ctx)
             clock.now += timedelta(minutes=1)
-    unrecorded = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and "could not record the run" in r.getMessage()
-    ]
+    unrecorded = [r for r in caplog.records
+                  if r.levelno == logging.WARNING and "could not record the run" in r.getMessage()]
     attempts = [r for r in caplog.records if "could not record the run" in r.getMessage()]
     assert len(attempts) > len(unrecorded) >= 1  # the job was attempted more than once
     per_job = {}
@@ -28335,13 +24440,8 @@ def test_the_cli_refuses_abbreviated_flags():
 
     parser = build_parser()
     assert parser.parse_args(["doctor", "--role", "web"]).role == "web"
-    for argv in (
-        ["doctor", "--rol", "web"],
-        ["backup", "run", "--ta", "x"],
-        ["validate", "x", "--dee"],
-        ["init", "--ado"],
-        ["mirror", "--max-del", "3"],
-    ):
+    for argv in (["doctor", "--rol", "web"], ["backup", "run", "--ta", "x"],
+                 ["validate", "x", "--dee"], ["init", "--ado"], ["mirror", "--max-del", "3"]):
         with pytest.raises(SystemExit):
             parser.parse_args(argv)
 ```
