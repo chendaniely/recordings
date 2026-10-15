@@ -20,7 +20,7 @@ recordings-ui = { workspace = true }
 [dependency-groups]
 dev = [
     "pytest==9.1.1",
-    "pytest-playwright==0.9.0",
+    "pytest-playwright==0.10.0",
     "httpx2==2.13.1",
     "jsonschema==4.26.0",
     "pyyaml==6.0.3",
