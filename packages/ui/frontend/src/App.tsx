@@ -7,12 +7,17 @@ import { StatusPage } from "./components/StatusPage";
 import { TopBar } from "./components/TopBar";
 import { hashFor, pageFromHash } from "./lib/nav";
 import { filterRows } from "./lib/transcript";
-import { useShinyInitialized, useShinyInput, useShinyOutputValue } from "./sr";
+import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
 import type { Filter, LibraryView, Page } from "./types";
 
 export default function App() {
   const initialized = useShinyInitialized();
   const library = useShinyOutputValue<LibraryView>("library");
+  // Every page's output lives as long as the app. shinyreact 0.1.0 removes an unmounted output's
+  // element before Shiny unbinds it, so Shiny never does, and each later value for that output
+  // logs "Output <id> not found". Held here, no output is ever unmounted.
+  useShinyOutputStatus("recording");
+  useShinyOutputStatus("status");
   const [selectedId, setSelectedId] = useShinyInput<string | null>("selected_id", null);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [page, setPage] = useState<Page>(() => pageFromHash(window.location.hash));
