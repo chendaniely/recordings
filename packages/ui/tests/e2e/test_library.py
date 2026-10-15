@@ -146,6 +146,40 @@ def test_the_status_page_shows_backups_and_disk(page: Page, server_url):
     expect(page.get_by_test_id("status-page")).to_have_count(0)
 
 
+# Outputs whose Shiny binding points at an element that is no longer in the page.
+_DETACHED_BINDINGS = """() => Object.entries(window.Shiny.shinyapp.$bindings)
+    .filter(([, binding]) => binding.el && !binding.el.isConnected).map(([id]) => id)"""
+# shinyreact cleans up an unmounted output on the next animation frame; wait past it.
+_TWO_FRAMES = "() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
+
+def test_a_page_left_behind_keeps_no_binding_and_logs_nothing(page: Page, server_url):
+    # why: shinyreact 0.1.0 removes an unmounted output's element before Shiny unbinds it, and
+    # Shiny only unbinds what it finds in the page, so the binding outlives its element and every
+    # later value for that output logs "Output <id> not found". The Pages test saw it on
+    # 2026-10-15, when the recording's first value landed just after the Status click.
+    errors: list[str] = []
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    open_library(page, server_url)
+    page.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    expect(page.get_by_test_id("recording-when")).to_be_visible()
+    page.get_by_role("button", name="Status").click()
+    expect(page.get_by_test_id("status-page")).to_be_visible()
+    page.evaluate(_TWO_FRAMES)
+    assert page.evaluate(_DETACHED_BINDINGS) == []
+    # A value for the library's pane while it is away: the server clears the selection.
+    page.evaluate("""() => new Promise((done) => {
+        window.jQuery(document).one("shiny:idle", done);
+        setTimeout(done, 5000);
+        window.Shiny.setInputValue("selected_id:shinyreact.default", null);
+    })""")
+    page.get_by_role("button", name="Library").click()
+    expect(page.get_by_test_id("recording-row")).to_have_count(4)
+    page.evaluate(_TWO_FRAMES)
+    assert page.evaluate(_DETACHED_BINDINGS) == []
+    assert errors == []
+
+
 def test_the_status_page_does_not_scroll_sideways_on_a_phone(page: Page, server_url):
     # why: a card's minimum width plus its padding is wider than a 320 px phone.
     page.set_viewport_size({"width": 320, "height": 640})
