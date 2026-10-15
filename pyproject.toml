@@ -49,6 +49,9 @@ line-length = 100
 # syntax (like 3.14's unparenthesised `except A, B:`), and flags any that is added. This
 # overrides requires-python, for ruff only. CLAUDE.md "Upgrading Shinylive" keeps it in step.
 target-version = "py312"
+# Markdown is prose: plans, specs and the archive's own docs. Since 0.17, ruff formats the Python
+# blocks inside it (its docs: formatter.md, "Markdown code formatting"); this keeps it out.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 # An explicit rule set (ruff's docs: prefer lint.select), so a ruff upgrade can't change what is
