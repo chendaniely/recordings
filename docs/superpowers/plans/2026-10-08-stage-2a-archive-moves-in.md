@@ -1417,6 +1417,25 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
    - `MirrorError` alone: the rsync dry run printed a line the mirror can't read, perhaps from a
      new rsync on the NAS or in the image. Nothing was deleted.
 
+## When the data disk fills
+
+Status warns below 20% free and the import stops below 5% (spec §12.5); the restore test refuses
+to take the disk below 20%. When the disk is full, `state.db` can't be written either, so the
+backup service keeps running its jobs but can't record them. It remembers its last attempts in
+memory, sends the alert once (and a reminder a day), and logs `could not write the heartbeat`,
+`could not trim the old runs` and, for each job, `<job>: could not record the run` at most once an
+hour. Those lines mean "the state disk is full", not a second fault, and each starts again if the
+disk recovers and fills again.
+
+1. **Free space first.** Delete the import copy (`import/`) if the restore test has passed, and the
+   `.lost-` and `restore-real` folders. Status shows the new figure within a minute.
+2. **Then restart nothing, if you can.** A restart forgets those in-memory attempts, so a job whose
+   last *recorded* run is old starts again in the first minutes: the repository check, the restore
+   test (which needs the room that was just short), and retention if `[backup] prune` is on. The
+   hourly backup waits for them (its turns are skipped, not failed), and Status names the running
+   job and since when. Restarting while the disk is still full sends the alert once more.
+3. If you must restart, do it after step 1, and expect that wait.
+
 ## Restoring for real
 
 When the archive, `state.db`, or the whole server is lost. Each snapshot holds the container

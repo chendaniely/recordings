@@ -845,9 +845,10 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
 Status warns below 20% free and the import stops below 5% (spec §12.5); the restore test refuses
 to take the disk below 20%. When the disk is full, `state.db` can't be written either, so the
 backup service keeps running its jobs but can't record them. It remembers its last attempts in
-memory, sends the alert once (and a reminder a day), and logs `could not write the heartbeat` and
-`could not trim the old runs` once an hour. Those two lines mean "the state disk is full", not a
-second fault.
+memory, sends the alert once (and a reminder a day), and logs `could not write the heartbeat`,
+`could not trim the old runs` and, for each job, `<job>: could not record the run` at most once an
+hour. Those lines mean "the state disk is full", not a second fault, and each starts again if the
+disk recovers and fills again.
 
 1. **Free space first.** Delete the import copy (`import/`) if the restore test has passed, and the
    `.lost-` and `restore-real` folders. Status shows the new figure within a minute.
