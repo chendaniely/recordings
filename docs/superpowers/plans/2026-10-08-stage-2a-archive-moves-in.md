@@ -20436,7 +20436,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Before writing any UI code, load the `/shinyreact-build-app` skill** (after `make skills`), and
 check shadcn's docs for anything the page reuses. Note what you checked in the commit.
-`reactive.invalidate_later` is core Shiny for Python; confirm it in the skill's references.
+`reactive.invalidate_later` is core Shiny for Python, and the skill's references do not mention it
+(nothing in `SKILL.md` or `references/`). Confirm it in Shiny's own docs
+(https://shiny.posit.co/py/api/core/reactive.invalidate_later.html), and say in the commit that the
+skill doesn't cover it: that gap is worth reporting upstream.
 
 The recording header's time with its UTC offset is a stage-1 carry-over (spec §12.1), pulled in
 here by the council's ruling of 2026-10-09: the real archive spans several time zones, so the
@@ -20453,7 +20456,7 @@ copy, or on Pages, Pyodide's in-memory file system, so any figure would be made 
 - Create: `packages/ui/src/recordings_ui/status.py`, `packages/ui/frontend/src/lib/nav.ts`, `packages/ui/frontend/src/lib/nav.test.ts`, `packages/ui/frontend/src/lib/when.ts`, `packages/ui/frontend/src/lib/when.test.ts`, `packages/ui/frontend/src/components/StatusPage.tsx`, `packages/ui/frontend/src/components/StatusPage.test.ts`
 - Modify: `packages/core/src/recordings/disk.py` (`disk_view`), `ops.py` (`when_label`, `status_summary`, and `run_job`, which announces its job), `state.py` (`State.read_only`), `locks.py` (`announce`, `running`), `sources/audio_router.py` (the import announces itself)
 - Modify: `packages/ui/src/recordings_ui/runtime.py`, `views.py`, `shiny_app.py`, `app.py`
-- Modify: `packages/ui/frontend/src/App.tsx`, `components/TopBar.tsx`, `components/DetailsTab.tsx`, `components/RecordingPane.tsx` (the header's time), `types.ts`, `app.css`
+- Modify: `packages/ui/frontend/src/App.tsx`, `components/TopBar.tsx`, `components/DetailsTab.tsx`, `components/RecordingPane.tsx` (the header's time), `sr.ts` (`useShinyOutputError`), `types.ts`, `app.css`
 - Test: `packages/core/tests/test_ops.py` (the summary, the read-only state), `test_locks.py` and `test_import_run.py` (the running job), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
 
 **Interfaces:**
@@ -20819,8 +20822,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { StatusJob, StatusView } from "../types";
 
-const shown = vi.hoisted(() => ({ view: null as unknown }));
-vi.mock("../sr", () => ({ useShinyOutputValue: () => shown.view }));
+const shown = vi.hoisted(() => ({ view: null as unknown, error: null as unknown }));
+vi.mock("../sr", () => ({ useShinyOutputValue: () => shown.view, useShinyOutputError: () => shown.error }));
 
 import { StatusPage } from "./StatusPage";
 
@@ -20832,6 +20835,7 @@ const backup: StatusJob = {
 
 function render(view: StatusView): string {
   shown.view = view;
+  shown.error = null;
   return renderToStaticMarkup(createElement(StatusPage));
 }
 
@@ -20856,6 +20860,13 @@ describe("StatusPage", () => {
     const html = render({ configured: false, jobs: [], attention: [], flags: 0, disk: null });
     expect(html).toContain('data-testid="disk-unknown"');
     expect(html).not.toContain('role="meter"');
+  });
+  it("shows the server's error instead of loading for ever", () => {
+    shown.view = null;
+    shown.error = { message: "No time zone found", call: null, type: "error" };
+    const html = renderToStaticMarkup(createElement(StatusPage));
+    expect(html).toContain('data-testid="status-error"');
+    expect(html).toContain("No time zone found");
   });
 });
 ```
@@ -20916,7 +20927,8 @@ def disk_view(status: DiskStatus) -> dict:
             "free_percent": round(pct, 1) if pct is not None else None, "free_label": label}
 ```
 
-In `packages/core/src/recordings/state.py`:
+In `packages/core/src/recordings/state.py` (the three code blocks below are indented 3 spaces for the
+list: take those 3 off, or Python raises `IndentationError`):
 1. In `State.__init__`, **add** after the line `self.path = Path(path)`:
    ```python
            self._read_only = False  # read_only() sets it: every connection is then mode=ro
@@ -21004,8 +21016,12 @@ In `packages/core/src/recordings/ops.py`'s `run_job`, **import** `announce` besi
 `stack.enter_context(announce(ctx.state.locks_dir, job, ctx.clock()))`. `announce` never raises, so the `except` clauses stay as they are.
 
 In `packages/core/src/recordings/sources/audio_router.py`, `run` holds `OPS_LOCK` with
-`with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):`; **import** `announce` beside `OPS_LOCK` and make the body run inside
-`with announce(writer.state.locks_dir, "import", now):` (the `now` argument `run` already takes). (Its test is in Step 1: the disk callback, which the run calls inside its hold, reads `running`.)
+`with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):`; **import** `announce` beside `OPS_LOCK` and **replace** that line with
+```python
+    with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK), \
+            announce(writer.state.locks_dir, "import", now):
+```
+(the `now` argument `run` already takes; the body keeps its indentation). (Its test is in Step 1: the disk callback, which the run calls inside its hold, reads `running`.)
 
 In `packages/core/src/recordings/ops.py`, **add** `from pathlib import Path`,
 `from zoneinfo import ZoneInfo`, `from recordings.disk import disk_view` and `running` to the `recordings.locks` import, then:
@@ -21216,6 +21232,35 @@ and **replace** `runtime.configure(archive)` with:
 
 - [ ] **Step 4: Write the page**
 
+In `packages/ui/frontend/src/sr.ts`, **replace**
+```ts
+type Hooks = Pick<
+  typeof SR,
+  "useShinyInput" | "useShinyOutputValue" | "useShinyOutputStatus" | "useShinyInitialized"
+>;
+```
+with
+```ts
+type Hooks = Pick<
+  typeof SR,
+  | "useShinyInput" | "useShinyOutputValue" | "useShinyOutputStatus" | "useShinyOutputError"
+  | "useShinyInitialized"
+>;
+```
+and **replace**
+```ts
+export const { useShinyInput, useShinyOutputValue, useShinyOutputStatus, useShinyInitialized } =
+  shinyreact;
+```
+with
+```ts
+export const {
+  useShinyInput, useShinyOutputValue, useShinyOutputStatus, useShinyOutputError, useShinyInitialized,
+} = shinyreact;
+```
+(The skill: `useShinyOutputError(id)` shows the server's error. Without it, an exception in the
+`status` output leaves the page on "Loading…" for ever.)
+
 `packages/ui/frontend/src/lib/nav.ts`:
 ```ts
 import type { Page } from "../types";
@@ -21249,12 +21294,14 @@ export interface StatusView {
 
 `packages/ui/frontend/src/components/StatusPage.tsx`:
 ```tsx
-import { useShinyOutputValue } from "../sr";
+import { useShinyOutputError, useShinyOutputValue } from "../sr";
 import type { StatusView } from "../types";
 
 /** Status's backup and disk panels (spec §12.5), read-only. Alerts are the push view (§14). */
 export function StatusPage() {
   const status = useShinyOutputValue<StatusView>("status");
+  const error = useShinyOutputError("status");  // without it, a server error is "Loading…" for ever
+  if (error) return <main className="status"><div className="problems" role="alert" data-testid="status-error">Status can't be shown: {error.message}</div></main>;
   if (!status) return <main className="status"><p className="empty">Loading…</p></main>;
   const disk = status.disk;
   return (
@@ -21446,7 +21493,8 @@ tr.attn td { color: var(--destructive); }
 
 Run: `make test && make e2e && make pages && make pages-test`
 Expected: pytest, Vitest (with `nav.test.ts`, `when.test.ts` and `StatusPage.test.ts`) and the
-Playwright tests all pass, `test_the_status_page_shows_backups_and_disk` and
+Playwright tests all pass (checked in a clone at the commit after Task 14's council fixes: pytest 839, Vitest 23, e2e 9, Pages 5;
+pytest shows 838 and 1 skipped until `make build` has built `www/ui.js`), `test_the_status_page_shows_backups_and_disk` and
 `test_the_header_shows_the_local_time_with_its_offset` included. The Pages smoke test passes,
 `test_the_status_page_shows_no_made_up_disk` included: the static demo (Pyodide) now runs the
 Status output too, with no state folder, no `sqlite3` and no disk figure.
@@ -21461,8 +21509,8 @@ Backups need attention after 2 hours (spec §12.5), and the disk warns below 20%
 below 5%. Status reads state.db read-only (mode=ro), never loads sqlite3 without one, so the Pages
 demo is unaffected, and shows a damaged state.db as needing attention. The recording header shows
 the recording's own local time with its UTC offset (§12.1, a stage-1 carry-over). Checked: the
-shinyreact-build-app skill (reactive_output, useShinyOutputValue) and Shiny's
-reactive.invalidate_later.
+shinyreact-build-app skill (reactive_output, useShinyOutputValue, useShinyOutputError; it does not
+cover reactive.invalidate_later, which Shiny's docs do).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -21490,10 +21538,11 @@ else `all`. Two checks read config.toml alone, so every role reports them, as th
 
 **Files:**
 - Create: `packages/core/src/recordings/doctor.py`
-- Modify: `packages/core/src/recordings/config.py` (remove `doctor`), `cli.py` (`doctor --role`, using `recordings.doctor`)
+- Modify: `packages/core/src/recordings/config.py` (remove `doctor`), `cli.py` (`doctor --role`, using `recordings.doctor`; and the loop's log timestamps carry a zone)
 - Modify: `packages/core/tests/test_config.py` (imports `doctor` from `recordings.doctor`; the presence test initialises its archive)
 - Modify: `scripts/compose_smoke.py` (runs `doctor --role backup` in the hardened container)
-- Test: `packages/core/tests/test_doctor.py`
+- Modify: `docs/runbooks/first-run.md` (step 2.4 loses the interim sentence about `doctor --role`)
+- Test: `packages/core/tests/test_doctor.py`, `packages/core/tests/test_ops.py` (the log timestamps)
 
 **Interfaces:**
 - Consumes:
@@ -21564,7 +21613,8 @@ def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings"
         f'[nas]\nssh = "backup@nas"\n'
         f'[backup]\nrepository = "{repository}"\nrestore_scratch = "{tmp_path / "scratch"}"\n'
         f'nas_repo_path = "/volume1/backups/recordings"\n'
-        f'extra_paths = ["/backup-extra/deploy.env"]\n{backup_extra}'
+        f'extra_paths = ["/backup-extra/deploy.env"]\n'
+        f'cache_dir = "{tmp_path / "cache"}"\n{backup_extra}'
         f'[mirror]\ntarget = "backup@nas:/volume1/recordings-mirror/"\n'
         f'[alerts]\nntfy_server = "https://ntfy.sh"\n', encoding="utf-8")
     return {"RECORDINGS_CONFIG": str(cfg), "RESTIC_PASSWORD_FILE": str(secrets / "pw"),
@@ -21680,6 +21730,75 @@ def test_an_unset_optional_token_is_nothing_to_warn_about(tmp_path):
     report = doctor(server(tmp_path) | {"RECORDINGS_NTFY_TOKEN_FILE": ""})
     assert report["problems"] == [] and report["warnings"] == []
     assert report["secrets"]["ntfy_token"]["set"] is False
+
+
+def test_leftover_job_folders_and_an_unset_cache_dir_are_warnings(tmp_path):
+    # why: a killed repository check leaves restic-check-cache-* in restic's cache folder, and a
+    # killed restore test leaves restore-*, an unencrypted copy of the archive, in the scratch
+    # folder (Task 11's council). With no [backup] cache_dir, restic's cache falls to
+    # $HOME/.cache, which in the container is the memory-backed /tmp and is lost at every restart.
+    environ = server(tmp_path)
+    assert doctor(environ, role="backup")["warnings"] == []
+    (tmp_path / "cache" / "restic-check-cache-1234").mkdir(parents=True)
+    (tmp_path / "scratch" / "restore-20261009T080000Z").mkdir()
+    for role in ("backup", "all"):
+        warnings = doctor(environ, role=role)["warnings"]
+        assert any("restic-check-cache-" in w and "killed" in w for w in warnings), role
+        assert any("restore-" in w and "unencrypted" in w for w in warnings), role
+    web = doctor(web_only(environ), role="web")["warnings"]
+    assert not any("restic-check-cache-" in w or "restore-" in w for w in web)  # not its job
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        f'cache_dir = "{tmp_path / "cache"}"\n', ""), encoding="utf-8")
+    assert any("cache_dir" in w and "/tmp" in w for w in doctor(environ, role="backup")["warnings"])
+
+
+def test_ntfy_off_for_want_of_a_topic_is_a_warning(tmp_path):
+    # why: AlertConfig.enabled needs a server and a topic, and send() returns False without a
+    # word when either is missing, so only doctor says that no alert will ever arrive.
+    environ = {k: v for k, v in server(tmp_path).items() if k != "RECORDINGS_NTFY_TOPIC_FILE"}
+    report = doctor(environ)
+    assert report["problems"] == [] and report["alerts"]["topic_set"] is False
+    assert any("alerts are off" in w for w in report["warnings"])
+
+
+def test_a_short_topic_on_a_public_server_is_a_problem_unless_a_token_guards_it(tmp_path):
+    # why: the app refuses a topic under 20 characters on ntfy.sh without a token (the topic is
+    # then all that keeps the alerts private), so alerts silently stop; doctor must say why.
+    environ = server(tmp_path)
+    (tmp_path / "secrets" / "topic").write_text("short-topic\n", encoding="utf-8")
+    report = doctor(environ)
+    assert [p for p in report["problems"] if "20 or more random characters" in p]
+    assert "short-topic" not in json.dumps(report)
+    token = tmp_path / "secrets" / "token"
+    token.write_text("tk_abc123\n", encoding="utf-8")
+    token.chmod(0o600)
+    assert doctor(environ | {"RECORDINGS_NTFY_TOKEN_FILE": str(token)})["problems"] == []
+
+
+def test_the_empty_optional_token_mount_is_not_a_finding(tmp_path):
+    # why: Compose mounts ntfy_token from /dev/null unless deploy.env names a file (Task 14), so
+    # in the backup service the secret is a character device, empty, and nothing names it.
+    environ = server(tmp_path)
+    run_secrets = tmp_path / "run-secrets"
+    run_secrets.mkdir()
+    (run_secrets / "ntfy_token").symlink_to("/dev/null")
+    for role in ("backup", "all"):
+        report = doctor(environ, role=role)
+        assert report["problems"] == [] and report["warnings"] == [], role
+        assert report["secrets"]["ntfy_token"]["set"] is False
+
+
+def test_a_cache_dir_on_another_disk_than_the_state_is_a_warning(tmp_path, monkeypatch):
+    # why: restic's cache belongs on the data disk (Task 11's council): on the container's /tmp it
+    # is memory and lost at every restart, so every deploy downloads the repository's index again.
+    environ = server(tmp_path)
+    assert doctor(environ, role="backup")["warnings"] == []
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(doctor_module, "_device", lambda path: 1 if Path(path) == cache else 2)
+    warnings = doctor(environ, role="backup")["warnings"]
+    assert any("cache_dir" in w and "not on the disk" in w for w in warnings)
+    assert not any("cache_dir" in w for w in doctor(web_only(environ), role="web")["warnings"])
 
 
 def test_a_topic_with_no_server_is_a_warning(tmp_path):
@@ -21942,12 +22061,33 @@ and in `test_doctor_reports_presence_never_values`, **replace** the two lines
     init_archive(archive, tmp_path / "state", writer_id="test")  # a real, initialised archive
 ```
 
+In `packages/core/tests/test_ops.py`, **add** after `test_the_loop_runs_with_sigterm_forwarded`
+(the loop's log lines had no time zone, and `rc logs backup` is read in local time; ops council,
+Task 14):
+```python
+def test_the_loops_log_lines_carry_a_time_zone(tmp_path, writer, ntfy, monkeypatch):
+    # why: the container's clock is UTC, and a line stamped "2026-10-14 19:30:00" read as local
+    # time is 7 hours out for a reader in Vancouver. %z makes every stamp say which it is.
+    import logging
+    import re
+
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: seen.update(kwargs))
+    monkeypatch.setattr(ops, "loop", lambda ctx, **kwargs: None)
+    assert main(["ops", "--loop"]) == 0
+    record = logging.LogRecord("recordings.ops", logging.INFO, __file__, 1, "backup ok", None, None)
+    line = logging.Formatter(seen["format"], seen["datefmt"]).format(record)
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4} recordings\.ops backup ok", line)
+```
+
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `uv run pytest packages/core/tests/test_doctor.py packages/core/tests/test_config.py -v`
+Run: `uv run pytest packages/core/tests/test_doctor.py packages/core/tests/test_config.py packages/core/tests/test_ops.py -v`
 Expected: errors at collection: `ImportError: cannot import name 'doctor' from 'recordings'` in
 `test_doctor.py`, and `ModuleNotFoundError: No module named 'recordings.doctor'` in
-`test_config.py`.
+`test_config.py`. `test_the_loops_log_lines_carry_a_time_zone` fails with `KeyError: 'datefmt'`.
 
 - [ ] **Step 3: Write `doctor`**
 
@@ -22131,6 +22271,46 @@ def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[s
                         "must not write here")
 
 
+def _left_behind(cfg: Config, bc: backup.BackupConfig, warnings: list[str]) -> None:
+    """What a killed job leaves (Task 11's council), and the cache folder it depends on. A job
+    running now has these folders too, hence the wording."""
+    if bc.cache_dir is None:
+        warnings.append("[backup] cache_dir is not set, so restic's cache goes under $HOME/.cache: "
+                        "in the container that is the memory-backed /tmp, lost at every restart "
+                        "(config.example.toml: cache_dir = \"/state/cache/restic\")")
+    else:
+        if cfg.state_path is not None and _device(bc.cache_dir) != _device(cfg.state_path):
+            warnings.append(f"[backup] cache_dir {bc.cache_dir} is not on the disk [state] path is "
+                            "on, so restic's cache (about 0.03% of the repository) is lost at a "
+                            "restart or fills the wrong disk: put it under the state folder "
+                            "(config.example.toml: cache_dir = \"/state/cache/restic\")")
+        if _has(bc.cache_dir, "restic-check-cache-*"):
+            warnings.append(f"{bc.cache_dir} holds restic-check-cache-* folders, which a killed "
+                            "repository check leaves behind: delete them (a check running now "
+                            "has one)")
+    if bc.restore_scratch is not None and _has(bc.restore_scratch, "restore-*"):
+        warnings.append(f"{bc.restore_scratch} holds a restore-* folder, an unencrypted copy of the "
+                        "archive that a killed restore test left behind: the next restore test "
+                        "removes it, or delete it now (one running now has one)")
+
+
+def _device(path: Path) -> int | None:
+    """The disk a folder is on, or would be created on: its nearest existing ancestor's."""
+    for candidate in (path, *path.parents):
+        try:
+            return candidate.stat().st_dev
+        except OSError:
+            continue
+    return None
+
+
+def _has(folder: Path, pattern: str) -> bool:
+    try:
+        return any(folder.glob(pattern))
+    except OSError:
+        return False
+
+
 def _transport(repository: str) -> str:
     for prefix, name in (("sftp:", "sftp"), ("rest:", "rest"), ("/", "local")):
         if repository.startswith(prefix):
@@ -22143,6 +22323,8 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
     if not cfg.data.get("backup", {}).get("repository"):
         warnings.append("backups aren't configured: set [backup] repository")
         return
+    if not report["secrets"]["restic_password"]["set"]:  # before from_config, which may refuse first
+        problems.append("RESTIC_PASSWORD_FILE is not set, so backups can't run")
     try:
         bc = backup.from_config(cfg, environ)
     except ConfigError as exc:
@@ -22157,8 +22339,6 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
             "nas_free_bytes": None,
             "restic_installed": shutil.which(bc.restic) is not None}
     report["backup"] = info
-    if not info["password_set"]:
-        problems.append("RESTIC_PASSWORD_FILE is not set, so backups can't run")
     if info["transport"] == "sftp" and (bc.nas.key is None or bc.nas.known_hosts is None):
         problems.append("an SFTP repository needs RECORDINGS_NAS_SSH_KEY_FILE and "
                         "RECORDINGS_NAS_KNOWN_HOSTS_FILE")
@@ -22173,6 +22353,7 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
         problems.append(f"{bc.restic} is not installed")
     if not info["restore_scratch_exists"]:
         warnings.append("[backup] restore_scratch doesn't exist, so the restore test can't run")
+    _left_behind(cfg, bc, warnings)
     if not info["nas_free_check"]:
         warnings.append("the NAS's free space isn't checked: set [nas] ssh and [backup] "
                         "nas_repo_path")
@@ -22190,7 +22371,8 @@ def _mirror(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
     try:
         mc = mirror.from_config(cfg, environ)
     except ConfigError as exc:
-        problems.append(str(exc))
+        if str(exc) not in problems:  # the backup check says the same of a missing host key
+            problems.append(str(exc))
         return
     info = {"remote": mirror.is_remote(mc.target),
             "rsync_installed": shutil.which(mc.rsync) is not None}
@@ -22341,6 +22523,15 @@ In `packages/core/src/recordings/cli.py`:
        p.add_argument("--json", action="store_true")
    ```
 3. **Replace** `report = config.doctor(os.environ)` with `report = doctor(os.environ, role=args.role)`.
+4. In `cmd_ops`, **replace**
+   ```python
+           logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+   ```
+   with
+   ```python
+           logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s",
+                               datefmt="%Y-%m-%dT%H:%M:%S%z")  # the container clock is UTC: say so
+   ```
 
 In `scripts/compose_smoke.py`, so the smoke test proves doctor's backup role in the real, hardened
 container: that it sees the read-only archive mount as one, and that ssh's uid has its passwd
@@ -22365,6 +22556,11 @@ entry.
                       ("doctor", "--role", "backup"))
    ```
 
+In `docs/runbooks/first-run.md`, step 2.4's "Expected:" list, **delete** the sentence "`doctor --role`
+arrives with Task 16; until then run `rc exec web recordings doctor` and `rc exec backup recordings
+doctor`." that Task 14's round added, now that `--role` exists. Then re-sync Task 1's fence (the
+plan's copy of the runbook) and run `W/fence_check.py`'s equivalent: the fence must equal the file.
+
 Task 14 already writes the placeholder secrets with mode 600 and an https ping URL, so doctor
 finds nothing to warn about in them.
 
@@ -22376,14 +22572,15 @@ Expected: all pass, and the suite's passed count is not lower than Task 15's.
 Then run `make deploy-smoke`.
 Expected: it passes, `recordings doctor --role backup --json` among its backup commands, which
 exits 0. Its only warnings are about the smoke's own config, which has no `[nas]` or `[alerts]`:
-the NAS's free space isn't checked, and alerts are off. If doctor reports "hard links don't
+the NAS's free space isn't checked, and the topic file has no `[alerts] ntfy_server`, so no alert is
+sent. If doctor reports "hard links don't
 work", it didn't see the read-only mount: check `read_only_mount` against the container's
 `/archive`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/recordings packages/core/tests/test_doctor.py packages/core/tests/test_config.py scripts/compose_smoke.py
+git add packages/core/src/recordings packages/core/tests/test_doctor.py packages/core/tests/test_ops.py packages/core/tests/test_config.py scripts/compose_smoke.py docs/runbooks/first-run.md docs/superpowers/plans
 git commit -m "feat(core): doctor checks the state, sentinel, writer ID, backups, mirror and alerts
 
 Presence only: no secret value and no repository URL ever reaches its output. It reports the
@@ -22393,7 +22590,9 @@ secret; backup skips the hard-link probe on its read-only archive and checks tha
 a passwd entry. It warns when retention is off here, so it must run on the NAS, and when a secret
 file is open to group or others or ffprobe or ffmpeg is missing; it checks [backup] cacert, and
 reports the consent list, which only import runs mount in 2a, as information. The compose smoke
-test runs doctor --role backup in the hardened container.
+test runs doctor --role backup in the hardened container. It also warns about what a killed job
+leaves (restic-check-cache-* and restore-* folders), restic's cache off the state disk or unset, and
+the loop's log lines now carry their time zone.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -22407,6 +22606,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Create: `packages/core/tests/test_flow_2a.py`, `packages/ui/tests/test_template_settings.py`
 - Modify: `packages/core/tests/test_runbook.py` (every `recordings` command it names parses), `.github/workflows/ci.yml` (`validate --deep`), `CLAUDE.md`, `README.md`
+- Modify: `packages/core/src/recordings/config.py` and `packages/core/tests/test_config.py` (`normalise_host` refuses the forms no browser sends), `packages/core/src/recordings/ops.py` and `packages/core/tests/test_ops.py` (a full state disk warns once an hour)
 - Modify: `docs/runbooks/first-run.md`, only where the forward reviews found drift
 
 **Interfaces:**
@@ -22436,6 +22636,7 @@ restic repository, run the restore test after the import, and doctor."""
 import json
 import os
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -22443,6 +22644,7 @@ import pytest
 from recordings.archive import Archive
 from recordings.cli import main
 from recordings.models import is_private
+from recordings.ops import status_summary
 from recordings.state import State
 
 REPO = Path(__file__).resolve().parents[3]
@@ -22543,6 +22745,14 @@ def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, ar_archive
     state = State.open(tmp_path / "state")
     assert state.last_run("restore-test", ok=True) is not None
     assert not any((tmp_path / "scratch").iterdir())
+    # Status (spec §12.5) reads what the runs just recorded, as the web service does: read-only.
+    summary = status_summary(State.read_only(tmp_path / "state"), archive_root=tmp_path / "archive",
+                             now=datetime.now(timezone.utc), timezone_name="UTC", warn=0.0, stop=0.0,
+                             jobs=("disk", "backup", "restore-test"))
+    jobs = {j["job"]: j for j in summary["jobs"]}
+    assert jobs["backup"]["last_ok"] and jobs["backup"]["last_ok_detail"].startswith("snapshot ")
+    assert jobs["restore-test"]["last_ok_detail"] == "restored and validated 5 recordings"
+    assert summary["attention"] == [] and summary["running"] is None
     code, report = run(capsys, "doctor", "--role", "all")
     assert code == 0 and report["problems"] == []
 ```
@@ -22762,6 +22972,104 @@ In `.github/workflows/ci.yml`'s `python` job, **change**
 The pinned restic reached CI in Task 11, with `RECORDINGS_REQUIRE_RESTIC=1`, so
 `test_back_up_and_prove_the_restore` runs there and fails rather than skips.
 
+- [ ] **Step 3b: Two carried fixes (Tasks 10 and 13)**
+
+`normalise_host` accepted `127.1`, `0x7f.1`, `2130706433`, `01.02.03.04`, `1.2.3.4.5`,
+`::ffff:127.0.0.1` and `fe80::1%en0`. A browser sends none of them as written (it turns `127.1` into
+`127.0.0.1`), so an `allowed_hosts` entry like that never matches: it fails closed, with a bare 400
+and no hint. Refuse them at load, saying what to write.
+
+In `packages/core/src/recordings/config.py`'s `normalise_host`, **replace**
+```python
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    if "://" in host or "/" in host:
+```
+with
+```python
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        if getattr(address, "scope_id", None) or getattr(address, "ipv4_mapped", None):
+            raise ValueError(f"{value!r} is an address no browser sends in `Host`: write it as "
+                             "a browser shows it (no zone ID, and an IPv4 address as 4 numbers)")
+        return str(address)
+    if all(label.isdigit() or re.fullmatch(r"0x[0-9a-f]*", label) for label in host.split(".")):
+        raise ValueError(f"{value!r} is a number, not a host name, and no browser sends it as "
+                         "written (127.1 and 0x7f.1 become 127.0.0.1): write the address in full")
+    if "://" in host or "/" in host:
+```
+and in `packages/core/tests/test_config.py`, **replace**
+```python
+                                   "-my-homelab", "my-homelab-", "my..homelab"])
+```
+with
+```python
+                                   "-my-homelab", "my-homelab-", "my..homelab",
+                                   "127.1", "0x7f.1", "2130706433", "01.02.03.04", "1.2.3.4.5",
+                                   "::ffff:127.0.0.1", "fe80::1%en0"])
+```
+(`123abc.example`, `1.example` and every name and address in `test_host_names_are_normalised` stay
+valid.)
+
+On a full state disk the loop's heartbeat and the daily trim fail at every tick, and each logged a
+WARNING every minute (1,440 a day) that buried the one line that matters. In
+`packages/core/src/recordings/ops.py`:
+1. In `Context`, **add** after the `locked` field:
+   ```python
+       warned: dict[str, datetime] = field(default_factory=dict)  # when _warn_hourly last spoke
+   ```
+2. **Add** before `def _trim_runs`:
+   ```python
+   WARN_EVERY = timedelta(hours=1)
+
+
+   def _warn_hourly(ctx: Context, key: str, message: str) -> None:
+       """A full state disk fails the heartbeat and the trim at every tick: say so once an hour (the
+       rest at debug), not 1,440 times a day. The alert says it too, once (Task 13)."""
+       now = ctx.clock()
+       last = ctx.warned.get(key)
+       if last is None or not timedelta(0) <= now - last < WARN_EVERY:
+           ctx.warned[key] = now
+           log.warning(message)
+       else:
+           log.debug(message)
+   ```
+3. **Replace** `log.warning("could not trim the old runs")` with
+   `_warn_hourly(ctx, "trim", "could not trim the old runs")`, and
+   `log.warning("could not write the heartbeat")` with
+   `_warn_hourly(ctx, "heartbeat", "could not write the heartbeat")`.
+
+**Add** to `packages/core/tests/test_ops.py`:
+```python
+def test_a_full_state_disk_warns_about_the_heartbeat_once_an_hour(tmp_path, writer, ntfy,
+                                                                 monkeypatch, caplog):
+    # why: a full state disk fails the heartbeat and the trim at every tick; the log said so every
+    # minute, which buries the one line that matters (Task 13's council).
+    import logging
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, full)
+    with caplog.at_level(logging.DEBUG, logger="recordings.ops"):
+        for _ in range(90):
+            run_due(ctx)
+            clock.now += timedelta(minutes=1)
+    warned = [r for r in caplog.records if r.levelno == logging.WARNING]
+    for text in ("could not write the heartbeat", "could not trim the old runs"):
+        assert len([r for r in warned if r.getMessage() == text]) == 2, text  # minute 0 and 60
+```
+Run `uv run pytest packages/core/tests/test_config.py packages/core/tests/test_ops.py -v`.
+Expected: pass. Without the throttle the new ops test fails with `assert 90 == 2`.
+
 - [ ] **Step 4: Bring the project docs up to date**
 
 In `CLAUDE.md`, **replace** the `## Archive rules (spec §6)` section with:
@@ -22795,6 +23103,29 @@ locked write path, `recordings import-audio-router`, restic backups to an append
 rest-server on the NAS with a monthly restore test, the NAS mirror, alerts, and Status.
 `docs/runbooks/first-run.md` is the first real run.
 ```
+
+In `docs/runbooks/first-run.md`, **add** this section before `## Restoring for real`:
+```markdown
+## When the data disk fills
+
+Status warns below 20% free and the import stops below 5% (spec §12.5); the restore test refuses
+to take the disk below 20%. When the disk is full, `state.db` can't be written either, so the
+backup service keeps running its jobs but can't record them. It remembers its last attempts in
+memory, sends the alert once (and a reminder a day), and logs `could not write the heartbeat` and
+`could not trim the old runs` once an hour. Those two lines mean "the state disk is full", not a
+second fault.
+
+1. **Free space first.** Delete the import copy (`import/`) if the restore test has passed, and the
+   `.lost-` and `restore-real` folders. Status shows the new figure within a minute.
+2. **Then restart nothing, if you can.** A restart forgets those in-memory attempts, so a job whose
+   last *recorded* run is old starts again in the first minutes: the repository check, the restore
+   test (which needs the room that was just short), and retention if `[backup] prune` is on. The
+   hourly backup waits for them (its turns are skipped, not failed), and Status names the running
+   job and since when. Restarting while the disk is still full sends the alert once more.
+3. If you must restart, do it after step 1, and expect that wait.
+```
+
+Then re-sync Task 1's fence with the runbook, and check they are byte-identical.
 
 - [ ] **Step 5: Run everything and scan for secrets**
 
@@ -22917,8 +23248,10 @@ more reviews checked the result:
   server, `[mirror] no_perms` named in the runbook, and wording.
 - **A dry run** executed every task in order in a clean clone, then again after its own fixes.
   - Every OLD anchor, every name shared between tasks, and every stated failure and count held.
-  - Final: 614 pytest passed with real restic 0.19.1 and no skips, plus 21 Vitest, 9 e2e and 5
-    Pages tests, `make deploy-smoke`, gitleaks and `validate --deep`.
+  - Final, at that dry run: 614 pytest passed with real restic 0.19.1 and no skips, plus 21 Vitest, 9
+    e2e and 5 Pages tests, `make deploy-smoke`, gitleaks and `validate --deep`. The counts have
+    grown since; each task's gate records its own. After Task 15, in a clone with real restic:
+    839 pytest, 23 Vitest, 9 e2e and 5 Pages tests.
   - Its fixes: Status shows a good backup's NAS free space, ssh gets a 10 s connect timeout, the
     Pages demo's Status reports its disk as unknown, two README rows, and the smoke test's secret
     files at mode 600.
