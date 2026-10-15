@@ -18,7 +18,8 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
 
 These change quickly. Before writing or changing code that uses any of them, check the
 current skill or docs. Say in the commit or PR what you checked. If the docs don't cover
-it, say so instead of guessing; that gap is worth reporting upstream.
+it, say so instead of guessing, and record the gap in `docs/upstream-issues.md`. Never report
+anything to an upstream project: issues, comments and PRs there are for Dan to write, if ever.
 
 | Library | Skill (`make skills` installs both) | Docs |
 |---|---|---|
@@ -32,6 +33,9 @@ The rules the code depends on:
   every hook silently return nothing.
 - **`www/ui.js` is build output.** Never edit it. Rebuild with `make build`.
 - **`ReactApp(server)` in `shiny_app.py`** finds `www/` next to that file.
+- **Every output is subscribed in `App`.** shinyreact 0.1.0 leaves an output bound to a removed
+  element once its last component unmounts (`docs/upstream-issues.md`). A new output gets a
+  `useShinyOutputStatus` line in `App.tsx`, even if only one page uses it.
 
 ## Upgrading shinyreact
 
@@ -45,7 +49,9 @@ exactly. To upgrade:
 5. Check that its examples' Vite, plugin-react, TypeScript and Vitest versions still match
    ours. Move `react`, `react-dom` and their `@types` to the React minor version that
    `shinyreact.js` bundles (`grep -o '"19\.[0-9.]*"' …/shinyreact/www/shinyreact.js`).
-6. `make test e2e`.
+6. Check each shinyreact entry in `docs/upstream-issues.md`, which says how to tell when its
+   workaround can go.
+7. `make test e2e`.
 
 ## Upgrading Shinylive (the Pages demo)
 

@@ -15,7 +15,8 @@ export default function App() {
   const library = useShinyOutputValue<LibraryView>("library");
   // Every page's output lives as long as the app. shinyreact 0.1.0 removes an unmounted output's
   // element before Shiny unbinds it, so Shiny never does, and each later value for that output
-  // logs "Output <id> not found". Held here, no output is ever unmounted.
+  // logs "Output <id> not found". Held here, no output is ever unmounted. A new output gets a
+  // line here too (docs/upstream-issues.md).
   useShinyOutputStatus("recording");
   useShinyOutputStatus("status");
   const [selectedId, setSelectedId] = useShinyInput<string | null>("selected_id", null);
