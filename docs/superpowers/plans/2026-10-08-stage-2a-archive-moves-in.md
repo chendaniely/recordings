@@ -1156,8 +1156,15 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    Expected:
    - `git status --porcelain` prints nothing, so the tag names the code exactly.
    - `init` prints the archive's UUID, and `backup init` reports the repository initialised.
-   - Neither `doctor` reports a problem. `--role web` confirms that the web service holds no
-     backup or mirror secrets.
+   - Neither `doctor` reports a problem. Read `problems:` first. An empty list and exit status 0
+     mean none. Any entry, and exit status 78, mean something the real code would refuse or that
+     stops a service: fix it before you go on. `warnings:` are choices and risks, and do not make
+     it fail. `notes:` are information only (for example, that `[plaud] consent_list` is not set
+     yet, or that a folder belongs to a job running now). `--role web` also confirms that the web
+     service holds no backup, mirror or alert secrets.
+   - Either report is safe to paste into an issue or a chat: it names no secret, URL, host name
+     or archive UUID. It shows the container's own paths, your UID, the `writer_id`, the number of
+     recordings and the NAS's free space.
    - Both warn that retention is off here (`[backup] prune = false`). That is right for
      rest-server: retention runs on the NAS (1b.7).
    - From your own device, `nc -vz -w 5 "$SERVER_TS" 8000` now connects. From the refused
@@ -1251,9 +1258,10 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
 
    A rollback changes the code only. If the newer code migrated `state.db`, the older code
    refuses to open it (`StateError`: "newer than this release's"), and `web` and `backup` will not
-   stay up. Then either deploy forward, or restore `state/` from the last backup (Restoring for
-   real, step 3, and its `state.db` lines) before starting the older image. Before stage 3's first
-   tag, the archive itself can be moved aside and imported again (spec §19, and the end of step 4).
+   stay up. `rc run --rm web recordings doctor --role web` names it as a problem. Then either
+   deploy forward, or restore `state/` from the last backup (Restoring for real, step 3, and its
+   `state.db` lines) before starting the older image. Before stage 3's first tag, the archive
+   itself can be moved aside and imported again (spec §19, and the end of step 4).
 
 ## 3. Bring the source over
 
