@@ -239,7 +239,7 @@ recordings/                      (repo root, uv workspace, MIT)
     below it), `restore_scratch` and `cache_dir` (§15.1)
   - `[speakers]`: `auto_threshold` and `suggest_threshold` (§7.6)
   - `[calendar] terms`, the term presets in the date control (§12.6a)
-  - the ntfy server (§14)
+  - `[alerts] ntfy_server`, https only (§14)
   - the watched folder path
   - the app base URL (used for links back into the app)
 - **Secrets are passed by reference only**, as environment variables or Docker secrets.
@@ -257,7 +257,10 @@ recordings/                      (repo root, uv workspace, MIT)
     always checked (`StrictHostKeyChecking=yes`) against that `known_hosts` file, and ssh to
     the NAS is refused without it, because the mirror sends the plaintext archive, private
     recordings included, over it.
-  - the ntfy topic (stage 2a; §14)
+  - the ntfy topic (stage 2a; §14): 1 to 64 letters, digits, `-` or `_`; use 20 or more random
+    ones, because the topic is the only lock on the alerts
+  - an ntfy access token, `RECORDINGS_NTFY_TOKEN`, only for a self-hosted server that needs
+    login (stage 2a; §14)
   - the dead-man's switch ping URL, which carries its own token (stage 2a; §14)
   - the rest-server password, `RESTIC_REST_PASSWORD`, with its user in `[backup]
     rest_username` (stage 2a; §15.1). A repository URL with a password in it is refused.
@@ -531,7 +534,10 @@ State has three homes:
   - the writer ID (§3)
   - the salted hashes that scrub forgotten names from new fetches (§7.6)
   - the history of scheduled jobs (backups, checks, the restore test): when each ran and a
-    fixed result text, for Status (§12.5)
+    fixed result text, for Status (§12.5), kept 90 days plus each job's newest and newest good
+    run
+  - the alert state: for each job, whether it is failing and when an alert was last sent
+    (§14), so a restart does not repeat an alert and a recovery is announced once
 
   The same folder holds the Plaud token store (`plaud/tokens.json`; §9.1), the voice store
   (`voice.db`; §7.6) and the lock files (§6.4).
@@ -2042,15 +2048,37 @@ come from that frame.
 - **Invalid edits:** shown, never overwritten (§11).
 - **Visibility:** every failure appears in **Needs attention** with Retry.
 - **Alerts** (Dan, 2026-10-08; services chosen 2026-10-09) are push notifications through
-  ntfy.sh with a private topic, so they arrive even when the homelab server is down. The
+  ntfy.sh with a private topic (20 or more random characters, or a token on a server with access
+  control), so they arrive even when the homelab server is down. The
   topic and the dead-man's ping URL are secrets (§5). Bodies are fixed templates (the job,
   the kind of failure as an error class name, its exit code and counts, then "see Status"),
   never error text, titles or paths. Status carries the same text; the full error is
   printed only by re-running the job from the CLI with `--debug`.
-  - **They fire on:** a Plaud 401, a circuit-breaker trip, a disk warning, a failed backup
-    or restore test, and a failed `--full`.
+  - **They fire on:** a Plaud 401, a circuit-breaker trip, a disk warning (a low disk, or an
+    archive disk that is missing or is not this archive, which has its own title), a failed
+    backup, retention, check, restore test or mirror, and a failed `--full`. A job that fails
+    for any reason, including an error nobody expected, is a failure and alerts.
+  - **How often:** one push when a job starts failing, a reminder every 24 hours while it keeps
+    failing, and one "works again" push when it recovers. A turn skipped because another job
+    holds the `ops` lock, or because the NAS's retention task holds the repository (§15.1), is
+    neither a failure nor an alert. A failure that was not delivered is sent again at the next
+    failure. The state is in `state.db` (the `alerts` table). When `state.db` can't be written,
+    for example on a full disk, the loop remembers its last attempts and sends in memory, so a
+    failing job is retried at its normal retry time and alerted once, not at every tick.
+  - **Delivery:** the ntfy server and the dead-man's switch URL must be `https://` with no user
+    name or password in them (`http://` only to this machine's loopback, for tests). A redirect
+    is never followed, because it would carry the token and the title to another host, and it
+    counts as not delivered. Only proxies from the environment are used. Each request times out
+    after 10 seconds, and a failed delivery is logged without its URL. A server that needs
+    login gets an optional access token (`RECORDINGS_NTFY_TOKEN`, a secret).
+  - **`recordings alert-test`** sends one test push and one `/log` ping, which leaves the check's
+    state alone. Each part is tested only if it is set up (`null` is "not configured"); it
+    exits 1 when a part that is set up fails, and 78 when neither is set up.
   - **A dead-man's switch** on Healthchecks.io: each good sync and each good backup pings
     it, and a missed window raises an alert, so a stopped worker or backup is noticed too.
+    A backup pings `/start` when it begins, then the plain URL when it worked or `/fail` when
+    it failed. A backup that meets the NAS's retention lock sends neither, and the check
+    decides after its grace.
     The grace is at least 3 hours, because long jobs (the restore test, the first mirror)
     run in the same loop.
   - **Status keeps the pull view** (§12.5).
@@ -2149,8 +2177,20 @@ come from that frame.
     The CLI waits for the repository lock (`--retry-lock 5m`). The loop does not, because
     waiting would hold up every other job: a job that meets the repository lock (restic exit
     11), as it does while the NAS's weekly retention task holds it, is skipped as busy, not
-    recorded as failed, and raises no alert. A backup that stays blocked is caught by the
-    dead-man's switch (§14).
+    recorded as failed, and raises no alert. The loop remembers this in memory and leaves that
+    job alone for 15 minutes, so a long retention run does not cost a restic call every
+    minute. A backup that stays blocked is caught by the dead-man's switch (§14).
+  - **The schedule** (the loop wakes every minute and runs what is due, one job at a time, in
+    this order): the disk check every 10 minutes, the backup and the mirror every hour,
+    retention daily, `check` weekly and the restore test monthly. A failed job is tried again
+    after 15 minutes. The heavy ones wait longer, because each retry would hold up every other
+    job for hours: a failed `check` or restore test after 24 hours, a failed mirror after 1
+    hour. A run stamped in the future (a clock that ran ahead and was put right) counts as long
+    ago. Once a day the loop deletes `ops_runs` rows older than 90 days, keeping each job's
+    newest row and newest good row, so Status never reads "never succeeded" after a long
+    failing streak. A Ctrl-C on a CLI job asks its child to stop and waits up to the caller's
+    timeout, or two minutes with none, before killing it; a second Ctrl-C is ignored while it
+    cleans up. `recordings ops` (one pass) exits 75 when every turn was busy.
 - **restic is pinned** by version, release-archive SHA-256 and the unpacked binary's own SHA-256
   (`scripts/fetch_restic.py`; the image and the runbook's spike use the same pin, and a test
   checks all three agree). A downloaded binary is never run to find out what it is.
