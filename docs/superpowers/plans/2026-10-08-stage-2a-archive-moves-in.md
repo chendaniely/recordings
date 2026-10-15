@@ -1069,12 +1069,18 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
      `?…`: the app adds `/start` and `/fail` to its end, and refuses a URL with a query.
      Healthchecks sees when each backup starts and ends, so how long it took, which grows with
      what was recorded since the one before; it never sees more than the fixed failure line.
+   - **A token, only if your ntfy server needs one** (a self-hosted server with access control;
+     ntfy.sh needs none): put it in a file `ntfy_token` beside the others, and name that file in
+     `docker/deploy.env` as `RECORDINGS_NTFY_AUTH_HOST=$RECORDINGS_HOME/secrets/ntfy_token` (an
+     absolute path). Left empty there, no token is mounted, which is right for ntfy.sh.
    - **Keep both in your password manager,** the topic and the ping URL. Whoever holds them can
      read your alerts or keep an outage quiet.
    ```bash
    cd "$RECORDINGS_HOME/secrets"
    install -m 600 /dev/null ntfy_topic && ${EDITOR:-vi} ntfy_topic
    install -m 600 /dev/null deadman_url && ${EDITOR:-vi} deadman_url
+   # only if your ntfy server needs a token:
+   # install -m 600 /dev/null ntfy_token && ${EDITOR:-vi} ntfy_token
    ls -l
    cd -
    ```
@@ -19109,8 +19115,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - **The deployment's shape:**
     - `docker/compose.yml` with the services `web` and `backup`, both `pull_policy: never`, each with `RECORDINGS_ROLE` set to `web` or `backup` (for `doctor --role`, Task 16); `backup` has `stop_grace_period: 2m`
     - the named volume `index`
-    - the secrets `restic_password`, `rest_password`, `nas_cacert`, `nas_ssh_key`, `nas_known_hosts`, `ntfy_topic` and `deadman_url`, all mounted in `backup` only
-    - the deploy variables `RECORDINGS_{ARCHIVE,STATE,RESTORE,SECRETS,CONFIG,DEPLOY_ENV}_HOST`, `RECORDINGS_BIND`, `RECORDINGS_PORT`, `RECORDINGS_UID` and `RECORDINGS_GID`
+    - the secrets `restic_password`, `rest_password`, `nas_cacert`, `nas_ssh_key`, `nas_known_hosts`, `ntfy_topic` and `deadman_url`, and the optional `ntfy_token` (a `/dev/null` mount, with `RECORDINGS_NTFY_TOKEN_FILE` unset, unless `RECORDINGS_NTFY_AUTH_HOST` names the file), all mounted in `backup` only
+    - the deploy variables `RECORDINGS_{ARCHIVE,STATE,RESTORE,SECRETS,CONFIG,DEPLOY_ENV}_HOST`, `RECORDINGS_NTFY_AUTH_HOST` (optional), `RECORDINGS_BIND`, `RECORDINGS_PORT`, `RECORDINGS_UID` and `RECORDINGS_GID`
   - **The image:** base images pinned by digest; build args `APP_UID` and `APP_GID` (default 10001), which Compose takes from `RECORDINGS_UID`/`RECORDINGS_GID`, creating that user in `/etc/passwd`; `USER ${APP_UID}:${APP_GID}`.
   - **Image tags:** `RECORDINGS_IMAGE_TAG`, set by `make deploy` to `git rev-parse --short=12 HEAD`, with `-dirty` for uncommitted or untracked changes, which `make deploy` refuses.
   - **Make targets:** `make deploy`, `make rollback TAG=<tag>` (`up -d --no-build`), `make deploy-smoke`.
@@ -19342,9 +19348,12 @@ def test_the_backup_service_reads_the_archive_and_takes_secrets_only_from_files(
     env = service["environment"]
     for key, value in env.items():
         if key.endswith("_FILE"):
-            assert value.startswith("/run/secrets/"), key
-    for leaked in ("RESTIC_PASSWORD", "RECORDINGS_NTFY_TOPIC", "RECORDINGS_DEADMAN_URL"):
+            # the optional ntfy token's path appears only when deploy.env sets its host file
+            assert value.removeprefix("${RECORDINGS_NTFY_AUTH_HOST:+").startswith("/run/secrets/"), key
+    for leaked in ("RESTIC_PASSWORD", "RECORDINGS_NTFY_TOPIC", "RECORDINGS_DEADMAN_URL",
+                   "RECORDINGS_NTFY_TOKEN"):
         assert leaked not in env
+    assert "secrets" not in compose()["services"]["web"], "a secret mounted in web"
     assert service["command"] == ["recordings", "ops", "--loop"]
     assert set(service["secrets"]) <= set(compose()["secrets"])
     assert "nas_cacert" in service["secrets"]  # rest-server's certificate, for [backup] cacert
@@ -19385,6 +19394,29 @@ def test_the_readme_names_every_secret_and_environment_setting():
     for spec in config.SECRETS.values():
         assert f"`{spec.env}`" in table, spec.env
     assert "`RECORDINGS_ALLOWED_HOSTS`" in table
+
+
+def test_the_ntfy_token_is_an_optional_secret_in_backup_only():
+    # why: a token-protected ntfy server needs it (Task 13), but the app reads an EMPTY token file
+    # as an error, which _alert_config logs and treats as "alerts are not configured". So the
+    # secret is mounted and named only when deploy.env sets RECORDINGS_NTFY_AUTH_HOST.
+    doc = compose()
+    env = doc["services"]["backup"]["environment"]
+    assert env["RECORDINGS_NTFY_TOKEN_FILE"] == "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
+    assert "ntfy_token" in doc["services"]["backup"]["secrets"]
+    assert doc["secrets"]["ntfy_token"]["file"] == "${RECORDINGS_NTFY_AUTH_HOST:-/dev/null}"
+    template = TEMPLATE.read_text(encoding="utf-8")
+    assert re.search(r"^RECORDINGS_NTFY_AUTH_HOST=$", template, re.M), "unset by default"
+
+
+def test_the_example_config_backs_up_the_deploy_file_where_compose_mounts_it():
+    # why: [backup] extra_paths defaults to [], so a config.toml written without this line would
+    # silently leave deploy.env (the UID, the paths: what a restore needs) out of every backup.
+    import tomllib
+    example = tomllib.loads((REPO / "config.example.toml").read_text(encoding="utf-8"))
+    mounts = {v["source"]: v["target"] for v in compose()["services"]["backup"]["volumes"]}
+    target = mounts["${RECORDINGS_DEPLOY_ENV_HOST:?set RECORDINGS_DEPLOY_ENV_HOST in docker/deploy.env}"]
+    assert target in example["backup"]["extra_paths"]
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -19416,6 +19448,9 @@ RECORDINGS_RESTORE_HOST=/srv/recordings/restore-test
 # One file per secret, readable only by RECORDINGS_UID: restic_password, rest_password,
 # nas_cacert (empty over the tailnet), nas_ssh_key, nas_known_hosts, ntfy_topic and deadman_url.
 RECORDINGS_SECRETS_HOST=/srv/recordings/secrets
+# Only for an ntfy server that needs an access key: the file holding it (not empty), such as
+# /srv/recordings/secrets/ntfy_token. Left empty, no ntfy_token secret is mounted.
+RECORDINGS_NTFY_AUTH_HOST=
 # Your config.toml (copied from config.example.toml). Mounted read-only.
 RECORDINGS_CONFIG_HOST=../config.toml
 # This file, backed up with the archive (spec §15.1). Mounted read-only in the backup service.
@@ -19530,10 +19565,14 @@ services:
       RECORDINGS_NAS_KNOWN_HOSTS_FILE: /run/secrets/nas_known_hosts
       RECORDINGS_NTFY_TOPIC_FILE: /run/secrets/ntfy_topic
       RECORDINGS_DEADMAN_URL_FILE: /run/secrets/deadman_url
+      # Only an ntfy server that needs an access token. Empty (so unset) unless deploy.env names the
+      # host file in RECORDINGS_NTFY_AUTH_HOST, because the app reads an empty token file as an
+      # error and then sends no alert at all.
+      RECORDINGS_NTFY_TOKEN_FILE: "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
     # nas_cacert is rest-server's TLS certificate, for [backup] cacert = "/run/secrets/nas_cacert";
     # the file always exists, and is empty when the NAS is reached over the tailnet.
     secrets: [restic_password, rest_password, nas_cacert, nas_ssh_key, nas_known_hosts, ntfy_topic,
-              deadman_url]
+              deadman_url, ntfy_token]
     volumes:
       - type: bind
         source: "${RECORDINGS_CONFIG_HOST:?set RECORDINGS_CONFIG_HOST in docker/deploy.env}"
@@ -19574,6 +19613,8 @@ secrets:
   nas_known_hosts: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/nas_known_hosts" }
   ntfy_topic: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/ntfy_topic" }
   deadman_url: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/deadman_url" }
+  # Optional: /dev/null (mounted, never named by the app) unless deploy.env gives the file.
+  ntfy_token: { file: "${RECORDINGS_NTFY_AUTH_HOST:-/dev/null}" }
 ```
 
 Replace `docker/Dockerfile` with the file below. Against stage 1 it pins every base image by
@@ -19990,7 +20031,7 @@ file. Docker sets it to `/config/config.toml`.
 | The names the app answers to | `[server] allowed_hosts` in `config.toml`, plus `RECORDINGS_ALLOWED_HOSTS` (comma-separated) | stage 1 |
 | Host folders, config path, bind address and port, the trusted proxy (`RECORDINGS_FORWARDED_ALLOW_IPS`), UID/GID | `docker/deploy.env` (template: `docker/deploy.example.conf`) | stage 1 |
 | `RESTIC_PASSWORD`; `RESTIC_REST_PASSWORD`, rest-server's; the NAS's SSH key and host key, `RECORDINGS_NAS_SSH_KEY` and `RECORDINGS_NAS_KNOWN_HOSTS` (files only); `RECORDINGS_NTFY_TOPIC`; `RECORDINGS_DEADMAN_URL`; and rest-server's certificate, the `nas_cacert` file that `[backup] cacert` names | secret files, as `…_FILE` (Docker secrets) | stage 2a |
-| `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | a secret file, as `…_FILE` | stage 2a |
+| `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | a secret file, which `RECORDINGS_NTFY_AUTH_HOST` in `docker/deploy.env` names (unset: no token is mounted) | stage 2a |
 | `RECORDINGS_PLAUD_TOKEN` | a secret file, as `RECORDINGS_PLAUD_TOKEN_FILE` | stage 2b |
 | `RECORDINGS_SPARK_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | environment, or `…_FILE` | stage 4 |
 
@@ -20018,7 +20059,11 @@ In `.github/workflows/ci.yml`, **add** this job after `docker`:
 - [ ] **Step 4: Run the tests and the smoke test**
 
 Run: `RECORDINGS_ARCHIVE=/nonexistent RESTIC_REPOSITORY=/nonexistent RECORDINGS_REQUIRE_RESTIC=1 uv run pytest packages/core/tests/test_deploy_template.py -v && uv run pytest && make deploy-smoke`
-Expected: 21 passed, then the whole suite passes. The smoke test builds the image with your own UID
+Expected: 24 passed, then the whole suite passes (819 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 797 less the 2 old template tests plus these 24; a clone without a built frontend shows 818 and one skip).
+Everything in `test_deploy_template.py` and the suite runs without Docker. The smoke test and the
+image build need a running Docker daemon (`docker info` must work) and fail, not skip, without
+one: run `make deploy-smoke` on such a machine, and CI's `docker` and `compose-smoke` jobs cover it
+too. It also proves the `/dev/null` secret mount of `ntfy_token`. The smoke test builds the image with your own UID
 and GID, runs `recordings init`, `ssh -G nas`, `backup init`, `backup run`,
 `backup restore-test` and `mirror`, and prints
 `compose smoke: init, ssh, backup, restore test and mirror ran, and web answered /healthz, as this machine's user`.
@@ -20065,10 +20110,10 @@ copy, or on Pages, Pyodide's in-memory file system, so any figure would be made 
 
 **Files:**
 - Create: `packages/ui/src/recordings_ui/status.py`, `packages/ui/frontend/src/lib/nav.ts`, `packages/ui/frontend/src/lib/nav.test.ts`, `packages/ui/frontend/src/lib/when.ts`, `packages/ui/frontend/src/lib/when.test.ts`, `packages/ui/frontend/src/components/StatusPage.tsx`, `packages/ui/frontend/src/components/StatusPage.test.ts`
-- Modify: `packages/core/src/recordings/disk.py` (`disk_view`), `ops.py` (`when_label`, `status_summary`), `state.py` (`State.read_only`)
+- Modify: `packages/core/src/recordings/disk.py` (`disk_view`), `ops.py` (`when_label`, `status_summary`, and `run_job`, which announces its job), `state.py` (`State.read_only`), `locks.py` (`announce`, `running`), `sources/audio_router.py` (the import announces itself)
 - Modify: `packages/ui/src/recordings_ui/runtime.py`, `views.py`, `shiny_app.py`, `app.py`
 - Modify: `packages/ui/frontend/src/App.tsx`, `components/TopBar.tsx`, `components/DetailsTab.tsx`, `components/RecordingPane.tsx` (the header's time), `types.ts`, `app.css`
-- Test: `packages/core/tests/test_ops.py` (the summary, the read-only state), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
+- Test: `packages/core/tests/test_ops.py` (the summary, the read-only state), `test_locks.py` (the running job), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
 
 **Interfaces:**
 - Consumes:
@@ -20077,13 +20122,14 @@ copy, or on Pages, Pyodide's in-memory file system, so any figure would be made 
   - from Task 5b: `State.flags`
   - from Task 9: `disk_status`, `disk_thresholds`
   - from Tasks 11 and 13: `run_job`'s fixed failure detail, `"<exception name>; exit <code>"`
-  - from Task 13: `ops.enabled_jobs`
+  - from Task 13: `ops.enabled_jobs`, and `ops.run_job`, which holds `OPS_LOCK` and is changed here to announce its job; from Task 9, the import's own hold of `OPS_LOCK` in `sources/audio_router.py` (`run`), changed the same way
   - from Task 10: `test_demo_guard.py` and its audit hook
 - Produces:
   - **core:**
     - `recordings.disk.disk_view(status: DiskStatus) -> dict`
     - `recordings.ops.when_label(t: datetime, now: datetime, timezone_name: str) -> str`
-    - `recordings.ops.status_summary(state: State, *, archive_root: Path, now: datetime, timezone_name: str, warn: float, stop: float, jobs: tuple[str, ...]) -> dict`. Each job's row has `last_ok`, `last_ok_detail` (the last good run's fixed detail), `failing`, `detail` and `attention`.
+    - `recordings.ops.status_summary(state: State, *, archive_root: Path, now: datetime, timezone_name: str, warn: float, stop: float, jobs: tuple[str, ...]) -> dict`. Each job's row has `last_ok`, `last_ok_detail` (the last good run's fixed detail), `failing`, `detail` and `attention`. The summary also has `running`: None, or `{"job", "label", "since"}` for the job that holds the `ops` lock now (spec §12.5), `since` being `when_label`'s text. While any job holds it, the backup's "more than 2 hours old" attention is not raised (its turns are skipped meanwhile; §14's dead-man grace decides when silence is an outage).
+    - `recordings.locks.announce(folder: Path, job: str, since: datetime, key: str = OPS_LOCK)`, a context manager used while holding the lock, and `recordings.locks.running(folder: Path, key: str = OPS_LOCK) -> tuple[str, datetime] | None`
     - `State.read_only(path) -> State | None`: every connection it makes is `mode=ro`
   - **UI, Python:**
     - `recordings_ui.status`: `@dataclass(frozen=True) StatusSettings(state_path, timezone_name, warn, stop, jobs)`, `status_settings(cfg) -> StatusSettings` and `status_view(archive_root: Path, settings: StatusSettings | None, *, now: datetime | None = None) -> dict`. A `state.db` that can't be read shows as attention, not as an error. With no settings (demo mode) its `disk` is None: no figure.
@@ -20141,6 +20187,26 @@ def test_status_shows_the_last_good_runs_detail_with_the_nas_free_space(writer):
     jobs = {j["job"]: j for j in summary["jobs"]}
     assert jobs["backup"]["last_ok_detail"] == detail and jobs["backup"]["detail"] is None
     assert jobs["restore-test"]["last_ok_detail"] is None
+
+
+def test_status_names_the_running_job_and_does_not_flag_the_backup_it_delays(writer):
+    # why: §12.5. A restore test holds the ops lock for hours, so the hourly backup's turns are
+    # skipped; that is not an outage, and Status says what is running and since when.
+    from recordings.locks import OPS_LOCK, Locks, announce
+    from recordings.ops import status_summary
+    writer.state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup", "restore-test"))
+    idle = status_summary(writer.state, **args)
+    assert idle["running"] is None
+    assert "The last backup is more than 2 hours old." in idle["attention"]
+    folder = writer.state.locks_dir
+    with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "restore-test",
+                                                           T0 - timedelta(minutes=50)):
+        busy = status_summary(writer.state, **args)
+    assert busy["running"] == {"job": "restore-test", "label": "Restore test",
+                               "since": "2026-10-09 07:10 (50 min ago)"}
+    assert "The last backup is more than 2 hours old." not in busy["attention"]
 
 
 def test_a_read_only_state_never_creates_or_writes(writer, tmp_path):
@@ -20386,6 +20452,12 @@ describe("StatusPage", () => {
     expect(html).toContain("Failing: BackupError; exit 1");
     expect(html).not.toContain("status-job-backup-detail");
   });
+  it("says which job is running and since when", () => {
+    const running = { job: "restore-test", label: "Restore test", since: "2026-10-09 07:10 (50 min ago)" };
+    const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null, running });
+    expect(html).toContain('data-testid="status-running"');
+    expect(html).toContain("Restore test is running, started 2026-10-09 07:10 (50 min ago)");
+  });
   it("says the free space is unknown when there is no disk figure", () => {
     const html = render({ configured: false, jobs: [], attention: [], flags: 0, disk: null });
     expect(html).toContain('data-testid="disk-unknown"');
@@ -20476,13 +20548,95 @@ In `packages/core/src/recordings/state.py`:
    ```
    The next line, `PRAGMA synchronous=FULL`, is harmless on a read-only connection.
 
+Add to `packages/core/tests/test_locks.py` (Step 1's test, shown here beside the code it covers):
+```python
+def test_a_held_ops_lock_says_which_job_runs_and_since_when(tmp_path):
+    # why: spec §12.5. Status shows the running job and since when, read from another process.
+    from datetime import datetime, timezone
+
+    from recordings.locks import OPS_LOCK, announce, running
+    folder, since = tmp_path / "locks", datetime(2026, 10, 9, 7, 0, tzinfo=timezone.utc)
+    assert running(folder) is None  # no lock file yet
+    with Locks(folder, timeout=0).hold(OPS_LOCK):
+        assert running(folder) is None  # held, not announced
+        with announce(folder, "restore-test", since):
+            assert running(folder) == ("restore-test", since)
+        assert running(folder) is None  # announce empties the file
+    (folder / "ops.lock").write_text('{"job": "check", "since": "2026-10-09T07:00:00+00:00"}')
+    assert running(folder) is None  # a crashed holder's leftover: the lock is free
+```
+
+In `packages/core/src/recordings/locks.py`, **add** `import json` and `from datetime import datetime`, then at the end:
+```python
+@contextmanager
+def announce(folder: Path, job: str, since: datetime, key: str = OPS_LOCK) -> Iterator[None]:
+    """Call while holding `key`: writes which job runs, and since when, into the lock file, for
+    Status (spec §12.5), and empties it again. Best effort: a full disk must not stop the job."""
+    path = Path(folder) / f"{key}.lock"
+    try:
+        _write(path, json.dumps({"job": job, "since": since.isoformat()}))
+    except OSError:
+        pass
+    try:
+        yield
+    finally:
+        try:
+            _write(path, "")
+        except OSError:
+            pass
+
+
+def _write(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+
+
+def running(folder: Path, key: str = OPS_LOCK) -> tuple[str, datetime] | None:
+    """Which job holds `key` now and since when, or None. It trusts the text only while the lock
+    is held (a probe with LOCK_SH | LOCK_NB, released at once), so a crashed holder's leftover
+    text means nothing. A reader in another container sees the same: flock is per host."""
+    try:
+        fd = os.open(Path(folder) / f"{key}.lock", os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in (errno.EAGAIN, errno.EACCES):
+                return None
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return None  # nobody holds it
+        try:
+            data = json.loads(os.pread(fd, 4096, 0).decode("utf-8"))
+            return str(data["job"]), datetime.fromisoformat(data["since"])
+        except (ValueError, KeyError, TypeError, OSError):
+            return None  # held, but not announced
+    finally:
+        os.close(fd)
+```
+In `packages/core/src/recordings/ops.py`'s `run_job`, **import** `announce` beside `OPS_LOCK`, and right after the line
+`stack.enter_context(Locks(ctx.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK))` (inside the same `try`) **add**
+`stack.enter_context(announce(ctx.state.locks_dir, job, ctx.clock()))`. `announce` never raises, so the `except` clauses stay as they are.
+
+In `packages/core/src/recordings/sources/audio_router.py`, `run` holds `OPS_LOCK` with
+`with Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK):`; **import** `announce` beside `OPS_LOCK` and make the body run inside
+`with announce(writer.state.locks_dir, "import", now):` (the `now` argument `run` already takes). A test beside the import's lock tests: while the import runs (a hook that reads `running(writer.state.locks_dir)`), the answer's job is `"import"`.
+
 In `packages/core/src/recordings/ops.py`, **add** `from pathlib import Path`,
-`from zoneinfo import ZoneInfo` and `from recordings.disk import disk_view`, then:
+`from zoneinfo import ZoneInfo`, `from recordings.disk import disk_view` and `running` to the `recordings.locks` import, then:
 ```python
 SHOWN = (("backup", "Backup", timedelta(hours=2)),
          ("restore-test", "Restore test", timedelta(days=31)),
          ("check", "Repository check", timedelta(days=8)),
          ("mirror", "Mirror for the Mac", timedelta(hours=2)))
+RUNNING_LABELS = {**{job: label for job, label, _ in SHOWN}, "disk": "Disk check",
+                  "prune": "Retention", "import": "Import"}
 
 
 def when_label(t: datetime, now: datetime, timezone_name: str) -> str:
@@ -20505,13 +20659,20 @@ def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_
     disk = disk_view(disk_status(archive_root, expected_uuid=state.meta("archive_uuid"),
                                  warn=warn, stop=stop))
     flags = len(state.flags())
-    out: dict = {"configured": True, "jobs": [], "attention": [], "flags": flags, "disk": disk}
+    held = running(state.locks_dir)  # (job, since) while a job holds the ops lock
+    out: dict = {"configured": True, "jobs": [], "attention": [], "flags": flags, "disk": disk,
+                 "running": None if held is None else {
+                     "job": held[0], "label": RUNNING_LABELS.get(held[0], held[0]),
+                     "since": when_label(held[1], now, timezone_name)}}
     for job, label, stale_after in SHOWN:
         if job not in jobs:
             continue
         good, last = state.last_run(job, ok=True), state.last_run(job)
         failing = last is not None and not last.ok
-        stale = good is None or now - good.finished_at > stale_after
+        late = good is None or now - good.finished_at > stale_after
+        # §12.5: while a job holds the ops lock the hourly backup's turns are skipped, so a backup
+        # that is merely late is not an outage; the dead-man's grace decides when silence is.
+        stale = late and not (job == "backup" and good is not None and held is not None)
         out["jobs"].append({
             "job": job, "label": label,
             "last_ok": when_label(good.finished_at, now, timezone_name) if good else None,
@@ -20702,6 +20863,7 @@ export interface StatusJob {
 
 export interface StatusView {
   configured: boolean; jobs: StatusJob[]; attention: string[]; flags: number;
+  running?: { job: string; label: string; since: string } | null;  // absent in the demo
   disk: { level: "ok" | "warn" | "stop"; message: string; marker: boolean; free_percent: number | null; free_label: string | null } | null;
 }
 ```
@@ -20718,6 +20880,11 @@ export function StatusPage() {
   const disk = status.disk;
   return (
     <main className="status" data-testid="status-page">
+      {status.running && (
+        <p className="muted" data-testid="status-running">
+          {status.running.label} is running, started {status.running.since}. The hourly backup waits for it.
+        </p>
+      )}
       {status.attention.length > 0 && (
         <div className="problems" role="status" data-testid="status-attention">
           Needs attention:
@@ -20976,6 +21143,7 @@ else `all`. Two checks read config.toml alone, so every role reports them, as th
 ```python
 import json
 import subprocess
+from pathlib import Path
 from zoneinfo import ZoneInfoNotFoundError
 
 import pytest
@@ -21005,7 +21173,7 @@ def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings"
     secrets.mkdir()
     for name, value in (("pw", "pw-do-not-print"), ("key", "key-do-not-print"),
                         ("known_hosts", "nas ssh-ed25519 AAAAexample"),
-                        ("topic", "topic-do-not-print"),
+                        ("topic", "topic-do-not-print-20"),
                         ("ping", "https://hc.example/ping-do-not-print"),
                         ("rest_password", "rest-do-not-print")):
         (secrets / name).write_text(value + "\n", encoding="utf-8")
@@ -21124,6 +21292,36 @@ def test_an_empty_optional_secret_is_only_a_warning(tmp_path):
     (tmp_path / "secrets" / "rest").write_text("", encoding="utf-8")
     report = doctor(environ | {"RESTIC_REST_PASSWORD_FILE": str(tmp_path / "secrets" / "rest")})
     assert report["problems"] == [] and any("is empty" in w for w in report["warnings"])
+
+
+def test_an_unset_optional_token_is_nothing_to_warn_about(tmp_path):
+    # why: Compose names RECORDINGS_NTFY_TOKEN_FILE only when deploy.env sets a token file; the
+    # backup service otherwise has it empty, and an empty optional secret is not a finding.
+    report = doctor(server(tmp_path) | {"RECORDINGS_NTFY_TOKEN_FILE": ""})
+    assert report["problems"] == [] and report["warnings"] == []
+    assert report["secrets"]["ntfy_token"]["set"] is False
+
+
+def test_a_topic_with_no_server_is_a_warning(tmp_path):
+    # why: AlertConfig.enabled needs both, so a deleted ntfy_server line drops every alert in
+    # silence. The reverse (a server, no topic) is the template's normal dead-man-only setup.
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace('ntfy_server = "https://ntfy.sh"\n', ""),
+                   encoding="utf-8")
+    report = doctor(environ)
+    assert report["problems"] == []
+    assert any("ntfy_server" in w and "no alert is sent" in w for w in report["warnings"])
+    assert "topic-do-not-print" not in json.dumps(report)
+
+
+def test_the_backup_role_warns_when_deploy_env_is_not_backed_up(tmp_path):
+    environ = server(tmp_path)  # no extra_paths: the default
+    assert any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
+    assert not any("deploy.env" in w for w in doctor(environ, role="all")["warnings"])
+    (tmp_path / "other").mkdir()
+    named = server(tmp_path / "other", backup_extra='extra_paths = ["/backup-extra/deploy.env"]\n')
+    assert not any("deploy.env" in w for w in doctor(named, role="backup")["warnings"])
 
 
 def test_a_secret_file_others_can_read_is_a_warning(tmp_path):
@@ -21674,11 +21872,25 @@ def _alerts(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
         return
     report["alerts"] = {"ntfy_server_set": bool(ac.ntfy_server), "topic_set": bool(ac.topic),
                         "deadman_set": bool(ac.deadman_url)}
-    if not ac.enabled:
+    if ac.topic and not ac.ntfy_server:  # the template presets ntfy_server, so a deleted line
+        warnings.append("RECORDINGS_NTFY_TOPIC_FILE is set but [alerts] ntfy_server is not, so no "
+                        "alert is sent: set ntfy_server")
+    elif not ac.enabled:
         warnings.append("alerts are off: set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE")
     if not ac.deadman_url:
         warnings.append("no dead-man's switch, so a stopped server or backup goes unnoticed: "
                         "set RECORDINGS_DEADMAN_URL_FILE")
+
+
+def _extra_paths(cfg: Config, warnings: list[str]) -> None:
+    """In Docker, deploy.env is backed up only if [backup] extra_paths names its mount
+    (config.example.toml has the line); the default is no extra path at all."""
+    section = cfg.data.get("backup", {})
+    paths = section.get("extra_paths", [])
+    if section.get("repository") and not any(
+            isinstance(p, str) and Path(p).name == "deploy.env" for p in paths):
+        warnings.append("deploy.env is not in [backup] extra_paths, so no backup carries it "
+                        "(config.example.toml has the line)")
 
 
 def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, Any]:
@@ -21718,6 +21930,8 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
         _backup(cfg, environ, report, problems, warnings)
         _mirror(cfg, environ, report, problems, warnings)
         _alerts(cfg, environ, report, problems, warnings)
+    if role == "backup":
+        _extra_paths(cfg, warnings)
     _retention(cfg, warnings)
     _consent(cfg, report)
     missing = [tool for tool in ("ffprobe", "ffmpeg") if not report["tools"][tool]]

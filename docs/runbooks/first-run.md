@@ -492,12 +492,18 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
      `?…`: the app adds `/start` and `/fail` to its end, and refuses a URL with a query.
      Healthchecks sees when each backup starts and ends, so how long it took, which grows with
      what was recorded since the one before; it never sees more than the fixed failure line.
+   - **A token, only if your ntfy server needs one** (a self-hosted server with access control;
+     ntfy.sh needs none): put it in a file `ntfy_token` beside the others, and name that file in
+     `docker/deploy.env` as `RECORDINGS_NTFY_AUTH_HOST=$RECORDINGS_HOME/secrets/ntfy_token` (an
+     absolute path). Left empty there, no token is mounted, which is right for ntfy.sh.
    - **Keep both in your password manager,** the topic and the ping URL. Whoever holds them can
      read your alerts or keep an outage quiet.
    ```bash
    cd "$RECORDINGS_HOME/secrets"
    install -m 600 /dev/null ntfy_topic && ${EDITOR:-vi} ntfy_topic
    install -m 600 /dev/null deadman_url && ${EDITOR:-vi} deadman_url
+   # only if your ntfy server needs a token:
+   # install -m 600 /dev/null ntfy_token && ${EDITOR:-vi} ntfy_token
    ls -l
    cd -
    ```
