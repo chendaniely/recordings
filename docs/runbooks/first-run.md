@@ -726,7 +726,8 @@ Expected: `copy verified`, then a report in which every catalog row has one disp
 - Every `audio-router` tag comes over. Privacy labels (`private`, `therapy` and the others in
   Task 8's `PRIVATE_TAGS`) become private tags, one per meaning. Those rows, rows with an `access` tier, and
   the private tier are `new-private`: check the report's private count against
-  `audio-router`'s private rows.
+  `audio-router`'s private rows. The count also includes a row that shares its audio with one
+  of them (a row deferred to 2b included), since that recording is created private.
 - If anything is unplaced, stop: the report gives each row's `uri` and reason.
 
 ## 4. Import

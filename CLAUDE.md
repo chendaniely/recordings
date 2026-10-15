@@ -60,12 +60,15 @@ smoke test on purpose until someone does the steps below:
 
 ## Archive rules (spec §6)
 
-- **Every write goes through `recordings.writer.Writer`.** Only three files ever change:
-  `recording.json`, only through `Writer.mutate`, which bumps `rev` and refuses a file edited
-  outside the app until `recordings reindex` accepts the edit; `my-notes.md`, only appended to,
-  under the recording's lock; and `tags.yaml`, by atomic replace. Media, `source/` and
-  `renditions/` are published write-once and never overwritten. Never write archive files any
-  other way, in code or in tests.
+- **Every write goes through `recordings.writer.Writer`.** Of the archive's own data, only three
+  files ever change: `recording.json`, only through `Writer.mutate`, which bumps `rev` and
+  refuses a file edited outside the app until `recordings reindex` accepts the edit;
+  `my-notes.md`, only appended to, under the recording's lock; and `tags.yaml`, by atomic
+  replace. The archive's docs (`README.md`, `AGENTS.md`, `FORMAT.md`, `recordings/README.md`,
+  `catalog/README.md` and `schemas/`) are replaced from `packages/core/src/recordings/format/`,
+  by atomic replace, whenever a Writer opens or the web app starts against an archive it may
+  write (`selfdoc.write_docs`). Media, `source/` and `renditions/` are published write-once and
+  never overwritten. Never write archive files any other way, in code or in tests.
 - **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
   make archives with `recordings.init.init_archive` (or the `writer` fixture).
 - **Privacy:** a recording is private if a tag is `private` or under `private/`, in any

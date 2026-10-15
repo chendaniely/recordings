@@ -27,7 +27,10 @@
    app refuses to change a file you edited, rather than overwrite your edit. (From stage 3a, jobs
    that the edit would start also wait for approval in the app.)
 7. **Prefer the `recordings` CLI with `--json`** to editing files by hand.
-8. **Never open, copy or index `.tmp/` or a file named `.*.tmp`.** They are writes in
-   progress. A recording being assembled in `.tmp/` has its transcripts and source files before
-   its `recording.json`, so nothing there yet says whether it is private: treat all of it as
-   private.
+8. **Never open, copy or index `.tmp/`, a file named `.*.tmp`, or a recording folder that has
+   no `recording.json`.** They are writes in progress, or ones a crash cut short. A recording
+   being assembled in `.tmp/` has its transcripts and source files before its `recording.json`,
+   and on a synced copy (the Mac's) a new recording's files can arrive before it too, so nothing
+   there yet says whether it is private: treat all of it as private, and edit, move or delete
+   nothing in it. On the homelab server, `recordings reindex` names any recording whose
+   `recording.json` has gone.

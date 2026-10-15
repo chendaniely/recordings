@@ -1303,7 +1303,8 @@ Expected: `copy verified`, then a report in which every catalog row has one disp
 - Every `audio-router` tag comes over. Privacy labels (`private`, `therapy` and the others in
   Task 8's `PRIVATE_TAGS`) become private tags, one per meaning. Those rows, rows with an `access` tier, and
   the private tier are `new-private`: check the report's private count against
-  `audio-router`'s private rows.
+  `audio-router`'s private rows. The count also includes a row that shares its audio with one
+  of them (a row deferred to 2b included), since that recording is created private.
 - If anything is unplaced, stop: the report gives each row's `uri` and reason.
 
 ## 4. Import
@@ -7453,10 +7454,13 @@ In `packages/core/src/recordings/format/AGENTS.md`, **replace**:
 with:
 ```markdown
 7. **Prefer the `recordings` CLI with `--json`** to editing files by hand.
-8. **Never open, copy or index `.tmp/` or a file named `.*.tmp`.** They are writes in
-   progress. A recording being assembled in `.tmp/` has its transcripts and source files before
-   its `recording.json`, so nothing there yet says whether it is private: treat all of it as
-   private.
+8. **Never open, copy or index `.tmp/`, a file named `.*.tmp`, or a recording folder that has
+   no `recording.json`.** They are writes in progress, or ones a crash cut short. A recording
+   being assembled in `.tmp/` has its transcripts and source files before its `recording.json`,
+   and on a synced copy (the Mac's) a new recording's files can arrive before it too, so nothing
+   there yet says whether it is private: treat all of it as private, and edit, move or delete
+   nothing in it. On the homelab server, `recordings reindex` names any recording whose
+   `recording.json` has gone.
 ```
 
 - [ ] **Step 7: Rebuild the demo and run every test**
@@ -24452,12 +24456,15 @@ In `CLAUDE.md`, **replace** the `## Archive rules (spec §6)` section with:
 ```markdown
 ## Archive rules (spec §6)
 
-- **Every write goes through `recordings.writer.Writer`.** Only three files ever change:
-  `recording.json`, only through `Writer.mutate`, which bumps `rev` and refuses a file edited
-  outside the app until `recordings reindex` accepts the edit; `my-notes.md`, only appended to,
-  under the recording's lock; and `tags.yaml`, by atomic replace. Media, `source/` and
-  `renditions/` are published write-once and never overwritten. Never write archive files any
-  other way, in code or in tests.
+- **Every write goes through `recordings.writer.Writer`.** Of the archive's own data, only three
+  files ever change: `recording.json`, only through `Writer.mutate`, which bumps `rev` and
+  refuses a file edited outside the app until `recordings reindex` accepts the edit;
+  `my-notes.md`, only appended to, under the recording's lock; and `tags.yaml`, by atomic
+  replace. The archive's docs (`README.md`, `AGENTS.md`, `FORMAT.md`, `recordings/README.md`,
+  `catalog/README.md` and `schemas/`) are replaced from `packages/core/src/recordings/format/`,
+  by atomic replace, whenever a Writer opens or the web app starts against an archive it may
+  write (`selfdoc.write_docs`). Media, `source/` and `renditions/` are published write-once and
+  never overwritten. Never write archive files any other way, in code or in tests.
 - **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
   make archives with `recordings.init.init_archive` (or the `writer` fixture).
 - **Privacy:** a recording is private if a tag is `private` or under `private/`, in any
@@ -24599,10 +24606,97 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## As built
 
-When the last task's council is done, the controller adds the "As built" record here, in stage
-1's shape:
-- a table of where the committed code differs from each task's text, with commits
-- the list of what is carried to 2b (extending the list above) and 3a
+Written 2026-10-15, after the final whole-branch review and its one fix wave. Every task's text
+above was kept in step with the code as each review and council fix round landed: whole-file
+blocks are byte-identical to the files, and fragment blocks are verbatim parts of them. So the
+table says where the code departs from each task's *first* text, which the rounds rewrote; the
+ledger has every ruling in full. "This wave" is the final review's fix wave.
+
+| Task | What it built, and where it departed from the task's first text | Commits |
+|---|---|---|
+| 1 | The first-run runbook and `test_runbook.py`. Two council rounds added the host settings, the tag policy before the tag, a real probe file, the mirror account's stop-and-decide branch, `rc` as a function, `tmux`/`caffeinate`, and restoring by snapshot ID. Later tasks grew it (rollback, "0. Before you start", the mirror on the Mac, doctor's report, "When the data disk fills"), and Task 1's fence was re-synced each time (`fence_check`). | 5f25403..e93862b |
+| 2 | Durable writes, the sentinel, `state.db` and `init`/`init --adopt`. A dangling symlink counts as a taken name. The council added: the move-aside advice moves the whole state folder, and `State.create` refuses a stray `state.db-wal`; the `MIRROR.md` mark (adopt and the Writer refuse it); damage told apart from unreachable in fixed text (`state.unreadable()`); absolute `[state]`/`[index]` paths. | e93862b..7703a7c |
+| 3 | `rev`, the `speakers` shape and Plaud's segment fields. Added: `allow_inf_nan=False`, one span per time, validation messages that carry no value. Spec §9.1.1: Plaud owns the title while `title_by` is `plaud` or absent. | 7703a7c..d461c7a |
+| 4 | `index.db`. The refuse-to-empty count moved inside `BEGIN IMMEDIATE`. A file SQLite can't read is never deleted: only a file whose header carries the `RIDX` application ID is probed (read-only, immutable), renamed aside with its siblings, or trusted, and config refuses an `[index]` path inside `[state]` (the council's deterministic close, in place of a timing probe). This wave: `find_by_source` and `sha256_of` take `strict`. | d461c7a..47f7fa3, e89de9f |
+| 5a | Locks. One deadline per `hold()`; the fd is closed on any exception; keys are validated, never substituted; an acquisition-order test. The planned busy-skip alert was dropped (a hung `ops` holder is caught by the dead-man's switch). | 47f7fa3..634d274 |
+| 5b | The `Writer`, `mutate` and merge bases. `_holding` never trusts the index's "none": pending marks are read first, and a strict lookup raises `IndexUnavailable` on a busy index. The catch-up runs after `INDEX_LOCK` is released. A lock is never held across an `await`. | 634d274..58fc750 |
+| 5c | Every writer through the Writer, and `reindex`. Over three council rounds: `reindex` (and every rebuild) refuses while `state.db` knows recordings whose files are gone, unless `--allow-missing`, which forgets them once and names them; the adopt loop skips a folder not in its ID's place; the Writer re-checks the sentinel before each write; `reindex` opens the Writer without the start-up rebuild. AGENTS.md rules 6 and 8. | 58fc750..2e96aa5 |
+| 6 | The Plaud normaliser. The signed-URL scrub runs on parsed strings and stops at the URL's end; unknown note fields go to `other`; a golden hash pins `NORMALISER_VERSION`; bad input never crashes it; one `diarization_key`, with no label from a segment without `original_speaker` (spec amended). | 2e96aa5..04010e0 |
+| 7 | Reconcile. Each Plaud output is identified by what it carries (spec §6.5 and §9.1.1 amended). Plaud's title applies only when it changed since `title_seen`; auto-private runs on the first reconcile and on a title change; an unreadable output is never taken as missing. | 04010e0..109a082 |
+| 8 | The import plan. The consent list excludes the recording, not only its ID (Dan, 2026-10-14): every row linked to a listed one is `consent-excluded`, and a listed row with no catalog hash is a plan problem. One bad file never stops the dry run; a WAV's duration is its frames read; an unlistable folder is never read as empty; same-audio rows wait for each other; an offset is never changed (`offset_only`). This wave: a deferred or audio-less row keeps its labels, a same-audio group's privacy is every linked row's (`group_privacy`, counted in `private`), and a busy index fails the plan. | 109a082..9bf97e5, e89de9f |
+| 9 | The import run. A group's skipped snapshots and held removals count once; the creation title comes from complete snapshots only; `run()` stops on plan problems itself; the disk guard counts the row that creates the recording; present rows go first and are never decoded again; imported outputs keep their identity (bump `IMPORT_VERSION` to write Pocket's again); a recording imported before its ID was listed stops the next run; a `present` row merges only privacy tags (S2(b)); the CLI peeks at `ops` before planning. This wave: the group's tags include `group_privacy`. | 9bf97e5..64bb9e1, e89de9f |
+| 10 | Cross-site writes, host names and demo isolation. The demo's copy goes on SIGTERM too; the demo guard watches exec, spawn and socket events and paths outside an allow-list; host names are canonical (no port, scheme or underscore); no framing, COOP and Referrer-Policy same-origin, `no-store` on `/media`; demo mode serves only the demo archive. | 64bb9e1..b51921d |
+| 11 | Backups and the restore test. SIGTERM and Ctrl-C reach restic, which finishes its cleanup first; host keys are always pinned; the fetched restic is checked by archive and binary hash; the restore test checks completeness against the snapshot's own `state.db` copy; a failed check retries its quarter; `ScratchTooSmall`; no `--retry-lock` in the loop (exit 11 is busy). | b51921d..a8ec85d |
+| 12 | The NAS mirror. The target is known by its `MIRROR.md` mark, so an interrupted first mirror recovers; a dry run refuses past `max_delete`, deleting nothing; the listing parse fails closed; `--timeout=600`; the loop caps a run at 6 h, while `recordings mirror` runs uncapped and takes `--max-delete N` for one run. | a8ec85d..1132b4d |
+| 13 | Alerts and the loop. Redirects are refused; a full state disk alerts once, then daily; a failure with its own title has its own alert key; a dead-man URL with `?` or `#` is refused; a public topic under 20 characters without a token is refused; `alert-test` refuses a topic with no server (reversed from the queued "a server with no topic"). | 1132b4d..ac982d7 |
+| 14 | Docker and Compose. The boot reads the tag with `docker inspect`; the optional `ntfy_token` secret defaults to `/dev/null` (accepted, by experiment); `make deploy` waits for a healthy `web` and refuses while a job holds `ops` (`FORCE=1`); `make prune-images` keeps rollback targets; a sized `/tmp`, `cpu_shares` and `oom_score_adj` for `backup`, no memory cap. This wave: the guard also asks a one-off `backup` container while the service is stopped. | ac982d7..75d9836, a70daa8 |
+| 15 | Status and the header's offset. Status reads the loop's heartbeat; a job holding `ops` excuses a late backup or mirror for 12 hours at most, and only if it began before they turned late (revising the earlier "no time limit" ruling); every overdue row has its own line; retention has a row; a future stamp reads "clock ahead". This wave: the disk job alerts on a restore copy left behind (`RestoreCopyLeft`). | 75d9836..64b7551, a70daa8 |
+| 16 | `doctor`. Alerts that can't be configured are a problem; three backup-role problems; `notes` name a running job's folders; a secret put where its path belongs is never repeated; it checks `state.db`'s schema version and a `MIRROR.md` on a writer, prints one line on a crash (exit 70), and skips its hard-link probe on a mirror or a reader; ssh adds `ControlPath=none`, `ForwardAgent=no` and `ClearAllForwardings=yes`; the NAS key is optional, the host key required. | 64b7551..b03b95f |
+| 17 | The flow end to end, every setting reaching its reader, CI and the docs. The CLI refuses abbreviated flags (`allow_abbrev=False`); the title scan covers stderr and the log; privacy is checked by identity; `plan()`'s `default_timezone` has no default; a full disk's hourly warnings re-arm after a recovery; gitleaks runs in a fresh `git clone --local`. | b03b95f..fed254b |
+| Final review | One Important and six Minors, all fixed in this wave: a deferred row's privacy reaches its same-audio group, and a busy index fails the plan (Tasks 4, 8, 9); the deploy guard sees a stopped backup service (Task 14); a left-behind restore copy alerts (Task 15); AGENTS.md rule 8 covers a folder with no `recording.json`; CLAUDE.md names the docs a Writer refreshes; this record. 938 pytest. | e89de9f, a70daa8 and this record's commit |
+
+### Flagged to Dan: behaviour you will see
+
+- **Abbreviated flags are refused** (Task 17): `--rol web` is an error, not `--role web`.
+- **A job holding `ops` excuses a late backup or mirror for 12 hours at most** (Task 15). A
+  longer job, such as a slow check, shows "needs attention" until it ends.
+- **A public ntfy topic under 20 characters without a token is refused** (Task 13). The whole
+  alert config fails, so dead-man pings stop too; `alert-test` exits 78 and Healthchecks fires
+  after its grace.
+- **A recording imported before its ID was listed stops the next import** (Task 9) until you
+  take it out by hand. The `post-import` snapshot keeps it for good.
+- **S2(b)** (Task 9): a re-run merges only privacy tags into a recording already here. A
+  non-privacy label added in `audio-router` later, or from a new same-audio row, never lands.
+- **Host names** (Task 10): an `allowed_hosts` entry with a port stops the app. Behind a TLS
+  proxy, the proxy must keep `Host` and be in `FORWARDED_ALLOW_IPS`. `/media` is `no-store`.
+- **This wave:** a busy index fails the import's plan (exit 1: run it again); `make deploy`
+  also refuses while a one-off job holds `ops` with the backup service stopped; a restore copy
+  left behind sends "restore copy left behind" (Status doesn't show it; `doctor` names it).
+- **A docs gap to report upstream:** the shinyreact skill doesn't cover
+  `reactive.invalidate_later` (Task 15 confirmed it from Shiny's own docstring).
+
+### Before the first real deploy and import
+
+- **Push, and let CI run:** its compose smoke on linux/amd64 (the image has been built only on
+  Docker Desktop's linux/aarch64, where `make deploy-smoke` passed seven times over Tasks
+  14–17), and the real
+  rsync mirror test on Ubuntu's rsync 3.2.x (the mirror's dry-run parse has been run only against
+  macOS openrsync; an unexpected line fails closed).
+- **`make deploy-smoke`** once more at this branch's head, on a machine with Docker.
+- **The real dry run** (runbook step 3) is the first check that Dan's catalog matches the
+  fixtures' naming; a mismatch is `unplaced`, which fails closed.
+- **Time the restore test** in step 4, and set the Healthchecks grace from it.
+- **The Library's first load** is measured in step 4 (decision 6).
+
+### Carried to 2b and 3a (beyond "Carried to stage 2b" above)
+
+- **2b:**
+  - **Consent per ID:** the sync can't recognise a Plaud ID whose audio matches a listed
+    recording. The import could store the closure's audio hashes (catalog data alone) in
+    `state.db`, so the sync refuses such a twin after downloading it.
+  - **The auto-private residual** (with 3a): a re-run or `reindex` puts back a private tag Dan
+    removed. It errs private; an event marker fixes it.
+  - **Task 7's council:** a stale timing verdict after a Plaud trim, version-bump ties on the
+    newest transcript, `speakers.source` after a rename, note-type numbering with `data_id`
+    order, interleaved lineages for two Plaud IDs, degraded-only recordings.
+  - **The normaliser against real snapshots:** other signed-link styles, `data_id` stability, a
+    whitespace-padded `original_speaker`.
+  - **The import's edges:** a row excluded by its hash is decoded before it is discarded; a
+    `.txt` beside a private-tier file named by a Plaud ID becomes a `plaud` source; FORMAT.md's
+    `inputs` wording and Recorder's JSON envelope.
+  - **Operations:** `KnownHostsCommand=none` for ssh; rsync's exit 24; a stop (not restart) of
+    `docker.service`; nothing alerts when `web` is down; the Dockerfile's layer order; a
+    read-only remount of the archive disk (with 3a).
+  - **Small ones:** `ruff check` in CI with its findings; `state = "/x"` raises AttributeError
+    outside Docker; a plain `reindex` on an empty archive with a foreign index exits 1 (fails
+    closed); no test pins that a damaged index answers none under `strict`.
+- **3a:**
+  - The details tab shows an offset-only recording's offset, not a blank zone.
+  - Status names a restore copy left behind (today the alert and `doctor` do), and a dev machine
+    with a `state.db` but no loop stops saying the service hasn't reported.
+  - A private tag added through `mutate` can leave the index stale: 3a must not read privacy
+    from the index without catching it up (Task 5b's council).
+  - The review queue for held removals reads `ReconcileReport.held` with `acknowledged_up_to`.
 
 ## Self-review (2026-10-08; updated 2026-10-09 after council round 1)
 
