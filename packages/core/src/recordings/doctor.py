@@ -34,6 +34,7 @@ from recordings import alerts, backup, mirror
 from recordings.config import SECRETS, Config, ConfigError, load_config, secret, secret_path
 from recordings.disk import disk_thresholds
 from recordings.index import Index
+from recordings.locks import running
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.ssh import nas_free_bytes
 from recordings.state import State, unreadable
@@ -72,11 +73,17 @@ def _secrets(environ: Mapping[str, str], problems: list[str], warnings: list[str
 def _no_job_secrets(environ: Mapping[str, str], problems: list[str]) -> None:
     held = [name for name in JOB_SECRETS
             if environ.get(SECRETS[name].env) or environ.get(f"{SECRETS[name].env}_FILE")
-            or (SECRETS_DIR / name).exists()]
+            or _mounted(SECRETS_DIR / name)]
     if held:
         problems.append("the web service must hold no backup, mirror or alert secret, but it "
                         "has " + ", ".join(held) + ": docker/compose.yml gives them to `backup` "
                         "only")
+
+
+def _mounted(path: Path) -> bool:
+    """A secret Compose mounted. An optional one it leaves empty is a character device
+    (/dev/null) and holds nothing."""
+    return path.exists() and not path.is_char_device()
 
 
 def _user(problems: list[str]) -> dict:
@@ -151,8 +158,10 @@ def _archive(cfg: Config, role: str, report: dict, problems: list[str]) -> str |
     return identity.uuid
 
 
-def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[str],
+def _state(cfg: Config, archive_uuid: str | None, role: str, report: dict, problems: list[str],
            warnings: list[str]) -> None:
+    # Without state.db, `ops --loop` exits 78 and the backup service crash-loops.
+    missing = problems if role == "backup" else warnings
     if cfg.writer_id is None:
         warnings.append("no [archive] writer_id: this machine can't write the archive")
     if cfg.state_path is None:
@@ -162,17 +171,19 @@ def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[s
             "writer_id": cfg.writer_id, "matches": None}
     report["state"] = info
     if not info["state_db"]:
-        warnings.append("no state.db yet: run `recordings init` once, on the writer")
+        missing.append("no state.db yet: run `recordings init` once, on the writer")
         return
     state = State.read_only(cfg.state_path)
     if state is None:  # state.db went away since the check above
         info["state_db"] = False
-        warnings.append("no state.db yet: run `recordings init` once, on the writer")
+        missing.append("no state.db yet: run `recordings init` once, on the writer")
         return
     try:
         found_uuid, found_writer = state.meta("archive_uuid"), state.meta("writer_id")
     except sqlite3.DatabaseError as exc:  # the restore advice only for real damage
         problems.append(unreadable(state.db_path, exc))
+        return
+    if archive_uuid is None:  # the archive's own problem is already reported
         return
     info["matches"] = found_uuid == archive_uuid and found_writer == cfg.writer_id
     if not info["matches"]:
@@ -180,9 +191,13 @@ def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[s
                         "must not write here")
 
 
-def _left_behind(cfg: Config, bc: backup.BackupConfig, warnings: list[str]) -> None:
+def _left_behind(cfg: Config, bc: backup.BackupConfig, report: dict, warnings: list[str]) -> None:
     """What a killed job leaves (Task 11's council), and the cache folder it depends on. A job
-    running now has these folders too, hence the wording."""
+    running now has these folders too: when the ops lock says that job runs, the folder is its
+    and doctor says to leave it."""
+    held = running(cfg.state_path / "locks") if cfg.state_path is not None else None
+    job = held[0] if held else None
+    notes = report["notes"]
     if bc.cache_dir is None:
         warnings.append("[backup] cache_dir is not set, so restic's cache goes under $HOME/.cache: "
                         "in the container that is the memory-backed /tmp, lost at every restart "
@@ -193,14 +208,20 @@ def _left_behind(cfg: Config, bc: backup.BackupConfig, warnings: list[str]) -> N
                             "on, so restic's cache (about 0.03% of the repository) is lost at a "
                             "restart or fills the wrong disk: put it under the state folder "
                             "(config.example.toml: cache_dir = \"/state/cache/restic\")")
-        if _has(bc.cache_dir, "restic-check-cache-*"):
+        if _has(bc.cache_dir, "restic-check-cache-*") and job == "check":
+            notes.append(f"{bc.cache_dir} holds a restic-check-cache-* folder that belongs to "
+                         "check, running now: leave it")
+        elif _has(bc.cache_dir, "restic-check-cache-*"):
             warnings.append(f"{bc.cache_dir} holds restic-check-cache-* folders, which a killed "
-                            "repository check leaves behind: delete them (a check running now "
-                            "has one)")
+                            "repository check leaves behind: delete them")
     if bc.restore_scratch is not None and _has(bc.restore_scratch, "restore-*"):
-        warnings.append(f"{bc.restore_scratch} holds a restore-* folder, an unencrypted copy of the "
-                        "archive that a killed restore test left behind: the next restore test "
-                        "removes it, or delete it now (one running now has one)")
+        if job == "restore-test":
+            notes.append(f"{bc.restore_scratch} holds a restore-* folder that belongs to "
+                         "restore-test, running now: leave it")
+        else:
+            warnings.append(f"{bc.restore_scratch} holds a restore-* folder, an unencrypted copy of the "
+                            "archive that a killed restore test left behind: the next restore "
+                            "test removes it, or delete it now")
 
 
 def _device(path: Path) -> int | None:
@@ -227,12 +248,16 @@ def _transport(repository: str) -> str:
     return "other"
 
 
-def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str],
-            warnings: list[str]) -> None:
+def _backup(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
+            problems: list[str], warnings: list[str]) -> None:
     if not cfg.data.get("backup", {}).get("repository"):
-        warnings.append("backups aren't configured: set [backup] repository")
+        # the backup service exists to run them; elsewhere it is a choice
+        (problems if role == "backup" else warnings).append(
+            "backups aren't configured: set [backup] repository")
         return
-    if not report["secrets"]["restic_password"]["set"]:  # before from_config, which may refuse first
+    # before from_config, which may refuse first; a named but empty file is already reported
+    if (not report["secrets"]["restic_password"]["set"]
+            and not environ.get("RESTIC_PASSWORD_FILE")):
         problems.append("RESTIC_PASSWORD_FILE is not set, so backups can't run")
     try:
         bc = backup.from_config(cfg, environ)
@@ -251,7 +276,14 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
     if info["transport"] == "sftp" and (bc.nas.key is None or bc.nas.known_hosts is None):
         problems.append("an SFTP repository needs RECORDINGS_NAS_SSH_KEY_FILE and "
                         "RECORDINGS_NAS_KNOWN_HOSTS_FILE")
-    if (info["transport"] == "rest" and bc.rest_username
+    if info["transport"] == "rest" and environ.get("RESTIC_REST_PASSWORD_FILE"):
+        try:  # a named but broken file refuses every backup, with or without a username
+            secret("rest_password", environ)
+        except ConfigError as exc:
+            if str(exc) in warnings:
+                warnings.remove(str(exc))
+            problems.append(str(exc))
+    elif (info["transport"] == "rest" and bc.rest_username
             and not report["secrets"]["rest_password"]["set"]):
         problems.append("a rest-server repository with [backup] rest_username needs "
                         "RESTIC_REST_PASSWORD_FILE")
@@ -262,7 +294,7 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
         problems.append(f"{bc.restic} is not installed")
     if not info["restore_scratch_exists"]:
         warnings.append("[backup] restore_scratch doesn't exist, so the restore test can't run")
-    _left_behind(cfg, bc, warnings)
+    _left_behind(cfg, bc, report, warnings)
     if not info["nas_free_check"]:
         warnings.append("the NAS's free space isn't checked: set [nas] ssh and [backup] "
                         "nas_repo_path")
@@ -272,10 +304,11 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
             warnings.append("the NAS's free space is unknown: neither ssh df nor sftp df answered")
 
 
-def _mirror(cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str],
-            warnings: list[str]) -> None:
+def _mirror(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
+            problems: list[str], warnings: list[str]) -> None:
     if not cfg.data.get("mirror", {}).get("target"):
-        warnings.append("the mirror isn't configured: set [mirror] target")
+        (problems if role == "backup" else warnings).append(
+            "the mirror isn't configured: set [mirror] target")
         return
     try:
         mc = mirror.from_config(cfg, environ)
@@ -319,7 +352,7 @@ def _timezone(cfg: Config, problems: list[str]) -> None:
     without the database, leaves the import unable to place any recording."""
     try:
         ZoneInfo(cfg.default_timezone)
-    except (ZoneInfoNotFoundError, ValueError, OSError):
+    except (ZoneInfoNotFoundError, ValueError, OSError, TypeError):
         problems.append(f"[archive] default_timezone {cfg.default_timezone!r} is not a time zone "
                         "this machine knows: check the name, and that the system's tzdata is "
                         "installed")
@@ -338,9 +371,14 @@ def _alerts(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
             warnings: list[str]) -> None:
     try:
         ac = alerts.from_config(cfg, environ)
-    except ConfigError as exc:  # each is a problem: a bad URL or topic, never its value
-        if str(exc) not in problems and str(exc) not in warnings:  # a bad secret file is listed
-            problems.append(str(exc))
+    except ConfigError as exc:
+        # The loop reads any failure as "alerts off": no alert and no dead-man ping is sent. So
+        # each is a problem (a bad URL, topic or secret file, never its value), whether or not
+        # _secrets listed the same text as a warning.
+        for found in (problems, warnings):
+            if str(exc) in found:
+                found.remove(str(exc))
+        problems.append(f"alerts and dead-man pings are off: {exc}")
         return
     report["alerts"] = {"ntfy_server_set": bool(ac.ntfy_server), "topic_set": bool(ac.topic),
                         "deadman_set": bool(ac.deadman_url)}
@@ -352,6 +390,16 @@ def _alerts(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
     if not ac.deadman_url:
         warnings.append("no dead-man's switch, so a stopped server or backup goes unnoticed: "
                         "set RECORDINGS_DEADMAN_URL_FILE")
+
+
+def _ssh(report: dict, problems: list[str]) -> None:
+    """An SFTP repository, a remote mirror and the NAS's free-space check all run ssh."""
+    info, mirror_info = report["backup"], report["mirror"]
+    needs = ((info is not None and (info["transport"] == "sftp" or info["nas_free_check"]))
+             or (mirror_info is not None and mirror_info["remote"]))
+    if needs and not report["tools"]["ssh"]:
+        problems.append("ssh is not installed, and the SFTP repository, the remote mirror or the "
+                        "NAS's free-space check needs it")
 
 
 def _extra_paths(cfg: Config, warnings: list[str]) -> None:
@@ -376,6 +424,7 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
     report: dict[str, Any] = {
         "role": role, "config": None, "user": None, "archive": None, "state": None,
         "index": None, "backup": None, "mirror": None, "alerts": None, "consent_list": None,
+        "notes": [],
         "tools": {tool: shutil.which(tool) is not None for tool in TOOLS},
         "secrets": _secrets(environ, problems, warnings),
         "problems": problems, "warnings": warnings,
@@ -393,15 +442,16 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
     _timezone(cfg, problems)
     _disk(cfg, problems)
     archive_uuid = _archive(cfg, role, report, problems)
-    _state(cfg, archive_uuid, report, problems, warnings)
+    _state(cfg, archive_uuid, role, report, problems, warnings)
     if role != "backup" and cfg.index_path is not None:  # the backup service has no index
         index = Index(cfg.index_path)
         report["index"] = {"path": str(cfg.index_path), "exists": index.exists(),
                            "recordings": index.count()}
     if role != "web":
-        _backup(cfg, environ, report, problems, warnings)
-        _mirror(cfg, environ, report, problems, warnings)
+        _backup(cfg, environ, role, report, problems, warnings)
+        _mirror(cfg, environ, role, report, problems, warnings)
         _alerts(cfg, environ, report, problems, warnings)
+        _ssh(report, problems)
     if role == "backup":
         _extra_paths(cfg, warnings)
     _retention(cfg, warnings)

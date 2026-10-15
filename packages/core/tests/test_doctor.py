@@ -221,8 +221,8 @@ def test_the_empty_optional_token_mount_is_not_a_finding(tmp_path):
     run_secrets = tmp_path / "run-secrets"
     run_secrets.mkdir()
     (run_secrets / "ntfy_token").symlink_to("/dev/null")
-    for role in ("backup", "all"):
-        report = doctor(environ, role=role)
+    for role, env in (("backup", environ), ("all", environ), ("web", web_only(environ))):
+        report = doctor(env, role=role)  # web reads SECRETS_DIR: an empty mount holds nothing
         assert report["problems"] == [] and report["warnings"] == [], role
         assert report["secrets"]["ntfy_token"]["set"] is False
 
@@ -483,3 +483,119 @@ def test_the_cli_takes_the_role(tmp_path, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["role"] == "web"
     assert main(["doctor", "--role", "backup", "--json"]) == 78  # no restic password here
     assert "RESTIC_PASSWORD_FILE" in " ".join(json.loads(capsys.readouterr().out)["problems"])
+
+
+def test_an_empty_named_token_file_is_a_problem_because_no_alert_is_ever_sent(tmp_path, monkeypatch,
+                                                                              capsys):
+    # why: the loop reads any alerts.from_config failure as "alerts off": no alert and no dead-man
+    # ping is sent, so doctor, the deploy gate, must say so and exit 78 (Task 16 review).
+    environ = server(tmp_path)
+    token = tmp_path / "secrets" / "token"
+    token.write_text("", encoding="utf-8")
+    token.chmod(0o600)
+    environ["RECORDINGS_NTFY_TOKEN_FILE"] = str(token)
+    report = doctor(environ)
+    assert [p for p in report["problems"] if "alerts and dead-man pings are off" in p
+            and "RECORDINGS_NTFY_TOKEN_FILE" in p and "is empty" in p]
+    assert not any("is empty" in w for w in report["warnings"])  # moved, not repeated
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE"):
+        monkeypatch.delenv(name, raising=False)
+    assert main(["doctor", "--json"]) == 78
+    capsys.readouterr()
+
+
+def test_a_rest_repository_with_a_broken_password_file_is_a_problem_without_a_username(tmp_path):
+    # why: restic_env raises on every backup when a named rest_password file is empty, whether or
+    # not [backup] rest_username is set.
+    environ = server(tmp_path, repository="rest:https://nas:8000/recordings/")
+    empty = tmp_path / "secrets" / "rest_empty"
+    empty.write_text("", encoding="utf-8")
+    empty.chmod(0o600)
+    report = doctor(environ | {"RESTIC_REST_PASSWORD_FILE": str(empty)})
+    assert [p for p in report["problems"] if "RESTIC_REST_PASSWORD_FILE" in p and "is empty" in p]
+    assert not any("is empty" in w for w in report["warnings"])
+
+
+def test_in_the_backup_role_a_missing_state_db_or_an_unconfigured_job_is_a_problem(tmp_path):
+    # why: `ops --loop` exits 78 without state.db, and the service crash-loops; and backup is the
+    # role whose whole job is the backups and the mirror.
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    good = cfg.read_text(encoding="utf-8")
+    (tmp_path / "state" / "state.db").unlink()
+    assert any("no state.db yet" in p for p in doctor(environ, role="backup")["problems"])
+    assert any("no state.db yet" in w for w in doctor(environ, role="all")["warnings"])
+    cfg.write_text(good.replace(f'repository = "sftp:backup@nas:/volume1/backups/recordings"\n', "")
+                   .replace('target = "backup@nas:/volume1/recordings-mirror/"\n', ""),
+                   encoding="utf-8")
+    problems = doctor(environ, role="backup")["problems"]
+    assert any("backups aren't configured" in p for p in problems)
+    assert any("the mirror isn't configured" in p for p in problems)
+    warnings = doctor(environ, role="all")["warnings"]
+    assert any("backups aren't configured" in w for w in warnings)
+
+
+def test_a_missing_ssh_is_a_problem_when_something_needs_it(tmp_path, monkeypatch):
+    environ = server(tmp_path)
+    monkeypatch.setattr(doctor_module.shutil, "which",
+                        lambda name: None if name == "ssh" else f"/usr/bin/{name}")
+    assert any("ssh is not installed" in p for p in doctor(environ, role="backup")["problems"])
+    assert doctor(web_only(environ), role="web")["problems"] == []  # web runs no ssh
+
+
+def test_an_unmounted_archive_does_not_also_blame_the_state(tmp_path):
+    environ = server(tmp_path)
+    (tmp_path / "archive" / SENTINEL).unlink()
+    report = doctor(environ)
+    assert report["state"]["matches"] is None
+    assert not any("belongs to another archive" in p for p in report["problems"])
+
+
+def test_state_from_another_archive_is_a_problem(tmp_path):
+    environ = server(tmp_path)
+    init_archive(tmp_path / "archive2", tmp_path / "state2", writer_id="homelab")
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        f'path = "{tmp_path / "state"}"', f'path = "{tmp_path / "state2"}"'), encoding="utf-8")
+    report = doctor(environ)
+    assert report["state"]["matches"] is False
+    assert any("another archive or another writer_id" in p for p in report["problems"])
+
+
+def test_an_empty_restic_password_file_is_not_also_reported_unset(tmp_path):
+    environ = server(tmp_path)
+    (tmp_path / "secrets" / "pw").write_text("", encoding="utf-8")
+    problems = doctor(environ)["problems"]
+    assert any("is empty" in p for p in problems)
+    assert not any("is not set" in p for p in problems)
+
+
+@pytest.mark.parametrize("value", ["5", "[1]"])
+def test_a_default_timezone_that_is_not_a_string_is_a_problem_not_a_crash(tmp_path, value):
+    environ = server(tmp_path)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        'writer_id = "homelab"\n', f'writer_id = "homelab"\ndefault_timezone = {value}\n', 1),
+        encoding="utf-8")
+    assert any("default_timezone" in p for p in doctor(web_only(environ), role="web")["problems"])
+
+
+def test_a_job_running_now_owns_its_folders_and_doctor_says_to_leave_them(tmp_path):
+    # why: the runbook runs doctor right after `up`, while the first check and restore test run;
+    # deleting a live restore test's folder fails it.
+    from datetime import datetime, timezone
+
+    from recordings.locks import OPS_LOCK, Locks, announce
+
+    environ = server(tmp_path)
+    (tmp_path / "cache" / "restic-check-cache-1234").mkdir(parents=True)
+    (tmp_path / "scratch" / "restore-20261009T080000Z").mkdir()
+    folders = tmp_path / "state" / "locks"
+    with Locks(folders, timeout=0).hold(OPS_LOCK):
+        with announce(folders, "check", datetime.now(timezone.utc)):
+            report = doctor(environ, role="backup")
+    assert not any("restic-check-cache-" in w for w in report["warnings"])
+    assert any("restore-" in w and "unencrypted" in w for w in report["warnings"])  # not check's
+    assert any("belongs to check, running now: leave it" in n for n in report["notes"])

@@ -21907,7 +21907,7 @@ else `all`. Two checks read config.toml alone, so every role reports them, as th
   - from Task 8: the import measures media with ffprobe and, for anything but a plain WAV, ffmpeg
   - from Task 14: Compose sets `RECORDINGS_ROLE` to `web` or `backup` in each service, and the image creates the `APP_UID` user from deploy.env's `RECORDINGS_UID`; `scripts/compose_smoke.py`'s `BACKUP_COMMANDS` and docstring, and its placeholder secrets (mode 600, with an https ping URL)
 - Produces:
-  - `recordings.doctor.doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict`, with the keys `role`, `config`, `user`, `archive`, `state`, `index`, `backup`, `mirror`, `alerts`, `consent_list`, `tools`, `secrets`, `problems` and `warnings`
+  - `recordings.doctor.doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict`, with the keys `role`, `config`, `user`, `archive`, `state`, `index`, `backup`, `mirror`, `alerts`, `consent_list`, `notes`, `tools`, `secrets`, `problems` and `warnings`
   - `recordings.doctor.ROLES = ("web", "backup", "all")`
   - `recordings.doctor.JOB_SECRETS`: the backup service's secrets, which `web` must not hold
   - `recordings.doctor.SECRETS_DIR = Path("/run/secrets")`
@@ -22142,8 +22142,8 @@ def test_the_empty_optional_token_mount_is_not_a_finding(tmp_path):
     run_secrets = tmp_path / "run-secrets"
     run_secrets.mkdir()
     (run_secrets / "ntfy_token").symlink_to("/dev/null")
-    for role in ("backup", "all"):
-        report = doctor(environ, role=role)
+    for role, env in (("backup", environ), ("all", environ), ("web", web_only(environ))):
+        report = doctor(env, role=role)  # web reads SECRETS_DIR: an empty mount holds nothing
         assert report["problems"] == [] and report["warnings"] == [], role
         assert report["secrets"]["ntfy_token"]["set"] is False
 
@@ -22404,6 +22404,122 @@ def test_the_cli_takes_the_role(tmp_path, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["role"] == "web"
     assert main(["doctor", "--role", "backup", "--json"]) == 78  # no restic password here
     assert "RESTIC_PASSWORD_FILE" in " ".join(json.loads(capsys.readouterr().out)["problems"])
+
+
+def test_an_empty_named_token_file_is_a_problem_because_no_alert_is_ever_sent(tmp_path, monkeypatch,
+                                                                              capsys):
+    # why: the loop reads any alerts.from_config failure as "alerts off": no alert and no dead-man
+    # ping is sent, so doctor, the deploy gate, must say so and exit 78 (Task 16 review).
+    environ = server(tmp_path)
+    token = tmp_path / "secrets" / "token"
+    token.write_text("", encoding="utf-8")
+    token.chmod(0o600)
+    environ["RECORDINGS_NTFY_TOKEN_FILE"] = str(token)
+    report = doctor(environ)
+    assert [p for p in report["problems"] if "alerts and dead-man pings are off" in p
+            and "RECORDINGS_NTFY_TOKEN_FILE" in p and "is empty" in p]
+    assert not any("is empty" in w for w in report["warnings"])  # moved, not repeated
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX", "RECORDINGS_ROLE"):
+        monkeypatch.delenv(name, raising=False)
+    assert main(["doctor", "--json"]) == 78
+    capsys.readouterr()
+
+
+def test_a_rest_repository_with_a_broken_password_file_is_a_problem_without_a_username(tmp_path):
+    # why: restic_env raises on every backup when a named rest_password file is empty, whether or
+    # not [backup] rest_username is set.
+    environ = server(tmp_path, repository="rest:https://nas:8000/recordings/")
+    empty = tmp_path / "secrets" / "rest_empty"
+    empty.write_text("", encoding="utf-8")
+    empty.chmod(0o600)
+    report = doctor(environ | {"RESTIC_REST_PASSWORD_FILE": str(empty)})
+    assert [p for p in report["problems"] if "RESTIC_REST_PASSWORD_FILE" in p and "is empty" in p]
+    assert not any("is empty" in w for w in report["warnings"])
+
+
+def test_in_the_backup_role_a_missing_state_db_or_an_unconfigured_job_is_a_problem(tmp_path):
+    # why: `ops --loop` exits 78 without state.db, and the service crash-loops; and backup is the
+    # role whose whole job is the backups and the mirror.
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    good = cfg.read_text(encoding="utf-8")
+    (tmp_path / "state" / "state.db").unlink()
+    assert any("no state.db yet" in p for p in doctor(environ, role="backup")["problems"])
+    assert any("no state.db yet" in w for w in doctor(environ, role="all")["warnings"])
+    cfg.write_text(good.replace(f'repository = "sftp:backup@nas:/volume1/backups/recordings"\n', "")
+                   .replace('target = "backup@nas:/volume1/recordings-mirror/"\n', ""),
+                   encoding="utf-8")
+    problems = doctor(environ, role="backup")["problems"]
+    assert any("backups aren't configured" in p for p in problems)
+    assert any("the mirror isn't configured" in p for p in problems)
+    warnings = doctor(environ, role="all")["warnings"]
+    assert any("backups aren't configured" in w for w in warnings)
+
+
+def test_a_missing_ssh_is_a_problem_when_something_needs_it(tmp_path, monkeypatch):
+    environ = server(tmp_path)
+    monkeypatch.setattr(doctor_module.shutil, "which",
+                        lambda name: None if name == "ssh" else f"/usr/bin/{name}")
+    assert any("ssh is not installed" in p for p in doctor(environ, role="backup")["problems"])
+    assert doctor(web_only(environ), role="web")["problems"] == []  # web runs no ssh
+
+
+def test_an_unmounted_archive_does_not_also_blame_the_state(tmp_path):
+    environ = server(tmp_path)
+    (tmp_path / "archive" / SENTINEL).unlink()
+    report = doctor(environ)
+    assert report["state"]["matches"] is None
+    assert not any("belongs to another archive" in p for p in report["problems"])
+
+
+def test_state_from_another_archive_is_a_problem(tmp_path):
+    environ = server(tmp_path)
+    init_archive(tmp_path / "archive2", tmp_path / "state2", writer_id="homelab")
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        f'path = "{tmp_path / "state"}"', f'path = "{tmp_path / "state2"}"'), encoding="utf-8")
+    report = doctor(environ)
+    assert report["state"]["matches"] is False
+    assert any("another archive or another writer_id" in p for p in report["problems"])
+
+
+def test_an_empty_restic_password_file_is_not_also_reported_unset(tmp_path):
+    environ = server(tmp_path)
+    (tmp_path / "secrets" / "pw").write_text("", encoding="utf-8")
+    problems = doctor(environ)["problems"]
+    assert any("is empty" in p for p in problems)
+    assert not any("is not set" in p for p in problems)
+
+
+@pytest.mark.parametrize("value", ["5", "[1]"])
+def test_a_default_timezone_that_is_not_a_string_is_a_problem_not_a_crash(tmp_path, value):
+    environ = server(tmp_path)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(cfg.read_text(encoding="utf-8").replace(
+        'writer_id = "homelab"\n', f'writer_id = "homelab"\ndefault_timezone = {value}\n', 1),
+        encoding="utf-8")
+    assert any("default_timezone" in p for p in doctor(web_only(environ), role="web")["problems"])
+
+
+def test_a_job_running_now_owns_its_folders_and_doctor_says_to_leave_them(tmp_path):
+    # why: the runbook runs doctor right after `up`, while the first check and restore test run;
+    # deleting a live restore test's folder fails it.
+    from datetime import datetime, timezone
+
+    from recordings.locks import OPS_LOCK, Locks, announce
+
+    environ = server(tmp_path)
+    (tmp_path / "cache" / "restic-check-cache-1234").mkdir(parents=True)
+    (tmp_path / "scratch" / "restore-20261009T080000Z").mkdir()
+    folders = tmp_path / "state" / "locks"
+    with Locks(folders, timeout=0).hold(OPS_LOCK):
+        with announce(folders, "check", datetime.now(timezone.utc)):
+            report = doctor(environ, role="backup")
+    assert not any("restic-check-cache-" in w for w in report["warnings"])
+    assert any("restore-" in w and "unencrypted" in w for w in report["warnings"])  # not check's
+    assert any("belongs to check, running now: leave it" in n for n in report["notes"])
 ```
 
 In `packages/core/tests/test_config.py`, **replace**
@@ -22488,6 +22604,7 @@ from recordings import alerts, backup, mirror
 from recordings.config import SECRETS, Config, ConfigError, load_config, secret, secret_path
 from recordings.disk import disk_thresholds
 from recordings.index import Index
+from recordings.locks import running
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.ssh import nas_free_bytes
 from recordings.state import State, unreadable
@@ -22526,11 +22643,17 @@ def _secrets(environ: Mapping[str, str], problems: list[str], warnings: list[str
 def _no_job_secrets(environ: Mapping[str, str], problems: list[str]) -> None:
     held = [name for name in JOB_SECRETS
             if environ.get(SECRETS[name].env) or environ.get(f"{SECRETS[name].env}_FILE")
-            or (SECRETS_DIR / name).exists()]
+            or _mounted(SECRETS_DIR / name)]
     if held:
         problems.append("the web service must hold no backup, mirror or alert secret, but it "
                         "has " + ", ".join(held) + ": docker/compose.yml gives them to `backup` "
                         "only")
+
+
+def _mounted(path: Path) -> bool:
+    """A secret Compose mounted. An optional one it leaves empty is a character device
+    (/dev/null) and holds nothing."""
+    return path.exists() and not path.is_char_device()
 
 
 def _user(problems: list[str]) -> dict:
@@ -22605,8 +22728,10 @@ def _archive(cfg: Config, role: str, report: dict, problems: list[str]) -> str |
     return identity.uuid
 
 
-def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[str],
+def _state(cfg: Config, archive_uuid: str | None, role: str, report: dict, problems: list[str],
            warnings: list[str]) -> None:
+    # Without state.db, `ops --loop` exits 78 and the backup service crash-loops.
+    missing = problems if role == "backup" else warnings
     if cfg.writer_id is None:
         warnings.append("no [archive] writer_id: this machine can't write the archive")
     if cfg.state_path is None:
@@ -22616,17 +22741,19 @@ def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[s
             "writer_id": cfg.writer_id, "matches": None}
     report["state"] = info
     if not info["state_db"]:
-        warnings.append("no state.db yet: run `recordings init` once, on the writer")
+        missing.append("no state.db yet: run `recordings init` once, on the writer")
         return
     state = State.read_only(cfg.state_path)
     if state is None:  # state.db went away since the check above
         info["state_db"] = False
-        warnings.append("no state.db yet: run `recordings init` once, on the writer")
+        missing.append("no state.db yet: run `recordings init` once, on the writer")
         return
     try:
         found_uuid, found_writer = state.meta("archive_uuid"), state.meta("writer_id")
     except sqlite3.DatabaseError as exc:  # the restore advice only for real damage
         problems.append(unreadable(state.db_path, exc))
+        return
+    if archive_uuid is None:  # the archive's own problem is already reported
         return
     info["matches"] = found_uuid == archive_uuid and found_writer == cfg.writer_id
     if not info["matches"]:
@@ -22634,9 +22761,13 @@ def _state(cfg: Config, archive_uuid: str | None, report: dict, problems: list[s
                         "must not write here")
 
 
-def _left_behind(cfg: Config, bc: backup.BackupConfig, warnings: list[str]) -> None:
+def _left_behind(cfg: Config, bc: backup.BackupConfig, report: dict, warnings: list[str]) -> None:
     """What a killed job leaves (Task 11's council), and the cache folder it depends on. A job
-    running now has these folders too, hence the wording."""
+    running now has these folders too: when the ops lock says that job runs, the folder is its
+    and doctor says to leave it."""
+    held = running(cfg.state_path / "locks") if cfg.state_path is not None else None
+    job = held[0] if held else None
+    notes = report["notes"]
     if bc.cache_dir is None:
         warnings.append("[backup] cache_dir is not set, so restic's cache goes under $HOME/.cache: "
                         "in the container that is the memory-backed /tmp, lost at every restart "
@@ -22647,14 +22778,20 @@ def _left_behind(cfg: Config, bc: backup.BackupConfig, warnings: list[str]) -> N
                             "on, so restic's cache (about 0.03% of the repository) is lost at a "
                             "restart or fills the wrong disk: put it under the state folder "
                             "(config.example.toml: cache_dir = \"/state/cache/restic\")")
-        if _has(bc.cache_dir, "restic-check-cache-*"):
+        if _has(bc.cache_dir, "restic-check-cache-*") and job == "check":
+            notes.append(f"{bc.cache_dir} holds a restic-check-cache-* folder that belongs to "
+                         "check, running now: leave it")
+        elif _has(bc.cache_dir, "restic-check-cache-*"):
             warnings.append(f"{bc.cache_dir} holds restic-check-cache-* folders, which a killed "
-                            "repository check leaves behind: delete them (a check running now "
-                            "has one)")
+                            "repository check leaves behind: delete them")
     if bc.restore_scratch is not None and _has(bc.restore_scratch, "restore-*"):
-        warnings.append(f"{bc.restore_scratch} holds a restore-* folder, an unencrypted copy of the "
-                        "archive that a killed restore test left behind: the next restore test "
-                        "removes it, or delete it now (one running now has one)")
+        if job == "restore-test":
+            notes.append(f"{bc.restore_scratch} holds a restore-* folder that belongs to "
+                         "restore-test, running now: leave it")
+        else:
+            warnings.append(f"{bc.restore_scratch} holds a restore-* folder, an unencrypted copy of the "
+                            "archive that a killed restore test left behind: the next restore "
+                            "test removes it, or delete it now")
 
 
 def _device(path: Path) -> int | None:
@@ -22681,12 +22818,16 @@ def _transport(repository: str) -> str:
     return "other"
 
 
-def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str],
-            warnings: list[str]) -> None:
+def _backup(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
+            problems: list[str], warnings: list[str]) -> None:
     if not cfg.data.get("backup", {}).get("repository"):
-        warnings.append("backups aren't configured: set [backup] repository")
+        # the backup service exists to run them; elsewhere it is a choice
+        (problems if role == "backup" else warnings).append(
+            "backups aren't configured: set [backup] repository")
         return
-    if not report["secrets"]["restic_password"]["set"]:  # before from_config, which may refuse first
+    # before from_config, which may refuse first; a named but empty file is already reported
+    if (not report["secrets"]["restic_password"]["set"]
+            and not environ.get("RESTIC_PASSWORD_FILE")):
         problems.append("RESTIC_PASSWORD_FILE is not set, so backups can't run")
     try:
         bc = backup.from_config(cfg, environ)
@@ -22705,7 +22846,14 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
     if info["transport"] == "sftp" and (bc.nas.key is None or bc.nas.known_hosts is None):
         problems.append("an SFTP repository needs RECORDINGS_NAS_SSH_KEY_FILE and "
                         "RECORDINGS_NAS_KNOWN_HOSTS_FILE")
-    if (info["transport"] == "rest" and bc.rest_username
+    if info["transport"] == "rest" and environ.get("RESTIC_REST_PASSWORD_FILE"):
+        try:  # a named but broken file refuses every backup, with or without a username
+            secret("rest_password", environ)
+        except ConfigError as exc:
+            if str(exc) in warnings:
+                warnings.remove(str(exc))
+            problems.append(str(exc))
+    elif (info["transport"] == "rest" and bc.rest_username
             and not report["secrets"]["rest_password"]["set"]):
         problems.append("a rest-server repository with [backup] rest_username needs "
                         "RESTIC_REST_PASSWORD_FILE")
@@ -22716,7 +22864,7 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
         problems.append(f"{bc.restic} is not installed")
     if not info["restore_scratch_exists"]:
         warnings.append("[backup] restore_scratch doesn't exist, so the restore test can't run")
-    _left_behind(cfg, bc, warnings)
+    _left_behind(cfg, bc, report, warnings)
     if not info["nas_free_check"]:
         warnings.append("the NAS's free space isn't checked: set [nas] ssh and [backup] "
                         "nas_repo_path")
@@ -22726,10 +22874,11 @@ def _backup(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
             warnings.append("the NAS's free space is unknown: neither ssh df nor sftp df answered")
 
 
-def _mirror(cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str],
-            warnings: list[str]) -> None:
+def _mirror(cfg: Config, environ: Mapping[str, str], role: str, report: dict,
+            problems: list[str], warnings: list[str]) -> None:
     if not cfg.data.get("mirror", {}).get("target"):
-        warnings.append("the mirror isn't configured: set [mirror] target")
+        (problems if role == "backup" else warnings).append(
+            "the mirror isn't configured: set [mirror] target")
         return
     try:
         mc = mirror.from_config(cfg, environ)
@@ -22773,7 +22922,7 @@ def _timezone(cfg: Config, problems: list[str]) -> None:
     without the database, leaves the import unable to place any recording."""
     try:
         ZoneInfo(cfg.default_timezone)
-    except (ZoneInfoNotFoundError, ValueError, OSError):
+    except (ZoneInfoNotFoundError, ValueError, OSError, TypeError):
         problems.append(f"[archive] default_timezone {cfg.default_timezone!r} is not a time zone "
                         "this machine knows: check the name, and that the system's tzdata is "
                         "installed")
@@ -22792,9 +22941,14 @@ def _alerts(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
             warnings: list[str]) -> None:
     try:
         ac = alerts.from_config(cfg, environ)
-    except ConfigError as exc:  # each is a problem: a bad URL or topic, never its value
-        if str(exc) not in problems and str(exc) not in warnings:  # a bad secret file is listed
-            problems.append(str(exc))
+    except ConfigError as exc:
+        # The loop reads any failure as "alerts off": no alert and no dead-man ping is sent. So
+        # each is a problem (a bad URL, topic or secret file, never its value), whether or not
+        # _secrets listed the same text as a warning.
+        for found in (problems, warnings):
+            if str(exc) in found:
+                found.remove(str(exc))
+        problems.append(f"alerts and dead-man pings are off: {exc}")
         return
     report["alerts"] = {"ntfy_server_set": bool(ac.ntfy_server), "topic_set": bool(ac.topic),
                         "deadman_set": bool(ac.deadman_url)}
@@ -22806,6 +22960,16 @@ def _alerts(cfg: Config, environ: Mapping[str, str], report: dict, problems: lis
     if not ac.deadman_url:
         warnings.append("no dead-man's switch, so a stopped server or backup goes unnoticed: "
                         "set RECORDINGS_DEADMAN_URL_FILE")
+
+
+def _ssh(report: dict, problems: list[str]) -> None:
+    """An SFTP repository, a remote mirror and the NAS's free-space check all run ssh."""
+    info, mirror_info = report["backup"], report["mirror"]
+    needs = ((info is not None and (info["transport"] == "sftp" or info["nas_free_check"]))
+             or (mirror_info is not None and mirror_info["remote"]))
+    if needs and not report["tools"]["ssh"]:
+        problems.append("ssh is not installed, and the SFTP repository, the remote mirror or the "
+                        "NAS's free-space check needs it")
 
 
 def _extra_paths(cfg: Config, warnings: list[str]) -> None:
@@ -22830,6 +22994,7 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
     report: dict[str, Any] = {
         "role": role, "config": None, "user": None, "archive": None, "state": None,
         "index": None, "backup": None, "mirror": None, "alerts": None, "consent_list": None,
+        "notes": [],
         "tools": {tool: shutil.which(tool) is not None for tool in TOOLS},
         "secrets": _secrets(environ, problems, warnings),
         "problems": problems, "warnings": warnings,
@@ -22847,15 +23012,16 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
     _timezone(cfg, problems)
     _disk(cfg, problems)
     archive_uuid = _archive(cfg, role, report, problems)
-    _state(cfg, archive_uuid, report, problems, warnings)
+    _state(cfg, archive_uuid, role, report, problems, warnings)
     if role != "backup" and cfg.index_path is not None:  # the backup service has no index
         index = Index(cfg.index_path)
         report["index"] = {"path": str(cfg.index_path), "exists": index.exists(),
                            "recordings": index.count()}
     if role != "web":
-        _backup(cfg, environ, report, problems, warnings)
-        _mirror(cfg, environ, report, problems, warnings)
+        _backup(cfg, environ, role, report, problems, warnings)
+        _mirror(cfg, environ, role, report, problems, warnings)
         _alerts(cfg, environ, report, problems, warnings)
+        _ssh(report, problems)
     if role == "backup":
         _extra_paths(cfg, warnings)
     _retention(cfg, warnings)
@@ -22933,8 +23099,8 @@ finds nothing to warn about in them.
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_doctor.py packages/core/tests/test_config.py -v && uv run pytest`
-Expected: all pass. The suite gains 37 tests over Task 15's count (36 in `test_doctor.py`, 1 in
-`test_ops.py`), so 851 + 37 = 888 with `RECORDINGS_REQUIRE_RESTIC=1`.
+Expected: all pass. The suite gains 47 tests over Task 15's count (46 in `test_doctor.py`, 1 in
+`test_ops.py`), so 851 + 47 = 898 with `RECORDINGS_REQUIRE_RESTIC=1`.
 
 Then run `make deploy-smoke`.
 Expected: it passes, `recordings doctor --role backup --json` among its backup commands, which
