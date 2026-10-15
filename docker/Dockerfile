@@ -60,14 +60,17 @@ RUN set -eu; \
 # here as APP_UID and APP_GID. That user must exist in /etc/passwd: ssh exits before it reads any
 # option when its uid has no entry ("No user exists for uid"), and the mirror and the NAS checks
 # run ssh. 10001 is for images built without them (CI, the demo). The index's named volume copies
-# /index's owner and mode when Docker first creates it.
+# /index's owner and mode when Docker first creates it. ~/.ssh exists so that ssh, on the read-only
+# file system, doesn't complain that it can't create it.
 ARG APP_UID=10001
 ARG APP_GID=10001
 RUN set -eu; \
     if [ "$APP_UID" = 0 ] || [ "$APP_GID" = 0 ]; then echo "APP_UID and APP_GID must not be 0" >&2; exit 1; fi; \
     getent group "$APP_GID" >/dev/null || groupadd --gid "$APP_GID" app; \
     getent passwd "$APP_UID" >/dev/null || useradd --uid "$APP_UID" --gid "$APP_GID" --no-log-init --create-home --shell /usr/sbin/nologin app; \
-    install -d -o "$APP_UID" -g "$APP_GID" -m 0700 /index
+    install -d -o "$APP_UID" -g "$APP_GID" -m 0700 /index; \
+    home=$(getent passwd "$APP_UID" | cut -d: -f6); \
+    install -d -o "$APP_UID" -g "$APP_GID" -m 0700 "$home/.ssh"
 WORKDIR /app
 COPY --from=build /app/.venv .venv
 COPY demo/archive demo/archive

@@ -1,4 +1,3 @@
-```python
 """Run the real docker/compose.yml once, against temporary folders: init, the backup service's
 jobs and /healthz.
 
@@ -100,7 +99,11 @@ def main() -> int:
             "RECORDINGS_BIND=127.0.0.1", f"RECORDINGS_PORT={PORT}",
             f"RECORDINGS_UID={os.getuid()}", f"RECORDINGS_GID={os.getgid()}"]) + "\n",
             encoding="utf-8")
-        env = {**os.environ, "RECORDINGS_IMAGE_TAG": "smoke"}
+        # Compose lets a shell variable beat --env-file, so an exported RECORDINGS_* would point the
+        # smoke at real data: drop them all, as the root conftest does, and set the tag.
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(("RECORDINGS_", "RESTIC_"))}
+        env["RECORDINGS_IMAGE_TAG"] = "smoke"
         compose = ["docker", "compose", "-p", "recordings-smoke", "--env-file", str(deploy),
                    "-f", str(REPO / "docker" / "compose.yml")]
         try:
@@ -123,7 +126,9 @@ def main() -> int:
             print(f"compose_smoke: {exc}", file=sys.stderr)
             return 1
         finally:
-            subprocess.run([*compose, "down", "-v"], env=env)
+            # --rmi all removes recordings:smoke (an image with a custom tag, which --rmi local
+            # keeps), so it never shows among `docker image ls recordings`' rollback tags.
+            subprocess.run([*compose, "down", "-v", "--rmi", "all"], env=env)
         print("compose smoke: init, ssh, backup, restore test and mirror ran, and web answered "
               "/healthz, as this machine's user")
         return 0

@@ -19194,6 +19194,8 @@ def test_the_template_holds_no_secret_names():
     template = TEMPLATE.read_text(encoding="utf-8")
     for name in ("TOKEN", "API_KEY", "PASSWORD", "SECRET="):
         assert name not in template
+    for spec in config.SECRETS.values():
+        assert spec.env not in template, spec.env
 
 
 def test_the_template_is_not_named_like_an_env_file():
@@ -19285,6 +19287,18 @@ def test_a_rollback_starts_an_old_image_and_never_builds_one():
     assert "up -d --no-build" in back.stdout
 
 
+def test_the_smoke_script_parses_and_creates_every_compose_secret():
+    # why: nothing else without Docker reads scripts/compose_smoke.py; a stray line once made it a
+    # SyntaxError that only `make deploy-smoke` would have found. ntfy_token is the optional one:
+    # its source is /dev/null, so the script makes no file for it.
+    path = REPO / "scripts" / "compose_smoke.py"
+    spec = importlib.util.spec_from_file_location("compose_smoke", path)
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    assert set(smoke.SECRETS) | {"ntfy_token"} == set(compose()["secrets"])
+    assert not os.access(path, os.X_OK), "no shebang, so no exec bit"
+
+
 def test_the_boot_unit_waits_for_docker_the_disk_and_tailscale():
     unit = UNIT.read_text(encoding="utf-8")
     for line in ("Requires=docker.service", "After=docker.service tailscaled.service",
@@ -19300,7 +19314,10 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
     # why: compose.yml requires RECORDINGS_IMAGE_TAG, and pull_policy: never can't fetch one. The
     # tag the web container runs is the deployed one, however it was started.
     fake = tmp_path / "docker"
-    fake.write_text('#!/bin/sh\nif [ "$1" = ps ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
+    # `ps -q` lists container IDs; `inspect` prints the image reference the container was created from
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1" = ps ]; then [ "$FAKE_IMAGE" ] && echo abc123; exit 0; fi\n'
+                    'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
                     'echo "RECORDINGS_IMAGE_TAG=$RECORDINGS_IMAGE_TAG $*"\n', encoding="utf-8")
     fake.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_IMAGE": "recordings:0123456789ab"}
@@ -19313,6 +19330,10 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
     none = subprocess.run(["sh", script, "up", "-d", "--no-build"], env={**env, "FAKE_IMAGE": ""},
                           capture_output=True, text=True)
     assert none.returncode != 0 and "make deploy" in none.stderr and none.stdout == ""
+    down = subprocess.run(["sh", script, "up", "-d", "--no-build"], env={**env, "FAKE_DOWN": "1"},
+                          capture_output=True, text=True)
+    assert down.returncode != 0 and "make deploy" not in down.stderr and down.stdout == ""
+    assert "docker" in down.stderr and "daemon" in down.stderr
 
 
 def test_every_base_image_is_pinned_by_digest():
@@ -19346,8 +19367,11 @@ def test_the_images_restic_is_the_one_fetch_restic_pins():
         "arm64": (fetch_restic.PINNED[("linux", "aarch64")][1],
                   fetch_restic.BINARY_SHA256["linux_arm64"])}
     runbook = (REPO / "docs" / "runbooks" / "first-run.md").read_text(encoding="utf-8")
-    archive_sums = [sums[0] for sums in found.values()]
-    assert all(sha in runbook for sha in archive_sums), "the runbook's spike checks other sums"
+    for arch, (sum_, _) in found.items():
+        # each sum sits on the case arm of its own architecture: x86_64 is amd64, aarch64 arm64
+        arm = {"amd64": "x86_64)  ARCH=linux_amd64", "arm64": "aarch64) ARCH=linux_arm64"}[arch]
+        assert f"{arm} SUM={sum_} ;;" in runbook, f"the runbook's {arch} sum differs"
+    assert set(re.findall(r"restic_(\d+\.\d+\.\d+)_", runbook)) == {fetch_restic.VERSION}
 
 
 def test_the_runtime_image_has_the_time_zone_database():
@@ -19702,14 +19726,17 @@ RUN set -eu; \
 # here as APP_UID and APP_GID. That user must exist in /etc/passwd: ssh exits before it reads any
 # option when its uid has no entry ("No user exists for uid"), and the mirror and the NAS checks
 # run ssh. 10001 is for images built without them (CI, the demo). The index's named volume copies
-# /index's owner and mode when Docker first creates it.
+# /index's owner and mode when Docker first creates it. ~/.ssh exists so that ssh, on the read-only
+# file system, doesn't complain that it can't create it.
 ARG APP_UID=10001
 ARG APP_GID=10001
 RUN set -eu; \
     if [ "$APP_UID" = 0 ] || [ "$APP_GID" = 0 ]; then echo "APP_UID and APP_GID must not be 0" >&2; exit 1; fi; \
     getent group "$APP_GID" >/dev/null || groupadd --gid "$APP_GID" app; \
     getent passwd "$APP_UID" >/dev/null || useradd --uid "$APP_UID" --gid "$APP_GID" --no-log-init --create-home --shell /usr/sbin/nologin app; \
-    install -d -o "$APP_UID" -g "$APP_GID" -m 0700 /index
+    install -d -o "$APP_UID" -g "$APP_GID" -m 0700 /index; \
+    home=$(getent passwd "$APP_UID" | cut -d: -f6); \
+    install -d -o "$APP_UID" -g "$APP_GID" -m 0700 "$home/.ssh"
 WORKDIR /app
 COPY --from=build /app/.venv .venv
 COPY demo/archive demo/archive
@@ -19728,9 +19755,17 @@ CMD ["recordings-ui", "--host", "0.0.0.0", "--port", "8000"]
 # boot, so a restart never builds, pulls or switches code. It reads no secret.
 set -eu
 cd "$(dirname "$0")/.."
-image=$(docker ps -a --filter label=com.docker.compose.project=recordings \
-  --filter label=com.docker.compose.service=web --filter label=com.docker.compose.oneoff=False \
-  --format '{{.Image}}' | head -n 1)
+# docker ps lists the newest container first. The image is read back with inspect, which keeps the
+# reference the container was created from (ps prints an image ID once its tag has moved).
+ids=$(docker ps -a -q --filter label=com.docker.compose.project=recordings \
+  --filter label=com.docker.compose.service=web --filter label=com.docker.compose.oneoff=False) \
+  || { echo "up-deployed: docker failed (is the Docker daemon running?)" >&2; exit 1; }
+id=$(printf '%s\n' "$ids" | head -n 1)
+image=
+if [ -n "$id" ]; then
+  image=$(docker inspect --format '{{.Config.Image}}' "$id") \
+    || { echo "up-deployed: docker inspect failed (is the Docker daemon running?)" >&2; exit 1; }
+fi
 case "$image" in
   recordings:?*) ;;
   *) echo "up-deployed: no recordings web container to start again; run make deploy first" >&2
@@ -19915,7 +19950,11 @@ def main() -> int:
             "RECORDINGS_BIND=127.0.0.1", f"RECORDINGS_PORT={PORT}",
             f"RECORDINGS_UID={os.getuid()}", f"RECORDINGS_GID={os.getgid()}"]) + "\n",
             encoding="utf-8")
-        env = {**os.environ, "RECORDINGS_IMAGE_TAG": "smoke"}
+        # Compose lets a shell variable beat --env-file, so an exported RECORDINGS_* would point the
+        # smoke at real data: drop them all, as the root conftest does, and set the tag.
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith(("RECORDINGS_", "RESTIC_"))}
+        env["RECORDINGS_IMAGE_TAG"] = "smoke"
         compose = ["docker", "compose", "-p", "recordings-smoke", "--env-file", str(deploy),
                    "-f", str(REPO / "docker" / "compose.yml")]
         try:
@@ -19938,7 +19977,9 @@ def main() -> int:
             print(f"compose_smoke: {exc}", file=sys.stderr)
             return 1
         finally:
-            subprocess.run([*compose, "down", "-v"], env=env)
+            # --rmi all removes recordings:smoke (an image with a custom tag, which --rmi local
+            # keeps), so it never shows among `docker image ls recordings`' rollback tags.
+            subprocess.run([*compose, "down", "-v", "--rmi", "all"], env=env)
         print("compose smoke: init, ssh, backup, restore test and mirror ran, and web answered "
               "/healthz, as this machine's user")
         return 0
@@ -20013,7 +20054,8 @@ make deploy-smoke                                   # the real compose file, onc
   lists the tags. Keep a few: `docker image prune -a` deletes the ones no container uses.
 - **At boot,** `docker/recordings.service` waits for the data disk and the Tailscale address,
   then starts the containers again on the tag they last ran (`docker/up-deployed.sh`). The
-  runbook installs it.
+  runbook installs it. It uses the `compose.yml` and `deploy.env` the checkout holds at boot, so
+  pull only to deploy.
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
   always allowed; the app refuses any other name. Give each name alone, with no port or
@@ -20077,7 +20119,7 @@ In `.github/workflows/ci.yml`, **add** this job after `docker`:
 - [ ] **Step 4: Run the tests and the smoke test**
 
 Run: `RECORDINGS_ARCHIVE=/nonexistent RESTIC_REPOSITORY=/nonexistent RECORDINGS_REQUIRE_RESTIC=1 uv run pytest packages/core/tests/test_deploy_template.py -v && uv run pytest && make deploy-smoke`
-Expected: 24 passed, then the whole suite passes (820 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 798 less the 2 old template tests plus these 24; a clone without a built frontend shows 819 and one skip).
+Expected: 25 passed, then the whole suite passes (821 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 798 less the 2 old template tests plus these 25; a clone without a built frontend shows 820 and one skip).
 Everything in `test_deploy_template.py` and the suite runs without Docker. The smoke test and the
 image build need a running Docker daemon (`docker info` must work) and fail, not skip, without
 one: run `make deploy-smoke` on such a machine, and CI's `docker` and `compose-smoke` jobs cover it

@@ -57,7 +57,8 @@ make deploy-smoke                                   # the real compose file, onc
   lists the tags. Keep a few: `docker image prune -a` deletes the ones no container uses.
 - **At boot,** `docker/recordings.service` waits for the data disk and the Tailscale address,
   then starts the containers again on the tag they last ran (`docker/up-deployed.sh`). The
-  runbook installs it.
+  runbook installs it. It uses the `compose.yml` and `deploy.env` the checkout holds at boot, so
+  pull only to deploy.
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
   always allowed; the app refuses any other name. Give each name alone, with no port or

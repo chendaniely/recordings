@@ -47,6 +47,8 @@ def test_the_template_holds_no_secret_names():
     template = TEMPLATE.read_text(encoding="utf-8")
     for name in ("TOKEN", "API_KEY", "PASSWORD", "SECRET="):
         assert name not in template
+    for spec in config.SECRETS.values():
+        assert spec.env not in template, spec.env
 
 
 def test_the_template_is_not_named_like_an_env_file():
@@ -138,6 +140,18 @@ def test_a_rollback_starts_an_old_image_and_never_builds_one():
     assert "up -d --no-build" in back.stdout
 
 
+def test_the_smoke_script_parses_and_creates_every_compose_secret():
+    # why: nothing else without Docker reads scripts/compose_smoke.py; a stray line once made it a
+    # SyntaxError that only `make deploy-smoke` would have found. ntfy_token is the optional one:
+    # its source is /dev/null, so the script makes no file for it.
+    path = REPO / "scripts" / "compose_smoke.py"
+    spec = importlib.util.spec_from_file_location("compose_smoke", path)
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    assert set(smoke.SECRETS) | {"ntfy_token"} == set(compose()["secrets"])
+    assert not os.access(path, os.X_OK), "no shebang, so no exec bit"
+
+
 def test_the_boot_unit_waits_for_docker_the_disk_and_tailscale():
     unit = UNIT.read_text(encoding="utf-8")
     for line in ("Requires=docker.service", "After=docker.service tailscaled.service",
@@ -153,7 +167,10 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
     # why: compose.yml requires RECORDINGS_IMAGE_TAG, and pull_policy: never can't fetch one. The
     # tag the web container runs is the deployed one, however it was started.
     fake = tmp_path / "docker"
-    fake.write_text('#!/bin/sh\nif [ "$1" = ps ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
+    # `ps -q` lists container IDs; `inspect` prints the image reference the container was created from
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1" = ps ]; then [ "$FAKE_IMAGE" ] && echo abc123; exit 0; fi\n'
+                    'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
                     'echo "RECORDINGS_IMAGE_TAG=$RECORDINGS_IMAGE_TAG $*"\n', encoding="utf-8")
     fake.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_IMAGE": "recordings:0123456789ab"}
@@ -166,6 +183,10 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
     none = subprocess.run(["sh", script, "up", "-d", "--no-build"], env={**env, "FAKE_IMAGE": ""},
                           capture_output=True, text=True)
     assert none.returncode != 0 and "make deploy" in none.stderr and none.stdout == ""
+    down = subprocess.run(["sh", script, "up", "-d", "--no-build"], env={**env, "FAKE_DOWN": "1"},
+                          capture_output=True, text=True)
+    assert down.returncode != 0 and "make deploy" not in down.stderr and down.stdout == ""
+    assert "docker" in down.stderr and "daemon" in down.stderr
 
 
 def test_every_base_image_is_pinned_by_digest():
@@ -199,8 +220,11 @@ def test_the_images_restic_is_the_one_fetch_restic_pins():
         "arm64": (fetch_restic.PINNED[("linux", "aarch64")][1],
                   fetch_restic.BINARY_SHA256["linux_arm64"])}
     runbook = (REPO / "docs" / "runbooks" / "first-run.md").read_text(encoding="utf-8")
-    archive_sums = [sums[0] for sums in found.values()]
-    assert all(sha in runbook for sha in archive_sums), "the runbook's spike checks other sums"
+    for arch, (sum_, _) in found.items():
+        # each sum sits on the case arm of its own architecture: x86_64 is amd64, aarch64 arm64
+        arm = {"amd64": "x86_64)  ARCH=linux_amd64", "arm64": "aarch64) ARCH=linux_arm64"}[arch]
+        assert f"{arm} SUM={sum_} ;;" in runbook, f"the runbook's {arch} sum differs"
+    assert set(re.findall(r"restic_(\d+\.\d+\.\d+)_", runbook)) == {fetch_restic.VERSION}
 
 
 def test_the_runtime_image_has_the_time_zone_database():
