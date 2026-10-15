@@ -327,9 +327,11 @@ def test_the_loop_runs_with_sigterm_forwarded(tmp_path, writer, ntfy, monkeypatc
         events.append("restored")
 
     monkeypatch.setattr(ops, "sigterm_forwarded", forwarded)
-    monkeypatch.setattr(ops, "loop", lambda ctx, **kwargs: events.append("loop"))
+    # the CLI waits for restic's lock (5m); the loop never does (§15.1): it is None by then
+    monkeypatch.setattr(ops, "loop", lambda ctx, **kwargs: events.append(
+        f"loop retry_lock={ctx.retry_lock}"))
     assert main(["ops", "--loop"]) == 0
-    assert events == ["forwarding", "loop", "restored"]
+    assert events == ["forwarding", "loop retry_lock=None", "restored"]
 
 
 def test_alert_test_sends_one_logs_the_check_and_never_prints_the_topic(
@@ -342,3 +344,160 @@ def test_alert_test_sends_one_logs_the_check_and_never_prints_the_topic(
     assert "alerts-topic" not in out
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == ["recordings: test alert"]
     assert pings(ntfy) == ["/ping/log"]  # /log: the check's state stays as it is
+
+
+def test_alert_test_can_test_the_dead_mans_switch_alone_and_fails_when_a_ping_fails(
+        tmp_path, writer, ntfy, monkeypatch, capsys):
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
+    assert main(["alert-test", "--json"]) == 0  # no topic: ntfy is skipped, not failed
+    assert json.loads(capsys.readouterr().out) == {"ntfy": None, "deadman": True}
+    assert pushes(ntfy) == [] and pings(ntfy) == ["/ping/log"]
+    monkeypatch.setenv("RECORDINGS_NTFY_TOPIC", "alerts-topic")
+    ntfy.status = 500
+    assert main(["alert-test", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"ntfy": False, "deadman": False}
+    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
+    monkeypatch.delenv("RECORDINGS_DEADMAN_URL")
+    assert main(["alert-test", "--json"]) == 78  # nothing to test
+
+
+def test_one_pass_of_ops_exits_75_when_every_turn_was_busy(tmp_path, writer, ntfy, monkeypatch):
+    # why: `recordings backup` exits 75 (try again) on a busy turn, and so does a pass of ops
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
+        assert main(["ops", "--json"]) == 75
+    assert main(["ops", "--json"]) in (0, 1)  # free again: it ran
+
+
+def test_a_full_state_disk_alerts_once_not_every_minute(tmp_path, writer, ntfy, monkeypatch):
+    # why: a state.db that reads but can't write (a full disk) left every failing job due at every
+    # tick and its alert unsaved: one push a minute until ntfy.sh refused them all (Task 13 review).
+    from types import SimpleNamespace
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, full)
+    run_due(ctx)
+    titles = [r["headers"]["Title"] for r in pushes(ntfy)]
+    assert titles.count("recordings: disk space low") == 1
+    sent, pinged = len(ntfy.requests), pings(ntfy)
+    for _ in range(5):
+        clock.now += timedelta(minutes=1)
+        run_due(ctx)
+    assert [r["headers"]["Title"] for r in pushes(ntfy)] == titles
+    assert len(ntfy.requests) == sent and pings(ntfy) == pinged  # no job ran again either
+
+
+def test_a_locked_repository_is_not_retried_every_minute(tmp_path, writer, ntfy):
+    # why: a locked repository is not recorded, so every tick of the NAS's retention run brought
+    # ssh, a state.db copy, restic unlock and restic backup again (Task 13 review).
+    calls = []
+
+    def locked(cmd, **kwargs):
+        calls.append(cmd)
+        return restic(11, "Fatal: repository is already locked exclusively")(cmd, **kwargs)
+
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock, runner=locked)
+    run_due(ctx)
+    first = len(calls)
+    assert first
+    clock.now += timedelta(minutes=1)
+    run_due(ctx)
+    assert len(calls) == first
+    clock.now += ops.RETRY_AFTER
+    run_due(ctx)
+    assert len(calls) > first
+
+
+def test_a_job_that_raises_anything_is_a_failure_and_the_loop_carries_on(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: only FAILURES were caught, so a bug in one job ended the loop, and on restart the same
+    # unrecorded job was due first again and the jobs after it never ran (Task 13 review).
+    ctx = context(tmp_path, writer, ntfy)
+
+    def bug(ctx, tags):
+        raise KeyError(TITLE)
+
+    monkeypatch.setitem(ops.JOBS, "check", bug)
+    results = {r.job: r for r in run_due(ctx)}
+    assert (results["check"].ok, results["check"].detail) == (False, "KeyError")
+    assert "restore-test" in results  # the jobs after it still ran
+    assert writer.state.last_run("check").detail == "KeyError"
+    assert "recordings: backup check failed" in [r["headers"]["Title"] for r in pushes(ntfy)]
+    assert "会議" not in json.dumps(ntfy.requests, ensure_ascii=False)
+
+
+def test_the_loop_logs_a_fixed_line_and_keeps_the_traceback_for_debug(
+        tmp_path, writer, ntfy, monkeypatch, caplog):
+    ctx = context(tmp_path, writer, ntfy)
+
+    def broken(*args, **kwargs):
+        raise ValueError(TITLE)
+
+    monkeypatch.setattr(ops, "due", broken)
+    ticks = []
+    with caplog.at_level("INFO"):
+        loop(ctx, tick=0, sleep=lambda s: ticks.append(s), stop=lambda: len(ticks) >= 1)
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings and all(r.exc_info is None for r in warnings)
+    assert "ValueError" in caplog.text and "会議" not in caplog.text
+
+
+def test_an_unopenable_lock_file_alerts_and_a_backup_pings_fail(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: §14, a failed backup raises an alert. This failure was recorded but never said, so only
+    # the dead-man's switch noticed, after its period and grace.
+    class Unopenable:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def hold(self, key):
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(ops, "Locks", Unopenable)
+    ctx = context(tmp_path, writer, ntfy)
+    assert run_job(ctx, "backup") == ops.JobResult("backup", False, "PermissionError")
+    assert [r["headers"]["Title"] for r in pushes(ntfy)] == ["recordings: backup failed"]
+    assert pings(ntfy) == ["/ping/fail"]
+
+
+def test_a_missing_or_changed_archive_marker_has_its_own_title(tmp_path, writer, ntfy):
+    # why: an unmounted or wrong archive disk was reported as "disk space low"
+    writer.state.set_meta("archive_uuid", "not-this-archive")
+    result = run_job(context(tmp_path, writer, ntfy), "disk")
+    assert (result.ok, result.detail) == (False, "ArchiveMarkerError")
+    (req,) = pushes(ntfy)
+    assert req["headers"]["Title"] == "recordings: archive disk missing or changed"
+    assert req["body"] == "disk failed (ArchiveMarkerError). See Status."
+
+
+def test_a_reminder_is_not_held_back_by_an_alert_stamped_in_the_future(tmp_path, writer, ntfy):
+    writer.state.set_alert_state("job:backup", failing=True,
+                                 last_sent_at=T0 + timedelta(days=400))  # a clock that ran ahead
+    run_job(context(tmp_path, writer, ntfy, runner=restic(returncode=1)), "backup")
+    assert len(pushes(ntfy)) == 1
+
+
+def test_an_undelivered_alert_is_sent_again_at_the_next_failure(tmp_path, writer, ntfy):
+    # why: a refused push must not count as sent, or nothing is said for the next 24 hours
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock, runner=restic(returncode=1))
+    ntfy.status = 500
+    run_job(ctx, "backup")
+    ntfy.status = 200
+    clock.now += timedelta(hours=1)
+    run_job(ctx, "backup")
+    assert len(pushes(ntfy)) == 2
+    clock.now += timedelta(hours=1)
+    run_job(ctx, "backup")  # delivered at last: now quiet until the daily reminder
+    assert len(pushes(ntfy)) == 2

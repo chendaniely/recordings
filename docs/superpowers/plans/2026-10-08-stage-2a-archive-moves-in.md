@@ -17471,6 +17471,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Produces:
   - **`recordings.alerts`:**
     - `TIMEOUT = 10.0`, `TOPIC_RE` (`[-_A-Za-z0-9]{1,64}`), `PINGS = {"success": "", "start": "/start", "fail": "/fail", "log": "/log"}`
+    - `_OPENER`: redirects are never followed (a 30x is an `HTTPError`: logged, not delivered), and only the environment's proxies are used
     - `@dataclass(frozen=True) AlertConfig(ntfy_server: str | None, topic: str | None, deadman_url: str | None, token: str | None = None)`. It refuses, with a `ConfigError` that never repeats the value: a URL that isn't `https` (plain `http` only to the loopback), a URL with a user name or password, and a topic outside `TOPIC_RE`. It has `.enabled`, and a `__repr__` that hides the topic, the ping URL and the token.
     - `from_config(cfg, environ) -> AlertConfig`
     - `send(ac, *, title: str, message: str, priority: int = 4, tags: Sequence[str] = ("warning",)) -> bool`, with `Authorization: Bearer` when `ac.token` is set
@@ -17479,9 +17480,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - **`recordings.ops`:**
     - the schedule: `INTERVALS`, `ORDER`, `RETRY_AFTER = 15 min`, `RETRY_HEAVY_AFTER` (a failed `check` or `restore-test` waits 24 h, a failed `mirror` 1 h), `REMIND_EVERY = 24 h`, `TITLES`, and `KEEP_RUNS = 90 days` (`run_due` trims older `ops_runs` once a day, keeping each job's newest good run)
     - `INTERRUPT_GRACE = 120.0`: after Ctrl-C, `run_child` sends the child SIGTERM and waits for it within the caller's remaining timeout (this long with none), then kills it
-    - `class DiskWarning(RuntimeError)`
+    - `class DiskWarning(RuntimeError)` and `class ArchiveMarkerError(DiskWarning)` (a missing or changed archive marker: its own alert title)
     - `enabled_jobs(cfg) -> tuple[str, ...]`
-    - `due(state, now, jobs) -> list[str]`
+    - `due(state, now, jobs, attempts=None) -> list[str]`: `attempts` are the runs this process could not record (a full state disk)
     - `run_job(ctx, job, *, tags=(), lock_timeout: float = CLI_WAIT) -> JobResult`, replacing Task 11's with the same signature. It keeps the ops lock. A lock still held after `lock_timeout` gives `JobResult(job, False, BUSY)`, which is not recorded, alerted or pinged; a restic exit 11 (the repository is locked, as it is while the NAS's retention task runs) gives `JobResult(job, False, f"{BUSY} (repository locked)")`, handled the same way (callers test `startswith(BUSY)`). A lock file that can't be opened, or a `state.db` that can't record a run, is a failure that never escapes `run_job`. A failure's `detail` is `failure_detail(exc)`, never `str(exc)`. A backup pings the dead-man's switch at `/start`, then at the base URL or `/fail`.
     - `run_due(ctx) -> list[JobResult]`, which never waits for the lock (`lock_timeout=0`)
     - `loop(ctx, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: False) -> None`
@@ -17502,6 +17503,7 @@ class FakeNtfy:
 
     def __init__(self):
         self.requests, self.status = [], 200
+        self.redirect, self.redirect_code = None, 302  # set `redirect` to a URL to answer with one
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -17510,6 +17512,11 @@ class FakeNtfy:
                 outer.requests.append({"method": self.command, "path": self.path,
                                        "headers": dict(self.headers),
                                        "body": self.rfile.read(length).decode("utf-8")})
+                if outer.redirect:
+                    self.send_response(outer.redirect_code)
+                    self.send_header("Location", f"{outer.redirect}{self.path}")
+                    self.end_headers()
+                    return
                 self.send_response(outer.status)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -17531,6 +17538,14 @@ class FakeNtfy:
 
 @pytest.fixture
 def ntfy():
+    server = FakeNtfy()
+    yield server
+    server.close()
+
+
+@pytest.fixture
+def other_ntfy():
+    """A second FakeNtfy, on another port: where a redirect would lead."""
     server = FakeNtfy()
     yield server
     server.close()
@@ -17638,6 +17653,21 @@ def test_plain_http_credentials_in_a_url_and_odd_topics_are_refused(field, value
         AlertConfig(**fields)
     assert "do-not-print" not in str(caught.value) and "x" * 65 not in str(caught.value)
     AlertConfig("http://127.0.0.1:8080", "alerts-topic", "http://localhost:1/p")  # loopback is fine
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_a_redirect_is_never_followed_and_the_alert_is_not_delivered(
+        ntfy, other_ntfy, caplog, code):
+    # why: urlopen's default opener follows a 301, 302 or 303 answer to a POST as a GET, to any host
+    # and even from https down to http, with the Authorization and Title headers (security review).
+    # Here nothing may reach the second server, and a redirected alert is not a delivered one.
+    ntfy.redirect, ntfy.redirect_code = other_ntfy.url, code
+    ac = AlertConfig(ntfy.url, "alerts-topic", f"{ntfy.url}/ping/abc", token="tk_do-not-print")
+    with caplog.at_level("WARNING"):
+        assert send(ac, title="recordings: backup failed", message="m") is False
+        assert ping_deadman(ac, "fail", message="m") is False
+    assert len(ntfy.requests) == 2 and other_ntfy.requests == []
+    assert f"HTTP {code}" in caplog.text and "do-not-print" not in caplog.text
 ```
 
 `packages/core/tests/test_ops.py`:
@@ -17971,9 +18001,11 @@ def test_the_loop_runs_with_sigterm_forwarded(tmp_path, writer, ntfy, monkeypatc
         events.append("restored")
 
     monkeypatch.setattr(ops, "sigterm_forwarded", forwarded)
-    monkeypatch.setattr(ops, "loop", lambda ctx, **kwargs: events.append("loop"))
+    # the CLI waits for restic's lock (5m); the loop never does (§15.1): it is None by then
+    monkeypatch.setattr(ops, "loop", lambda ctx, **kwargs: events.append(
+        f"loop retry_lock={ctx.retry_lock}"))
     assert main(["ops", "--loop"]) == 0
-    assert events == ["forwarding", "loop", "restored"]
+    assert events == ["forwarding", "loop retry_lock=None", "restored"]
 
 
 def test_alert_test_sends_one_logs_the_check_and_never_prints_the_topic(
@@ -17986,6 +18018,163 @@ def test_alert_test_sends_one_logs_the_check_and_never_prints_the_topic(
     assert "alerts-topic" not in out
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == ["recordings: test alert"]
     assert pings(ntfy) == ["/ping/log"]  # /log: the check's state stays as it is
+
+
+def test_alert_test_can_test_the_dead_mans_switch_alone_and_fails_when_a_ping_fails(
+        tmp_path, writer, ntfy, monkeypatch, capsys):
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
+    assert main(["alert-test", "--json"]) == 0  # no topic: ntfy is skipped, not failed
+    assert json.loads(capsys.readouterr().out) == {"ntfy": None, "deadman": True}
+    assert pushes(ntfy) == [] and pings(ntfy) == ["/ping/log"]
+    monkeypatch.setenv("RECORDINGS_NTFY_TOPIC", "alerts-topic")
+    ntfy.status = 500
+    assert main(["alert-test", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"ntfy": False, "deadman": False}
+    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
+    monkeypatch.delenv("RECORDINGS_DEADMAN_URL")
+    assert main(["alert-test", "--json"]) == 78  # nothing to test
+
+
+def test_one_pass_of_ops_exits_75_when_every_turn_was_busy(tmp_path, writer, ntfy, monkeypatch):
+    # why: `recordings backup` exits 75 (try again) on a busy turn, and so does a pass of ops
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
+        assert main(["ops", "--json"]) == 75
+    assert main(["ops", "--json"]) in (0, 1)  # free again: it ran
+
+
+def test_a_full_state_disk_alerts_once_not_every_minute(tmp_path, writer, ntfy, monkeypatch):
+    # why: a state.db that reads but can't write (a full disk) left every failing job due at every
+    # tick and its alert unsaved: one push a minute until ntfy.sh refused them all (Task 13 review).
+    from types import SimpleNamespace
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, full)
+    run_due(ctx)
+    titles = [r["headers"]["Title"] for r in pushes(ntfy)]
+    assert titles.count("recordings: disk space low") == 1
+    sent, pinged = len(ntfy.requests), pings(ntfy)
+    for _ in range(5):
+        clock.now += timedelta(minutes=1)
+        run_due(ctx)
+    assert [r["headers"]["Title"] for r in pushes(ntfy)] == titles
+    assert len(ntfy.requests) == sent and pings(ntfy) == pinged  # no job ran again either
+
+
+def test_a_locked_repository_is_not_retried_every_minute(tmp_path, writer, ntfy):
+    # why: a locked repository is not recorded, so every tick of the NAS's retention run brought
+    # ssh, a state.db copy, restic unlock and restic backup again (Task 13 review).
+    calls = []
+
+    def locked(cmd, **kwargs):
+        calls.append(cmd)
+        return restic(11, "Fatal: repository is already locked exclusively")(cmd, **kwargs)
+
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock, runner=locked)
+    run_due(ctx)
+    first = len(calls)
+    assert first
+    clock.now += timedelta(minutes=1)
+    run_due(ctx)
+    assert len(calls) == first
+    clock.now += ops.RETRY_AFTER
+    run_due(ctx)
+    assert len(calls) > first
+
+
+def test_a_job_that_raises_anything_is_a_failure_and_the_loop_carries_on(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: only FAILURES were caught, so a bug in one job ended the loop, and on restart the same
+    # unrecorded job was due first again and the jobs after it never ran (Task 13 review).
+    ctx = context(tmp_path, writer, ntfy)
+
+    def bug(ctx, tags):
+        raise KeyError(TITLE)
+
+    monkeypatch.setitem(ops.JOBS, "check", bug)
+    results = {r.job: r for r in run_due(ctx)}
+    assert (results["check"].ok, results["check"].detail) == (False, "KeyError")
+    assert "restore-test" in results  # the jobs after it still ran
+    assert writer.state.last_run("check").detail == "KeyError"
+    assert "recordings: backup check failed" in [r["headers"]["Title"] for r in pushes(ntfy)]
+    assert "会議" not in json.dumps(ntfy.requests, ensure_ascii=False)
+
+
+def test_the_loop_logs_a_fixed_line_and_keeps_the_traceback_for_debug(
+        tmp_path, writer, ntfy, monkeypatch, caplog):
+    ctx = context(tmp_path, writer, ntfy)
+
+    def broken(*args, **kwargs):
+        raise ValueError(TITLE)
+
+    monkeypatch.setattr(ops, "due", broken)
+    ticks = []
+    with caplog.at_level("INFO"):
+        loop(ctx, tick=0, sleep=lambda s: ticks.append(s), stop=lambda: len(ticks) >= 1)
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings and all(r.exc_info is None for r in warnings)
+    assert "ValueError" in caplog.text and "会議" not in caplog.text
+
+
+def test_an_unopenable_lock_file_alerts_and_a_backup_pings_fail(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: §14, a failed backup raises an alert. This failure was recorded but never said, so only
+    # the dead-man's switch noticed, after its period and grace.
+    class Unopenable:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def hold(self, key):
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(ops, "Locks", Unopenable)
+    ctx = context(tmp_path, writer, ntfy)
+    assert run_job(ctx, "backup") == ops.JobResult("backup", False, "PermissionError")
+    assert [r["headers"]["Title"] for r in pushes(ntfy)] == ["recordings: backup failed"]
+    assert pings(ntfy) == ["/ping/fail"]
+
+
+def test_a_missing_or_changed_archive_marker_has_its_own_title(tmp_path, writer, ntfy):
+    # why: an unmounted or wrong archive disk was reported as "disk space low"
+    writer.state.set_meta("archive_uuid", "not-this-archive")
+    result = run_job(context(tmp_path, writer, ntfy), "disk")
+    assert (result.ok, result.detail) == (False, "ArchiveMarkerError")
+    (req,) = pushes(ntfy)
+    assert req["headers"]["Title"] == "recordings: archive disk missing or changed"
+    assert req["body"] == "disk failed (ArchiveMarkerError). See Status."
+
+
+def test_a_reminder_is_not_held_back_by_an_alert_stamped_in_the_future(tmp_path, writer, ntfy):
+    writer.state.set_alert_state("job:backup", failing=True,
+                                 last_sent_at=T0 + timedelta(days=400))  # a clock that ran ahead
+    run_job(context(tmp_path, writer, ntfy, runner=restic(returncode=1)), "backup")
+    assert len(pushes(ntfy)) == 1
+
+
+def test_an_undelivered_alert_is_sent_again_at_the_next_failure(tmp_path, writer, ntfy):
+    # why: a refused push must not count as sent, or nothing is said for the next 24 hours
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock, runner=restic(returncode=1))
+    ntfy.status = 500
+    run_job(ctx, "backup")
+    ntfy.status = 200
+    clock.now += timedelta(hours=1)
+    run_job(ctx, "backup")
+    assert len(pushes(ntfy)) == 2
+    clock.now += timedelta(hours=1)
+    run_job(ctx, "backup")  # delivered at last: now quiet until the daily reminder
+    assert len(pushes(ntfy)) == 2
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -18025,7 +18214,8 @@ In `packages/core/src/recordings/config.py`, **add** to `SECRETS`:
   long check or restore test holds back the next backup (docs/runbooks/first-run.md).
 
 Both URLs must be https, so the topic, the token and the ping URL never cross a network in clear;
-plain http is allowed only to this machine's loopback (the tests' fake server). Alert text comes
+plain http is allowed only to this machine's loopback (the tests' fake server). A redirect is never
+followed, because it would carry the token and the title to another host. Alert text comes
 from fixed templates (a job, an exception's class, an exit code), never a recording's title, a
 path or a tool's own output (Review Focus 4). Sending never raises: a failed delivery is logged
 without its URL.
@@ -18050,6 +18240,20 @@ TIMEOUT = 10.0
 TOPIC_RE = re.compile(r"[-_A-Za-z0-9]{1,64}")
 PINGS = {"success": "", "start": "/start", "fail": "/fail", "log": "/log"}
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urlopen follows a 301, 302 or 303 answer to a POST as a GET to any host, even from https down
+    to http, with the Authorization and Title headers: an alert is never redirected."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # HTTPDefaultErrorHandler raises HTTPError(code): logged, not delivered
+
+
+# Proxies from the environment only: the default handler asks macOS's system configuration, which
+# starts threads that never end (and makes a later fork() warn).
+_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler(urllib.request.getproxies_environment()), _NoRedirect)
 
 
 def _check_url(url: object, what: str) -> None:
@@ -18103,7 +18307,7 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> AlertConfig:
 
 def _deliver(request: urllib.request.Request) -> bool:
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with _OPENER.open(request, timeout=TIMEOUT) as response:
             return 200 <= response.status < 300
     except urllib.error.HTTPError as exc:
         log.warning("delivery failed: HTTP %s", exc.code)
@@ -18187,7 +18391,11 @@ In `packages/core/src/recordings/ops.py`:
 2. **Add** before `JOBS`:
    ```python
    class DiskWarning(RuntimeError):
-       """The archive's disk is below a threshold, or its marker is missing."""
+       """The archive's disk is below a threshold."""
+
+
+   class ArchiveMarkerError(DiskWarning):
+       """The archive's marker is missing or changed: an unmounted or wrong disk, not a full one."""
 
 
    def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
@@ -18195,9 +18403,21 @@ In `packages/core/src/recordings/ops.py`:
            raise ConfigError("set [archive] path")
        status = disk_status(ctx.cfg.archive_path, expected_uuid=ctx.state.meta("archive_uuid"),
                             **disk_thresholds(ctx.cfg))
+       if not status.marker:
+           raise ArchiveMarkerError(status.message)
        if status.level != "ok":
            raise DiskWarning(status.message)
        return status.message
+   ```
+2a. **Add** to `Context` (Task 11's), after `mirror_max_delete: int | None = None`:
+   ```python
+       # What this process remembers when state.db can't be written or read (a full disk), so a failing
+       # job isn't retried, and an alert isn't sent again, at every tick: each job's last attempt
+       # (finish time, ok), each alert key's (failing, last_sent), and when a job met a locked
+       # repository.
+       attempts: dict[str, tuple[datetime, bool]] = field(default_factory=dict)
+       alerted: dict[str, tuple[bool, datetime | None]] = field(default_factory=dict)
+       locked: dict[str, datetime] = field(default_factory=dict)
    ```
 3. **Add** `"disk": _disk,` to `JOBS`, and `DiskWarning` to `FAILURES`.
 4. **Add** after `FAILURES`:
@@ -18222,6 +18442,7 @@ In `packages/core/src/recordings/ops.py`:
    TITLES = {"disk": "disk space low", "backup": "backup failed", "mirror": "mirror failed",
              "prune": "backup retention failed", "check": "backup check failed",
              "restore-test": "restore test failed"}
+   DETAIL_TITLES = {"ArchiveMarkerError": "archive disk missing or changed"}  # a failure of its own kind
 
 
    def enabled_jobs(cfg: Config) -> tuple[str, ...]:
@@ -18233,17 +18454,27 @@ In `packages/core/src/recordings/ops.py`:
        return tuple(j for j in ORDER if j in jobs)
 
 
-   def due(state: State, now: datetime, jobs: tuple[str, ...]) -> list[str]:
+   def due(state: State, now: datetime, jobs: tuple[str, ...],
+           attempts: Mapping[str, tuple[datetime, bool]] | None = None) -> list[str]:
        """A run stamped in the future (a clock that ran ahead and was put right) counts as long
-       ago: otherwise every job, backups included, would wait for the clock to catch up."""
+       ago: otherwise every job, backups included, would wait for the clock to catch up. `attempts`
+       are the runs this process could not record (a full state disk): one newer than state.db's
+       counts as the job's latest run, so a failing job waits its retry rather than running at
+       every tick."""
        out = []
        for job in jobs:
-           last = state.last_run(job)
+           last, good = state.last_run(job), state.last_run(job, ok=True)
+           last_at, last_ok = (last.finished_at, last.ok) if last is not None else (None, True)
+           good_at = good.finished_at if good is not None else None
+           tried = (attempts or {}).get(job)
+           if tried is not None and (last_at is None or tried[0] > last_at):
+               last_at, last_ok = tried
+               if last_ok:
+                   good_at = last_at
            wait = RETRY_HEAVY_AFTER.get(job, RETRY_AFTER)
-           if last is not None and not last.ok and timedelta(0) <= now - last.finished_at < wait:
+           if last_at is not None and not last_ok and timedelta(0) <= now - last_at < wait:
                continue
-           good = state.last_run(job, ok=True)
-           if good is None or not timedelta(0) <= now - good.finished_at < INTERVALS[job]:
+           if good_at is None or not timedelta(0) <= now - good_at < INTERVALS[job]:
                out.append(job)
        return out
 
@@ -18260,14 +18491,10 @@ In `packages/core/src/recordings/ops.py`:
        """One push when a job starts failing, a reminder every day while it fails, and one when it
        works again. The text is a fixed template: the job, the failure's fixed detail and "See
        Status", never a path, a title or a tool's own output (Review Focus 4). A state.db that
-       can't be read or written never stops this: a failure is still said (at every retry, since
-       its last alert can't be known), and a recovery is skipped."""
+       can't be read or written never stops this, nor makes it say the same thing at every tick:
+       the process keeps what it sent (ctx.alerted) for as long as it is newer than state.db's."""
        key, now = f"job:{job}", ctx.clock()
-       try:
-           failing, last_sent = ctx.state.alert_state(key)
-       except FAILURES:  # state.db unreadable: a failure is still said, a recovery can't be known
-           log.warning("%s: could not read the alert state", job)
-           failing, last_sent = not ok, None
+       failing, last_sent = _known(ctx, key)
        if ok:
            if failing:
                alerts.send(ac, title=f"recordings: {job} recovered",
@@ -18275,47 +18502,74 @@ In `packages/core/src/recordings/ops.py`:
                            tags=("white_check_mark",))
                _remember(ctx, key, failing=False, last_sent_at=now)
            return
-       if not failing or last_sent is None or now - last_sent >= REMIND_EVERY:
-           delivered = alerts.send(ac, title=f"recordings: {TITLES[job]}",
+       if not failing or last_sent is None or not timedelta(0) <= now - last_sent < REMIND_EVERY:
+           delivered = alerts.send(ac, title=f"recordings: {DETAIL_TITLES.get(detail, TITLES[job])}",
                                    message=f"{job} failed ({detail}). See Status.")
            last_sent = now if delivered else last_sent
        _remember(ctx, key, failing=True, last_sent_at=last_sent)
 
 
+   def _known(ctx: Context, key: str) -> tuple[bool, datetime | None]:
+       """What is known of one alert: state.db's row, or this process's own memory of it when that is
+       newer, or when state.db can't be read."""
+       mine = ctx.alerted.get(key)
+       try:
+           saved = ctx.state.alert_state(key)
+       except FAILURES:  # state.db unreadable: the process's memory, or nothing sent so far
+           log.warning("%s: could not read the alert state", key)
+           saved = None
+       if saved is None:
+           return mine or (False, None)
+       if mine is None:
+           return saved
+       newer = saved[1] is not None and (mine[1] is None or saved[1] > mine[1])
+       return saved if newer else mine
+
+
    def _remember(ctx: Context, key: str, *, failing: bool, last_sent_at: datetime | None) -> None:
+       ctx.alerted[key] = (failing, last_sent_at)
        try:
            ctx.state.set_alert_state(key, failing=failing, last_sent_at=last_sent_at)
        except FAILURES:  # nothing to lose but the next reminder's timing
            log.warning("%s: could not save the alert state", key)
 
 
-   def _run_held(ctx: Context, job: str, tags: tuple[str, ...]) -> JobResult:
-       ac = _alert_config(ctx)
-       heartbeat = ac is not None and job == "backup"
-       if heartbeat:
-           alerts.ping_deadman(ac, "start")
-       started = ctx.clock()
-       try:
-           detail, ok = JOBS[job](ctx, tags), True
-       except FAILURES as exc:
-           if isinstance(exc, BackupError) and exc.returncode == REPO_LOCKED:
-               # The NAS's weekly forget --prune holds the repository for a while. Not a failure:
-               # not recorded, not alerted, no /fail ping. A backup that stays blocked leaves its
-               # /start unanswered, and the dead-man's switch alerts after its grace.
-               log.info("%s: %s", job, LOCKED)
-               return JobResult(job, False, LOCKED)
-           log.debug("%s failed", job, exc_info=True)  # the full error, for --debug only
-           detail, ok = failure_detail(exc), False
+   def _conclude(ctx: Context, ac: AlertConfig | None, job: str, started: datetime, ok: bool,
+                 detail: str) -> JobResult:
+       """Record a run, alert, and for a backup ping the dead-man's switch: the URL itself or /fail.
+       A state.db that can't record it leaves the attempt in ctx.attempts, for due()."""
        try:
            ctx.state.record_run(job, started, ctx.clock(), ok, detail)
        except FAILURES:  # a broken state disk must not hide the alert below (which guards its own)
            log.warning("%s: could not record the run (%s)", job, detail)
+           ctx.attempts[job] = (ctx.clock(), ok)
        if ac is not None:
            _alert(ctx, ac, job, ok, detail)
-           if heartbeat:
+           if job == "backup":
                alerts.ping_deadman(ac, "success" if ok else "fail",
                                    message="" if ok else f"{job} failed ({detail}). See Status.")
        return JobResult(job, ok, detail)
+
+
+   def _run_held(ctx: Context, job: str, tags: tuple[str, ...]) -> JobResult:
+       ac = _alert_config(ctx)
+       if ac is not None and job == "backup":
+           alerts.ping_deadman(ac, "start")
+       started = ctx.clock()
+       try:
+           detail, ok = JOBS[job](ctx, tags), True
+       except Exception as exc:  # any error is the job's failure: it must not end the loop
+           if isinstance(exc, BackupError) and exc.returncode == REPO_LOCKED:
+               # The NAS's weekly forget --prune holds the repository for a while. Not a failure:
+               # not recorded, not alerted, no /fail ping. A backup that stays blocked leaves its
+               # /start unanswered, and the dead-man's switch alerts after its grace. The loop
+               # leaves the job alone for RETRY_AFTER (run_due).
+               log.info("%s: %s", job, LOCKED)
+               ctx.locked[job] = ctx.clock()
+               return JobResult(job, False, LOCKED)
+           log.debug("%s failed", job, exc_info=True)  # the full error, for --debug only
+           detail, ok = failure_detail(exc), False
+       return _conclude(ctx, ac, job, started, ok, detail)
    ```
 5. **Replace** `run_job` (Task 11's, with its ops lock and the same signature) with:
    ```python
@@ -18333,15 +18587,9 @@ In `packages/core/src/recordings/ops.py`:
            except LockTimeout:
                log.info("%s: %s", job, BUSY)
                return JobResult(job, False, BUSY)
-           except FAILURES as exc:  # the lock file can't be opened: a failure, recorded as any is
+           except FAILURES as exc:  # the lock file can't be opened: a failure, said as any is
                log.debug("%s failed", job, exc_info=True)
-               now = ctx.clock()
-               detail = failure_detail(exc)
-               try:
-                   ctx.state.record_run(job, now, now, False, detail)
-               except FAILURES:  # state.db is broken too: the loop must not die of it
-                   log.warning("%s: could not record the failure (%s)", job, detail)
-               return JobResult(job, False, detail)
+               return _conclude(ctx, _alert_config(ctx), job, ctx.clock(), False, failure_detail(exc))
            return _run_held(ctx, job, tags)
 
 
@@ -18371,8 +18619,10 @@ In `packages/core/src/recordings/ops.py`:
        except FAILURES:  # a broken state disk must not stop the pass: the jobs still run
            log.warning("could not write the heartbeat")
        _trim_runs(ctx)
+       now = ctx.clock()
        return [run_job(ctx, job, lock_timeout=0)
-               for job in due(ctx.state, ctx.clock(), enabled_jobs(ctx.cfg))]
+               for job in due(ctx.state, now, enabled_jobs(ctx.cfg), ctx.attempts)
+               if not (job in ctx.locked and timedelta(0) <= now - ctx.locked[job] < RETRY_AFTER)]
 
 
    def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: False) -> None:
@@ -18383,8 +18633,9 @@ In `packages/core/src/recordings/ops.py`:
            try:
                for result in run_due(ctx):
                    log.info("%s: %s (%s)", result.job, "ok" if result.ok else "not ok", result.detail)
-           except FAILURES:  # due() reading a broken state.db: wait a tick and try again
-               log.warning("a pass of the loop failed", exc_info=True)
+           except Exception as exc:  # due() reading a broken state.db, or a bug: wait a tick, retry
+               log.warning("a pass of the loop failed (%s)", failure_detail(exc))
+               log.debug("a pass of the loop failed", exc_info=True)  # the traceback, for --debug only
            sleep(tick)
    ```
 
@@ -18487,21 +18738,26 @@ def test_ctrl_c_stops_the_child_with_sigterm_and_waits_for_its_cleanup(tmp_path)
 
 def test_a_second_ctrl_c_does_not_abandon_a_child_that_is_cleaning_up(tmp_path):
     # why: a second Ctrl-C used to leave the block, close the pipes and abandon restic mid-cleanup.
+    # The child's TERM handler touches `stopping` first, so the second Ctrl-C always lands while
+    # _stop_child waits (Popen.communicate has its own 0.25 s wait after the first one).
     ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
+    stopping = tmp_path / "stopping"
+    announced = CLEANS_UP.replace("def stop(*_):\n",
+                                  "def stop(*_):\n    pathlib.Path(%(stopping)r).touch()\n")
+    child = announced % {"ready": str(ready), "cleaned": str(cleaned), "stopping": str(stopping)}
     sigterm_when_ready(ready, signal.SIGINT)  # the first, as soon as the child is up
     main_thread = threading.main_thread().ident
 
     def second():
         deadline = time.monotonic() + 10
-        while not ready.exists() and time.monotonic() < deadline:
+        while not stopping.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-        time.sleep(0.25)  # the child's 0.5 s cleanup has begun
+        time.sleep(0.1)  # the child's 0.5 s cleanup has begun
         signal.pthread_kill(main_thread, signal.SIGINT)
 
     threading.Thread(target=second, daemon=True).start()
     with pytest.raises(KeyboardInterrupt):
-        ops.run_child([sys.executable, "-c", CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}],
-                      capture_output=True, text=True, timeout=60)
+        ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=60)
     assert cleaned.exists()
 
 
@@ -18518,6 +18774,21 @@ def test_ctrl_c_keeps_the_callers_timeout_and_kills_a_child_that_ignores_sigterm
     with pytest.raises(KeyboardInterrupt):
         ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=2)
     assert time.monotonic() - began < 8  # about the 2 s timeout, not the child's 60
+
+
+def test_ctrl_c_with_no_timeout_waits_only_interrupt_grace_for_a_child_that_ignores_sigterm(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(ops, "INTERRUPT_GRACE", 1.0)
+    ready = tmp_path / "ready"
+    child = ("import pathlib, signal, time\n"
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(60)\n")
+    sigterm_when_ready(ready, signal.SIGINT)
+    began = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        ops.run_child([sys.executable, "-c", child], capture_output=True, text=True)
+    assert time.monotonic() - began < 8  # about the 1 s grace, not the child's 60
 ```
 (The first two use Task 11's `CLEANS_UP` and `sigterm_when_ready`.)
 
@@ -18553,7 +18824,10 @@ def cmd_ops(args: argparse.Namespace) -> int:
     with ops.sigterm_forwarded():
         results = ops.run_due(ctx)
     _emit({"ran": [{"job": r.job, "ok": r.ok, "detail": r.detail} for r in results]}, args.json)
-    return 0 if all(r.ok for r in results) else 1
+    failed = [r for r in results if not r.ok]
+    if failed and all(r.detail.startswith(ops.BUSY) for r in failed):
+        return 75  # EX_TEMPFAIL, as _job_result: every turn was busy (the ops lock, or restic's)
+    return 1 if failed else 0
 
 
 def cmd_alert_test(args: argparse.Namespace) -> int:
@@ -18564,14 +18838,17 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
         ac = alerts.from_config(cfg, os.environ)
     except config.ConfigError as exc:
         return _fail(str(exc), args.json, 78)
-    if not ac.enabled:
-        return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE first", args.json, 78)
+    if not ac.enabled and not ac.deadman_url:
+        return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
+                     "RECORDINGS_DEADMAN_URL_FILE, first", args.json, 78)
+    # Each part is tested when it is set up: null is "not configured", false is "failed".
     sent = alerts.send(ac, title="recordings: test alert", message="If you see this, alerts work.",
-                       priority=3, tags=("white_check_mark",))
+                       priority=3, tags=("white_check_mark",)) if ac.enabled else None
     # /log records the test without changing the check's state, so it can never hide an outage.
-    logged = alerts.ping_deadman(ac, "log", message="recordings alert-test")
+    logged = (alerts.ping_deadman(ac, "log", message="recordings alert-test")
+              if ac.deadman_url else None)
     _emit({"ntfy": sent, "deadman": logged}, args.json)
-    return 0 if sent else 1
+    return 0 if sent is not False and logged is not False else 1
 ```
 with `"ops": cmd_ops, "alert-test": cmd_alert_test,` in `commands`.
 
@@ -18596,8 +18873,8 @@ and in the secrets comment block:
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_alerts.py packages/core/tests/test_ops.py -v && uv run pytest`
-Expected: 13 and 17 passed, then the whole suite passes: 769 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 737, plus 13 + 17 new
-tests, plus two net in `test_backup.py`: 49 becomes 51).
+Expected: 18 and 27 passed, then the whole suite passes: 785 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 737, plus 18 + 27 new
+tests, plus three net in `test_backup.py`: 49 becomes 52), and no warnings.
 
 - [ ] **Step 6: Commit**
 

@@ -677,21 +677,26 @@ def test_ctrl_c_stops_the_child_with_sigterm_and_waits_for_its_cleanup(tmp_path)
 
 def test_a_second_ctrl_c_does_not_abandon_a_child_that_is_cleaning_up(tmp_path):
     # why: a second Ctrl-C used to leave the block, close the pipes and abandon restic mid-cleanup.
+    # The child's TERM handler touches `stopping` first, so the second Ctrl-C always lands while
+    # _stop_child waits (Popen.communicate has its own 0.25 s wait after the first one).
     ready, cleaned = tmp_path / "ready", tmp_path / "cleaned"
+    stopping = tmp_path / "stopping"
+    announced = CLEANS_UP.replace("def stop(*_):\n",
+                                  "def stop(*_):\n    pathlib.Path(%(stopping)r).touch()\n")
+    child = announced % {"ready": str(ready), "cleaned": str(cleaned), "stopping": str(stopping)}
     sigterm_when_ready(ready, signal.SIGINT)  # the first, as soon as the child is up
     main_thread = threading.main_thread().ident
 
     def second():
         deadline = time.monotonic() + 10
-        while not ready.exists() and time.monotonic() < deadline:
+        while not stopping.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-        time.sleep(0.25)  # the child's 0.5 s cleanup has begun
+        time.sleep(0.1)  # the child's 0.5 s cleanup has begun
         signal.pthread_kill(main_thread, signal.SIGINT)
 
     threading.Thread(target=second, daemon=True).start()
     with pytest.raises(KeyboardInterrupt):
-        ops.run_child([sys.executable, "-c", CLEANS_UP % {"ready": str(ready), "cleaned": str(cleaned)}],
-                      capture_output=True, text=True, timeout=60)
+        ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=60)
     assert cleaned.exists()
 
 
@@ -708,6 +713,21 @@ def test_ctrl_c_keeps_the_callers_timeout_and_kills_a_child_that_ignores_sigterm
     with pytest.raises(KeyboardInterrupt):
         ops.run_child([sys.executable, "-c", child], capture_output=True, text=True, timeout=2)
     assert time.monotonic() - began < 8  # about the 2 s timeout, not the child's 60
+
+
+def test_ctrl_c_with_no_timeout_waits_only_interrupt_grace_for_a_child_that_ignores_sigterm(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(ops, "INTERRUPT_GRACE", 1.0)
+    ready = tmp_path / "ready"
+    child = ("import pathlib, signal, time\n"
+             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+             f"pathlib.Path({str(ready)!r}).touch()\n"
+             "time.sleep(60)\n")
+    sigterm_when_ready(ready, signal.SIGINT)
+    began = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        ops.run_child([sys.executable, "-c", child], capture_output=True, text=True)
+    assert time.monotonic() - began < 8  # about the 1 s grace, not the child's 60
 
 
 def test_a_sigterm_in_the_spawn_window_is_honoured_when_popen_raises(monkeypatch):

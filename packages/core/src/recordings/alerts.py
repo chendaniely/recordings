@@ -13,7 +13,8 @@
   long check or restore test holds back the next backup (docs/runbooks/first-run.md).
 
 Both URLs must be https, so the topic, the token and the ping URL never cross a network in clear;
-plain http is allowed only to this machine's loopback (the tests' fake server). Alert text comes
+plain http is allowed only to this machine's loopback (the tests' fake server). A redirect is never
+followed, because it would carry the token and the title to another host. Alert text comes
 from fixed templates (a job, an exception's class, an exit code), never a recording's title, a
 path or a tool's own output (Review Focus 4). Sending never raises: a failed delivery is logged
 without its URL.
@@ -38,6 +39,20 @@ TIMEOUT = 10.0
 TOPIC_RE = re.compile(r"[-_A-Za-z0-9]{1,64}")
 PINGS = {"success": "", "start": "/start", "fail": "/fail", "log": "/log"}
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urlopen follows a 301, 302 or 303 answer to a POST as a GET to any host, even from https down
+    to http, with the Authorization and Title headers: an alert is never redirected."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # HTTPDefaultErrorHandler raises HTTPError(code): logged, not delivered
+
+
+# Proxies from the environment only: the default handler asks macOS's system configuration, which
+# starts threads that never end (and makes a later fork() warn).
+_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler(urllib.request.getproxies_environment()), _NoRedirect)
 
 
 def _check_url(url: object, what: str) -> None:
@@ -91,7 +106,7 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> AlertConfig:
 
 def _deliver(request: urllib.request.Request) -> bool:
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with _OPENER.open(request, timeout=TIMEOUT) as response:
             return 200 <= response.status < 300
     except urllib.error.HTTPError as exc:
         log.warning("delivery failed: HTTP %s", exc.code)

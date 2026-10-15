@@ -197,6 +197,13 @@ class Context:
     # may allow more deletions for its one run (--max-delete) than [mirror] max_delete.
     mirror_timeout: float | None = mirror.TIMEOUT
     mirror_max_delete: int | None = None
+    # What this process remembers when state.db can't be written or read (a full disk), so a failing
+    # job isn't retried, and an alert isn't sent again, at every tick: each job's last attempt
+    # (finish time, ok), each alert key's (failing, last_sent), and when a job met a locked
+    # repository.
+    attempts: dict[str, tuple[datetime, bool]] = field(default_factory=dict)
+    alerted: dict[str, tuple[bool, datetime | None]] = field(default_factory=dict)
+    locked: dict[str, datetime] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -274,7 +281,11 @@ def _mirror(ctx: Context, tags: tuple[str, ...]) -> str:
 
 
 class DiskWarning(RuntimeError):
-    """The archive's disk is below a threshold, or its marker is missing."""
+    """The archive's disk is below a threshold."""
+
+
+class ArchiveMarkerError(DiskWarning):
+    """The archive's marker is missing or changed: an unmounted or wrong disk, not a full one."""
 
 
 def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
@@ -282,6 +293,8 @@ def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
         raise ConfigError("set [archive] path")
     status = disk_status(ctx.cfg.archive_path, expected_uuid=ctx.state.meta("archive_uuid"),
                          **disk_thresholds(ctx.cfg))
+    if not status.marker:
+        raise ArchiveMarkerError(status.message)
     if status.level != "ok":
         raise DiskWarning(status.message)
     return status.message
@@ -316,6 +329,7 @@ LOCKED = f"{BUSY} (repository locked)"
 TITLES = {"disk": "disk space low", "backup": "backup failed", "mirror": "mirror failed",
           "prune": "backup retention failed", "check": "backup check failed",
           "restore-test": "restore test failed"}
+DETAIL_TITLES = {"ArchiveMarkerError": "archive disk missing or changed"}  # a failure of its own kind
 
 
 def enabled_jobs(cfg: Config) -> tuple[str, ...]:
@@ -327,17 +341,27 @@ def enabled_jobs(cfg: Config) -> tuple[str, ...]:
     return tuple(j for j in ORDER if j in jobs)
 
 
-def due(state: State, now: datetime, jobs: tuple[str, ...]) -> list[str]:
+def due(state: State, now: datetime, jobs: tuple[str, ...],
+        attempts: Mapping[str, tuple[datetime, bool]] | None = None) -> list[str]:
     """A run stamped in the future (a clock that ran ahead and was put right) counts as long
-    ago: otherwise every job, backups included, would wait for the clock to catch up."""
+    ago: otherwise every job, backups included, would wait for the clock to catch up. `attempts`
+    are the runs this process could not record (a full state disk): one newer than state.db's
+    counts as the job's latest run, so a failing job waits its retry rather than running at
+    every tick."""
     out = []
     for job in jobs:
-        last = state.last_run(job)
+        last, good = state.last_run(job), state.last_run(job, ok=True)
+        last_at, last_ok = (last.finished_at, last.ok) if last is not None else (None, True)
+        good_at = good.finished_at if good is not None else None
+        tried = (attempts or {}).get(job)
+        if tried is not None and (last_at is None or tried[0] > last_at):
+            last_at, last_ok = tried
+            if last_ok:
+                good_at = last_at
         wait = RETRY_HEAVY_AFTER.get(job, RETRY_AFTER)
-        if last is not None and not last.ok and timedelta(0) <= now - last.finished_at < wait:
+        if last_at is not None and not last_ok and timedelta(0) <= now - last_at < wait:
             continue
-        good = state.last_run(job, ok=True)
-        if good is None or not timedelta(0) <= now - good.finished_at < INTERVALS[job]:
+        if good_at is None or not timedelta(0) <= now - good_at < INTERVALS[job]:
             out.append(job)
     return out
 
@@ -354,14 +378,10 @@ def _alert(ctx: Context, ac: AlertConfig, job: str, ok: bool, detail: str) -> No
     """One push when a job starts failing, a reminder every day while it fails, and one when it
     works again. The text is a fixed template: the job, the failure's fixed detail and "See
     Status", never a path, a title or a tool's own output (Review Focus 4). A state.db that
-    can't be read or written never stops this: a failure is still said (at every retry, since
-    its last alert can't be known), and a recovery is skipped."""
+    can't be read or written never stops this, nor makes it say the same thing at every tick:
+    the process keeps what it sent (ctx.alerted) for as long as it is newer than state.db's."""
     key, now = f"job:{job}", ctx.clock()
-    try:
-        failing, last_sent = ctx.state.alert_state(key)
-    except FAILURES:  # state.db unreadable: a failure is still said, a recovery can't be known
-        log.warning("%s: could not read the alert state", job)
-        failing, last_sent = not ok, None
+    failing, last_sent = _known(ctx, key)
     if ok:
         if failing:
             alerts.send(ac, title=f"recordings: {job} recovered",
@@ -369,47 +389,74 @@ def _alert(ctx: Context, ac: AlertConfig, job: str, ok: bool, detail: str) -> No
                         tags=("white_check_mark",))
             _remember(ctx, key, failing=False, last_sent_at=now)
         return
-    if not failing or last_sent is None or now - last_sent >= REMIND_EVERY:
-        delivered = alerts.send(ac, title=f"recordings: {TITLES[job]}",
+    if not failing or last_sent is None or not timedelta(0) <= now - last_sent < REMIND_EVERY:
+        delivered = alerts.send(ac, title=f"recordings: {DETAIL_TITLES.get(detail, TITLES[job])}",
                                 message=f"{job} failed ({detail}). See Status.")
         last_sent = now if delivered else last_sent
     _remember(ctx, key, failing=True, last_sent_at=last_sent)
 
 
+def _known(ctx: Context, key: str) -> tuple[bool, datetime | None]:
+    """What is known of one alert: state.db's row, or this process's own memory of it when that is
+    newer, or when state.db can't be read."""
+    mine = ctx.alerted.get(key)
+    try:
+        saved = ctx.state.alert_state(key)
+    except FAILURES:  # state.db unreadable: the process's memory, or nothing sent so far
+        log.warning("%s: could not read the alert state", key)
+        saved = None
+    if saved is None:
+        return mine or (False, None)
+    if mine is None:
+        return saved
+    newer = saved[1] is not None and (mine[1] is None or saved[1] > mine[1])
+    return saved if newer else mine
+
+
 def _remember(ctx: Context, key: str, *, failing: bool, last_sent_at: datetime | None) -> None:
+    ctx.alerted[key] = (failing, last_sent_at)
     try:
         ctx.state.set_alert_state(key, failing=failing, last_sent_at=last_sent_at)
     except FAILURES:  # nothing to lose but the next reminder's timing
         log.warning("%s: could not save the alert state", key)
 
 
-def _run_held(ctx: Context, job: str, tags: tuple[str, ...]) -> JobResult:
-    ac = _alert_config(ctx)
-    heartbeat = ac is not None and job == "backup"
-    if heartbeat:
-        alerts.ping_deadman(ac, "start")
-    started = ctx.clock()
-    try:
-        detail, ok = JOBS[job](ctx, tags), True
-    except FAILURES as exc:
-        if isinstance(exc, BackupError) and exc.returncode == REPO_LOCKED:
-            # The NAS's weekly forget --prune holds the repository for a while. Not a failure:
-            # not recorded, not alerted, no /fail ping. A backup that stays blocked leaves its
-            # /start unanswered, and the dead-man's switch alerts after its grace.
-            log.info("%s: %s", job, LOCKED)
-            return JobResult(job, False, LOCKED)
-        log.debug("%s failed", job, exc_info=True)  # the full error, for --debug only
-        detail, ok = failure_detail(exc), False
+def _conclude(ctx: Context, ac: AlertConfig | None, job: str, started: datetime, ok: bool,
+              detail: str) -> JobResult:
+    """Record a run, alert, and for a backup ping the dead-man's switch: the URL itself or /fail.
+    A state.db that can't record it leaves the attempt in ctx.attempts, for due()."""
     try:
         ctx.state.record_run(job, started, ctx.clock(), ok, detail)
     except FAILURES:  # a broken state disk must not hide the alert below (which guards its own)
         log.warning("%s: could not record the run (%s)", job, detail)
+        ctx.attempts[job] = (ctx.clock(), ok)
     if ac is not None:
         _alert(ctx, ac, job, ok, detail)
-        if heartbeat:
+        if job == "backup":
             alerts.ping_deadman(ac, "success" if ok else "fail",
                                 message="" if ok else f"{job} failed ({detail}). See Status.")
     return JobResult(job, ok, detail)
+
+
+def _run_held(ctx: Context, job: str, tags: tuple[str, ...]) -> JobResult:
+    ac = _alert_config(ctx)
+    if ac is not None and job == "backup":
+        alerts.ping_deadman(ac, "start")
+    started = ctx.clock()
+    try:
+        detail, ok = JOBS[job](ctx, tags), True
+    except Exception as exc:  # any error is the job's failure: it must not end the loop
+        if isinstance(exc, BackupError) and exc.returncode == REPO_LOCKED:
+            # The NAS's weekly forget --prune holds the repository for a while. Not a failure:
+            # not recorded, not alerted, no /fail ping. A backup that stays blocked leaves its
+            # /start unanswered, and the dead-man's switch alerts after its grace. The loop
+            # leaves the job alone for RETRY_AFTER (run_due).
+            log.info("%s: %s", job, LOCKED)
+            ctx.locked[job] = ctx.clock()
+            return JobResult(job, False, LOCKED)
+        log.debug("%s failed", job, exc_info=True)  # the full error, for --debug only
+        detail, ok = failure_detail(exc), False
+    return _conclude(ctx, ac, job, started, ok, detail)
 
 
 def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
@@ -426,15 +473,9 @@ def run_job(ctx: Context, job: str, *, tags: tuple[str, ...] = (),
         except LockTimeout:
             log.info("%s: %s", job, BUSY)
             return JobResult(job, False, BUSY)
-        except FAILURES as exc:  # the lock file can't be opened: a failure, recorded as any is
+        except FAILURES as exc:  # the lock file can't be opened: a failure, said as any is
             log.debug("%s failed", job, exc_info=True)
-            now = ctx.clock()
-            detail = failure_detail(exc)
-            try:
-                ctx.state.record_run(job, now, now, False, detail)
-            except FAILURES:  # state.db is broken too: the loop must not die of it
-                log.warning("%s: could not record the failure (%s)", job, detail)
-            return JobResult(job, False, detail)
+            return _conclude(ctx, _alert_config(ctx), job, ctx.clock(), False, failure_detail(exc))
         return _run_held(ctx, job, tags)
 
 
@@ -464,8 +505,10 @@ def run_due(ctx: Context) -> list[JobResult]:
     except FAILURES:  # a broken state disk must not stop the pass: the jobs still run
         log.warning("could not write the heartbeat")
     _trim_runs(ctx)
+    now = ctx.clock()
     return [run_job(ctx, job, lock_timeout=0)
-            for job in due(ctx.state, ctx.clock(), enabled_jobs(ctx.cfg))]
+            for job in due(ctx.state, now, enabled_jobs(ctx.cfg), ctx.attempts)
+            if not (job in ctx.locked and timedelta(0) <= now - ctx.locked[job] < RETRY_AFTER)]
 
 
 def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: False) -> None:
@@ -476,6 +519,7 @@ def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: Fal
         try:
             for result in run_due(ctx):
                 log.info("%s: %s (%s)", result.job, "ok" if result.ok else "not ok", result.detail)
-        except FAILURES:  # due() reading a broken state.db: wait a tick and try again
-            log.warning("a pass of the loop failed", exc_info=True)
+        except Exception as exc:  # due() reading a broken state.db, or a bug: wait a tick, retry
+            log.warning("a pass of the loop failed (%s)", failure_detail(exc))
+            log.debug("a pass of the loop failed", exc_info=True)  # the traceback, for --debug only
         sleep(tick)

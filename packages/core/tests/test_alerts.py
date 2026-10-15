@@ -98,3 +98,18 @@ def test_plain_http_credentials_in_a_url_and_odd_topics_are_refused(field, value
         AlertConfig(**fields)
     assert "do-not-print" not in str(caught.value) and "x" * 65 not in str(caught.value)
     AlertConfig("http://127.0.0.1:8080", "alerts-topic", "http://localhost:1/p")  # loopback is fine
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_a_redirect_is_never_followed_and_the_alert_is_not_delivered(
+        ntfy, other_ntfy, caplog, code):
+    # why: urlopen's default opener follows a 301, 302 or 303 answer to a POST as a GET, to any host
+    # and even from https down to http, with the Authorization and Title headers (security review).
+    # Here nothing may reach the second server, and a redirected alert is not a delivered one.
+    ntfy.redirect, ntfy.redirect_code = other_ntfy.url, code
+    ac = AlertConfig(ntfy.url, "alerts-topic", f"{ntfy.url}/ping/abc", token="tk_do-not-print")
+    with caplog.at_level("WARNING"):
+        assert send(ac, title="recordings: backup failed", message="m") is False
+        assert ping_deadman(ac, "fail", message="m") is False
+    assert len(ntfy.requests) == 2 and other_ntfy.requests == []
+    assert f"HTTP {code}" in caplog.text and "do-not-print" not in caplog.text

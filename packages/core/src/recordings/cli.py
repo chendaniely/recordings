@@ -371,7 +371,10 @@ def cmd_ops(args: argparse.Namespace) -> int:
     with ops.sigterm_forwarded():
         results = ops.run_due(ctx)
     _emit({"ran": [{"job": r.job, "ok": r.ok, "detail": r.detail} for r in results]}, args.json)
-    return 0 if all(r.ok for r in results) else 1
+    failed = [r for r in results if not r.ok]
+    if failed and all(r.detail.startswith(ops.BUSY) for r in failed):
+        return 75  # EX_TEMPFAIL, as _job_result: every turn was busy (the ops lock, or restic's)
+    return 1 if failed else 0
 
 
 def cmd_alert_test(args: argparse.Namespace) -> int:
@@ -382,14 +385,17 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
         ac = alerts.from_config(cfg, os.environ)
     except config.ConfigError as exc:
         return _fail(str(exc), args.json, 78)
-    if not ac.enabled:
-        return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE first", args.json, 78)
+    if not ac.enabled and not ac.deadman_url:
+        return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
+                     "RECORDINGS_DEADMAN_URL_FILE, first", args.json, 78)
+    # Each part is tested when it is set up: null is "not configured", false is "failed".
     sent = alerts.send(ac, title="recordings: test alert", message="If you see this, alerts work.",
-                       priority=3, tags=("white_check_mark",))
+                       priority=3, tags=("white_check_mark",)) if ac.enabled else None
     # /log records the test without changing the check's state, so it can never hide an outage.
-    logged = alerts.ping_deadman(ac, "log", message="recordings alert-test")
+    logged = (alerts.ping_deadman(ac, "log", message="recordings alert-test")
+              if ac.deadman_url else None)
     _emit({"ntfy": sent, "deadman": logged}, args.json)
-    return 0 if sent else 1
+    return 0 if sent is not False and logged is not False else 1
 
 
 def main(argv: list[str] | None = None) -> int:

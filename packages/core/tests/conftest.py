@@ -289,6 +289,7 @@ class FakeNtfy:
 
     def __init__(self):
         self.requests, self.status = [], 200
+        self.redirect, self.redirect_code = None, 302  # set `redirect` to a URL to answer with one
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -297,6 +298,11 @@ class FakeNtfy:
                 outer.requests.append({"method": self.command, "path": self.path,
                                        "headers": dict(self.headers),
                                        "body": self.rfile.read(length).decode("utf-8")})
+                if outer.redirect:
+                    self.send_response(outer.redirect_code)
+                    self.send_header("Location", f"{outer.redirect}{self.path}")
+                    self.end_headers()
+                    return
                 self.send_response(outer.status)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -318,6 +324,14 @@ class FakeNtfy:
 
 @pytest.fixture
 def ntfy():
+    server = FakeNtfy()
+    yield server
+    server.close()
+
+
+@pytest.fixture
+def other_ntfy():
+    """A second FakeNtfy, on another port: where a redirect would lead."""
     server = FakeNtfy()
     yield server
     server.close()
