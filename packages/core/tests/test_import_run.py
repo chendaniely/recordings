@@ -94,7 +94,7 @@ def _files(root):
 def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
     build(ar_archive, plaud_env)
     before = ar_archive.tree_hash()
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert (report.created, report.merged) == (5, 1)  # B's audio is A's: one recording, two IDs
     assert report.measured == {"wave": 6}  # every duration measured, and how
@@ -144,9 +144,9 @@ def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
 
 def test_running_the_import_again_adds_nothing(ar_archive, plaud_env, writer):
     build(ar_archive, plaud_env)
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     files = _files(writer.root)
-    again_plan = plan(ar_archive.root, writer.index, consent=())
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.counts()["present"] == 6
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.created, again.sources_added, again.renditions_added, again.plaud_outputs) == (0, 0, 0, 0)
@@ -220,7 +220,7 @@ elif point == "reconcile":  # Writer.reconcile_plaud, once its first Plaud outpu
     Writer._write_rendition_locked = write
 
 writer = Writer(Path(root), State.open(Path(state)), Index(Path(index)), writer_id="test")
-run(plan(Path(source), writer.index, consent=()), writer, now=datetime.fromisoformat(now))
+run(plan(Path(source), writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=datetime.fromisoformat(now))
 """
 
 
@@ -231,7 +231,7 @@ def test_an_import_killed_anywhere_ends_as_a_clean_run_does(ar_archive, plaud_en
     # the same `now`, the archive holds exactly the files a clean run gives, no source twice.
     build(ar_archive, plaud_env)
     clean = make_writer("clean")
-    run(plan(ar_archive.root, clean.index, consent=()), clean, now=NOW)
+    run(plan(ar_archive.root, clean.index, consent=(), default_timezone="America/Vancouver"), clean, now=NOW)
     killed = make_writer("killed")
     child = subprocess.run(
         [sys.executable, "-c", KILL, str(killed.root), str(killed.state.path),
@@ -240,7 +240,7 @@ def test_an_import_killed_anywhere_ends_as_a_clean_run_does(ar_archive, plaud_en
     assert child.returncode == 137, child.stderr.decode(errors="replace")  # it died there
     fresh = Writer(killed.root, State.open(killed.state.path), Index(killed.index.path),
                    writer_id="test")
-    report = run(plan(ar_archive.root, fresh.index, consent=()), fresh, now=NOW)
+    report = run(plan(ar_archive.root, fresh.index, consent=(), default_timezone="America/Vancouver"), fresh, now=NOW)
     assert report.failed == []
     assert _files(fresh.root) == _files(clean.root)
     assert not (fresh.root / ".tmp").exists()
@@ -254,7 +254,7 @@ def test_a_degraded_or_unreadable_snapshot_is_kept_but_never_used(ar_archive, pl
     # Review Focus 3.
     ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True), "{not json"])
     ar_archive.write_catalog()
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
     assert sum(s.kind == "plaud" for s in rec.sources) == 3  # raw is raw: all three are kept
     assert report.skipped_snapshots == 2
@@ -272,7 +272,7 @@ def test_same_second_snapshots_keep_their_order_in_the_outputs(ar_archive, plaud
     ar_archive.plaud(A, envelopes=[plaud_env(A), edited],
                      stamps=["20260801T161000Z", "20260801T161000Z-01"])
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
     transcripts = [r for _, r in writer.archive.renditions(rec.id)
                    if r.kind == "transcript" and r.engine == "plaud"]
@@ -284,7 +284,7 @@ def test_the_import_stops_when_the_disk_guard_says_stop(ar_archive, plaud_env, w
     stop = DiskStatus(path="x", marker=True, free_bytes=1, total_bytes=100, level="stop",
                       message="1.0% free: below 5%, new imports stop")
     with pytest.raises(ImportStopped, match="new imports stop") as caught:
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW, disk=lambda: stop)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW, disk=lambda: stop)
     assert caught.value.report.created == 0
     assert list(writer.archive.iter_recordings()) == []
 
@@ -300,7 +300,7 @@ def test_a_full_disk_stops_the_import_instead_of_filling_it_again_for_every_row(
 
     monkeypatch.setattr("recordings.writer.copy_file_synced", full)
     with pytest.raises(ImportStopped, match="disk is full") as caught:
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
         "OSError: a file could not be read or written"]
     assert list(writer.archive.iter_recordings()) == []
@@ -314,7 +314,7 @@ def test_an_archive_that_drops_off_stops_the_import_instead_of_failing_every_row
     build(ar_archive, plaud_env)
     (writer.root / "archive.json").rename(tmp_path / "archive.json.away")
     with pytest.raises(ImportStopped, match="archive has dropped off") as caught:
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
         "NotTheWriter: this process may not write the archive now"]
     assert caught.value.report.created == 0
@@ -329,7 +329,7 @@ def test_a_real_run_refuses_media_it_cannot_measure(ar_archive, plaud_env, write
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     with pytest.raises(ImportStopped, match="can't be measured for 1 of 2"):
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert list(writer.archive.iter_recordings()) == []
 
 
@@ -351,7 +351,7 @@ def test_privacy_is_in_place_when_a_recording_is_created(ar_archive, plaud_env, 
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == {A: [("private", "you")], B: [("private", "auto")]}
 
@@ -373,7 +373,7 @@ def test_privacy_covers_every_copy_of_the_audio_before_the_first_is_created(
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == [(A, [("private", "auto")]), (B, [("private", "auto")])]
 
@@ -382,7 +382,7 @@ def test_audio_that_changed_after_the_plan_is_refused(ar_archive, plaud_env, wri
     # why: the plan hashed the audio. The run passes that hash, and add refuses other bytes.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(b"RIFF changed after the plan")
     report = run(the_plan, writer, now=NOW)
     assert report.failed == [{"uri": f"plaud/{A}", "reason": "WriterError: the writer refused it"}]
@@ -398,7 +398,7 @@ def test_a_failure_is_reported_in_fixed_words(ar_archive, plaud_env, writer, mon
         raise ValueError(f"input_value={incoming.title!r}")
 
     monkeypatch.setattr(Writer, "add", refuse)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert {f["reason"] for f in report.failed} == {"ValueError: a value did not validate"}
     text = json.dumps(report.to_dict(), ensure_ascii=False)
     for title in (JA, "会議メモ", "Week 4", "Pocket chat", "Aug 3 at 10-00", "Jul 15"):
@@ -421,7 +421,7 @@ def test_an_archive_that_reads_as_empty_stops_the_import(ar_archive, plaud_env, 
 
     monkeypatch.setattr(Writer, "add", unmounted)
     with pytest.raises(ImportStopped, match="reads as empty") as caught:
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
         "IndexRefused: the archive reads as empty or unreadable"]
     text = str(caught.value) + json.dumps(caught.value.report.to_dict(), ensure_ascii=False)
@@ -432,7 +432,7 @@ def test_the_import_holds_the_ops_lock(ar_archive, plaud_env, writer):
     # why: the backup loop and the CLI's jobs share the "ops" lock (Task 11), so no snapshot or
     # mirror run lands half-way through an import.
     build(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
         with pytest.raises(LockTimeout):
             run(the_plan, writer, now=NOW, lock_timeout=0.1)
@@ -507,13 +507,13 @@ def test_a_pocket_outputs_identity_hashes_what_it_carries():
 def test_two_pocket_snapshots_that_carry_the_same_output_give_one(ar_archive, writer):
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     raw = ar_archive.root / "pocket" / "raw" / f"{UUID}.json"
     doc = json.loads(raw.read_text(encoding="utf-8"))
     doc["state"] = "processed"  # nothing an output carries
     doc["transcript"]["segments"][0]["end"] = 1.0  # spelled as a float, as it was an int
     raw.write_text(json.dumps(doc, indent=1), encoding="utf-8")
-    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.sources_added, again.renditions_added, again.failed) == (1, 0, [])
     (rec,) = writer.archive.iter_recordings()
@@ -531,7 +531,7 @@ def test_a_consent_listed_recording_is_never_imported_through_its_copy_either(
                      same_audio_as=f"plaud/audio/2026/08/{X}.wav", dup_of=f"plaud/{X}")
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, writer.index, consent={X})
+    the_plan = plan(ar_archive.root, writer.index, consent={X}, default_timezone="America/Vancouver")
     assert the_plan.counts()["consent-excluded"] == 2
     report = run(the_plan, writer, now=NOW)
     assert (report.created, report.failed) == (1, [])
@@ -652,11 +652,11 @@ def test_a_same_audio_group_counts_each_skipped_snapshot_once(ar_archive, plaud_
     # why: reconcile rebuilds its skipped snapshots from all of a recording's snapshots on every
     # call, so B's merge into A counted A's again, and the report disagreed with the dry run.
     _group(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert the_plan.incomplete_snapshots()["total"] == 1
     first = run(the_plan, writer, now=NOW)
     assert (first.created, first.merged, first.skipped_snapshots) == (1, 1, 1)
-    again_plan = plan(ar_archive.root, writer.index, consent=())
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.incomplete_snapshots()["total"] == 1
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.skipped_snapshots == again_plan.incomplete_snapshots()["total"] == 1
@@ -667,7 +667,7 @@ def test_held_removals_are_counted_once_per_recording(ar_archive, plaud_env, wri
     held = (Held("source/plaud-20260801T161000Z.json", "transcript", "transcript removed"),)
     monkeypatch.setattr(Writer, "reconcile_plaud",
                         lambda self, rid: SimpleNamespace(written=0, held=held, skipped=()))
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert (report.merged, report.held_removals) == (1, 1)
 
 
@@ -688,7 +688,7 @@ def test_a_degraded_snapshot_never_names_the_recording(ar_archive, plaud_env, wr
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == {A: ("Good title", "plaud"), B: ("Untitled recording", None)}
 
@@ -722,7 +722,7 @@ def test_run_itself_refuses_a_plan_with_problems(ar_archive, plaud_env, writer):
     # so the guarantee must not depend on the caller having checked. It stops before the lock.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    the_plan = dataclasses.replace(plan(ar_archive.root, writer.index, consent=()),
+    the_plan = dataclasses.replace(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
                                    problems=("a problem naming Week 4",))
     with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
         with pytest.raises(ImportStopped, match="the plan has 1 problem") as caught:
@@ -739,7 +739,7 @@ def test_the_disk_guard_counts_the_size_of_the_recording_about_to_be_copied(
     size = (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").stat().st_size
     tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
                        level="ok", message="5.5% free")  # 4.5% free once the copy is in
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     with pytest.raises(ImportStopped, match="would leave less than 5% free") as caught:
         run(the_plan, writer, now=NOW, disk=lambda: tight)
     assert caught.value.report.created == 0
@@ -810,7 +810,7 @@ def test_a_duplicates_catalog_label_is_on_the_recording_when_it_is_created(
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == [(A, [("private", "you")]), (B, [("private", "you")])]
 
@@ -821,12 +821,12 @@ def test_a_re_run_never_decodes_what_the_archive_already_holds(ar_archive, plaud
     # same bytes, so a re-run measures only what it would create: decoding about 3,000
     # recordings again on every re-run took hours.
     build(ar_archive, plaud_env)
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     decoded = []
     real_probe = audio_router.probe
     monkeypatch.setattr(audio_router, "probe",
                         lambda path, **kw: decoded.append(path) or real_probe(path, **kw))
-    again_plan = plan(ar_archive.root, writer.index, consent=())
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.counts()["present"] == 6 and again_plan.unprobed() == []
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.failed, again.measured, decoded) == ([], {}, [])
@@ -836,8 +836,8 @@ def test_a_present_row_whose_recording_has_gone_fails_and_is_never_created_unmea
         ar_archive, plaud_env, writer):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     (item,) = the_plan.items
     assert item.disposition == "present" and item.probed is None
     shutil.rmtree(writer.archive.path_for(item.present_id))  # removed by hand after the plan
@@ -854,7 +854,7 @@ def test_a_re_run_never_writes_an_imported_output_twice_whatever_its_bytes(
     # would leave a second copy of every output on the next re-run, and the first, x.json,
     # would stay the one shown (x-2.json sorts before it).
     build(ar_archive, plaud_env)
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     files = _files(writer.root)
     real_map, real_pocket = audio_router.map_rendition, audio_router.pocket_outputs
 
@@ -870,7 +870,7 @@ def test_a_re_run_never_writes_an_imported_output_twice_whatever_its_bytes(
     monkeypatch.setattr(audio_router, "map_rendition", mapped)
     monkeypatch.setattr(audio_router, "pocket_outputs",
                         lambda *args: [changed(r) for r in real_pocket(*args)])
-    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.failed, again.renditions_added) == ([], 0)
     assert _files(writer.root) == files
@@ -882,10 +882,10 @@ def test_an_import_version_bump_writes_each_pocket_output_once_more(ar_archive, 
     # old ones (write-once), the newer shown; the re-run after it writes nothing.
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     monkeypatch.setattr(ar_outputs, "IMPORT_VERSION", 2)
-    first = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
-    second = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    first = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
+    second = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert (first.renditions_added, second.renditions_added) == (2, 0)
     (rec,) = writer.archive.iter_recordings()
     versions = [(r.kind, r.version) for _, r in writer.archive.renditions(rec.id)]
@@ -900,8 +900,8 @@ def test_a_recording_imported_before_its_id_was_listed_stops_the_next_run(ar_arc
     # recording: one imported before its ID was listed must not stay silently, counted among
     # the rows the list kept out. Counted by recording, never named.
     _group(ar_archive, plaud_env)
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
-    later = plan(ar_archive.root, writer.index, consent={B})
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
+    later = plan(ar_archive.root, writer.index, consent={B}, default_timezone="America/Vancouver")
     assert later.counts()["consent-excluded"] == 2 and not later.ok
     (problem,) = later.problems
     assert problem.startswith("1 recordings already in this archive")
@@ -917,12 +917,12 @@ def test_a_label_added_since_reaches_a_recording_here_even_when_the_run_stops(
     # (here the disk guard) never leaves it public until the run after.
     row = ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     row["tags"] = "therapy"
     first = "1" * 32  # sorts before A
     ar_archive.plaud(first, envelopes=[plaud_env(first)], recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert [i.disposition for i in the_plan.items] == ["new", "present"]
     size = (ar_archive.root / f"plaud/audio/2026/08/{first}.wav").stat().st_size
     tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
@@ -943,7 +943,7 @@ def test_the_disk_guard_counts_a_duplicate_that_creates_the_recording(ar_archive
     audio.write_bytes((ar_archive.root / orphan["audio_rel"]).read_bytes())
     pocket.update(audio_sha256=orphan["audio_sha256"], dup_of=orphan["uri"])
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert [i.disposition for i in the_plan.items] == ["deferred-to-2b", "duplicate"]
     size = audio.stat().st_size
     tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
@@ -970,7 +970,7 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
     # label he removed stays removed, and only a privacy label (which fails closed) merges again.
     ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("lecture", "therapy"))
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
     assert {t.tag for t in rec.tags} == {"lecture", "private/therapy"}
 
@@ -983,7 +983,7 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
             return rec.model_copy(update={"tags": [t for t in rec.tags if t.tag != self.tag]})
 
     writer.mutate(rec.id, RemoveTag("lecture"))
-    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.failed == []
     assert {t.tag for t in writer.archive.load(rec.id).tags} == {"private/therapy"}
@@ -1001,6 +1001,6 @@ def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer
         seen.append(running(writer.state.locks_dir))
         return roomy
 
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW, disk=disk)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW, disk=disk)
     assert seen and set(seen) == {("import", NOW)}
     assert running(writer.state.locks_dir) is None

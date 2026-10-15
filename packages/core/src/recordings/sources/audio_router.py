@@ -651,9 +651,11 @@ def _hold_groups(items: list[Item]) -> list[Item]:
 
 
 def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
-         default_timezone: str = "America/Vancouver") -> Plan:
+         default_timezone: str) -> Plan:
     """The dry run (§9.3). `consent` is Dan's consent list (§9.1), which the caller reads
-    fail-closed with `recordings.plaud.consent`. It has no default, so no caller forgets it."""
+    fail-closed with `recordings.plaud.consent`. `default_timezone` is `[archive] default_timezone`
+    (it places a time the source gave without an offset). Neither has a default, so no caller
+    forgets it."""
     root = Path(root)
     listed = frozenset(canonical_plaud_id(c) for c in consent)
     rows = read_catalog(root)

@@ -9814,7 +9814,7 @@ Four rulings of 2026-10-09 shape it (header decisions 12, 14 and 23):
     - `map_tags(labels: Iterable[str]) -> tuple[str, ...]`
     - `read_catalog(root: Path) -> list[Row]`
     - `snapshot_order(path: Path) -> tuple[str, str]`
-    - `plan(root: Path, index: Index | None = None, *, consent: Collection[str], default_timezone: str = "America/Vancouver") -> Plan`
+    - `plan(root: Path, index: Index | None = None, *, consent: Collection[str], default_timezone: str) -> Plan`
   - **Test fixtures** in `conftest.py`:
     - `wav_bytes(seed: int, seconds: float = 2.0, rate: int = 16000, channels: int = 1) -> bytes`, a module-level helper
     - `AR_COLUMNS`
@@ -10362,7 +10362,7 @@ def full(ar, plaud_env):
 
 def test_the_dry_run_accounts_for_every_catalog_row(ar_archive, plaud_env):
     full(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, consent={X, X2})
+    the_plan = plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver")
     assert sorted(i.row.uri for i in the_plan.items) == sorted(r["uri"] for r in ar_archive.rows)
     assert the_plan.counts() == {"new": 4, "new-private": 2, "duplicate": 1, "present": 0,
                                  "no-audio": 2, "deferred-to-2b": 1, "consent-excluded": 1,
@@ -10380,7 +10380,7 @@ def test_a_consent_listed_recording_is_never_read_and_only_counted(ar_archive, p
     # why: §9.1, §9.3. Dan's consent list is a hard rule: the recording isn't imported, and no
     # report names its ID, either form of which may be on the list.
     full(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, consent={X, "of_" + X2})
+    the_plan = plan(ar_archive.root, consent={X, "of_" + X2}, default_timezone="America/Vancouver")
     (excluded,) = [i for i in the_plan.items if i.disposition == "consent-excluded"]
     assert excluded.row.file_id == X and excluded.audio is None and excluded.sha256 == ""
     text = json.dumps(the_plan.report(), ensure_ascii=False)
@@ -10391,7 +10391,7 @@ def test_the_dry_run_never_names_a_title_and_never_changes_the_source(ar_archive
     # Review Focus 4, and §9.3: it reads audio-router's archive and never changes it.
     full(ar_archive, plaud_env)
     before = ar_archive.tree_hash()
-    text = json.dumps(plan(ar_archive.root, consent={X, X2}).report(), ensure_ascii=False)
+    text = json.dumps(plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver").report(), ensure_ascii=False)
     for title in ("A PRIVATE TITLE", "Interview: Grace", "Getting Started", "getting_started",
                   "Pocket chat", "Jul 15", JA, "会議メモ", "Aug 3 at 10-00"):
         assert title not in text
@@ -10406,7 +10406,7 @@ def test_audio_routers_privacy_labels_make_a_recording_private(ar_archive, plaud
     ar_archive.plaud(C, envelopes=[plaud_env(C)])["access"] = "restricted"
     ar_archive.plaud(D, envelopes=[plaud_env(D)], tags=("lecture", "therapy"))
     ar_archive.write_catalog()
-    by_id = {i.row.file_id: i for i in plan(ar_archive.root, consent=NONE).items}
+    by_id = {i.row.file_id: i for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items}
     assert (by_id[A].disposition, by_id[A].tags, by_id[A].private) == ("new", ("lecture",), False)
     assert (by_id[B].disposition, by_id[B].tags) == ("new-private", ("private",))
     assert (by_id[C].disposition, by_id[C].tags) == ("new-private", ("private",))
@@ -10426,7 +10426,7 @@ def test_the_private_tier_is_found_by_hash_whatever_its_files_are_called(ar_arch
     # SHA-256, and the file keeps its export name. There are no raw/ or derived/ folders.
     row = ar_archive.private()
     ar_archive.write_catalog()
-    (item,) = plan(ar_archive.root, consent=NONE).items
+    (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert (item.disposition, item.kind, item.private) == ("new-private", "recorder", True)
     assert item.sha256 == row["file_id"] and item.audio.name == "Aug 3 at 10-00.wav"
     assert [p.name for p in item.texts] == ["Aug 3 at 10-00.txt"]
@@ -10446,7 +10446,7 @@ def test_each_row_it_cannot_place_says_why(ar_archive, plaud_env):
     (ar_archive.root / "private/recorder-exports/Aug 3 at 10-00.wav").unlink()
     ar_archive.rows.append({**ar_archive.rows[0], "uri": "zoom/z1", "source": "zoom"})
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     reasons = {u["uri"]: u["reason"] for u in the_plan.report()["unplaced"]}
     assert "missing from the copy" in reasons[f"plaud/{A}"]
     assert "damaged" in reasons[f"plaud/{B}"]
@@ -10461,13 +10461,13 @@ def test_each_row_it_cannot_place_says_why(ar_archive, plaud_env):
 def test_a_short_copy_is_a_problem(ar_archive, plaud_env):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog(provenance_rows=5)
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     assert the_plan.problems and "incomplete" in the_plan.problems[0] and not the_plan.ok
 
 
 def test_the_catalog_must_be_audio_routers(ar_archive):
     with pytest.raises(CatalogError, match="catalog.csv is missing"):
-        plan(ar_archive.root, consent=NONE)
+        plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     (ar_archive.root / "catalog").mkdir(parents=True)
     (ar_archive.root / "catalog" / "catalog.csv").write_text("uri,source\nx,y\n", encoding="utf-8")
     with pytest.raises(CatalogError, match="missing columns"):
@@ -10483,7 +10483,7 @@ def test_recordings_on_disk_that_the_catalog_misses_are_reported_by_id(ar_archiv
     ar_archive.plaud(X, envelopes=[plaud_env(X)])  # on the consent list: never named
     ar_archive.pocket_without_audio("my_secret_slug")
     (ar_archive.root / "plaud/audio/2026/08/My secret title.mp3").write_bytes(b"ID3")
-    the_plan = plan(ar_archive.root, consent={X})
+    the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
 
     def surrogate(name):
         return hashlib.sha256(name.encode("utf-8")).hexdigest()[:32]
@@ -10500,7 +10500,7 @@ def test_snapshots_keep_audio_routers_order_within_one_second(ar_archive, plaud_
     ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, name="second"), plaud_env(A, name="third")],
                      stamps=["20260801T161000Z", "20260801T161000Z-01", "20260801T161000Z-02"])
     ar_archive.write_catalog()
-    (item,) = plan(ar_archive.root, consent=NONE).items
+    (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert [p.name for p in item.snapshots] == [
         "20260801T161000Z.json", "20260801T161000Z-01.json", "20260801T161000Z-02.json"]
 
@@ -10512,7 +10512,7 @@ def test_media_that_cant_be_measured_is_reported(ar_archive, plaud_env, monkeypa
                      recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     assert the_plan.report()["unprobed"] == [f"plaud/{B}"] and not the_plan.ok
     assert {i.row.file_id: i.probed.method for i in the_plan.items if i.probed} == {A: "wave"}
 
@@ -10527,7 +10527,7 @@ def test_a_row_already_in_the_archive_is_present_by_either_plaud_id_form(ar_arch
         RawSource(kind="plaud", ref="of_" + A, added_at=T0),)))
     writer.add(make_incoming(b"other audio", name="b.wav", sources=(
         RawSource(kind="plaud", ref=B, added_at=T0),)))
-    by_uri = {i.row.uri: i for i in plan(ar_archive.root, writer.index, consent=NONE).items}
+    by_uri = {i.row.uri: i for i in plan(ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver").items}
     assert by_uri[f"plaud/{A}"].disposition == "present"
     assert by_uri[f"plaud/{B}"].disposition == "unplaced"
     assert "different audio" in by_uri[f"plaud/{B}"].reason
@@ -10542,7 +10542,7 @@ def test_incomplete_snapshots_are_counted_by_reason_and_never_hidden(ar_archive,
                      recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     report = the_plan.report()
     assert report["incomplete_snapshots"] == {
         "total": 3, "by_reason": {"auto_sum_note": 2, "unreadable": 1}}
@@ -10579,7 +10579,7 @@ def test_a_consent_listed_recording_excludes_every_row_that_carries_it(ar_archiv
     # ID: a row that duplicates it, the row it duplicates, a copy with the same audio and a
     # private-tier copy found by hash would import the listed recording's audio and transcript.
     rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, consent={X})
+    the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
     by_uri = {i.row.uri: i for i in the_plan.items}
     for uri in (f"plaud/{X}", f"plaud/{A}", f"plaud/{B}", rec_uri, priv_uri):
         item = by_uri[uri]
@@ -10594,7 +10594,7 @@ def test_a_consent_listed_recording_excludes_every_row_that_carries_it(ar_archiv
 def test_without_the_id_on_the_consent_list_the_same_rows_import(ar_archive, plaud_env):
     # The control for the test above: the exclusion comes from the list, nothing else.
     rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
-    by_uri = {i.row.uri: i for i in plan(ar_archive.root, consent=NONE).items}
+    by_uri = {i.row.uri: i for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items}
     assert by_uri[f"plaud/{B}"].disposition == "duplicate"
     assert by_uri[rec_uri].disposition == "duplicate"
     assert by_uri[priv_uri].disposition == "new-private"
@@ -10611,7 +10611,7 @@ def test_a_private_file_named_by_a_listed_id_is_never_read(ar_archive, monkeypat
     hashed = []
     real = audio_router.sha256_file
     monkeypatch.setattr(audio_router, "sha256_file", lambda p: (hashed.append(p.name), real(p))[1])
-    the_plan = plan(ar_archive.root, consent={X, X2})
+    the_plan = plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver")
     assert hashed and not any(X in n or X2 in n for n in hashed)
     assert the_plan.report()["unlisted_private"] == 0
 
@@ -10628,7 +10628,7 @@ def test_one_unreadable_file_does_not_stop_the_dry_run(ar_archive, plaud_env):
     stray.chmod(0)
     locked.chmod(0)
     try:
-        the_plan = plan(ar_archive.root, consent=NONE)
+        the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     finally:
         stray.chmod(0o644)
         locked.chmod(0o644)
@@ -10649,7 +10649,7 @@ def test_a_malformed_wav_is_unprobed_not_fatal(ar_archive, plaud_env, monkeypatc
     ar_archive.rows[0]["audio_sha256"] = ""
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     assert the_plan.report()["unprobed"] == [f"plaud/{A}"] and not the_plan.ok
 
 
@@ -10661,7 +10661,7 @@ def test_every_path_the_plan_returns_is_inside_the_source(ar_archive, plaud_env,
     outside.mkdir()
     shutil.move(str(ar_archive.root / "plaud" / "raw" / A), str(outside / A))
     (ar_archive.root / "plaud" / "raw" / A).symlink_to(outside / A, target_is_directory=True)
-    (item,) = plan(ar_archive.root, consent=NONE).items
+    (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert item.disposition == "unplaced" and "outside the source" in item.reason
 
 
@@ -10669,7 +10669,7 @@ def test_private_media_with_no_catalog_row_is_counted_never_named(ar_archive):
     ar_archive.private()
     ar_archive._write("private/recorder-exports/Unlisted Title.wav", b"RIFFnot a row")
     ar_archive.write_catalog()
-    report = plan(ar_archive.root, consent=NONE).report()
+    report = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").report()
     assert report["unlisted_private"] == 1
     assert "Unlisted Title" not in json.dumps(report, ensure_ascii=False)
 
@@ -10679,8 +10679,8 @@ def test_the_pocket_listing_honours_the_consent_list(ar_archive):
     ar_archive.rows.clear()
     ar_archive.write_catalog()
     surrogate = hashlib.sha256(b"my_secret_slug").hexdigest()[:32]
-    assert plan(ar_archive.root, consent=NONE).unlisted == (f"pocket/{surrogate}",)
-    assert plan(ar_archive.root, consent={surrogate}).unlisted == ()
+    assert plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").unlisted == (f"pocket/{surrogate}",)
+    assert plan(ar_archive.root, consent={surrogate}, default_timezone="America/Vancouver").unlisted == ()
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root lists every folder")
@@ -10703,7 +10703,7 @@ def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_e
     for folder in locked:
         folder.chmod(0)
     try:
-        the_plan = plan(ar_archive.root, consent=NONE)
+        the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     finally:
         for folder in locked:
             folder.chmod(0o755)
@@ -10730,7 +10730,7 @@ def test_a_source_folder_that_cant_be_listed_is_a_problem_not_a_crash(ar_archive
     for folder in locked:
         folder.chmod(0o311)  # can be passed through, not listed
     try:
-        the_plan = plan(ar_archive.root, consent=NONE)
+        the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     finally:
         for folder in locked:
             folder.chmod(0o755)
@@ -10754,7 +10754,7 @@ def test_rows_with_the_same_audio_wait_for_each_other(ar_archive, plaud_env):
     ar_archive.plaud(T, envelopes=[plaud_env(T)], recorded_at="2026-08-05T09:00:00-07:00")
     ar_archive.write_catalog()
     (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(b"damaged in the copy")
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     by_id = {i.row.file_id: i for i in the_plan.items}
     assert by_id[A].disposition == by_id[D].disposition == "unplaced"
     assert by_id[B].disposition == "unplaced" and f"plaud/{A} has the same audio" in by_id[B].reason
@@ -10797,7 +10797,7 @@ def test_a_private_rows_hand_written_time_keeps_its_offset(ar_archive):
     # build_catalog gives every private.jsonl row its config's zone, whatever the time says.
     row = ar_archive.private(recorded_at="2026-08-03T10:00:00+09:00")
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     (item,) = the_plan.items
     assert (item.recorded_at.isoformat(), item.timezone) == ("2026-08-03T10:00:00+09:00", "")
     assert the_plan.report()["offset_only"] == [row["uri"]]
@@ -10809,7 +10809,7 @@ def test_a_zone_or_offset_a_recording_cant_carry_is_unplaced(ar_archive, plaud_e
     ar_archive.plaud(B, envelopes=[plaud_env(B)],
                      recorded_at="2026-08-02T09:00:00+05:30:15")
     ar_archive.write_catalog()
-    reasons = {u["uri"]: u["reason"] for u in plan(ar_archive.root, consent=NONE).report()["unplaced"]}
+    reasons = {u["uri"]: u["reason"] for u in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").report()["unplaced"]}
     assert "unknown time zone 'Mars/Olympus'" in reasons[f"plaud/{A}"]
     assert "offset in seconds" in reasons[f"plaud/{B}"]
 
@@ -10820,7 +10820,7 @@ def test_a_private_file_named_by_its_hash_must_have_that_hash(ar_archive):
     (tier / "placeholder.wav").rename(tier / f"{row['file_id']}.wav")
     (tier / f"{row['file_id']}.wav").write_bytes(b"RIFF damaged in the copy")
     ar_archive.write_catalog()
-    (item,) = plan(ar_archive.root, consent=NONE).items
+    (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert item.disposition == "unplaced" and "damaged" in item.reason
 
 
@@ -10830,7 +10830,7 @@ def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(ar_archi
     ar_archive.write_catalog()
     writer.add(make_incoming(b"other audio", name="p.wav", sources=(
         RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),)))
-    (item,) = plan(ar_archive.root, writer.index, consent=NONE).items
+    (item,) = plan(ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver").items
     assert item.disposition == "unplaced" and "different audio" in item.reason
 
 
@@ -10843,7 +10843,7 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     assert ar_archive.rows[0]["uri"] == f"plaud/{X}"
     ar_archive.rows[0]["audio_sha256"] = ""
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, consent={X})
+    the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
     assert [p for p in the_plan.problems if "consent-listed" in p] == [
         "1 consent-listed rows have no catalog audio hash, so copies of them can't be "
         "recognised: rebuild the catalog"]
@@ -10852,7 +10852,7 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     assert the_plan.counts()["consent-excluded"] == 1 and the_plan.counts()["new"] == 1
     ar_archive.rows[0]["audio_sha256"] = hashlib.sha256(b"x").hexdigest()
     ar_archive.write_catalog()
-    assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}).problems)
+    assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver").problems)
 ```
 
 - [ ] **Step 6: Run them to see them fail**
@@ -11514,9 +11514,11 @@ def _hold_groups(items: list[Item]) -> list[Item]:
 
 
 def plan(root: Path, index: Index | None = None, *, consent: Collection[str],
-         default_timezone: str = "America/Vancouver") -> Plan:
+         default_timezone: str) -> Plan:
     """The dry run (§9.3). `consent` is Dan's consent list (§9.1), which the caller reads
-    fail-closed with `recordings.plaud.consent`. It has no default, so no caller forgets it."""
+    fail-closed with `recordings.plaud.consent`. `default_timezone` is `[archive] default_timezone`
+    (it places a time the source gave without an offset). Neither has a default, so no caller
+    forgets it."""
     root = Path(root)
     listed = frozenset(canonical_plaud_id(c) for c in consent)
     rows = read_catalog(root)
@@ -11797,7 +11799,7 @@ def _files(root):
 def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
     build(ar_archive, plaud_env)
     before = ar_archive.tree_hash()
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert (report.created, report.merged) == (5, 1)  # B's audio is A's: one recording, two IDs
     assert report.measured == {"wave": 6}  # every duration measured, and how
@@ -11847,9 +11849,9 @@ def test_the_import_maps_every_kind_of_recording(ar_archive, plaud_env, writer):
 
 def test_running_the_import_again_adds_nothing(ar_archive, plaud_env, writer):
     build(ar_archive, plaud_env)
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     files = _files(writer.root)
-    again_plan = plan(ar_archive.root, writer.index, consent=())
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.counts()["present"] == 6
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.created, again.sources_added, again.renditions_added, again.plaud_outputs) == (0, 0, 0, 0)
@@ -11923,7 +11925,7 @@ elif point == "reconcile":  # Writer.reconcile_plaud, once its first Plaud outpu
     Writer._write_rendition_locked = write
 
 writer = Writer(Path(root), State.open(Path(state)), Index(Path(index)), writer_id="test")
-run(plan(Path(source), writer.index, consent=()), writer, now=datetime.fromisoformat(now))
+run(plan(Path(source), writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=datetime.fromisoformat(now))
 """
 
 
@@ -11934,7 +11936,7 @@ def test_an_import_killed_anywhere_ends_as_a_clean_run_does(ar_archive, plaud_en
     # the same `now`, the archive holds exactly the files a clean run gives, no source twice.
     build(ar_archive, plaud_env)
     clean = make_writer("clean")
-    run(plan(ar_archive.root, clean.index, consent=()), clean, now=NOW)
+    run(plan(ar_archive.root, clean.index, consent=(), default_timezone="America/Vancouver"), clean, now=NOW)
     killed = make_writer("killed")
     child = subprocess.run(
         [sys.executable, "-c", KILL, str(killed.root), str(killed.state.path),
@@ -11943,7 +11945,7 @@ def test_an_import_killed_anywhere_ends_as_a_clean_run_does(ar_archive, plaud_en
     assert child.returncode == 137, child.stderr.decode(errors="replace")  # it died there
     fresh = Writer(killed.root, State.open(killed.state.path), Index(killed.index.path),
                    writer_id="test")
-    report = run(plan(ar_archive.root, fresh.index, consent=()), fresh, now=NOW)
+    report = run(plan(ar_archive.root, fresh.index, consent=(), default_timezone="America/Vancouver"), fresh, now=NOW)
     assert report.failed == []
     assert _files(fresh.root) == _files(clean.root)
     assert not (fresh.root / ".tmp").exists()
@@ -11957,7 +11959,7 @@ def test_a_degraded_or_unreadable_snapshot_is_kept_but_never_used(ar_archive, pl
     # Review Focus 3.
     ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, link_error=True), "{not json"])
     ar_archive.write_catalog()
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
     assert sum(s.kind == "plaud" for s in rec.sources) == 3  # raw is raw: all three are kept
     assert report.skipped_snapshots == 2
@@ -11975,7 +11977,7 @@ def test_same_second_snapshots_keep_their_order_in_the_outputs(ar_archive, plaud
     ar_archive.plaud(A, envelopes=[plaud_env(A), edited],
                      stamps=["20260801T161000Z", "20260801T161000Z-01"])
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
     transcripts = [r for _, r in writer.archive.renditions(rec.id)
                    if r.kind == "transcript" and r.engine == "plaud"]
@@ -11987,7 +11989,7 @@ def test_the_import_stops_when_the_disk_guard_says_stop(ar_archive, plaud_env, w
     stop = DiskStatus(path="x", marker=True, free_bytes=1, total_bytes=100, level="stop",
                       message="1.0% free: below 5%, new imports stop")
     with pytest.raises(ImportStopped, match="new imports stop") as caught:
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW, disk=lambda: stop)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW, disk=lambda: stop)
     assert caught.value.report.created == 0
     assert list(writer.archive.iter_recordings()) == []
 
@@ -12003,7 +12005,7 @@ def test_a_full_disk_stops_the_import_instead_of_filling_it_again_for_every_row(
 
     monkeypatch.setattr("recordings.writer.copy_file_synced", full)
     with pytest.raises(ImportStopped, match="disk is full") as caught:
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
         "OSError: a file could not be read or written"]
     assert list(writer.archive.iter_recordings()) == []
@@ -12017,7 +12019,7 @@ def test_an_archive_that_drops_off_stops_the_import_instead_of_failing_every_row
     build(ar_archive, plaud_env)
     (writer.root / "archive.json").rename(tmp_path / "archive.json.away")
     with pytest.raises(ImportStopped, match="archive has dropped off") as caught:
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
         "NotTheWriter: this process may not write the archive now"]
     assert caught.value.report.created == 0
@@ -12032,7 +12034,7 @@ def test_a_real_run_refuses_media_it_cannot_measure(ar_archive, plaud_env, write
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
     with pytest.raises(ImportStopped, match="can't be measured for 1 of 2"):
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert list(writer.archive.iter_recordings()) == []
 
 
@@ -12054,7 +12056,7 @@ def test_privacy_is_in_place_when_a_recording_is_created(ar_archive, plaud_env, 
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == {A: [("private", "you")], B: [("private", "auto")]}
 
@@ -12076,7 +12078,7 @@ def test_privacy_covers_every_copy_of_the_audio_before_the_first_is_created(
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == [(A, [("private", "auto")]), (B, [("private", "auto")])]
 
@@ -12085,7 +12087,7 @@ def test_audio_that_changed_after_the_plan_is_refused(ar_archive, plaud_env, wri
     # why: the plan hashed the audio. The run passes that hash, and add refuses other bytes.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(b"RIFF changed after the plan")
     report = run(the_plan, writer, now=NOW)
     assert report.failed == [{"uri": f"plaud/{A}", "reason": "WriterError: the writer refused it"}]
@@ -12101,7 +12103,7 @@ def test_a_failure_is_reported_in_fixed_words(ar_archive, plaud_env, writer, mon
         raise ValueError(f"input_value={incoming.title!r}")
 
     monkeypatch.setattr(Writer, "add", refuse)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert {f["reason"] for f in report.failed} == {"ValueError: a value did not validate"}
     text = json.dumps(report.to_dict(), ensure_ascii=False)
     for title in (JA, "会議メモ", "Week 4", "Pocket chat", "Aug 3 at 10-00", "Jul 15"):
@@ -12124,7 +12126,7 @@ def test_an_archive_that_reads_as_empty_stops_the_import(ar_archive, plaud_env, 
 
     monkeypatch.setattr(Writer, "add", unmounted)
     with pytest.raises(ImportStopped, match="reads as empty") as caught:
-        run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+        run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert [f["reason"] for f in caught.value.report.failed] == [
         "IndexRefused: the archive reads as empty or unreadable"]
     text = str(caught.value) + json.dumps(caught.value.report.to_dict(), ensure_ascii=False)
@@ -12135,7 +12137,7 @@ def test_the_import_holds_the_ops_lock(ar_archive, plaud_env, writer):
     # why: the backup loop and the CLI's jobs share the "ops" lock (Task 11), so no snapshot or
     # mirror run lands half-way through an import.
     build(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
         with pytest.raises(LockTimeout):
             run(the_plan, writer, now=NOW, lock_timeout=0.1)
@@ -12210,13 +12212,13 @@ def test_a_pocket_outputs_identity_hashes_what_it_carries():
 def test_two_pocket_snapshots_that_carry_the_same_output_give_one(ar_archive, writer):
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     raw = ar_archive.root / "pocket" / "raw" / f"{UUID}.json"
     doc = json.loads(raw.read_text(encoding="utf-8"))
     doc["state"] = "processed"  # nothing an output carries
     doc["transcript"]["segments"][0]["end"] = 1.0  # spelled as a float, as it was an int
     raw.write_text(json.dumps(doc, indent=1), encoding="utf-8")
-    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.sources_added, again.renditions_added, again.failed) == (1, 0, [])
     (rec,) = writer.archive.iter_recordings()
@@ -12234,7 +12236,7 @@ def test_a_consent_listed_recording_is_never_imported_through_its_copy_either(
                      same_audio_as=f"plaud/audio/2026/08/{X}.wav", dup_of=f"plaud/{X}")
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, writer.index, consent={X})
+    the_plan = plan(ar_archive.root, writer.index, consent={X}, default_timezone="America/Vancouver")
     assert the_plan.counts()["consent-excluded"] == 2
     report = run(the_plan, writer, now=NOW)
     assert (report.created, report.failed) == (1, [])
@@ -12355,11 +12357,11 @@ def test_a_same_audio_group_counts_each_skipped_snapshot_once(ar_archive, plaud_
     # why: reconcile rebuilds its skipped snapshots from all of a recording's snapshots on every
     # call, so B's merge into A counted A's again, and the report disagreed with the dry run.
     _group(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert the_plan.incomplete_snapshots()["total"] == 1
     first = run(the_plan, writer, now=NOW)
     assert (first.created, first.merged, first.skipped_snapshots) == (1, 1, 1)
-    again_plan = plan(ar_archive.root, writer.index, consent=())
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.incomplete_snapshots()["total"] == 1
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.skipped_snapshots == again_plan.incomplete_snapshots()["total"] == 1
@@ -12370,7 +12372,7 @@ def test_held_removals_are_counted_once_per_recording(ar_archive, plaud_env, wri
     held = (Held("source/plaud-20260801T161000Z.json", "transcript", "transcript removed"),)
     monkeypatch.setattr(Writer, "reconcile_plaud",
                         lambda self, rid: SimpleNamespace(written=0, held=held, skipped=()))
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert (report.merged, report.held_removals) == (1, 1)
 
 
@@ -12391,7 +12393,7 @@ def test_a_degraded_snapshot_never_names_the_recording(ar_archive, plaud_env, wr
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == {A: ("Good title", "plaud"), B: ("Untitled recording", None)}
 
@@ -12425,7 +12427,7 @@ def test_run_itself_refuses_a_plan_with_problems(ar_archive, plaud_env, writer):
     # so the guarantee must not depend on the caller having checked. It stops before the lock.
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    the_plan = dataclasses.replace(plan(ar_archive.root, writer.index, consent=()),
+    the_plan = dataclasses.replace(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
                                    problems=("a problem naming Week 4",))
     with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
         with pytest.raises(ImportStopped, match="the plan has 1 problem") as caught:
@@ -12442,7 +12444,7 @@ def test_the_disk_guard_counts_the_size_of_the_recording_about_to_be_copied(
     size = (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").stat().st_size
     tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
                        level="ok", message="5.5% free")  # 4.5% free once the copy is in
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     with pytest.raises(ImportStopped, match="would leave less than 5% free") as caught:
         run(the_plan, writer, now=NOW, disk=lambda: tight)
     assert caught.value.report.created == 0
@@ -12491,7 +12493,7 @@ def test_a_duplicates_catalog_label_is_on_the_recording_when_it_is_created(
         return real_add(self, incoming)
 
     monkeypatch.setattr(Writer, "add", add)
-    report = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    report = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert report.failed == []
     assert seen == [(A, [("private", "you")]), (B, [("private", "you")])]
 
@@ -12502,12 +12504,12 @@ def test_a_re_run_never_decodes_what_the_archive_already_holds(ar_archive, plaud
     # same bytes, so a re-run measures only what it would create: decoding about 3,000
     # recordings again on every re-run took hours.
     build(ar_archive, plaud_env)
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     decoded = []
     real_probe = audio_router.probe
     monkeypatch.setattr(audio_router, "probe",
                         lambda path, **kw: decoded.append(path) or real_probe(path, **kw))
-    again_plan = plan(ar_archive.root, writer.index, consent=())
+    again_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert again_plan.counts()["present"] == 6 and again_plan.unprobed() == []
     again = run(again_plan, writer, now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.failed, again.measured, decoded) == ([], {}, [])
@@ -12517,8 +12519,8 @@ def test_a_present_row_whose_recording_has_gone_fails_and_is_never_created_unmea
         ar_archive, plaud_env, writer):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     (item,) = the_plan.items
     assert item.disposition == "present" and item.probed is None
     shutil.rmtree(writer.archive.path_for(item.present_id))  # removed by hand after the plan
@@ -12535,7 +12537,7 @@ def test_a_re_run_never_writes_an_imported_output_twice_whatever_its_bytes(
     # would leave a second copy of every output on the next re-run, and the first, x.json,
     # would stay the one shown (x-2.json sorts before it).
     build(ar_archive, plaud_env)
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     files = _files(writer.root)
     real_map, real_pocket = audio_router.map_rendition, audio_router.pocket_outputs
 
@@ -12551,7 +12553,7 @@ def test_a_re_run_never_writes_an_imported_output_twice_whatever_its_bytes(
     monkeypatch.setattr(audio_router, "map_rendition", mapped)
     monkeypatch.setattr(audio_router, "pocket_outputs",
                         lambda *args: [changed(r) for r in real_pocket(*args)])
-    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert (again.failed, again.renditions_added) == ([], 0)
     assert _files(writer.root) == files
@@ -12563,10 +12565,10 @@ def test_an_import_version_bump_writes_each_pocket_output_once_more(ar_archive, 
     # old ones (write-once), the newer shown; the re-run after it writes nothing.
     ar_archive.pocket(UUID)
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     monkeypatch.setattr(ar_outputs, "IMPORT_VERSION", 2)
-    first = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
-    second = run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    first = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
+    second = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     assert (first.renditions_added, second.renditions_added) == (2, 0)
     (rec,) = writer.archive.iter_recordings()
     versions = [(r.kind, r.version) for _, r in writer.archive.renditions(rec.id)]
@@ -12581,8 +12583,8 @@ def test_a_recording_imported_before_its_id_was_listed_stops_the_next_run(ar_arc
     # recording: one imported before its ID was listed must not stay silently, counted among
     # the rows the list kept out. Counted by recording, never named.
     _group(ar_archive, plaud_env)
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
-    later = plan(ar_archive.root, writer.index, consent={B})
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
+    later = plan(ar_archive.root, writer.index, consent={B}, default_timezone="America/Vancouver")
     assert later.counts()["consent-excluded"] == 2 and not later.ok
     (problem,) = later.problems
     assert problem.startswith("1 recordings already in this archive")
@@ -12598,12 +12600,12 @@ def test_a_label_added_since_reaches_a_recording_here_even_when_the_run_stops(
     # (here the disk guard) never leaves it public until the run after.
     row = ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     row["tags"] = "therapy"
     first = "1" * 32  # sorts before A
     ar_archive.plaud(first, envelopes=[plaud_env(first)], recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert [i.disposition for i in the_plan.items] == ["new", "present"]
     size = (ar_archive.root / f"plaud/audio/2026/08/{first}.wav").stat().st_size
     tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
@@ -12624,7 +12626,7 @@ def test_the_disk_guard_counts_a_duplicate_that_creates_the_recording(ar_archive
     audio.write_bytes((ar_archive.root / orphan["audio_rel"]).read_bytes())
     pocket.update(audio_sha256=orphan["audio_sha256"], dup_of=orphan["uri"])
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, writer.index, consent=())
+    the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
     assert [i.disposition for i in the_plan.items] == ["deferred-to-2b", "duplicate"]
     size = audio.stat().st_size
     tight = DiskStatus(path="x", marker=True, free_bytes=size * 11 // 2, total_bytes=size * 100,
@@ -12651,7 +12653,7 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
     # label he removed stays removed, and only a privacy label (which fails closed) merges again.
     ar_archive.plaud(A, envelopes=[plaud_env(A)], tags=("lecture", "therapy"))
     ar_archive.write_catalog()
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW)
     (rec,) = writer.archive.iter_recordings()
     assert {t.tag for t in rec.tags} == {"lecture", "private/therapy"}
 
@@ -12664,7 +12666,7 @@ def test_a_re_run_does_not_bring_back_a_label_dan_removed_but_still_merges_priva
             return rec.model_copy(update={"tags": [t for t in rec.tags if t.tag != self.tag]})
 
     writer.mutate(rec.id, RemoveTag("lecture"))
-    again = run(plan(ar_archive.root, writer.index, consent=()), writer,
+    again = run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer,
                 now=datetime(2026, 10, 10, tzinfo=timezone.utc))
     assert again.failed == []
     assert {t.tag for t in writer.archive.load(rec.id).tags} == {"private/therapy"}
@@ -20960,7 +20962,7 @@ def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer
         seen.append(running(writer.state.locks_dir))
         return roomy
 
-    run(plan(ar_archive.root, writer.index, consent=()), writer, now=NOW, disk=disk)
+    run(plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=NOW, disk=disk)
     assert seen and set(seen) == {("import", NOW)}
     assert running(writer.state.locks_dir) is None
 ```
@@ -23436,6 +23438,7 @@ init, import a synthetic audio-router archive (a dry run first), validate, back 
 restic repository, run the restore test after the import, and doctor."""
 
 import json
+import logging
 import os
 import shutil
 from datetime import datetime, timezone
@@ -23505,44 +23508,61 @@ def setup(tmp_path, monkeypatch, ar, plaud_env, restic="restic"):
         monkeypatch.delenv(name, raising=False)
 
 
-def run(capsys, *argv) -> tuple[int, dict]:
-    code = main([*argv, "--json"])
-    out = capsys.readouterr().out
-    assert [t for t in TITLES if t in out] == [], f"`recordings {' '.join(argv)}` printed a title"
-    return code, json.loads(out)
+def run(capsys, caplog, *argv) -> tuple[int, dict]:
+    """One command through the CLI. No title may reach stdout, stderr or a log record (INFO and
+    above), whatever the command printed."""
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        code = main([*argv, "--json"])
+    captured = capsys.readouterr()
+    where = {"stdout": captured.out, "stderr": captured.err, "log": caplog.text}
+    leaked = [(name, t) for name, text in where.items() for t in TITLES if t in text]
+    assert leaked == [], f"`recordings {' '.join(argv)}` printed a title: {leaked}"
+    return code, json.loads(captured.out)
 
 
-def test_init_import_and_validate(tmp_path, monkeypatch, capsys, ar_archive, plaud_env):
+def test_init_import_and_validate(tmp_path, monkeypatch, capsys, caplog, ar_archive, plaud_env):
     setup(tmp_path, monkeypatch, ar_archive, plaud_env)
-    assert run(capsys, "init")[0] == 0
-    code, dry = run(capsys, "import-audio-router", str(ar_archive.root), "--dry-run")
+    assert run(capsys, caplog, "init")[0] == 0
+    code, dry = run(capsys, caplog, "import-audio-router", str(ar_archive.root), "--dry-run")
     assert code == 0 and dry["unplaced"] == []
     assert sum(dry["by_disposition"].values()) == dry["catalog_rows"] == len(ar_archive.rows)
     assert dry["by_disposition"]["consent-excluded"] == 1 and D not in json.dumps(dry)
     assert dry["by_disposition"]["new-private"] == 2
     assert dry["deferred_to_2b"] == [O]  # its Plaud ID is kept, for 2b's sync
     assert dry["unprobed"] == []  # every fixture is a plain WAV
-    code, done = run(capsys, "import-audio-router", str(ar_archive.root))
+    code, done = run(capsys, caplog, "import-audio-router", str(ar_archive.root))
     assert code == 0 and done["imported"]["created"] == 5 and done["imported"]["failed"] == []
     recordings = list(Archive(tmp_path / "archive").iter_recordings())
     assert len(recordings) == 5 and sum(is_private(r) for r in recordings) == 2
-    assert run(capsys, "validate", str(tmp_path / "archive"), "--deep") == (0, {"problems": []})
-    code, again = run(capsys, "import-audio-router", str(ar_archive.root))
+    # Which two: the main-tier row that audio-router tagged private (by its Plaud ID), and the
+    # private tier's (by the hash of its audio). Not a count that any two recordings could meet.
+    (by_plaud,) = [r for r in recordings if any(s.kind == "plaud" and s.ref.endswith(P)
+                                                 for s in r.sources)]
+    tier = next(row["file_id"] for row in ar_archive.rows if row["source"] == "private")
+    (by_hash,) = [r for r in recordings if r.media.sha256 == tier]
+    assert by_plaud is not by_hash
+    assert {r.id for r in recordings if is_private(r)} == {by_plaud.id, by_hash.id}
+    # The consent-listed recording never came in: its ID is in no recording.json.
+    written = list((tmp_path / "archive" / "recordings").rglob("recording.json"))
+    assert len(written) == 5 and [f for f in written if D in f.read_text(encoding="utf-8")] == []
+    assert run(capsys, caplog, "validate", str(tmp_path / "archive"), "--deep") == (0, {"problems": []})
+    code, again = run(capsys, caplog, "import-audio-router", str(ar_archive.root))
     assert code == 0 and again["imported"]["created"] == 0
     assert again["imported"]["sources_added"] == 0
-    code, reindexed = run(capsys, "reindex")
+    code, reindexed = run(capsys, caplog, "reindex")
     assert code == 0 and reindexed["recordings"] == 5 and reindexed["plaud"]["written"] == 0
 
 
-def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, ar_archive, plaud_env):
+def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, caplog, ar_archive, plaud_env):
     exe = restic_or_skip()
     setup(tmp_path, monkeypatch, ar_archive, plaud_env, restic=exe)
-    assert run(capsys, "init")[0] == 0
-    assert run(capsys, "backup", "init")[0] == 0
-    assert run(capsys, "backup", "run", "--tag", "pre-import")[1]["ok"] is True
-    assert run(capsys, "import-audio-router", str(ar_archive.root))[0] == 0
-    assert run(capsys, "backup", "run", "--tag", "post-import")[1]["ok"] is True
-    code, restored = run(capsys, "backup", "restore-test")  # after the import, as the runbook does
+    assert run(capsys, caplog, "init")[0] == 0
+    assert run(capsys, caplog, "backup", "init")[0] == 0
+    assert run(capsys, caplog, "backup", "run", "--tag", "pre-import")[1]["ok"] is True
+    assert run(capsys, caplog, "import-audio-router", str(ar_archive.root))[0] == 0
+    assert run(capsys, caplog, "backup", "run", "--tag", "post-import")[1]["ok"] is True
+    code, restored = run(capsys, caplog, "backup", "restore-test")  # after the import, as the runbook does
     assert code == 0 and restored["detail"] == "restored and validated 5 recordings"
     state = State.open(tmp_path / "state")
     assert state.last_run("restore-test", ok=True) is not None
@@ -23555,7 +23575,7 @@ def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, ar_archive
     assert jobs["backup"]["last_ok"] and jobs["backup"]["last_ok_detail"].startswith("snapshot ")
     assert jobs["restore-test"]["last_ok_detail"] == "restored and validated 5 recordings"
     assert summary["attention"] == [] and summary["running"] is None
-    code, report = run(capsys, "doctor", "--role", "all")
+    code, report = run(capsys, caplog, "doctor", "--role", "all")
     assert code == 0 and report["problems"] == []
 ```
 
@@ -23718,11 +23738,16 @@ def test_every_recordings_command_the_runbook_names_parses():
 
     from recordings.cli import build_parser
 
+    # The fenced blocks, and the commands the prose names in `inline code` (`mirror --debug`).
+    prose = FENCE.sub("", _text())
+    lines = ("\n".join(_code_lines()).replace("\\\n", " ").splitlines()
+             + re.findall(r"`([^`\n]+)`", prose))
     commands = []
-    for line in "\n".join(_code_lines()).replace("\\\n", " ").splitlines():
+    for line in lines:
         if not re.search(r"\brecordings [a-z]", line):
             continue
-        tokens = shlex.split(line, comments=True)
+        # A placeholder for a number (`--max-delete N`) stands for any: 1.
+        tokens = ["1" if t == "N" else t for t in shlex.split(line, comments=True)]
         for i, token in enumerate(tokens):
             # The command itself: first on the line, or after a service name, `run` or `exec`.
             # Not `--tag recordings` or a path.
@@ -23750,6 +23775,8 @@ def test_every_recordings_command_the_runbook_names_parses():
     assert {"web", "backup"} <= {c[c.index("--role") + 1] for c in commands
                                  if c[0] == "doctor" and "--role" in c[:-1]}
     assert any(c[:2] == ["backup", "restore-test"] for c in commands)
+    # Two commands the runbook names only in prose, where the parse used to skip them.
+    assert ["mirror", "--max-delete", "1"] in commands and ["mirror", "--debug"] in commands
 ```
 
 - [ ] **Step 2: Run them, and see the settings test fail when a row goes missing**
@@ -23774,7 +23801,7 @@ In `.github/workflows/ci.yml`'s `python` job, **change**
 The pinned restic reached CI in Task 11, with `RECORDINGS_REQUIRE_RESTIC=1`, so
 `test_back_up_and_prove_the_restore` runs there and fails rather than skips.
 
-- [ ] **Step 3b: Two carried fixes (Tasks 10 and 13)**
+- [ ] **Step 3b: Four carried fixes (Tasks 10 and 13, and this task's review)**
 
 `normalise_host` accepted `127.1`, `0x7f.1`, `2130706433`, `01.02.03.04`, `1.2.3.4.5`,
 `::ffff:127.0.0.1` and `fe80::1%en0`. A browser sends none of them as written (it turns `127.1` into
@@ -23845,6 +23872,53 @@ WARNING every minute (1,440 a day) that buried the one line that matters. In
    `_warn_hourly(ctx, "trim", "could not trim the old runs")`, and
    `log.warning("could not write the heartbeat")` with
    `_warn_hourly(ctx, "heartbeat", "could not write the heartbeat")`.
+4. In `_conclude`, **replace**
+   ```python
+           ctx.state.record_run(job, started, ctx.clock(), ok, detail)
+       except FAILURES:  # a broken state disk must not hide the alert below (which guards its own)
+           log.warning("%s: could not record the run (%s)", job, detail)
+   ```
+   with
+   ```python
+           ctx.state.record_run(job, started, ctx.clock(), ok, detail)
+           ctx.warned.pop(f"record:{job}", None)
+       except FAILURES:  # a broken state disk must not hide the alert below (which guards its own)
+           _warn_hourly(ctx, f"record:{job}", f"{job}: could not record the run ({detail})")
+   ```
+   (`detail` is a fixed template, never a title.)
+5. When the disk recovers, the next full-disk episode must warn at once, so a success clears the
+   key. In `_trim_runs`, **add** `ctx.warned.pop("trim", None)  # recovered: the next full disk warns at once`
+   right after `ctx.state.set_meta("ops_runs_trimmed", now.isoformat())`, and in `run_due`
+   `ctx.warned.pop("heartbeat", None)  # recovered: the next full disk warns at once` right after
+   `ctx.state.set_meta("ops_heartbeat", ctx.clock().isoformat())`.
+
+The CLI refuses abbreviated flags. `argparse` accepts `doctor --rol web` until a second option
+shares the prefix, so a flag renamed to an extension of the old one would keep the runbook
+"working" by accident, and the runbook test could not see it. In `cli.py`'s `build_parser`,
+**replace**
+```python
+    p = sub.add_parser("alert-test", help="send a test alert and log a dead-man's switch ping")
+    p.add_argument("--json", action="store_true")
+    return parser
+```
+with
+```python
+    p = sub.add_parser("alert-test", help="send a test alert and log a dead-man's switch ping")
+    p.add_argument("--json", action="store_true")
+    # No abbreviated flags: `doctor --rol web` would otherwise work until a second option shares
+    # the prefix, and the runbook test could not see a flag renamed to an extension of the old one.
+    # (A subparser's allow_abbrev is its own: it doesn't inherit the parent's.)
+    for each in (parser, *sub.choices.values()):
+        each.allow_abbrev = False
+    return parser
+```
+(Every flag already in the tests, scripts, docs, Makefile, compose and CI is written in full.)
+
+`audio_router.plan()` has no default for `default_timezone`: every caller passes
+`cfg.default_timezone`, and a dropped keyword argument would otherwise import in the wrong zone
+without a failing test. In `plan`'s signature **remove** ` = "America/Vancouver"`, and add
+`default_timezone="America/Vancouver"` to every `plan(…, consent=…)` call in
+`packages/core/tests/test_import_plan.py` and `test_import_run.py`.
 
 **Add** to `packages/core/tests/test_ops.py`:
 ```python
@@ -23868,9 +23942,93 @@ def test_a_full_state_disk_warns_about_the_heartbeat_once_an_hour(tmp_path, writ
     warned = [r for r in caplog.records if r.levelno == logging.WARNING]
     for text in ("could not write the heartbeat", "could not trim the old runs"):
         assert len([r for r in warned if r.getMessage() == text]) == 2, text  # minute 0 and 60
+
+
+def test_the_hourly_warnings_start_again_once_the_state_disk_recovers(tmp_path, writer, ntfy,
+                                                                    monkeypatch, caplog):
+    # why: a second full-disk episode within the hour of the first must still say so once.
+    import logging
+
+    broken = {"on": True}
+
+    def flaky(real):
+        def call(*args, **kwargs):
+            if broken["on"]:
+                raise sqlite3.OperationalError("database or disk is full")
+            return real(*args, **kwargs)
+        return call
+
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, flaky(getattr(writer.state, name)))
+    texts = ("could not write the heartbeat", "could not trim the old runs")
+
+    def warnings() -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+    with caplog.at_level(logging.DEBUG, logger="recordings.ops"):
+        for _ in range(3):  # a full disk: one line each, then debug
+            run_due(ctx)
+            clock.now += timedelta(minutes=1)
+        assert [w for w in warnings() if w in texts] == list(texts)
+        broken["on"] = False  # recovered
+        run_due(ctx)
+        clock.now += timedelta(minutes=1)
+        assert ctx.warned.keys().isdisjoint({"heartbeat", "trim"})
+        broken["on"] = True  # full again, 5 minutes after the first line
+        run_due(ctx)
+    # The trim is a daily job: it isn't tried again after it succeeded, so only the heartbeat is.
+    assert [w for w in warnings() if w in texts] == [*texts, texts[0]]
+
+
+def test_a_full_state_disk_logs_each_jobs_unrecorded_run_once_an_hour(tmp_path, writer, ntfy,
+                                                                    monkeypatch, caplog):
+    # why: _conclude's "could not record the run" repeated at every attempt (every 10 minutes for
+    # the disk job); the runbook says these lines come once an hour.
+    import logging
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, full)
+    with caplog.at_level(logging.DEBUG, logger="recordings.ops"):
+        for _ in range(90):
+            run_due(ctx)
+            clock.now += timedelta(minutes=1)
+    unrecorded = [r for r in caplog.records
+                  if r.levelno == logging.WARNING and "could not record the run" in r.getMessage()]
+    attempts = [r for r in caplog.records if "could not record the run" in r.getMessage()]
+    assert len(attempts) > len(unrecorded) >= 1  # the job was attempted more than once
+    per_job = {}
+    for r in unrecorded:
+        per_job[r.getMessage().split(":")[0]] = per_job.get(r.getMessage().split(":")[0], 0) + 1
+    assert max(per_job.values()) <= 2, per_job  # minute 0 and 60, never more
 ```
-Run `uv run pytest packages/core/tests/test_config.py packages/core/tests/test_ops.py -v`.
-Expected: pass. Without the throttle the new ops test fails with `assert 90 == 2`.
+**Add** to `packages/core/tests/test_cli.py`:
+```python
+def test_the_cli_refuses_abbreviated_flags():
+    # why: argparse accepts `doctor --rol web` until a second option shares the prefix, so a flag
+    # renamed to an extension of the old one would keep the runbook "working" by accident. The
+    # runbook test parses with this parser, so it must not guess.
+    import pytest
+
+    from recordings.cli import build_parser
+
+    parser = build_parser()
+    assert parser.parse_args(["doctor", "--role", "web"]).role == "web"
+    for argv in (["doctor", "--rol", "web"], ["backup", "run", "--ta", "x"],
+                 ["validate", "x", "--dee"], ["init", "--ado"], ["mirror", "--max-del", "3"]):
+        with pytest.raises(SystemExit):
+            parser.parse_args(argv)
+```
+Run `uv run pytest packages/core/tests/test_config.py packages/core/tests/test_ops.py packages/core/tests/test_cli.py -v`.
+Expected: pass. Without the throttle the first ops test fails with `assert 90 == 2`; without
+the reset, the second fails at `isdisjoint`; without the throttle on `_conclude`, the third fails with
+`assert 14 > 14`; without `allow_abbrev = False`, the CLI test fails with `DID NOT RAISE SystemExit`.
 
 - [ ] **Step 4: Bring the project docs up to date**
 
@@ -23878,11 +24036,12 @@ In `CLAUDE.md`, **replace** the `## Archive rules (spec §6)` section with:
 ```markdown
 ## Archive rules (spec §6)
 
-- **Every write goes through `recordings.writer.Writer`.** Its `mutate` is the only thing that
-  changes a `recording.json`: it bumps `rev` and refuses a file edited outside the app until
-  `recordings reindex` accepts the edit. `my-notes.md` is only ever appended to, under the
-  recording's lock. Media, `source/` and `renditions/` are published write-once. Never write
-  archive files any other way, in code or in tests.
+- **Every write goes through `recordings.writer.Writer`.** Only three files ever change:
+  `recording.json`, only through `Writer.mutate`, which bumps `rev` and refuses a file edited
+  outside the app until `recordings reindex` accepts the edit; `my-notes.md`, only appended to,
+  under the recording's lock; and `tags.yaml`, by atomic replace. Media, `source/` and
+  `renditions/` are published write-once and never overwritten. Never write archive files any
+  other way, in code or in tests.
 - **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
   make archives with `recordings.init.init_archive` (or the `writer` fixture).
 - **Privacy:** a recording is private if a tag is `private` or under `private/`, in any
@@ -23913,9 +24072,10 @@ In `docs/runbooks/first-run.md`, **add** this section before `## Restoring for r
 Status warns below 20% free and the import stops below 5% (spec §12.5); the restore test refuses
 to take the disk below 20%. When the disk is full, `state.db` can't be written either, so the
 backup service keeps running its jobs but can't record them. It remembers its last attempts in
-memory, sends the alert once (and a reminder a day), and logs `could not write the heartbeat` and
-`could not trim the old runs` once an hour. Those two lines mean "the state disk is full", not a
-second fault.
+memory, sends the alert once (and a reminder a day), and logs `could not write the heartbeat`,
+`could not trim the old runs` and, for each job, `<job>: could not record the run` at most once an
+hour. Those lines mean "the state disk is full", not a second fault, and each starts again if the
+disk recovers and fills again.
 
 1. **Free space first.** Delete the import copy (`import/`) if the restore test has passed, and the
    `.lost-` and `restore-real` folders. Status shows the new figure within a minute.
@@ -23932,8 +24092,8 @@ Then re-sync Task 1's fence with the runbook, and check they are byte-identical.
 - [ ] **Step 5: Run everything and scan for secrets**
 
 Run: `make test && make e2e && make deploy-smoke && gitleaks dir . --redact --no-banner && gitleaks git . --redact --no-banner`
-Expected: every test passes, with 924 pytest (Task 16's 911 plus this task's 13: 2 flow, 2 settings,
-1 runbook, 1 ops, 7 config cases) when `RECORDINGS_REQUIRE_RESTIC=1`, and Vitest, e2e and Pages
+Expected: every test passes, with 927 pytest (Task 16's 911 plus this task's 16: 2 flow, 2 settings,
+1 runbook, 3 ops, 7 config cases, 1 cli) when `RECORDINGS_REQUIRE_RESTIC=1`, and Vitest, e2e and Pages
 counts not lower than Task 15's; the compose smoke test passes; and both gitleaks scans report
 `no leaks found`. Both scans read only the working directory; run them in a fresh
 `git clone --local` of the repo, never in the working tree, which also holds git-ignored folders
@@ -23942,7 +24102,7 @@ counts not lower than Task 15's; the compose smoke test passes; and both gitleak
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/core/tests/test_flow_2a.py packages/core/tests/test_runbook.py packages/ui/tests/test_template_settings.py .github/workflows/ci.yml CLAUDE.md README.md docs/runbooks/first-run.md
+git add -A packages/core/src packages/core/tests packages/ui/tests .github/workflows/ci.yml CLAUDE.md README.md docs/runbooks/first-run.md
 git commit -m "test: stage 2a end to end; every template setting and secret reaches its reader
 
 The flow runs init, the import (a dry run first), validate, a backup and the restore test after
@@ -24058,7 +24218,7 @@ more reviews checked the result:
     e2e and 5 Pages tests, `make deploy-smoke`, gitleaks and `validate --deep`. The counts have
     grown since; each task's gate records its own. After Task 15, in a clone with real restic:
     851 pytest, 27 Vitest, 10 e2e and 5 Pages tests; after Task 16, 911 pytest; after Task 17,
-    924 pytest.
+    927 pytest.
   - Its fixes: Status shows a good backup's NAS free space, ssh gets a 10 s connect timeout, the
     Pages demo's Status reports its disk as unknown, two README rows, and the smoke test's secret
     files at mode 600.

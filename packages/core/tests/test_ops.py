@@ -890,3 +890,68 @@ def test_a_full_state_disk_warns_about_the_heartbeat_once_an_hour(tmp_path, writ
     warned = [r for r in caplog.records if r.levelno == logging.WARNING]
     for text in ("could not write the heartbeat", "could not trim the old runs"):
         assert len([r for r in warned if r.getMessage() == text]) == 2, text  # minute 0 and 60
+
+
+def test_the_hourly_warnings_start_again_once_the_state_disk_recovers(tmp_path, writer, ntfy,
+                                                                    monkeypatch, caplog):
+    # why: a second full-disk episode within the hour of the first must still say so once.
+    import logging
+
+    broken = {"on": True}
+
+    def flaky(real):
+        def call(*args, **kwargs):
+            if broken["on"]:
+                raise sqlite3.OperationalError("database or disk is full")
+            return real(*args, **kwargs)
+        return call
+
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, flaky(getattr(writer.state, name)))
+    texts = ("could not write the heartbeat", "could not trim the old runs")
+
+    def warnings() -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+    with caplog.at_level(logging.DEBUG, logger="recordings.ops"):
+        for _ in range(3):  # a full disk: one line each, then debug
+            run_due(ctx)
+            clock.now += timedelta(minutes=1)
+        assert [w for w in warnings() if w in texts] == list(texts)
+        broken["on"] = False  # recovered
+        run_due(ctx)
+        clock.now += timedelta(minutes=1)
+        assert ctx.warned.keys().isdisjoint({"heartbeat", "trim"})
+        broken["on"] = True  # full again, 5 minutes after the first line
+        run_due(ctx)
+    # The trim is a daily job: it isn't tried again after it succeeded, so only the heartbeat is.
+    assert [w for w in warnings() if w in texts] == [*texts, texts[0]]
+
+
+def test_a_full_state_disk_logs_each_jobs_unrecorded_run_once_an_hour(tmp_path, writer, ntfy,
+                                                                    monkeypatch, caplog):
+    # why: _conclude's "could not record the run" repeated at every attempt (every 10 minutes for
+    # the disk job); the runbook says these lines come once an hour.
+    import logging
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, full)
+    with caplog.at_level(logging.DEBUG, logger="recordings.ops"):
+        for _ in range(90):
+            run_due(ctx)
+            clock.now += timedelta(minutes=1)
+    unrecorded = [r for r in caplog.records
+                  if r.levelno == logging.WARNING and "could not record the run" in r.getMessage()]
+    attempts = [r for r in caplog.records if "could not record the run" in r.getMessage()]
+    assert len(attempts) > len(unrecorded) >= 1  # the job was attempted more than once
+    per_job = {}
+    for r in unrecorded:
+        per_job[r.getMessage().split(":")[0]] = per_job.get(r.getMessage().split(":")[0], 0) + 1
+    assert max(per_job.values()) <= 2, per_job  # minute 0 and 60, never more

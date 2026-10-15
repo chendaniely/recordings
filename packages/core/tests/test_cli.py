@@ -171,3 +171,19 @@ def test_reindex_exits_1_when_a_plaud_recording_could_not_be_reconciled(
     out = json.loads(capsys.readouterr().out)
     assert out["plaud"]["problems"] == 1
     assert "busy" not in json.dumps(out)
+
+
+def test_the_cli_refuses_abbreviated_flags():
+    # why: argparse accepts `doctor --rol web` until a second option shares the prefix, so a flag
+    # renamed to an extension of the old one would keep the runbook "working" by accident. The
+    # runbook test parses with this parser, so it must not guess.
+    import pytest
+
+    from recordings.cli import build_parser
+
+    parser = build_parser()
+    assert parser.parse_args(["doctor", "--role", "web"]).role == "web"
+    for argv in (["doctor", "--rol", "web"], ["backup", "run", "--ta", "x"],
+                 ["validate", "x", "--dee"], ["init", "--ado"], ["mirror", "--max-del", "3"]):
+        with pytest.raises(SystemExit):
+            parser.parse_args(argv)

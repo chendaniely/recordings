@@ -52,7 +52,7 @@ def full(ar, plaud_env):
 
 def test_the_dry_run_accounts_for_every_catalog_row(ar_archive, plaud_env):
     full(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, consent={X, X2})
+    the_plan = plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver")
     assert sorted(i.row.uri for i in the_plan.items) == sorted(r["uri"] for r in ar_archive.rows)
     assert the_plan.counts() == {"new": 4, "new-private": 2, "duplicate": 1, "present": 0,
                                  "no-audio": 2, "deferred-to-2b": 1, "consent-excluded": 1,
@@ -70,7 +70,7 @@ def test_a_consent_listed_recording_is_never_read_and_only_counted(ar_archive, p
     # why: §9.1, §9.3. Dan's consent list is a hard rule: the recording isn't imported, and no
     # report names its ID, either form of which may be on the list.
     full(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, consent={X, "of_" + X2})
+    the_plan = plan(ar_archive.root, consent={X, "of_" + X2}, default_timezone="America/Vancouver")
     (excluded,) = [i for i in the_plan.items if i.disposition == "consent-excluded"]
     assert excluded.row.file_id == X and excluded.audio is None and excluded.sha256 == ""
     text = json.dumps(the_plan.report(), ensure_ascii=False)
@@ -81,7 +81,7 @@ def test_the_dry_run_never_names_a_title_and_never_changes_the_source(ar_archive
     # Review Focus 4, and §9.3: it reads audio-router's archive and never changes it.
     full(ar_archive, plaud_env)
     before = ar_archive.tree_hash()
-    text = json.dumps(plan(ar_archive.root, consent={X, X2}).report(), ensure_ascii=False)
+    text = json.dumps(plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver").report(), ensure_ascii=False)
     for title in ("A PRIVATE TITLE", "Interview: Grace", "Getting Started", "getting_started",
                   "Pocket chat", "Jul 15", JA, "会議メモ", "Aug 3 at 10-00"):
         assert title not in text
@@ -96,7 +96,7 @@ def test_audio_routers_privacy_labels_make_a_recording_private(ar_archive, plaud
     ar_archive.plaud(C, envelopes=[plaud_env(C)])["access"] = "restricted"
     ar_archive.plaud(D, envelopes=[plaud_env(D)], tags=("lecture", "therapy"))
     ar_archive.write_catalog()
-    by_id = {i.row.file_id: i for i in plan(ar_archive.root, consent=NONE).items}
+    by_id = {i.row.file_id: i for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items}
     assert (by_id[A].disposition, by_id[A].tags, by_id[A].private) == ("new", ("lecture",), False)
     assert (by_id[B].disposition, by_id[B].tags) == ("new-private", ("private",))
     assert (by_id[C].disposition, by_id[C].tags) == ("new-private", ("private",))
@@ -116,7 +116,7 @@ def test_the_private_tier_is_found_by_hash_whatever_its_files_are_called(ar_arch
     # SHA-256, and the file keeps its export name. There are no raw/ or derived/ folders.
     row = ar_archive.private()
     ar_archive.write_catalog()
-    (item,) = plan(ar_archive.root, consent=NONE).items
+    (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert (item.disposition, item.kind, item.private) == ("new-private", "recorder", True)
     assert item.sha256 == row["file_id"] and item.audio.name == "Aug 3 at 10-00.wav"
     assert [p.name for p in item.texts] == ["Aug 3 at 10-00.txt"]
@@ -136,7 +136,7 @@ def test_each_row_it_cannot_place_says_why(ar_archive, plaud_env):
     (ar_archive.root / "private/recorder-exports/Aug 3 at 10-00.wav").unlink()
     ar_archive.rows.append({**ar_archive.rows[0], "uri": "zoom/z1", "source": "zoom"})
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     reasons = {u["uri"]: u["reason"] for u in the_plan.report()["unplaced"]}
     assert "missing from the copy" in reasons[f"plaud/{A}"]
     assert "damaged" in reasons[f"plaud/{B}"]
@@ -151,13 +151,13 @@ def test_each_row_it_cannot_place_says_why(ar_archive, plaud_env):
 def test_a_short_copy_is_a_problem(ar_archive, plaud_env):
     ar_archive.plaud(A, envelopes=[plaud_env(A)])
     ar_archive.write_catalog(provenance_rows=5)
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     assert the_plan.problems and "incomplete" in the_plan.problems[0] and not the_plan.ok
 
 
 def test_the_catalog_must_be_audio_routers(ar_archive):
     with pytest.raises(CatalogError, match="catalog.csv is missing"):
-        plan(ar_archive.root, consent=NONE)
+        plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     (ar_archive.root / "catalog").mkdir(parents=True)
     (ar_archive.root / "catalog" / "catalog.csv").write_text("uri,source\nx,y\n", encoding="utf-8")
     with pytest.raises(CatalogError, match="missing columns"):
@@ -173,7 +173,7 @@ def test_recordings_on_disk_that_the_catalog_misses_are_reported_by_id(ar_archiv
     ar_archive.plaud(X, envelopes=[plaud_env(X)])  # on the consent list: never named
     ar_archive.pocket_without_audio("my_secret_slug")
     (ar_archive.root / "plaud/audio/2026/08/My secret title.mp3").write_bytes(b"ID3")
-    the_plan = plan(ar_archive.root, consent={X})
+    the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
 
     def surrogate(name):
         return hashlib.sha256(name.encode("utf-8")).hexdigest()[:32]
@@ -190,7 +190,7 @@ def test_snapshots_keep_audio_routers_order_within_one_second(ar_archive, plaud_
     ar_archive.plaud(A, envelopes=[plaud_env(A), plaud_env(A, name="second"), plaud_env(A, name="third")],
                      stamps=["20260801T161000Z", "20260801T161000Z-01", "20260801T161000Z-02"])
     ar_archive.write_catalog()
-    (item,) = plan(ar_archive.root, consent=NONE).items
+    (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert [p.name for p in item.snapshots] == [
         "20260801T161000Z.json", "20260801T161000Z-01.json", "20260801T161000Z-02.json"]
 
@@ -202,7 +202,7 @@ def test_media_that_cant_be_measured_is_reported(ar_archive, plaud_env, monkeypa
                      recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     assert the_plan.report()["unprobed"] == [f"plaud/{B}"] and not the_plan.ok
     assert {i.row.file_id: i.probed.method for i in the_plan.items if i.probed} == {A: "wave"}
 
@@ -217,7 +217,7 @@ def test_a_row_already_in_the_archive_is_present_by_either_plaud_id_form(ar_arch
         RawSource(kind="plaud", ref="of_" + A, added_at=T0),)))
     writer.add(make_incoming(b"other audio", name="b.wav", sources=(
         RawSource(kind="plaud", ref=B, added_at=T0),)))
-    by_uri = {i.row.uri: i for i in plan(ar_archive.root, writer.index, consent=NONE).items}
+    by_uri = {i.row.uri: i for i in plan(ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver").items}
     assert by_uri[f"plaud/{A}"].disposition == "present"
     assert by_uri[f"plaud/{B}"].disposition == "unplaced"
     assert "different audio" in by_uri[f"plaud/{B}"].reason
@@ -232,7 +232,7 @@ def test_incomplete_snapshots_are_counted_by_reason_and_never_hidden(ar_archive,
                      recorded_at="2026-08-02T09:00:00-07:00")
     ar_archive.plaud(C, envelopes=[plaud_env(C)], recorded_at="2026-08-03T09:00:00-07:00")
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     report = the_plan.report()
     assert report["incomplete_snapshots"] == {
         "total": 3, "by_reason": {"auto_sum_note": 2, "unreadable": 1}}
@@ -269,7 +269,7 @@ def test_a_consent_listed_recording_excludes_every_row_that_carries_it(ar_archiv
     # ID: a row that duplicates it, the row it duplicates, a copy with the same audio and a
     # private-tier copy found by hash would import the listed recording's audio and transcript.
     rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
-    the_plan = plan(ar_archive.root, consent={X})
+    the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
     by_uri = {i.row.uri: i for i in the_plan.items}
     for uri in (f"plaud/{X}", f"plaud/{A}", f"plaud/{B}", rec_uri, priv_uri):
         item = by_uri[uri]
@@ -284,7 +284,7 @@ def test_a_consent_listed_recording_excludes_every_row_that_carries_it(ar_archiv
 def test_without_the_id_on_the_consent_list_the_same_rows_import(ar_archive, plaud_env):
     # The control for the test above: the exclusion comes from the list, nothing else.
     rec_uri, priv_uri = _consent_family(ar_archive, plaud_env)
-    by_uri = {i.row.uri: i for i in plan(ar_archive.root, consent=NONE).items}
+    by_uri = {i.row.uri: i for i in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items}
     assert by_uri[f"plaud/{B}"].disposition == "duplicate"
     assert by_uri[rec_uri].disposition == "duplicate"
     assert by_uri[priv_uri].disposition == "new-private"
@@ -301,7 +301,7 @@ def test_a_private_file_named_by_a_listed_id_is_never_read(ar_archive, monkeypat
     hashed = []
     real = audio_router.sha256_file
     monkeypatch.setattr(audio_router, "sha256_file", lambda p: (hashed.append(p.name), real(p))[1])
-    the_plan = plan(ar_archive.root, consent={X, X2})
+    the_plan = plan(ar_archive.root, consent={X, X2}, default_timezone="America/Vancouver")
     assert hashed and not any(X in n or X2 in n for n in hashed)
     assert the_plan.report()["unlisted_private"] == 0
 
@@ -318,7 +318,7 @@ def test_one_unreadable_file_does_not_stop_the_dry_run(ar_archive, plaud_env):
     stray.chmod(0)
     locked.chmod(0)
     try:
-        the_plan = plan(ar_archive.root, consent=NONE)
+        the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     finally:
         stray.chmod(0o644)
         locked.chmod(0o644)
@@ -339,7 +339,7 @@ def test_a_malformed_wav_is_unprobed_not_fatal(ar_archive, plaud_env, monkeypatc
     ar_archive.rows[0]["audio_sha256"] = ""
     ar_archive.write_catalog()
     monkeypatch.setattr(media.shutil, "which", lambda name: None)
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     assert the_plan.report()["unprobed"] == [f"plaud/{A}"] and not the_plan.ok
 
 
@@ -351,7 +351,7 @@ def test_every_path_the_plan_returns_is_inside_the_source(ar_archive, plaud_env,
     outside.mkdir()
     shutil.move(str(ar_archive.root / "plaud" / "raw" / A), str(outside / A))
     (ar_archive.root / "plaud" / "raw" / A).symlink_to(outside / A, target_is_directory=True)
-    (item,) = plan(ar_archive.root, consent=NONE).items
+    (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert item.disposition == "unplaced" and "outside the source" in item.reason
 
 
@@ -359,7 +359,7 @@ def test_private_media_with_no_catalog_row_is_counted_never_named(ar_archive):
     ar_archive.private()
     ar_archive._write("private/recorder-exports/Unlisted Title.wav", b"RIFFnot a row")
     ar_archive.write_catalog()
-    report = plan(ar_archive.root, consent=NONE).report()
+    report = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").report()
     assert report["unlisted_private"] == 1
     assert "Unlisted Title" not in json.dumps(report, ensure_ascii=False)
 
@@ -369,8 +369,8 @@ def test_the_pocket_listing_honours_the_consent_list(ar_archive):
     ar_archive.rows.clear()
     ar_archive.write_catalog()
     surrogate = hashlib.sha256(b"my_secret_slug").hexdigest()[:32]
-    assert plan(ar_archive.root, consent=NONE).unlisted == (f"pocket/{surrogate}",)
-    assert plan(ar_archive.root, consent={surrogate}).unlisted == ()
+    assert plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").unlisted == (f"pocket/{surrogate}",)
+    assert plan(ar_archive.root, consent={surrogate}, default_timezone="America/Vancouver").unlisted == ()
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root lists every folder")
@@ -393,7 +393,7 @@ def test_a_store_folder_that_cant_be_listed_unplaces_its_row(ar_archive, plaud_e
     for folder in locked:
         folder.chmod(0)
     try:
-        the_plan = plan(ar_archive.root, consent=NONE)
+        the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     finally:
         for folder in locked:
             folder.chmod(0o755)
@@ -420,7 +420,7 @@ def test_a_source_folder_that_cant_be_listed_is_a_problem_not_a_crash(ar_archive
     for folder in locked:
         folder.chmod(0o311)  # can be passed through, not listed
     try:
-        the_plan = plan(ar_archive.root, consent=NONE)
+        the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     finally:
         for folder in locked:
             folder.chmod(0o755)
@@ -444,7 +444,7 @@ def test_rows_with_the_same_audio_wait_for_each_other(ar_archive, plaud_env):
     ar_archive.plaud(T, envelopes=[plaud_env(T)], recorded_at="2026-08-05T09:00:00-07:00")
     ar_archive.write_catalog()
     (ar_archive.root / f"plaud/audio/2026/08/{A}.wav").write_bytes(b"damaged in the copy")
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     by_id = {i.row.file_id: i for i in the_plan.items}
     assert by_id[A].disposition == by_id[D].disposition == "unplaced"
     assert by_id[B].disposition == "unplaced" and f"plaud/{A} has the same audio" in by_id[B].reason
@@ -487,7 +487,7 @@ def test_a_private_rows_hand_written_time_keeps_its_offset(ar_archive):
     # build_catalog gives every private.jsonl row its config's zone, whatever the time says.
     row = ar_archive.private(recorded_at="2026-08-03T10:00:00+09:00")
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, consent=NONE)
+    the_plan = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     (item,) = the_plan.items
     assert (item.recorded_at.isoformat(), item.timezone) == ("2026-08-03T10:00:00+09:00", "")
     assert the_plan.report()["offset_only"] == [row["uri"]]
@@ -499,7 +499,7 @@ def test_a_zone_or_offset_a_recording_cant_carry_is_unplaced(ar_archive, plaud_e
     ar_archive.plaud(B, envelopes=[plaud_env(B)],
                      recorded_at="2026-08-02T09:00:00+05:30:15")
     ar_archive.write_catalog()
-    reasons = {u["uri"]: u["reason"] for u in plan(ar_archive.root, consent=NONE).report()["unplaced"]}
+    reasons = {u["uri"]: u["reason"] for u in plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").report()["unplaced"]}
     assert "unknown time zone 'Mars/Olympus'" in reasons[f"plaud/{A}"]
     assert "offset in seconds" in reasons[f"plaud/{B}"]
 
@@ -510,7 +510,7 @@ def test_a_private_file_named_by_its_hash_must_have_that_hash(ar_archive):
     (tier / "placeholder.wav").rename(tier / f"{row['file_id']}.wav")
     (tier / f"{row['file_id']}.wav").write_bytes(b"RIFF damaged in the copy")
     ar_archive.write_catalog()
-    (item,) = plan(ar_archive.root, consent=NONE).items
+    (item,) = plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver").items
     assert item.disposition == "unplaced" and "damaged" in item.reason
 
 
@@ -520,7 +520,7 @@ def test_a_row_already_imported_by_its_uri_with_other_audio_is_unplaced(ar_archi
     ar_archive.write_catalog()
     writer.add(make_incoming(b"other audio", name="p.wav", sources=(
         RawSource(kind="audio_router", ref=f"pocket/{UUID}", added_at=T0),)))
-    (item,) = plan(ar_archive.root, writer.index, consent=NONE).items
+    (item,) = plan(ar_archive.root, writer.index, consent=NONE, default_timezone="America/Vancouver").items
     assert item.disposition == "unplaced" and "different audio" in item.reason
 
 
@@ -533,7 +533,7 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     assert ar_archive.rows[0]["uri"] == f"plaud/{X}"
     ar_archive.rows[0]["audio_sha256"] = ""
     ar_archive.write_catalog()
-    the_plan = plan(ar_archive.root, consent={X})
+    the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
     assert [p for p in the_plan.problems if "consent-listed" in p] == [
         "1 consent-listed rows have no catalog audio hash, so copies of them can't be "
         "recognised: rebuild the catalog"]
@@ -542,4 +542,4 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     assert the_plan.counts()["consent-excluded"] == 1 and the_plan.counts()["new"] == 1
     ar_archive.rows[0]["audio_sha256"] = hashlib.sha256(b"x").hexdigest()
     ar_archive.write_catalog()
-    assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}).problems)
+    assert not any("consent-listed" in p for p in plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver").problems)

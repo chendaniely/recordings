@@ -98,6 +98,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("alert-test", help="send a test alert and log a dead-man's switch ping")
     p.add_argument("--json", action="store_true")
+    # No abbreviated flags: `doctor --rol web` would otherwise work until a second option shares
+    # the prefix, and the runbook test could not see a flag renamed to an extension of the old one.
+    # (A subparser's allow_abbrev is its own: it doesn't inherit the parent's.)
+    for each in (parser, *sub.choices.values()):
+        each.allow_abbrev = False
     return parser
 
 

@@ -3,6 +3,7 @@ init, import a synthetic audio-router archive (a dry run first), validate, back 
 restic repository, run the restore test after the import, and doctor."""
 
 import json
+import logging
 import os
 import shutil
 from datetime import datetime, timezone
@@ -72,44 +73,61 @@ def setup(tmp_path, monkeypatch, ar, plaud_env, restic="restic"):
         monkeypatch.delenv(name, raising=False)
 
 
-def run(capsys, *argv) -> tuple[int, dict]:
-    code = main([*argv, "--json"])
-    out = capsys.readouterr().out
-    assert [t for t in TITLES if t in out] == [], f"`recordings {' '.join(argv)}` printed a title"
-    return code, json.loads(out)
+def run(capsys, caplog, *argv) -> tuple[int, dict]:
+    """One command through the CLI. No title may reach stdout, stderr or a log record (INFO and
+    above), whatever the command printed."""
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        code = main([*argv, "--json"])
+    captured = capsys.readouterr()
+    where = {"stdout": captured.out, "stderr": captured.err, "log": caplog.text}
+    leaked = [(name, t) for name, text in where.items() for t in TITLES if t in text]
+    assert leaked == [], f"`recordings {' '.join(argv)}` printed a title: {leaked}"
+    return code, json.loads(captured.out)
 
 
-def test_init_import_and_validate(tmp_path, monkeypatch, capsys, ar_archive, plaud_env):
+def test_init_import_and_validate(tmp_path, monkeypatch, capsys, caplog, ar_archive, plaud_env):
     setup(tmp_path, monkeypatch, ar_archive, plaud_env)
-    assert run(capsys, "init")[0] == 0
-    code, dry = run(capsys, "import-audio-router", str(ar_archive.root), "--dry-run")
+    assert run(capsys, caplog, "init")[0] == 0
+    code, dry = run(capsys, caplog, "import-audio-router", str(ar_archive.root), "--dry-run")
     assert code == 0 and dry["unplaced"] == []
     assert sum(dry["by_disposition"].values()) == dry["catalog_rows"] == len(ar_archive.rows)
     assert dry["by_disposition"]["consent-excluded"] == 1 and D not in json.dumps(dry)
     assert dry["by_disposition"]["new-private"] == 2
     assert dry["deferred_to_2b"] == [O]  # its Plaud ID is kept, for 2b's sync
     assert dry["unprobed"] == []  # every fixture is a plain WAV
-    code, done = run(capsys, "import-audio-router", str(ar_archive.root))
+    code, done = run(capsys, caplog, "import-audio-router", str(ar_archive.root))
     assert code == 0 and done["imported"]["created"] == 5 and done["imported"]["failed"] == []
     recordings = list(Archive(tmp_path / "archive").iter_recordings())
     assert len(recordings) == 5 and sum(is_private(r) for r in recordings) == 2
-    assert run(capsys, "validate", str(tmp_path / "archive"), "--deep") == (0, {"problems": []})
-    code, again = run(capsys, "import-audio-router", str(ar_archive.root))
+    # Which two: the main-tier row that audio-router tagged private (by its Plaud ID), and the
+    # private tier's (by the hash of its audio). Not a count that any two recordings could meet.
+    (by_plaud,) = [r for r in recordings if any(s.kind == "plaud" and s.ref.endswith(P)
+                                                 for s in r.sources)]
+    tier = next(row["file_id"] for row in ar_archive.rows if row["source"] == "private")
+    (by_hash,) = [r for r in recordings if r.media.sha256 == tier]
+    assert by_plaud is not by_hash
+    assert {r.id for r in recordings if is_private(r)} == {by_plaud.id, by_hash.id}
+    # The consent-listed recording never came in: its ID is in no recording.json.
+    written = list((tmp_path / "archive" / "recordings").rglob("recording.json"))
+    assert len(written) == 5 and [f for f in written if D in f.read_text(encoding="utf-8")] == []
+    assert run(capsys, caplog, "validate", str(tmp_path / "archive"), "--deep") == (0, {"problems": []})
+    code, again = run(capsys, caplog, "import-audio-router", str(ar_archive.root))
     assert code == 0 and again["imported"]["created"] == 0
     assert again["imported"]["sources_added"] == 0
-    code, reindexed = run(capsys, "reindex")
+    code, reindexed = run(capsys, caplog, "reindex")
     assert code == 0 and reindexed["recordings"] == 5 and reindexed["plaud"]["written"] == 0
 
 
-def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, ar_archive, plaud_env):
+def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, caplog, ar_archive, plaud_env):
     exe = restic_or_skip()
     setup(tmp_path, monkeypatch, ar_archive, plaud_env, restic=exe)
-    assert run(capsys, "init")[0] == 0
-    assert run(capsys, "backup", "init")[0] == 0
-    assert run(capsys, "backup", "run", "--tag", "pre-import")[1]["ok"] is True
-    assert run(capsys, "import-audio-router", str(ar_archive.root))[0] == 0
-    assert run(capsys, "backup", "run", "--tag", "post-import")[1]["ok"] is True
-    code, restored = run(capsys, "backup", "restore-test")  # after the import, as the runbook does
+    assert run(capsys, caplog, "init")[0] == 0
+    assert run(capsys, caplog, "backup", "init")[0] == 0
+    assert run(capsys, caplog, "backup", "run", "--tag", "pre-import")[1]["ok"] is True
+    assert run(capsys, caplog, "import-audio-router", str(ar_archive.root))[0] == 0
+    assert run(capsys, caplog, "backup", "run", "--tag", "post-import")[1]["ok"] is True
+    code, restored = run(capsys, caplog, "backup", "restore-test")  # after the import, as the runbook does
     assert code == 0 and restored["detail"] == "restored and validated 5 recordings"
     state = State.open(tmp_path / "state")
     assert state.last_run("restore-test", ok=True) is not None
@@ -122,5 +140,5 @@ def test_back_up_and_prove_the_restore(tmp_path, monkeypatch, capsys, ar_archive
     assert jobs["backup"]["last_ok"] and jobs["backup"]["last_ok_detail"].startswith("snapshot ")
     assert jobs["restore-test"]["last_ok_detail"] == "restored and validated 5 recordings"
     assert summary["attention"] == [] and summary["running"] is None
-    code, report = run(capsys, "doctor", "--role", "all")
+    code, report = run(capsys, caplog, "doctor", "--role", "all")
     assert code == 0 and report["problems"] == []

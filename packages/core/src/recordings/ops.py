@@ -440,8 +440,9 @@ def _conclude(ctx: Context, ac: AlertConfig | None, job: str, started: datetime,
     A state.db that can't record it leaves the attempt in ctx.attempts, for due()."""
     try:
         ctx.state.record_run(job, started, ctx.clock(), ok, detail)
+        ctx.warned.pop(f"record:{job}", None)
     except FAILURES:  # a broken state disk must not hide the alert below (which guards its own)
-        log.warning("%s: could not record the run (%s)", job, detail)
+        _warn_hourly(ctx, f"record:{job}", f"{job}: could not record the run ({detail})")
         ctx.attempts[job] = (ctx.clock(), ok)
     if ac is not None:
         _alert(ctx, ac, job, ok, detail)
@@ -519,6 +520,7 @@ def _trim_runs(ctx: Context) -> None:
             return
         gone = ctx.state.prune_runs(now - KEEP_RUNS)
         ctx.state.set_meta("ops_runs_trimmed", now.isoformat())
+        ctx.warned.pop("trim", None)  # recovered: the next full disk warns at once
     except (*FAILURES, ValueError):
         _warn_hourly(ctx, "trim", "could not trim the old runs")
         return
@@ -531,6 +533,7 @@ def run_due(ctx: Context) -> list[JobResult]:
     busy job is BUSY, and the next pass tries it again."""
     try:
         ctx.state.set_meta("ops_heartbeat", ctx.clock().isoformat())
+        ctx.warned.pop("heartbeat", None)  # recovered: the next full disk warns at once
     except FAILURES:  # a broken state disk must not stop the pass: the jobs still run
         _warn_hourly(ctx, "heartbeat", "could not write the heartbeat")
     _trim_runs(ctx)

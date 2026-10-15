@@ -152,11 +152,16 @@ def test_every_recordings_command_the_runbook_names_parses():
 
     from recordings.cli import build_parser
 
+    # The fenced blocks, and the commands the prose names in `inline code` (`mirror --debug`).
+    prose = FENCE.sub("", _text())
+    lines = ("\n".join(_code_lines()).replace("\\\n", " ").splitlines()
+             + re.findall(r"`([^`\n]+)`", prose))
     commands = []
-    for line in "\n".join(_code_lines()).replace("\\\n", " ").splitlines():
+    for line in lines:
         if not re.search(r"\brecordings [a-z]", line):
             continue
-        tokens = shlex.split(line, comments=True)
+        # A placeholder for a number (`--max-delete N`) stands for any: 1.
+        tokens = ["1" if t == "N" else t for t in shlex.split(line, comments=True)]
         for i, token in enumerate(tokens):
             # The command itself: first on the line, or after a service name, `run` or `exec`.
             # Not `--tag recordings` or a path.
@@ -184,3 +189,5 @@ def test_every_recordings_command_the_runbook_names_parses():
     assert {"web", "backup"} <= {c[c.index("--role") + 1] for c in commands
                                  if c[0] == "doctor" and "--role" in c[:-1]}
     assert any(c[:2] == ["backup", "restore-test"] for c in commands)
+    # Two commands the runbook names only in prose, where the parse used to skip them.
+    assert ["mirror", "--max-delete", "1"] in commands and ["mirror", "--debug"] in commands
