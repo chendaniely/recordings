@@ -5,3 +5,5 @@
 9db189743716699fa4c5db3f3afadb1251400c96
 # style: ruff check --fix
 3483db4aecb0d9c32709305a233050b76f93251e
+# docs: restore the plans and spec that ruff format rewrote
+fd82bfc06f534fde11bba2dfbf16fcb4280ce144
