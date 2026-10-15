@@ -292,6 +292,28 @@ class ArchiveMarkerError(DiskWarning):
     """The archive's marker is missing or changed: an unmounted or wrong disk, not a full one."""
 
 
+class RestoreCopyLeft(DiskWarning):
+    """A restore test's copy, the whole archive unencrypted, is in [backup] restore_scratch while
+    no restore test runs: a SIGKILL, the OOM killer or a power cut left it behind (§15.1). The
+    next restore test removes it, up to 30 days later; `recordings doctor` names it."""
+
+
+def _restore_copy_left(ctx: Context) -> bool:
+    """A restore-* folder in [backup] restore_scratch that no running restore test owns. The disk
+    job runs holding "ops" (run_job), so no restore test can be running while it looks; the
+    check is doctor's all the same, so a running test's own copy is never called left behind."""
+    scratch = ctx.cfg.data.get("backup", {}).get("restore_scratch")
+    if not isinstance(scratch, str) or not scratch.strip():
+        return False
+    held = running(ctx.state.locks_dir)
+    if held is not None and held[0] == "restore-test":
+        return False
+    try:
+        return any(Path(scratch).glob("restore-*"))
+    except OSError:
+        return False
+
+
 def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
     if ctx.cfg.archive_path is None:
         raise ConfigError("set [archive] path")
@@ -299,6 +321,8 @@ def _disk(ctx: Context, tags: tuple[str, ...]) -> str:
                          **disk_thresholds(ctx.cfg))
     if not status.marker:
         raise ArchiveMarkerError(status.message)
+    if _restore_copy_left(ctx):  # before low space: Status shows that, and nothing shows this
+        raise RestoreCopyLeft("a restore test's copy is still in [backup] restore_scratch")
     if status.level != "ok":
         raise DiskWarning(status.message)
     return status.message
@@ -335,7 +359,9 @@ LOCKED = f"{BUSY} (repository locked)"
 TITLES = {"disk": "disk space low", "backup": "backup failed", "mirror": "mirror failed",
           "prune": "backup retention failed", "check": "backup check failed",
           "restore-test": "restore test failed"}
-DETAIL_TITLES = {"ArchiveMarkerError": "archive disk missing or changed"}  # a failure of its own kind
+# Failures of their own kind: each has its own title and its own alert state.
+DETAIL_TITLES = {"ArchiveMarkerError": "archive disk missing or changed",
+                 "RestoreCopyLeft": "restore copy left behind"}
 
 
 def enabled_jobs(cfg: Config) -> tuple[str, ...]:

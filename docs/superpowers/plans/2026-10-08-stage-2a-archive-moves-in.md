@@ -19453,7 +19453,7 @@ and in the secrets comment block:
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_alerts.py packages/core/tests/test_ops.py -v && uv run pytest`
-Expected: 27 and 31 passed, then the whole suite passes: 798 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 737, plus 27 + 31 new
+Expected: 27 and 31 passed, then the whole suite passes: 807 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 746, plus 27 + 31 new
 tests, plus three net in `test_backup.py`: 49 becomes 52), and no warnings.
 
 - [ ] **Step 6: Commit**
@@ -19501,7 +19501,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - the deploy variables `RECORDINGS_{ARCHIVE,STATE,RESTORE,SECRETS,CONFIG,DEPLOY_ENV}_HOST`, `RECORDINGS_NTFY_AUTH_HOST` (optional), `RECORDINGS_BIND`, `RECORDINGS_PORT`, `RECORDINGS_UID` and `RECORDINGS_GID`
   - **The image:** base images pinned by digest; build args `APP_UID` and `APP_GID` (default 10001), which Compose takes from `RECORDINGS_UID`/`RECORDINGS_GID`, creating that user in `/etc/passwd`; `USER ${APP_UID}:${APP_GID}`.
   - **Image tags:** `RECORDINGS_IMAGE_TAG`, set by `make deploy` to `git rev-parse --short=12 HEAD`, with `-dirty` for uncommitted or untracked changes, which `make deploy` refuses.
-  - **Make targets:** `make deploy [FORCE=1]` (refuses while a job holds the ops lock, unless forced: `docker/deploy-guard.sh` pipes `docker/ops-busy.py` into the running backup container's python; then `up -d --build --wait --wait-timeout 180`), `make rollback TAG=<tag>` (`up -d --no-build`), `make prune-images [KEEP=n]` (`docker/prune-images.sh`: keeps the newest n commit tags, default 5, and any a container was made from), `make deploy-smoke`.
+  - **Make targets:** `make deploy [FORCE=1]` (refuses while a job holds the ops lock, unless forced: `docker/deploy-guard.sh` pipes `docker/ops-busy.py` into the running backup container's python, or, while the backup service is stopped (runbook steps 2.6 and 4), into a one-off `compose run --rm --no-deps backup` on the image the stopped container was made from; then `up -d --build --wait --wait-timeout 180`), `make rollback TAG=<tag>` (`up -d --no-build`), `make prune-images [KEEP=n]` (`docker/prune-images.sh`: keeps the newest n commit tags, default 5, and any a container was made from), `make deploy-smoke`.
   - **Boot:** `docker/recordings.service` (systemd; `/srv/recordings` and the checkout `/srv/recordings/repo` named at its top) and `docker/up-deployed.sh ARGS…`, which runs `docker compose ARGS…` on the tag the web container already runs.
   - **Tests:** the root `conftest.py`, with `KEEP = frozenset({"RECORDINGS_REQUIRE_RESTIC", "RECORDINGS_TEST_RESTIC"})`, `host_settings(environ) -> list[str]` and the autouse fixture `no_settings_from_this_machine`, which returns `host_settings`. The fixture drops every `RECORDINGS_*` and `RESTIC_*` variable except those in `KEEP`, and points `config.DEFAULT_PATH` at a file that never exists. CI's `RECORDINGS_REQUIRE_RESTIC=1` survives it.
 
@@ -19785,6 +19785,43 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
     assert '"up", "-d", "--wait", "--wait-timeout", "120", "web"' in smoke
     forced = make_dry_run("deploy", "IMAGE_TAG=0123456789ab", "FORCE=1").stdout
     assert "FORCE=1 sh docker/deploy-guard.sh" in forced
+
+
+def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(tmp_path):
+    # why: the final review's minor 1. The runbook stops backup (steps 2.6 and 4), then runs its
+    # jobs and the import in one-off containers: a hold matters most then, and the guard looked
+    # only at a running backup container, so `up -d` started the loop in their way.
+    fake = tmp_path / "docker"
+    # `ps -q` lists running containers (none), `ps -a -q` stopped ones too, and `inspect` the image
+    # one was made from. The one-off `compose run` gets docker/ops-busy.py on stdin; the fake runs
+    # it here instead, on the test's own lock folder.
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
+                    'if [ "$1" = ps ]; then exit 0; fi\n'
+                    'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
+                    'if [ "$RECORDINGS_IMAGE_TAG $*" = "0123456789ab compose --env-file docker/deploy.env '
+                    '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks" ]; then\n'
+                    '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n', encoding="utf-8")
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_STOPPED": "def456",
+           "FAKE_IMAGE": "recordings:0123456789ab", "FAKE_PYTHON": sys.executable,
+           "FAKE_LOCKS": str(tmp_path / "locks")}
+
+    def guard(**extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["sh", str(REPO / "docker" / "deploy-guard.sh")],
+                              env={**env, **extra}, capture_output=True, text=True)
+
+    assert guard().returncode == 0  # stopped, and nothing holds the lock
+    with ops_lock_held(tmp_path / "locks", '{"job": "import"}'):
+        busy = guard()
+        assert busy.returncode != 0 and "import" in busy.stderr and "FORCE=1" in busy.stderr
+        assert guard(FORCE="1").returncode == 0
+    assert guard(FAKE_STOPPED="").returncode == 0  # no backup container at all: nothing deployed
+    for extra in ({"FAKE_IMAGE": "postgres:16"}, {"FAKE_PYTHON": "/nonexistent"}):
+        broken = guard(**extra)  # nothing to ask with, or the question failed: say so, don't deploy
+        assert broken.returncode != 0 and "could not ask" in broken.stderr
+    down = guard(FAKE_DOWN="1")
+    assert down.returncode != 0 and "daemon" in down.stderr
 
 
 def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path):
@@ -20271,9 +20308,12 @@ RECORDINGS_IMAGE_TAG=${image#recordings:} exec docker compose --env-file docker/
 #!/bin/sh
 # `make deploy` runs this first. A deploy recreates the backup container, which stops the job it
 # runs: restic and rsync stop cleanly, but the job starts again from the beginning, so a deploy
-# during a restore test or a check costs hours. This asks the running backup container whether any
-# process holds the ops lock (docker/ops-busy.py), as Status does. FORCE=1 deploys anyway. It reads
-# no secret.
+# during a restore test or a check costs hours. While the backup service is stopped (the runbook
+# stops it, then runs its jobs and the import in one-off containers), `up` would start the loop in
+# their way. This asks whether any process holds the ops lock (docker/ops-busy.py), as Status
+# does: in the running backup container, or else in a one-off backup container on the image the
+# stopped one was made from (this deploy's image may not be built yet). flock is per host, so a
+# hold in any container counts. FORCE=1 deploys anyway. It reads no secret.
 set -eu
 cd "$(dirname "$0")/.."
 [ "${FORCE:-}" = 1 ] && exit 0
@@ -20281,14 +20321,33 @@ ids=$(docker ps -q --filter label=com.docker.compose.project=recordings \
   --filter label=com.docker.compose.service=backup --filter label=com.docker.compose.oneoff=False) \
   || { echo "deploy-guard: docker failed (is the Docker daemon running?)" >&2; exit 1; }
 id=$(printf '%s\n' "$ids" | head -n 1)
-[ -n "$id" ] || exit 0  # no backup container running: no job to stop
 status=0
-held=$(docker exec -i "$id" python - /state/locks < docker/ops-busy.py) || status=$?
+if [ -n "$id" ]; then
+  held=$(docker exec -i "$id" python - /state/locks < docker/ops-busy.py) || status=$?
+else
+  # docker ps lists the newest first. The image is read back with inspect, which keeps the
+  # reference the container was created from (as docker/up-deployed.sh reads it).
+  ids=$(docker ps -a -q --filter label=com.docker.compose.project=recordings \
+    --filter label=com.docker.compose.service=backup \
+    --filter label=com.docker.compose.oneoff=False) \
+    || { echo "deploy-guard: docker failed (is the Docker daemon running?)" >&2; exit 1; }
+  id=$(printf '%s\n' "$ids" | head -n 1)
+  [ -n "$id" ] || exit 0  # no backup container at all: nothing deployed to stop or start
+  image=$(docker inspect --format '{{.Config.Image}}' "$id") \
+    || { echo "deploy-guard: docker inspect failed (is the Docker daemon running?)" >&2; exit 1; }
+  case "$image" in
+    recordings:?*)
+      held=$(RECORDINGS_IMAGE_TAG=${image#recordings:} docker compose --env-file docker/deploy.env \
+        -f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks \
+        < docker/ops-busy.py) || status=$? ;;
+    *) status=1 ;;  # not an image make deploy tagged: nothing to ask with
+  esac
+fi
 case "$status" in
   0) exit 0 ;;
-  3) echo "make deploy: a job is running${held:+ ($held)}. A deploy now would stop it, and it" \
-       "would start again from the beginning. Wait for it (Status shows it), or deploy" \
-       "anyway: make deploy FORCE=1" >&2 ;;
+  3) echo "make deploy: a job is running${held:+ ($held)}. A deploy now would stop it (it would" \
+       "start again from the beginning), or start the backup service in its way. Wait for it" \
+       "(Status shows it), or deploy anyway: make deploy FORCE=1" >&2 ;;
   *) echo "make deploy: could not ask the backup container whether a job is running (exit" \
        "$status). make deploy FORCE=1 deploys anyway." >&2 ;;
 esac
@@ -20724,7 +20783,7 @@ In `.github/workflows/ci.yml`, **add** this job after `docker`:
 - [ ] **Step 4: Run the tests and the smoke test**
 
 Run: `RECORDINGS_ARCHIVE=/nonexistent RESTIC_REPOSITORY=/nonexistent RECORDINGS_REQUIRE_RESTIC=1 uv run pytest packages/core/tests/test_deploy_template.py -v && uv run pytest && make deploy-smoke`
-Expected: 29 passed, then the whole suite passes (825 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 798 less the 2 old template tests plus these 29; a clone without a built frontend shows 824 and one skip).
+Expected: 30 passed, then the whole suite passes (835 with `RECORDINGS_REQUIRE_RESTIC=1`, Task 13's 807 less the 2 old template tests plus these 30; a clone without a built frontend shows 834 and one skip).
 Everything in `test_deploy_template.py` and the suite runs without Docker. The smoke test and the
 image build need a running Docker daemon (`docker info` must work) and fail, not skip, without
 one: run `make deploy-smoke` on such a machine, and CI's `docker` and `compose-smoke` jobs cover it
@@ -20785,15 +20844,22 @@ Status never stays green while something is wrong (the council of 2026-10-09):
   `state.unreadable()`'s text, which says to leave it alone. A configured server with no `state.db`
   needs attention.
 
+The disk job also says when a restore test's copy was left behind (the final review's minor 2,
+2026-10-14). A SIGKILL, the OOM killer or a power cut leaves that copy, the whole archive in
+plaintext, in `[backup] restore_scratch`, and the next restore test removes it up to 30 days
+later. A `restore-*` folder there while no restore test holds `ops` (`running`) fails the disk
+job as `RestoreCopyLeft`, which has its own alert title, `restore copy left behind`: one push,
+the daily reminder while it stays, and `disk recovered` once it is gone.
+
 In demo mode, which has no settings, Status shows no disk figure: the demo's disk is a temporary
 copy, or on Pages, Pyodide's in-memory file system, so any figure would be made up.
 
 **Files:**
 - Create: `packages/ui/src/recordings_ui/status.py`, `packages/ui/frontend/src/lib/nav.ts`, `packages/ui/frontend/src/lib/nav.test.ts`, `packages/ui/frontend/src/lib/when.ts`, `packages/ui/frontend/src/lib/when.test.ts`, `packages/ui/frontend/src/components/StatusPage.tsx`, `packages/ui/frontend/src/components/StatusPage.test.ts`
-- Modify: `packages/core/src/recordings/disk.py` (`disk_view`), `ops.py` (`when_label`, `status_summary`, and `run_job`, which announces its job), `state.py` (`State.read_only`), `locks.py` (`announce`, `running`), `sources/audio_router.py` (the import announces itself)
+- Modify: `packages/core/src/recordings/disk.py` (`disk_view`), `ops.py` (`when_label`, `status_summary`, `run_job`, which announces its job, and the disk job, which reports a restore copy left behind), `state.py` (`State.read_only`), `locks.py` (`announce`, `running`), `sources/audio_router.py` (the import announces itself)
 - Modify: `packages/ui/src/recordings_ui/runtime.py`, `views.py`, `shiny_app.py`, `app.py`
 - Modify: `packages/ui/frontend/src/App.tsx`, `components/TopBar.tsx`, `components/DetailsTab.tsx`, `components/RecordingPane.tsx` (the header's time), `sr.ts` (`useShinyOutputError`), `types.ts`, `app.css`
-- Test: `packages/core/tests/test_ops.py` (the summary, the read-only state), `test_locks.py` and `test_import_run.py` (the running job), `test_deploy_template.py` (web and backup share the state folder), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
+- Test: `packages/core/tests/test_ops.py` (the summary, the read-only state, the restore copy left behind), `test_locks.py` and `test_import_run.py` (the running job), `test_deploy_template.py` (web and backup share the state folder), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
 
 **Interfaces:**
 - Consumes:
@@ -21213,6 +21279,35 @@ def test_run_job_announces_its_job_while_it_runs(tmp_path, writer, ntfy):
     run_job(context(tmp_path, writer, ntfy, runner=runner), "backup")
     assert seen and set(seen) == {("backup", T0)}
     assert running(writer.state.locks_dir) is None  # and says nothing once it is done
+
+
+def test_a_restore_copy_left_behind_alerts_once_but_a_running_tests_own_never(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: §15.1 (the final review's minor 2). A SIGKILL, the OOM killer (backup's oom_score_adj
+    # makes it the first choice, and a restore is its heaviest job) or a power cut leaves the
+    # restore test's copy, the whole archive unencrypted, in restore_scratch. Only the next restore
+    # test, up to 30 days later, removed it, and only doctor said so meanwhile.
+    from types import SimpleNamespace
+
+    from recordings.locks import OPS_LOCK, announce
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=900, f_frsize=1024, f_blocks=1000))  # 90% free: only the copy is wrong
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    left = tmp_path / "scratch" / "restore-20261009T060000Z"
+    left.mkdir(parents=True)
+    folder = writer.state.locks_dir
+    with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "restore-test", T0):
+        assert ops._disk(ctx, ())  # the copy of the restore test running now: nothing to say
+    assert run_job(ctx, "disk") == ops.JobResult("disk", False, "RestoreCopyLeft")
+    clock.now += timedelta(minutes=20)
+    run_job(ctx, "disk")  # still there: quiet until the daily reminder
+    left.rmdir()
+    clock.now += timedelta(minutes=20)
+    assert run_job(ctx, "disk").ok
+    assert [(r["headers"]["Title"], r["body"]) for r in pushes(ntfy)] == [
+        ("recordings: restore copy left behind", "disk failed (RestoreCopyLeft). See Status."),
+        ("recordings: disk recovered", "disk works again. See Status.")]
 ```
 
 Add to `packages/core/tests/test_locks.py`:
@@ -21495,7 +21590,8 @@ Expected:
 - The Shiny and demo-guard tests: FAIL. The demo guard fails after 20 s, `the demo's websocket sent
   only ['library']`, because the server function has no `status` output yet, and the session has
   none either. (The `views.status_view` AttributeError comes after it, once `status` is published.)
-- The three announce tests (`test_locks.py`, `test_import_run.py` and the one in `test_ops.py`): FAIL with
+- The four announce tests (`test_locks.py`, `test_import_run.py` and the two in `test_ops.py`, the
+  restore copy's among them): FAIL with
   `ImportError: cannot import name 'announce'` (or `'running'`) `from 'recordings.locks'`.
 - `test_status.py`: an error at collection, `ModuleNotFoundError: No module named 'recordings_ui.status'`.
 - Vitest fails to resolve `./nav`, `./when` and `./StatusPage`.
@@ -21736,6 +21832,41 @@ def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_
             f"{flags} file needs attention: run recordings reindex." if flags == 1
             else f"{flags} files need attention: run recordings reindex.")
     return out
+```
+
+In `packages/core/src/recordings/ops.py`, the disk job also reports a restore copy left behind (the final review's minor 2). **Add** after `ArchiveMarkerError`:
+```python
+class RestoreCopyLeft(DiskWarning):
+    """A restore test's copy, the whole archive unencrypted, is in [backup] restore_scratch while
+    no restore test runs: a SIGKILL, the OOM killer or a power cut left it behind (§15.1). The
+    next restore test removes it, up to 30 days later; `recordings doctor` names it."""
+
+
+def _restore_copy_left(ctx: Context) -> bool:
+    """A restore-* folder in [backup] restore_scratch that no running restore test owns. The disk
+    job runs holding "ops" (run_job), so no restore test can be running while it looks; the
+    check is doctor's all the same, so a running test's own copy is never called left behind."""
+    scratch = ctx.cfg.data.get("backup", {}).get("restore_scratch")
+    if not isinstance(scratch, str) or not scratch.strip():
+        return False
+    held = running(ctx.state.locks_dir)
+    if held is not None and held[0] == "restore-test":
+        return False
+    try:
+        return any(Path(scratch).glob("restore-*"))
+    except OSError:
+        return False
+```
+In `_disk`, **add** between the marker check (`raise ArchiveMarkerError(status.message)`) and the level check:
+```python
+    if _restore_copy_left(ctx):  # before low space: Status shows that, and nothing shows this
+        raise RestoreCopyLeft("a restore test's copy is still in [backup] restore_scratch")
+```
+And **replace** the `DETAIL_TITLES` line (Task 13's) with:
+```python
+# Failures of their own kind: each has its own title and its own alert state.
+DETAIL_TITLES = {"ArchiveMarkerError": "archive disk missing or changed",
+                 "RestoreCopyLeft": "restore copy left behind"}
 ```
 
 `packages/ui/src/recordings_ui/status.py`:
@@ -22168,8 +22299,8 @@ tr.attn td { color: var(--destructive); }
 
 Run: `make test && make e2e && make pages && make pages-test`
 Expected: pytest, Vitest (with `nav.test.ts`, `when.test.ts` and `StatusPage.test.ts`) and the
-Playwright tests all pass (checked in a clone at the commit after Task 14's council fixes: pytest 851, Vitest 27, e2e 10, Pages 5;
-pytest shows 850 and 1 skipped until `make build` has built `www/ui.js`), `test_the_status_page_shows_backups_and_disk` and
+Playwright tests all pass (checked in a clone at the commit after Task 14's council fixes: pytest 862, Vitest 27, e2e 10, Pages 5;
+pytest shows 861 and 1 skipped until `make build` has built `www/ui.js`), `test_the_status_page_shows_backups_and_disk` and
 `test_the_header_shows_the_local_time_with_its_offset` included. The Pages smoke test passes,
 `test_the_status_page_shows_no_made_up_disk` included: the static demo (Pyodide) now runs the
 Status output too, with no state folder, no `sqlite3` and no disk figure.
@@ -23655,7 +23786,7 @@ finds nothing to warn about in them.
 
 Run: `uv run pytest packages/core/tests/test_doctor.py packages/core/tests/test_config.py -v && uv run pytest`
 Expected: all pass. The suite gains 60 tests over Task 15's count (54 in `test_doctor.py`, 4 in
-`test_config.py`, 1 in `test_backup.py` and 1 in `test_ops.py`), so 851 + 60 = 911 with
+`test_config.py`, 1 in `test_backup.py` and 1 in `test_ops.py`), so 862 + 60 = 922 with
 `RECORDINGS_REQUIRE_RESTIC=1`.
 
 Then run `make deploy-smoke`.
@@ -24377,7 +24508,7 @@ Then re-sync Task 1's fence with the runbook, and check they are byte-identical.
 - [ ] **Step 5: Run everything and scan for secrets**
 
 Run: `make test && make e2e && make deploy-smoke && gitleaks dir . --redact --no-banner && gitleaks git . --redact --no-banner`
-Expected: every test passes, with 927 pytest (Task 16's 911 plus this task's 16: 2 flow, 2 settings,
+Expected: every test passes, with 938 pytest (Task 16's 922 plus this task's 16: 2 flow, 2 settings,
 1 runbook, 3 ops, 7 config cases, 1 cli) when `RECORDINGS_REQUIRE_RESTIC=1`, and Vitest, e2e and Pages
 counts not lower than Task 15's; the compose smoke test passes; and both gitleaks scans report
 `no leaks found`. Both scans read only the working directory; run them in a fresh
@@ -24506,8 +24637,9 @@ more reviews checked the result:
   - Final, at that dry run: 614 pytest passed with real restic 0.19.1 and no skips, plus 21 Vitest, 9
     e2e and 5 Pages tests, `make deploy-smoke`, gitleaks and `validate --deep`. The counts have
     grown since; each task's gate records its own. After Task 15, in a clone with real restic:
-    851 pytest, 27 Vitest, 10 e2e and 5 Pages tests; after Task 16, 911 pytest; after Task 17,
-    927 pytest.
+    862 pytest, 27 Vitest, 10 e2e and 5 Pages tests; after Task 16, 922 pytest; after Task 17,
+    938 pytest (with the final review's fix wave, whose 11 tests are in Tasks 4, 8, 9, 14 and
+    15).
   - Its fixes: Status shows a good backup's NAS free space, ssh gets a 10 s connect timeout, the
     Pages demo's Status reports its disk as unknown, two README rows, and the smoke test's secret
     files at mode 600.

@@ -717,6 +717,35 @@ def test_run_job_announces_its_job_while_it_runs(tmp_path, writer, ntfy):
     assert running(writer.state.locks_dir) is None  # and says nothing once it is done
 
 
+def test_a_restore_copy_left_behind_alerts_once_but_a_running_tests_own_never(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: §15.1 (the final review's minor 2). A SIGKILL, the OOM killer (backup's oom_score_adj
+    # makes it the first choice, and a restore is its heaviest job) or a power cut leaves the
+    # restore test's copy, the whole archive unencrypted, in restore_scratch. Only the next restore
+    # test, up to 30 days later, removed it, and only doctor said so meanwhile.
+    from types import SimpleNamespace
+
+    from recordings.locks import OPS_LOCK, announce
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=900, f_frsize=1024, f_blocks=1000))  # 90% free: only the copy is wrong
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    left = tmp_path / "scratch" / "restore-20261009T060000Z"
+    left.mkdir(parents=True)
+    folder = writer.state.locks_dir
+    with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "restore-test", T0):
+        assert ops._disk(ctx, ())  # the copy of the restore test running now: nothing to say
+    assert run_job(ctx, "disk") == ops.JobResult("disk", False, "RestoreCopyLeft")
+    clock.now += timedelta(minutes=20)
+    run_job(ctx, "disk")  # still there: quiet until the daily reminder
+    left.rmdir()
+    clock.now += timedelta(minutes=20)
+    assert run_job(ctx, "disk").ok
+    assert [(r["headers"]["Title"], r["body"]) for r in pushes(ntfy)] == [
+        ("recordings: restore copy left behind", "disk failed (RestoreCopyLeft). See Status."),
+        ("recordings: disk recovered", "disk works again. See Status.")]
+
+
 def test_status_says_when_the_backup_service_last_reported(writer):
     # why: the loop writes a heartbeat at each pass (Task 13), and the backup service has no Docker
     # healthcheck. A stopped loop must show on Status within minutes, not only once the backup is

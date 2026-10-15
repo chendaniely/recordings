@@ -287,6 +287,43 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
     assert "FORCE=1 sh docker/deploy-guard.sh" in forced
 
 
+def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(tmp_path):
+    # why: the final review's minor 1. The runbook stops backup (steps 2.6 and 4), then runs its
+    # jobs and the import in one-off containers: a hold matters most then, and the guard looked
+    # only at a running backup container, so `up -d` started the loop in their way.
+    fake = tmp_path / "docker"
+    # `ps -q` lists running containers (none), `ps -a -q` stopped ones too, and `inspect` the image
+    # one was made from. The one-off `compose run` gets docker/ops-busy.py on stdin; the fake runs
+    # it here instead, on the test's own lock folder.
+    fake.write_text('#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+                    'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
+                    'if [ "$1" = ps ]; then exit 0; fi\n'
+                    'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
+                    'if [ "$RECORDINGS_IMAGE_TAG $*" = "0123456789ab compose --env-file docker/deploy.env '
+                    '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks" ]; then\n'
+                    '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n', encoding="utf-8")
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_STOPPED": "def456",
+           "FAKE_IMAGE": "recordings:0123456789ab", "FAKE_PYTHON": sys.executable,
+           "FAKE_LOCKS": str(tmp_path / "locks")}
+
+    def guard(**extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["sh", str(REPO / "docker" / "deploy-guard.sh")],
+                              env={**env, **extra}, capture_output=True, text=True)
+
+    assert guard().returncode == 0  # stopped, and nothing holds the lock
+    with ops_lock_held(tmp_path / "locks", '{"job": "import"}'):
+        busy = guard()
+        assert busy.returncode != 0 and "import" in busy.stderr and "FORCE=1" in busy.stderr
+        assert guard(FORCE="1").returncode == 0
+    assert guard(FAKE_STOPPED="").returncode == 0  # no backup container at all: nothing deployed
+    for extra in ({"FAKE_IMAGE": "postgres:16"}, {"FAKE_PYTHON": "/nonexistent"}):
+        broken = guard(**extra)  # nothing to ask with, or the question failed: say so, don't deploy
+        assert broken.returncode != 0 and "could not ask" in broken.stderr
+    down = guard(FAKE_DOWN="1")
+    assert down.returncode != 0 and "daemon" in down.stderr
+
+
 def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path):
     # why: each make deploy leaves an image, with its own venv, on the system disk, and
     # `docker image prune -a` would take every rollback target with it (ops council, Task 14).
