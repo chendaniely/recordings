@@ -358,7 +358,9 @@ def test_alert_test_can_test_the_dead_mans_switch_alone_and_fails_when_a_ping_fa
     ntfy.status = 500
     assert main(["alert-test", "--json"]) == 1
     assert json.loads(capsys.readouterr().out) == {"ntfy": False, "deadman": False}
-    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
+    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")  # a failing ping alone fails the command
+    assert main(["alert-test", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"ntfy": None, "deadman": False}
     monkeypatch.delenv("RECORDINGS_DEADMAN_URL")
     assert main(["alert-test", "--json"]) == 78  # nothing to test
 
@@ -390,7 +392,7 @@ def test_a_full_state_disk_alerts_once_not_every_minute(tmp_path, writer, ntfy, 
     titles = [r["headers"]["Title"] for r in pushes(ntfy)]
     assert titles.count("recordings: disk space low") == 1
     sent, pinged = len(ntfy.requests), pings(ntfy)
-    for _ in range(5):
+    for _ in range(30):  # past RETRY_AFTER (15 min), so the alert memory is what holds, not only the attempts
         clock.now += timedelta(minutes=1)
         run_due(ctx)
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == titles
@@ -501,3 +503,73 @@ def test_an_undelivered_alert_is_sent_again_at_the_next_failure(tmp_path, writer
     clock.now += timedelta(hours=1)
     run_job(ctx, "backup")  # delivered at last: now quiet until the daily reminder
     assert len(pushes(ntfy)) == 2
+
+
+def test_alert_test_refuses_a_topic_with_no_server_but_not_a_server_with_no_topic(
+        tmp_path, writer, ntfy, monkeypatch, capsys):
+    # why: a topic with no ntfy_server silently drops every alert; a server with no topic is the
+    # template's normal dead-man-only setup and must keep working (Task 13 council)
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    assert main(["alert-test", "--json"]) == 0  # server and topic: both parts tested
+    capsys.readouterr()
+    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
+    assert main(["alert-test", "--json"]) == 0  # server, no topic: dead-man only
+    assert json.loads(capsys.readouterr().out) == {"ntfy": None, "deadman": True}
+    monkeypatch.setenv("RECORDINGS_NTFY_TOPIC", "alerts-topic")
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(cfg_file.read_text(encoding="utf-8").replace(
+        f'ntfy_server = "{ntfy.url}"\n', ""), encoding="utf-8")
+    assert main(["alert-test", "--json"]) == 78  # topic, no server
+    out = capsys.readouterr().out
+    assert "ntfy_server" in out and "alerts-topic" not in out
+    assert len(pushes(ntfy)) == 1  # the first run's test push alone
+
+
+def test_a_failure_with_a_title_of_its_own_is_said_at_once_and_one_recovery_clears_all(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: the disk job shared one alert state between a low disk and a missing marker, so the
+    # flip from one to the other waited for the daily reminder (Task 13 re-review)
+    from types import SimpleNamespace
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    run_job(ctx, "disk")
+    real_uuid = writer.state.meta("archive_uuid")
+    writer.state.set_meta("archive_uuid", "not-this-archive")
+    clock.now += timedelta(minutes=20)
+    run_job(ctx, "disk")
+    clock.now += timedelta(minutes=20)
+    run_job(ctx, "disk")  # still missing: quiet
+    writer.state.set_meta("archive_uuid", real_uuid)
+    monkeypatch.undo()
+    clock.now += timedelta(minutes=20)
+    run_job(ctx, "disk")
+    assert [r["headers"]["Title"] for r in pushes(ntfy)] == [
+        "recordings: disk space low", "recordings: archive disk missing or changed",
+        "recordings: disk recovered"]
+
+
+def test_a_future_stamp_and_a_full_state_disk_still_alert_once(tmp_path, writer, ntfy, monkeypatch):
+    # why: a run and an alert row stamped in the future (a clock that ran ahead, then was put
+    # right) were taken as newer than the process's own memory, so a full state disk brought back
+    # a push a minute (Task 13 re-review)
+    from types import SimpleNamespace
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
+    future = T0 + timedelta(days=2)
+    writer.state.record_run("disk", future - timedelta(minutes=1), future, False, "DiskWarning")
+    writer.state.set_alert_state("job:disk", failing=True, last_sent_at=future)
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, full)
+    for _ in range(31):
+        run_due(ctx)
+        clock.now += timedelta(minutes=1)
+    assert len([r for r in pushes(ntfy) if r["body"].startswith("disk failed")]) == 1

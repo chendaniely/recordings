@@ -385,6 +385,8 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
         ac = alerts.from_config(cfg, os.environ)
     except config.ConfigError as exc:
         return _fail(str(exc), args.json, 78)
+    if ac.topic and not ac.ntfy_server:
+        return _fail("RECORDINGS_NTFY_TOPIC is set but [alerts] ntfy_server is not", args.json, 78)
     if not ac.enabled and not ac.deadman_url:
         return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
                      "RECORDINGS_DEADMAN_URL_FILE, first", args.json, 78)

@@ -1055,13 +1055,20 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
 
 2. **Alerts, and the last secret files.**
    - **ntfy.sh:** generate a topic in your password manager: 20 or more random letters and
-     digits (only `A–Z`, `a–z`, `0–9`, `-` and `_`, at most 64). Subscribe to it in the ntfy app
-     on your phone. The topic is the only lock on your alerts.
+     digits (only `A–Z`, `a–z`, `0–9`, `-` and `_`, at most 64; the app refuses a shorter one).
+     Subscribe to it in the ntfy app on your phone, and copy the server the app shows into
+     `[alerts] ntfy_server`. The topic is the only lock on your alerts: whoever has it can read
+     the last 12 hours of them (ntfy.sh keeps messages that long) and send you false ones, such
+     as "recovered". Status is the record, not a push. ntfy.sh also passes every message to
+     Google's Firebase, which delivers it to Android phones.
    - **Healthchecks.io:** create a check with a period of 1 hour and a grace of 3 hours. The
      grace is long because the loop runs the mirror, the check and the restore test between
      backups, and a long one must not look like an outage. Add an integration that reaches your
-     phone: email, or ntfy with the same topic. Copy the check's ping URL
-     (`https://hc-ping.com/…`) without `/start` or `/fail`; the app adds those.
+     phone: email, or ntfy with a second topic, never the app's (Healthchecks would hold it
+     too). Copy the check's ping URL (`https://hc-ping.com/…`) without `/start`, `/fail` or any
+     `?…`: the app adds `/start` and `/fail` to its end, and refuses a URL with a query.
+     Healthchecks sees when each backup starts and ends, so how long it took, which grows with
+     what was recorded since the one before; it never sees more than the fixed failure line.
    - **Keep both in your password manager,** the topic and the ping URL. Whoever holds them can
      read your alerts or keep an outage quiet.
    ```bash
@@ -1179,7 +1186,9 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    Expected:
    - `backup run`, `restore-test` and `mirror` each print `ok: True`.
    - The phone gets the test push. Healthchecks shows the check up, with a log entry from
-     `alert-test`.
+     `alert-test`. No push although it printed `ntfy: True` means the alert went to another
+     topic or server. If `ntfy_server` was mistyped, that server now has your topic (and any
+     token): make new ones as well as fixing it.
    - The Status page shows the backup, the restore test and the mirror.
 
    `rc stop` gives the loop 10 seconds, then kills it. A job it was running leaves a stale restic
@@ -17608,7 +17617,7 @@ def test_the_dead_mans_switch_speaks_healthchecks(ntfy):
 
 
 def test_the_config_reads_the_secrets_from_files_and_hides_them(tmp_path):
-    (tmp_path / "topic").write_text("topic-do-not-print\n", encoding="utf-8")
+    (tmp_path / "topic").write_text("topic-do-not-print-20\n", encoding="utf-8")
     (tmp_path / "ping").write_text("https://hc.example/ping/do-not-print\n", encoding="utf-8")
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text('[alerts]\nntfy_server = "https://ntfy.sh/"\n', encoding="utf-8")
@@ -17616,7 +17625,8 @@ def test_the_config_reads_the_secrets_from_files_and_hides_them(tmp_path):
                "RECORDINGS_NTFY_TOPIC_FILE": str(tmp_path / "topic"),
                "RECORDINGS_DEADMAN_URL_FILE": str(tmp_path / "ping")}
     ac = alerts.from_config(load_config(environ), environ)
-    assert (ac.ntfy_server, ac.topic, ac.enabled) == ("https://ntfy.sh", "topic-do-not-print", True)
+    assert (ac.ntfy_server, ac.topic, ac.enabled) == (
+        "https://ntfy.sh", "topic-do-not-print-20", True)
     assert "do-not-print" not in repr(ac) and "do-not-print" not in str(ac)
     for server in ("ntfy.sh", "http://ntfy.example"):
         cfg_file.write_text(f'[alerts]\nntfy_server = "{server}"\n', encoding="utf-8")
@@ -17668,6 +17678,64 @@ def test_a_redirect_is_never_followed_and_the_alert_is_not_delivered(
         assert ping_deadman(ac, "fail", message="m") is False
     assert len(ntfy.requests) == 2 and other_ntfy.requests == []
     assert f"HTTP {code}" in caplog.text and "do-not-print" not in caplog.text
+
+
+@pytest.mark.parametrize("field, value", [
+    ("deadman_url", "https://hc-ping.example/key/do-not-print?create=1"),
+    ("deadman_url", "https://hc-ping.example/do-not-print?"),
+    ("deadman_url", "https://hc-ping.example/do-not-print#x"),
+    ("ntfy_server", "https://ntfy.example/?do-not-print"),
+    ("ntfy_server", "https://ntfy.example\tdo-not-print"),
+    ("ntfy_server", "https://ntfy.example:do-not-print"),
+    ("ntfy_server", "https://ntf\u0443.example/do-not-print"),
+])
+def test_a_url_whose_suffix_would_not_land_on_its_path_is_refused(field, value):
+    # why: /start, /fail and the topic are added to the end of the URL. After a ? or a # they land
+    # in the query or are dropped, and Healthchecks takes ".../slug?create=1/fail" as a plain
+    # success ping, so every failed backup would keep the dead-man's switch quiet. A tab, which
+    # urlsplit drops but the request keeps, a bad port and a look-alike non-ASCII host are refused
+    # too (security council).
+    fields = {"ntfy_server": None, "topic": None, "deadman_url": None, field: value}
+    with pytest.raises(ConfigError) as caught:
+        AlertConfig(**fields)
+    assert "do-not-print" not in str(caught.value)
+
+
+def test_a_topic_that_is_the_only_lock_is_long_and_a_token_is_one_visible_word():
+    # why: on a public server such as ntfy.sh the topic is the password (ntfy.sh's terms): whoever
+    # guesses it reads the alerts and can send false ones, such as "recovered". The runbook asks for
+    # 20 or more random characters (security council).
+    with pytest.raises(ConfigError, match="20") as caught:
+        AlertConfig("https://ntfy.sh", "do-not-print", None)
+    assert "do-not-print" not in str(caught.value)
+    AlertConfig("https://ntfy.sh", "x" * 20, None)
+    AlertConfig("https://ntfy.example", "alerts", None, token="tk_abc")  # access control: a token
+    AlertConfig("http://127.0.0.1:8080", "alerts", None)  # the tests' server on this machine
+    for token in ("tk_a\r\n X-Folded: do-not-print", "tk do-not-print", "tk_\u00e9do-not-print"):
+        with pytest.raises(ConfigError) as caught:
+            AlertConfig("https://ntfy.example", "alerts", None, token=token)
+        assert "do-not-print" not in str(caught.value)
+
+
+def test_an_http_proxy_never_carries_an_alert_and_nothing_secret_is_logged(
+        ntfy, other_ntfy, monkeypatch, caplog):
+    # why: urllib sends plain http through HTTP_PROXY as the whole URL with every header, the topic,
+    # the ping URL and the token in clear. Only an https proxy is used, and through it an alert
+    # travels in a CONNECT tunnel that shows the proxy the host name alone (security council).
+    for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, other_ntfy.url)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(alerts, "_OPENER", alerts._build_opener())
+    ac = AlertConfig(ntfy.url, "topic-do-not-print", f"{ntfy.url}/ping/do-not-print",
+                     token="tk_do-not-print")
+    with caplog.at_level("DEBUG"):
+        assert send(ac, title="recordings: test alert", message="m")
+        assert ping_deadman(ac, "fail", message="m")
+        ntfy.status = 404
+        assert send(ac, title="recordings: test alert", message="m") is False
+    assert other_ntfy.requests == [] and len(ntfy.requests) == 3
+    assert "do-not-print" not in caplog.text
 ```
 
 `packages/core/tests/test_ops.py`:
@@ -18032,7 +18100,9 @@ def test_alert_test_can_test_the_dead_mans_switch_alone_and_fails_when_a_ping_fa
     ntfy.status = 500
     assert main(["alert-test", "--json"]) == 1
     assert json.loads(capsys.readouterr().out) == {"ntfy": False, "deadman": False}
-    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
+    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")  # a failing ping alone fails the command
+    assert main(["alert-test", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"ntfy": None, "deadman": False}
     monkeypatch.delenv("RECORDINGS_DEADMAN_URL")
     assert main(["alert-test", "--json"]) == 78  # nothing to test
 
@@ -18064,7 +18134,7 @@ def test_a_full_state_disk_alerts_once_not_every_minute(tmp_path, writer, ntfy, 
     titles = [r["headers"]["Title"] for r in pushes(ntfy)]
     assert titles.count("recordings: disk space low") == 1
     sent, pinged = len(ntfy.requests), pings(ntfy)
-    for _ in range(5):
+    for _ in range(30):  # past RETRY_AFTER (15 min), so the alert memory is what holds, not only the attempts
         clock.now += timedelta(minutes=1)
         run_due(ctx)
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == titles
@@ -18175,6 +18245,76 @@ def test_an_undelivered_alert_is_sent_again_at_the_next_failure(tmp_path, writer
     clock.now += timedelta(hours=1)
     run_job(ctx, "backup")  # delivered at last: now quiet until the daily reminder
     assert len(pushes(ntfy)) == 2
+
+
+def test_alert_test_refuses_a_topic_with_no_server_but_not_a_server_with_no_topic(
+        tmp_path, writer, ntfy, monkeypatch, capsys):
+    # why: a topic with no ntfy_server silently drops every alert; a server with no topic is the
+    # template's normal dead-man-only setup and must keep working (Task 13 council)
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    assert main(["alert-test", "--json"]) == 0  # server and topic: both parts tested
+    capsys.readouterr()
+    monkeypatch.delenv("RECORDINGS_NTFY_TOPIC")
+    assert main(["alert-test", "--json"]) == 0  # server, no topic: dead-man only
+    assert json.loads(capsys.readouterr().out) == {"ntfy": None, "deadman": True}
+    monkeypatch.setenv("RECORDINGS_NTFY_TOPIC", "alerts-topic")
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(cfg_file.read_text(encoding="utf-8").replace(
+        f'ntfy_server = "{ntfy.url}"\n', ""), encoding="utf-8")
+    assert main(["alert-test", "--json"]) == 78  # topic, no server
+    out = capsys.readouterr().out
+    assert "ntfy_server" in out and "alerts-topic" not in out
+    assert len(pushes(ntfy)) == 1  # the first run's test push alone
+
+
+def test_a_failure_with_a_title_of_its_own_is_said_at_once_and_one_recovery_clears_all(
+        tmp_path, writer, ntfy, monkeypatch):
+    # why: the disk job shared one alert state between a low disk and a missing marker, so the
+    # flip from one to the other waited for the daily reminder (Task 13 re-review)
+    from types import SimpleNamespace
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    run_job(ctx, "disk")
+    real_uuid = writer.state.meta("archive_uuid")
+    writer.state.set_meta("archive_uuid", "not-this-archive")
+    clock.now += timedelta(minutes=20)
+    run_job(ctx, "disk")
+    clock.now += timedelta(minutes=20)
+    run_job(ctx, "disk")  # still missing: quiet
+    writer.state.set_meta("archive_uuid", real_uuid)
+    monkeypatch.undo()
+    clock.now += timedelta(minutes=20)
+    run_job(ctx, "disk")
+    assert [r["headers"]["Title"] for r in pushes(ntfy)] == [
+        "recordings: disk space low", "recordings: archive disk missing or changed",
+        "recordings: disk recovered"]
+
+
+def test_a_future_stamp_and_a_full_state_disk_still_alert_once(tmp_path, writer, ntfy, monkeypatch):
+    # why: a run and an alert row stamped in the future (a clock that ran ahead, then was put
+    # right) were taken as newer than the process's own memory, so a full state disk brought back
+    # a push a minute (Task 13 re-review)
+    from types import SimpleNamespace
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=0, f_frsize=1024, f_blocks=1000))
+    future = T0 + timedelta(days=2)
+    writer.state.record_run("disk", future - timedelta(minutes=1), future, False, "DiskWarning")
+    writer.state.set_alert_state("job:disk", failing=True, last_sent_at=future)
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+
+    def full(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
+        monkeypatch.setattr(writer.state, name, full)
+    for _ in range(31):
+        run_due(ctx)
+        clock.now += timedelta(minutes=1)
+    assert len([r for r in pushes(ntfy) if r["body"].startswith("disk failed")]) == 1
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -18214,8 +18354,11 @@ In `packages/core/src/recordings/config.py`, **add** to `SECRETS`:
   long check or restore test holds back the next backup (docs/runbooks/first-run.md).
 
 Both URLs must be https, so the topic, the token and the ping URL never cross a network in clear;
-plain http is allowed only to this machine's loopback (the tests' fake server). A redirect is never
-followed, because it would carry the token and the title to another host. Alert text comes
+plain http is allowed only to this machine's loopback (the tests' fake server). Neither may hold a
+query or a fragment, since /start, /fail and the topic are added to its end. A redirect is never
+followed, because it would carry the token and the title to another host, and only an https proxy
+is used: a CONNECT tunnel shows it the host name alone. Without a token the topic is the alerts'
+only lock (ntfy.sh's topics are public), so it is at least MIN_OPEN_TOPIC long. Alert text comes
 from fixed templates (a job, an exception's class, an exit code), never a recording's title, a
 path or a tool's own output (Review Focus 4). Sending never raises: a failed delivery is logged
 without its URL.
@@ -18238,6 +18381,8 @@ from recordings.config import Config, ConfigError, secret
 log = logging.getLogger(__name__)
 TIMEOUT = 10.0
 TOPIC_RE = re.compile(r"[-_A-Za-z0-9]{1,64}")
+MIN_OPEN_TOPIC = 20  # without a token: the runbook's "20 or more random letters and digits"
+TOKEN_RE = re.compile(r"[!-~]{1,256}")  # visible ASCII, one word: nothing folded into a header
 PINGS = {"success": "", "start": "/start", "fail": "/fail", "log": "/log"}
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -18250,23 +18395,39 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # HTTPDefaultErrorHandler raises HTTPError(code): logged, not delivered
 
 
-# Proxies from the environment only: the default handler asks macOS's system configuration, which
-# starts threads that never end (and makes a later fork() warn).
-_OPENER = urllib.request.build_opener(
-    urllib.request.ProxyHandler(urllib.request.getproxies_environment()), _NoRedirect)
+def _build_opener() -> urllib.request.OpenerDirector:
+    """Proxies from the environment only, and only for https: through one, an alert travels in a
+    CONNECT tunnel, and the proxy sees the host name, never the topic, the token or the ping URL.
+    Plain http (the loopback) never goes to a proxy, which would get the whole request in clear.
+    The default handler would also ask macOS's system configuration, which starts threads that
+    never end (and makes a later fork() warn)."""
+    proxies = urllib.request.getproxies_environment()
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({k: v for k, v in proxies.items() if k == "https"}),
+        _NoRedirect)
+
+
+_OPENER = _build_opener()
 
 
 def _check_url(url: object, what: str) -> None:
-    """https, with a host and no user name or password in it; http only to the loopback. The
-    error names the setting, never the URL, which may be a secret."""
+    """https, with a host and no user name or password in it; http only to the loopback. No query
+    or fragment: after a ? or a #, the /fail or the topic added to the end would land in the query
+    (Healthchecks takes it as a plain success ping) or be dropped. Visible ASCII only, so the URL
+    checked is the URL sent (urlsplit drops a tab or a newline the request keeps) and a host can't
+    be a look-alike. The error names the setting, never the URL, which may be a secret."""
+    plain = isinstance(url, str) and url.isascii() and url.isprintable() and not any(
+        c in url for c in " ?#")
     try:
-        parts = urlsplit(url) if isinstance(url, str) else None
+        parts = urlsplit(url) if plain else None
         host = parts.hostname if parts else None
-    except ValueError:  # a malformed IPv6 address
+        _ = parts.port if parts else None  # a port that isn't a number raises ValueError
+    except ValueError:  # a malformed IPv6 address, or port
         parts, host = None, None
     if parts is None or not host or "@" in parts.netloc or not (
             parts.scheme == "https" or (parts.scheme == "http" and host in _LOOPBACK)):
-        raise ConfigError(f"{what} must be an https:// URL, with no user name or password in it")
+        raise ConfigError(f"{what} must be an https:// URL in plain ASCII, with no user name, "
+                          "password, query (?) or fragment (#) in it")
 
 
 @dataclass(frozen=True)
@@ -18283,6 +18444,13 @@ class AlertConfig:
             _check_url(self.deadman_url, "RECORDINGS_DEADMAN_URL")
         if self.topic is not None and not TOPIC_RE.fullmatch(self.topic):
             raise ConfigError("RECORDINGS_NTFY_TOPIC must be 1 to 64 letters, digits, '-' or '_'")
+        if self.token is not None and not TOKEN_RE.fullmatch(self.token):
+            raise ConfigError("RECORDINGS_NTFY_TOKEN must be one word of visible ASCII")
+        if (self.topic is not None and self.token is None and self.ntfy_server is not None
+                and urlsplit(self.ntfy_server).hostname not in _LOOPBACK
+                and len(self.topic) < MIN_OPEN_TOPIC):
+            raise ConfigError(f"RECORDINGS_NTFY_TOPIC must be {MIN_OPEN_TOPIC} or more random "
+                              "characters: with no token, it is all that keeps the alerts private")
 
     @property
     def enabled(self) -> bool:
@@ -18311,6 +18479,7 @@ def _deliver(request: urllib.request.Request) -> bool:
             return 200 <= response.status < 300
     except urllib.error.HTTPError as exc:
         log.warning("delivery failed: HTTP %s", exc.code)
+        exc.close()
     except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         log.warning("delivery failed: %s", type(exc).__name__)
     return False
@@ -18419,7 +18588,12 @@ In `packages/core/src/recordings/ops.py`:
        alerted: dict[str, tuple[bool, datetime | None]] = field(default_factory=dict)
        locked: dict[str, datetime] = field(default_factory=dict)
    ```
-3. **Add** `"disk": _disk,` to `JOBS`, and `DiskWarning` to `FAILURES`.
+3. **Add** `"disk": _disk,` to `JOBS`, and `DiskWarning` to `FAILURES`, and **put** this comment
+   above `FAILURES`:
+   ```python
+   # The errors a job is expected to raise, and the ones a broken state.db is guarded against;
+   # run_job also contains any other Exception.
+   ```
 4. **Add** after `FAILURES`:
    ```python
    INTERVALS = {"disk": timedelta(minutes=10), "backup": timedelta(hours=1),
@@ -18467,7 +18641,7 @@ In `packages/core/src/recordings/ops.py`:
            last_at, last_ok = (last.finished_at, last.ok) if last is not None else (None, True)
            good_at = good.finished_at if good is not None else None
            tried = (attempts or {}).get(job)
-           if tried is not None and (last_at is None or tried[0] > last_at):
+           if tried is not None and (last_at is None or tried[0] > last_at or last_at > now):
                last_at, last_ok = tried
                if last_ok:
                    good_at = last_at
@@ -18492,16 +18666,22 @@ In `packages/core/src/recordings/ops.py`:
        works again. The text is a fixed template: the job, the failure's fixed detail and "See
        Status", never a path, a title or a tool's own output (Review Focus 4). A state.db that
        can't be read or written never stops this, nor makes it say the same thing at every tick:
-       the process keeps what it sent (ctx.alerted) for as long as it is newer than state.db's."""
-       key, now = f"job:{job}", ctx.clock()
-       failing, last_sent = _known(ctx, key)
+       the process keeps what it sent (ctx.alerted) for as long as it is newer than state.db's.
+       A failure with a title of its own (DETAIL_TITLES) has an alert state of its own, so a flip to
+       it is said at once, and one recovery clears them all."""
+       now = ctx.clock()
        if ok:
+           keys = [f"job:{job}", *(f"job:{job}:{kind}" for kind in DETAIL_TITLES)]
+           failing = [key for key in keys if _known(ctx, key)[0]]
            if failing:
                alerts.send(ac, title=f"recordings: {job} recovered",
                            message=f"{job} works again. See Status.", priority=3,
                            tags=("white_check_mark",))
+           for key in failing:
                _remember(ctx, key, failing=False, last_sent_at=now)
            return
+       key = f"job:{job}:{detail}" if detail in DETAIL_TITLES else f"job:{job}"
+       failing, last_sent = _known(ctx, key)
        if not failing or last_sent is None or not timedelta(0) <= now - last_sent < REMIND_EVERY:
            delivered = alerts.send(ac, title=f"recordings: {DETAIL_TITLES.get(detail, TITLES[job])}",
                                    message=f"{job} failed ({detail}). See Status.")
@@ -18522,7 +18702,8 @@ In `packages/core/src/recordings/ops.py`:
            return mine or (False, None)
        if mine is None:
            return saved
-       newer = saved[1] is not None and (mine[1] is None or saved[1] > mine[1])
+       newer = (saved[1] is not None and saved[1] <= ctx.clock()
+                and (mine[1] is None or saved[1] > mine[1]))
        return saved if newer else mine
 
 
@@ -18696,6 +18877,14 @@ In `packages/core/src/recordings/ops.py`:
      ```
      (`time` is already imported by item 1.)
 7. **Docstrings in `ops.py`** (Task 11's; they must say what the code now does):
+   - In the module docstring's first bullet, **replace** `hold, then raise LockTimeout, which is not in FAILURES. Imports run from the CLI alone; the`
+     / `backups around one are two CLI runs (`backup run --tag pre-import`, then `--tag post-import`).` with
+     ```
+       hold, then raise LockTimeout, which run_job records and alerts as a failure. Imports run from
+       the CLI alone; the backups around one are two CLI runs (`backup run --tag pre-import`, then
+       `--tag post-import`).
+     ```
+     (The bullet's first lines stay.)
    - In the module docstring, **add** after the first bullet (the one ending
      `then `--tag post-import`).`):
      ```
@@ -18838,6 +19027,8 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
         ac = alerts.from_config(cfg, os.environ)
     except config.ConfigError as exc:
         return _fail(str(exc), args.json, 78)
+    if ac.topic and not ac.ntfy_server:
+        return _fail("RECORDINGS_NTFY_TOPIC is set but [alerts] ntfy_server is not", args.json, 78)
     if not ac.enabled and not ac.deadman_url:
         return _fail("set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
                      "RECORDINGS_DEADMAN_URL_FILE, first", args.json, 78)
@@ -18857,11 +19048,12 @@ In `config.example.toml`, **add** after `[mirror]`:
 [alerts]                                # stage 2a: push alerts (spec §14)
 ntfy_server = "https://ntfy.sh"         # https only (stage-2a plan, decision 16)
 # The topic and the dead-man's switch URL are secrets: RECORDINGS_NTFY_TOPIC(_FILE) and
-# RECORDINGS_DEADMAN_URL(_FILE), below. The topic is 1 to 64 letters, digits, - or _.
+# RECORDINGS_DEADMAN_URL(_FILE), below. The topic is 20 to 64 random letters, digits, - or _: with
+# no token (RECORDINGS_NTFY_TOKEN, for a server with access control) it is the alerts' only lock.
 # The dead-man's switch is a Healthchecks.io check with a period of 1 hour and a grace of at least
 # 3 hours: the loop runs one job at a time, so a long check or restore test delays the next
 # backup's ping. Each backup pings <url>/start, then <url> or <url>/fail; `recordings alert-test`
-# pings <url>/log, which leaves the check's state alone.
+# pings <url>/log, which leaves the check's state alone. So the URL takes no ?query or #fragment.
 ```
 and in the secrets comment block:
 ```toml
@@ -18873,7 +19065,7 @@ and in the secrets comment block:
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_alerts.py packages/core/tests/test_ops.py -v && uv run pytest`
-Expected: 18 and 27 passed, then the whole suite passes: 785 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 737, plus 18 + 27 new
+Expected: 27 and 30 passed, then the whole suite passes: 797 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 737, plus 27 + 30 new
 tests, plus three net in `test_backup.py`: 49 becomes 52), and no warnings.
 
 - [ ] **Step 6: Commit**

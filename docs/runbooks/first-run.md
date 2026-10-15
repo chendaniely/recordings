@@ -478,13 +478,20 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
 
 2. **Alerts, and the last secret files.**
    - **ntfy.sh:** generate a topic in your password manager: 20 or more random letters and
-     digits (only `A–Z`, `a–z`, `0–9`, `-` and `_`, at most 64). Subscribe to it in the ntfy app
-     on your phone. The topic is the only lock on your alerts.
+     digits (only `A–Z`, `a–z`, `0–9`, `-` and `_`, at most 64; the app refuses a shorter one).
+     Subscribe to it in the ntfy app on your phone, and copy the server the app shows into
+     `[alerts] ntfy_server`. The topic is the only lock on your alerts: whoever has it can read
+     the last 12 hours of them (ntfy.sh keeps messages that long) and send you false ones, such
+     as "recovered". Status is the record, not a push. ntfy.sh also passes every message to
+     Google's Firebase, which delivers it to Android phones.
    - **Healthchecks.io:** create a check with a period of 1 hour and a grace of 3 hours. The
      grace is long because the loop runs the mirror, the check and the restore test between
      backups, and a long one must not look like an outage. Add an integration that reaches your
-     phone: email, or ntfy with the same topic. Copy the check's ping URL
-     (`https://hc-ping.com/…`) without `/start` or `/fail`; the app adds those.
+     phone: email, or ntfy with a second topic, never the app's (Healthchecks would hold it
+     too). Copy the check's ping URL (`https://hc-ping.com/…`) without `/start`, `/fail` or any
+     `?…`: the app adds `/start` and `/fail` to its end, and refuses a URL with a query.
+     Healthchecks sees when each backup starts and ends, so how long it took, which grows with
+     what was recorded since the one before; it never sees more than the fixed failure line.
    - **Keep both in your password manager,** the topic and the ping URL. Whoever holds them can
      read your alerts or keep an outage quiet.
    ```bash
@@ -602,7 +609,9 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    Expected:
    - `backup run`, `restore-test` and `mirror` each print `ok: True`.
    - The phone gets the test push. Healthchecks shows the check up, with a log entry from
-     `alert-test`.
+     `alert-test`. No push although it printed `ntfy: True` means the alert went to another
+     topic or server. If `ntfy_server` was mistyped, that server now has your topic (and any
+     token): make new ones as well as fixing it.
    - The Status page shows the backup, the restore test and the mirror.
 
    `rc stop` gives the loop 10 seconds, then kills it. A job it was running leaves a stale restic

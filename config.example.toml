@@ -92,11 +92,12 @@ no_perms = false                        # true adds --no-perms: for a share with
 [alerts]                                # stage 2a: push alerts (spec §14)
 ntfy_server = "https://ntfy.sh"         # https only (stage-2a plan, decision 16)
 # The topic and the dead-man's switch URL are secrets: RECORDINGS_NTFY_TOPIC(_FILE) and
-# RECORDINGS_DEADMAN_URL(_FILE), below. The topic is 1 to 64 letters, digits, - or _.
+# RECORDINGS_DEADMAN_URL(_FILE), below. The topic is 20 to 64 random letters, digits, - or _: with
+# no token (RECORDINGS_NTFY_TOKEN, for a server with access control) it is the alerts' only lock.
 # The dead-man's switch is a Healthchecks.io check with a period of 1 hour and a grace of at least
 # 3 hours: the loop runs one job at a time, so a long check or restore test delays the next
 # backup's ping. Each backup pings <url>/start, then <url> or <url>/fail; `recordings alert-test`
-# pings <url>/log, which leaves the check's state alone.
+# pings <url>/log, which leaves the check's state alone. So the URL takes no ?query or #fragment.
 
 [plaud]                                 # stage 2
 schedule_minutes = 20                   # scheduled sync interval; 0 turns it off

@@ -13,8 +13,11 @@
   long check or restore test holds back the next backup (docs/runbooks/first-run.md).
 
 Both URLs must be https, so the topic, the token and the ping URL never cross a network in clear;
-plain http is allowed only to this machine's loopback (the tests' fake server). A redirect is never
-followed, because it would carry the token and the title to another host. Alert text comes
+plain http is allowed only to this machine's loopback (the tests' fake server). Neither may hold a
+query or a fragment, since /start, /fail and the topic are added to its end. A redirect is never
+followed, because it would carry the token and the title to another host, and only an https proxy
+is used: a CONNECT tunnel shows it the host name alone. Without a token the topic is the alerts'
+only lock (ntfy.sh's topics are public), so it is at least MIN_OPEN_TOPIC long. Alert text comes
 from fixed templates (a job, an exception's class, an exit code), never a recording's title, a
 path or a tool's own output (Review Focus 4). Sending never raises: a failed delivery is logged
 without its URL.
@@ -37,6 +40,8 @@ from recordings.config import Config, ConfigError, secret
 log = logging.getLogger(__name__)
 TIMEOUT = 10.0
 TOPIC_RE = re.compile(r"[-_A-Za-z0-9]{1,64}")
+MIN_OPEN_TOPIC = 20  # without a token: the runbook's "20 or more random letters and digits"
+TOKEN_RE = re.compile(r"[!-~]{1,256}")  # visible ASCII, one word: nothing folded into a header
 PINGS = {"success": "", "start": "/start", "fail": "/fail", "log": "/log"}
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -49,23 +54,39 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # HTTPDefaultErrorHandler raises HTTPError(code): logged, not delivered
 
 
-# Proxies from the environment only: the default handler asks macOS's system configuration, which
-# starts threads that never end (and makes a later fork() warn).
-_OPENER = urllib.request.build_opener(
-    urllib.request.ProxyHandler(urllib.request.getproxies_environment()), _NoRedirect)
+def _build_opener() -> urllib.request.OpenerDirector:
+    """Proxies from the environment only, and only for https: through one, an alert travels in a
+    CONNECT tunnel, and the proxy sees the host name, never the topic, the token or the ping URL.
+    Plain http (the loopback) never goes to a proxy, which would get the whole request in clear.
+    The default handler would also ask macOS's system configuration, which starts threads that
+    never end (and makes a later fork() warn)."""
+    proxies = urllib.request.getproxies_environment()
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({k: v for k, v in proxies.items() if k == "https"}),
+        _NoRedirect)
+
+
+_OPENER = _build_opener()
 
 
 def _check_url(url: object, what: str) -> None:
-    """https, with a host and no user name or password in it; http only to the loopback. The
-    error names the setting, never the URL, which may be a secret."""
+    """https, with a host and no user name or password in it; http only to the loopback. No query
+    or fragment: after a ? or a #, the /fail or the topic added to the end would land in the query
+    (Healthchecks takes it as a plain success ping) or be dropped. Visible ASCII only, so the URL
+    checked is the URL sent (urlsplit drops a tab or a newline the request keeps) and a host can't
+    be a look-alike. The error names the setting, never the URL, which may be a secret."""
+    plain = isinstance(url, str) and url.isascii() and url.isprintable() and not any(
+        c in url for c in " ?#")
     try:
-        parts = urlsplit(url) if isinstance(url, str) else None
+        parts = urlsplit(url) if plain else None
         host = parts.hostname if parts else None
-    except ValueError:  # a malformed IPv6 address
+        _ = parts.port if parts else None  # a port that isn't a number raises ValueError
+    except ValueError:  # a malformed IPv6 address, or port
         parts, host = None, None
     if parts is None or not host or "@" in parts.netloc or not (
             parts.scheme == "https" or (parts.scheme == "http" and host in _LOOPBACK)):
-        raise ConfigError(f"{what} must be an https:// URL, with no user name or password in it")
+        raise ConfigError(f"{what} must be an https:// URL in plain ASCII, with no user name, "
+                          "password, query (?) or fragment (#) in it")
 
 
 @dataclass(frozen=True)
@@ -82,6 +103,13 @@ class AlertConfig:
             _check_url(self.deadman_url, "RECORDINGS_DEADMAN_URL")
         if self.topic is not None and not TOPIC_RE.fullmatch(self.topic):
             raise ConfigError("RECORDINGS_NTFY_TOPIC must be 1 to 64 letters, digits, '-' or '_'")
+        if self.token is not None and not TOKEN_RE.fullmatch(self.token):
+            raise ConfigError("RECORDINGS_NTFY_TOKEN must be one word of visible ASCII")
+        if (self.topic is not None and self.token is None and self.ntfy_server is not None
+                and urlsplit(self.ntfy_server).hostname not in _LOOPBACK
+                and len(self.topic) < MIN_OPEN_TOPIC):
+            raise ConfigError(f"RECORDINGS_NTFY_TOPIC must be {MIN_OPEN_TOPIC} or more random "
+                              "characters: with no token, it is all that keeps the alerts private")
 
     @property
     def enabled(self) -> bool:
@@ -110,6 +138,7 @@ def _deliver(request: urllib.request.Request) -> bool:
             return 200 <= response.status < 300
     except urllib.error.HTTPError as exc:
         log.warning("delivery failed: HTTP %s", exc.code)
+        exc.close()
     except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         log.warning("delivery failed: %s", type(exc).__name__)
     return False

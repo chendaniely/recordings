@@ -7,8 +7,9 @@ in state.db, so Status can show it and the schedule knows what is due.
   a failure. It is also what makes `restic unlock` safe (recordings.backup). A job runs while this
   process holds "ops", and Locks is re-entrant only within one instance, so no job may call the
   import: it takes "ops" through a Locks of its own, would wait out its 600 s on this process's
-  hold, then raise LockTimeout, which is not in FAILURES. Imports run from the CLI alone; the
-  backups around one are two CLI runs (`backup run --tag pre-import`, then `--tag post-import`).
+  hold, then raise LockTimeout, which run_job records and alerts as a failure. Imports run from
+  the CLI alone; the backups around one are two CLI runs (`backup run --tag pre-import`, then
+  `--tag post-import`).
 - **Exit 11 is busy, not broken.** A restic exit 11 means another process holds the repository, as
   the NAS's weekly retention task does. run_job gives BUSY + " (repository locked)" for it: not
   recorded, not alerted, no /fail ping, and the CLI exits 75 like any busy turn. A backup that
@@ -304,6 +305,8 @@ JOBS: dict[str, Callable[[Context, tuple[str, ...]], str]] = {
     "disk": _disk, "backup": _backup, "prune": _prune, "check": _check, "restore-test": _restore_test,
     "mirror": _mirror,
 }
+# The errors a job is expected to raise, and the ones a broken state.db is guarded against;
+# run_job also contains any other Exception.
 FAILURES: tuple[type[BaseException], ...] = (
     BackupError, MirrorError, DiskWarning, ConfigError, SentinelError, StateError, OSError, sqlite3.Error,
     subprocess.TimeoutExpired)
@@ -354,7 +357,7 @@ def due(state: State, now: datetime, jobs: tuple[str, ...],
         last_at, last_ok = (last.finished_at, last.ok) if last is not None else (None, True)
         good_at = good.finished_at if good is not None else None
         tried = (attempts or {}).get(job)
-        if tried is not None and (last_at is None or tried[0] > last_at):
+        if tried is not None and (last_at is None or tried[0] > last_at or last_at > now):
             last_at, last_ok = tried
             if last_ok:
                 good_at = last_at
@@ -379,16 +382,22 @@ def _alert(ctx: Context, ac: AlertConfig, job: str, ok: bool, detail: str) -> No
     works again. The text is a fixed template: the job, the failure's fixed detail and "See
     Status", never a path, a title or a tool's own output (Review Focus 4). A state.db that
     can't be read or written never stops this, nor makes it say the same thing at every tick:
-    the process keeps what it sent (ctx.alerted) for as long as it is newer than state.db's."""
-    key, now = f"job:{job}", ctx.clock()
-    failing, last_sent = _known(ctx, key)
+    the process keeps what it sent (ctx.alerted) for as long as it is newer than state.db's.
+    A failure with a title of its own (DETAIL_TITLES) has an alert state of its own, so a flip to
+    it is said at once, and one recovery clears them all."""
+    now = ctx.clock()
     if ok:
+        keys = [f"job:{job}", *(f"job:{job}:{kind}" for kind in DETAIL_TITLES)]
+        failing = [key for key in keys if _known(ctx, key)[0]]
         if failing:
             alerts.send(ac, title=f"recordings: {job} recovered",
                         message=f"{job} works again. See Status.", priority=3,
                         tags=("white_check_mark",))
+        for key in failing:
             _remember(ctx, key, failing=False, last_sent_at=now)
         return
+    key = f"job:{job}:{detail}" if detail in DETAIL_TITLES else f"job:{job}"
+    failing, last_sent = _known(ctx, key)
     if not failing or last_sent is None or not timedelta(0) <= now - last_sent < REMIND_EVERY:
         delivered = alerts.send(ac, title=f"recordings: {DETAIL_TITLES.get(detail, TITLES[job])}",
                                 message=f"{job} failed ({detail}). See Status.")
@@ -409,7 +418,8 @@ def _known(ctx: Context, key: str) -> tuple[bool, datetime | None]:
         return mine or (False, None)
     if mine is None:
         return saved
-    newer = saved[1] is not None and (mine[1] is None or saved[1] > mine[1])
+    newer = (saved[1] is not None and saved[1] <= ctx.clock()
+             and (mine[1] is None or saved[1] > mine[1]))
     return saved if newer else mine
 
 
