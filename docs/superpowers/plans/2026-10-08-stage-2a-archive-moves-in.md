@@ -18317,10 +18317,28 @@ def test_a_future_stamp_and_a_full_state_disk_still_alert_once(tmp_path, writer,
 
     for name in ("record_run", "set_alert_state", "set_meta", "prune_runs"):
         monkeypatch.setattr(writer.state, name, full)
+    runs = 0
     for _ in range(31):
-        run_due(ctx)
+        runs += sum(r.job == "disk" for r in run_due(ctx))
         clock.now += timedelta(minutes=1)
+    assert runs == 3  # minutes 0, 15 and 30: a future stamp must not make the job due every minute
     assert len([r for r in pushes(ntfy) if r["body"].startswith("disk failed")]) == 1
+
+
+def test_a_marker_failure_that_recovers_alone_is_cleared_and_said_again_when_it_returns(
+        tmp_path, writer, ntfy):
+    # why: one recovery must clear the marker failure's own alert key, not only job:disk's, or the
+    # next marker failure within 24 hours is taken for the same one and not said (Task 13 re-review)
+    clock = Clock()
+    ctx = context(tmp_path, writer, ntfy, clock=clock)
+    real_uuid = writer.state.meta("archive_uuid")
+    for uuid in ("not-this-archive", real_uuid, "not-this-archive"):
+        writer.state.set_meta("archive_uuid", uuid)
+        run_job(ctx, "disk")
+        clock.now += timedelta(minutes=20)
+    assert [r["headers"]["Title"] for r in pushes(ntfy)] == [
+        "recordings: archive disk missing or changed", "recordings: disk recovered",
+        "recordings: archive disk missing or changed"]
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -19071,7 +19089,7 @@ and in the secrets comment block:
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `uv run pytest packages/core/tests/test_alerts.py packages/core/tests/test_ops.py -v && uv run pytest`
-Expected: 27 and 30 passed, then the whole suite passes: 797 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 737, plus 27 + 30 new
+Expected: 27 and 31 passed, then the whole suite passes: 798 with `RECORDINGS_REQUIRE_RESTIC=1` (Task 12's 737, plus 27 + 31 new
 tests, plus three net in `test_backup.py`: 49 becomes 52), and no warnings.
 
 - [ ] **Step 6: Commit**
