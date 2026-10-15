@@ -33,12 +33,17 @@ _TABLES = ("meta", "recordings", "source_refs")  # dropping a table drops its in
 _SCHEMA = (
     f"PRAGMA application_id = {APPLICATION_ID}",
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-    "CREATE TABLE recordings ("
-    " id TEXT PRIMARY KEY, folder TEXT NOT NULL, sha256 TEXT NOT NULL, rev INTEGER NOT NULL)",
+    (
+        "CREATE TABLE recordings ("
+        " id TEXT PRIMARY KEY, folder TEXT NOT NULL, sha256 TEXT NOT NULL, rev INTEGER NOT NULL)"
+    ),
     "CREATE INDEX recordings_by_sha256 ON recordings (sha256)",
-    "CREATE TABLE source_refs ("
-    " recording_id TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL, canonical TEXT NOT NULL,"
-    " PRIMARY KEY (recording_id, kind, ref))",
+    (
+        "CREATE TABLE source_refs ("
+        " recording_id TEXT NOT NULL, kind TEXT NOT NULL,"
+        " ref TEXT NOT NULL, canonical TEXT NOT NULL,"
+        " PRIMARY KEY (recording_id, kind, ref))"
+    ),
     "CREATE INDEX source_refs_by_canonical ON source_refs (kind, canonical)",
 )
 _UNREADABLE = ("SQLITE_NOTADB", "SQLITE_CORRUPT")
@@ -58,7 +63,8 @@ def _insert(db: sqlite3.Connection, rec: Recording) -> None:
         (rec.id, relative_dir(rec.id).as_posix(), rec.media.sha256, rec.rev or 0),
     )
     db.executemany(
-        "INSERT OR IGNORE INTO source_refs (recording_id, kind, ref, canonical) VALUES (?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO source_refs (recording_id, kind, ref, canonical)"
+        " VALUES (?, ?, ?, ?)",
         [(rec.id, s.kind, s.ref, canonical_ref(s.kind, s.ref)) for s in rec.sources],
     )
 
@@ -216,7 +222,8 @@ class Index:
                 # Increment and try again
                 suffix_num = f"-{int(suffix_num[1:] if suffix_num else 1) + 1}"
             # The siblings first and the file last: a failure part-way leaves the file where it
-            # was, and never a -wal or -journal alone, which SQLite deletes beside a new, empty file.
+            # was, and never a -wal or -journal alone, which SQLite deletes beside a new, empty
+            # file.
             for sibling_suffix in ("-journal", "-wal", "-shm", ""):
                 old_path = Path(f"{self.path}{sibling_suffix}")
                 try:

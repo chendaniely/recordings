@@ -4,12 +4,12 @@ A Writer refuses to exist unless the archive's sentinel, this machine's state.db
 writer ID all agree (§3, §6.7). Every change to a recording.json is an operation applied by
 `mutate` under that recording's lock. `Locks` re-entrancy is per thread, so Writer methods are
 synchronous: never `await` inside `hold()`, or other tasks on the thread share the lock. It checks
-the file's content hash against the revision the app last wrote (a merge base in state.db), applies the operation, bumps `rev`, and writes the file
-durably. A file edited outside the app is refused until `recordings reindex` accepts the edit
-(three-way merges arrive in stage 3). New recordings are assembled under `.tmp/` and renamed into
-place whole. Identical bytes arriving again merge into the existing recording, keeping the second
-copy's sources, outputs, tags and notes. A private tag always lands before the content it
-protects (§7.4).
+the file's content hash against the revision the app last wrote (a merge base in state.db), applies
+the operation, bumps `rev`, and writes the file durably. A file edited outside the app is refused
+until `recordings reindex` accepts the edit (three-way merges arrive in stage 3). New recordings
+are assembled under `.tmp/` and renamed into place whole. Identical bytes arriving again merge into
+the existing recording, keeping the second copy's sources, outputs, tags and notes. A private tag
+always lands before the content it protects (§7.4).
 """
 
 from __future__ import annotations
@@ -322,7 +322,8 @@ class Writer:
                     ""
                     if foreign or isinstance(exc, MissingRecordings)
                     else (
-                        f" A writer can't start with --allow-empty: if the archive really is empty, "
+                        f" A writer can't start with --allow-empty: "
+                        f"if the archive really is empty, "
                         f"delete {index.path} (it is derived) and start again."
                     )
                 )

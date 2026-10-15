@@ -89,7 +89,8 @@ def test_writer_open_says_which_settings_are_missing_and_writes_the_docs(writer,
     with pytest.raises(NotTheWriter, match=r"\[state\] path"):
         Writer.open(load_config({"RECORDINGS_CONFIG": str(cfg_file)}))
     cfg_file.write_text(
-        f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n[state]\npath = "{writer.state.path}"\n'
+        f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
+        f'[state]\npath = "{writer.state.path}"\n'
         f'[index]\npath = "{writer.index.path}"\n',
         encoding="utf-8",
     )
@@ -101,16 +102,17 @@ def test_writer_open_says_which_settings_are_missing_and_writes_the_docs(writer,
 def test_a_damaged_state_db_is_not_the_writer_and_says_to_restore_it(writer, tmp_path):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(
-        f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n[state]\npath = "{writer.state.path}"\n'
+        f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
+        f'[state]\npath = "{writer.state.path}"\n'
         f'[index]\npath = "{writer.index.path}"\n',
         encoding="utf-8",
     )
     for leftover in writer.state.path.glob("state.db-*"):  # WAL files: garbage stands alone
         leftover.unlink()
     writer.state.db_path.write_bytes(b"this is not a database\n" * 64)
-    with pytest.raises(NotTheWriter, match="(?i)restore state.db from the backup"):
+    with pytest.raises(NotTheWriter, match=r"(?i)restore state.db from the backup"):
         Writer.open(load_config({"RECORDINGS_CONFIG": str(cfg_file)}))
-    with pytest.raises(NotTheWriter, match="(?i)restore state.db from the backup"):
+    with pytest.raises(NotTheWriter, match=r"(?i)restore state.db from the backup"):
         Writer(writer.root, State(writer.state.path), writer.index, writer_id="test")
 
 

@@ -27,7 +27,7 @@ def test_parse_round_trips_instant_and_offset():
 
 def test_naive_datetime_is_refused():
     with pytest.raises(ValueError, match="timezone-aware"):
-        make_id(datetime(2026, 1, 1), SHA)
+        make_id(datetime(2026, 1, 1), SHA)  # noqa: DTZ001  naive on purpose
 
 
 def test_offset_with_seconds_is_refused():

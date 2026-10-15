@@ -26,7 +26,8 @@ class Settings:
 
 
 def env_hosts(environ: Mapping[str, str]) -> frozenset[str]:
-    """RECORDINGS_ALLOWED_HOSTS: extra names, comma-separated, checked like [server] allowed_hosts."""
+    """RECORDINGS_ALLOWED_HOSTS: extra names, comma-separated, checked like [server]
+    allowed_hosts."""
     names = [n for n in environ.get("RECORDINGS_ALLOWED_HOSTS", "").split(",") if n.strip()]
     try:
         return frozenset(normalise_host(n) for n in names)

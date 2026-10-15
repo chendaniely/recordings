@@ -102,9 +102,12 @@ def test_a_hold_of_several_contended_keys_waits_one_timeout_in_total(tmp_path):
     threading.Timer(0.3, a_free.set).start()
     started = time.monotonic()
     try:
-        with holder_b.hold(B), pytest.raises(LockTimeout):
-            with Locks(tmp_path, timeout=0.5).hold(A, B):
-                pass
+        with (
+            holder_b.hold(B),
+            pytest.raises(LockTimeout),
+            Locks(tmp_path, timeout=0.5).hold(A, B),
+        ):
+            pass
         elapsed = time.monotonic() - started
     finally:
         a_free.set()
@@ -113,9 +116,12 @@ def test_a_hold_of_several_contended_keys_waits_one_timeout_in_total(tmp_path):
 
 
 def test_a_timeout_on_a_later_key_releases_the_earlier_ones(tmp_path):
-    with Locks(tmp_path).hold(B), pytest.raises(LockTimeout):
-        with Locks(tmp_path, timeout=0.1).hold(A, B):
-            pass
+    with (
+        Locks(tmp_path).hold(B),
+        pytest.raises(LockTimeout),
+        Locks(tmp_path, timeout=0.1).hold(A, B),
+    ):
+        pass
     with Locks(tmp_path, timeout=0).hold(A):  # A was taken first, then given back
         pass
 

@@ -194,7 +194,7 @@ def test_no_backup_runs_without_the_sentinel_or_with_another_archive(tmp_path, w
 def test_a_missing_path_or_password_is_refused_before_restic_runs(tmp_path, writer):
     cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "nope.env")])
     bc = backup.from_config(cfg, environ)
-    with pytest.raises(BackupError, match="nope.env"):
+    with pytest.raises(BackupError, match=r"nope.env"):
         backup.run_backup(bc, writer.state, environ, runner=FakeRestic(stdout=SUMMARY))
     cfg, environ = config(tmp_path, writer)
     del environ["RESTIC_PASSWORD_FILE"]
@@ -441,7 +441,10 @@ def test_without_a_shell_the_free_space_comes_from_sftp_df():
 
 def test_the_free_space_is_unknown_when_neither_df_answers():
     nas = Nas(ssh="mirror@nas", port=None, key=None, known_hosts=None)
-    failing = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 255, "", "")
+
+    def failing(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 255, "", "")
+
     assert nas_free_bytes(nas, "/recordings-mirror", runner=failing) is None
     calls = []
     assert nas_free_bytes(nas, "/x\nrm -r /", runner=lambda cmd, **kw: calls.append(cmd)) is None

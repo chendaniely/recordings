@@ -306,8 +306,10 @@ def test_a_secret_file_others_can_read_is_a_warning(tmp_path):
     report = doctor(environ)
     assert report["problems"] == []
     assert [w for w in report["warnings"] if "chmod 600" in w] == [
-        "RECORDINGS_NAS_SSH_KEY_FILE names a file that group or others can open (mode 644): "
-        "chmod 600 it"
+        (
+            "RECORDINGS_NAS_SSH_KEY_FILE names a file that group or others can open (mode 644): "
+            "chmod 600 it"
+        )
     ]
     assert "key-do-not-print" not in json.dumps(report)
 
@@ -684,9 +686,11 @@ def test_a_job_running_now_owns_its_folders_and_doctor_says_to_leave_them(tmp_pa
     (tmp_path / "cache" / "restic-check-cache-1234").mkdir(parents=True)
     (tmp_path / "scratch" / "restore-20261009T080000Z").mkdir()
     folders = tmp_path / "state" / "locks"
-    with Locks(folders, timeout=0).hold(OPS_LOCK):
-        with announce(folders, "check", datetime.now(UTC)):
-            report = doctor(environ, role="backup")
+    with (
+        Locks(folders, timeout=0).hold(OPS_LOCK),
+        announce(folders, "check", datetime.now(UTC)),
+    ):
+        report = doctor(environ, role="backup")
     assert not any("restic-check-cache-" in w for w in report["warnings"])
     assert any("restore-" in w and "unencrypted" in w for w in report["warnings"])  # not check's
     assert any("belongs to check, running now: leave it" in n for n in report["notes"])

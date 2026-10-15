@@ -32,7 +32,7 @@ def test_it_refuses_to_run_without_the_built_frontend(build_pages, tmp_path):
 def test_it_refuses_to_run_without_the_demo_archive(build_pages, tmp_path):
     (tmp_path / "ui.js").write_text("", encoding="utf-8")
     (tmp_path / "ui.css").write_text("", encoding="utf-8")
-    with pytest.raises(SystemExit, match="demo archive .* is missing"):
+    with pytest.raises(SystemExit, match=r"demo archive .* is missing"):
         build_pages.check_inputs(www=tmp_path, demo=tmp_path / "no-archive")
 
 

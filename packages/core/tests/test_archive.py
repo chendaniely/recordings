@@ -100,6 +100,6 @@ def test_a_copied_recording_folder_is_reported_and_the_original_kept(writer, mak
 def test_a_raw_source_needs_aware_times():
     # why: stage-1 carry-over. A naive time would be read as UTC somewhere and as local elsewhere.
     with pytest.raises(ValueError, match="timezone-aware"):
-        RawSource(kind="plaud", ref="x", added_at=datetime(2026, 10, 8, 12, 0))
+        RawSource(kind="plaud", ref="x", added_at=datetime(2026, 10, 8, 12, 0))  # noqa: DTZ001  naive on purpose
     with pytest.raises(ValueError, match="timezone-aware"):
-        RawSource(kind="plaud", ref="x", added_at=T0, fetched_at=datetime(2026, 8, 1))
+        RawSource(kind="plaud", ref="x", added_at=T0, fetched_at=datetime(2026, 8, 1))  # noqa: DTZ001  naive on purpose

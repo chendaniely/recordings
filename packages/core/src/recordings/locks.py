@@ -22,7 +22,7 @@ import re
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -123,17 +123,13 @@ def announce(folder: Path, job: str, since: datetime, key: str = OPS_LOCK) -> It
     """Call while holding `key`: writes which job runs, and since when, into the lock file, for
     Status (spec §12.5), and empties it again. Best effort: a full disk must not stop the job."""
     path = Path(folder) / f"{key}.lock"
-    try:
+    with suppress(OSError):
         _write(path, json.dumps({"job": job, "since": since.isoformat()}))
-    except OSError:
-        pass
     try:
         yield
     finally:
-        try:
+        with suppress(OSError):
             _write(path, "")
-        except OSError:
-            pass
 
 
 def _write(path: Path, text: str) -> None:

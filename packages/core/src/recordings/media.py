@@ -87,6 +87,7 @@ def _streams(exe: str, path: Path, timeout: float) -> list[dict] | None:
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,  # a non-zero exit is read below, as "no streams"
         )
         data = json.loads(proc.stdout) if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError):  # ValueError: bad JSON or bad UTF-8

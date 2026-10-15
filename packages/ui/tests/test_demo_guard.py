@@ -3,6 +3,7 @@ opened, no other program runs, and nothing looks up or connects to another machi
 audit hooks see these whoever does them. SQLite opens its files from C, which the "open" event
 never sees, so "sqlite3.connect" is watched too."""
 
+import contextlib
 import json
 import mimetypes
 import os
@@ -82,10 +83,8 @@ def test_the_hook_sees_sqlite_listings_other_programs_and_name_lookups(tmp_path)
         socket.getnameinfo(("127.0.0.1", 80), 0)
         os.system("true")
         os.waitpid(os.posix_spawn(sys.executable, [sys.executable, "-c", "pass"], os.environ), 0)
-        try:
+        with contextlib.suppress(OSError):
             os.execv(str(tmp_path / "none"), ["none"])  # the event comes first; the call fails
-        except OSError:
-            pass
         if os.fork() == 0:
             os._exit(0)
         os.wait()

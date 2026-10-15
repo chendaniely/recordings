@@ -9,8 +9,8 @@ identical Plaud outputs, and running it again writes nothing new.
   Markdown. Each names its snapshot (`inputs.source`) and the hash of what it carries
   (`inputs.part_sha256`), so a difference the output can't show is never a new write-once file.
   That hash isn't the Sync screen's part hash: stage 2b compares snapshots with `part_hashes`,
-  never with this. `version` is `plaud@<normaliser version>`. `created_at` is the snapshot's fetch time, so a
-  re-run writes byte-identical files.
+  never with this. `version` is `plaud@<normaliser version>`. `created_at` is the snapshot's fetch
+  time, so a re-run writes byte-identical files.
 - **An output's identity** is its kind, note type, snapshot, part hash and `version`. An output
   of another version doesn't count, so a normaliser bump writes every part again (§6.5). The skip
   check (`_identity`) keys on `version` and `part_sha256` together, never the hash alone.

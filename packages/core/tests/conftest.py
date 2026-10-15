@@ -60,17 +60,17 @@ def make_incoming(tmp_path):
         path = tmp_path / "in" / f"{n}-{name}"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content if content is not None else f"ID3 fake audio {n}".encode())
-        fields = dict(
-            media=path,
-            recorded_at=LOCAL,
-            timezone_name="America/Vancouver",
-            time_source="plaud",
-            title="Week 4",
-            kind="audio",
-            sources=(
+        fields = {
+            "media": path,
+            "recorded_at": LOCAL,
+            "timezone_name": "America/Vancouver",
+            "time_source": "plaud",
+            "title": "Week 4",
+            "kind": "audio",
+            "sources": (
                 RawSource(kind="plaud", ref="of_" + "a" * 32, added_at=T0, payload=b'{"id": 1}'),
             ),
-        )
+        }
         fields.update(over)
         return Incoming(**fields)
 

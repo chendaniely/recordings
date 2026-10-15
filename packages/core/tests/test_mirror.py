@@ -64,7 +64,7 @@ class FakeRsync:
         return subprocess.CompletedProcess(cmd, self.returncode, "", self.stderr)
 
 
-def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_skips_work_in_progress(
+def test_the_command_deletes_late_and_little_puts_updates_in_place_together_and_skips_work_in_progress(  # noqa: E501  one unsplittable name
     tmp_path, writer
 ):
     mc = mirror_config(tmp_path, writer, "recordings-mirror@nas:/volume1/recordings-mirror/")
@@ -335,7 +335,7 @@ def _rsync_with_delay_updates() -> str | None:
     exe = shutil.which("rsync")
     if exe is None:
         return None
-    help_text = subprocess.run([exe, "--help"], capture_output=True, text=True).stdout
+    help_text = subprocess.run([exe, "--help"], capture_output=True, text=True, check=False).stdout
     return exe if "--delay-updates" in help_text and "--delete-delay" in help_text else None
 
 

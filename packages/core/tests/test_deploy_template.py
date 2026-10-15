@@ -27,7 +27,9 @@ def make_dry_run(*args: str) -> subprocess.CompletedProcess:
     """`make -n` prints a recipe without running it; $(error ...) still stops it."""
     if shutil.which("make") is None:
         pytest.skip("make is not installed")
-    return subprocess.run(["make", "-n", *args], cwd=REPO, capture_output=True, text=True)
+    return subprocess.run(
+        ["make", "-n", *args], cwd=REPO, capture_output=True, text=True, check=False
+    )
 
 
 def test_every_compose_variable_is_documented_in_the_template_or_set_by_make():
@@ -204,9 +206,11 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
     # why: compose.yml requires RECORDINGS_IMAGE_TAG, and pull_policy: never can't fetch one. The
     # tag the web container runs is the deployed one, however it was started.
     fake = tmp_path / "docker"
-    # `ps -q` lists container IDs; `inspect` prints the image reference the container was created from
+    # `ps -q` lists container IDs; `inspect` prints the image reference the container was created
+    # from
     fake.write_text(
-        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; '
+        "exit 1; fi\n"
         'if [ "$1" = ps ]; then [ "$FAKE_IMAGE" ] && echo abc123; exit 0; fi\n'
         'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
         'echo "RECORDINGS_IMAGE_TAG=$RECORDINGS_IMAGE_TAG $*"\n',
@@ -216,7 +220,11 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_IMAGE": "recordings:0123456789ab"}
     script = str(REPO / "docker" / "up-deployed.sh")
     up = subprocess.run(
-        ["sh", script, "up", "-d", "--no-build"], env=env, capture_output=True, text=True
+        ["sh", script, "up", "-d", "--no-build"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert up.returncode == 0, up.stderr
     assert up.stdout == (
@@ -228,6 +236,7 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
         env={**env, "FAKE_IMAGE": ""},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert none.returncode != 0 and "make deploy" in none.stderr and none.stdout == ""
     down = subprocess.run(
@@ -235,6 +244,7 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
         env={**env, "FAKE_DOWN": "1"},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert down.returncode != 0 and "make deploy" not in down.stderr and down.stdout == ""
     assert "docker" in down.stderr and "daemon" in down.stderr
@@ -275,11 +285,11 @@ def test_the_ops_probe_sees_a_held_lock_and_what_it_announced(tmp_path):
     # why: deploy-guard.sh asks the backup container with this file. flock is per host, so a hold
     # by the loop, or by a one-off `rc run` in another container, shows the same.
     probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks")]
-    assert subprocess.run(probe).returncode == 0  # never taken: no lock file yet
+    assert subprocess.run(probe, check=False).returncode == 0  # never taken: no lock file yet
     with ops_lock_held(tmp_path / "locks", '{"job": "restore-test"}'):
-        busy = subprocess.run(probe, capture_output=True, text=True)
+        busy = subprocess.run(probe, capture_output=True, text=True, check=False)
         assert busy.returncode == 3 and busy.stdout == '{"job": "restore-test"}\n'
-    assert subprocess.run(probe).returncode == 0  # let go: free again
+    assert subprocess.run(probe, check=False).returncode == 0  # let go: free again
 
 
 def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
@@ -289,7 +299,8 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
     # `ps -q` lists the running backup container. The guard pipes docker/ops-busy.py into that
     # container's python; the fake runs it here instead, on the test's own lock folder.
     fake.write_text(
-        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; '
+        "exit 1; fi\n"
         'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
         'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
         '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
@@ -309,6 +320,7 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
             env={**env, **extra},
             capture_output=True,
             text=True,
+            check=False,
         )
 
     assert guard().returncode == 0  # idle
@@ -343,7 +355,8 @@ def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(t
     # one was made from. The one-off `compose run` gets docker/ops-busy.py on stdin; the fake runs
     # it here instead, on the test's own lock folder.
     fake.write_text(
-        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; '
+        "exit 1; fi\n"
         'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
         'if [ "$1" = ps ]; then exit 0; fi\n'
         'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
@@ -367,6 +380,7 @@ def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(t
             env={**env, **extra},
             capture_output=True,
             text=True,
+            check=False,
         )
 
     assert guard().returncode == 0  # stopped, and nothing holds the lock
@@ -395,7 +409,8 @@ def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path)
     )
     fake = tmp_path / "docker"
     fake.write_text(
-        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi\n'
+        '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; '
+        "exit 1; fi\n"
         'if [ "$1 $2" = "image ls" ]; then printf "%s\\n" '
         + " ".join(f"'{line}'" for line in listed)
         + "; exit 0; fi\n"
@@ -406,16 +421,23 @@ def test_old_images_are_pruned_but_rollback_targets_and_used_ones_stay(tmp_path)
     fake.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
     script = str(REPO / "docker" / "prune-images.sh")
-    run = subprocess.run(["sh", script, "2"], env=env, capture_output=True, text=True)
+    run = subprocess.run(["sh", script, "2"], env=env, capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stderr
     # d and c are the newest two; a is older, but a container was made from it; smoke and the
     # -dirty tag aren't commit tags
     assert [line for line in run.stdout.splitlines() if line.startswith("removed")] == [
         "removed recordings:00000000000b"
     ]
-    assert subprocess.run(["sh", script, "five"], env=env, capture_output=True).returncode == 2
+    assert (
+        subprocess.run(["sh", script, "five"], env=env, capture_output=True, check=False).returncode
+        == 2
+    )
     down = subprocess.run(
-        ["sh", script], env={**env, "FAKE_DOWN": "1"}, capture_output=True, text=True
+        ["sh", script],
+        env={**env, "FAKE_DOWN": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert down.returncode != 0 and "daemon" in down.stderr
     assert "sh docker/prune-images.sh 5" in make_dry_run("prune-images").stdout

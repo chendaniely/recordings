@@ -106,20 +106,22 @@ def _recording_problems(archive: Archive, rec, *, deep: bool = False) -> list[di
         present = False
     if not present:
         problems.append({"path": here, "message": f"media.file {rec.media.file!r} is missing"})
-    for source in rec.sources:
-        if source.raw and not (folder / source.raw).is_file():
-            problems.append({"path": here, "message": f"source file {source.raw} is missing"})
+    problems.extend(
+        {"path": here, "message": f"source file {source.raw} is missing"}
+        for source in rec.sources
+        if source.raw and not (folder / source.raw).is_file()
+    )
     if rec.media.duration_ms is not None:
         end = rec.media.duration_ms / 1000
-        for span in rec.speakers.spans:
-            if span.end > end:
-                problems.append(
-                    {
-                        "path": here,
-                        "message": f"speakers span {span.start}-{span.end} s runs past the "
-                        f"media's end ({end} s)",
-                    }
-                )
+        problems.extend(
+            {
+                "path": here,
+                "message": f"speakers span {span.start}-{span.end} s runs past the "
+                f"media's end ({end} s)",
+            }
+            for span in rec.speakers.spans
+            if span.end > end
+        )
     if deep:  # every byte, as the restore test needs: a file that's there isn't proof enough
         if present and sha256_file(media) != rec.media.sha256:
             problems.append(

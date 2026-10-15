@@ -286,7 +286,7 @@ def test_a_state_disk_that_cannot_write_or_read_never_stops_a_job_an_alert_or_th
     assert all(isinstance(r, ops.JobResult) for r in run_due(ctx))  # the heartbeat write fails too
     monkeypatch.setattr(writer.state, "last_run", broken)  # due() cannot read either
     ticks = []
-    loop(ctx, tick=0, sleep=lambda s: ticks.append(s), stop=lambda: len(ticks) >= 2)
+    loop(ctx, tick=0, sleep=ticks.append, stop=lambda: len(ticks) >= 2)
     assert len(ticks) == 2
 
 
@@ -359,7 +359,7 @@ def test_a_locked_repository_is_busy_not_a_failure(tmp_path, writer, ntfy):
 def test_the_loop_runs_until_told_to_stop(tmp_path, writer, ntfy):
     ctx = context(tmp_path, writer, ntfy)
     ticks = []
-    loop(ctx, tick=0, sleep=lambda s: ticks.append(s), stop=lambda: len(ticks) >= 3)
+    loop(ctx, tick=0, sleep=ticks.append, stop=lambda: len(ticks) >= 3)
     assert len(ticks) == 3
 
 
@@ -526,7 +526,7 @@ def test_the_loop_logs_a_fixed_line_and_keeps_the_traceback_for_debug(
     monkeypatch.setattr(ops, "due", broken)
     ticks = []
     with caplog.at_level("INFO"):
-        loop(ctx, tick=0, sleep=lambda s: ticks.append(s), stop=lambda: len(ticks) >= 1)
+        loop(ctx, tick=0, sleep=ticks.append, stop=lambda: len(ticks) >= 1)
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert warnings and all(r.exc_info is None for r in warnings)
     assert "ValueError" in caplog.text and "会議" not in caplog.text
@@ -750,14 +750,14 @@ def test_status_names_the_running_job_and_does_not_flag_the_backup_it_delays(wri
     from recordings.ops import status_summary
 
     writer.state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
-    args = dict(
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("backup", "restore-test"),
-    )
+    args = {
+        "archive_root": writer.root,
+        "now": T0,
+        "timezone_name": "UTC",
+        "warn": 20.0,
+        "stop": 5.0,
+        "jobs": ("backup", "restore-test"),
+    }
     idle = status_summary(writer.state, **args)
     assert idle["running"] is None
     assert "The last backup is more than 2 hours old." in idle["attention"]
@@ -860,14 +860,14 @@ def test_status_says_when_the_backup_service_last_reported(writer):
     # 2 hours late, and also where no backup is set up.
     from recordings.ops import status_summary
 
-    args = dict(
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("disk", "backup", "restore-test"),
-    )
+    args = {
+        "archive_root": writer.root,
+        "now": T0,
+        "timezone_name": "UTC",
+        "warn": 20.0,
+        "stop": 5.0,
+        "jobs": ("disk", "backup", "restore-test"),
+    }
     writer.state.record_run(
         "backup", T0 - timedelta(minutes=50), T0 - timedelta(minutes=50), True, "x"
     )
@@ -909,9 +909,14 @@ def test_a_job_holding_ops_excuses_a_late_backup_for_12_hours_at_most(writer):
     from recordings.ops import status_summary
 
     writer.state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
-    args = dict(
-        archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0, jobs=("backup",)
-    )
+    args = {
+        "archive_root": writer.root,
+        "now": T0,
+        "timezone_name": "UTC",
+        "warn": 20.0,
+        "stop": 5.0,
+        "jobs": ("backup",),
+    }
     folder = writer.state.locks_dir
     for held_for, excused in (
         (timedelta(hours=11), True),
@@ -995,14 +1000,14 @@ def test_a_hold_excuses_the_mirror_too_and_only_if_it_began_before_the_job_was_l
 
     for job in ("backup", "mirror"):
         writer.state.record_run(job, T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
-    args = dict(
-        archive_root=writer.root,
-        now=T0,
-        timezone_name="UTC",
-        warn=20.0,
-        stop=5.0,
-        jobs=("backup", "mirror"),
-    )
+    args = {
+        "archive_root": writer.root,
+        "now": T0,
+        "timezone_name": "UTC",
+        "warn": 20.0,
+        "stop": 5.0,
+        "jobs": ("backup", "mirror"),
+    }
     folder = writer.state.locks_dir
     # Both turned late at T0 - 1 h. A hold from before that excuses them; one from after doesn't.
     for since, excused in ((T0 - timedelta(minutes=90), True), (T0 - timedelta(minutes=30), False)):
@@ -1044,9 +1049,14 @@ def test_the_flags_line_agrees_in_number_and_has_no_markup(writer):
     # why: the line is shown as plain text, so a backtick would appear literally.
     from recordings.ops import status_summary
 
-    args = dict(
-        archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0, jobs=("disk",)
-    )
+    args = {
+        "archive_root": writer.root,
+        "now": T0,
+        "timezone_name": "UTC",
+        "warn": 20.0,
+        "stop": 5.0,
+        "jobs": ("disk",),
+    }
     writer.state.flag("recordings/a/recording.json", "outside-edit", "x")
     one = status_summary(writer.state, **args)
     assert "1 file needs attention: run recordings reindex." in one["attention"]

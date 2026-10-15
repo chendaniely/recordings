@@ -17,7 +17,7 @@ from recordings.ops import status_summary
 from recordings.state import State
 
 REPO = Path(__file__).resolve().parents[3]
-A, B, C, D, O, P = "a" * 32, "b" * 32, "c" * 32, "d" * 32, "9" * 32, "e" * 32
+A, B, C, D, O, P = "a" * 32, "b" * 32, "c" * 32, "d" * 32, "9" * 32, "e" * 32  # noqa: E741  one hex ID per letter, like A to D
 UUID = "11111111-1111-4111-8111-111111111111"
 # No report may carry a title (Review Focus 4), whatever its script. A private-tier export keeps its
 # export name, which is a title too.

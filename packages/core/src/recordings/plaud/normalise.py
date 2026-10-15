@@ -27,6 +27,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -92,10 +93,9 @@ def _scrub(obj: Any) -> Any:
             # A segment block's content is JSON inside a string. Scrub the parsed leaves, never
             # the encoded text: there the URL is followed by an escape (`\\n`, `\\"`) that the
             # scrub would eat, breaking the JSON or merging two different texts.
-            try:
+            # On unparseable JSON, keep the string, scrubbed as plain text.
+            with suppress(_UNPARSEABLE):
                 out["data_content"] = canonical_json(_scrub(json.loads(obj["data_content"])))
-            except _UNPARSEABLE:
-                pass  # keep the string, scrubbed as plain text
         return out
     if isinstance(obj, list):
         return [_scrub(v) for v in obj]
@@ -251,7 +251,8 @@ def note_blocks(envelope: dict) -> list[tuple[str, dict, dict]]:
 
 
 def _ms(value: Any) -> Any:
-    """1500.0 and 1500 are the same millisecond: a client re-serialising must not look re-diarized."""
+    """1500.0 and 1500 are the same millisecond: a client re-serialising must not look
+    re-diarized."""
     return int(value) if isinstance(value, float) and value.is_integer() else value
 
 
@@ -309,7 +310,8 @@ def part_hashes(envelope: dict) -> dict[str, str]:
     if text:
         parts["transcript"] = sha256_of(text)
         parts["speakers"] = sha256_of(names)
-    unknown = []  # a note block's fields outside _NOTE_KEYS: unknown, so "other", never a notes edit
+    # A note block's fields outside _NOTE_KEYS: unknown, so "other", never a notes edit.
+    unknown = []
     for note_type, block, _raw in note_blocks(env):
         parts[f"notes:{note_type}"] = sha256_of({k: v for k, v in block.items() if k in _NOTE_KEYS})
         extra = {k: v for k, v in block.items() if k not in _NOTE_KEYS}

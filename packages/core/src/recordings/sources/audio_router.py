@@ -1042,7 +1042,7 @@ def _titles(item: Item, *, complete_only: bool = False) -> list[str]:
     problems = item.snapshot_problems or ((),) * len(item.snapshots)
     docs = [
         _read_json(path)
-        for path, bad in zip(item.snapshots, problems)
+        for path, bad in zip(item.snapshots, problems, strict=True)
         if not (complete_only and bad)
     ]
     return [

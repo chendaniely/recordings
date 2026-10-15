@@ -44,7 +44,8 @@ def server_url(tmp_path_factory):
         while True:
             if proc.poll() is not None:
                 pytest.fail(
-                    f"demo server exited with {proc.returncode}:\n{log_path.read_text(errors='replace')[-2000:]}"
+                    f"demo server exited with {proc.returncode}:\n"
+                    f"{log_path.read_text(errors='replace')[-2000:]}"
                 )
             try:
                 with urllib.request.urlopen(f"{url}/healthz", timeout=1):
@@ -52,7 +53,8 @@ def server_url(tmp_path_factory):
             except OSError:
                 if time.monotonic() > deadline:
                     pytest.fail(
-                        f"demo server did not start in 20 s:\n{log_path.read_text(errors='replace')[-2000:]}"
+                        f"demo server did not start in 20 s:\n"
+                        f"{log_path.read_text(errors='replace')[-2000:]}"
                     )
                 time.sleep(0.2)
         yield url

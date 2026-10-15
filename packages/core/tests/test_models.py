@@ -26,14 +26,14 @@ SHA = "3fa91c2e" + "0" * 56
 
 
 def recording(**over) -> Recording:
-    base = dict(
-        id="20261006T140003-0700_3fa91c2e",
-        title="COURSE 101: Week 4",
-        recorded_at=datetime.fromisoformat("2026-10-06T14:00:03-07:00"),
-        timezone="America/Vancouver",
-        time_source="plaud",
-        media={"file": "20261006T140003-0700_3fa91c2e.mp3", "sha256": SHA, "kind": "audio"},
-    )
+    base = {
+        "id": "20261006T140003-0700_3fa91c2e",
+        "title": "COURSE 101: Week 4",
+        "recorded_at": datetime.fromisoformat("2026-10-06T14:00:03-07:00"),
+        "timezone": "America/Vancouver",
+        "time_source": "plaud",
+        "media": {"file": "20261006T140003-0700_3fa91c2e.mp3", "sha256": SHA, "kind": "audio"},
+    }
     base.update(over)
     return Recording.model_validate(base)
 
@@ -50,7 +50,7 @@ def test_round_trip_keeps_dollar_schema_and_offset():
 
 def test_naive_recorded_at_is_rejected():
     with pytest.raises(ValidationError):
-        recording(recorded_at=datetime(2026, 10, 6, 14, 0, 3))
+        recording(recorded_at=datetime(2026, 10, 6, 14, 0, 3))  # noqa: DTZ001  naive on purpose
 
 
 def test_bad_id_is_rejected():
@@ -101,15 +101,15 @@ def test_is_untagged_means_no_tags_at_all():
 
 
 def rendition(**over) -> Rendition:
-    base = dict(
-        kind="notes",
-        note_type="lecture",
-        engine="canned",
-        model="claude-opus-5-5",
-        version="claude-opus-5-5@demo",
-        created_at=datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
-        payload={"markdown": "# Notes"},
-    )
+    base = {
+        "kind": "notes",
+        "note_type": "lecture",
+        "engine": "canned",
+        "model": "claude-opus-5-5",
+        "version": "claude-opus-5-5@demo",
+        "created_at": datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
+        "payload": {"markdown": "# Notes"},
+    }
     base.update(over)
     return Rendition.model_validate(base)
 

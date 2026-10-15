@@ -308,7 +308,11 @@ elif point == "reconcile":  # Writer.reconcile_plaud, once its first Plaud outpu
     Writer._write_rendition_locked = write
 
 writer = Writer(Path(root), State.open(Path(state)), Index(Path(index)), writer_id="test")
-run(plan(Path(source), writer.index, consent=(), default_timezone="America/Vancouver"), writer, now=datetime.fromisoformat(now))
+run(
+    plan(Path(source), writer.index, consent=(), default_timezone="America/Vancouver"),
+    writer,
+    now=datetime.fromisoformat(now),
+)
 """
 
 
@@ -340,6 +344,7 @@ def test_an_import_killed_anywhere_ends_as_a_clean_run_does(
         ],
         capture_output=True,
         timeout=300,
+        check=False,
     )
     assert child.returncode == 137, child.stderr.decode(errors="replace")  # it died there
     fresh = Writer(
@@ -1012,9 +1017,11 @@ def test_run_itself_refuses_a_plan_with_problems(ar_archive, plaud_env, writer):
         plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
         problems=("a problem naming Week 4",),
     )
-    with Locks(writer.state.locks_dir, timeout=0).hold("ops"):
-        with pytest.raises(ImportStopped, match="the plan has 1 problem") as caught:
-            run(the_plan, writer, now=NOW, lock_timeout=0.1)
+    with (
+        Locks(writer.state.locks_dir, timeout=0).hold("ops"),
+        pytest.raises(ImportStopped, match="the plan has 1 problem") as caught,
+    ):
+        run(the_plan, writer, now=NOW, lock_timeout=0.1)
     assert "Week 4" not in str(caught.value) and caught.value.report.created == 0
     assert list(writer.archive.iter_recordings()) == []
 

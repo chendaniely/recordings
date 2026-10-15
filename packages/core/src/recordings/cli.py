@@ -283,7 +283,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 def cmd_doctor(args: argparse.Namespace) -> int:
     try:
         report = doctor(os.environ, role=args.role)
-    except Exception as exc:  # a config shape no check expects: one line, never a traceback
+    except Exception as exc:  # noqa: BLE001  a config shape no check expects: never a traceback
         # Its output is pasted into issues and chats, so the error's type and the check it
         # stopped in, never its text (as ops.failure_detail does).
         where = next(

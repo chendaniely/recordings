@@ -94,7 +94,7 @@ def _words(items: Any, start: float) -> tuple[list[dict], int]:
     times, untimed = _times(rows, start)
     return [
         {"word": str(w.get("word") or ""), "start": begin, "end": end}
-        for w, (begin, end) in zip(rows, times)
+        for w, (begin, end) in zip(rows, times, strict=True)
     ], untimed
 
 
@@ -129,7 +129,7 @@ def _words_transcript(payload: dict) -> tuple[dict, int] | None:
         inside[n].append(word)
     out = [
         {"start": start, "end": end, "text": str(seg.get("text") or "").strip(), "words": found}
-        for seg, (start, end), found in zip(rows, times, inside)
+        for seg, (start, end), found in zip(rows, times, inside, strict=True)
     ]
     return {"segments": out}, untimed
 
@@ -140,7 +140,7 @@ def _merged_transcript(payload: dict) -> tuple[dict, int, int] | None:
         return None
     times, untimed = _times(turns)
     segments, untimed_words = [], 0
-    for turn, (start, end) in zip(turns, times):
+    for turn, (start, end) in zip(turns, times, strict=True):
         words, missing = _words(turn.get("words"), start)
         untimed_words += missing
         segments.append(
@@ -202,13 +202,13 @@ def map_rendition(path: Path, doc: object) -> Mapped:
         for k, v in (doc.get("inputs") or {}).items()
         if isinstance(v, (str, int, float)) and not isinstance(v, bool)
     }
-    common = dict(
-        engine=engine,
-        version=version,
-        created_at=created,
-        inputs=inputs,
-        meta={"imported_from": "audio-router", "file": path.name, "audio_router_meta": meta_in},
-    )
+    common = {
+        "engine": engine,
+        "version": version,
+        "created_at": created,
+        "inputs": inputs,
+        "meta": {"imported_from": "audio-router", "file": path.name, "audio_router_meta": meta_in},
+    }
     try:
         if kind == "words":
             built = _words_transcript(payload)
@@ -289,7 +289,7 @@ def pocket_outputs(doc: dict, raw: str, fetched_at: datetime) -> list[Rendition]
                 "text": str(r.get("text") or "").strip(),
                 **({"speaker": str(r["speaker"])} if r.get("speaker") else {}),
             }
-            for r, (start, end) in zip(rows, times)
+            for r, (start, end) in zip(rows, times, strict=True)
         ]
         meta: dict[str, Any] = {"time_unit": "ms" if in_ms else "s"}
         if untimed:

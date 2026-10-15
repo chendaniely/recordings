@@ -47,7 +47,7 @@ def test_no_file_means_defaults(tmp_path, monkeypatch):
 
 
 def test_a_broken_file_names_itself(tmp_path):
-    with pytest.raises(ConfigError, match="config.toml"):
+    with pytest.raises(ConfigError, match=r"config.toml"):
         load_config({"RECORDINGS_CONFIG": str(write(tmp_path, "path = [unclosed"))})
 
 

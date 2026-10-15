@@ -21,7 +21,7 @@ A = "a" * 32
 B = "b" * 32
 C = "c" * 32
 D = "d" * 32
-O = "8" * 32  # an orphan: audio, but no snapshot and no time
+O = "8" * 32  # noqa: E741  an orphan: audio, but no snapshot and no time
 T = "9" * 32  # tagged private in audio-router's catalog
 X = "7" * 32  # on the consent list
 X2 = "6" * 32  # on the consent list, and only in audio-router's ledger
@@ -193,7 +193,7 @@ def test_a_short_copy_is_a_problem(ar_archive, plaud_env):
 
 
 def test_the_catalog_must_be_audio_routers(ar_archive):
-    with pytest.raises(CatalogError, match="catalog.csv is missing"):
+    with pytest.raises(CatalogError, match=r"catalog.csv is missing"):
         plan(ar_archive.root, consent=NONE, default_timezone="America/Vancouver")
     (ar_archive.root / "catalog").mkdir(parents=True)
     (ar_archive.root / "catalog" / "catalog.csv").write_text("uri,source\nx,y\n", encoding="utf-8")
@@ -674,8 +674,10 @@ def test_a_consent_listed_row_with_no_audio_hash_stops_the_run(ar_archive, plaud
     ar_archive.write_catalog()
     the_plan = plan(ar_archive.root, consent={X}, default_timezone="America/Vancouver")
     assert [p for p in the_plan.problems if "consent-listed" in p] == [
-        "1 consent-listed rows have no catalog audio hash, so copies of them can't be "
-        "recognised: rebuild the catalog"
+        (
+            "1 consent-listed rows have no catalog audio hash, so copies of them can't be "
+            "recognised: rebuild the catalog"
+        )
     ]
     text = json.dumps(the_plan.report(), ensure_ascii=False)
     assert X not in text and str(ar_archive.root) not in text and not the_plan.ok

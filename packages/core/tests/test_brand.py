@@ -44,7 +44,9 @@ def test_orange_is_never_a_light_mode_text_colour():
 def _mix(fg, share, bg):
     a = [int(fg[i : i + 2], 16) for i in (1, 3, 5)]
     b = [int(bg[i : i + 2], 16) for i in (1, 3, 5)]
-    return "#" + "".join(f"{round(share * x + (1 - share) * y):02X}" for x, y in zip(a, b))
+    return "#" + "".join(
+        f"{round(share * x + (1 - share) * y):02X}" for x, y in zip(a, b, strict=True)
+    )
 
 
 def test_note_type_chips_meet_wcag_aa_in_both_modes():

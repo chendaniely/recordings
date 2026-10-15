@@ -30,7 +30,7 @@ import shutil
 import sqlite3
 import subprocess
 from collections.abc import Mapping, Sequence
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -439,10 +439,8 @@ def _tree_bytes(root: Path) -> int:
     total = 0
     for folder, _, names in os.walk(root):
         for name in names:
-            try:
+            with suppress(OSError):
                 total += (Path(folder) / name).lstat().st_size
-            except OSError:
-                pass
     return total
 
 
@@ -495,16 +493,20 @@ def _not_in_snapshot(bc: BackupConfig, target: Path, restored: Path) -> list[dic
                 )
             ]
     except sqlite3.Error as exc:
-        return problems + [
+        return [
+            *problems,
             {
                 "path": str(copy),
                 "message": f"the snapshot's copy can't be read ({type(exc).__name__})",
-            }
+            },
         ]
-    return problems + [
-        {"path": str(bc.archive / f), "message": "is not in the snapshot"}
-        for f in files
-        if not (restored / f).is_file()
+    return [
+        *problems,
+        *(
+            {"path": str(bc.archive / f), "message": "is not in the snapshot"}
+            for f in files
+            if not (restored / f).is_file()
+        ),
     ]
 
 

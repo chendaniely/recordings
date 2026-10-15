@@ -84,7 +84,7 @@ def _block(selector: str, values: dict[str, str], scheme: str, indent: str = "")
         f"{indent}  --radius: 0.5rem;",
     ]
     lines += [f"{indent}  --{k}: {v};" for k, v in values.items()]
-    return "\n".join(lines + [f"{indent}}}"])
+    return "\n".join([*lines, f"{indent}}}"])
 
 
 def render(repo: Path) -> str:

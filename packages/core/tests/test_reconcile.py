@@ -24,15 +24,15 @@ T1 = datetime(2026, 8, 1, 16, 10, tzinfo=UTC)
 
 
 def rec(**over) -> Recording:
-    fields = dict(
-        id="20260801T090000-0700_" + "a" * 8,
-        title="Week 4",
-        title_by="plaud",
-        recorded_at=datetime.fromisoformat("2026-08-01T09:00:00-07:00"),
-        timezone="America/Vancouver",
-        time_source="plaud",
-        media=MediaInfo(file="x.wav", sha256="a" * 64, kind="audio", duration_ms=2600),
-    )
+    fields = {
+        "id": "20260801T090000-0700_" + "a" * 8,
+        "title": "Week 4",
+        "title_by": "plaud",
+        "recorded_at": datetime.fromisoformat("2026-08-01T09:00:00-07:00"),
+        "timezone": "America/Vancouver",
+        "time_source": "plaud",
+        "media": MediaInfo(file="x.wav", sha256="a" * 64, kind="audio", duration_ms=2600),
+    }
     fields.update(over)
     return Recording(**fields)
 

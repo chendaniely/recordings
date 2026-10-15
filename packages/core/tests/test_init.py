@@ -280,7 +280,8 @@ def test_cli_init_says_what_is_missing(tmp_path, monkeypatch, capsys):
 
 
 def test_docs_refuses_a_folder_without_a_sentinel(tmp_path, monkeypatch, capsys):
-    # why: §6.7. Writing the docs into an unmounted, empty folder would make it look like an archive.
+    # why: §6.7. Writing the docs into an unmounted, empty folder would make it look like an
+    # archive.
     init_archive(tmp_path / "archive", tmp_path / "state", writer_id="test")
     empty = tmp_path / "unmounted"
     empty.mkdir()

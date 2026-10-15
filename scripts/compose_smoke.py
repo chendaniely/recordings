@@ -70,7 +70,9 @@ class SmokeFailed(Exception):
 
 
 def compose_run(compose: list[str], env: dict[str, str], *args: str, quiet: bool = False) -> None:
-    proc = subprocess.run([*compose, *args], env=env, capture_output=quiet, text=True)
+    proc = subprocess.run(
+        [*compose, *args], env=env, capture_output=quiet, text=True, check=False
+    )  # exit code read below
     if proc.returncode != 0:
         if quiet:
             print(proc.stderr, file=sys.stderr)
@@ -87,7 +89,7 @@ def wait_for_healthz(compose: list[str], env: dict[str, str]) -> None:
         except OSError:
             pass
         if time.monotonic() > deadline:
-            subprocess.run([*compose, "logs", "web"], env=env)
+            subprocess.run([*compose, "logs", "web"], env=env, check=False)  # diagnostics only
             raise SmokeFailed("/healthz never answered")
         time.sleep(2)
 
@@ -168,7 +170,9 @@ def main() -> int:
         finally:
             # --rmi all removes recordings:smoke (an image with a custom tag, which --rmi local
             # keeps), so it never shows among `docker image ls recordings`' rollback tags.
-            subprocess.run([*compose, "down", "-v", "--rmi", "all"], env=env)
+            subprocess.run(
+                [*compose, "down", "-v", "--rmi", "all"], env=env, check=False
+            )  # cleanup
         print(
             "compose smoke: init, ssh, backup, restore test and mirror ran, and web answered "
             "/healthz, as this machine's user"
