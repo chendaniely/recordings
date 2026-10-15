@@ -582,6 +582,20 @@ Steps 1–4 of the spec's "order of the first real run" (§19), and how to resto
 command that needs one reads it from a file, and secret files are written with an editor, never
 typed on a command line, where shell history would keep them.
 
+## 0. Before you start
+
+On the homelab server, as the user who will run everything (not root):
+- Docker Engine with the Compose plugin (`docker compose version` works), and your user in the
+  `docker` group (`sudo usermod -aG docker "$USER"`, then log in again). The `rc` lines below run
+  without sudo.
+- `git`, `make`, `rsync`, `curl`, `nc`, `openssl` and `tailscale` (logged in to your tailnet; 1a.6
+  checks it).
+- The repo: after 1a.4 has made `$RECORDINGS_HOME`, run `git clone <the repo's URL> "$REPO_DIR"`,
+  then `git checkout <the commit you will deploy>`.
+
+Every file in `$RECORDINGS_HOME`, secrets included, must be owned by the user whose UID goes in
+`docker/deploy.env`: the containers run as that UID and cannot read a root-owned 0600 file.
+
 Set these in the shell you use on the homelab server, and paste the block again at the start of
 every new session there (a new ssh login, a tmux window, after a reboot): `rc` and the variables
 exist only in the shell that defined them. They are examples; use your own values.
@@ -1052,6 +1066,8 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    cp config.example.toml config.toml
    cp docker/deploy.example.conf docker/deploy.env
    ```
+   After editing `config.toml` later, run `rc restart web backup`; after editing `deploy.env`, run
+   `rc up -d`. A file an editor replaced is not seen by a running container until it restarts.
 
 2. **Alerts, and the last secret files.**
    - **ntfy.sh:** generate a topic in your password manager: 20 or more random letters and
@@ -1123,7 +1139,9 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
 4. **Build, initialise once, start.** `rc` is the function from the top of this runbook, the
    project's compose command; the image is tagged by the commit (as `make deploy` tags it). Every
    `rc` line after this needs `RECORDINGS_IMAGE_TAG` exported in the same shell, and it must name
-   an image you built: after a `git pull`, run `rc build` again first.
+   an image you built: after a `git pull`, run `rc build` again first. After a `make deploy` or
+   `make rollback`, export the tag again: `rc up -d` with an old one silently puts the old image
+   back, and with one never built, `up` builds it from the checkout as it is.
    ```bash
    cd "$REPO_DIR"
    git status --porcelain
@@ -1139,7 +1157,8 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    - `git status --porcelain` prints nothing, so the tag names the code exactly.
    - `init` prints the archive's UUID, and `backup init` reports the repository initialised.
    - Neither `doctor` reports a problem. `--role web` confirms that the web service holds no
-     backup or mirror secrets.
+     backup or mirror secrets. `doctor --role` arrives with Task 16; until then run
+     `rc exec web recordings doctor` and `rc exec backup recordings doctor`.
    - Both warn that retention is off here (`[backup] prune = false`). That is right for
      rest-server: retention runs on the NAS (1b.7).
    - From your own device, `nc -vz -w 5 "$SERVER_TS" 8000` now connects. From the refused
@@ -1199,8 +1218,8 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
      token): make new ones as well as fixing it.
    - The Status page shows the backup, the restore test and the mirror.
 
-   `rc stop` gives the loop 10 seconds, then kills it. A job it was running leaves a stale restic
-   lock; a lock warning on the next run is expected and clears itself.
+   `rc stop` gives the loop compose.yml's 2-minute `stop_grace_period`: a running restic or rsync
+   gets SIGTERM and stops cleanly, and that job starts again from the beginning on `rc start`.
 
    Then, on the NAS, run the retention task once (Task Scheduler: select it, then Run). Its saved
    output shows `forget` listing the snapshots it keeps, and no error.
@@ -1218,6 +1237,24 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    ```bash
    rc start backup
    ```
+
+8. **Rolling back the code.** Only an image already on the server can be rolled back to:
+   `docker image ls recordings` lists the tags, each a commit. Never use `rc up -d` for this: it
+   builds a tag that is missing from today's code.
+   ```bash
+   cd "$REPO_DIR"
+   make rollback TAG=<tag>
+   ```
+   The boot unit then keeps that tag (`docker/up-deployed.sh` reads it back from the running web
+   container). To go forward again, `git checkout` the commit and `make deploy`. A deploy that
+   fails its health check, or that you regret, is the case for this step; `make prune-images`
+   keeps the newest five tags for it.
+
+   A rollback changes the code only. If the newer code migrated `state.db`, the older code
+   refuses to open it (`StateError`: "newer than this release's"), and `web` and `backup` will not
+   stay up. Then either deploy forward, or restore `state/` from the last backup (Restoring for
+   real, step 3, and its `state.db` lines) before starting the older image. Before stage 3's first
+   tag, the archive itself can be moved aside and imported again (spec §19, and the end of step 4).
 
 ## 3. Bring the source over
 
