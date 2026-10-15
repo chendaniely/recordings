@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Core library and CLI for the recordings archive."
 requires-python = ">=3.14"
 license = "MIT"
-dependencies = ["pydantic==2.13.5"]
+dependencies = ["pydantic==2.14.1"]
 
 [project.scripts]
 recordings = "recordings.cli:main"
