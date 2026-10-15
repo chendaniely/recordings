@@ -278,8 +278,11 @@ recordings/                      (repo root, uv workspace, MIT)
 
   Stage 2a adds the state, restore-test and secrets folders and deploy.env's own path
   (`RECORDINGS_STATE_HOST`, `RECORDINGS_RESTORE_HOST`, `RECORDINGS_SECRETS_HOST`,
-  `RECORDINGS_DEPLOY_ENV_HOST`). The backup target is `[backup] repository` in
-  `config.toml`. Stage 5 adds the watched folder path.
+  `RECORDINGS_DEPLOY_ENV_HOST`), `RECORDINGS_NTFY_AUTH_HOST` (the ntfy token's file, only for
+  a server that needs one) and `RECORDINGS_FORWARDED_ALLOW_IPS` (§15). `make deploy` adds
+  `RECORDINGS_IMAGE_TAG` itself. Rest-server's certificate is a file in the secrets folder
+  (`nas_cacert`, empty over the tailnet), not a setting. The backup target is
+  `[backup] repository` in `config.toml`. Stage 5 adds the watched folder path.
 
   No secret appears in the image, the repo, the archive, logs or `--json` output. CI runs
   gitleaks.
@@ -2444,8 +2447,18 @@ Each stage leaves a working, demonstrable app.
    - the normaliser and reconcile, as pure functions, so the import and the sync give
      identical Plaud outputs (§9.1.1)
    - a re-runnable `import-audio-router`, with its mapping table (§9.3)
-   - **Compose:** a state volume; long-syntax bind mounts with `create_host_path: false`;
-     log rotation; images tagged by commit SHA; `hostname`
+   - **Compose:** `state/` as a bind mount on the server's local disk (never a volume that
+     a prune could drop), plus a named volume for the derived `index.db`; long-syntax bind
+     mounts with `create_host_path: false`; log rotation; images tagged by commit SHA, with
+     `pull_policy: never`, so a rollback is a tag (`make rollback`); a fixed `hostname` per
+     service (restic's lock owner); `init: true` in `backup`; read-only root file systems,
+     `cap_drop: ALL` and `no-new-privileges` in both; the secrets mounted in `backup` only;
+     a boot unit (`docker/recordings.service`) that waits for the data disk and the Tailscale
+     address, then starts the containers on the tag they last ran (`docker/up-deployed.sh`);
+     and a compose smoke test (`make deploy-smoke`, a CI job) that runs the real file once.
+     `make deploy` refuses while a job holds the `ops` lock (`FORCE=1` overrides), waits for
+     `web`'s health check, and `make prune-images` keeps the newest commit tags as rollback
+     targets
    - **archive setup:** an explicit `recordings init` and the archive sentinel (§6.7)
    - **operations:**
      - restic backups, the NAS mirror (`--delay-updates`) and the restore test (§15.1)
