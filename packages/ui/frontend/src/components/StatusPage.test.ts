@@ -37,6 +37,32 @@ describe("StatusPage", () => {
     const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null, running });
     expect(html).toContain('data-testid="status-running"');
     expect(html).toContain("Restore test is running, started 2026-10-09 07:10 (50 min ago)");
+    expect(html).toContain("The hourly backup waits for it.");
+  });
+  it("doesn't say the hourly backup waits for the backup or the disk check", () => {
+    for (const [job, label] of [["backup", "Backup"], ["disk", "Disk check"]]) {
+      const running = { job, label, since: "2026-10-09 07:10 (50 min ago)" };
+      const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null, running });
+      expect(html).toContain(`${label} is running, started 2026-10-09 07:10 (50 min ago).`);
+      expect(html).not.toContain("waits for it");
+    }
+  });
+  it("has a page heading, and the running line spans the grid", () => {
+    const running = { job: "check", label: "Repository check", since: "2026-10-09 07:10 (50 min ago)" };
+    const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null, running });
+    expect(html).toContain("<h1>Status</h1>");
+    expect(html).toContain('class="muted status-running"');
+  });
+  it("says a backup that waits for a running job is waiting, not OK", () => {
+    const late = { ...backup, last_ok: "2026-10-09 05:00 (3 h ago)", waiting: true };
+    const html = render({ configured: true, jobs: [late], attention: [], flags: 0, disk: null });
+    expect(html).toContain("<td>Waiting<div");
+    expect(html).not.toContain("<td>OK");
+  });
+  it("says when the backup service last reported", () => {
+    const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null,
+      reported: "2026-10-09 07:59 (1 min ago)" });
+    expect(html).toContain("The backup service last reported 2026-10-09 07:59 (1 min ago).");
   });
   it("says the free space is unknown when there is no disk figure", () => {
     const html = render({ configured: false, jobs: [], attention: [], flags: 0, disk: null });

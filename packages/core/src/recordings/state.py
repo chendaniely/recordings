@@ -110,6 +110,10 @@ class State:
         self._read_only = False  # read_only() sets it: every connection is then mode=ro
 
     @property
+    def _mode(self) -> str:
+        return "ro" if self._read_only else "rw"
+
+    @property
     def db_path(self) -> Path:
         return self.path / "state.db"
 
@@ -193,7 +197,7 @@ class State:
 
         It opens an existing state.db only: a missing one is an error, never a new, empty file.
         """
-        with closing(self._connect("ro" if self._read_only else "rw")) as conn:
+        with closing(self._connect(self._mode)) as conn:
             conn.execute("PRAGMA synchronous=FULL")
             with conn:
                 yield conn
@@ -373,12 +377,13 @@ class State:
     def backup_to(self, dest: Path) -> Path:
         """A consistent copy of state.db, with SQLite's own backup command (§15.1), even while
         another process writes it. Replaced atomically, so a half copy is never backed up. The
-        source opens with mode=rw (_connect), so a missing state.db is never created here."""
+        source opens with mode=rw, or ro through read_only() (_connect), so a missing state.db is
+        never created here."""
         dest = Path(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = temp_name(dest)
         try:
-            with closing(self._connect("rw")) as src, closing(sqlite3.connect(tmp)) as dst:
+            with closing(self._connect(self._mode)) as src, closing(sqlite3.connect(tmp)) as dst:
                 src.backup(dst)
             os.replace(tmp, dest)
         except BaseException:

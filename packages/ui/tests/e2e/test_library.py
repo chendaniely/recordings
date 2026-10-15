@@ -146,9 +146,25 @@ def test_the_status_page_shows_backups_and_disk(page: Page, server_url):
     expect(page.get_by_test_id("status-page")).to_have_count(0)
 
 
+def test_the_status_page_does_not_scroll_sideways_on_a_phone(page: Page, server_url):
+    # why: a card's minimum width plus its padding is wider than a 320 px phone.
+    page.set_viewport_size({"width": 320, "height": 640})
+    page.goto(f"{server_url}/#/status")
+    expect(page.get_by_test_id("status-page")).to_be_visible()
+    overflow = page.evaluate("""() => {
+        const main = document.querySelector("[data-testid=status-page]");
+        return [main.scrollWidth - main.clientWidth,
+                document.documentElement.scrollWidth - document.documentElement.clientWidth];
+    }""")
+    assert overflow == [0, 0]
+
+
+@pytest.mark.browser_context_args(timezone_id="Pacific/Auckland")
 def test_the_header_shows_the_local_time_with_its_offset(page: Page, server_url):
     # why: the archive spans several time zones, so the header shows each recording's own local
-    # time and UTC offset (spec §12.1), whatever zone the browser is in.
+    # time and UTC offset (spec §12.1), whatever zone the browser is in: here, 14 hours ahead of
+    # the recording's own.
+    assert page.evaluate("Intl.DateTimeFormat().resolvedOptions().timeZone") == "Pacific/Auckland"
     open_library(page, server_url)
     page.get_by_test_id("recording-row").filter(has_text="JFK").click()
     expect(page.get_by_test_id("recording-when")).to_have_text("1962-09-12 10:00 UTC-05:00")

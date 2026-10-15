@@ -541,15 +541,33 @@ def loop(ctx: Context, *, tick: float = 60.0, sleep=time.sleep, stop=lambda: Fal
 SHOWN = (("backup", "Backup", timedelta(hours=2)),
          ("restore-test", "Restore test", timedelta(days=31)),
          ("check", "Repository check", timedelta(days=8)),
-         ("mirror", "Mirror for the Mac", timedelta(hours=2)))
+         ("mirror", "Mirror for the Mac", timedelta(hours=2)),
+         ("prune", "Retention", timedelta(days=2)))  # its alert says "See Status" too (§14)
 RUNNING_LABELS = {**{job: label for job, label, _ in SHOWN}, "disk": "Disk check",
-                  "prune": "Retention", "import": "Import"}
+                  "import": "Import"}
+# The loop writes its heartbeat at each pass, about once a minute (Task 13). Between passes only a
+# job holding "ops" keeps it quiet, and that job's run reports when it ends.
+QUIET_AFTER = timedelta(minutes=15)
+# A job holding "ops" excuses a late backup for this long at most. Past it, a hung restic or rsync,
+# or a CLI job left running, needs attention: Status must not stay green for days while the
+# dead-man's switch has alerted after its grace (§14).
+HOLD_LIMIT = timedelta(hours=12)
+
+
+def _stamp(text: str | None) -> datetime | None:
+    try:
+        t = datetime.fromisoformat(text) if text else None
+    except ValueError:
+        return None
+    return t if t is not None and t.tzinfo is not None else None
 
 
 def when_label(t: datetime, now: datetime, timezone_name: str) -> str:
     """`2026-10-08 14:05 (35 min ago)`: ISO 8601 dates and 24-hour times (spec §12)."""
     minutes = int((now - t).total_seconds() // 60)
-    if minutes < 1:
+    if t > now:  # a clock that ran ahead and was put right (§15.1): never "just now"
+        ago = "clock ahead"
+    elif minutes < 1:
         ago = "just now"
     elif minutes < 60:
         ago = f"{minutes} min ago"
@@ -567,32 +585,60 @@ def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_
                                  warn=warn, stop=stop))
     flags = len(state.flags())
     held = running(state.locks_dir)  # (job, since) while a job holds the ops lock
+    # A hold can excuse a late job for HOLD_LIMIT at most. A start in the future (a clock put
+    # right) counts as long ago, as in due().
+    hold_ok = held is not None and timedelta(0) <= now - held[1] <= HOLD_LIMIT
     out: dict = {"configured": True, "jobs": [], "attention": [], "flags": flags, "disk": disk,
                  "running": None if held is None else {
                      "job": held[0], "label": RUNNING_LABELS.get(held[0], held[0]),
                      "since": when_label(held[1], now, timezone_name)}}
+    reports = [_stamp(state.meta("ops_heartbeat"))]  # the loop's heartbeat, and each job's last run
     for job, label, stale_after in SHOWN:
         if job not in jobs:
             continue
         good, last = state.last_run(job, ok=True), state.last_run(job)
+        reports.append(last.finished_at if last else None)
         failing = last is not None and not last.ok
-        late = good is None or now - good.finished_at > stale_after
-        # §12.5: while a job holds the ops lock the hourly backup's turns are skipped, so a backup
-        # that is merely late is not an outage; the dead-man's grace decides when silence is.
-        stale = late and not (job == "backup" and good is not None and held is not None)
+        # A run stamped in the future counts as long ago, as in due().
+        ago = None if good is None or good.finished_at > now else now - good.finished_at
+        late = ago is None or ago > stale_after
+        # §12.5: while a job holds the ops lock the backup's and the mirror's turns are skipped,
+        # so one that is merely late is waiting, not an outage, for HOLD_LIMIT at most, and only
+        # if the hold began before the job turned late: a hold that began after explains nothing.
+        waiting = (late and job in ("backup", "mirror") and ago is not None and hold_ok
+                   and held[1] <= good.finished_at + stale_after)
+        stale = late and not waiting
+        last_ok = when_label(good.finished_at, now, timezone_name) if good else None
         out["jobs"].append({
-            "job": job, "label": label,
-            "last_ok": when_label(good.finished_at, now, timezone_name) if good else None,
+            "job": job, "label": label, "last_ok": last_ok,
             "last_ok_detail": good.detail if good else None,  # the NAS's free space, for a backup
             "failing": failing, "detail": last.detail if failing else None,
-            "attention": failing or stale})
+            "attention": failing or stale, "waiting": waiting})
         if job == "backup" and stale:
             out["attention"].append("The last backup is more than 2 hours old." if good
                                     else "No backup has finished yet.")
+        elif stale and not failing:  # a failing job has its line below
+            out["attention"].append(
+                f"{label} is overdue: it last worked {last_ok}." if good
+                else f"{label} has not worked yet.")
         if failing:
             out["attention"].append(f"{label} failed: {last.detail}")
+    if held is not None and not hold_ok:
+        out["attention"].append(
+            f"{out['running']['label']} has been running since {out['running']['since']}, and no "
+            "backup runs until it ends: check that it isn't stuck.")
+    # Silence with nothing holding "ops" means the backup service has stopped, whatever the
+    # backup's own age says, and also where no backup is set up. A future stamp proves nothing.
+    seen = max((t for t in reports if t is not None and t <= now), default=None)
+    out["reported"] = when_label(seen, now, timezone_name) if seen else None
+    if held is None and (seen is None or now - seen > QUIET_AFTER):
+        out["attention"].append(
+            f"The backup service last reported {out['reported']}: check that it is running."
+            if seen else "The backup service has not reported yet: check that it is running.")
     if disk["level"] != "ok":
         out["attention"].append(disk["message"])
     if flags:
-        out["attention"].append(f"{flags} files need attention: run `recordings reindex`.")
+        out["attention"].append(
+            f"{flags} file needs attention: run recordings reindex." if flags == 1
+            else f"{flags} files need attention: run recordings reindex.")
     return out

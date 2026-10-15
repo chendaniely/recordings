@@ -89,9 +89,10 @@ h3 { font-weight: 700; margin: 12px 0 6px; }
   .sidebar, .list { border-right: 0; border-bottom: 1px solid var(--border); max-height: 40vh; }
   .notes-split, .compare { grid-template-columns: 1fr; }
 }
-button.nav { background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; padding: 0 0 2px; margin-right: 12px; }
-.status { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-content: start; }
-.status .problems { grid-column: 1 / -1; margin: 0; }
+button.nav { background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; padding: 0 0 2px; margin-right: 8px; }
+.status { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); align-content: start; }
+.status h1 { grid-column: 1 / -1; margin: 0; font-size: 19px; font-weight: 700; }
+.status .problems, .status .status-running { grid-column: 1 / -1; margin: 0; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .card h2 { margin: 0 0 8px; font-size: 15px; }
 tr.attn td { color: var(--destructive); }

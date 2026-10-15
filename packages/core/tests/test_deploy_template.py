@@ -83,6 +83,17 @@ def test_the_state_and_the_index_have_mounts_of_their_own():
     assert doc["services"]["web"]["environment"]["RECORDINGS_INDEX"] == "/index/index.db"
 
 
+def test_web_reads_the_state_folder_the_backup_service_writes():
+    # why: Status (web) reads the state.db and the ops lock that the loop (backup) writes. Two
+    # folders would show, for ever, the last runs Status saw before they split.
+    doc = compose()
+    mounts = {name: {v["target"]: v for v in service["volumes"]}
+              for name, service in doc["services"].items()}
+    assert mounts["web"]["/state"]["source"] == mounts["backup"]["/state"]["source"]
+    for name in ("web", "backup"):
+        assert doc["services"][name]["environment"]["RECORDINGS_STATE"] == "/state", name
+
+
 def test_every_service_rotates_its_logs_is_hardened_and_has_a_hostname():
     for name, service in compose()["services"].items():
         assert service["logging"]["driver"] == "json-file", name

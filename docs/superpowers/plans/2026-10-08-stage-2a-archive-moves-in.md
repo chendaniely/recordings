@@ -20449,6 +20449,17 @@ Status shows each job's last good run with its detail, as a muted line under "OK
 detail ends with `; <n> GB free on the NAS`, or `; NAS free space unknown` when neither `df`
 answers (Task 11), so the NAS's free space reaches the page (spec §15.1).
 
+Status never stays green while something is wrong (the council of 2026-10-09):
+- It reads the loop's heartbeat, so a stopped backup service shows within 15 minutes, with or
+  without a `[backup]`.
+- A job that holds `ops` excuses a late backup or mirror for 12 hours at most, and only if it began
+  before they turned late. Past 12 hours, Status says the job may be stuck.
+- Every overdue row has its own line under "Needs attention", and retention has a row.
+- A run stamped in the future counts as long ago (§15.1), and reads "clock ahead", never "just now".
+- A damaged `state.db` gets the way back; one that is merely busy, unmounted or not writable gets
+  `state.unreadable()`'s text, which says to leave it alone. A configured server with no `state.db`
+  needs attention.
+
 In demo mode, which has no settings, Status shows no disk figure: the demo's disk is a temporary
 copy, or on Pages, Pyodide's in-memory file system, so any figure would be made up.
 
@@ -20457,11 +20468,11 @@ copy, or on Pages, Pyodide's in-memory file system, so any figure would be made 
 - Modify: `packages/core/src/recordings/disk.py` (`disk_view`), `ops.py` (`when_label`, `status_summary`, and `run_job`, which announces its job), `state.py` (`State.read_only`), `locks.py` (`announce`, `running`), `sources/audio_router.py` (the import announces itself)
 - Modify: `packages/ui/src/recordings_ui/runtime.py`, `views.py`, `shiny_app.py`, `app.py`
 - Modify: `packages/ui/frontend/src/App.tsx`, `components/TopBar.tsx`, `components/DetailsTab.tsx`, `components/RecordingPane.tsx` (the header's time), `sr.ts` (`useShinyOutputError`), `types.ts`, `app.css`
-- Test: `packages/core/tests/test_ops.py` (the summary, the read-only state), `test_locks.py` and `test_import_run.py` (the running job), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
+- Test: `packages/core/tests/test_ops.py` (the summary, the read-only state), `test_locks.py` and `test_import_run.py` (the running job), `test_deploy_template.py` (web and backup share the state folder), `packages/ui/tests/test_status.py`, `test_shiny_server.py`, `test_demo_guard.py`, `e2e/test_library.py`, `pages/test_pages_site.py`
 
 **Interfaces:**
 - Consumes:
-  - from Task 2: `State._connect(mode)`, and the line in `State.db()` that calls it, `with closing(self._connect("rw")) as conn:`
+  - from Task 2: `State._connect(mode)`, and the line in `State.db()` that calls it, `with closing(self._connect("rw")) as conn:`; from Task 11, `State.backup_to`, whose source connection is `self._connect("rw")` too
   - from Task 11: `State.last_run`
   - from Task 5b: `State.flags`
   - from Task 9: `disk_status`, `disk_thresholds`
@@ -20472,9 +20483,10 @@ copy, or on Pages, Pyodide's in-memory file system, so any figure would be made 
   - **core:**
     - `recordings.disk.disk_view(status: DiskStatus) -> dict`
     - `recordings.ops.when_label(t: datetime, now: datetime, timezone_name: str) -> str`
-    - `recordings.ops.status_summary(state: State, *, archive_root: Path, now: datetime, timezone_name: str, warn: float, stop: float, jobs: tuple[str, ...]) -> dict`. Each job's row has `last_ok`, `last_ok_detail` (the last good run's fixed detail), `failing`, `detail` and `attention`. The summary also has `running`: None, or `{"job", "label", "since"}` for the job that holds the `ops` lock now (spec §12.5), `since` being `when_label`'s text. While any job holds it, the backup's "more than 2 hours old" attention is not raised (its turns are skipped meanwhile; §14's dead-man grace decides when silence is an outage).
+    - `recordings.ops.status_summary(state: State, *, archive_root: Path, now: datetime, timezone_name: str, warn: float, stop: float, jobs: tuple[str, ...]) -> dict`. Each job's row has `last_ok`, `last_ok_detail` (the last good run's fixed detail), `failing`, `detail`, `attention` and `waiting`. The rows are the backup, restore test, check, mirror and retention. The summary also has `running`: None, or `{"job", "label", "since"}` for the job that holds the `ops` lock now (spec §12.5), `since` being `when_label`'s text, and `reported`: when the backup service last reported (its heartbeat, or a job's last run), or None. While any job holds `ops` for at most 12 hours (`HOLD_LIMIT`), and began before the backup or the mirror turned late, that row is "Waiting" and raises no attention (its turns are skipped meanwhile; §14's dead-man grace decides when silence is an outage). A longer hold, or one stamped in the future, is attention ("check that it isn't stuck"). Every overdue row has its own line, and so does a backup service that has not reported for 15 minutes while nothing holds `ops`. `when_label` says "clock ahead" for a time in the future, and the summary counts such a run as long ago.
     - `recordings.locks.announce(folder: Path, job: str, since: datetime, key: str = OPS_LOCK)`, a context manager used while holding the lock, and `recordings.locks.running(folder: Path, key: str = OPS_LOCK) -> tuple[str, datetime] | None`
-    - `State.read_only(path) -> State | None`: every connection it makes is `mode=ro`
+    - `State.read_only(path) -> State | None`: every connection it makes is `mode=ro`, `backup_to`'s too (one `_mode` property)
+    - `recordings_ui.status.status_view` treats a `None` from it like a missing `state.db`
   - **UI, Python:**
     - `recordings_ui.status`: `@dataclass(frozen=True) StatusSettings(state_path, timezone_name, warn, stop, jobs)`, `status_settings(cfg) -> StatusSettings` and `status_view(archive_root: Path, settings: StatusSettings | None, *, now: datetime | None = None) -> dict`. A `state.db` that can't be read shows as attention, not as an error. With no settings (demo mode) its `disk` is None: no figure.
     - `runtime.configure(archive, *, media_base=None, status=None)` and `runtime.status_settings()`
@@ -20545,11 +20557,12 @@ def test_status_names_the_running_job_and_does_not_flag_the_backup_it_delays(wri
     assert idle["running"] is None
     assert "The last backup is more than 2 hours old." in idle["attention"]
     folder = writer.state.locks_dir
+    # the backup turned late at T0 - 1 h; this hold began before that, so it explains the delay
     with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "restore-test",
-                                                           T0 - timedelta(minutes=50)):
+                                                           T0 - timedelta(minutes=90)):
         busy = status_summary(writer.state, **args)
     assert busy["running"] == {"job": "restore-test", "label": "Restore test",
-                               "since": "2026-10-09 07:10 (50 min ago)"}
+                               "since": "2026-10-09 06:30 (1 h ago)"}
     assert "The last backup is more than 2 hours old." not in busy["attention"]
 
 
@@ -20582,14 +20595,183 @@ def test_a_read_only_state_reads_what_a_live_writer_just_committed(writer):
         assert State.read_only(writer.state.path).meta("probe") == "wal"
     finally:
         live.close()
+
+
+def test_status_says_when_the_backup_service_last_reported(writer):
+    # why: the loop writes a heartbeat at each pass (Task 13), and the backup service has no Docker
+    # healthcheck. A stopped loop must show on Status within minutes, not only once the backup is
+    # 2 hours late, and also where no backup is set up.
+    from recordings.ops import status_summary
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("disk", "backup", "restore-test"))
+    writer.state.record_run("backup", T0 - timedelta(minutes=50), T0 - timedelta(minutes=50), True,
+                            "x")
+    writer.state.set_meta("ops_heartbeat", (T0 - timedelta(minutes=1)).isoformat())
+    live = status_summary(writer.state, **args)
+    assert live["reported"] == "2026-10-09 07:59 (1 min ago)"
+    assert not any("backup service" in a for a in live["attention"])
+    writer.state.set_meta("ops_heartbeat", (T0 - timedelta(minutes=50)).isoformat())
+    quiet = status_summary(writer.state, **args)
+    assert ("The backup service last reported 2026-10-09 07:10 (50 min ago): check that it is "
+            "running.") in quiet["attention"]
+    assert "The last backup is more than 2 hours old." not in quiet["attention"]
+    # A long job leaves the heartbeat old until the next pass, but its own run has just reported.
+    writer.state.record_run("restore-test", T0 - timedelta(hours=3), T0 - timedelta(minutes=1),
+                            True, "restored and validated 3 recordings")
+    after = status_summary(writer.state, **args)
+    assert after["reported"] == "2026-10-09 07:59 (1 min ago)"
+    assert not any("backup service" in a for a in after["attention"])
+    # A heartbeat stamped in the future (a clock put right) proves nothing; nor is a loop that
+    # never reported missed where no backup is set up.
+    writer.state.set_meta("ops_heartbeat", (T0 + timedelta(days=1)).isoformat())
+    alone = status_summary(writer.state, **{**args, "jobs": ("disk",)})
+    assert alone["reported"] is None
+    assert ("The backup service has not reported yet: check that it is running."
+            in alone["attention"])
+
+
+def test_a_job_holding_ops_excuses_a_late_backup_for_12_hours_at_most(writer):
+    # why: a hung restic or rsync, or a CLI job left running, holds "ops" with no end. The
+    # dead-man's switch alerts after its grace (§14); Status must not stay green for days.
+    from recordings.locks import OPS_LOCK, Locks, announce
+    from recordings.ops import status_summary
+    writer.state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup",))
+    folder = writer.state.locks_dir
+    for held_for, excused in ((timedelta(hours=11), True), (timedelta(hours=13), False),
+                              (-timedelta(hours=1), False)):  # a start in the future: long ago
+        with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "check", T0 - held_for):
+            summary = status_summary(writer.state, **args)
+        (backup,) = summary["jobs"]
+        assert backup["waiting"] is excused and backup["attention"] is not excused
+        assert ("The last backup is more than 2 hours old." in summary["attention"]) is not excused
+        stuck = [a for a in summary["attention"] if a.startswith("Repository check has been")]
+        assert bool(stuck) is not excused
+        assert not any("backup service" in a for a in summary["attention"])  # the hold explains it
+    assert stuck == [("Repository check has been running since 2026-10-09 09:00 (clock ahead), and "
+                      "no backup runs until it ends: check that it isn't stuck.")]
+
+
+def test_status_shows_retention_whose_alert_says_see_status(writer):
+    # why: every alert ends "See Status" (§14), and a failed retention alerts.
+    from recordings.ops import status_summary
+    writer.state.record_run("prune", T0, T0, False, "BackupError; exit 1")
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0, jobs=("backup", "prune"))
+    jobs = {j["job"]: j for j in summary["jobs"]}
+    assert jobs["prune"]["label"] == "Retention" and jobs["prune"]["failing"]
+    assert "Retention failed: BackupError; exit 1" in summary["attention"]
+
+
+def test_every_overdue_shown_job_says_so_in_needs_attention(writer):
+    # why: a red "Overdue" row with nothing in the box above it leaves Dan to find it. The box
+    # lists every row that is red (Task 15's council).
+    from recordings.ops import status_summary
+    old = T0 - timedelta(days=40)  # past 2 hours, 8 days and 31 days
+    for job in ("restore-test", "check", "mirror"):
+        writer.state.record_run(job, old, old, True, "x")
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0,
+                             jobs=("mirror", "prune", "check", "restore-test"))
+    last = "2026-08-30 08:00 (40 days ago)"
+    for label in ("Mirror for the Mac", "Repository check", "Restore test"):
+        assert f"{label} is overdue: it last worked {last}." in summary["attention"]
+    assert "Retention has not worked yet." in summary["attention"]
+    fresh = status_summary(writer.state, archive_root=writer.root, now=old + timedelta(hours=1),
+                           timezone_name="UTC", warn=20.0, stop=5.0, jobs=("check", "mirror"))
+    assert not any("overdue" in a for a in fresh["attention"])
+
+
+def test_a_hold_excuses_the_mirror_too_and_only_if_it_began_before_the_job_was_late(writer):
+    # why: §12.5. The mirror's turns are skipped while a job holds ops, as the backup's are, so
+    # neither is Overdue for that. But a hold that began after a job was already late explains
+    # nothing: only the lateness that came first is excused (Task 15's council).
+    from recordings.locks import OPS_LOCK, Locks, announce
+    from recordings.ops import status_summary
+    for job in ("backup", "mirror"):
+        writer.state.record_run(job, T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup", "mirror"))
+    folder = writer.state.locks_dir
+    # Both turned late at T0 - 1 h. A hold from before that excuses them; one from after doesn't.
+    for since, excused in ((T0 - timedelta(minutes=90), True), (T0 - timedelta(minutes=30), False)):
+        with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "check", since):
+            summary = status_summary(writer.state, **args)
+        for row in summary["jobs"]:
+            assert row["waiting"] is excused and row["attention"] is not excused, row["job"]
+        assert ("The last backup is more than 2 hours old." in summary["attention"]) is not excused
+        assert any(a.startswith("Mirror for the Mac is overdue") for a in summary["attention"]) \
+            is not excused
+        # a hold that is merely recent is not "stuck": only a long or future one is
+        assert not any("check that it isn't stuck" in a for a in summary["attention"])
+
+
+def test_a_future_stamp_counts_as_long_ago_and_is_not_just_now(writer):
+    # why: due() and §15.1 treat a run stamped in the future (a clock put right) as long ago.
+    # Status must too: otherwise it shows "OK, just now" for a loop that has stopped recording.
+    from recordings.ops import status_summary, when_label
+    writer.state.record_run("backup", T0 + timedelta(days=1), T0 + timedelta(days=1), True, "x")
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0, jobs=("backup",))
+    (backup,) = summary["jobs"]
+    assert backup["attention"] and "just now" not in backup["last_ok"]
+    assert "The last backup is more than 2 hours old." in summary["attention"]
+    assert when_label(T0 + timedelta(minutes=5), T0, "UTC") == "2026-10-09 08:05 (clock ahead)"
+
+
+def test_the_flags_line_agrees_in_number_and_has_no_markup(writer):
+    # why: the line is shown as plain text, so a backtick would appear literally.
+    from recordings.ops import status_summary
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("disk",))
+    writer.state.flag("recordings/a/recording.json", "outside-edit", "x")
+    one = status_summary(writer.state, **args)
+    assert "1 file needs attention: run recordings reindex." in one["attention"]
+    writer.state.flag("recordings/b/recording.json", "outside-edit", "x")
+    two = status_summary(writer.state, **args)
+    assert "2 files need attention: run recordings reindex." in two["attention"]
+
+
+def test_a_read_only_state_makes_every_connection_read_only(writer, tmp_path, monkeypatch):
+    # why: State.read_only promises that no connection it makes can write, backup_to's too.
+    from recordings.state import State
+    state = State.read_only(writer.state.path)
+    modes = []
+    real = State._connect
+
+    def spy(self, mode):
+        modes.append(mode)
+        return real(self, mode)
+
+    monkeypatch.setattr(State, "_connect", spy)
+    state.backup_to(tmp_path / "copy" / "state.db")
+    state.meta("archive_uuid")
+    assert modes == ["ro", "ro"]
+```
+
+Add to `packages/core/tests/test_deploy_template.py`:
+```python
+def test_web_reads_the_state_folder_the_backup_service_writes():
+    # why: Status (web) reads the state.db and the ops lock that the loop (backup) writes. Two
+    # folders would show, for ever, the last runs Status saw before they split.
+    doc = compose()
+    mounts = {name: {v["target"]: v for v in service["volumes"]}
+              for name, service in doc["services"].items()}
+    assert mounts["web"]["/state"]["source"] == mounts["backup"]["/state"]["source"]
+    for name in ("web", "backup"):
+        assert doc["services"][name]["environment"]["RECORDINGS_STATE"] == "/state", name
 ```
 
 `packages/ui/tests/test_status.py`:
 ```python
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
+from recordings import disk
 from recordings_ui.status import StatusSettings, status_view
 
 T0 = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
@@ -20602,12 +20784,37 @@ def test_the_demo_shows_no_disk_figure(demo_archive):
     assert view == {"configured": False, "jobs": [], "attention": [], "flags": 0, "disk": None}
 
 
-def test_without_a_state_folder_status_shows_disk_only(demo_archive):
+def test_without_a_state_folder_status_shows_disk_only(demo_archive, monkeypatch):
+    monkeypatch.setattr(disk.os, "statvfs", lambda p: SimpleNamespace(
+        f_bavail=150, f_frsize=1024, f_blocks=1000))
     settings = StatusSettings(state_path=None, timezone_name="UTC", warn=20.0, stop=5.0,
                               jobs=("disk",))
     view = status_view(demo_archive, settings, now=T0)
-    assert view["configured"] is False and view["jobs"] == []
-    assert view["disk"]["marker"] is True and view["disk"]["level"] in ("ok", "warn", "stop")
+    assert view["configured"] is False and view["jobs"] == [] and view["attention"] == []
+    assert view["disk"]["marker"] is True
+    assert view["disk"]["level"] == "warn" and view["disk"]["free_percent"] == 15.0
+
+
+def test_a_server_with_a_backup_but_no_state_db_needs_attention(demo_archive, tmp_path):
+    # why: "Backups aren't set up here" is true of a laptop, not of a server whose config has a
+    # [backup]: there the missing state.db means `recordings init` was never run (or the state
+    # folder is not mounted), and every backup since has had nowhere to be recorded.
+    settings = StatusSettings(state_path=tmp_path / "state", timezone_name="UTC", warn=20.0,
+                              stop=5.0, jobs=("disk", "backup"))
+    view = status_view(demo_archive, settings, now=T0)
+    assert view["configured"] is False and view["disk"] is not None
+    assert any("no state.db" in a for a in view["attention"])
+
+
+def test_a_state_db_that_vanishes_after_the_check_is_treated_as_missing(writer, monkeypatch):
+    # why: State.read_only returns None when state.db is gone, and Status must not raise.
+    from recordings.state import State
+    monkeypatch.setattr(State, "read_only", classmethod(lambda cls, path: None))
+    settings = StatusSettings(state_path=writer.state.path, timezone_name="UTC", warn=20.0,
+                              stop=5.0, jobs=("disk", "backup"))
+    view = status_view(writer.root, settings, now=T0)
+    assert view["configured"] is False and view["disk"] is not None
+    assert any("no state.db" in a for a in view["attention"])
 
 
 def test_with_state_status_reads_the_runs(writer):
@@ -20628,8 +20835,28 @@ def test_a_damaged_state_db_needs_attention_rather_than_breaking_the_page(writer
                               stop=5.0, jobs=("disk", "backup"))
     view = status_view(writer.root, settings, now=T0)
     assert view["configured"] is True and view["jobs"] == []
-    assert any("restore it from the backup" in a for a in view["attention"])
+    assert any("restore state.db from the backup" in a for a in view["attention"])
     assert view["disk"] is not None
+
+
+def test_a_state_db_that_is_sound_but_unreachable_gets_no_restore_advice(writer, monkeypatch):
+    # why: state.unreadable() sorts the errors: moving a sound state.db aside, as the restore
+    # advice says, throws away the queue and every merge base. A locked or unmounted one isn't
+    # damage.
+    import recordings.ops
+
+    def busy(*args, **kwargs):
+        exc = sqlite3.OperationalError("database is locked")
+        exc.sqlite_errorname = "SQLITE_BUSY"
+        raise exc
+
+    monkeypatch.setattr(recordings.ops, "status_summary", busy)
+    settings = StatusSettings(state_path=writer.state.path, timezone_name="UTC", warn=20.0,
+                              stop=5.0, jobs=("disk", "backup"))
+    view = status_view(writer.root, settings, now=T0)
+    (line,) = view["attention"]
+    assert "SQLITE_BUSY" in line and "not damage" in line and "restore" not in line
+    assert view["configured"] is True and view["disk"] is not None
 
 
 def test_status_without_state_never_loads_sqlite(demo_archive):
@@ -20805,9 +21032,25 @@ def test_the_status_page_shows_backups_and_disk(page: Page, server_url):
     expect(page.get_by_test_id("status-page")).to_have_count(0)
 
 
+def test_the_status_page_does_not_scroll_sideways_on_a_phone(page: Page, server_url):
+    # why: a card's minimum width plus its padding is wider than a 320 px phone.
+    page.set_viewport_size({"width": 320, "height": 640})
+    page.goto(f"{server_url}/#/status")
+    expect(page.get_by_test_id("status-page")).to_be_visible()
+    overflow = page.evaluate("""() => {
+        const main = document.querySelector("[data-testid=status-page]");
+        return [main.scrollWidth - main.clientWidth,
+                document.documentElement.scrollWidth - document.documentElement.clientWidth];
+    }""")
+    assert overflow == [0, 0]
+
+
+@pytest.mark.browser_context_args(timezone_id="Pacific/Auckland")
 def test_the_header_shows_the_local_time_with_its_offset(page: Page, server_url):
     # why: the archive spans several time zones, so the header shows each recording's own local
-    # time and UTC offset (spec §12.1), whatever zone the browser is in.
+    # time and UTC offset (spec §12.1), whatever zone the browser is in: here, 14 hours ahead of
+    # the recording's own.
+    assert page.evaluate("Intl.DateTimeFormat().resolvedOptions().timeZone") == "Pacific/Auckland"
     open_library(page, server_url)
     page.get_by_test_id("recording-row").filter(has_text="JFK").click()
     expect(page.get_by_test_id("recording-when")).to_have_text("1962-09-12 10:00 UTC-05:00")
@@ -20855,6 +21098,32 @@ describe("StatusPage", () => {
     const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null, running });
     expect(html).toContain('data-testid="status-running"');
     expect(html).toContain("Restore test is running, started 2026-10-09 07:10 (50 min ago)");
+    expect(html).toContain("The hourly backup waits for it.");
+  });
+  it("doesn't say the hourly backup waits for the backup or the disk check", () => {
+    for (const [job, label] of [["backup", "Backup"], ["disk", "Disk check"]]) {
+      const running = { job, label, since: "2026-10-09 07:10 (50 min ago)" };
+      const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null, running });
+      expect(html).toContain(`${label} is running, started 2026-10-09 07:10 (50 min ago).`);
+      expect(html).not.toContain("waits for it");
+    }
+  });
+  it("has a page heading, and the running line spans the grid", () => {
+    const running = { job: "check", label: "Repository check", since: "2026-10-09 07:10 (50 min ago)" };
+    const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null, running });
+    expect(html).toContain("<h1>Status</h1>");
+    expect(html).toContain('class="muted status-running"');
+  });
+  it("says a backup that waits for a running job is waiting, not OK", () => {
+    const late = { ...backup, last_ok: "2026-10-09 05:00 (3 h ago)", waiting: true };
+    const html = render({ configured: true, jobs: [late], attention: [], flags: 0, disk: null });
+    expect(html).toContain("<td>Waiting<div");
+    expect(html).not.toContain("<td>OK");
+  });
+  it("says when the backup service last reported", () => {
+    const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null,
+      reported: "2026-10-09 07:59 (1 min ago)" });
+    expect(html).toContain("The backup service last reported 2026-10-09 07:59 (1 min ago).");
   });
   it("says the free space is unknown when there is no disk figure", () => {
     const html = render({ configured: false, jobs: [], attention: [], flags: 0, disk: null });
@@ -20929,9 +21198,14 @@ def disk_view(status: DiskStatus) -> dict:
 
 In `packages/core/src/recordings/state.py` (the three code blocks below are indented 3 spaces for the
 list: take those 3 off, or Python raises `IndentationError`):
-1. In `State.__init__`, **add** after the line `self.path = Path(path)`:
+1. In `State.__init__`, **add** after the line `self.path = Path(path)`, and **add** the `_mode`
+   property right after `__init__`:
    ```python
            self._read_only = False  # read_only() sets it: every connection is then mode=ro
+
+       @property
+       def _mode(self) -> str:
+           return "ro" if self._read_only else "rw"
    ```
 2. **Add** to `State`, just before `_connect`:
    ```python
@@ -20953,9 +21227,16 @@ list: take those 3 off, or Python raises `IndentationError`):
    ```
 3. In `db()`, **replace** the line `with closing(self._connect("rw")) as conn:` with:
    ```python
-           with closing(self._connect("ro" if self._read_only else "rw")) as conn:
+           with closing(self._connect(self._mode)) as conn:
    ```
    The next line, `PRAGMA synchronous=FULL`, is harmless on a read-only connection.
+4. In `backup_to`, **replace** `with closing(self._connect("rw")) as src, closing(sqlite3.connect(tmp)) as dst:`
+   with:
+   ```python
+               with closing(self._connect(self._mode)) as src, closing(sqlite3.connect(tmp)) as dst:
+   ```
+   and in its docstring, change "The source opens with mode=rw (_connect)" to "The source opens
+   with mode=rw, or ro through read_only() (_connect)", so a reader's copy can't write either.
 
 In `packages/core/src/recordings/locks.py`, **add** `import json` and `from datetime import datetime`, then at the end:
 ```python
@@ -21029,15 +21310,33 @@ In `packages/core/src/recordings/ops.py`, **add** `from pathlib import Path`,
 SHOWN = (("backup", "Backup", timedelta(hours=2)),
          ("restore-test", "Restore test", timedelta(days=31)),
          ("check", "Repository check", timedelta(days=8)),
-         ("mirror", "Mirror for the Mac", timedelta(hours=2)))
+         ("mirror", "Mirror for the Mac", timedelta(hours=2)),
+         ("prune", "Retention", timedelta(days=2)))  # its alert says "See Status" too (§14)
 RUNNING_LABELS = {**{job: label for job, label, _ in SHOWN}, "disk": "Disk check",
-                  "prune": "Retention", "import": "Import"}
+                  "import": "Import"}
+# The loop writes its heartbeat at each pass, about once a minute (Task 13). Between passes only a
+# job holding "ops" keeps it quiet, and that job's run reports when it ends.
+QUIET_AFTER = timedelta(minutes=15)
+# A job holding "ops" excuses a late backup for this long at most. Past it, a hung restic or rsync,
+# or a CLI job left running, needs attention: Status must not stay green for days while the
+# dead-man's switch has alerted after its grace (§14).
+HOLD_LIMIT = timedelta(hours=12)
+
+
+def _stamp(text: str | None) -> datetime | None:
+    try:
+        t = datetime.fromisoformat(text) if text else None
+    except ValueError:
+        return None
+    return t if t is not None and t.tzinfo is not None else None
 
 
 def when_label(t: datetime, now: datetime, timezone_name: str) -> str:
     """`2026-10-08 14:05 (35 min ago)`: ISO 8601 dates and 24-hour times (spec §12)."""
     minutes = int((now - t).total_seconds() // 60)
-    if minutes < 1:
+    if t > now:  # a clock that ran ahead and was put right (§15.1): never "just now"
+        ago = "clock ahead"
+    elif minutes < 1:
         ago = "just now"
     elif minutes < 60:
         ago = f"{minutes} min ago"
@@ -21055,34 +21354,62 @@ def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_
                                  warn=warn, stop=stop))
     flags = len(state.flags())
     held = running(state.locks_dir)  # (job, since) while a job holds the ops lock
+    # A hold can excuse a late job for HOLD_LIMIT at most. A start in the future (a clock put
+    # right) counts as long ago, as in due().
+    hold_ok = held is not None and timedelta(0) <= now - held[1] <= HOLD_LIMIT
     out: dict = {"configured": True, "jobs": [], "attention": [], "flags": flags, "disk": disk,
                  "running": None if held is None else {
                      "job": held[0], "label": RUNNING_LABELS.get(held[0], held[0]),
                      "since": when_label(held[1], now, timezone_name)}}
+    reports = [_stamp(state.meta("ops_heartbeat"))]  # the loop's heartbeat, and each job's last run
     for job, label, stale_after in SHOWN:
         if job not in jobs:
             continue
         good, last = state.last_run(job, ok=True), state.last_run(job)
+        reports.append(last.finished_at if last else None)
         failing = last is not None and not last.ok
-        late = good is None or now - good.finished_at > stale_after
-        # §12.5: while a job holds the ops lock the hourly backup's turns are skipped, so a backup
-        # that is merely late is not an outage; the dead-man's grace decides when silence is.
-        stale = late and not (job == "backup" and good is not None and held is not None)
+        # A run stamped in the future counts as long ago, as in due().
+        ago = None if good is None or good.finished_at > now else now - good.finished_at
+        late = ago is None or ago > stale_after
+        # §12.5: while a job holds the ops lock the backup's and the mirror's turns are skipped,
+        # so one that is merely late is waiting, not an outage, for HOLD_LIMIT at most, and only
+        # if the hold began before the job turned late: a hold that began after explains nothing.
+        waiting = (late and job in ("backup", "mirror") and ago is not None and hold_ok
+                   and held[1] <= good.finished_at + stale_after)
+        stale = late and not waiting
+        last_ok = when_label(good.finished_at, now, timezone_name) if good else None
         out["jobs"].append({
-            "job": job, "label": label,
-            "last_ok": when_label(good.finished_at, now, timezone_name) if good else None,
+            "job": job, "label": label, "last_ok": last_ok,
             "last_ok_detail": good.detail if good else None,  # the NAS's free space, for a backup
             "failing": failing, "detail": last.detail if failing else None,
-            "attention": failing or stale})
+            "attention": failing or stale, "waiting": waiting})
         if job == "backup" and stale:
             out["attention"].append("The last backup is more than 2 hours old." if good
                                     else "No backup has finished yet.")
+        elif stale and not failing:  # a failing job has its line below
+            out["attention"].append(
+                f"{label} is overdue: it last worked {last_ok}." if good
+                else f"{label} has not worked yet.")
         if failing:
             out["attention"].append(f"{label} failed: {last.detail}")
+    if held is not None and not hold_ok:
+        out["attention"].append(
+            f"{out['running']['label']} has been running since {out['running']['since']}, and no "
+            "backup runs until it ends: check that it isn't stuck.")
+    # Silence with nothing holding "ops" means the backup service has stopped, whatever the
+    # backup's own age says, and also where no backup is set up. A future stamp proves nothing.
+    seen = max((t for t in reports if t is not None and t <= now), default=None)
+    out["reported"] = when_label(seen, now, timezone_name) if seen else None
+    if held is None and (seen is None or now - seen > QUIET_AFTER):
+        out["attention"].append(
+            f"The backup service last reported {out['reported']}: check that it is running."
+            if seen else "The backup service has not reported yet: check that it is running.")
     if disk["level"] != "ok":
         out["attention"].append(disk["message"])
     if flags:
-        out["attention"].append(f"{flags} files need attention: run `recordings reindex`.")
+        out["attention"].append(
+            f"{flags} file needs attention: run recordings reindex." if flags == 1
+            else f"{flags} files need attention: run recordings reindex.")
     return out
 ```
 
@@ -21092,8 +21419,8 @@ def status_summary(state: State, *, archive_root: Path, now: datetime, timezone_
 
 The backup records come from state.db, opened read-only. sqlite3 is imported only when a state.db
 exists, so the Pages demo (Pyodide), which has none, never needs it. A state.db that can't be read
-is shown as something needing attention, with the way back, rather than breaking the page. Demo
-mode has no settings, and shows no disk figure.
+is shown as something needing attention, with the way back only if it is damaged, rather than
+breaking the page. Demo mode has no settings, and shows no disk figure.
 """
 
 from __future__ import annotations
@@ -21127,38 +21454,51 @@ def status_settings(cfg) -> StatusSettings:
                           jobs=enabled_jobs(cfg))
 
 
+NO_STATE_DB = ("There is no state.db yet, so no backup can be recorded: run recordings init once, "
+               "on the homelab server, and check that its state folder is mounted.")
+
+
+def _without_state(archive_root: Path, settings: StatusSettings, attention: list[str], *,
+                   configured: bool) -> dict:
+    """Status with no backup records: the disk alone, and why (no state.db, or one that can't be
+    read)."""
+    from recordings.disk import disk_status, disk_view
+
+    disk = disk_view(disk_status(archive_root, expected_uuid=None, warn=settings.warn,
+                                 stop=settings.stop))
+    return {"configured": configured, "jobs": [], "attention": attention, "flags": 0, "disk": disk}
+
+
 def status_view(archive_root: Path, settings: StatusSettings | None, *,
                 now: datetime | None = None) -> dict:
     if settings is None:
         # Demo mode: its disk is a temporary copy, or on Pages, Pyodide's in-memory file system,
         # so any free-space figure would be made up (§17).
         return {"configured": False, "jobs": [], "attention": [], "flags": 0, "disk": None}
-    from recordings.disk import STOP_FREE_PERCENT, WARN_FREE_PERCENT, disk_status, disk_view
-
     now = now or datetime.now(timezone.utc)
-    warn = settings.warn if settings else WARN_FREE_PERCENT
-    stop = settings.stop if settings else STOP_FREE_PERCENT
-    state_db = settings.state_path / "state.db" if settings and settings.state_path else None
-    if state_db is None or not state_db.is_file():
-        return {"configured": False, "jobs": [], "attention": [], "flags": 0,
-                "disk": disk_view(disk_status(archive_root, expected_uuid=None, warn=warn,
-                                              stop=stop))}
+    state_db = settings.state_path / "state.db" if settings.state_path else None
+    state = None
+    if state_db is not None and state_db.is_file():
+        from recordings.state import State  # imports sqlite3: only where a state.db exists
+
+        state = State.read_only(settings.state_path)  # None if it went away since the check
+    if state is None:
+        # A laptop has no backups; a server whose config has a [backup] has lost its records.
+        attention = [NO_STATE_DB] if "backup" in settings.jobs else []
+        return _without_state(archive_root, settings, attention, configured=False)
     import sqlite3
 
     from recordings.ops import status_summary
-    from recordings.state import State
+    from recordings.state import unreadable
 
     try:
-        return status_summary(State.read_only(settings.state_path), archive_root=archive_root,
-                              now=now, timezone_name=settings.timezone_name, warn=warn,
-                              stop=stop, jobs=settings.jobs)
-    except sqlite3.DatabaseError:
-        return {"configured": True, "jobs": [], "flags": 0,
-                "attention": ["state.db can't be read: it is damaged (restore it from the backup, "
-                              "runbook: Restoring for real), or this service can't write to the "
-                              "state folder, which SQLite's WAL files need."],
-                "disk": disk_view(disk_status(archive_root, expected_uuid=None, warn=warn,
-                                              stop=stop))}
+        return status_summary(state, archive_root=archive_root, now=now,
+                              timezone_name=settings.timezone_name, warn=settings.warn,
+                              stop=settings.stop, jobs=settings.jobs)
+    except sqlite3.DatabaseError as exc:
+        # Only damage gets the way back: restoring over a sound state.db that is merely busy,
+        # unmounted or not writable would throw away its queue and merge bases.
+        return _without_state(archive_root, settings, [unreadable(state_db, exc)], configured=True)
 ```
 
 Replace `packages/ui/src/recordings_ui/runtime.py` with:
@@ -21283,11 +21623,13 @@ export type Page = "library" | "status";
 export interface StatusJob {
   job: string; label: string; last_ok: string | null; last_ok_detail: string | null;
   failing: boolean; detail: string | null; attention: boolean;
+  waiting?: boolean;  // late only because a job holds "ops" (spec §12.5)
 }
 
 export interface StatusView {
   configured: boolean; jobs: StatusJob[]; attention: string[]; flags: number;
   running?: { job: string; label: string; since: string } | null;  // absent in the demo
+  reported?: string | null;  // when the backup service last reported; absent in the demo
   disk: { level: "ok" | "warn" | "stop"; message: string; marker: boolean; free_percent: number | null; free_label: string | null } | null;
 }
 ```
@@ -21306,9 +21648,11 @@ export function StatusPage() {
   const disk = status.disk;
   return (
     <main className="status" data-testid="status-page">
+      <h1>Status</h1>
       {status.running && (
-        <p className="muted" data-testid="status-running">
-          {status.running.label} is running, started {status.running.since}. The hourly backup waits for it.
+        <p className="muted status-running" data-testid="status-running">
+          {status.running.label} is running, started {status.running.since}.
+          {!["backup", "disk"].includes(status.running.job) && " The hourly backup waits for it."}
         </p>
       )}
       {status.attention.length > 0 && (
@@ -21328,7 +21672,7 @@ export function StatusPage() {
                   <td>{j.label}</td>
                   <td>{j.last_ok ?? "never"}</td>
                   <td>
-                    {j.failing ? `Failing: ${j.detail}` : j.attention ? "Overdue" : "OK"}
+                    {j.failing ? `Failing: ${j.detail}` : j.attention ? "Overdue" : j.waiting ? "Waiting" : "OK"}
                     {!j.failing && j.last_ok_detail && (
                       <div className="muted" data-testid={`status-job-${j.job}-detail`}>{j.last_ok_detail}</div>
                     )}
@@ -21340,6 +21684,11 @@ export function StatusPage() {
         ) : (
           <p className="muted" data-testid="backups-unconfigured">
             Backups aren't set up here. On the homelab server, the backup service runs them every hour.
+          </p>
+        )}
+        {status.reported !== undefined && (
+          <p className="muted" data-testid="status-reported">
+            {status.reported ? `The backup service last reported ${status.reported}.` : "The backup service has not reported yet."}
           </p>
         )}
       </section>
@@ -21476,9 +21825,10 @@ In `packages/ui/frontend/src/components/RecordingPane.tsx`:
 
 Append to `packages/ui/frontend/src/app.css`:
 ```css
-button.nav { background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; padding: 0 0 2px; margin-right: 12px; }
-.status { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-content: start; }
-.status .problems { grid-column: 1 / -1; margin: 0; }
+button.nav { background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; padding: 0 0 2px; margin-right: 8px; }
+.status { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); align-content: start; }
+.status h1 { grid-column: 1 / -1; margin: 0; font-size: 19px; font-weight: 700; }
+.status .problems, .status .status-running { grid-column: 1 / -1; margin: 0; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .card h2 { margin: 0 0 8px; font-size: 15px; }
 tr.attn td { color: var(--destructive); }
@@ -21493,8 +21843,8 @@ tr.attn td { color: var(--destructive); }
 
 Run: `make test && make e2e && make pages && make pages-test`
 Expected: pytest, Vitest (with `nav.test.ts`, `when.test.ts` and `StatusPage.test.ts`) and the
-Playwright tests all pass (checked in a clone at the commit after Task 14's council fixes: pytest 839, Vitest 23, e2e 9, Pages 5;
-pytest shows 838 and 1 skipped until `make build` has built `www/ui.js`), `test_the_status_page_shows_backups_and_disk` and
+Playwright tests all pass (checked in a clone at the commit after Task 14's council fixes: pytest 851, Vitest 27, e2e 10, Pages 5;
+pytest shows 850 and 1 skipped until `make build` has built `www/ui.js`), `test_the_status_page_shows_backups_and_disk` and
 `test_the_header_shows_the_local_time_with_its_offset` included. The Pages smoke test passes,
 `test_the_status_page_shows_no_made_up_disk` included: the static demo (Pyodide) now runs the
 Status output too, with no state folder, no `sqlite3` and no disk figure.

@@ -10,9 +10,11 @@ export function StatusPage() {
   const disk = status.disk;
   return (
     <main className="status" data-testid="status-page">
+      <h1>Status</h1>
       {status.running && (
-        <p className="muted" data-testid="status-running">
-          {status.running.label} is running, started {status.running.since}. The hourly backup waits for it.
+        <p className="muted status-running" data-testid="status-running">
+          {status.running.label} is running, started {status.running.since}.
+          {!["backup", "disk"].includes(status.running.job) && " The hourly backup waits for it."}
         </p>
       )}
       {status.attention.length > 0 && (
@@ -32,7 +34,7 @@ export function StatusPage() {
                   <td>{j.label}</td>
                   <td>{j.last_ok ?? "never"}</td>
                   <td>
-                    {j.failing ? `Failing: ${j.detail}` : j.attention ? "Overdue" : "OK"}
+                    {j.failing ? `Failing: ${j.detail}` : j.attention ? "Overdue" : j.waiting ? "Waiting" : "OK"}
                     {!j.failing && j.last_ok_detail && (
                       <div className="muted" data-testid={`status-job-${j.job}-detail`}>{j.last_ok_detail}</div>
                     )}
@@ -44,6 +46,11 @@ export function StatusPage() {
         ) : (
           <p className="muted" data-testid="backups-unconfigured">
             Backups aren't set up here. On the homelab server, the backup service runs them every hour.
+          </p>
+        )}
+        {status.reported !== undefined && (
+          <p className="muted" data-testid="status-reported">
+            {status.reported ? `The backup service last reported ${status.reported}.` : "The backup service has not reported yet."}
           </p>
         )}
       </section>

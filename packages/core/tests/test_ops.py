@@ -646,11 +646,12 @@ def test_status_names_the_running_job_and_does_not_flag_the_backup_it_delays(wri
     assert idle["running"] is None
     assert "The last backup is more than 2 hours old." in idle["attention"]
     folder = writer.state.locks_dir
+    # the backup turned late at T0 - 1 h; this hold began before that, so it explains the delay
     with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "restore-test",
-                                                           T0 - timedelta(minutes=50)):
+                                                           T0 - timedelta(minutes=90)):
         busy = status_summary(writer.state, **args)
     assert busy["running"] == {"job": "restore-test", "label": "Restore test",
-                               "since": "2026-10-09 07:10 (50 min ago)"}
+                               "since": "2026-10-09 06:30 (1 h ago)"}
     assert "The last backup is more than 2 hours old." not in busy["attention"]
 
 
@@ -697,3 +698,156 @@ def test_run_job_announces_its_job_while_it_runs(tmp_path, writer, ntfy):
     run_job(context(tmp_path, writer, ntfy, runner=runner), "backup")
     assert seen and set(seen) == {("backup", T0)}
     assert running(writer.state.locks_dir) is None  # and says nothing once it is done
+
+
+def test_status_says_when_the_backup_service_last_reported(writer):
+    # why: the loop writes a heartbeat at each pass (Task 13), and the backup service has no Docker
+    # healthcheck. A stopped loop must show on Status within minutes, not only once the backup is
+    # 2 hours late, and also where no backup is set up.
+    from recordings.ops import status_summary
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("disk", "backup", "restore-test"))
+    writer.state.record_run("backup", T0 - timedelta(minutes=50), T0 - timedelta(minutes=50), True,
+                            "x")
+    writer.state.set_meta("ops_heartbeat", (T0 - timedelta(minutes=1)).isoformat())
+    live = status_summary(writer.state, **args)
+    assert live["reported"] == "2026-10-09 07:59 (1 min ago)"
+    assert not any("backup service" in a for a in live["attention"])
+    writer.state.set_meta("ops_heartbeat", (T0 - timedelta(minutes=50)).isoformat())
+    quiet = status_summary(writer.state, **args)
+    assert ("The backup service last reported 2026-10-09 07:10 (50 min ago): check that it is "
+            "running.") in quiet["attention"]
+    assert "The last backup is more than 2 hours old." not in quiet["attention"]
+    # A long job leaves the heartbeat old until the next pass, but its own run has just reported.
+    writer.state.record_run("restore-test", T0 - timedelta(hours=3), T0 - timedelta(minutes=1),
+                            True, "restored and validated 3 recordings")
+    after = status_summary(writer.state, **args)
+    assert after["reported"] == "2026-10-09 07:59 (1 min ago)"
+    assert not any("backup service" in a for a in after["attention"])
+    # A heartbeat stamped in the future (a clock put right) proves nothing; nor is a loop that
+    # never reported missed where no backup is set up.
+    writer.state.set_meta("ops_heartbeat", (T0 + timedelta(days=1)).isoformat())
+    alone = status_summary(writer.state, **{**args, "jobs": ("disk",)})
+    assert alone["reported"] is None
+    assert ("The backup service has not reported yet: check that it is running."
+            in alone["attention"])
+
+
+def test_a_job_holding_ops_excuses_a_late_backup_for_12_hours_at_most(writer):
+    # why: a hung restic or rsync, or a CLI job left running, holds "ops" with no end. The
+    # dead-man's switch alerts after its grace (§14); Status must not stay green for days.
+    from recordings.locks import OPS_LOCK, Locks, announce
+    from recordings.ops import status_summary
+    writer.state.record_run("backup", T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup",))
+    folder = writer.state.locks_dir
+    for held_for, excused in ((timedelta(hours=11), True), (timedelta(hours=13), False),
+                              (-timedelta(hours=1), False)):  # a start in the future: long ago
+        with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "check", T0 - held_for):
+            summary = status_summary(writer.state, **args)
+        (backup,) = summary["jobs"]
+        assert backup["waiting"] is excused and backup["attention"] is not excused
+        assert ("The last backup is more than 2 hours old." in summary["attention"]) is not excused
+        stuck = [a for a in summary["attention"] if a.startswith("Repository check has been")]
+        assert bool(stuck) is not excused
+        assert not any("backup service" in a for a in summary["attention"])  # the hold explains it
+    assert stuck == [("Repository check has been running since 2026-10-09 09:00 (clock ahead), and "
+                      "no backup runs until it ends: check that it isn't stuck.")]
+
+
+def test_status_shows_retention_whose_alert_says_see_status(writer):
+    # why: every alert ends "See Status" (§14), and a failed retention alerts.
+    from recordings.ops import status_summary
+    writer.state.record_run("prune", T0, T0, False, "BackupError; exit 1")
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0, jobs=("backup", "prune"))
+    jobs = {j["job"]: j for j in summary["jobs"]}
+    assert jobs["prune"]["label"] == "Retention" and jobs["prune"]["failing"]
+    assert "Retention failed: BackupError; exit 1" in summary["attention"]
+
+
+def test_every_overdue_shown_job_says_so_in_needs_attention(writer):
+    # why: a red "Overdue" row with nothing in the box above it leaves Dan to find it. The box
+    # lists every row that is red (Task 15's council).
+    from recordings.ops import status_summary
+    old = T0 - timedelta(days=40)  # past 2 hours, 8 days and 31 days
+    for job in ("restore-test", "check", "mirror"):
+        writer.state.record_run(job, old, old, True, "x")
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0,
+                             jobs=("mirror", "prune", "check", "restore-test"))
+    last = "2026-08-30 08:00 (40 days ago)"
+    for label in ("Mirror for the Mac", "Repository check", "Restore test"):
+        assert f"{label} is overdue: it last worked {last}." in summary["attention"]
+    assert "Retention has not worked yet." in summary["attention"]
+    fresh = status_summary(writer.state, archive_root=writer.root, now=old + timedelta(hours=1),
+                           timezone_name="UTC", warn=20.0, stop=5.0, jobs=("check", "mirror"))
+    assert not any("overdue" in a for a in fresh["attention"])
+
+
+def test_a_hold_excuses_the_mirror_too_and_only_if_it_began_before_the_job_was_late(writer):
+    # why: §12.5. The mirror's turns are skipped while a job holds ops, as the backup's are, so
+    # neither is Overdue for that. But a hold that began after a job was already late explains
+    # nothing: only the lateness that came first is excused (Task 15's council).
+    from recordings.locks import OPS_LOCK, Locks, announce
+    from recordings.ops import status_summary
+    for job in ("backup", "mirror"):
+        writer.state.record_run(job, T0 - timedelta(hours=3), T0 - timedelta(hours=3), True, "x")
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("backup", "mirror"))
+    folder = writer.state.locks_dir
+    # Both turned late at T0 - 1 h. A hold from before that excuses them; one from after doesn't.
+    for since, excused in ((T0 - timedelta(minutes=90), True), (T0 - timedelta(minutes=30), False)):
+        with Locks(folder, timeout=0).hold(OPS_LOCK), announce(folder, "check", since):
+            summary = status_summary(writer.state, **args)
+        for row in summary["jobs"]:
+            assert row["waiting"] is excused and row["attention"] is not excused, row["job"]
+        assert ("The last backup is more than 2 hours old." in summary["attention"]) is not excused
+        assert any(a.startswith("Mirror for the Mac is overdue") for a in summary["attention"]) \
+            is not excused
+        # a hold that is merely recent is not "stuck": only a long or future one is
+        assert not any("check that it isn't stuck" in a for a in summary["attention"])
+
+
+def test_a_future_stamp_counts_as_long_ago_and_is_not_just_now(writer):
+    # why: due() and §15.1 treat a run stamped in the future (a clock put right) as long ago.
+    # Status must too: otherwise it shows "OK, just now" for a loop that has stopped recording.
+    from recordings.ops import status_summary, when_label
+    writer.state.record_run("backup", T0 + timedelta(days=1), T0 + timedelta(days=1), True, "x")
+    summary = status_summary(writer.state, archive_root=writer.root, now=T0, timezone_name="UTC",
+                             warn=20.0, stop=5.0, jobs=("backup",))
+    (backup,) = summary["jobs"]
+    assert backup["attention"] and "just now" not in backup["last_ok"]
+    assert "The last backup is more than 2 hours old." in summary["attention"]
+    assert when_label(T0 + timedelta(minutes=5), T0, "UTC") == "2026-10-09 08:05 (clock ahead)"
+
+
+def test_the_flags_line_agrees_in_number_and_has_no_markup(writer):
+    # why: the line is shown as plain text, so a backtick would appear literally.
+    from recordings.ops import status_summary
+    args = dict(archive_root=writer.root, now=T0, timezone_name="UTC", warn=20.0, stop=5.0,
+                jobs=("disk",))
+    writer.state.flag("recordings/a/recording.json", "outside-edit", "x")
+    one = status_summary(writer.state, **args)
+    assert "1 file needs attention: run recordings reindex." in one["attention"]
+    writer.state.flag("recordings/b/recording.json", "outside-edit", "x")
+    two = status_summary(writer.state, **args)
+    assert "2 files need attention: run recordings reindex." in two["attention"]
+
+
+def test_a_read_only_state_makes_every_connection_read_only(writer, tmp_path, monkeypatch):
+    # why: State.read_only promises that no connection it makes can write, backup_to's too.
+    from recordings.state import State
+    state = State.read_only(writer.state.path)
+    modes = []
+    real = State._connect
+
+    def spy(self, mode):
+        modes.append(mode)
+        return real(self, mode)
+
+    monkeypatch.setattr(State, "_connect", spy)
+    state.backup_to(tmp_path / "copy" / "state.db")
+    state.meta("archive_uuid")
+    assert modes == ["ro", "ro"]

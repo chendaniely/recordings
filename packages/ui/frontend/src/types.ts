@@ -42,10 +42,12 @@ export type Page = "library" | "status";
 export interface StatusJob {
   job: string; label: string; last_ok: string | null; last_ok_detail: string | null;
   failing: boolean; detail: string | null; attention: boolean;
+  waiting?: boolean;  // late only because a job holds "ops" (spec §12.5)
 }
 
 export interface StatusView {
   configured: boolean; jobs: StatusJob[]; attention: string[]; flags: number;
   running?: { job: string; label: string; since: string } | null;  // absent in the demo
+  reported?: string | null;  // when the backup service last reported; absent in the demo
   disk: { level: "ok" | "warn" | "stop"; message: string; marker: boolean; free_percent: number | null; free_label: string | null } | null;
 }
