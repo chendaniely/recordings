@@ -459,6 +459,10 @@ def test_operations_refuse_a_single_tagref_or_plain_strings_to_add():
         "private\u2044journal",  # a slash lookalike
         "\u0440ri\u200bvate",  # a lookalike that also breaks an earlier rule (INVISIBLE)
         "pri\u0301vate",  # a lookalike that also breaks an earlier rule (NOT_NFC)
+        "\u0440ri\u3164vate",  # Hangul filler: hidden, so INVISIBLE fires first
+        "\u0440ri\uffa0vate",  # halfwidth Hangul filler: hidden, so INVISIBLE fires first
+        "\u0440ri\u115fvate",  # Hangul choseong filler: hidden, so INVISIBLE fires first
+        "\u0440ri\u2800vate",  # Braille blank: hidden, so INVISIBLE fires first
     ],
 )
 def test_a_lookalike_is_found_whatever_other_rule_it_breaks(tag):

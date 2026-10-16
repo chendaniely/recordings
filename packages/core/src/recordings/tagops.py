@@ -290,10 +290,13 @@ class Recorded:
 
 
 def _reads_as(part: str) -> str:
-    """How a folder part reads, for the lookalike check: NFKC, format characters dropped,
+    """How a folder part reads, for the lookalike check: NFKC, format characters and the other
+    invisible code points (HIDDEN_CODEPOINTS, as `is_private_tag` drops them) dropped,
     casefolded, accents dropped, and the confusable letters mapped to Latin ones."""
     text = unicodedata.normalize("NFKC", part)
-    text = "".join(c for c in text if unicodedata.category(c) != "Cf").casefold()
+    text = "".join(
+        c for c in text if unicodedata.category(c) != "Cf" and ord(c) not in HIDDEN_CODEPOINTS
+    ).casefold()
     text = "".join(
         c for c in unicodedata.normalize("NFKD", text) if unicodedata.category(c) != "Mn"
     )
