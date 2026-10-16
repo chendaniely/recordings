@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { TagRequest, TagResult } from "../types";
 import {
-  actionText, cellText, confirmBody, confirmTitle, droppedText, failureLines, progressKind, progressStart, progressText, textOf,
+  actionText, cellText, confirmBody, confirmTitle, droppedText, failureLines, progressKind, progressStart, progressText,
+  selectFirstText, textOf,
 } from "./toasts";
 
 const req = (over: Partial<TagRequest>): TagRequest => ({ request_id: "r", action: "add", ids: [], tags: [], ...over });
@@ -126,5 +127,12 @@ describe("progress follows the action (Task 10 council)", () => {
     expect(progressKind(req({ action: "remove" }), false)).toBe("remove");
     expect(progressKind(req({ action: "undo", undo: "u" }), false)).toBe("undo");
     expect(progressKind(req({ action: "undo", undo: "u" }), true)).toBe("redo");
+  });
+});
+
+describe("+ New tag… with nothing selected (Task 15 fix round 1, item 9)", () => {
+  it("mentions dragging only where a pointer can hover, and so drag", () => {
+    expect(selectFirstText(true)).toBe("Select recordings first, or drag them here");
+    expect(selectFirstText(false)).toBe("Select recordings first");
   });
 });

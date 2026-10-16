@@ -2,7 +2,8 @@ import { toast } from "sonner";
 
 import { cannotTagText, type TagStatus } from "@/lib/library";
 import {
-  SELECT_FIRST, STILL_WORKING, actionText, cellText, droppedText, failureLines, progressStart, progressText, type ProgressKind, type Text,
+  STILL_WORKING, actionText, cellText, droppedText, failureLines, progressStart, progressText, selectFirstText,
+  type ProgressKind, type Text,
 } from "@/lib/toasts";
 import type { TagRequest, TagResult } from "@/types";
 
@@ -99,7 +100,8 @@ let selectFirstShown = 0;
 export function showSelectFirst(): void {
   toast.dismiss(`select-first-${selectFirstShown}`);
   selectFirstShown += 1;
-  showNote(`select-first-${selectFirstShown}`, [SELECT_FIRST]);
+  const canHover = typeof window.matchMedia !== "function" || window.matchMedia("(hover: hover)").matches;
+  showNote(`select-first-${selectFirstShown}`, [selectFirstText(canHover)]);
 }
 
 export function showDropped(dropped: number, inFlight: boolean): void {

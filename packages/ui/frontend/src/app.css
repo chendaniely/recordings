@@ -45,7 +45,14 @@ body { background: var(--background); color: var(--foreground); font-family: "At
 .row .m { color: var(--muted-foreground); font-size: 12px; margin: 2px 0 5px; }
 .chip { display: inline-block; font-size: 11px; padding: 0 8px; border-radius: 999px; background: var(--accent); margin: 0 4px 4px 0; }
 .chip.auto { background: transparent; border: 1px dashed var(--border); color: var(--muted-foreground); }
-.chip.nt { background: var(--success-tint); color: var(--brand-success); font-weight: 700; }
+/* A note type's chip: the brand green, a shade darker in the light theme, where it was 4.4:1 on a
+   row both selected and tagged (Task 15 fix round 1, item 2). The dark theme keeps the brand's. */
+:root { --nt-text: color-mix(in srgb, var(--brand-success) 85%, black); }
+.dark { --nt-text: var(--brand-success); }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not(.dark) { --nt-text: var(--brand-success); }
+}
+.chip.nt { background: var(--success-tint); color: var(--nt-text); font-weight: 700; }
 .lock { color: var(--muted-foreground); display: inline; }
 
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--card); }
@@ -89,7 +96,7 @@ h3 { font-weight: 700; margin: 12px 0 6px; }
 
 @media (max-width: 760px) {
   .panes { grid-template-columns: 1fr; grid-auto-rows: auto; overflow: auto; }
-  .sidebar, .list { border-right: 0; border-bottom: 1px solid var(--border); max-height: 40vh; }
+  .sidebar, .list { border-right: 0; border-bottom: 1px solid var(--border); max-height: 40vh; max-height: 40dvh; }
   .notes-split, .compare { grid-template-columns: 1fr; }
 }
 button.nav { background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; padding: 0 0 2px; margin-right: 8px; }
@@ -145,6 +152,12 @@ tr.attn td { color: var(--destructive); }
 .alert-toast { display: grid; gap: 4px; width: 100%; }
 .alert-toast p { margin: 0; overflow-wrap: anywhere; }
 .action-toast code, .alert-toast code, .confirm-title code { unicode-bidi: isolate; direction: ltr; overflow-wrap: anywhere; }
+/* Toasts take taps while a modal dialog makes the rest of the page inert (its body has
+   pointer-events: none), so a toast's Undo works with the picker open (TagPickerDialog; Task 15 fix
+   round 1, item 1). A focused toast shows a ring that forced colours keep: Sonner's is a shadow,
+   with outline: none (item 7). */
+[data-sonner-toaster] { pointer-events: auto; }
+[data-sonner-toaster] [data-sonner-toast]:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .toast-undo { margin-left: auto; min-height: 24px; padding: 4px 6px; border: 0; background: none; color: var(--primary); font: inherit; font-weight: 700; cursor: pointer; flex-shrink: 0; }
 .alert-toast .toast-undo { justify-self: end; }
 
@@ -178,7 +191,8 @@ tr.attn td { color: var(--destructive); }
 .picker-lock svg { width: 12px; height: 12px; }
 .picker-note { min-height: 1.4em; margin: 0; padding: 2px 12px; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
 .picker-keys { margin: 0; padding: 6px 12px 10px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 11.5px; }
-.picker-popover { width: min(340px, calc(100vw - 32px)); }
+.picker-popover { width: min(340px, calc(100vw - 32px)); max-height: var(--radix-popover-content-available-height); }
+.picker-popover > .picker, .picker-popover [cmdk-list] { flex: 0 1 auto; min-height: 0; }
 /* The + is drawn in --muted-foreground, border included (main spec §12.6a). */
 .add-tag { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; padding: 0; border: 1px dashed var(--muted-foreground); border-radius: 999px; background: none; color: var(--muted-foreground); cursor: pointer; }
 .add-tag svg { width: 12px; height: 12px; }
@@ -228,8 +242,10 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 @media (hover: none) {
   .check { visibility: visible; }
   .row .chip-x { display: none; }
-  /* No keys to hint at on touch (Task 12 carry): the list's, the grid's and the phone's Tags page's. */
-  .key-hint { display: none; }
+  /* No keys to hint at on touch (Task 12 carry): the list's, the grid's and the phone's Tags page's
+     hints, the picker's keys line and the selection bar's keys (Task 15 fix round 1, item 6). The
+     keys line still describes the picker's box: aria-describedby reads hidden text. */
+  .key-hint, .picker-keys, .selection-bar kbd { display: none; }
 }
 
 /* Drop targets: a 2px orange outline; the text keeps its colour (tagging spec §6). In the light
@@ -321,18 +337,31 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 .columns-picker legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
 .column-choice { display: flex; align-items: center; gap: 6px; min-height: 24px; overflow-wrap: anywhere; }
 
-/* Phones (tagging spec §6). The picker is a full-width bottom sheet: the dialog form, which the +
-   opens there too (TagPicker.tsx). These rules are unlayered, so they win over the Tailwind
-   utilities placing the centred dialog (top-1/3, -translate-x-1/2 and translate-y-0, which set the
-   translate property; checked: Tailwind v4 docs, translate). It sits on what the screen shows,
-   above an on-screen keyboard (--sheet-bottom), and its list gives up the room
-   (--sheet-height), both from the visual viewport (useSheetRoom); without them, the bottom edge
-   and the dynamic viewport. It slides up rather than zooming (tw-animate-css's enter and exit
-   keyframes read these variables). */
+/* The picker's dialog on a touch screen or a phone (tagging spec §6). Toasts come in at the top there
+   (App.tsx), so the dialog keeps below their band: Sonner's 16 px offset and a two-line toast, or
+   less on a screen too short to spare it (Task 15 fix round 1, item 1). It sits on what the screen
+   shows, above an on-screen keyboard, from the visual viewport (--sheet-top, --sheet-bottom and
+   --sheet-height, set by useSheetRoom; without them the edges and the dynamic viewport), and its
+   list gives up the room. These rules are unlayered, so they win over the Tailwind utilities
+   placing the centred dialog (top-1/3, -translate-x-1/2 and translate-y-0, which set the translate
+   property; checked: Tailwind v4 docs, translate). */
+.picker-dialog { --toast-band: min(112px, calc(var(--sheet-height, 100dvh) * 0.3)); }
+@media (hover: none) and (min-width: 761px) {
+  /* A touch tablet, or a large phone on its side: the dialog stays centred across, near the top. */
+  .picker-dialog {
+    top: calc(var(--sheet-top, 0px) + var(--toast-band));
+    max-height: calc(var(--sheet-height, 100dvh) - var(--toast-band) - 16px);
+    display: flex; flex-direction: column;
+  }
+  .picker-dialog > .picker, .picker-dialog [cmdk-list] { flex: 0 1 auto; min-height: 0; }
+}
+/* Phones: a full-width bottom sheet, the dialog form, which the + opens there too (TagPicker.tsx).
+   It slides up rather than zooming (tw-animate-css's enter and exit keyframes read these
+   variables). */
 @media (max-width: 760px) {
   .picker-dialog {
     top: auto; bottom: var(--sheet-bottom, 0px); left: 0; right: 0; width: 100%; max-width: none; translate: none;
-    max-height: calc(var(--sheet-height, 100dvh) - 16px);
+    max-height: calc(var(--sheet-height, 100dvh) - var(--toast-band));
     display: flex; flex-direction: column;
     border-radius: 12px 12px 0 0;
     --tw-enter-scale: 1; --tw-exit-scale: 1; --tw-enter-translate-y: 100%; --tw-exit-translate-y: 100%;
@@ -340,10 +369,12 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   .picker-dialog > .picker, .picker-dialog [cmdk-list] { flex: 0 1 auto; min-height: 0; }
   /* iOS Safari zooms the page into a text field whose text is under 16 px as it takes focus. */
   .picker-dialog [cmdk-input] { font-size: 16px; }
-  /* The selection bar stays above the bottom of the screen: it sticks to the bottom of the page's
-     scroller. The list clips rather than hides, as overflow: hidden made the list a scroll
-     container of its own, which the bar would have stuck to instead. */
-  .list { overflow: clip; }
+  /* The selection bar stays whole and above the bottom of the screen. The panes' grid squeezes its
+     rows to fit the screen, and squeezed the list (min-height: 0) below its header and bar, which
+     it cut off. A list that clips is no scroll container, so with min-height: auto its content's
+     height is its minimum. On a screen too short even for that the panes scroll, and the bar
+     sticks to their bottom (Task 15 fix round 1, item 12). */
+  .list { overflow: clip; min-height: auto; }
   .selection-bar { position: sticky; bottom: 0; z-index: 3; }
   /* The phone's Tags page is the Untagged list: it takes the page's height. */
   .tags-page.phone .list { max-height: none; flex: 1; min-height: 0; border-bottom: 0; }

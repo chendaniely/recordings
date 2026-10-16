@@ -605,6 +605,22 @@ describe("on a phone (spec §6: the picker is a full-width bottom sheet)", () =>
     expect(rowClick).not.toHaveBeenCalled();
   });
 
+  it("reports the sheet's open and close, so a virtual list keeps the row drawn meanwhile", () => {
+    phoneMedia(true);
+    const changes: boolean[] = [];
+    function Harness() {
+      const [picker, setPicker] = useState<PickerTarget | null>(null);
+      return provide(tagging({ picker, openPicker: setPicker, closePicker: () => setPicker(null) }), createElement("div", {},
+        createElement(AddTagsButton, { id: "a", title: "Week a", place: "row", onOpenChange: (o: boolean) => changes.push(o) }),
+        createElement("button", { "data-testid": "close", onClick: () => setPicker(null) })));
+    }
+    draw(createElement(Harness));
+    flushSync(() => $<HTMLButtonElement>("[data-testid=add-tag]")!.click());
+    expect(changes).toEqual([true]);
+    flushSync(() => $<HTMLButtonElement>("[data-testid=close]")!.click());
+    expect(changes).toEqual([true, false]);
+  });
+
   it("turning a tablet to a phone closes an open popover, reports it, and keeps focus on the +", async () => {
     const media = phoneMedia(false);
     const changes: boolean[] = [];

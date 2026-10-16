@@ -12,7 +12,7 @@ import { TopBar } from "./components/TopBar";
 import { hashFor, routeFromHash } from "./lib/nav";
 import { useGridState } from "./lib/useGridState";
 import { UNTAGGED, useListState } from "./lib/useListState";
-import { PHONE, useMediaQuery } from "./lib/useMediaQuery";
+import { useMediaQuery } from "./lib/useMediaQuery";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
 import { ConfirmDialog } from "./tagging/ConfirmDialog";
 import { TaggingContext, useTagging } from "./tagging/useTagging";
@@ -44,7 +44,10 @@ export default function App() {
   const grid = useGridState(tagging);
   // On a phone the Tags page is the Untagged list instead (spec §6): its state is held here too.
   const untagged = useListState(tagging, UNTAGGED);
-  const phone = useMediaQuery(PHONE);
+  // Toasts come in at the top on touch screens and in windows up to 1,000 px wide: at the bottom
+  // they covered the selection bar, its Clear included, and a phone's sheet (spec §6; Task 15 fix
+  // round 1, item 4). A touch tablet has no Esc to clear with instead.
+  const topToasts = useMediaQuery("(hover: none), (max-width: 1000px)");
 
   // Hash routes: Back returns to the page you came from, and the server never logs them. The hash
   // only chooses what to show: `#/library/<id>` opens that recording, read-only (spec §7, §15).
@@ -79,9 +82,7 @@ export default function App() {
         )}
         <TagPickerDialog />
         <ConfirmDialog />
-        {/* On a phone toasts come in at the top: at the bottom they covered the selection bar and
-            the picker's sheet (spec §6: the bar stays above the bottom of the screen). */}
-        <Toaster position={phone ? "top-center" : "bottom-right"} />
+        <Toaster position={topToasts ? "top-center" : "bottom-right"} />
       </div>
     </TaggingContext.Provider>
   );

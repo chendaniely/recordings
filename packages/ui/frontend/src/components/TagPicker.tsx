@@ -12,8 +12,9 @@ import { shownTags } from "@/lib/library";
 import {
   alreadyWords, createOffer, createRefusal, pickerGroups, pickerTags, stateWords, tagStates, type PickerTag, type TagState,
 } from "@/lib/picker";
-import { PHONE, useMediaQuery } from "@/lib/useMediaQuery";
+import { PHONE, TOUCH, useMediaQuery } from "@/lib/useMediaQuery";
 import { useSheetRoom } from "@/lib/viewport";
+import { inToaster } from "@/tagging/toaster";
 import { useReturnFocus } from "@/tagging/useReturnFocus";
 import { useTaggingContext, type PickerFrom, type PickerTarget } from "@/tagging/useTagging";
 
@@ -326,8 +327,13 @@ export function plusFor(from: PickerFrom): HTMLElement | null {
  * + a phone's sheet came from, which a tap in Safari never focused. The last target stays drawn
  * while the dialog animates out.
  *
- * On a phone the sheet sits on what the screen shows: above an on-screen keyboard, its list
- * giving up the room (useSheetRoom; checked: MDN, VisualViewport and the dynamic viewport units). */
+ * On a touch screen it sits on what the screen shows: above an on-screen keyboard and below the
+ * toasts, which come in at the top there, its list giving up the room (useSheetRoom, app.css;
+ * checked: MDN, VisualViewport and the dynamic viewport units). Radix makes everything outside a
+ * modal dialog inert, and a tap there closes it; a tap on a toast does neither, so a toast's Undo
+ * works with the picker open (Task 15 fix round 1, item 1; checked: Radix Dialog's
+ * onPointerDownOutside, and DismissableLayer's source, which dismisses only when it isn't
+ * prevented). */
 export function TagPickerDialog() {
   const tagging = useTaggingContext();
   const target = tagging.picker;
@@ -337,8 +343,11 @@ export function TagPickerDialog() {
   from.current = shown?.from ?? null;
   const returnFocus = useReturnFocus(() => (from.current ? plusFor(from.current) : null));
   const phone = useMediaQuery(PHONE);
-  const room = useSheetRoom(phone && target !== null);
-  const sheet = room ? ({ "--sheet-bottom": `${room.bottom}px`, "--sheet-height": `${room.height}px` } as CSSProperties) : undefined;
+  const touch = useMediaQuery(TOUCH);
+  const room = useSheetRoom((phone || touch) && target !== null);
+  const sheet = room
+    ? ({ "--sheet-top": `${room.top}px`, "--sheet-bottom": `${room.bottom}px`, "--sheet-height": `${room.height}px` } as CSSProperties)
+    : undefined;
   return (
     <Dialog open={target !== null} onOpenChange={(open) => { if (!open) tagging.closePicker(); }}>
       <DialogContent
@@ -347,6 +356,7 @@ export function TagPickerDialog() {
         showCloseButton={false}
         aria-describedby={undefined}
         onEscapeKeyDown={imeEscape}
+        onPointerDownOutside={(e) => { if (inToaster(e.target)) e.preventDefault(); }}
         {...returnFocus}
       >
         {shown && <PickerBody ids={shown.ids} heading={<DialogTitle className="picker-title">{shown.title}</DialogTitle>} />}
@@ -360,7 +370,7 @@ export function TagPickerDialog() {
  * alignment axis, and `sticky: "always"` keeps it inside the viewport there whatever the trigger
  * does; beside the +, that axis is the vertical one (checked: Radix Popper 1.4.0's shift
  * middleware, `crossAxis: false`; the Popover docs' `side`, `sticky`, `collisionPadding`). */
-const ROW_PLACEMENT = { side: "right", sticky: "always", collisionPadding: 8 } as const;
+const ROW_PLACEMENT = { side: "right", sticky: "always" } as const;
 
 const inConfirmation = (target: EventTarget | null) => target instanceof Element && target.closest("[role=alertdialog]") !== null;
 
@@ -373,22 +383,44 @@ const inConfirmation = (target: EventTarget | null) => target instanceof Element
  * On a phone the + opens the dialog form instead, as a full-width bottom sheet (spec §6), told
  * which + it came from. The button is the same element either way, so turning a tablet into a
  * phone's width closes an open popover, reports the close, and leaves focus on the + (Task 11
- * carry: Radix gives focus back to the trigger when a controlled popover closes). */
+ * carry: Radix gives focus back to the trigger when a controlled popover closes). The sheet's open
+ * and close are reported too, so a virtual list keeps the row drawn meanwhile (fix round 1, item
+ * 10).
+ *
+ * On a touch screen the popover keeps clear of an on-screen keyboard: Radix keeps it inside the
+ * viewport less its collision padding, and sizes it to what is left
+ * (--radix-popover-content-available-height), so the keyboard's height is padding at the bottom
+ * (fix round 1, item 5; checked: the Popover docs' collisionPadding and CSS variables, and Radix
+ * Popper's size middleware, which applies the padding). */
 export function AddTagsButton({ id, title, place, onOpenChange }: {
   id: string; title: string; place: "row" | "header"; onOpenChange?: (open: boolean) => void;
 }) {
   const tagging = useTaggingContext();
   const headingId = useId();
   const phone = useMediaQuery(PHONE);
+  const touch = useMediaQuery(TOUCH);
   const [open, setOpen] = useState(false);
   const ids = useMemo(() => [id], [id]);
+  const room = useSheetRoom(touch && open && !phone);
+  const keyboard = touch ? (room?.bottom ?? 0) : 0;
+  const padding = useMemo(() => ({ top: 8, right: 8, bottom: 8 + keyboard, left: 8 }), [keyboard]);
   const change = (next: boolean) => {
     setOpen(next);
     onOpenChange?.(next);
   };
   useEffect(() => {
-    if (phone && open) change(false);
-  }, [phone, open]);
+    if (!phone || !open) return;
+    setOpen(false);
+    onOpenChange?.(false);
+  }, [phone, open, onOpenChange]);
+  // The sheet this + opened is open while the picker's target still comes from it.
+  const sheetOpen = tagging.picker?.from?.id === id && tagging.picker.from.place === place;
+  const wasSheet = useRef(false);
+  useLayoutEffect(() => {
+    if (sheetOpen === wasSheet.current) return;
+    wasSheet.current = sheetOpen;
+    onOpenChange?.(sheetOpen);
+  }, [sheetOpen, onOpenChange]);
   // The confirmation opens over the picker without closing it (spec §6). A focus move into the
   // Alert Dialog is "outside" this Popover, which Radix would close, so it is refused while the
   // confirmation is open or when it lands in one. (A pointer can't reach outside: the modal
@@ -420,6 +452,7 @@ export function AddTagsButton({ id, title, place, onOpenChange }: {
         className="picker-popover p-0"
         align="start"
         {...(place === "row" ? ROW_PLACEMENT : {})}
+        collisionPadding={padding}
         aria-labelledby={headingId}
         onEscapeKeyDown={imeEscape}
         onFocusOutside={keepOpen}

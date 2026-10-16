@@ -7,6 +7,12 @@ export type Text = (string | { code: string })[];
 export const STILL_WORKING = "Still working…";
 /** A click on the sidebar's + New tag… with nothing selected (Task 13 fix round 1). */
 export const SELECT_FIRST = "Select recordings first, or drag them here";
+
+/** What + New tag… says with nothing selected: dragging is offered only where rows drag, which is
+ * where a pointer can hover (Task 13 fix round 1; Task 15 fix round 1, item 9). */
+export function selectFirstText(canHover: boolean): string {
+  return canHover ? SELECT_FIRST : "Select recordings first";
+}
 const n = (count: number) => count.toLocaleString("en");
 const recordings = (count: number) => `${n(count)} recording${count === 1 ? "" : "s"}`;
 

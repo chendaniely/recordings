@@ -70,8 +70,8 @@ def test_removing_a_last_private_tag_asks_first(page: Page, server, console, dem
     expect(dialog.get_by_role("button", name="Cancel")).to_be_focused()
     page.keyboard.press("Escape")  # Esc means Cancel
     expect(dialog).to_have_count(0)
-    # Focus went to the ×'s next control, the +, and the dialog gave it back there.
-    expect(header.get_by_role("button", name=re.compile(r"^Add tags to Fireside"))).to_be_focused()
+    # Nothing was removed, so focus goes back to the × that asked (Task 15 fix round 1, item 8).
+    expect(remove).to_be_focused()
     expect(header.locator("[data-testid=chip][data-tag=private]")).to_have_count(1)
     assert server.tags(fdr) == [("private", "you")]
     remove.click()
@@ -801,21 +801,35 @@ ROW_COLOURS = """() => {
     const list = getComputedStyle(document.querySelector('.list')).backgroundColor;
     const states = {
         plain: '', selected: 'sel', done: 'done', 'selected+done': 'sel done',
-        'selected+failed': 'sel failed',
+        'selected+failed': 'sel failed', open: 'on', 'open+selected+done': 'on sel done',
     };
+    // Every kind of chip (Task 15 fix round 1, item 2): a tag, an auto tag, a note type (yours
+    // or auto), and a pending one.
+    const chips = { tag: '', auto: 'auto', note: 'nt', 'auto note': 'nt auto', pending: 'pending' };
     const out = {};
     for (const [name, cls] of Object.entries(states)) {
         const row = document.createElement('div');
         row.className = ('row ' + cls).trim();
         row.innerHTML = '<div class="row-cell"><span class="check"></span><div class="row-body">'
-            + '<div class="m">meta</div><span class="done-label">Tagged</span>'
+            + '<div class="m">meta</div><div class="chips">'
+            + Object.values(chips)
+                .map((k) => `<span class="chip ${k}"><span class="chip-label">x</span></span>`)
+                .join('')
+            + '</div><span class="done-label">Tagged</span>'
             + '<span class="failed-label"><svg></svg><span>reason</span></span></div></div>';
         vrows.appendChild(row);
         const of = (sel) => paint(getComputedStyle(row.querySelector(sel)).color);
+        const rowBg = getComputedStyle(row).backgroundColor;
         out[name] = {
-            bg: paint('#fff', list, getComputedStyle(row).backgroundColor),
+            bg: paint('#fff', list, rowBg),
             meta: of('.m'), done: of('.done-label'), reason: of('.failed-label span'),
             glyph: of('.failed-label svg'),
+            chips: Object.fromEntries(Object.keys(chips).map((k, i) => {
+                const chip = row.querySelectorAll('.chip')[i];
+                const s = getComputedStyle(chip);
+                const bg = paint('#fff', list, rowBg, s.backgroundColor);
+                return [k, { text: paint(s.color), bg }];
+            })),
         };
         row.remove();
     }
@@ -835,6 +849,8 @@ def test_the_list_rows_text_stays_readable_in_every_state(page: Page, server, co
         for text in ("meta", "done", "reason"):
             assert contrast(c[text], c["bg"]) >= 4.5, (scheme, state, text, c)
         assert contrast(c["glyph"], c["bg"]) >= 3, (scheme, state, "the ⚠", c)
+        for kind, chip in c["chips"].items():
+            assert contrast(chip["text"], chip["bg"]) >= 4.5, (scheme, state, kind, chip)
 
 
 def test_clear_in_the_selection_bar_gives_focus_back_to_the_list(page: Page, server, console):
@@ -1494,8 +1510,16 @@ def test_the_header_and_the_first_columns_stay_pinned_as_the_grid_scrolls(
     expect(page.get_by_test_id("grid-header")).to_have_count(15)
     grid.evaluate("el => { el.scrollLeft = 600; el.scrollTop = 4000; }")
     wait_until(lambda: grid.evaluate("el => el.scrollLeft > 500 && el.scrollTop > 3000"))
-    seen = grid.evaluate(PINNED)
-    assert seen == {"pin": 0, "cell": "private", "header": "private", "first": "1"}, seen
+    # The virtualiser draws the rows for the new scroll position a frame or more later (Task 15
+    # fix round 1, item 3: read too early, about 1 run in 5 found no row under the probe).
+    want = {"pin": 0, "cell": "private", "header": "private", "first": "1"}
+    seen: dict = {}
+
+    def pinned() -> bool:
+        seen.update(grid.evaluate(PINNED))
+        return seen == want
+
+    wait_until(pinned)
     box = grid.bounding_box()
     head = page.locator("[data-testid=grid-header][data-tag=private]").bounding_box()
     assert abs(head["y"] - box["y"]) < 1 and abs(head["x"] - (box["x"] + 300)) < 1
@@ -2352,17 +2376,10 @@ def on_screen(page: Page, locator) -> bool:
     viewport={"width": 375, "height": 667}, is_mobile=True, has_touch=True
 )
 def test_on_a_phone_the_selection_bar_stays_on_screen(page: Page, big_server, console):
-    page.goto(big_server.url)
-    rows = page.get_by_test_id("recording-row")
-    rows.nth(0).locator(".check").click()
-    rows.nth(1).locator(".check").click()
-    bar = page.get_by_test_id("selection-bar")
-    expect(bar).to_contain_text("2 selected")
-    assert on_screen(page, bar)
-    page.get_by_test_id("recording-list").evaluate("el => { el.scrollTop = el.scrollHeight; }")
-    assert on_screen(page, bar)
     # The Tags page: the Untagged list, with its bar at the bottom of the screen.
     page.goto(f"{big_server.url}/#/tags")
+    rows = page.get_by_test_id("recording-row")
+    bar = page.get_by_test_id("selection-bar")
     expect(page.get_by_test_id("tags-grid")).to_have_count(0)
     rows.nth(0).locator(".check").click()
     rows.nth(2).locator(".check").click()
@@ -2387,6 +2404,45 @@ def test_on_a_phone_the_selection_bar_stays_on_screen(page: Page, big_server, co
     assert on_screen(page, bar)
 
 
+WHOLE = """el => {
+    const r = el.getBoundingClientRect();
+    const at = [[r.left + 2, r.top + 2], [r.right - 2, r.top + 2], [r.left + 2, r.bottom - 2],
+        [r.right - 2, r.bottom - 2]];
+    return r.top >= 0 && r.bottom <= innerHeight + 0.5
+        && at.every(([x, y]) => el.contains(document.elementFromPoint(x, y)));
+}"""
+
+
+@pytest.mark.parametrize("height", [250, 170])
+@pytest.mark.browser_context_args(is_mobile=True, has_touch=True)
+def test_on_a_short_phone_screen_the_librarys_bar_stays_whole(
+    page: Page, big_server, console, height
+):
+    # Task 15 fix round 1, item 12. On a phone the panes' grid squeezes its rows to fit the screen.
+    # At 250 px it squeezed the list (min-height: 0) below its header and bar: the bar was cut off
+    # or, sticky in a list that hides its overflow, covered the header. A list that clips (not a
+    # scroll container) keeps its content's height as its minimum. At 170 px even that doesn't fit,
+    # the panes scroll, and only the sticky bar stays on screen.
+    page.set_viewport_size({"width": 360, "height": height})
+    page.goto(big_server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.nth(0).locator(".check").click()
+    rows.nth(1).locator(".check").click()
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    panes = page.locator(".panes")
+    panes.evaluate("el => { el.scrollTop = 0; }")  # a tap scrolls its checkbox into view
+    scrolls = panes.evaluate("el => el.scrollHeight - el.clientHeight > 1")  # beyond rounding
+    assert scrolls == (height == 170)
+    assert bar.evaluate(WHOLE)
+    if height == 170:
+        return  # 80 px of panes can't show both the list's 45 px header and the 43 px bar
+    # ...and covers none of the list's header, its Refresh included: in a list that hides its
+    # overflow, the sticky bar sticks to the list's own bottom, up over the header.
+    head = page.locator(".list-head").bounding_box()
+    assert bar.bounding_box()["y"] >= head["y"] + head["height"] - 0.5, (head, bar.bounding_box())
+
+
 FAKE_KEYBOARD = """(height) => {
     // An on-screen keyboard shrinks the visual viewport, not the layout one (MDN, VisualViewport).
     const vv = window.visualViewport;
@@ -2396,7 +2452,25 @@ FAKE_KEYBOARD = """(height) => {
 }"""
 
 
-@pytest.mark.browser_context_args(**PHONE)
+IPHONE_13 = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
+TOAST_BAND = 112  # Sonner's 16 px offset and a two-line toast, on top on a phone
+
+
+def within(locator, top: float, bottom: float) -> bool:
+    b = locator.bounding_box()
+    return b is not None and b["y"] >= top - 0.5 and b["y"] + b["height"] <= bottom + 0.5
+
+
+def apart(a: dict, b: dict) -> bool:
+    return (
+        a["y"] + a["height"] <= b["y"] + 0.5
+        or b["y"] + b["height"] <= a["y"] + 0.5
+        or a["x"] + a["width"] <= b["x"] + 0.5
+        or b["x"] + b["width"] <= a["x"] + 0.5
+    )
+
+
+@pytest.mark.browser_context_args(**IPHONE_13)
 def test_the_sheet_stays_above_the_on_screen_keyboard(page: Page, server, console):
     open_library(page, server.url)
     open_row(page, "JFK")
@@ -2405,17 +2479,63 @@ def test_the_sheet_stays_above_the_on_screen_keyboard(page: Page, server, consol
     ).click()
     sheet = page.get_by_role("dialog")
     expect(sheet).to_be_visible()
-    page.evaluate(FAKE_KEYBOARD, 260)  # a keyboard over the bottom 480 px
+    page.evaluate(FAKE_KEYBOARD, 508)  # iPhone 13's keyboard: 336 px
+    # Above the keyboard, and below the toasts' band (fix round 1, item 1).
+    wait_until(lambda: within(sheet, TOAST_BAND, 508))
+    assert within(page.locator("[data-slot=input-group]"), TOAST_BAND, 508)
+    page.evaluate(FAKE_KEYBOARD, 844)  # the keyboard goes: the sheet sits on the bottom again
+    wait_until(lambda: abs(sheet.bounding_box()["y"] + sheet.bounding_box()["height"] - 844) < 1)
 
-    def above(locator, edge: float) -> bool:
-        b = locator.bounding_box()
-        return b is not None and b["y"] >= -0.5 and b["y"] + b["height"] <= edge + 0.5
 
-    wait_until(lambda: above(sheet, 260))
-    assert above(page.get_by_test_id("picker-input"), 260)
-    assert above(sheet.locator(".picker-keys"), 260)  # the list gives up the room, not the box
-    page.evaluate(FAKE_KEYBOARD, 740)  # the keyboard goes: the sheet sits on the bottom again
-    wait_until(lambda: abs(sheet.bounding_box()["y"] + sheet.bounding_box()["height"] - 740) < 1)
+@pytest.mark.browser_context_args(**IPHONE_13)
+def test_with_the_keyboard_up_a_toast_leaves_the_sheets_box_clear_and_its_undo_works(
+    page: Page, server, console, demo_ids
+):
+    # Task 15 fix round 1, item 1: the sheet grew under the top toasts, which covered its box, and
+    # the modal sheet made the toast inert: a tap on Undo closed the sheet and undid nothing.
+    jfk = demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Add tags to")
+    ).click()
+    sheet = page.get_by_role("dialog")
+    expect(sheet).to_be_visible()
+    page.evaluate(FAKE_KEYBOARD, 508)
+    box = page.get_by_test_id("picker-input")
+    box.fill("keyboard-up")
+    box.press("Shift+Enter")
+    wait_until(lambda: ("keyboard-up", "you") in server.tags(jfk))
+    toast = page.locator("[data-sonner-toast]").filter(has_text="Added keyboard-up")
+    expect(toast).to_be_visible()
+    toast.evaluate(SETTLED)
+    sheet.evaluate(SETTLED)
+    group = page.locator("[data-slot=input-group]").bounding_box()
+    assert apart(toast.bounding_box(), group), (toast.bounding_box(), group)
+    toast.get_by_role("button", name="Undo").click()
+    wait_until(lambda: ("keyboard-up", "you") not in server.tags(jfk))
+    expect(sheet).to_be_visible()  # the tap on the toast didn't close it
+    expect(box).to_be_focused()
+
+
+@pytest.mark.browser_context_args(**PHONE)
+def test_on_touch_the_keys_lines_go_but_the_box_keeps_its_description(page: Page, server, console):
+    # Task 15 fix round 1, item 6: no keys to press on touch. The keys line still describes the box
+    # (aria-describedby reads hidden text).
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.nth(0).locator(".check").click()
+    rows.nth(1).locator(".check").click()
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    for kbd in bar.locator("kbd").all():
+        expect(kbd).to_be_hidden()
+    bar.get_by_role("button", name=re.compile(r"^Tag")).click()
+    expect(page.get_by_role("dialog")).to_be_visible()
+    expect(page.locator(".picker-keys")).to_be_hidden()
+    expect(page.get_by_test_id("picker-input")).to_have_accessible_description(
+        re.compile(r"^Enter add · Shift\+Enter create")
+    )
 
 
 @pytest.mark.browser_context_args(viewport={"width": 1024, "height": 768}, has_touch=True)
@@ -2605,3 +2725,206 @@ def test_forced_colours_keep_each_state_and_each_overlays_edge(page: Page, serve
     radios = page.get_by_role("menuitemradio")
     outlines = [radios.nth(i).evaluate(EDGES)["outline"] for i in range(radios.count())]
     assert outlines == ["none", "solid", "none", "none"], outlines  # only the focused item
+
+
+# Task 15 fix round 1.
+
+
+def tag_a_selection(page: Page, server) -> None:
+    """Apollo 11 and JFK selected and tagged together: both rows done and still selected, each
+    with a note type's chip (item 2: the normal state after any selection-wide tag)."""
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.filter(has_text="Apollo 11").click()
+    rows.filter(has_text="JFK").locator(".check").click()
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    bar.get_by_role("button", name=re.compile(r"^Tag")).click()
+    box = page.get_by_test_id("picker-input")
+    box.fill("together")
+    box.press("Shift+Enter")
+    expect(page.get_by_test_id("action-toast")).to_contain_text("Added together to 2 recordings")
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    expect(rows.filter(has_text="JFK")).to_contain_text("Tagged")
+    expect(rows.filter(has_text="Apollo 11")).to_have_attribute("aria-selected", "true")
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_list_passes_axe_after_tagging_a_selection(page: Page, server, console, theme):
+    page.emulate_media(color_scheme=theme)
+    tag_a_selection(page, server)
+    page.mouse.move(0, 0)
+    assert axe(page, ".list") == []
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.browser_context_args(**PHONE)
+def test_the_phone_list_passes_axe_after_tagging_a_selection(page: Page, server, console, theme):
+    page.emulate_media(color_scheme=theme)
+    tag_a_selection(page, server)
+    assert axe(page, ".list", WCAG22) == []
+
+
+TOASTER = "[data-sonner-toaster]"
+
+
+def test_toasts_come_in_at_the_top_in_a_narrow_window(page: Page, server, console):
+    # Item 4: at 768–1000 px the bottom-right toasts covered the selection bar's Clear.
+    page.set_viewport_size({"width": 900, "height": 700})
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.first.click()
+    rows.nth(1).click(modifiers=["ControlOrMeta"])
+    page.keyboard.press("t")
+    box = page.get_by_test_id("picker-input")
+    box.fill("narrow")
+    box.press("Shift+Enter")
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    toast = page.locator("[data-sonner-toast]").first
+    expect(toast).to_be_visible()
+    expect(page.locator(TOASTER)).to_have_attribute("data-y-position", "top")
+    toast.evaluate(SETTLED)
+    clear = page.get_by_test_id("selection-bar").get_by_role("button", name=re.compile(r"^Clear"))
+    assert apart(toast.bounding_box(), clear.bounding_box())
+    page.set_viewport_size({"width": 1280, "height": 800})  # wide, with a pointer: bottom right
+    expect(page.locator(TOASTER)).to_have_attribute("data-y-position", "bottom")
+
+
+TABLET = {"viewport": {"width": 1024, "height": 768}, "is_mobile": True, "has_touch": True}
+
+
+@pytest.mark.browser_context_args(**TABLET)
+def test_on_a_touch_tablet_the_picker_stays_above_the_on_screen_keyboard(
+    page: Page, server, console
+):
+    # Item 5: the dialog and the + popover ignored the keyboard wherever the window was wider than
+    # a phone; on a 1024×768 tablet the T dialog ended 318 px under it.
+    open_library(page, server.url)
+    assert page.evaluate("() => matchMedia('(hover: none)').matches")
+    open_row(page, "JFK")
+    page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Add tags to")
+    ).click()
+    popover = page.locator("[data-slot=popover-content]")
+    expect(popover).to_be_visible()
+    page.evaluate(FAKE_KEYBOARD, 420)
+    wait_until(lambda: within(popover, 0, 420))
+    assert within(popover.locator("[data-slot=input-group]"), 0, 420)
+    page.keyboard.press("Escape")
+    expect(popover).to_have_count(0)
+    page.evaluate(FAKE_KEYBOARD, 768)
+    page.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    page.keyboard.press("t")
+    dialog = page.locator("[data-slot=dialog-content]")
+    expect(dialog).to_be_visible()
+    page.evaluate(FAKE_KEYBOARD, 420)
+    # Above the keyboard, below the toasts' band: toasts are on top on touch (item 4).
+    wait_until(lambda: within(dialog, TOAST_BAND, 420))
+    box = page.get_by_test_id("picker-input")
+    box.fill("tablet")
+    box.press("Shift+Enter")
+    toast = page.locator("[data-sonner-toast]").filter(has_text="Added tablet")
+    expect(toast).to_be_visible()
+    expect(page.locator(TOASTER)).to_have_attribute("data-y-position", "top")
+    toast.evaluate(SETTLED)
+    group = page.locator("[data-slot=dialog-content] [data-slot=input-group]").bounding_box()
+    assert apart(toast.bounding_box(), group), (toast.bounding_box(), group)
+
+
+@pytest.mark.browser_context_args(
+    viewport={"width": 839, "height": 412}, is_mobile=True, has_touch=True
+)
+def test_in_landscape_on_a_large_phone_the_dialog_keeps_its_box_above_the_keyboard(
+    page: Page, server, console
+):
+    # Item 5: Pixel 7 on its side is wider than a phone's width; its keyboard leaves about 210 px.
+    open_library(page, server.url)
+    page.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    page.keyboard.press("t")
+    dialog = page.locator("[data-slot=dialog-content]")
+    expect(dialog).to_be_visible()
+    page.evaluate(FAKE_KEYBOARD, 210)
+    wait_until(lambda: within(dialog, 0, 210))
+    assert within(page.locator("[data-slot=dialog-content] [data-slot=input-group]"), 0, 210)
+
+
+def test_a_focused_toast_shows_its_focus_in_forced_colours(page: Page, server, console):
+    # Item 7: Sonner's outline: none beat the app's ring, and forced colours drop its shadow ring.
+    page.emulate_media(forced_colors="active")
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Remove tag talks")
+    ).click()
+    expect(page.get_by_test_id("action-toast")).to_be_visible()
+    page.keyboard.press("Alt+KeyT")
+    for _ in range(3):
+        if page.evaluate("() => document.activeElement?.matches('[data-sonner-toast]')"):
+            break
+        page.keyboard.press("Tab")
+    toast = page.locator("[data-sonner-toast]:focus")
+    expect(toast).to_have_count(1)
+    ring = toast.evaluate(
+        "el => { const s = getComputedStyle(el);"
+        " return [s.outlineStyle, parseFloat(s.outlineWidth), s.outlineColor]; }"
+    )
+    assert ring[0] == "solid" and ring[1] >= 2, ring
+    assert ring[2] not in ("transparent", "rgba(0, 0, 0, 0)"), ring
+
+
+def test_cancelling_the_confirmation_gives_focus_back_to_the_x_that_asked(
+    page: Page, server, console, demo_ids
+):
+    # Item 8: the × moves focus on to its next control as it sends; Cancel gave focus to the +.
+    open_library(page, server.url)
+    open_row(page, "Fireside")
+    x = page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Remove tag private")
+    )
+    x.focus()
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("alertdialog")
+    expect(dialog.get_by_role("button", name="Cancel")).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(x).to_be_focused()
+    # A row's × the same way, reached with the arrows.
+    row = page.get_by_test_id("recording-row").filter(has_text="Fireside")
+    row.focus()
+    page.keyboard.press("ArrowRight")
+    row_x = row.get_by_role("button", name=re.compile(r"^Remove tag private"))
+    expect(row_x).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(dialog.get_by_role("button", name="Cancel")).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(row_x).to_be_focused()
+    assert server.tags(demo_ids["fdr-fireside-1"]) == [("private", "you")]
+
+
+@pytest.mark.browser_context_args(**PHONE)
+def test_on_touch_new_tag_with_nothing_selected_says_nothing_of_dragging(
+    page: Page, server, console
+):
+    # Item 9: nothing drags where nothing hovers (Task 13 fix round 1).
+    open_library(page, server.url)
+    page.get_by_test_id("new-tag").click()
+    toast = page.get_by_test_id("action-toast")
+    expect(toast).to_contain_text("Select recordings first")
+    expect(toast).not_to_contain_text("drag")
+
+
+PHONE_LIST_HEIGHTS = """() => [...document.styleSheets]
+    .flatMap((sheet) => { try { return [...sheet.cssRules]; } catch { return []; } })
+    .filter((rule) => rule instanceof CSSMediaRule)
+    .flatMap((media) => [...media.cssRules])
+    .filter((rule) => rule.selectorText === '.sidebar, .list')
+    .map((rule) => rule.style.maxHeight)"""
+
+
+def test_the_phone_lists_heights_follow_the_dynamic_viewport(page: Page, server, console):
+    # Item 11: 40vh is the large viewport's, taller than the screen while a phone's bars show.
+    open_library(page, server.url)
+    assert page.evaluate(PHONE_LIST_HEIGHTS) == ["40dvh"]

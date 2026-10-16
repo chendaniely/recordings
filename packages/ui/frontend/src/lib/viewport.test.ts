@@ -7,20 +7,20 @@ import { sheetRoom, useSheetRoom, type SheetRoom } from "./viewport";
 
 describe("sheetRoom (a phone's bottom sheet above the on-screen keyboard)", () => {
   it("is the whole screen with no keyboard", () => {
-    expect(sheetRoom(740, { height: 740, offsetTop: 0 })).toEqual({ bottom: 0, height: 740 });
+    expect(sheetRoom(740, { height: 740, offsetTop: 0 })).toEqual({ top: 0, bottom: 0, height: 740 });
   });
 
   it("rises by the keyboard's height, and shrinks to what is left", () => {
-    expect(sheetRoom(740, { height: 400, offsetTop: 0 })).toEqual({ bottom: 340, height: 400 });
+    expect(sheetRoom(740, { height: 400, offsetTop: 0 })).toEqual({ top: 0, bottom: 340, height: 400 });
   });
 
   it("follows a visual viewport the browser scrolled down to the box", () => {
-    expect(sheetRoom(740, { height: 400, offsetTop: 120 })).toEqual({ bottom: 220, height: 400 });
+    expect(sheetRoom(740, { height: 400, offsetTop: 120 })).toEqual({ top: 120, bottom: 220, height: 400 });
   });
 
   it("never goes below the bottom edge, and rounds to whole pixels", () => {
-    expect(sheetRoom(740, { height: 760.4, offsetTop: 0 })).toEqual({ bottom: 0, height: 760 });
-    expect(sheetRoom(740, { height: 399.6, offsetTop: 0.2 })).toEqual({ bottom: 340, height: 400 });
+    expect(sheetRoom(740, { height: 760.4, offsetTop: 0 })).toEqual({ top: 0, bottom: 0, height: 760 });
+    expect(sheetRoom(740, { height: 399.6, offsetTop: 0.2 })).toEqual({ top: 0, bottom: 340, height: 400 });
   });
 });
 
@@ -53,18 +53,19 @@ afterEach(() => {
 });
 
 describe("useSheetRoom", () => {
-  it("follows the visual viewport while on, and lets go when off", async () => {
+  it("follows the visual viewport while on, and stops listening when off", async () => {
     vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(740);
     const visual = fakeVisual(740);
     const root = createRoot(document.createElement("div"));
     flushSync(() => root.render(createElement(Probe, { on: true })));
     await tick();
-    expect(seen.at(-1)).toEqual({ bottom: 0, height: 740 });
+    expect(seen.at(-1)).toEqual({ top: 0, bottom: 0, height: 740 });
     visual.resize(400); // the keyboard comes up
-    expect(seen.at(-1)).toEqual({ bottom: 340, height: 400 });
+    expect(seen.at(-1)).toEqual({ top: 0, bottom: 340, height: 400 });
     flushSync(() => root.render(createElement(Probe, { on: false })));
     await tick();
-    expect(seen.at(-1)).toBe(null);
+    // Kept as it was, so a closing sheet slides out from where it stood (fix round 1, item 13).
+    expect(seen.at(-1)).toEqual({ top: 0, bottom: 340, height: 400 });
     const before = seen.length;
     visual.resize(740); // no longer listening
     expect(seen.length).toBe(before);
