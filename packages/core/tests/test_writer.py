@@ -963,10 +963,33 @@ def test_would_expose_leaves_the_file_and_its_revisions_untouched(writer, make_i
     rel = writer._rel(rec.id)
     path = writer.root / rel
     before = path.read_bytes()
+    committed_id = writer.state.last_committed(rel).id
     with pytest.raises(WouldExpose):
         writer.mutate(rec.id, Recorded(RemoveTags(("private",)), "req0002abcd"))
     assert path.read_bytes() == before
     assert writer.state.pending(rel) is None
     assert writer.state.last_committed(rel).rev == 1
+    assert writer.state.last_committed(rel).id == committed_id
+    with Locks(writer.state.locks_dir, timeout=0).hold(rec.id):
+        pass  # the lock is free at once
+    assert writer.state.index_pending() == []
+    assert not list(path.parent.glob("*.tmp")) and not list(path.parent.glob(".tmp*"))
     allowed = writer.mutate(rec.id, RemoveTags(("private",), frozenset({rec.id})))
     assert allowed.tags == [] and allowed.rev == 2
+
+
+def test_a_duplicate_merge_never_clears_an_exclusion(writer, make_incoming):
+    # why: main spec §7.3 "your choice wins" and §6.4: the merge joins tags and exclusions; only
+    # the UI's AddTags clears an exclusion.
+    rec = writer.add(make_incoming()).recording
+    writer.mutate(rec.id, writer_module.MergeIncoming(sources=(), excluded_note_types=("x",)))
+    for by in ("you", "auto"):
+        out = writer.mutate(
+            rec.id,
+            writer_module.MergeIncoming(
+                sources=(), tags=(TagRef(tag="notes/x", by=by), TagRef(tag="notes/y", by=by))
+            ),
+        )
+        assert out.excluded_note_types == ["x"]
+        assert "notes/x" not in [t.tag for t in out.tags]
+    assert [t.tag for t in out.tags].count("notes/y") == 1

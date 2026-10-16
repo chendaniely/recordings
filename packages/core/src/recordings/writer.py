@@ -68,7 +68,11 @@ from recordings.refs import canonical_ref
 from recordings.selfdoc import write_docs
 from recordings.sentinel import MIRROR, SentinelError, is_mirror, read_sentinel
 from recordings.state import State, StateError, unreadable
-from recordings.tagops import AddTags  # re-exported: the tag operations live in tagops (spec §4)
+from recordings.tagops import (
+    NOTES,
+    AddTags,
+    _append_tags,
+)  # re-exported: the tag operations live in tagops (spec §4)
 
 INDEX_LOCK = "index"
 DOCS_LOCK = "docs"
@@ -122,11 +126,20 @@ class MergeIncoming:
     name: str = "merge-duplicate"
 
     def apply(self, rec: Recording) -> Recording:
-        rec = AddTags(self.tags).apply(rec)
-        excluded = list(rec.excluded_note_types)
-        excluded += [n for n in dict.fromkeys(self.excluded_note_types) if n not in excluded]
+        # The merge never clears or overrides an exclusion: "your choice wins" (main spec §7.3).
+        # Only the UI's AddTags does. An incoming notes/<type> the recording excludes is dropped.
+        kept = [
+            t
+            for t in self.tags
+            if not (t.tag.startswith(NOTES) and t.tag[len(NOTES) :] in rec.excluded_note_types)
+        ]
+        excluded = list(dict.fromkeys([*rec.excluded_note_types, *self.excluded_note_types]))
         return rec.model_copy(
-            update={"sources": [*rec.sources, *self.sources], "excluded_note_types": excluded}
+            update={
+                "tags": _append_tags(rec.tags, kept),
+                "sources": [*rec.sources, *self.sources],
+                "excluded_note_types": excluded,
+            }
         )
 
 

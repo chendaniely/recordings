@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -167,6 +167,16 @@ def _note_type(tag: str) -> str | None:
     return tag[len(NOTES) :] if tag.startswith(NOTES) else None
 
 
+def _append_tags(tags: list[TagRef], new: Iterable[TagRef]) -> list[TagRef]:
+    """`tags` plus the tags of `new` it doesn't have, in order. Never touches exclusions."""
+    out, have = list(tags), {t.tag for t in tags}
+    for tag in new:
+        if tag.tag not in have:
+            out.append(tag)
+            have.add(tag.tag)
+    return out
+
+
 @dataclass(frozen=True)
 class AddTags:
     """Adds the tags the recording doesn't have. A tag already there is left as it is, `by`
@@ -183,11 +193,7 @@ class AddTags:
             raise TypeError("tags must be TagRef objects")
 
     def apply(self, rec: Recording) -> Recording:
-        tags, have = list(rec.tags), {t.tag for t in rec.tags}
-        for tag in self.tags:
-            if tag.tag not in have:
-                tags.append(tag)
-                have.add(tag.tag)
+        tags = _append_tags(rec.tags, self.tags)
         yours = {_note_type(t.tag) for t in self.tags if t.by == "you"} - {None}
         excluded = [n for n in rec.excluded_note_types if n not in yours]
         update: dict = {"tags": tags}
@@ -261,7 +267,9 @@ class RestoreTags:
 @dataclass
 class Recorded:
     """Wraps an operation so the caller sees the Recording `apply` was given (before) and the one
-    it returned (after), both taken under the recording's lock (spec §4). `mutate` itself is
+    it returned (after), both taken under the recording's lock (spec §4). `after` is what the op
+    produced, set before the write: not proof that it landed, so a caller re-reads the recording
+    to confirm. `mutate` itself is
     unchanged. Its name is `<op>:<request_id>`, which `mutate` records as the revision's origin
     in state.db (spec §5, "The record")."""
 
