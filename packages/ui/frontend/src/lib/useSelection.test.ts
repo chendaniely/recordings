@@ -76,11 +76,24 @@ describe("useRowOrder: rows stay put (spec §6)", () => {
     expect(order.ids).toEqual(["b"]);
     expect(order.reason).toBe("load");
   });
+  it("puts back only the Undo's rows that pass the Library's own filter", async () => {
+    // why: Task 14 fix round 2, item 2. A grid Undo put its rows into the Library's filter
+    // unfiltered: a tagged recording under Untagged.
+    await draw({ v: view(row("a"), row("b"), row("c", ["talks"])), loadKey: 1, filter: UNTAGGED });
+    expect(order.ids).toEqual(["a", "b"]);
+    const key = order.key;
+    await draw({ revealed: { key: 1, ids: ["c"] } });
+    expect(order.ids).toEqual(["a", "b"]);
+    expect(order.key).toBe(key);
+    await draw({ v: view(row("a"), row("b"), row("c", ["talks"]), row("d")), revealed: { key: 2, ids: ["c", "d"] } });
+    expect(order.ids).toEqual(["a", "b", "d"]);
+  });
   it("puts an Undo's rows back at their place, in the current filter", async () => {
     await draw({ v: view(row("a"), row("b"), row("c")), loadKey: 1, filter: UNTAGGED });
     await draw({ v: view(row("a"), row("b", ["work"]), row("c")), loadKey: 2 });
     expect(order.ids).toEqual(["a", "c"]);
-    await draw({ revealed: { key: 1, ids: ["b"] } });
+    // The Undo's reply has b untagged again by the time its rows come back.
+    await draw({ v: view(row("a"), row("b"), row("c")), revealed: { key: 1, ids: ["b"] } });
     expect(order.ids).toEqual(["a", "b", "c"]);
     expect(order.reason).toBe("reveal");
   });
@@ -121,7 +134,7 @@ describe("useSelection: Finder selection over the order (spec §6)", () => {
     await draw({ v: four, loadKey: 1, filter: UNTAGGED });
     await act(() => selection.act({ type: "click", id: "d", meta: false, shift: false }));
     const before = selection.sel;
-    await draw({ revealed: { key: 1, ids: ["a"] } });
+    await draw({ v: view(row("a"), row("b"), row("c", ["talks"]), row("d")), revealed: { key: 1, ids: ["a"] } });
     expect(order.ids).toEqual(["a", "b", "d"]);
     expect(selection.sel).toBe(before);
   });
@@ -150,7 +163,7 @@ describe("useSelection, fix round 1 (Task 12)", () => {
     await draw({ v: view(row("a", ["work"]), row("b"), row("c"), row("d"), row("e")), loadKey: 2, filter: UNTAGGED });
     expect(selection.fitted.reason).toBe("load");
     const before = selection.sel;
-    await draw({ revealed: { key: 1, ids: ["a"] } });
+    await draw({ v: view(...five()), revealed: { key: 1, ids: ["a"] } }); // a untagged again by the Undo
     expect(selection.fitted).toEqual({ key: order.key, reason: "reveal" }); // the rows moved
     expect(selection.sel).toBe(before);
   });

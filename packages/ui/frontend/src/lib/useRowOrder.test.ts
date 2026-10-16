@@ -79,16 +79,34 @@ describe("useGridOrder: the Tags grid's rows stay put (spec §6, §7)", () => {
   it("puts an Undo's rows back at their place in the sorted order", async () => {
     await draw({ v: four, settings: { untaggedOnly: true, title: "", sort: { by: "oldest" } } });
     expect(order.ids).toEqual(["d", "b"]);
-    await draw({ revealed: { key: 1, ids: ["c"] } });
+    // The Undo's reply has c untagged again by the time its rows come back.
+    const undone = view(row("a", 4, ["talks"]), row("b", 3), row("c", 2, [], "Apple"), row("d", 1));
+    await draw({ v: undone, revealed: { key: 1, ids: ["c"] } });
     expect(order).toMatchObject({ ids: ["d", "c", "b"], reason: "reveal" });
   });
 
-  it("puts back nothing for an Undo heard before the page opened", async () => {
-    // why: the grid mounts when the Tags page opens, long after an Undo in the Library; that
-    // Undo's rows are no part of this page's order.
+  it("puts back only the Undo's rows that pass the grid's own filter", async () => {
+    // why: fix round 2, item 2. An Undo made in the Library put its rows into the grid unfiltered:
+    // a tagged recording under Untagged only, or one its title filter leaves out.
+    const v = view(row("a", 6), row("b", 5, ["talks"]), row("c", 4, [], "Apple"), row("d", 3), row("e", 2));
+    await draw({ v, settings: { untaggedOnly: true, title: "week", sort: NEWEST } });
+    await draw({ settings: { untaggedOnly: true, title: "week", sort: NEWEST }, v: view(row("a", 6), row("b", 5, ["talks"]), row("c", 4, [], "Apple"), row("d", 3, ["work"]), row("e", 2)), loadKey: 2 });
+    expect(order.ids).toEqual(["a", "e"]); // d tagged since, and gone on Refresh
+    const key = order.key;
+    await draw({ revealed: { key: 1, ids: ["b", "c"] } }); // tagged; and failing the title filter
+    expect(order.ids).toEqual(["a", "e"]);
+    expect(order.key).toBe(key); // no new order at all
+    await draw({ v, revealed: { key: 2, ids: ["b", "d"] } }); // d untagged again by the Undo
+    expect(order).toMatchObject({ ids: ["a", "d", "e"], reason: "reveal" });
+  });
+
+  it("makes no new order for an Undo heard before it was mounted", async () => {
+    // why: an order mounted after an Undo (a view opened later) works its rows out on load; that
+    // Undo's rows are already there if they pass its filter.
     await draw({ v: four, revealed: { key: 3, ids: ["a"] } });
-    expect(order.ids).toEqual(["b", "d"]);
-    await draw({ revealed: { key: 4, ids: ["c"] } });
+    expect(order).toMatchObject({ ids: ["b", "d"], key: 1, reason: "load" });
+    const undone = view(row("a", 4, ["talks"]), row("b", 3), row("c", 2, [], "Apple"), row("d", 1)); // c untagged again
+    await draw({ v: undone, revealed: { key: 4, ids: ["c"] } });
     expect(order.ids).toEqual(["b", "c", "d"]);
   });
 });

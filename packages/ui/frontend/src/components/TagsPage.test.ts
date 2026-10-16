@@ -370,6 +370,24 @@ describe("headers (spec §7)", () => {
     expect(tagging.tag).not.toHaveBeenCalled();
   });
 
+  it("act once for a held Enter or Space: the add and the menus ignore the key's repeats", async () => {
+    // why: fix round 2, item 1. Chromium clicks a button once per repeated Enter: a held Enter on
+    // "Add … to N selected" sent the add four times.
+    await draw(fake(three()));
+    const add = header("talks").querySelector<HTMLElement>(".tg-add")!;
+    const menu = header("talks").querySelector<HTMLElement>(".tg-menu")!;
+    for (const button of [add, menu]) {
+      await focus(button);
+      for (const k of ["Enter", " "]) {
+        const e = await key(button, k, { repeat: true });
+        expect(e.defaultPrevented, `${button.className} ${k}`).toBe(true);
+      }
+    }
+    expect(menu.getAttribute("aria-expanded")).toBe("false"); // the repeats opened no menu
+    const first = await key(add, "Enter");
+    expect(first.defaultPrevented).toBe(false); // the first press is the button's own
+  });
+
   it("open their sort menus as menus (fix round 1, item 12)", async () => {
     await draw(fake(three()));
     expect($("[role=columnheader][aria-colindex='1'] button")!.getAttribute("aria-haspopup")).toBe("menu");

@@ -286,16 +286,24 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 /* The sort menus (shadcn's DropdownMenu): wider than their ⋯ button, with 28 px items. */
 .tg-menu-list { width: auto; min-width: 180px; }
 .tg-menu-list [role=menuitemradio] { min-height: 28px; }
+/* A keyboard-focused or pointed-at item: shadcn's --accent tint alone is about 1.3:1 against the
+   popover. The ring is drawn inset, as the picker's highlighted item's is, so the menu's own edge,
+   which clips what overflows it, never cuts it; --ring is over 3:1 against the popover and the tint
+   in both themes (fix round 2). */
+.tg-menu-list [role=menuitemradio]:focus-visible, .tg-menu-list [role=menuitemradio][data-highlighted] { outline: 2px solid var(--ring); outline-offset: -2px; }
 .tg-cell { display: grid; place-items: center; border-right: 1px solid var(--border); cursor: pointer; }
 .tg-box { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid var(--muted-foreground); border-radius: 4px; }
 .tg-box[aria-checked=true] { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
 .tg-box[aria-disabled=true] { cursor: not-allowed; }
 .tg-box svg { width: 14px; height: 14px; }
 .tg-pin:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-/* The focused box's ring is a shadow, 2 px clear of the box, so a pending change's dashed outline
-   (spec §6), further out, shows with it: a keyboard user sees both (fix round 1). */
-.tg-box:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--row-bg), 0 0 0 4px var(--ring); }
-.tg-box.pending { outline: 1px dashed var(--muted-foreground); outline-offset: 5px; }
+/* The focused box's ring is a shadow, 2 to 4 px out, over a transparent outline in the same place:
+   forced colours (Windows High Contrast) drop shadows and paint the outline instead (fix round 2).
+   A pending change's dashed marker (spec §6) is drawn further out, 5 to 6 px, on ::after, so a
+   keyboard user sees both, in either mode (fix rounds 1 and 2). */
+.tg-box { position: relative; }
+.tg-box:focus-visible { outline: 2px solid transparent; outline-offset: 2px; box-shadow: 0 0 0 2px var(--row-bg), 0 0 0 4px var(--ring); }
+.tg-box.pending::after { content: ""; position: absolute; inset: -6px; border: 1px dashed var(--muted-foreground); border-radius: 6px; pointer-events: none; }
 .columns-picker { max-height: 60vh; overflow: auto; }
 .columns-picker fieldset { border: 0; margin: 0 0 8px; padding: 0; }
 .columns-picker legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }

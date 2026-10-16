@@ -1661,6 +1661,7 @@ GRID_COLOURS = """() => {
             + '<div class="tg-cell"><span class="tg-box ring" aria-checked="false"></span></div>';
         body.appendChild(row);
         const s = (sel) => getComputedStyle(row.querySelector(sel));
+        const marker = (r) => getComputedStyle(r.querySelector('.pending'), '::after');
         const bg = (sel) => paint(
             '#fff', under, (sel ? s(sel) : getComputedStyle(row)).backgroundColor);
         out[name] = {
@@ -1670,8 +1671,9 @@ GRID_COLOURS = """() => {
             reason: paint(s('.failed-label span').color),
             glyph: paint(s('.failed-label svg').color),
             off: paint(s('.off').borderTopColor), on: paint(s('.on').backgroundColor),
-            check: paint(s('.on').color), pending: paint(s('.pending').outlineColor),
-            pendingStyle: s('.pending').outlineStyle, ring,
+            check: paint(s('.on').color),
+            pending: paint(marker(row).borderTopColor), pendingStyle: marker(row).borderTopStyle,
+            ring,
         };
         row.remove();
     }
@@ -1864,6 +1866,7 @@ def test_a_focused_pending_cell_shows_its_ring_and_its_pending_outline(page: Pag
     seen = talks.evaluate(
         """el => {
             const s = getComputedStyle(el);
+            const after = getComputedStyle(el, '::after');
             const probe = document.body.appendChild(document.createElement('span'));
             probe.style.color = 'var(--ring)';
             const ring = getComputedStyle(probe).color;
@@ -1871,12 +1874,13 @@ def test_a_focused_pending_cell_shows_its_ring_and_its_pending_outline(page: Pag
             const muted = getComputedStyle(probe).color;
             probe.remove();
             return {
-                outline: s.outlineStyle, outlineColor: s.outlineColor, shadow: s.boxShadow,
-                ring, muted,
+                marker: after.borderTopStyle, markerColor: after.borderTopColor,
+                shadow: s.boxShadow, ring, muted,
             };
         }"""
     )
-    assert seen["outline"] == "dashed" and seen["outlineColor"] == seen["muted"], seen
+    # The pending marker (fix round 2: on ::after, clear of the ring) and the ring, together.
+    assert seen["marker"] == "dashed" and seen["markerColor"] == seen["muted"], seen
     assert seen["ring"] in seen["shadow"], seen
     held["on"] = False
     for message in held["messages"]:
@@ -1906,3 +1910,127 @@ def test_a_key_on_a_cell_scrolled_away_sideways_brings_it_back(page: Page, big_s
     expect(box).to_have_attribute("aria-checked", "true")
     shown = box.bounding_box()
     assert shown["x"] >= edge, (shown, edge)
+
+
+# Task 14 fix round 2. Each test says what was wrong.
+
+
+def test_a_held_enter_on_a_header_adds_once(page: Page, server, console, demo_ids):
+    # why: item 1. Chromium clicks a focused button once per repeated Enter, so a held Enter on
+    # "Add … to 2 selected" sent the add four times.
+    apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
+    page.goto(f"{server.url}/#/tags")
+    page.get_by_test_id("untagged-only").uncheck()
+    rows = page.get_by_test_id("grid-row")
+    rows.filter(has_text="Apollo 13").locator(".tg-title").click()
+    rows.filter(has_text="JFK").locator(".tg-title").click(modifiers=["ControlOrMeta"])
+    header = page.locator("[data-testid=grid-header][data-tag='space/apollo']")
+    add = header.get_by_role("button", name=re.compile(r"^Add space\/apollo to 2 selected"))
+    add.focus()
+    add.evaluate(
+        "el => { window.clicks = 0; el.addEventListener('click', () => window.clicks++); }"
+    )
+    for _ in range(4):
+        page.keyboard.down("Enter")  # after the first, each down is a repeat
+    page.keyboard.up("Enter")
+    assert page.evaluate("window.clicks") == 1
+    wait_until(
+        lambda: (
+            ("space/apollo", "you") in server.tags(apollo13)
+            and ("space/apollo", "you") in server.tags(jfk)
+        )
+    )
+    expect(page.get_by_test_id("action-toast")).to_have_count(1)
+
+
+MARKS = """el => {
+    const s = getComputedStyle(el);
+    const after = getComputedStyle(el, '::after');
+    return {
+        ring: s.outlineStyle, ringWidth: parseFloat(s.outlineWidth), ringColor: s.outlineColor,
+        ringOffset: parseFloat(s.outlineOffset),
+        pending: after.content !== 'none' ? after.borderTopStyle : 'none',
+        pendingInset: parseFloat(after.top),
+    };
+}"""
+
+
+def test_a_focused_cell_keeps_its_ring_and_pending_marker_in_forced_colours(
+    page: Page, server, console
+):
+    # why: item 3. Forced colours (Windows High Contrast) drop box-shadow, and the ring was only
+    # a shadow (outline: none), so a focused cell showed no focus at all.
+    page.emulate_media(forced_colors="active")
+    held = hold_tag_results(page)
+    page.goto(f"{server.url}/#/tags")
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(1)
+    rows.first.locator(".tg-title").click()
+    page.keyboard.press("ArrowRight")
+    private = cell(page, "Apollo 13", "private")
+    expect(private).to_be_focused()
+    seen = private.evaluate(MARKS)
+    assert seen["ring"] == "solid" and seen["ringWidth"] >= 2, seen
+    assert seen["ringColor"] not in ("transparent", "rgba(0, 0, 0, 0)"), seen
+    page.keyboard.press("ArrowRight")  # notes/conference-talk: a toggle there needs no dialog
+    talks = cell(page, "Apollo 13", "notes/conference-talk")
+    expect(talks).to_be_focused()
+    held["on"] = True
+    page.keyboard.press("Space")
+    expect(talks).to_have_class(re.compile(r"\bpending\b"))
+    seen = talks.evaluate(MARKS)
+    # Both show, apart: the ring 2 to 4 px out, the pending marker's dashed edge further out.
+    assert seen["ring"] == "solid" and seen["pending"] == "dashed", seen
+    assert -seen["pendingInset"] > seen["ringOffset"] + seen["ringWidth"], seen
+    held["on"] = False
+    for message in held["messages"]:
+        held["page"].send(message)
+    expect(talks).not_to_have_class(re.compile(r"\bpending\b"))
+
+
+MENU_ITEM = """el => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 1;
+    const x = c.getContext('2d');
+    const paint = (...layers) => {
+        x.clearRect(0, 0, 1, 1);
+        for (const l of layers) { x.fillStyle = l; x.fillRect(0, 0, 1, 1); }
+        return [...x.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    };
+    const s = getComputedStyle(el);
+    const menu = el.closest('[role=menu]');
+    const m = getComputedStyle(menu);
+    const popover = paint('#fff', m.backgroundColor);
+    const box = el.getBoundingClientRect();
+    const edge = menu.getBoundingClientRect();
+    const reach = parseFloat(s.outlineOffset) + parseFloat(s.outlineWidth);
+    return {
+        style: s.outlineStyle, width: parseFloat(s.outlineWidth), ring: paint(s.outlineColor),
+        item: paint('#fff', m.backgroundColor, s.backgroundColor), popover,
+        // the ring's outer edge stays inside the menu, which clips what overflows it
+        inside: box.left - reach >= edge.left && box.right + reach <= edge.right
+            && box.top - reach >= edge.top && box.bottom + reach <= edge.bottom,
+    };
+}"""
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_a_keyboard_focused_sort_menu_item_stands_out(page: Page, server, console, scheme):
+    # why: item 5. shadcn's menu item shows focus only by its --accent tint, about 1.3:1 against
+    # the popover; a keyboard user needs an indicator of 3:1 or more (WCAG 1.4.11, 2.4.7).
+    page.emulate_media(color_scheme=scheme)
+    page.goto(f"{server.url}/#/tags")
+    sort = page.get_by_role("button", name=re.compile(r"^Sort rows"))
+    sort.focus()
+    page.keyboard.press("Enter")
+    page.keyboard.press("ArrowDown")
+    item = page.get_by_role("menuitemradio", name="Oldest")
+    expect(item).to_be_focused()
+    item.evaluate(
+        "el => Promise.all(el.closest('[role=menu]').getAnimations().map((a) => a.finished))"
+    )  # opened: no longer zooming in
+    c = item.evaluate(MENU_ITEM)
+    assert c["style"] == "solid" and c["width"] >= 2, (scheme, c)
+    assert contrast(c["ring"], c["popover"]) >= 3, (scheme, c)
+    assert contrast(c["ring"], c["item"]) >= 3, (scheme, c)
+    assert c["inside"], (scheme, c)

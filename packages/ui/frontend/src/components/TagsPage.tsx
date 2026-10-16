@@ -57,10 +57,11 @@ function firstSort(sort: RowSort): "ascending" | "descending" | undefined {
 
 const sortLabel = (sort: RowSort) => (sort.by === "has" ? `Has ${sort.tag} first` : SORTS.find((s) => s.by === sort.by)!.label);
 
-/** Down on a header's menu button moves to the rows, as on the header's other controls: the
- * button opens its menu with Enter or Space. Radix skips a key the handler before it prevented. */
-const downToRows = (e: KeyboardEvent) => {
-  if (e.key === "ArrowDown") e.preventDefault();
+/** A header's menu button: Down moves to the rows, as on the header's other controls, and the
+ * button opens its menu with Enter or Space, once for a held key (fix round 2). Radix skips a key
+ * the handler before it prevented. */
+const menuButtonKeys = (e: KeyboardEvent) => {
+  if (e.key === "ArrowDown" || (e.repeat && (e.key === "Enter" || e.key === " "))) e.preventDefault();
 };
 
 /** The first column's menu: Newest (the default), Oldest, Title and Duration (spec §7), as radio
@@ -71,7 +72,7 @@ function RowSortMenu({ sort, onSort, tabStop }: { sort: RowSort; onSort: (sort: 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="tg-sort" data-head-col={0} tabIndex={tabStop ? 0 : -1} aria-label={`Sort rows: ${label}`} onKeyDown={downToRows}>
+        <button type="button" className="tg-sort" data-head-col={0} tabIndex={tabStop ? 0 : -1} aria-label={`Sort rows: ${label}`} onKeyDown={menuButtonKeys}>
           <bdi dir="ltr">{label}</bdi> <ChevronDown aria-hidden="true" size={12} />
         </button>
       </DropdownMenuTrigger>
@@ -89,7 +90,7 @@ function ColumnMenu({ tag, col, sorted, onSort }: { tag: string; col: number; so
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="tg-menu" data-head-col={col} tabIndex={-1} aria-label={`Sort by ${tag}`} onKeyDown={downToRows}>
+        <button type="button" className="tg-menu" data-head-col={col} tabIndex={-1} aria-label={`Sort by ${tag}`} onKeyDown={menuButtonKeys}>
           <MoreHorizontal aria-hidden="true" size={14} />
         </button>
       </DropdownMenuTrigger>
@@ -289,6 +290,8 @@ export function TagsPage({ grid }: { grid: GridState }) {
       }
       case "Enter":
       case " ":
+        // The button's own, once: Chromium clicks a button again on each repeat of a held Enter.
+        if (e.repeat) e.preventDefault();
         return true;
     }
     return false;

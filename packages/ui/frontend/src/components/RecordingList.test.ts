@@ -285,6 +285,24 @@ describe("dragging rows (spec §6)", () => {
     list.done();
   });
 
+  it("lets Cmd/Ctrl and Shift with Left and Right through on a row, for the browser", () => {
+    // why: Task 14 fix round 2, item 4. Cmd+Left is history Back on macOS; the list swallowed it.
+    const list = mount(fake(), { selected: new Set(), anchor: "b", focus: "b" });
+    list.row("b").focus();
+    for (const init of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }]) {
+      for (const key of ["ArrowLeft", "ArrowRight"]) {
+        const e = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
+        flushSync(() => list.row("b").dispatchEvent(e));
+        expect(e.defaultPrevented, `${key} ${JSON.stringify(init)}`).toBe(false);
+        expect(document.activeElement).toBe(list.row("b"));
+      }
+    }
+    const plain = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+    flushSync(() => list.row("b").dispatchEvent(plain));
+    expect(plain.defaultPrevented).toBe(true); // plain Right still moves to the row's controls
+    list.done();
+  });
+
   it("forgets a drag whose row leaves the list, since no dragend comes for it, and on leaving the Library", () => {
     const tagging = fake();
     const list = mount(tagging, NO_SEL);

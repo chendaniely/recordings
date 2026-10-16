@@ -189,7 +189,10 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
       case "Home": return move(e, "first");
       case "End": return move(e, "last");
       case "ArrowLeft":
-      case "ArrowRight": return across(e);
+      case "ArrowRight":
+        // With Cmd, Ctrl or Shift they are the browser's: Cmd+Left is Back on macOS.
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+        return across(e);
       case "Enter":
         if (sel.focus && e.target === rowEl(sel.focus)) {
           e.preventDefault();
