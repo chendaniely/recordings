@@ -670,10 +670,13 @@ class TagSession:
                 error: Exception | None = None
                 after: Recording | None
                 # Shielded: a write that has started can't be stopped, so a cancelled request
-                # waits for it and records what landed (Task 4's carry).
+                # waits for it and records what landed (Task 4's carry). asyncio.wait never
+                # cancels what it waits for; asyncio.shield would also shield it, but would log
+                # the text of a write that failed after the cancel (CPython 3.13+).
                 write = asyncio.ensure_future(self.store.write(partial(self.store.apply, rid, op)))
                 try:
-                    after = await asyncio.shield(write)
+                    await asyncio.wait({write})
+                    after = write.result()
                 except asyncio.CancelledError as exc:
                     cancelled = exc
                     after = await self._after_cancel(write, rid, op)

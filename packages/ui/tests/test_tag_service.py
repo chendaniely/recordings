@@ -705,6 +705,36 @@ def test_a_request_cancelled_mid_write_keeps_what_landed(service, tag_archive, m
     assert ask(session, req("undo", undo=final["undo"])).final["changed"] == 2
 
 
+def test_a_write_that_fails_after_a_cancel_logs_no_exception_text(
+    service, tag_archive, monkeypatch, caplog
+):
+    # why: Global Constraints. asyncio.shield hands the exception of a shielded future that
+    # fails after its waiter was cancelled to the loop's exception handler (CPython 3.13+),
+    # which logs its text; exception text can carry a title or a tag.
+    rid = tag_archive.ids["untagged"]
+    session = session_of(service)
+    running: dict = {}
+
+    def apply(r, op):
+        running["loop"].call_soon_threadsafe(running["task"].cancel)
+        if threading.current_thread() is not threading.main_thread():
+            time.sleep(0.1)  # still writing when the cancel arrives
+        raise RuntimeError("Week 3 is tagged private/ada")
+
+    monkeypatch.setattr(service.store, "apply", apply)
+
+    async def window() -> None:
+        running["loop"] = asyncio.get_running_loop()
+        work = session.run(session.check(req("add", [rid], ["work"])), Replies())
+        running["task"] = asyncio.ensure_future(work)
+        with pytest.raises(asyncio.CancelledError):
+            await running["task"]
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(window())
+    assert "Week" not in caplog.text and "private/ada" not in caplog.text
+
+
 def test_a_stop_at_shutdown_ends_the_batch_between_recordings(service, tag_archive, monkeypatch):
     ids = list(tag_archive.ids.values())
     real = service.store.apply
