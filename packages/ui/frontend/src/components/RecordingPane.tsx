@@ -1,19 +1,22 @@
 import { Lock } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+import { shownTags } from "../lib/library";
 import { headerWhen } from "../lib/when";
 import { useShinyOutputStatus, useShinyOutputValue } from "../sr";
-import type { RecordingView } from "../types";
+import { useTaggingContext } from "../tagging/useTagging";
+import type { LibraryRow, RecordingView } from "../types";
 import { DetailsTab } from "./DetailsTab";
 import { MyNotesTab } from "./MyNotesTab";
 import { NotesTab } from "./NotesTab";
 import { Player } from "./Player";
 import { PlaudTab } from "./PlaudTab";
+import { TagChips } from "./TagChips";
 import { TranscriptTab } from "./TranscriptTab";
 
-export function RecordingPane({ selectedId }: { selectedId: string | null }) {
+export function RecordingPane({ selectedId, row }: { selectedId: string | null; row: LibraryRow | null }) {
   const rec = useShinyOutputValue<RecordingView | null>("recording");
   const status = useShinyOutputStatus("recording");
 
@@ -21,11 +24,32 @@ export function RecordingPane({ selectedId }: { selectedId: string | null }) {
   if (!rec || rec.id !== selectedId) return <section className="pane"><p className="empty">Loading…</p></section>;
   // Keyed by id, so every recording mounts fresh: its playback time starts at 0 and can never
   // be another recording's position (which would highlight and scroll to the wrong line).
-  return <RecordingDetail key={rec.id} rec={rec} dimmed={status === "recalculating"} />;
+  return <RecordingDetail key={rec.id} rec={rec} row={row} dimmed={status === "recalculating"} />;
 }
 
-function RecordingDetail({ rec, dimmed }: { rec: RecordingView; dimmed: boolean }) {
+/** The header's chips read the open recording's row in the merged library, never the `recording`
+ * output, which isn't re-sent for a tag change because it carries the whole transcript (spec §5).
+ * After ×, focus goes to the next control; with none left, to the title, never to the page. */
+function HeaderChips({ rec, row, heading }: { rec: RecordingView; row: LibraryRow | null; heading: RefObject<HTMLHeadingElement | null> }) {
+  const tagging = useTaggingContext();
+  const tags = row ? shownTags(row, tagging.pending) : rec.tags;
+  return (
+    <TagChips
+      tags={tags}
+      title={row?.title ?? rec.title}
+      canTag={tagging.canTag && row !== null}
+      place="header"
+      onRemove={(tag, next) => {
+        (next ?? heading.current)?.focus();
+        tagging.tag("remove", [rec.id], [tag], { kind: "header" });
+      }}
+    />
+  );
+}
+
+function RecordingDetail({ rec, row, dimmed }: { rec: RecordingView; row: LibraryRow | null; dimmed: boolean }) {
   const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const heading = useRef<HTMLHeadingElement | null>(null);
   const [time, setTime] = useState(0);
 
   const seek = (t: number) => {
@@ -34,14 +58,14 @@ function RecordingDetail({ rec, dimmed }: { rec: RecordingView; dimmed: boolean 
   };
   return (
     <section className="pane" style={{ opacity: dimmed ? 0.6 : 1 }}>
-      <div className="head">
-        <h1>{rec.title} {rec.private && <Lock size={15} className="lock" data-testid="lock" aria-label="Private: Spark only" />}</h1>
+      <div className="head" data-testid="recording-header">
+        <h1 ref={heading} tabIndex={-1}>{row?.title ?? rec.title} {(row?.private ?? rec.private) && <Lock size={15} className="lock" data-testid="lock" aria-label="Private: Spark only" />}</h1>
         <div className="meta">
           <time dateTime={rec.recorded_at} data-testid="recording-when">{headerWhen(rec.recorded_at)}</time>
           {[rec.duration, [...new Set(rec.sources.map((s) => s.kind))].join(", ")].filter(Boolean).map((x) => ` · ${x}`).join("")}
           {" · "}<span className="mono">{rec.id}</span>
         </div>
-        <div>{rec.tags.map((t) => <span key={t.tag} className={`chip${t.by === "auto" ? " auto" : ""}`}>{t.tag}</span>)}</div>
+        <HeaderChips rec={rec} row={row} heading={heading} />
       </div>
       {rec.media_url && <Player url={rec.media_url} kind={rec.kind} mediaRef={mediaRef} onTime={setTime} />}
       <Tabs defaultValue="transcript" className="flex min-h-0 flex-1 flex-col">

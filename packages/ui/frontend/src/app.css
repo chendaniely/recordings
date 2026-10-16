@@ -101,3 +101,33 @@ tr.attn td { color: var(--destructive); }
 .meter.warn span { background: var(--brand-orange); }
 .meter.stop span { background: var(--destructive); }
 .warn { color: var(--destructive); }
+
+/* Chips with × (tagging spec §6). The × has a hit area of at least 24×24 px, padded beyond the
+   glyph, and shows on hover or focus. A long tag is truncated; its full name is in the chip's
+   title and the ×'s accessible name. Its text is isolated left to right (<bdi dir="ltr">), so a
+   right-to-left tag can't reorder what's around it. */
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.chips .chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; margin: 0; }
+.chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28ch; }
+.chip-label bdi { unicode-bidi: isolate; direction: ltr; }
+.chip-x { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; margin: -6px -8px -6px -2px; padding: 0; border: 0; border-radius: 999px; background: none; color: inherit; cursor: pointer; opacity: 0; }
+.chip-x svg { width: 12px; height: 12px; }
+.chip:hover .chip-x, .chip-x:focus-visible, .row:focus-within .chip-x { opacity: 1; }
+/* Devices that can't hover: the header's × always shows, with a 44 px target (spec §6). */
+@media (hover: none) {
+  .head .chip-x { opacity: 1; min-width: 44px; min-height: 44px; margin: -12px -14px -12px -6px; }
+  .head .chips { gap: 12px 8px; }
+}
+/* A pending change shows at once, with a dashed outline in --muted-foreground (spec §6). */
+.chip.pending { outline: 1px dashed var(--muted-foreground); outline-offset: 1px; }
+.chip.pending-remove .chip-label { text-decoration: line-through; }
+
+/* Toasts and the confirmation. A tag shown as code is isolated left to right too; a reason that
+   is a long path (the mirror's) wraps instead of widening the toast. */
+.action-toast { display: flex; align-items: center; gap: 12px; width: 100%; }
+.action-toast-text { min-width: 0; overflow-wrap: anywhere; }
+.alert-toast { display: grid; gap: 4px; width: 100%; }
+.alert-toast p { margin: 0; overflow-wrap: anywhere; }
+.action-toast code, .alert-toast code, .confirm-title code { unicode-bidi: isolate; direction: ltr; overflow-wrap: anywhere; }
+.toast-undo { margin-left: auto; min-height: 24px; padding: 4px 6px; border: 0; background: none; color: var(--primary); font: inherit; font-weight: 700; cursor: pointer; flex-shrink: 0; }
+.alert-toast .toast-undo { justify-self: end; }

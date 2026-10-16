@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { Toaster } from "@/components/ui/sonner";
+
 import { RecordingList } from "./components/RecordingList";
 import { RecordingPane } from "./components/RecordingPane";
 import { Sidebar } from "./components/Sidebar";
 import { StatusPage } from "./components/StatusPage";
 import { TopBar } from "./components/TopBar";
-import { hashFor, pageFromHash } from "./lib/nav";
+import { hashFor, routeFromHash } from "./lib/nav";
 import { filterRows } from "./lib/transcript";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
-import type { Filter, LibraryView, Page } from "./types";
+import { ConfirmDialog } from "./tagging/ConfirmDialog";
+import { TaggingContext, useTagging } from "./tagging/useTagging";
+import type { Filter, LibraryView, Page, Route } from "./types";
 
 export default function App() {
   const initialized = useShinyInitialized();
@@ -16,36 +20,48 @@ export default function App() {
   // Every page's output lives as long as the app. shinyreact 0.1.0 removes an unmounted output's
   // element before Shiny unbinds it, so Shiny never does, and each later value for that output
   // logs "Output <id> not found". Held here, no output is ever unmounted. A new output gets a
-  // line here too (docs/upstream-issues.md).
+  // line here too (docs/upstream-issues.md). Message handlers live here too, in useTagging:
+  // shinyreact drops a message that has no handler.
   useShinyOutputStatus("recording");
   useShinyOutputStatus("status");
+  const tagging = useTagging(library);
   const [selectedId, setSelectedId] = useShinyInput<string | null>("selected_id", null);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
-  const [page, setPage] = useState<Page>(() => pageFromHash(window.location.hash));
-  const rows = useMemo(() => (library ? filterRows(library.recordings, filter) : []), [library, filter]);
+  const [route, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
+  const view = tagging.view;
+  const rows = useMemo(() => (view ? filterRows(view.recordings, filter) : []), [view, filter]);
+  const openRow = useMemo(() => view?.recordings.find((r) => r.id === selectedId) ?? null, [view, selectedId]);
 
-  // Hash routes: Back returns to the page you came from, and the server never logs them.
+  // Hash routes: Back returns to the page you came from, and the server never logs them. The hash
+  // only chooses what to show: `#/library/<id>` opens that recording, read-only (spec §7, §15).
   useEffect(() => {
-    const onHash = () => setPage(pageFromHash(window.location.hash));
+    const onHash = () => setRoute(routeFromHash(window.location.hash));
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+  useEffect(() => {
+    if (initialized && route.open) setSelectedId(route.open);
+  }, [initialized, route.open, setSelectedId]);
   const go = (next: Page) => {
     window.location.hash = hashFor(next);
-    setPage(next);
+    setRoute({ page: next, open: null });
   };
 
   if (!initialized) return null; // no flash of empty defaults during connection
   return (
-    <div className="app">
-      <TopBar page={page} onPage={go} />
-      {page === "status" ? <StatusPage /> : library ? (
-        <main className="panes">
-          <Sidebar library={library} filter={filter} onFilter={setFilter} />
-          <RecordingList rows={rows} selectedId={selectedId} onSelect={setSelectedId} />
-          <RecordingPane selectedId={selectedId} />
-        </main>
-      ) : <p className="empty">Loading…</p>}
-    </div>
+    <TaggingContext.Provider value={tagging}>
+      <div className="app">
+        <TopBar page={route.page} onPage={go} />
+        {route.page === "status" ? <StatusPage /> : view ? (
+          <main className="panes">
+            <Sidebar library={view} filter={filter} onFilter={setFilter} />
+            <RecordingList rows={rows} selectedId={selectedId} onSelect={setSelectedId} />
+            <RecordingPane selectedId={selectedId} row={openRow} />
+          </main>
+        ) : <p className="empty">Loading…</p>}
+        <ConfirmDialog />
+        <Toaster position="bottom-right" />
+      </div>
+    </TaggingContext.Provider>
   );
 }

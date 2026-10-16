@@ -6,11 +6,12 @@ import type * as SR from "@posit-dev/shinyreact";
 type Hooks = Pick<
   typeof SR,
   | "useShinyInput" | "useShinyOutputValue" | "useShinyOutputStatus" | "useShinyOutputError"
-  | "useShinyInitialized"
+  | "useShinyInitialized" | "useSetShinyInput" | "useShinyMessageHandler"
 >;
 
 const shinyreact = (window as unknown as { shinyreact: Hooks }).shinyreact;
 
 export const {
   useShinyInput, useShinyOutputValue, useShinyOutputStatus, useShinyOutputError, useShinyInitialized,
+  useSetShinyInput, useShinyMessageHandler,
 } = shinyreact;
