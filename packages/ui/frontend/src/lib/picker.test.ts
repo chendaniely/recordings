@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { LibraryView } from "../types";
-import { alreadyWords, createOffer, pickerGroups, pickerTags, rankTags, stateWords, tagState, type PickerTag } from "./picker";
+import {
+  alreadyWords, createOffer, createRefusal, pickerGroups, pickerTags, rankTags, stateWords, tagState, tagStates, type PickerTag,
+} from "./picker";
 
 const tag = (name: string, count = 1, priv = false): PickerTag => ({ tag: name, count, private: priv });
 const tags = [tag("school/course-101", 5), tag("courses", 2), tag("talks", 9), tag("private", 3, true), tag("notes/lecture", 4)];
@@ -51,6 +53,11 @@ describe("item states, in words as well as glyphs (spec §6)", () => {
     expect(alreadyWords(tagState("talks", rows.slice(0, 2)))).toBe("Already on all 2");
     expect(alreadyWords(tagState("talks", rows.slice(0, 1)))).toBe("Already on it");
   });
+  it("writes big counts as the title does (\"Tag 1,200 recordings\")", () => {
+    expect(stateWords({ on: 1200, of: 1200, state: "all" })).toBe("on all 1,200");
+    expect(stateWords({ on: 1100, of: 20000, state: "some" })).toBe("on 1,100 of 20,000");
+    expect(alreadyWords({ on: 1200, of: 1200, state: "all" })).toBe("Already on all 1,200");
+  });
 });
 
 describe("pickerTags", () => {
@@ -89,5 +96,39 @@ describe("Create refuses structurally invalid names", () => {
     }
     expect(createOffer(tags, "a".repeat(64))).toBe("a".repeat(64));
     expect(createOffer(tags, "work/2026.q1")).toBe("work/2026.q1");
+  });
+});
+
+describe("why Create isn't offered (Shift+Enter says so, in the server's words)", () => {
+  it("names an existing tag, a case-variant, a notes/ tag, and a malformed name", () => {
+    expect(createRefusal(tags, "talks")).toBe("That tag exists: Enter adds it.");
+    expect(createRefusal(tags, " TALKS ")).toBe("A tag with the same letters in another case exists already: Enter adds it.");
+    expect(createRefusal(tags, "notes/summary")).toBe("Note types come from prompt files: notes/<type> must name one the archive has.");
+    expect(createRefusal(tags, "notes/lecture")).toBe("That tag exists: Enter adds it."); // it exists: Enter adds it
+    expect(createRefusal(tags, "a//b")).toBe("A folder part is empty, or starts or ends with a space.");
+    expect(createRefusal(tags, "a /b")).toBe("A folder part is empty, or starts or ends with a space.");
+    expect(createRefusal(tags, "a".repeat(65))).toBe("Each folder part is at most 64 characters, and the whole tag at most 200.");
+    expect(createRefusal(tags, "a/../b")).toBe("A folder part can't be . or .., and a tag can't hold a backslash.");
+    expect(createRefusal(tags, "a\\b")).toBe("A folder part can't be . or .., and a tag can't hold a backslash.");
+  });
+  it("is null exactly when Create is offered, or the box is empty", () => {
+    for (const q of ["", "  ", "work", "course", "notebook", "café"]) {
+      expect(createRefusal(tags, q)).toBe(null);
+    }
+    for (const q of ["talks", "Talks", "notes/x", "/a", "a/./b", "a /b", "a\\b"]) {
+      expect(createOffer(tags, q)).toBe(null);
+      expect(createRefusal(tags, q)).not.toBe(null);
+    }
+  });
+});
+
+describe("tagStates: every item's state, counted once over the targets", () => {
+  it("agrees with tagState, and counts a row once", () => {
+    const rows = [{ tags: [{ tag: "talks" }, { tag: "talks" }] }, { tags: [{ tag: "talks" }, { tag: "work" }] }, { tags: [] }];
+    const stateOf = tagStates(rows);
+    expect(stateOf("talks")).toEqual({ on: 2, of: 3, state: "some" });
+    expect(stateOf("work")).toEqual(tagState("work", rows));
+    expect(stateOf("nope")).toEqual({ on: 0, of: 3, state: "none" });
+    expect(tagStates(rows.slice(1, 2))("work").state).toBe("all");
   });
 });

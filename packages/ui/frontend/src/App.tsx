@@ -6,6 +6,7 @@ import { RecordingList } from "./components/RecordingList";
 import { RecordingPane } from "./components/RecordingPane";
 import { Sidebar } from "./components/Sidebar";
 import { StatusPage } from "./components/StatusPage";
+import { TagPickerDialog } from "./components/TagPicker";
 import { TopBar } from "./components/TopBar";
 import { hashFor, routeFromHash } from "./lib/nav";
 import { filterRows } from "./lib/transcript";
@@ -59,6 +60,7 @@ export default function App() {
             <RecordingPane selectedId={selectedId} row={openRow} />
           </main>
         ) : <p className="empty">Loading…</p>}
+        <TagPickerDialog />
         <ConfirmDialog />
         <Toaster position="bottom-right" />
       </div>

@@ -58,34 +58,68 @@ export function pickerGroups(tags: readonly PickerTag[], query: string): PickerG
 const MAX_PART = 64;
 const MAX_TAG = 200;
 
-/** Names the server refuses anyway: empty parts (leading, trailing or double `/`), `.` and `..`
- * parts, a part over 64 characters, a tag over 200. */
-function wellFormed(text: string): boolean {
-  if (Array.from(text).length > MAX_TAG) return false;
-  return text.split("/").every((part) => part !== "" && part !== "." && part !== ".." && Array.from(part).length <= MAX_PART);
+// Why Create isn't offered, in the server's words where it has them (recordings/tagops.py); none
+// repeats the tag. Shift+Enter shows it.
+const EXISTS = "That tag exists: Enter adds it.";
+const CASE_VARIANT = "A tag with the same letters in another case exists already: Enter adds it.";
+const NOTE_TYPE = "Note types come from prompt files: notes/<type> must name one the archive has.";
+const EMPTY_PART = "A folder part is empty, or starts or ends with a space.";
+const TOO_LONG = "Each folder part is at most 64 characters, and the whole tag at most 200.";
+const PATH_LIKE = "A folder part can't be . or .., and a tag can't hold a backslash.";
+
+/** Why Create isn't offered for the typed text, or null when it is (or the box is empty). An
+ * existing tag in any case, a notes/ tag, and the names the server refuses anyway: an empty part
+ * (a leading, trailing or double `/`) or one with a space at either end, a part over 64
+ * characters or a tag over 200, a `.` or `..` part, a backslash. The rest of §4's rules are the
+ * server's to apply. */
+export function createRefusal(tags: readonly PickerTag[], query: string): string | null {
+  const text = query.trim().normalize("NFC");
+  if (!text) return null;
+  const folded = fold(text);
+  const same = tags.find((t) => fold(t.tag) === folded);
+  if (same) return same.tag === text ? EXISTS : CASE_VARIANT;
+  const parts = text.split("/");
+  if (parts.some((part) => part === "" || part !== part.trim())) return EMPTY_PART;
+  if (Array.from(text).length > MAX_TAG || parts.some((part) => Array.from(part).length > MAX_PART)) return TOO_LONG;
+  if (text.includes("\\") || parts.some((part) => part === "." || part === "..")) return PATH_LIKE;
+  if (/^notes$/i.test(parts[0])) return NOTE_TYPE;
+  return null;
 }
 
 /** What Create (and Shift+Enter) would make: the typed text, trimmed and composed (NFC; tagging
  * plan, decision 5). Never a notes/ tag, never a case-variant of an existing tag. */
 export function createOffer(tags: readonly PickerTag[], query: string): string | null {
   const text = query.trim().normalize("NFC");
-  if (!text || /^notes(\/|$)/i.test(text) || !wellFormed(text)) return null;
-  const folded = fold(text);
-  return tags.some((t) => fold(t.tag) === folded) ? null : text;
+  return text && createRefusal(tags, query) === null ? text : null;
+}
+
+/** Every tag's state over the targets, counted once: the picker asks it of each item on every
+ * keystroke, and the targets may be 20,000 recordings. A row counts once per tag. */
+export function tagStates(targets: readonly { tags: readonly { tag: string }[] }[]): (tag: string) => TagState {
+  const counts = new Map<string, number>();
+  for (const r of targets) {
+    for (const tag of new Set(r.tags.map((t) => t.tag))) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+  const of = targets.length;
+  return (tag) => {
+    const on = counts.get(tag) ?? 0;
+    return { on, of, state: on === 0 ? "none" : on === of ? "all" : "some" };
+  };
 }
 
 export function tagState(tag: string, targets: readonly { tags: readonly { tag: string }[] }[]): TagState {
-  const on = targets.filter((r) => r.tags.some((t) => t.tag === tag)).length;
-  return { on, of: targets.length, state: on === 0 ? "none" : on === targets.length ? "all" : "some" };
+  return tagStates(targets)(tag);
 }
+
+const count = (n: number) => n.toLocaleString("en");
 
 /** Each item's state in words as well as a glyph: ✓ "on all 12", – "on 5 of 12". */
 export function stateWords(s: TagState): string {
-  if (s.state === "all") return s.of === 1 ? "on it" : `on all ${s.of}`;
-  return s.state === "some" ? `on ${s.on} of ${s.of}` : "";
+  if (s.state === "all") return s.of === 1 ? "on it" : `on all ${count(s.of)}`;
+  return s.state === "some" ? `on ${count(s.on)} of ${count(s.of)}` : "";
 }
 
 /** Enter on a ✓ item adds nothing, and says so. */
 export function alreadyWords(s: TagState): string {
-  return s.of === 1 ? "Already on it" : `Already on all ${s.of}`;
+  return s.of === 1 ? "Already on it" : `Already on all ${count(s.of)}`;
 }

@@ -68,8 +68,8 @@ def test_removing_a_last_private_tag_asks_first(page: Page, server, console, dem
     expect(dialog.get_by_role("button", name="Cancel")).to_be_focused()
     page.keyboard.press("Escape")  # Esc means Cancel
     expect(dialog).to_have_count(0)
-    # The × had no next control, so focus went to the title, and the dialog gave it back there.
-    expect(header.locator("h1")).to_be_focused()
+    # Focus went to the ×'s next control, the +, and the dialog gave it back there.
+    expect(header.get_by_role("button", name=re.compile(r"^Add tags to Fireside"))).to_be_focused()
     expect(header.locator("[data-testid=chip][data-tag=private]")).to_have_count(1)
     assert server.tags(fdr) == [("private", "you")]
     remove.click()
@@ -158,3 +158,86 @@ def test_the_headers_touch_targets_are_44_px_and_never_overlap(page: Page, serve
     for row in bands:  # and side by side, never
         for a, b in itertools.pairwise(row):
             assert a["x"] + a["width"] <= b["x"] + 0.5
+
+
+def test_the_plus_adds_several_tags_creates_removes_and_stays_open(
+    page: Page, server, console, demo_ids
+):
+    apollo13 = demo_ids["apollo13-problem"]
+    open_library(page, server.url)
+    open_row(page, "Apollo 13")
+    page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Add tags to Apollo 13")
+    ).click()
+    box = page.get_by_test_id("picker-input")
+    expect(box).to_be_focused()
+    box.fill("lectures")
+    box.press("Shift+Enter")  # creates exactly the typed text
+    expect(box).to_have_value("")
+    box.fill("apol")
+    box.press("Enter")  # Enter on a partial name picks the existing tag, never Create
+    expect(box).to_be_visible()  # the picker stays open for the next tag
+    wait_until(lambda: server.tags(apollo13) == [("lectures", "you"), ("space/apollo", "you")])
+    box.fill("apollo")
+    item = page.locator("[data-testid=picker-item][data-tag='space/apollo']")
+    expect(item).to_have_attribute("data-state", "all")
+    expect(item).to_contain_text("on it")
+    box.press("Enter")
+    expect(page.get_by_test_id("picker-note")).to_have_text("Already on it")
+    box.press("Shift+Delete")  # removes the highlighted tag
+    wait_until(lambda: server.tags(apollo13) == [("lectures", "you")])
+    box.fill("Lectures")
+    expect(page.get_by_test_id("picker-create")).to_have_count(0)  # never a case-variant
+    box.fill("notes/x")
+    expect(page.get_by_test_id("picker-create")).to_have_count(0)  # never a notes/ tag
+    box.press("Escape")
+    expect(box).to_have_count(0)
+    header = page.get_by_test_id("recording-header")
+    expect(header.locator("[data-testid=chip]")).to_have_count(1)
+
+
+def test_the_confirmation_opens_over_the_plus_picker_and_leaves_it_open(
+    page: Page, server, console, demo_ids
+):
+    # why: a focus move into the Alert Dialog is "outside" the Popover, so Radix would close the
+    # picker under the confirmation; and Esc must close only the topmost layer (Task 10 council).
+    fdr = demo_ids["fdr-fireside-1"]
+    open_library(page, server.url)
+    open_row(page, "Fireside")
+    header = page.get_by_test_id("recording-header")
+    plus = header.get_by_role("button", name=re.compile(r"^Add tags to Fireside"))
+    plus.click()
+    picker = page.get_by_role("dialog", name=re.compile(r"^Tag Fireside"))
+    box = page.get_by_test_id("picker-input")  # by test id: the modal confirmation hides the rest
+    expect(box).to_be_focused()
+    expect(picker.get_by_role("group", name="Private")).to_contain_text("private")  # by its flag
+    item = picker.locator("[data-testid=picker-item][data-tag=private]")
+    expect(item).to_have_attribute("data-state", "all")
+    item.get_by_test_id("picker-x").click()  # the mouse's way to remove
+    confirm = page.get_by_role("alertdialog")
+    expect(confirm).to_contain_text("Remove private from 1 recording?")
+    expect(confirm.get_by_role("button", name="Cancel")).to_be_focused()
+    expect(box).to_be_visible()  # opened over the picker, which stays
+    confirm.get_by_role("button", name="Cancel").click()
+    expect(confirm).to_have_count(0)
+    expect(box).to_be_focused()  # back on the picker's input
+    assert server.tags(fdr) == [("private", "you")]
+    box.fill("private")
+    box.press("Shift+Delete")  # the keyboard's way asks too
+    expect(confirm).to_be_visible()
+    page.keyboard.press("Escape")  # closes only the confirmation, as Cancel
+    expect(confirm).to_have_count(0)
+    expect(box).to_be_focused()
+    box.press("Shift+Delete")
+    confirm.get_by_role("button", name="Remove").click()
+    expect(confirm).to_have_count(0)
+    expect(box).to_be_focused()
+    wait_until(lambda: server.tags(fdr) == [])
+    expect(item).to_have_count(0)  # no recording has it now: the server's recount drops it
+    page.keyboard.press("Escape")  # now the picker
+    expect(box).to_have_count(0)
+    expect(plus).to_be_focused()  # Radix gives focus back to the +
+    plus.click()
+    expect(box).to_be_focused()
+    header.locator("h1").click()  # an outside click still closes it
+    expect(box).to_have_count(0)

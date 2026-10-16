@@ -14,6 +14,7 @@ import { NotesTab } from "./NotesTab";
 import { Player } from "./Player";
 import { PlaudTab } from "./PlaudTab";
 import { TagChips } from "./TagChips";
+import { AddTagsButton } from "./TagPicker";
 import { TranscriptTab } from "./TranscriptTab";
 
 export function RecordingPane({ selectedId, row }: { selectedId: string | null; row: LibraryRow | null }) {
@@ -29,7 +30,8 @@ export function RecordingPane({ selectedId, row }: { selectedId: string | null; 
 
 /** The header's chips read the open recording's row in the merged library, never the `recording`
  * output, which isn't re-sent for a tag change because it carries the whole transcript (spec §5).
- * After ×, focus goes to the next control; with none left, to the title, never to the page. */
+ * After ×, focus goes to the next control (the next ×, or the +); with none left, to the title,
+ * never to the page. The + opens the picker for the open recording (spec §6). */
 function HeaderChips({ rec, row, heading }: { rec: RecordingView; row: LibraryRow | null; heading: RefObject<HTMLHeadingElement | null> }) {
   const tagging = useTaggingContext();
   const tags = row ? shownTags(row, tagging.pending) : rec.tags;
@@ -43,7 +45,9 @@ function HeaderChips({ rec, row, heading }: { rec: RecordingView; row: LibraryRo
         (next ?? heading.current)?.focus();
         tagging.tag("remove", [rec.id], [tag], { kind: "header" });
       }}
-    />
+    >
+      {tagging.canTag && row !== null && <AddTagsButton id={rec.id} title={row.title} place="header" />}
+    </TagChips>
   );
 }
 
