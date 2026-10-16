@@ -7,6 +7,7 @@ import errno
 import logging
 import secrets
 import threading
+import time
 
 import pytest
 from pydantic import ValidationError
@@ -22,6 +23,7 @@ from recordings.tagops import (
     RemoveTags,
     WouldExpose,
 )
+from recordings_ui import tagging, views
 from recordings_ui.tagging import (
     ALREADY_UNDONE,
     BAD_ID,
@@ -33,6 +35,7 @@ from recordings_ui.tagging import (
     NOT_CONFIRMED,
     STALE,
     STOP_BUSY,
+    STOP_CANCELLED,
     STOP_FULL,
     STOP_IO,
     STOP_READ_ONLY,
@@ -81,6 +84,16 @@ def session_of(service: TagService) -> TagSession:
 def ask(session: TagSession, raw: object) -> Replies:
     replies = Replies()
     asyncio.run(session.run(session.check(raw), replies))
+    return replies
+
+
+def ask_confirmed(session: TagSession, raw: dict) -> Replies:
+    """Ask, and when the reply is `confirm`, resend with the IDs it named, as the dialog's Remove
+    does: the same request with a new request ID (spec §5)."""
+    replies = ask(session, raw)
+    if replies and replies.final["status"] == "confirm":
+        named = replies.final["loses_private"]["ids"]
+        replies = ask(session, {**raw, "request_id": secrets.token_hex(8), "confirm_ids": named})
     return replies
 
 
@@ -208,8 +221,9 @@ def test_a_request_as_shiny_delivers_it_with_tuples_is_read(service, tag_archive
     assert ask(session, {**raw, "confirm_ids": ()}).final["status"] == "done"
     assert tags_of(service.store, ids["untagged"]) == ["work"]
     gated = {**req("remove", (), ()), "ids": (ids["private"],), "tags": ("private",)}
-    confirm = (ids["private"],)
-    assert ask(session, {**gated, "confirm_ids": confirm}).final["status"] == "done"
+    assert ask(session, {**gated, "confirm_ids": ()}).final["status"] == "confirm"
+    resend = {**gated, "request_id": secrets.token_hex(8), "confirm_ids": (ids["private"],)}
+    assert ask(session, resend).final["status"] == "done"
     assert tags_of(service.store, ids["private"]) == []
 
 
@@ -257,6 +271,10 @@ def test_new_tags_follow_the_rules_and_existing_ones_are_taken_as_they_are(servi
         "\u0440rivate",  # Cyrillic er: reads as private, and isn't
         "\uff50\uff52\uff49\uff56\uff41\uff54\uff45",  # fullwidth: private to the app only
         "\u0440ri\u200bvate",  # validate_new_tag names INVISIBLE first, which hides the lookalike
+        "\u0440ri\u3164vate",  # Hangul filler: hidden, so INVISIBLE fires first
+        "\u0440ri\uffa0vate",  # halfwidth Hangul filler: hidden, so INVISIBLE fires first
+        "\u0440ri\u115fvate",  # Hangul choseong filler: hidden, so INVISIBLE fires first
+        "\u0440ri\u2800vate",  # Braille blank: hidden, so INVISIBLE fires first
     ],
 )
 def test_a_lookalike_already_in_the_archive_is_never_spread(service, tag_archive, run, lookalike):
@@ -271,7 +289,7 @@ def test_a_lookalike_already_in_the_archive_is_never_spread(service, tag_archive
     refused = ask(session, req("add", [ids["untagged"]], ["work", lookalike])).final
     assert refused["status"] == "failed" and refused["message"] == LOOKS_PRIVATE
     assert tags_of(service.store, ids["untagged"]) == []
-    removed = ask(session, req("remove", [ids["plain"]], [lookalike], confirm=[ids["plain"]]))
+    removed = ask_confirmed(session, req("remove", [ids["plain"]], [lookalike]))
     assert removed.final["status"] == "done" and tags_of(service.store, ids["plain"]) == ["talks"]
 
 
@@ -343,6 +361,29 @@ def test_nothing_is_applied_without_confirm_ids_even_for_a_hand_crafted_request(
     assert done.final["status"] == "done" and tags_of(service.store, ids["private"]) == []
 
 
+def test_only_the_last_confirm_reply_can_be_confirmed(service, tag_archive):
+    # why: the council's ruling. Pre-filled confirm_ids are never consent, and nor are IDs from
+    # a dialog that was cancelled while another request ran: the session remembers the IDs its
+    # last confirm reply named, and only a resend straight after it applies.
+    rid = tag_archive.ids["private"]
+    session = session_of(service)
+    prefilled = req("remove", [rid], ["private"], confirm=[rid])
+    assert ask(session, prefilled).final["status"] == "confirm"
+    assert tags_of(service.store, rid) == ["private"]
+    ask(session, req("add", [tag_archive.ids["untagged"]], ["work"]))  # the dialog was cancelled
+    late = req("remove", [rid], ["private"], confirm=[rid])
+    assert ask(session, late).final["status"] == "confirm"
+    assert tags_of(service.store, rid) == ["private"]
+    another_window = session_of(service)  # what this window was asked isn't another's consent
+    assert (
+        ask(another_window, req("remove", [rid], ["private"], confirm=[rid])).final["status"]
+        == "confirm"
+    )
+    resend = req("remove", [rid], ["private"], confirm=[rid])
+    assert ask(another_window, resend).final["status"] == "done"
+    assert tags_of(service.store, rid) == []
+
+
 # ---- the races (spec §9) ---------------------------------------------------------------------
 def test_complementary_removals_in_two_windows_never_expose_a_recording(
     service, tag_archive, monkeypatch
@@ -384,6 +425,26 @@ def test_a_set_that_grows_after_the_confirm_asks_again(service, tag_archive, run
     assert again["status"] == "confirm"
     assert sorted(again["loses_private"]["ids"]) == sorted(targets)
     assert tags_of(service.store, ids["private"]) == ["private"]
+    assert tags_of(service.store, ids["journal"]) == ["private"]
+
+
+def test_only_the_ids_the_pre_pass_found_may_be_exposed(service, tag_archive, monkeypatch):
+    # why: the council's probe. The client's confirm_ids may hold more than the server named;
+    # the gate gets only the IDs this request's own pre-pass found losing their last private
+    # tag. A recording that newly qualifies between the pre-pass and the write, through another
+    # window, fails as "not confirmed", even when the client listed it (spec §5).
+    ids = tag_archive.ids
+    targets = [ids["private"], ids["journal"]]  # journal has private/journal and private
+    session = session_of(service)
+    asked = ask(session, req("remove", targets, ["private"])).final
+    assert asked["status"] == "confirm" and asked["loses_private"]["ids"] == [ids["private"]]
+    journal_only = RemoveTags(("private/journal",))
+    before_the_first_write(
+        service.store, monkeypatch, lambda real: real(ids["journal"], elsewhere(journal_only))
+    )
+    final = ask(session, req("remove", targets, ["private"], confirm=targets)).final
+    assert final["failures"] == [{"id": ids["journal"], "reason": NOT_CONFIRMED}]
+    assert tags_of(service.store, ids["private"]) == []
     assert tags_of(service.store, ids["journal"]) == ["private"]
 
 
@@ -514,6 +575,33 @@ def test_a_change_that_landed_before_an_error_counts_as_applied(service, tag_arc
     assert final["changed"] == 1 and final["undo"] and final["rows"][0]["id"] == rid
 
 
+def test_whether_a_change_landed_is_read_on_the_writer_thread(tag_archive, monkeypatch):
+    # why: the re-read after an exception decides what Undo covers. On the event loop it would
+    # read outside the writer thread's order, beside writes still queued there (spec §5).
+    store = ArchiveStore(Archive(tag_archive.root), tag_archive.open_writer)
+    service = TagService(store, progress_every=0)
+    rid = tag_archive.ids["untagged"]
+    real_apply, real_read = store.apply, store.read
+    readers: list[str] = []
+
+    def apply(r, op):
+        real_apply(r, op)
+        raise OSError(errno.EIO, "fsync of the folder failed")
+
+    def read(r):
+        readers.append(threading.current_thread().name)
+        return real_read(r)
+
+    try:
+        session = session_of(service)
+        monkeypatch.setattr(store, "apply", apply)
+        monkeypatch.setattr(store, "read", read)
+        final = ask(session, req("add", [rid], ["work"])).final
+        assert final["changed"] == 1 and readers == ["recordings-writer"]
+    finally:
+        store.close()
+
+
 def test_five_busy_recordings_in_a_row_stop_the_batch(tag_archive):
     store = ArchiveStore(
         Archive(tag_archive.root), lambda: tag_archive.open_writer(lock_timeout=0.05)
@@ -535,6 +623,86 @@ def test_an_unexpected_error_stops_the_batch(service, tag_archive, monkeypatch):
     session = session_of(service)
     final = ask(session, req("add", [tag_archive.ids["untagged"]], ["work"])).final
     assert final["status"] == "failed" and final["message"] == STOP_UNEXPECTED
+
+
+def test_a_bug_outside_the_writes_still_replies_with_the_rows_and_undo(
+    service, tag_archive, monkeypatch
+):
+    # why: spec §5 and §8. Every reply that ends a request carries the rows and an Undo token
+    # for the recordings already written; a bug between writes stops the batch (decision 14)
+    # but never loses them.
+    ids = [tag_archive.ids["untagged"], tag_archive.ids["plain"]]
+    real = tagging.effect_of
+
+    def effect_of(before, after):
+        if before.id == ids[1]:
+            raise RuntimeError("a bug")
+        return real(before, after)
+
+    monkeypatch.setattr(tagging, "effect_of", effect_of)
+    session = session_of(service)
+    final = ask(session, req("add", ids, ["work"])).final
+    assert final["status"] == "failed" and final["message"] == STOP_UNEXPECTED
+    assert final["undo"] and [r["id"] for r in final["rows"]] == ids[:1]
+    assert ask(session, req("undo", undo=final["undo"])).final["status"] == "done"
+    assert tags_of(service.store, ids[0]) == []
+
+
+def test_a_row_that_cant_be_drawn_never_loses_the_undo(service, tag_archive, monkeypatch):
+    # why: as above, for a bug while the reply is built: the token covers every write, and the
+    # other rows still come back.
+    ids = [tag_archive.ids["untagged"], tag_archive.ids["plain"]]
+    session = session_of(service)
+    real = views.row
+
+    def row(rec):
+        if rec.id == ids[1]:
+            raise RuntimeError("a bug")
+        return real(rec)
+
+    monkeypatch.setattr(views, "row", row)
+    final = ask(session, req("add", ids, ["work"])).final
+    assert final["status"] == "failed" and final["message"] == STOP_UNEXPECTED
+    assert final["changed"] == 2 and final["undo"]
+    assert [r["id"] for r in final["rows"]] == ids[:1]
+    assert final["counts"] == {"all": 6, "untagged": 0}
+
+
+def test_a_request_cancelled_mid_write_keeps_what_landed(service, tag_archive, monkeypatch):
+    # why: the council (Task 4's carry). The window's extended task can be cancelled while a
+    # write runs (the window goes, or the app stops). The write itself can't be stopped, so its
+    # effect, row and Undo token are kept, a reply is tried, and the cancellation goes on.
+    ids = [tag_archive.ids[s] for s in ("untagged", "plain", "excluded")]
+    session = session_of(service)
+    replies = Replies()
+    real = service.store.apply
+    running: dict = {}
+
+    def apply(rid, op):
+        if rid == ids[1]:
+            running["loop"].call_soon_threadsafe(running["task"].cancel)
+            if threading.current_thread() is not threading.main_thread():
+                time.sleep(0.1)  # the writer thread is still writing when the cancel arrives
+        return real(rid, op)
+
+    monkeypatch.setattr(service.store, "apply", apply)
+
+    async def window() -> None:
+        running["loop"] = asyncio.get_running_loop()
+        work = session.run(session.check(req("add", ids, ["work"])), replies)
+        running["task"] = asyncio.ensure_future(work)
+        with pytest.raises(asyncio.CancelledError):
+            await running["task"]
+
+    asyncio.run(window())
+    final = replies.final
+    assert final["status"] == "failed" and final["message"] == STOP_CANCELLED
+    assert final["changed"] == 2 and final["undo"]
+    assert [r["id"] for r in final["rows"]] == ids[:2]
+    assert {"tag": "work", "by": "you"} in session.rows[ids[1]]["tags"]
+    assert tags_of(service.store, ids[2]) == ["talks"]  # never reached
+    monkeypatch.setattr(service.store, "apply", real)
+    assert ask(session, req("undo", undo=final["undo"])).final["changed"] == 2
 
 
 def test_a_stop_at_shutdown_ends_the_batch_between_recordings(service, tag_archive, monkeypatch):
@@ -620,6 +788,24 @@ def test_a_request_id_is_applied_at_most_once_and_a_gated_one_is_not_recorded(se
     assert ask(session, gated).final["status"] == "confirm"  # not recorded: asked again
 
 
+def test_a_repeated_refused_request_is_ignored_and_one_without_an_id_is_answered(
+    service, tag_archive
+):
+    # why: spec §5. An ID is recorded once its request is applied or has failed, and a repeated
+    # ID is ignored; a refusal is a failure. A request with no usable ID can't be recorded, so
+    # each one is answered.
+    rid = tag_archive.ids["plain"]
+    session = session_of(service)
+    empty = req("remove", [rid], [])
+    assert ask(session, empty).final["message"] == NO_TAGS
+    assert ask(session, empty) == []
+    assert ask(session, {**req("add", [rid], ["work"]), "request_id": empty["request_id"]}) == []
+    no_id = {"request_id": "short", "action": "add", "ids": [rid], "tags": ["work"]}
+    for _ in range(2):
+        assert [r["message"] for r in ask(session, no_id)] == [UNREADABLE]
+    assert tags_of(service.store, rid) == ["talks"]
+
+
 def test_undo_is_single_use_and_an_unknown_token_says_so(service, tag_archive):
     rid = tag_archive.ids["untagged"]
     session = session_of(service)
@@ -660,6 +846,51 @@ def test_an_undo_that_stops_part_way_keeps_its_token_for_the_rest(
     rest = ask(session, req("undo", undo=added["undo"])).final
     assert rest["status"] == "done" and rest["changed"] == 1
     assert tags_of(service.store, ids["plain"]) == ["talks"]
+    assert ask(session, req("undo", undo=added["undo"])).final["message"] == ALREADY_UNDONE
+
+
+def test_a_part_way_undo_of_the_oldest_action_never_evicts_another(
+    service, tag_archive, monkeypatch
+):
+    # why: the council. Keeping the Redo token first, then keeping the part-way token again,
+    # pushed out the next-oldest action. The Undo is settled first; then its Redo token pushes
+    # out the oldest action, as "the last 20" says.
+    ids = tag_archive.ids
+    session = session_of(service)
+    oldest = ask(session, req("add", [ids["untagged"], ids["plain"]], ["work"])).final["undo"]
+    rid = ids["untagged"]
+    later = [ask(session, req("add", [rid], [f"t{i}"])).final["undo"] for i in range(1, 20)]
+    real = service.store.apply
+
+    def apply(r, op):
+        if r == ids["plain"]:
+            raise OSError(errno.EIO, "a disk error")
+        return real(r, op)
+
+    monkeypatch.setattr(service.store, "apply", apply)
+    assert ask(session, req("undo", undo=oldest)).final["message"] == STOP_IO
+    monkeypatch.setattr(service.store, "apply", real)
+    assert ask(session, req("undo", undo=later[0])).final["status"] == "done"
+    assert ask(session, req("undo", undo=oldest)).final["message"] == UNDO_GONE
+
+
+def test_a_recording_gone_since_never_keeps_an_undo_alive(service, tag_archive, monkeypatch):
+    # why: the council. A recording moved or trashed since can't be undone; leaving it under the
+    # token would keep the token alive for good, each retry failing it again.
+    ids = tag_archive.ids
+    session = session_of(service)
+    added = ask(session, req("add", [ids["untagged"], ids["plain"]], ["work"])).final
+    real = service.store.apply
+
+    def apply(rid, op):
+        if rid == ids["plain"]:
+            raise KeyError(rid)  # gone since (spec §5)
+        return real(rid, op)
+
+    monkeypatch.setattr(service.store, "apply", apply)
+    undone = ask(session, req("undo", undo=added["undo"])).final
+    assert undone["status"] == "done" and undone["changed"] == 1
+    assert undone["failures"] == [{"id": ids["plain"], "reason": GONE}]
     assert ask(session, req("undo", undo=added["undo"])).final["message"] == ALREADY_UNDONE
 
 

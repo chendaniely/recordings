@@ -24,7 +24,7 @@ import sys
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, NamedTuple, Protocol, TypeVar
 
@@ -69,10 +69,12 @@ STOP_IO = "Stopped: a disk error"
 STOP_STATE = "Stopped: state.db can't be used"
 STOP_BUSY = "Stopped: busy: other jobs hold these recordings; try again"
 STOP_SHUTDOWN = "Stopped: the app is shutting down"
+STOP_CANCELLED = "Stopped: the request was cancelled"  # its window went, or the app stops
 STOP_THREAD = "Stopped: the writer thread stopped; restart the app"
 STOP_UNEXPECTED = "Stopped: an unexpected error (the server log has its class)"
 
 LOCK_WAIT = 2.0  # seconds: the service's locks, not the Writer's default 30 (spec §5)
+CANCEL_WAIT = 5.0  # seconds a cancelled request waits for the write it had started
 
 
 class Classified(NamedTuple):
@@ -360,6 +362,37 @@ def _ids_ok(ids: tuple[str, ...]) -> bool:
     return True
 
 
+@dataclass
+class _Tally:
+    """What a batch has done so far: what its reply and its Undo are built from, however the
+    batch ends (spec §5)."""
+
+    total: int
+    done: int = 0
+    unchanged: int = 0
+    now_visible: int = 0
+    effects: dict[str, Effect] = field(default_factory=dict)
+    afters: dict[str, Recording] = field(default_factory=dict)
+    settled: set[str] = field(default_factory=set)  # nothing more for an Undo to do there
+    failures: list[dict] = field(default_factory=list)
+    stopped: str | None = None
+
+    def landed(self, rid: str, before: Recording, after: Recording) -> None:
+        effect = effect_of(before, after)
+        self.settled.add(rid)
+        if effect.empty:
+            self.unchanged += 1
+            return
+        self.effects[rid], self.afters[rid] = effect, after
+        if not before.tags and after.tags and not is_private(after):
+            self.now_visible += 1
+
+    def failed(self, rid: str, reason: str) -> None:
+        self.failures.append({"id": rid, "reason": reason})
+        if reason == GONE:
+            self.settled.add(rid)
+
+
 class TagService:
     """One per process: the store, the request IDs already handled, and shutdown (spec §5)."""
 
@@ -401,6 +434,8 @@ class TagSession:
         self._types: set[str] = set()  # note types the view lists, exclusion-only ones included
         self._undo: OrderedDict[str, dict[str, Effect]] = OrderedDict()
         self._used: OrderedDict[str, None] = OrderedDict()
+        # The IDs the last `confirm` reply named: the only ones a resend can confirm.
+        self._named: frozenset[str] = frozenset()
 
     # ---- the view ------------------------------------------------------------------------
     async def library(self, *, refresh: bool = False) -> dict:
@@ -482,16 +517,17 @@ class TagSession:
     # ---- running a request -----------------------------------------------------------------
     async def run(self, job: Job | Refusal, send: Send) -> None:
         """Apply one request and reply. It runs as the session's extended task, outside Shiny's
-        reactive lock, and never raises: a tagging error never closes the session (spec §5)."""
+        reactive lock, and never raises: a tagging error never closes the session (spec §5). A
+        cancellation alone goes on, once what landed is recorded and a reply tried."""
         request_id = job.request_id
         try:
-            if isinstance(job, Refusal):
-                if request_id is not None:
-                    self.service.claim(request_id)  # failed: recorded
-                reply = self._reply(request_id, "failed", message=job.message)
-            elif not self.service.claim(request_id):
+            # Applied or failed, a request's ID is recorded, and a repeat is ignored (spec §5). A
+            # refusal with no usable ID can't be recorded, so each one is answered.
+            if request_id is not None and not self.service.claim(request_id):
                 log.info("tag %s: a repeated request, ignored", request_id)
                 return
+            if isinstance(job, Refusal):
+                reply = self._reply(request_id, "failed", message=job.message)
             else:
                 reply = await self._apply(job, send)
                 if reply["status"] == "confirm":
@@ -504,6 +540,9 @@ class TagSession:
         await self._quietly(send, reply)
 
     async def _apply(self, job: Job, send: Send) -> dict:
+        # Only the resend straight after a confirm reply can confirm, and only the IDs it named:
+        # pre-filled confirm_ids, or a cancelled dialog's, are never consent (council ruling).
+        named, self._named = self._named, frozenset()
         log.info(
             "tag %s: %s, %d recording(s), %d tag(s)",
             job.request_id,
@@ -514,11 +553,13 @@ class TagSession:
         can_tag, reason = await self.store.open_for_write()  # retries a transient failure (§5)
         if not can_tag:
             return self._reply(job.request_id, "failed", message=f"Stopped: {reason}")
+        undoing: dict[str, Effect] | None = None  # the effects an Undo reverses
         if job.action == "undo":
-            effects = self._undo.get(job.undo or "")
-            if effects is None:
+            undoing = self._undo.get(job.undo or "")
+            if undoing is None:
                 message = ALREADY_UNDONE if job.undo in self._used else UNDO_GONE
                 return self._reply(job.request_id, "failed", message=message)
+            effects = undoing
             targets = tuple(effects)
 
             def make(rid: str, expose: frozenset[str]) -> Op:
@@ -537,9 +578,13 @@ class TagSession:
             def make(rid: str, expose: frozenset[str]) -> Op:
                 return RemoveTags(job.tags, expose)
 
+        # The gate may expose only what this request's own pre-pass found and the window
+        # confirmed: never the rest of the client's confirm_ids (spec §5).
+        may_expose: frozenset[str] = frozenset()
         if job.action != "add":  # only a removal can expose a recording
             losing = await self._prepass(targets, make)
-            if not set(losing) <= job.confirm_ids:
+            if not set(losing) <= job.confirm_ids & named:
+                self._named = frozenset(losing)
                 visible = sum(losing.values())
                 return self._reply(
                     job.request_id,
@@ -551,18 +596,17 @@ class TagSession:
                         "ids": list(losing),
                     },
                 )
-        reply, settled = await self._batch(job, targets, make, send)
-        if job.action == "undo" and job.undo is not None:
-            self._settle_undo(job.undo, effects, settled)
-        return reply
+            may_expose = frozenset(losing)
+        return await self._batch(job, targets, make, may_expose, send, undoing)
 
     def _settle_undo(self, token: str, effects: dict[str, Effect], settled: set[str]) -> None:
         """An Undo that was applied uses up its token; a gated one never does (spec §5). What it
         didn't settle, because it failed there (busy, say) or the batch stopped first, stays
-        under the same token, so "try again" can."""
+        under the same token, in its place, so "try again" can. A recording gone since is
+        settled: nothing more can be undone there."""
         left = {rid: e for rid, e in effects.items() if rid not in settled}
         if left:
-            self._keep(token, left)
+            self._undo[token] = left
             return
         self._undo.pop(token, None)
         self._used[token] = None
@@ -607,88 +651,145 @@ class TagSession:
         job: Job,
         targets: tuple[str, ...],
         make: Callable[[str, frozenset[str]], Op],
+        may_expose: frozenset[str],
         send: Send,
-    ) -> tuple[dict, set[str]]:
+        undoing: dict[str, Effect] | None,
+    ) -> dict:
         """Recording by recording, not all-or-nothing: each gets its own write, wrapped for every
-        exception (spec §5). Returns the reply, and the recordings settled: changed, or found
-        already as asked."""
-        effects: dict[str, Effect] = {}
-        settled: set[str] = set()
-        afters: dict[str, Recording] = {}
-        failures: list[dict] = []
-        unchanged = now_visible = busy = done = 0
-        stopped: str | None = None
+        exception (spec §5)."""
+        tally = _Tally(total=len(targets))
+        cancelled: asyncio.CancelledError | None = None
+        busy = 0
         last = time.monotonic()
-        for rid in targets:
-            if self.service.stopping:
-                stopped = STOP_SHUTDOWN
-                break
-            op = Recorded(make(rid, job.confirm_ids), job.request_id)
-            error: Exception | None = None
-            after: Recording | None
-            try:
-                after = await self.store.write(partial(self.store.apply, rid, op))
-            except Exception as exc:  # noqa: BLE001  each recording is wrapped (spec §5)
-                error, after = exc, self._landed(rid, op)
-                log.warning(
-                    "tag %s: %s failed on %s (%s)",
-                    job.request_id,
-                    job.action,
-                    rid,
-                    type(exc).__name__,
-                )
-            done += 1
-            if after is not None and op.before is not None:
-                busy = 0
-                settled.add(rid)
-                effect = effect_of(op.before, after)
-                if effect.empty:
-                    unchanged += 1
-                else:
-                    effects[rid], afters[rid] = effect, after
-                    if not op.before.tags and after.tags and not is_private(after):
-                        now_visible += 1
-            if error is not None:
-                found = self.store.classify(error) or classify_common(error)
-                if found.stops:
-                    stopped = found.reason
+        try:
+            for rid in targets:
+                if self.service.stopping:
+                    tally.stopped = STOP_SHUTDOWN
                     break
-                if after is None:
-                    failures.append({"id": rid, "reason": found.reason})
-                    busy = busy + 1 if found.reason == BUSY else 0
-                    if busy >= MAX_BUSY:
-                        stopped = STOP_BUSY
+                op = Recorded(make(rid, may_expose), job.request_id)
+                error: Exception | None = None
+                after: Recording | None
+                # Shielded: a write that has started can't be stopped, so a cancelled request
+                # waits for it and records what landed (Task 4's carry).
+                write = asyncio.ensure_future(self.store.write(partial(self.store.apply, rid, op)))
+                try:
+                    after = await asyncio.shield(write)
+                except asyncio.CancelledError as exc:
+                    cancelled = exc
+                    after = await self._after_cancel(write, rid, op)
+                except Exception as exc:  # noqa: BLE001  each recording is wrapped (spec §5)
+                    error, after = exc, await self._recheck(rid, op)
+                    log.warning(
+                        "tag %s: %s failed on %s (%s)",
+                        job.request_id,
+                        job.action,
+                        rid,
+                        type(exc).__name__,
+                    )
+                tally.done += 1
+                if after is not None and op.before is not None:
+                    busy = 0
+                    tally.landed(rid, op.before, after)
+                if cancelled is not None:
+                    break
+                if error is not None:
+                    found = self.store.classify(error) or classify_common(error)
+                    if found.stops:
+                        tally.stopped = found.reason
                         break
-            if done < len(targets) and time.monotonic() - last >= self.service.progress_every:
-                last = time.monotonic()
-                progress = self._reply(
-                    job.request_id, "progress", done_so_far=done, total=len(targets)
-                )
-                await self._quietly(send, progress)
+                    if after is None:
+                        tally.failed(rid, found.reason)
+                        busy = busy + 1 if found.reason == BUSY else 0
+                        if busy >= MAX_BUSY:
+                            tally.stopped = STOP_BUSY
+                            break
+                if (
+                    tally.done < tally.total
+                    and time.monotonic() - last >= self.service.progress_every
+                ):
+                    last = time.monotonic()
+                    progress = self._reply(
+                        job.request_id, "progress", done_so_far=tally.done, total=tally.total
+                    )
+                    await self._quietly(send, progress)
+        except Exception as exc:  # noqa: BLE001  a bug between writes stops the batch (decision 14)
+            log.warning("tag %s: %s stopped (%s)", job.request_id, job.action, type(exc).__name__)
+            tally.stopped = STOP_UNEXPECTED
+        except asyncio.CancelledError as exc:  # while a progress reply, or a re-read, was awaited
+            cancelled = exc
+        if cancelled is None:
+            return self._conclude(job, tally, undoing)
+        # Cancelled: keep what landed, with its rows and Undo, try a reply, and let the
+        # cancellation go on.
+        tally.stopped = STOP_CANCELLED
+        log.info("tag %s: cancelled after %d of %d", job.request_id, tally.done, tally.total)
+        await self._quietly(send, self._conclude(job, tally, undoing))
+        raise cancelled
+
+    async def _after_cancel(
+        self, write: asyncio.Future, rid: str, op: Recorded
+    ) -> Recording | None:
+        """The request was cancelled while this recording's write ran. Wait for the write, a
+        while, and say what landed, so the reply and the Undo cover it."""
+        finished, _ = await asyncio.wait({write}, timeout=CANCEL_WAIT)
+        if not finished:
+            log.warning("tag %s: a write on %s outlasted the cancel", op.request_id, rid)
+            return None
+        if not write.cancelled() and write.exception() is None:
+            return write.result()
+        return await self._recheck(rid, op)
+
+    def _conclude(self, job: Job, tally: _Tally, undoing: dict[str, Effect] | None) -> dict:
+        """The reply that ends a batch, with the rows and the Undo token for what it applied
+        (spec §5). An Undo is settled before the new action is kept, so keeping its Redo token
+        never pushes out another action's token."""
+        if undoing is not None and job.undo is not None:
+            self._settle_undo(job.undo, undoing, tally.settled)
         token = None
-        if effects:
+        if tally.effects:
             token = secrets.token_urlsafe(16)
-            self._keep(token, effects)
-        rows = []
-        for rid, rec in afters.items():
-            self.rows[rid] = views.row(rec)
-            rows.append(self.rows[rid])
+            self._keep(token, tally.effects)
+        # From here, a bug costs a row or the counts, never the token or the other rows.
+        stopped, rows = tally.stopped, []
+        summary: dict = {"counts": None, "tags": None, "note_types": None}
+        for rid, rec in tally.afters.items():
             self._types.update(rec.excluded_note_types)  # a removed type stays known (decision 18)
-        reply = self._reply(
+            try:
+                self.rows[rid] = views.row(rec)
+            except Exception as exc:  # noqa: BLE001  the window's Refresh redraws it
+                log.warning("tag %s: no row for %s (%s)", job.request_id, rid, type(exc).__name__)
+                stopped = stopped or STOP_UNEXPECTED
+                continue
+            rows.append(self.rows[rid])
+        try:
+            summary = views.summarise(self.rows.values(), self._types)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("tag %s: no counts (%s)", job.request_id, type(exc).__name__)
+            stopped = stopped or STOP_UNEXPECTED
+        return self._reply(
             job.request_id,
             "failed" if stopped else "done",
-            changed=len(effects),
-            unchanged=unchanged,
-            done_so_far=done,
-            total=len(targets),
-            now_visible=now_visible,
-            failures=failures,
+            changed=len(tally.effects),
+            unchanged=tally.unchanged,
+            done_so_far=tally.done,
+            total=tally.total,
+            now_visible=tally.now_visible,
+            failures=tally.failures,
             undo=token,
             rows=rows,
             message=stopped,
-            **views.summarise(self.rows.values(), self._types),
+            **summary,
         )
-        return reply, settled
+
+    async def _recheck(self, rid: str, op: Recorded) -> Recording | None:
+        """After an exception, whether the change landed after all: read on the writer thread,
+        in its order, never beside a write still queued there (spec §5)."""
+        if op.before is None or op.after is None or op.after == op.before:
+            return None  # nothing was about to change: no read needed
+        try:
+            return await self.store.write(partial(self._landed, rid, op))
+        except Exception:  # noqa: BLE001  the thread has stopped: not counted as applied
+            return None
 
     def _landed(self, rid: str, op: Recorded) -> Recording | None:
         """After an exception, read the file again. A change can land and then fail, when an
