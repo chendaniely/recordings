@@ -40,6 +40,8 @@ export function heard(q: Queue, reply: TagResult, now: number): { queue: Queue; 
   }
   if (reply.request_id !== q.inFlight.request.request_id) return { queue: q, finished: null };
   if (reply.status === "progress") return { queue: { ...q, inFlight: { ...q.inFlight, heardAt: now } }, finished: null };
+  // A confirmation opens a dialog: pause here, so no drain sends the next request behind it.
+  if (reply.status === "confirm") return { queue: { ...q, inFlight: null, paused: true }, finished: q.inFlight };
   return { queue: { ...q, inFlight: null }, finished: q.inFlight };
 }
 

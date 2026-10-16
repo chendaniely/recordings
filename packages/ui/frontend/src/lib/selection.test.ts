@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { NO_SEL, prune, reduceSel, targetsOf, type Sel, type SelAction } from "./selection";
+import { NO_SEL, hiddenText, prune, reduceSel, targetsOf, type Sel, type SelAction } from "./selection";
 
 const order = ["a", "b", "c", "d", "e"];
 const run = (...actions: SelAction[]): Sel => actions.reduce((s, a) => reduceSel(s, a, order), NO_SEL);
@@ -77,7 +77,7 @@ describe("pruning and targets", () => {
     const { sel, hidden } = prune(run(click("a"), click("c", true), click("e", true)), ["b", "c", "d"]);
     expect(ids(sel)).toEqual(["c"]);
     expect(hidden).toBe(2);
-    expect(sel.anchor).toBe(null); // "e" is hidden now
+    expect(sel.anchor).toBe("b"); // the anchor goes with the focus
     expect(sel.focus).toBe("b");
   });
   it("T targets the selection in list order, or the focused row when nothing is selected", () => {
@@ -85,5 +85,21 @@ describe("pruning and targets", () => {
     const focusedOnly = reduceSel(run(click("c")), { type: "clear" }, order);
     expect(targetsOf(focusedOnly, order)).toEqual(["c"]);
     expect(targetsOf(NO_SEL, order)).toEqual([]);
+  });
+});
+
+describe("after a filter change", () => {
+  it("Shift+Down selects the focused row and the next; T targets the focused row", () => {
+    const shown = ["b", "c", "d"];
+    const { sel } = prune(run(click("a"), click("e", true)), shown);
+    expect(sel.anchor).toBe("b");
+    const down = reduceSel(sel, { type: "move", to: "next", shift: true, meta: false }, shown);
+    expect(ids(down)).toEqual(["b", "c"]);
+    expect(targetsOf(sel, shown)).toEqual(["b"]); // nothing selected: T targets the focused row
+  });
+  it("announces the hidden rows", () => {
+    expect(hiddenText(1)).toBe("1 hidden row deselected");
+    expect(hiddenText(9)).toBe("9 hidden rows deselected");
+    expect(hiddenText(0)).toBe("");
   });
 });

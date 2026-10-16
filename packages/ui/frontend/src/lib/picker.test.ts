@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { LibraryView } from "../types";
-import { alreadyWords, createOffer, pickerTags, rankTags, stateWords, tagState, type PickerTag } from "./picker";
+import { alreadyWords, createOffer, pickerGroups, pickerTags, rankTags, stateWords, tagState, type PickerTag } from "./picker";
 
 const tag = (name: string, count = 1, priv = false): PickerTag => ({ tag: name, count, private: priv });
 const tags = [tag("school/course-101", 5), tag("courses", 2), tag("talks", 9), tag("private", 3, true), tag("notes/lecture", 4)];
@@ -62,5 +62,32 @@ describe("pickerTags", () => {
     expect(pickerTags(view, ["fresh", "talks"])).toEqual([
       tag("talks", 2), tag("Private/x", 1, true), tag("notes/lecture", 3), tag("fresh", 0),
     ]);
+  });
+});
+
+describe("pickerGroups (the first item shown is the first ranked)", () => {
+  const set = [tag("people/alex", 9), tag("private/alex", 1, true), tag("talks", 4), tag("private", 2, true)];
+  it("on a rank tie the private (locked) group comes first, and the first item shown is rankTags()[0]", () => {
+    const groups = pickerGroups(set, "alex");
+    expect(groups.map((g) => g.locked)).toEqual([true, false]);
+    expect(groups[0].tags[0].tag).toBe("private/alex");
+    expect(groups[0].tags[0]).toBe(rankTags(set, "alex")[0]);
+  });
+  it("orders groups by their best-ranked item, and drops an empty group", () => {
+    expect(pickerGroups(set, "talks").map((g) => g.locked)).toEqual([false]);
+    expect(pickerGroups(set, "ALEX").flatMap((g) => g.tags.map((t) => t.tag))).toEqual(["private/alex", "people/alex"]);
+    const g = pickerGroups(set, "");
+    expect(g[0].tags[0]).toBe(rankTags(set, "")[0]);
+    expect(g.flatMap((x) => x.tags)).toHaveLength(4);
+  });
+});
+
+describe("Create refuses structurally invalid names", () => {
+  it("hides Create for leading, trailing and double slashes, dot parts, and over-long names", () => {
+    for (const bad of ["/a", "a/", "a//b", "a/./b", "..", "a/../b", "a".repeat(65), `a/${"b".repeat(65)}`, Array(51).fill("abcd").join("/")]) {
+      expect(createOffer(tags, bad)).toBe(null);
+    }
+    expect(createOffer(tags, "a".repeat(64))).toBe("a".repeat(64));
+    expect(createOffer(tags, "work/2026.q1")).toBe("work/2026.q1");
   });
 });

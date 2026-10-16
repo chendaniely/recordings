@@ -36,15 +36,40 @@ export function rankTags(tags: readonly PickerTag[], query: string): PickerTag[]
   return tags
     .map((t) => [rank(t.tag, q), t] as const)
     .filter(([r]) => r >= 0)
-    .sort(([ra, a], [rb, b]) => ra - rb || byUse(a, b))
+    .sort(([ra, a], [rb, b]) => ra - rb || Number(b.private) - Number(a.private) || byUse(a, b))
     .map(([, t]) => t);
+}
+
+export interface PickerGroup { locked: boolean; tags: PickerTag[] }
+
+/** The picker's groups, open and locked (private), in the order of their best-ranked item. On a
+ * rank tie the locked group sorts first inside `rankTags`, so it comes first here too: the first
+ * item shown is always `rankTags()[0]`, and Enter never adds a lower-ranked tag, silently, in
+ * place of a private one that matched as well. */
+export function pickerGroups(tags: readonly PickerTag[], query: string): PickerGroup[] {
+  const ranked = rankTags(tags, query);
+  const groups: PickerGroup[] = [
+    { locked: true, tags: ranked.filter((t) => t.private) },
+    { locked: false, tags: ranked.filter((t) => !t.private) },
+  ].filter((g) => g.tags.length > 0);
+  return groups.sort((a, b) => ranked.indexOf(a.tags[0]) - ranked.indexOf(b.tags[0]));
+}
+
+const MAX_PART = 64;
+const MAX_TAG = 200;
+
+/** Names the server refuses anyway: empty parts (leading, trailing or double `/`), `.` and `..`
+ * parts, a part over 64 characters, a tag over 200. */
+function wellFormed(text: string): boolean {
+  if (Array.from(text).length > MAX_TAG) return false;
+  return text.split("/").every((part) => part !== "" && part !== "." && part !== ".." && Array.from(part).length <= MAX_PART);
 }
 
 /** What Create (and Shift+Enter) would make: the typed text, trimmed and composed (NFC; tagging
  * plan, decision 5). Never a notes/ tag, never a case-variant of an existing tag. */
 export function createOffer(tags: readonly PickerTag[], query: string): string | null {
   const text = query.trim().normalize("NFC");
-  if (!text || /^notes(\/|$)/i.test(text)) return null;
+  if (!text || /^notes(\/|$)/i.test(text) || !wellFormed(text)) return null;
   const folded = fold(text);
   return tags.some((t) => fold(t.tag) === folded) ? null : text;
 }

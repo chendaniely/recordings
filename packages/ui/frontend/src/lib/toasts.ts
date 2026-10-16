@@ -19,12 +19,16 @@ function listed(tags: readonly string[]): Text {
 export function actionText(request: TagRequest, reply: TagResult, saves: boolean): Text {
   let text: Text;
   const tags = request.tags;
+  // Nothing changed and nothing was already so: the writes failed or were refused, and the
+  // failure alert speaks. Never "Already on…" for a write that did not happen.
+  if (reply.changed === 0 && (request.action === "undo" || reply.unchanged === 0)) return [];
   if (request.action === "undo") text = [`Undone on ${recordings(reply.changed)}`];
   else if (reply.changed === 0) {
-    // Nothing changed: an add says "Already on…", a removal "Already off…", never "0 recordings".
-    const of = reply.unchanged || request.ids.length;
+    // Only what the server counted as already so: "Already on all 12", "Already off 3 of 12".
+    const of = reply.unchanged;
     const where = request.action === "add" ? "on" : "off";
-    text = [of === 1 ? `Already ${where} it` : `Already ${where} all ${n(of)}`];
+    if (of < request.ids.length) text = [`Already ${where} ${n(of)} of ${n(request.ids.length)}`];
+    else text = [of === 1 ? `Already ${where} it` : `Already ${where} all ${n(of)}`];
   } else if (tags.length === 1) {
     text = request.action === "add"
       ? ["Added ", { code: tags[0] }, ` to ${recordings(reply.changed)}`]

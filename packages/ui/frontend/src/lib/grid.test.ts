@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { LibraryRow, LibraryView } from "../types";
 import {
-  columnOrder, defaultColumns, digitColumn, digitFor, foldersOf, gridRows, layoutColumns, loadChoices,
+  columnOrder, defaultColumns, digitColumn, digitFor, drawRows, foldersOf, gridOrder, gridRows, layoutColumns, loadChoices,
   saveChoices, snippetsToFetch, sortRows,
 } from "./grid";
 
@@ -42,14 +42,14 @@ describe("stored choices never name a private tag (spec §7, K-M3)", () => {
   it("saves only non-private choices, and reads back defensively", () => {
     const store = new Map<string, string>();
     const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
-    saveChoices(storage, { t01: true, "Private/health": false, private: false }, isPrivate);
+    saveChoices(storage, { t01: true, "Private/health": false, private: false, fresh: true }, view);
     expect(JSON.parse(store.get("recordings.tagColumns") ?? "{}")).toEqual({ t01: true });
     expect(loadChoices(storage)).toEqual({ t01: true });
     store.set("recordings.tagColumns", "not json");
     expect(loadChoices(storage)).toEqual({});
     const throwing = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
     expect(loadChoices(throwing)).toEqual({});
-    expect(() => saveChoices(throwing, { t01: true }, isPrivate)).not.toThrow();
+    expect(() => saveChoices(throwing, { t01: true }, view)).not.toThrow();
   });
 });
 
@@ -99,5 +99,29 @@ describe("snippets and folders", () => {
     expect([...foldersOf(["school/a", "school/b", "talks"]).entries()]).toEqual([
       ["school", ["school/a", "school/b"]], ["", ["talks"]],
     ]);
+  });
+});
+
+describe("rows stay put in the grid (spec §6, §7)", () => {
+  const rows = [
+    row("a", { title: "Alpha", recorded_at: "2026-10-03T10:00:00Z" }),
+    row("b", { title: "Beta", recorded_at: "2026-10-02T10:00:00Z" }),
+    row("c", { title: "Caf\u00e9", recorded_at: "2026-10-01T10:00:00Z", untagged: false }),
+  ];
+  const opts = { untaggedOnly: true, title: "", sort: { by: "newest" } as const };
+  it("takes the order once; a row tagged afterwards stays in it", () => {
+    const order = gridOrder(rows, opts);
+    expect(order).toEqual(["a", "b"]);
+    const later = rows.map((r) => (r.id === "a" ? { ...r, untagged: false } : r));
+    expect(drawRows(order, later).map((r) => r.id)).toEqual(["a", "b"]);
+    expect(gridOrder(later, opts)).toEqual(["b"]);
+  });
+  it("skips an ID that is no longer in the view", () => {
+    expect(drawRows(["a", "zzz"], rows).map((r) => r.id)).toEqual(["a"]);
+  });
+  it("matches titles after NFC on both sides", () => {
+    expect(gridRows(rows, { untaggedOnly: false, title: "cafe\u0301" }).map((r) => r.id)).toEqual(["c"]);
+    const decomposed = [row("d", { title: "Cafe\u0301" })];
+    expect(gridRows(decomposed, { untaggedOnly: false, title: "caf\u00e9" }).map((r) => r.id)).toEqual(["d"]);
   });
 });

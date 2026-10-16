@@ -14,12 +14,27 @@ const realClock: Clock = {
 export function pausableTimer(ms: number, onExpire: () => void, clock: Clock = realClock) {
   let left = ms;
   let startedAt = clock.now();
-  let handle: unknown = clock.set(onExpire, left);
   let pauses = 0;
   let cancelled = false;
+  let done = false;
+  const expire = () => {
+    if (done || cancelled) return;
+    done = true;
+    handle = null;
+    onExpire();
+  };
+  let handle: unknown = clock.set(expire, left);
   return {
+    /** A fresh time, keeping the pause count: a merged toast whose text changed while hovered. */
+    restart(newMs: number) {
+      if (cancelled || done) return;
+      if (handle !== null) clock.clear(handle);
+      left = newMs;
+      startedAt = clock.now();
+      handle = pauses === 0 ? clock.set(expire, left) : null;
+    },
     pause() {
-      if (cancelled) return;
+      if (cancelled || done) return;
       pauses += 1;
       if (pauses === 1 && handle !== null) {
         clock.clear(handle);
@@ -28,11 +43,11 @@ export function pausableTimer(ms: number, onExpire: () => void, clock: Clock = r
       }
     },
     resume() {
-      if (cancelled || pauses === 0) return;
+      if (cancelled || done || pauses === 0) return;
       pauses -= 1;
       if (pauses === 0) {
         startedAt = clock.now();
-        handle = clock.set(onExpire, Math.max(0, left));
+        handle = clock.set(expire, Math.max(0, left));
       }
     },
     cancel() {

@@ -75,7 +75,8 @@ export function prune(sel: Sel, order: readonly string[]): { sel: Sel; hidden: n
   const keep = new Set(order);
   const selected = new Set([...sel.selected].filter((id) => keep.has(id)));
   return {
-    sel: { selected, anchor: sel.anchor !== null && keep.has(sel.anchor) ? sel.anchor : null, focus: order[0] ?? null },
+    // Focus and anchor both go to the first row, so Shift+Down then selects it and the next.
+    sel: { selected, anchor: order[0] ?? null, focus: order[0] ?? null },
     hidden: sel.selected.size - selected.size,
   };
 }
@@ -85,4 +86,10 @@ export function prune(sel: Sel, order: readonly string[]): { sel: Sel; hidden: n
 export function targetsOf(sel: Sel, order: readonly string[]): string[] {
   if (sel.selected.size === 0) return sel.focus !== null && order.includes(sel.focus) ? [sel.focus] : [];
   return order.filter((id) => sel.selected.has(id));
+}
+
+/** The live-region announcement after a filter change deselects rows. */
+export function hiddenText(hidden: number): string {
+  if (hidden <= 0) return "";
+  return `${hidden.toLocaleString("en")} hidden row${hidden === 1 ? "" : "s"} deselected`;
 }

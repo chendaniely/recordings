@@ -4,9 +4,17 @@
 export interface KeyLike {
   key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean;
   isComposing?: boolean; target: EventTarget | null;
+  nativeEvent?: { isComposing?: boolean }; keyCode?: number; // a React event has these, not isComposing
 }
 
-const TEXT_ENTRY = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
+// Text-like inputs only: a checkbox, radio, button, range, colour or file input takes no typing.
+const NON_TEXT = ["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image"];
+const TEXT_ENTRY = `input${NON_TEXT.map((t) => `:not([type='${t}'])`).join("")}, textarea, select, [contenteditable]:not([contenteditable='false'])`;
+
+/** An IME is composing: the browser's own flag, a React event's nativeEvent, or keyCode 229. */
+export function composing(e: Pick<KeyLike, "isComposing" | "nativeEvent" | "keyCode">): boolean {
+  return Boolean(e.isComposing || e.nativeEvent?.isComposing || e.keyCode === 229);
+}
 
 export function isTextEntry(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(TEXT_ENTRY) !== null;
@@ -19,10 +27,17 @@ export function commandKey(e: Pick<KeyLike, "metaKey" | "ctrlKey">): boolean {
 
 /** A bare shortcut: `T`, `R`, the digits. */
 export function plainShortcut(e: KeyLike): boolean {
-  return !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing && !isTextEntry(e.target);
+  return !e.metaKey && !e.ctrlKey && !e.altKey && !composing(e) && !isTextEntry(e.target);
 }
 
 /** A key-map shortcut with Cmd/Ctrl: Cmd-A, Cmd-Z, Cmd+Space, Cmd+arrows. */
 export function commandShortcut(e: KeyLike): boolean {
-  return commandKey(e) && !e.altKey && !e.isComposing && !isTextEntry(e.target);
+  return commandKey(e) && !e.altKey && !composing(e) && !isTextEntry(e.target);
+}
+
+/** Toggle the focused row: plain `X`, or Cmd/Ctrl+Space. On a Mac, Cmd+Space (Spotlight) and
+ * Ctrl+Space (input source) usually never reach the page, so `X` is the dependable one. */
+export function toggleFocusedKey(e: KeyLike): boolean {
+  if (plainShortcut(e)) return !e.shiftKey && e.key.toLowerCase() === "x";
+  return e.key === " " && commandShortcut(e);
 }

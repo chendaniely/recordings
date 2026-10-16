@@ -74,3 +74,14 @@ describe("the request queue (spec §6)", () => {
     expect(newRequestId()).toMatch(/^[0-9a-f]{32}$/);
   });
 });
+
+describe("a confirm reply pauses the queue itself", () => {
+  it("pauses inside heard, so no drain sends the next request behind the dialog", () => {
+    const q = takeNext(enqueue(enqueue(EMPTY_QUEUE, request("r1"), origin), request("r2"), origin), 0).queue;
+    const out = heard(q, reply("r1", "confirm"), 1);
+    expect(out.finished?.request.request_id).toBe("r1");
+    expect(out.queue.paused).toBe(true);
+    expect(takeNext(out.queue, 2).send).toBe(null);
+    expect(takeNext(resume(out.queue), 3).send?.request_id).toBe("r2");
+  });
+});

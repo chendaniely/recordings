@@ -70,3 +70,19 @@ describe("the confirmation's wording (spec §6)", () => {
       .toBe("Remove private/a, private/b from 1 recording?");
   });
 });
+
+describe("never says Already for writes that failed", () => {
+  const ids12 = Array(12).fill("x");
+  it("says nothing when nothing changed and nothing was unchanged", () => {
+    const failed = res({ changed: 0, unchanged: 0, failures: [{ id: "x", reason: "the recording is gone" }] });
+    expect(actionText(req({ tags: ["t"], ids: ids12 }), failed, true)).toEqual([]);
+    expect(actionText(req({ action: "remove", tags: ["t"], ids: ids12 }), res({ status: "failed" }), true)).toEqual([]);
+    expect(actionText(req({ tags: ["t"], ids: ids12 }), res({ status: "confirm" }), true)).toEqual([]);
+    expect(actionText(req({ action: "undo", undo: "u" }), res({ changed: 0 }), true)).toEqual([]);
+  });
+  it("counts only reply.unchanged, and says 3 of 12 when some failed", () => {
+    const partial = res({ changed: 0, unchanged: 3, failures: Array(9).fill({ id: "y", reason: "busy" }) });
+    expect(textOf(actionText(req({ tags: ["t"], ids: ids12 }), partial, true))).toBe("Already on 3 of 12");
+    expect(textOf(actionText(req({ action: "remove", tags: ["t"], ids: ids12 }), partial, true))).toBe("Already off 3 of 12");
+  });
+});

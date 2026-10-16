@@ -1,5 +1,7 @@
 import type { LibraryRow, LibraryView } from "../types";
 
+const nfcLower = (s: string) => s.normalize("NFC").toLowerCase();
+
 /** The Tags page grid's logic (spec §7). */
 
 export const DEFAULT_COLUMNS = 15;
@@ -60,8 +62,20 @@ export function sortRows(rows: readonly LibraryRow[], sort: RowSort): LibraryRow
 }
 
 export function gridRows(rows: readonly LibraryRow[], opts: { untaggedOnly: boolean; title: string }): LibraryRow[] {
-  const q = opts.title.trim().toLowerCase();
-  return rows.filter((r) => (!opts.untaggedOnly || r.untagged) && (!q || r.title.toLowerCase().includes(q)));
+  const q = nfcLower(opts.title.trim());
+  return rows.filter((r) => (!opts.untaggedOnly || r.untagged) && (!q || nfcLower(r.title).includes(q)));
+}
+
+/** The IDs the grid shows, in order. Taken on load, on Refresh and when the filter, title or sort
+ * changes, never on a tag change: a row tagged afterwards stays where it is (spec §6, §7). */
+export function gridOrder(rows: readonly LibraryRow[], opts: { untaggedOnly: boolean; title: string; sort: RowSort }): string[] {
+  return sortRows(gridRows(rows, opts), opts.sort).map((r) => r.id);
+}
+
+/** Draw the rows from a frozen order, with their current tags; an ID no longer in the view is skipped. */
+export function drawRows(order: readonly string[], rows: readonly LibraryRow[]): LibraryRow[] {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return order.flatMap((id) => byId.get(id) ?? []);
 }
 
 /** `1`–`9` and `0`: the first ten visible tag columns. */
@@ -84,8 +98,11 @@ export function loadChoices(storage: Storage | null): Record<string, boolean> {
   }
 }
 
-export function saveChoices(storage: Storage | null, choices: Readonly<Record<string, boolean>>, isPrivate: (tag: string) => boolean): void {
-  const kept = Object.fromEntries(Object.entries(choices).filter(([tag]) => !isPrivate(tag)));
+/** Persist only tags the server's view flags `private: false`: an unknown tag, such as one made
+ * this session, counts as private until the reply, so no private tag name reaches storage. */
+export function saveChoices(storage: Storage | null, choices: Readonly<Record<string, boolean>>, view: Pick<LibraryView, "tags" | "note_types">): void {
+  const open = new Set([...view.tags.filter((t) => !t.private).map((t) => t.tag), ...view.note_types.map((n) => `notes/${n.note_type}`)]);
+  const kept = Object.fromEntries(Object.entries(choices).filter(([tag]) => open.has(tag)));
   try {
     storage?.setItem(COLUMN_KEY, JSON.stringify(kept));
   } catch {

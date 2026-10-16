@@ -51,8 +51,14 @@ export function shownTags(row: LibraryRow, pending: readonly TagRequest[]): Show
     if (request.action === "undo" || !idsOf(request).has(row.id)) continue;
     for (const tag of request.tags) {
       const at = tags.findIndex((t) => t.tag === tag);
-      if (request.action === "add" && at < 0) tags.push({ tag, by: "you", pending: "add" });
-      if (request.action === "remove" && at >= 0) tags[at] = { ...tags[at], pending: "remove" };
+      if (request.action === "add") {
+        if (at < 0) tags.push({ tag, by: "you", pending: "add" });
+        else if (tags[at].pending === "remove") tags[at] = { ...tags[at], pending: "add" };
+      } else if (at >= 0) {
+        // A removal of a tag only a pending add shows leaves nothing to show.
+        if (tags[at].pending === "add") tags.splice(at, 1);
+        else tags[at] = { ...tags[at], pending: "remove" };
+      }
     }
   }
   return tags;

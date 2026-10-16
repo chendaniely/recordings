@@ -75,3 +75,20 @@ describe("filterIsShown (Review Focus 4)", () => {
     expect(filterIsShown({ kind: "untagged" }, view)).toBe(true);
   });
 });
+
+describe("pending add after a pending remove", () => {
+  it("shows the tag pending add, not struck", () => {
+    const pending = [
+      { request_id: "1", action: "remove" as const, ids: ["a"], tags: ["talks"] },
+      { request_id: "2", action: "add" as const, ids: ["a"], tags: ["talks"] },
+    ];
+    expect(shownTags(view.recordings[0], pending)).toEqual([{ tag: "talks", by: "you", pending: "add" }]);
+  });
+  it("an add then a remove of a new tag shows nothing", () => {
+    const pending = [
+      { request_id: "1", action: "add" as const, ids: ["b"], tags: ["x"] },
+      { request_id: "2", action: "remove" as const, ids: ["b"], tags: ["x"] },
+    ];
+    expect(shownTags(view.recordings[1], pending)).toEqual([]);
+  });
+});
