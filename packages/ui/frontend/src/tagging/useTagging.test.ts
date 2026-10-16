@@ -118,7 +118,7 @@ describe("useTagging: inputs and the queue (spec §5, §6)", () => {
     expect(tagging.view?.recordings[0].tags.map((t) => t.tag)).toEqual(["talks", "work"]);
     expect(tagging.marks.a).toEqual({ done: true });
     expect(tagging.touched).toBe(1);
-    expect(tagging.lastTagged).toEqual({ tags: ["work"], ids: ["a"], key: 1 }); // the IDs it went to
+    expect(tagging.lastTagged).toEqual({ tags: ["work"], ids: ["a"], key: 1, undo: "t1" }); // where it went
     expect(said(`tag-${sent()[0].request_id}`)).toBe("Added work to 1 recording");
   });
   it("shows a big request's progress when it is sent, not while it waits", () => {
@@ -209,8 +209,10 @@ describe("useTagging: Undo (Task 9 carry)", () => {
     reply(result(last(), { changed: 0, failures: [busy] }));
     act(() => tagging.undoLast());
     expect(last()).toMatchObject({ action: "undo", undo: "t2" }); // tried again
+    expect(tagging.lastUndone).toBe(null); // a busy Undo reversed nothing
     reply(result(last(), { changed: 1, undo: "redo", rows: [row("b")] }));
     expect(tagging.revealed.ids).toEqual(["b"]);
+    expect(tagging.lastUndone).toEqual({ token: "t2", key: 1 }); // which action an Undo reversed
     expect(latest(`tag-${last().request_id}`)?.[0].props.undo?.label).toBe("Redo");
     act(() => tagging.undoLast());
     expect(last()).toMatchObject({ action: "undo", undo: "t1" });

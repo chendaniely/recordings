@@ -49,3 +49,16 @@ describe("nextControl: where focus goes after × (spec §6)", () => {
     expect(nextControl(only)).toBe(null);
   });
 });
+
+describe("a pending chip in a row's name (fix round 2, Task 12)", () => {
+  it("says it is pending inside the labelled element the row's name is made of", () => {
+    const html = renderToStaticMarkup(createElement(TagChips, {
+      tags: [{ tag: "talks", by: "you", pending: "remove" }, { tag: "work", by: "you", pending: "add" }],
+      title: "Week 4", canTag: true, place: "row", labelIds: "r1-c", onRemove: () => {},
+    }));
+    const box = document.createElement("div");
+    box.innerHTML = html;
+    expect(box.querySelector("#r1-c0")?.textContent).toBe("talks (removing)");
+    expect(box.querySelector("#r1-c1")?.textContent).toBe("work (adding)");
+  });
+});

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { markReply, mergeReply, tagStatus, type JustTagged, type Marks } from "@/lib/library";
+import { markReply, mergeReply, tagStatus, type JustTagged, type Marks, type Undone } from "@/lib/library";
 import {
   EMPTY_QUEUE, dropAll, enqueue, enqueueFront, heard, newRequestId, pendingRequests, resume, stillWorking,
   takeNext, type Origin, type Queue,
@@ -31,6 +31,7 @@ export interface Tagging {
   revealed: { key: number; ids: string[] }; // rows an Undo put back into the view
   touched: number;
   lastTagged: JustTagged | null; // the last add that changed something, and where it went
+  lastUndone: Undone | null; // the last Undo that ran, by the token of what it reversed
   sessionTags: string[];
   drag: { current: string[] | null }; // set at dragstart, never read from dataTransfer
   canTag: boolean;
@@ -81,6 +82,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [revealed, setRevealed] = useState({ key: 0, ids: [] as string[] });
   const [lastTagged, setLastTagged] = useState<JustTagged | null>(null);
+  const [lastUndone, setLastUndone] = useState<Undone | null>(null);
   const [sessionTags, setSessionTags] = useState<string[]>([]);
   const [picker, setPicker] = useState<PickerTarget | null>(null);
   const [snippetVersion, setSnippetVersion] = useState(0);
@@ -236,9 +238,11 @@ export function useTagging(library: LibraryView | undefined): Tagging {
     undos.current = heardUndo(undos.current, request, origin, reply);
     if (request.action === "undo") {
       setRevealed((r) => ({ key: r.key + 1, ids: reply.rows.map((row) => row.id) }));
+      const token = request.undo;
+      if (token && reply.status === "done" && reply.changed > 0) setLastUndone((u) => ({ token, key: (u?.key ?? 0) + 1 }));
     }
     if (request.action === "add" && reply.changed > 0) {
-      setLastTagged((last) => ({ tags: request.tags, ids: request.ids, key: (last?.key ?? 0) + 1 }));
+      setLastTagged((last) => ({ tags: request.tags, ids: request.ids, key: (last?.key ?? 0) + 1, undo: reply.undo }));
     }
     if (mergesIntoCells(origin, request, reply)) {
       dismissProgress(request); // "Still working…", if a cell was that slow
@@ -323,8 +327,8 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   const status = useMemo(() => tagStatus(view, lost), [view, lost]);
 
   return useMemo(() => ({
-    view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, sessionTags, drag,
+    view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, drag,
     canTag: status.canTag, opening: status.opening, reason: status.reason, saves: view?.saves ?? true,
     isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets,
-  }), [view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, sessionTags, status, isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets]);
+  }), [view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, status, isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets]);
 }

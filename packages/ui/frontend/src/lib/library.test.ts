@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { LibraryRow, LibraryView, TagResult } from "../types";
 import {
-  OPENING, cannotTagText, filterIsShown, justTaggedTags, markReply, mergeReply, orderFor, shownTags, tagStatus, withIds,
+  OPENING, cannotTagText, filterIsShown, markReply, mergeReply, nextNote, orderFor, shownTags, startNote, tagStatus, withIds,
 } from "./library";
 
 const row = (id: string, tags: string[] = []): LibraryRow => ({
@@ -120,16 +120,40 @@ describe("whether tagging is on (spec §5 can_tag; Task 7 carry)", () => {
   });
 });
 
-describe('"just tagged" describes the selection it was applied to (ruled, Task 12 fix round 1)', () => {
-  const last = { tags: ["work"], ids: ["a", "b"], key: 3 };
-  it("names an add made to exactly the selection, since the selection last changed", () => {
-    expect(justTaggedTags(last, new Set(["b", "a"]), 2)).toEqual(["work"]);
+describe('"just tagged" describes the selection it was applied to (ruled, Task 12 fix rounds 1 and 2)', () => {
+  const ab = new Set(["a", "b"]);
+  const add = (key: number, ids: string[], tags = ["work"], undo: string | null = `t${key}`) => ({ tags, ids, key, undo });
+  const started = startNote(ab, add(2, ["x", "y"]), null); // what was added before is never named
+
+  it("names an add made to exactly the selection, since it last changed", () => {
+    expect(started.tags).toBe(null);
+    const named = nextNote(started, ab, add(3, ["b", "a"]), null);
+    expect(named.tags).toEqual(["work"]);
+    expect(nextNote(named, ab, add(3, ["b", "a"]), null)).toBe(named); // nothing new: the same note
   });
-  it("names nothing for another selection, one row's +, or an add from before the selection changed", () => {
-    expect(justTaggedTags(last, new Set(["a", "b", "c"]), 2)).toBe(null);
-    expect(justTaggedTags({ ...last, ids: ["a"] }, new Set(["a", "b"]), 2)).toBe(null);
-    expect(justTaggedTags(last, new Set(["a", "c"]), 2)).toBe(null);
-    expect(justTaggedTags(last, new Set(["a", "b"]), 3)).toBe(null); // the selection changed after it
-    expect(justTaggedTags(null, new Set(["a", "b"]), 0)).toBe(null);
+  it("(a) keeps naming it when a later add went elsewhere: a row's or the header's +", () => {
+    const named = nextNote(started, ab, add(3, ["a", "b"]), null);
+    const plus = nextNote(named, ab, add(4, ["a"], ["space/apollo"]), null);
+    expect(plus.tags).toEqual(["work"]);
+    expect(nextNote(plus, ab, add(5, ["a", "b"], ["review"]), null).tags).toEqual(["review"]); // a second tag
+  });
+  it("(b) keeps it through a Refresh or a filter change that keeps every selected row (a new Set)", () => {
+    const named = nextNote(started, ab, add(3, ["a", "b"]), null);
+    const same = nextNote(named, new Set(["b", "a"]), add(3, ["a", "b"]), null);
+    expect(same.tags).toEqual(["work"]);
+    expect(nextNote(same, new Set(["a"]), add(3, ["a", "b"]), null).tags).toBe(null); // a row went
+    expect(nextNote(named, new Set(["a", "b", "c"]), add(3, ["a", "b"]), null).tags).toBe(null);
+  });
+  it("(c) forgets it when an Undo reverses that add, and only that one", () => {
+    const named = nextNote(started, ab, add(3, ["a", "b"]), null);
+    expect(nextNote(named, ab, add(3, ["a", "b"]), { token: "t9", key: 1 }).tags).toEqual(["work"]);
+    expect(nextNote(named, ab, add(3, ["a", "b"]), { token: "t3", key: 1 }).tags).toBe(null);
+    const tokenless = nextNote(started, ab, add(3, ["a", "b"], ["work"], null), null);
+    expect(nextNote(tokenless, ab, add(3, ["a", "b"], ["work"], null), { token: "t3", key: 1 }).tags).toEqual(["work"]);
+  });
+  it("starts over for a new selection, and never names an Undo heard before it", () => {
+    const fresh = startNote(ab, add(3, ["a", "b"]), { token: "t3", key: 4 });
+    expect(nextNote(fresh, ab, add(3, ["a", "b"]), { token: "t3", key: 4 })).toBe(fresh);
+    expect(fresh.tags).toBe(null);
   });
 });

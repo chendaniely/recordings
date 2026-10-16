@@ -34,11 +34,12 @@ export function TagChips({ tags, title, canTag, place, onRemove, labelIds, child
           data-tag={t.tag}
           title={t.tag}
         >
+          {/* The label names the chip, in a row's name too: a pending change is said inside it. */}
           <span className="chip-label" id={labelIds === undefined ? undefined : `${labelIds}${i}`}>
             <bdi dir="ltr">{t.tag}</bdi>
             {t.by === "auto" ? " · auto" : ""}
+            {t.pending && <span className="sr-only">{t.pending === "add" ? " (adding)" : " (removing)"}</span>}
           </span>
-          {t.pending && <span className="sr-only">{t.pending === "add" ? " (adding)" : " (removing)"}</span>}
           {canTag && !t.pending && (
             <button
               type="button"

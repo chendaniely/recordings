@@ -833,9 +833,11 @@ def test_clear_in_the_selection_bar_gives_focus_back_to_the_list(page: Page, ser
     bar.get_by_role("button", name=re.compile(r"^Clear")).click()
     expect(bar).to_have_count(0)
     expect(jfk).to_be_focused()
+    after = int(jfk.get_attribute("aria-rowindex")) + 1
     page.keyboard.press("Shift+ArrowDown")  # the list's keys work at once
     expect(bar).to_contain_text("2 selected")
-    expect(focused_row(page)).to_have_count(1)
+    # Focus reaches the next row a frame after the key: wait for it, not for JFK still focused.
+    expect(focused_row(page)).to_have_attribute("aria-rowindex", str(after))
     back = focused_row(page).get_attribute("data-id")
     bar.get_by_role("button", name=re.compile(r"^Clear")).focus()
     page.keyboard.press("Escape")
@@ -939,3 +941,116 @@ def test_a_key_on_a_focused_row_scrolled_away_brings_it_back(page: Page, big_ser
     wait_until(lambda: grid.evaluate("el => el.scrollTop") > 3000)
     page.keyboard.press("Enter")
     expect(row).to_be_in_viewport()
+
+
+# Fix round 2 (Task 12 re-review): "just tagged" keeps naming what this selection was tagged with.
+
+
+def select_two_and_tag(page: Page, server, demo_ids) -> None:
+    """Apollo 13 and JFK selected, then T adds a new tag, review, to both."""
+    apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.filter(has_text="Apollo 13").click()
+    rows.filter(has_text="JFK").click(modifiers=["ControlOrMeta"])
+    page.keyboard.press("t")
+    dialog = page.get_by_role("dialog", name="Tag 2 recordings")
+    box = dialog.get_by_test_id("picker-input")
+    box.fill("review")
+    box.press("Shift+Enter")
+    wait_until(
+        lambda: ("review", "you") in server.tags(apollo13) and ("review", "you") in server.tags(jfk)
+    )
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(page.get_by_test_id("selection-bar")).to_contain_text("just tagged review")
+
+
+def test_just_tagged_stays_when_a_row_inside_the_selection_is_tagged_with_its_plus(
+    page: Page, server, console, demo_ids
+):
+    # why: a row's + overwrote the last add, so the selection's note went though the selection
+    # hadn't changed. A +'s one row never matches a selection of two or more.
+    jfk = demo_ids["jfk-rice"]
+    select_two_and_tag(page, server, demo_ids)
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    row.hover()
+    row.get_by_role("button", name=re.compile(r"^Add tags to JFK")).click()
+    box = page.get_by_test_id("picker-input")
+    box.fill("space")
+    box.press("Enter")
+    wait_until(lambda: ("space/apollo", "you") in server.tags(jfk))
+    box.press("Escape")
+    expect(box).to_have_count(0)
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    expect(bar).to_contain_text("just tagged review")
+
+
+def test_just_tagged_stays_through_a_refresh_that_keeps_the_selection(
+    page: Page, server, console, demo_ids
+):
+    # why: a Refresh builds a new selection Set even when every row stays, and the note compared
+    # Sets by identity.
+    select_two_and_tag(page, server, demo_ids)
+    refresh = page.get_by_test_id("refresh")
+    expect(refresh).to_contain_text("2 tagged")
+    page.keyboard.press("r")  # focus is back on the row T was pressed on
+    expect(refresh).to_have_text("Refresh")  # the new library has come: the marks are gone
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    expect(bar).to_contain_text("just tagged review")
+
+
+def test_just_tagged_goes_when_an_undo_reverses_it(page: Page, server, console, demo_ids):
+    # why (new ruling): after Cmd-Z undoes the add the bar names, the note would be false.
+    apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
+    select_two_and_tag(page, server, demo_ids)
+    page.keyboard.press("ControlOrMeta+z")
+    wait_until(
+        lambda: (
+            ("review", "you") not in server.tags(jfk)
+            and ("review", "you") not in server.tags(apollo13)
+        )
+    )
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    expect(bar).not_to_contain_text("just tagged")
+
+
+def test_a_rows_name_says_a_chip_is_pending(page: Page, server, console):
+    # why: a pending chip's " (removing)" sat outside the labelled chip label, so the row's name
+    # no longer said the chip was pending. The server's tag reply is held back to keep it pending.
+    held: list = []
+    socket: dict = {}
+
+    def route(ws):
+        socket["page"] = ws
+        to_server = ws.connect_to_server()
+
+        def from_server(message):
+            if socket.get("hold", True) and "tag_result" in str(message):
+                held.append(message)
+            else:
+                ws.send(message)
+
+        to_server.on_message(from_server)
+
+    page.route_web_socket(re.compile(r"/websocket/$"), route)
+    open_library(page, server.url)
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    chip = row.locator("[data-testid=chip][data-tag=talks]")
+    row.hover()
+    row.get_by_role("button", name=re.compile(r"^Remove tag talks from JFK")).click()
+    expect(chip).to_have_class(re.compile(r"\bpending\b"))
+    expect(row).to_have_accessible_name(re.compile(r"talks \(removing\)"))
+    for _ in range(200):  # Playwright runs the route only while it is called: not in time.sleep
+        if held:
+            break
+        page.wait_for_timeout(50)
+    assert held, "the server's reply never came"
+    socket["hold"] = False
+    for message in held:  # the reply, at last
+        socket["page"].send(message)
+    expect(chip).to_have_count(0)
+    expect(row).not_to_have_accessible_name(re.compile(r"removing"))

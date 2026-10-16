@@ -64,17 +64,48 @@ export function shownTags(row: LibraryRow, pending: readonly TagRequest[]): Show
   return tags;
 }
 
-/** The last add that changed something: its tags and the recordings it went to. `key` counts
- * them, so the list can tell one made since its selection last changed. */
-export interface JustTagged { tags: string[]; ids: string[]; key: number }
+/** The last add that changed something: its tags, the recordings it went to, and its Undo token.
+ * `key` counts them, so the list can tell one it hasn't heard yet. */
+export interface JustTagged { tags: string[]; ids: string[]; key: number; undo: string | null }
+/** The last Undo that ran: the token of the action it reversed. `key` counts them. */
+export interface Undone { token: string; key: number }
 
-/** "just tagged …" in the selection bar describes the selection it was applied to (ruled, Task 12
- * fix round 1): an add whose recordings are exactly the selection (T, the bar's Tag…, a drop of
- * the selection; a + targets one row), made since the selection last changed (`since`, the key
- * then). Its tags, or null. */
-export function justTaggedTags(last: JustTagged | null, selected: ReadonlySet<string>, since: number): string[] | null {
-  if (!last || last.key <= since || last.ids.length !== selected.size) return null;
-  return last.ids.every((id) => selected.has(id)) ? last.tags : null;
+/** The selection bar's "just tagged …" (ruled, Task 12 fix rounds 1 and 2): the last add made to
+ * exactly this selection since it last changed (T, the bar's Tag…, a drop of the selection),
+ * kept while later adds go elsewhere (a +'s one row never matches two or more), and while a
+ * Refresh or a filter change keeps every selected row; gone when the selection changes, or when
+ * an Undo reverses that add (the note would be false). `tagKey` and `undoneKey` are the last ones
+ * heard. */
+export interface BarNote {
+  selected: ReadonlySet<string>; tagKey: number; undoneKey: number; tags: string[] | null; undo: string | null;
+}
+
+const sameMembers = (a: ReadonlySet<string>, b: ReadonlySet<string> | readonly string[]) => {
+  const ids = [...b];
+  return a.size === ids.length && ids.every((id) => a.has(id));
+};
+
+/** A note for a new selection: names nothing, and nothing heard before it. */
+export function startNote(selected: ReadonlySet<string>, last: JustTagged | null, undone: Undone | null): BarNote {
+  return { selected, tagKey: last?.key ?? 0, undoneKey: undone?.key ?? 0, tags: null, undo: null };
+}
+
+/** The note after what has happened since; the same object when nothing has. */
+export function nextNote(note: BarNote, selected: ReadonlySet<string>, last: JustTagged | null, undone: Undone | null): BarNote {
+  let next = note;
+  if (selected !== next.selected) {
+    next = sameMembers(next.selected, selected) ? { ...next, selected } : startNote(selected, last, undone);
+  }
+  if (last && last.key > next.tagKey) {
+    next = sameMembers(selected, last.ids)
+      ? { ...next, tagKey: last.key, tags: last.tags, undo: last.undo }
+      : { ...next, tagKey: last.key };
+  }
+  if (undone && undone.key > next.undoneKey) {
+    const reversed = next.undo !== null && next.undo === undone.token;
+    next = { ...next, undoneKey: undone.key, ...(reversed ? { tags: null, undo: null } : {}) };
+  }
+  return next;
 }
 
 export interface Mark { done?: boolean; failed?: string }

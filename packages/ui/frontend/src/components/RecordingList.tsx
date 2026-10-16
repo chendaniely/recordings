@@ -5,7 +5,7 @@ import { useEffect, useId, useMemo, useRef, useState, type FocusEvent, type Keyb
 import { cn } from "@/lib/utils";
 
 import { composing, isTextEntry, toggleFocusedKey } from "../lib/keys";
-import { justTaggedTags, shownTags } from "../lib/library";
+import { nextNote, shownTags, startNote } from "../lib/library";
 import { targetsOf, type Move, type Sel, type SelAction } from "../lib/selection";
 import { useListShortcuts } from "../lib/useListShortcuts";
 import type { Announcement, Fitted } from "../lib/useSelection";
@@ -51,13 +51,14 @@ export function Announcer({ text, at }: { text: string; at: number }) {
   return <span className="sr-only" role="status">{said.shown}</span>;
 }
 
-/** The tags "just tagged" names: the last add to exactly this selection since it last changed
- * (ruled, Task 12 fix round 1). A new selection forgets what the one before was tagged with. */
+/** The tags "just tagged" names (library.ts's nextNote): the last add to exactly this selection,
+ * kept through adds that went elsewhere and through a Refresh that keeps every selected row, and
+ * gone with a new selection or an Undo of that add. */
 function useJustTagged(selected: ReadonlySet<string>, tagging: Tagging): string[] | null {
-  const now = tagging.lastTagged?.key ?? 0;
-  const [since, setSince] = useState({ selected, key: now });
-  if (since.selected !== selected) setSince({ selected, key: now }); // React redraws at once
-  return justTaggedTags(tagging.lastTagged, selected, since.selected === selected ? since.key : now);
+  const [note, setNote] = useState(() => startNote(selected, tagging.lastTagged, tagging.lastUndone));
+  const next = nextNote(note, selected, tagging.lastTagged, tagging.lastUndone);
+  if (next !== note) setNote(next); // React redraws at once, before committing
+  return next.tags;
 }
 
 type Props = {
