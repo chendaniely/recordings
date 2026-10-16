@@ -2,17 +2,26 @@
 started with TMPDIR=<its tmp_path>, so it finds the demo's temporary copy and reads what the app
 wrote there, through Archive."""
 
+import io
 import os
 import socket
 import subprocess
 import sys
 import time
 import urllib.request
+import wave
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 from recordings.archive import Archive
+from recordings.index import Index
+from recordings.init import init_archive
+from recordings.models import TagRef
+from recordings.state import State
+from recordings.writer import Incoming, Writer
+from recordings_ui.settings import DEMO_UUID
 
 
 def _free_port() -> int:
@@ -94,3 +103,58 @@ def console(page):
     page.on("pageerror", lambda e: errors.append(f"uncaught: {e}"))
     yield errors
     assert errors == [], f"console errors: {errors}"
+
+
+def _wav(seed: int) -> bytes:
+    """A tenth of a second of quiet, different for each seed: real audio, so a row that opens
+    plays without a decode error."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(8000)
+        out.writeframes(seed.to_bytes(2, "little") * 800)
+    return buffer.getvalue()
+
+
+@pytest.fixture(scope="module")
+def big_archive(tmp_path_factory) -> Path:
+    """300 synthetic recordings with the demo's UUID, so demo mode serves them through
+    RECORDINGS_DEMO_ARCHIVE (spec §9). 200 untagged; 100 tagged from 20 topics, every tenth of
+    those private too. Built through init_archive and Writer.add; invented titles only."""
+    base = tmp_path_factory.mktemp("big")
+    root = base / "archive"
+    init_archive(root, base / "state", writer_id="e2e", archive_uuid=DEMO_UUID)
+    writer = Writer(root, State.open(base / "state"), Index(base / "index.db"), writer_id="e2e")
+    media = base / "media"
+    media.mkdir()
+    t0 = datetime.fromisoformat("2026-01-05T09:00:00-08:00")
+    for i in range(300):
+        path = media / f"{i:03d}.wav"
+        path.write_bytes(_wav(i))
+        tags: tuple[TagRef, ...] = ()
+        if i >= 200:
+            tags = (TagRef(tag=f"topic/t{i % 20:02d}", by="you"),)
+            if i % 10 == 0:
+                tags += (TagRef(tag="private", by="you"),)
+        writer.add(
+            Incoming(
+                media=path,
+                recorded_at=t0 + timedelta(hours=i),
+                timezone_name="America/Vancouver",
+                time_source="metadata",
+                title=f"Synthetic {i:03d}",
+                kind="audio",
+                sources=(),
+                tags=tags,
+                duration_ms=60_000 + i * 1000,
+            )
+        )
+    return root
+
+
+@pytest.fixture
+def big_server(tmp_path, big_archive):
+    started = start_server(tmp_path / "server", archive=big_archive)
+    yield started
+    started.stop()

@@ -362,3 +362,284 @@ def test_the_highlighted_item_and_the_plus_stand_out_in_both_themes(
     assert contrast(c["ring"], c["popover"]) >= 3, c
     assert contrast(c["ring"], c["item"]) >= 3, c
     assert c["plusStyle"] == "dashed" and c["plusBorder"] == c["muted"], c
+
+
+def selected(page: Page):
+    return page.locator("[data-testid=recording-row][aria-selected=true]")
+
+
+def test_arrows_select_as_they_move_and_enter_opens(page: Page, server, console):
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.first.focus()  # the list's one tab stop
+    page.keyboard.press("ArrowDown")
+    expect(rows.nth(1)).to_have_attribute("aria-selected", "true")
+    expect(selected(page)).to_have_count(1)
+    page.keyboard.press("Shift+ArrowDown")
+    expect(selected(page)).to_have_count(2)
+    expect(rows.nth(2)).to_be_focused()  # focus moves in a frame after the key: wait for it
+    page.keyboard.press("Enter")
+    expect(rows.nth(2)).to_have_attribute("aria-current", "true")
+
+
+def test_a_rows_plus_adds_several_tags_without_selecting_it(page: Page, server, console, demo_ids):
+    jfk = demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    row.hover()
+    row.get_by_role("button", name=re.compile(r"^Add tags to JFK")).click()
+    expect(row).to_have_attribute("aria-selected", "false")  # + never selects or opens
+    box = page.get_by_test_id("picker-input")
+    box.fill("space")
+    box.press("Enter")
+    box.fill("first")
+    box.press("Shift+Enter")
+    wait_until(
+        lambda: (
+            server.tags(jfk)
+            == [
+                ("talks", "you"),
+                ("notes/conference-talk", "auto"),
+                ("space/apollo", "you"),
+                ("first", "you"),
+            ]
+        )
+    )
+    box.press("Escape")
+    expect(row.locator("[data-testid=chip]")).to_have_count(4)
+
+
+def test_a_rows_x_removes_a_tag_from_that_row_only(page: Page, server, console, demo_ids):
+    apollo11 = demo_ids["apollo11-first-steps"]
+    open_library(page, server.url)
+    row = page.get_by_test_id("recording-row").filter(has_text="Apollo 11")
+    row.hover()
+    row.get_by_role("button", name=re.compile(r"^Remove tag space\/apollo from Apollo 11")).click()
+    expect(row.locator("[data-testid=chip][data-tag='space/apollo']")).to_have_count(0)
+    expect(row).to_have_attribute("aria-selected", "false")
+    wait_until(lambda: server.tags(apollo11) == [("notes/general-fallback", "auto")])
+
+
+def test_t_on_a_selection_esc_keeps_it_and_cmd_z_undoes_after_the_toast(
+    page: Page, server, console, demo_ids
+):
+    apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.filter(has_text="Apollo 13").click()
+    rows.filter(has_text="JFK").click(modifiers=["ControlOrMeta"])
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    page.keyboard.press("t")
+    dialog = page.get_by_role("dialog", name="Tag 2 recordings")
+    box = dialog.get_by_test_id("picker-input")
+    box.fill("review")
+    box.press("Shift+Enter")
+    wait_until(
+        lambda: ("review", "you") in server.tags(apollo13) and ("review", "you") in server.tags(jfk)
+    )
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    # Focus went back to the row T was pressed on (useReturnFocus; Task 11 carry).
+    expect(rows.filter(has_text="JFK")).to_be_focused()
+    expect(bar).to_contain_text("2 selected")  # Esc closed only the picker
+    expect(bar).to_contain_text("just tagged review")
+    # the toast has gone
+    expect(page.get_by_test_id("action-toast")).to_have_count(0, timeout=15_000)
+    page.keyboard.press("ControlOrMeta+z")
+    wait_until(
+        lambda: (
+            ("review", "you") not in server.tags(jfk)
+            and ("review", "you") not in server.tags(apollo13)
+        )
+    )
+
+
+def test_rows_stay_put_until_refresh(page: Page, server, console):
+    open_library(page, server.url)
+    page.get_by_test_id("filter-untagged").click()
+    rows = page.get_by_test_id("recording-row")
+    expect(rows).to_have_count(1)
+    rows.first.hover()
+    rows.first.get_by_role("button", name=re.compile(r"^Add tags to Apollo 13")).click()
+    box = page.get_by_test_id("picker-input")
+    box.fill("talks")
+    box.press("Enter")
+    expect(rows.first).to_contain_text("Tagged")
+    box.press("Escape")
+    expect(rows).to_have_count(1)  # no longer untagged, and still here, marked done
+    expect(page.get_by_test_id("refresh")).to_contain_text("1 tagged")
+    rows.first.focus()
+    page.keyboard.press("r")
+    expect(rows).to_have_count(0)
+
+
+def test_a_long_list_is_drawn_virtually_and_focus_survives_a_wheel_scroll(
+    page: Page, big_server, console
+):
+    page.goto(big_server.url)
+    rows = page.get_by_test_id("recording-row")
+    expect(rows.first).to_be_visible()
+    assert rows.count() < 100  # only what is on screen, and a little more
+    grid = page.get_by_test_id("recording-list")
+    expect(grid).to_have_attribute("aria-rowcount", "301")
+    rows.nth(2).click()
+    focused = page.evaluate("document.activeElement.dataset.id")
+    grid.hover()
+    page.mouse.wheel(0, 9000)
+    # Wait until the list has scrolled well past the focused row (about 170 px down), not for a
+    # fixed time: only then does "kept" prove anything.
+    wait_until(lambda: grid.evaluate("el => el.scrollTop") > 3000)
+    # kept
+    expect(page.locator(f"[data-testid=recording-row][data-id='{focused}']")).to_have_count(1)
+    page.keyboard.press("ArrowDown")
+    expect(selected(page)).to_have_count(1)
+    expect(selected(page)).to_be_in_viewport()
+    expect(selected(page)).to_have_attribute("aria-rowindex", "5")
+
+
+def test_cmd_a_selects_rows_not_drawn_and_page_down_moves_a_screenful(
+    page: Page, big_server, console
+):
+    page.goto(big_server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.first.click()
+    page.keyboard.press("ControlOrMeta+a")
+    expect(page.get_by_test_id("selection-bar")).to_contain_text("300 selected")
+    page.keyboard.press("Escape")
+    expect(page.get_by_test_id("selection-bar")).to_have_count(0)
+    page.keyboard.press("PageDown")
+    expect(selected(page)).to_have_count(1)
+    assert int(selected(page).get_attribute("aria-rowindex")) > 4  # a screenful, not one row
+
+
+def test_a_rows_plus_picker_stays_open_when_its_row_scrolls_away(page: Page, big_server, console):
+    # why: the virtualiser unmounts a row scrolled out of view, and the + picker anchored in it
+    # went with it. A click focuses the + in Chromium only, which keeps its row as the focused one;
+    # Safari, Firefox and touch don't, so the open picker must keep its row itself (Task 11
+    # council, T11-F1). A dispatched click opens it without focusing, as they do.
+    page.goto(big_server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.first.click()  # focus and the anchor are on the first row
+    row = rows.nth(3)
+    rid = row.get_attribute("data-id")
+    row.get_by_test_id("add-tag").dispatch_event("click")
+    box = page.get_by_test_id("picker-input")
+    expect(box).to_be_focused()
+    grid = page.get_by_test_id("recording-list")
+    grid.evaluate("el => { el.scrollTop = 6000; }")
+    # The rows near the top are gone, so the list has been drawn again since the scroll...
+    expect(page.locator("[data-testid=recording-row][aria-rowindex='12']")).to_have_count(0)
+    # ...and the picker's row is still drawn, with the picker open on it.
+    expect(page.locator(f"[data-testid=recording-row][data-id='{rid}']")).to_have_count(1)
+    expect(box).to_be_focused()
+    box.press("Escape")
+    expect(box).to_have_count(0)
+
+
+def test_keys_typed_in_a_rows_picker_stay_in_the_picker(page: Page, server, console, demo_ids):
+    # why: the + picker is a portal whose React events bubble through the row that opened it, so
+    # `t` typed there could open the T dialog, and Cmd-Z undo a tag (Task 11 carry).
+    jfk = demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    row.hover()
+    row.get_by_role("button", name=re.compile(r"^Add tags to JFK")).click()
+    box = page.get_by_test_id("picker-input")
+    box.fill("first")
+    box.press("Shift+Enter")
+    wait_until(lambda: ("first", "you") in server.tags(jfk))
+    box.press("t")
+    expect(box).to_have_value("t")  # text in the box
+    expect(page.get_by_role("dialog")).to_have_count(1)  # the popover only: no T dialog
+    box.press("ControlOrMeta+z")  # the box's own undo, never the list's
+    box.fill("second")
+    box.press("Shift+Enter")
+    # Requests go one at a time, in order: an Undo queued by Cmd-Z would have run first.
+    wait_until(lambda: ("second", "you") in server.tags(jfk))
+    assert ("first", "you") in server.tags(jfk)
+
+
+LONG = "a-made-up-tag-long-enough-to-wrap/across-more-than-one-line-of-the-list"
+
+
+def test_a_focused_long_tag_unwraps_and_the_rows_below_make_room(
+    page: Page, server, console, demo_ids
+):
+    # why: a focused chip shows its whole tag, which can wrap onto lines a fixed-height virtual
+    # row doesn't have, over the row below (Task 10 carry). Rows are measured as drawn.
+    jfk = demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    plus = row.get_by_role("button", name=re.compile(r"^Add tags to JFK"))
+    plus.click()
+    box = page.get_by_test_id("picker-input")
+    box.fill(LONG)
+    box.press("Shift+Enter")
+    wait_until(lambda: (LONG, "you") in server.tags(jfk))
+    box.press("Escape")
+    expect(plus).to_be_focused()
+    chip = row.locator(f"[data-testid=chip][data-tag='{LONG}']")
+    expect(chip).to_have_count(1)
+    folded = chip.bounding_box()["height"]
+    page.keyboard.press("ArrowLeft")  # from the + to the long tag's ×
+    x = row.get_by_role(
+        "button", name=re.compile(rf"^Remove tag {re.escape(LONG).replace('/', r'\/')} from JFK")
+    )
+    expect(x).to_be_focused()
+    wait_until(lambda: chip.bounding_box()["height"] > folded)  # shown whole, on two lines
+    index = int(row.get_attribute("aria-rowindex"))
+    below = page.locator(f"[data-testid=recording-row][aria-rowindex='{index + 1}']")
+
+    def clear() -> bool:
+        a, b = row.bounding_box(), below.bounding_box()
+        return a["y"] + a["height"] <= b["y"] + 0.5
+
+    wait_until(clear)
+
+
+@pytest.mark.browser_context_args(
+    is_mobile=True, has_touch=True, viewport={"width": 390, "height": 800}
+)
+def test_rows_on_a_touch_screen_show_their_checkbox_and_no_x(page: Page, server, console):
+    # spec §6: on devices that can't hover, the checkbox always shows and list rows show no ×
+    # (tags are removed from the header or the picker); Left and Right skip the hidden ×s.
+    open_library(page, server.url)
+    assert page.evaluate("() => matchMedia('(hover: none)').matches")
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    expect(row.locator(".check")).to_be_visible()
+    expect(row.locator(".chip-x")).to_have_count(2)
+    for i in range(2):
+        expect(row.locator(".chip-x").nth(i)).to_be_hidden()
+    row.focus()
+    page.keyboard.press("ArrowRight")
+    expect(row.get_by_test_id("add-tag")).to_be_focused()
+
+
+def test_refresh_hands_focus_on_when_the_focused_row_goes(page: Page, big_server, console):
+    # why: Refresh drops a row just tagged from the Untagged filter; with focus on it, focus fell
+    # to <body>, so the keys stopped working until a click or Tab (spec §6, keyboard triage).
+    page.goto(big_server.url)
+    page.get_by_test_id("filter-untagged").click()
+    grid = page.get_by_test_id("recording-list")
+    expect(grid).to_have_attribute("aria-rowcount", "201")
+    rows = page.get_by_test_id("recording-row")
+    first = rows.first
+    gone = first.get_attribute("data-id")
+    first.click()
+    page.keyboard.press("t")
+    box = page.get_by_role("dialog", name=re.compile(r"^Tag Synthetic")).get_by_test_id(
+        "picker-input"
+    )
+    box.fill("topic/t01")
+    box.press("Enter")
+    expect(first).to_contain_text("Tagged")
+    page.keyboard.press("Escape")
+    expect(first).to_be_focused()
+    page.keyboard.press("r")
+    expect(grid).to_have_attribute("aria-rowcount", "200")
+    expect(page.locator(f"[data-testid=recording-row][data-id='{gone}']")).to_have_count(0)
+    wait_until(lambda: page.evaluate("document.activeElement?.dataset.testid") == "recording-row")
+    page.keyboard.press("ArrowDown")
+    expect(selected(page)).to_have_attribute("aria-rowindex", "3")
+    expect(selected(page)).to_be_focused()

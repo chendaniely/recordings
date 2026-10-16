@@ -33,11 +33,11 @@ body { background: var(--background); color: var(--foreground); font-family: "At
 .si.on .n { color: var(--primary); }
 .problems { margin: 8px; padding: 8px; border-radius: 8px; border: 1px solid var(--destructive); color: var(--destructive); font-size: 12.5px; }
 
-.list { border-right: 1px solid var(--border); overflow: auto; background: var(--card); }
+.list { border-right: 1px solid var(--border); background: var(--card); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .list-head { padding: 9px 12px; color: var(--muted-foreground); border-bottom: 1px solid var(--border); }
 .row { display: block; width: 100%; text-align: left; border-bottom: 1px solid var(--border); padding: 10px 12px; cursor: pointer; }
 .row:hover { background: var(--background); }
-.row.on { background: var(--sel); box-shadow: inset 3px 0 0 var(--primary); }
+.row.on { box-shadow: inset 3px 0 0 var(--primary); }
 .row .t { font-weight: 700; display: flex; justify-content: space-between; gap: 8px; }
 .row .m { color: var(--muted-foreground); font-size: 12px; margin: 2px 0 5px; }
 .chip { display: inline-block; font-size: 11px; padding: 0 8px; border-radius: 999px; background: var(--accent); margin: 0 4px 4px 0; }
@@ -172,3 +172,43 @@ tr.attn td { color: var(--destructive); }
 /* The + is drawn in --muted-foreground, border included (main spec §12.6a). */
 .add-tag { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; padding: 0; border: 1px dashed var(--muted-foreground); border-radius: 999px; background: none; color: var(--muted-foreground); cursor: pointer; }
 .add-tag svg { width: 12px; height: 12px; }
+
+/* The Library list as an ARIA grid, drawn virtually (tagging spec §6). Each state is distinct
+   without colour: focused has the ring, selected the tint and a visible check, open the 3px bar,
+   done the muted background and "✓ Tagged" at full-strength text. Never opacity. */
+.list-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.refresh { margin-left: auto; min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; cursor: pointer; }
+.key-hint, .demo-note { width: 100%; font-size: 11.5px; color: var(--muted-foreground); }
+/* Why tagging is off may be a long path (the mirror's): it wraps, never widening the list. While
+   the archive is still being opened, it is a moment, not a fault. */
+.cannot-tag { width: 100%; min-width: 0; color: var(--destructive); font-size: 12.5px; overflow-wrap: anywhere; }
+.cannot-tag.opening { color: var(--muted-foreground); }
+.vlist { flex: 1; min-height: 0; overflow: auto; }
+.vrows { position: relative; width: 100%; }
+.vrows > .row { position: absolute; top: 0; left: 0; }
+.row { user-select: none; -webkit-user-select: none; }
+.row:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.row.sel { background: var(--sel); }
+.row.done { background: var(--muted); }
+/* Selected and done: both tints, the primary's kept light, so muted text and a failure's reason
+   stay above 4.5:1 in the light theme (12% put them at 4.2:1). */
+.row.sel.done { background: color-mix(in srgb, var(--primary) 5%, var(--muted)); }
+.row-cell { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; }
+.row-body { min-width: 0; }
+.row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.check { display: inline-grid; place-items: center; width: 16px; height: 16px; margin-top: 2px; border: 1px solid var(--muted-foreground); border-radius: 4px; cursor: pointer; visibility: hidden; }
+.check svg { width: 12px; height: 12px; }
+.row:hover .check, .vlist.has-selection .check { visibility: visible; }
+.done-label { display: inline-block; margin-top: 2px; font-size: 12px; color: var(--muted-foreground); }
+.failed-label { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--destructive); overflow-wrap: anywhere; }
+.selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--card); }
+.selection-bar button { min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; cursor: pointer; }
+.selection-bar code { unicode-bidi: isolate; direction: ltr; overflow-wrap: anywhere; }
+kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-size: 11px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; }
+/* Devices that can't hover (spec §6): the checkbox always shows; list rows show no ×, so tags are
+   removed from the header, with 44 px targets, or from the picker. Left and Right skip the
+   hidden ×s. */
+@media (hover: none) {
+  .check { visibility: visible; }
+  .row .chip-x { display: none; }
+}

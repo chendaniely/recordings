@@ -9,7 +9,8 @@ import { StatusPage } from "./components/StatusPage";
 import { TagPickerDialog } from "./components/TagPicker";
 import { TopBar } from "./components/TopBar";
 import { hashFor, routeFromHash } from "./lib/nav";
-import { filterRows } from "./lib/transcript";
+import { useOrderedRows, useRowOrder } from "./lib/useRowOrder";
+import { useSelection } from "./lib/useSelection";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
 import { ConfirmDialog } from "./tagging/ConfirmDialog";
 import { TaggingContext, useTagging } from "./tagging/useTagging";
@@ -30,7 +31,11 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [route, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
   const view = tagging.view;
-  const rows = useMemo(() => (view ? filterRows(view.recordings, filter) : []), [view, filter]);
+  // The order, its rows and the selection (with its pruning and announcement) come from the
+  // hooks the phone's Untagged list shares (Task 15).
+  const order = useRowOrder(view, filter, tagging.loadKey, tagging.revealed);
+  const { sel, act, announce } = useSelection(order);
+  const rows = useOrderedRows(order.ids, view);
   const openRow = useMemo(() => view?.recordings.find((r) => r.id === selectedId) ?? null, [view, selectedId]);
 
   // Hash routes: Back returns to the page you came from, and the server never logs them. The hash
@@ -56,7 +61,7 @@ export default function App() {
         {route.page === "status" ? <StatusPage /> : view ? (
           <main className="panes">
             <Sidebar library={view} filter={filter} onFilter={setFilter} />
-            <RecordingList rows={rows} selectedId={selectedId} onSelect={setSelectedId} />
+            <RecordingList rows={rows} sel={sel} act={act} openId={selectedId} onOpen={setSelectedId} announce={announce} />
             <RecordingPane selectedId={selectedId} row={openRow} />
           </main>
         ) : <p className="empty">Loading…</p>}
