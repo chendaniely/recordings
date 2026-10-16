@@ -309,11 +309,28 @@ def _has_many_marks(text: str) -> bool:
     return False
 
 
+def is_private_lookalike(tag: str) -> bool:
+    """True when the tag's first folder reads as `private` without being spelled `private` in
+    plain letters, or when the app's rule (`is_private_tag`) and the archive's plain rule (the
+    first folder, casefolded, is `private`) disagree on it (spec §4; tagging plan, decision 2).
+
+    `validate_new_tag` refuses such a tag with LOOKS_PRIVATE. The tag service also asks this of a
+    tag the archive already has, so a lookalike that got in by hand is never spread (Task 2's
+    review, M2). Any string can be asked, whatever other rule it breaks."""
+    plain_private = tag.split("/", 1)[0].casefold() == "private"
+    # A slash lookalike hides a private folder: judge the first folder of the tag as it reads.
+    first_as_read = tag.translate(_SLASHES).split("/", 1)[0]
+    if _reads_as(first_as_read) == "private" and not plain_private:
+        return True
+    return is_private_tag(tag) != plain_private
+
+
 def validate_new_tag(
     tag: str, *, note_types: Collection[str] = (), existing: Collection[str] = ()
 ) -> str | None:
     """Why a *new* tag can't be made, or None (spec §4). A tag that already exists in the archive
-    is never checked: adding it again, or removing it, accepts any spelling."""
+    isn't checked here: removing it accepts any spelling, and adding it again is refused only
+    when `is_private_lookalike` says so (Task 2's review, M2)."""
     if not unicodedata.is_normalized("NFC", tag):
         return NOT_NFC
     if any(
@@ -342,13 +359,8 @@ def validate_new_tag(
         )
         if not ok:
             return NOTE_TYPE
-    # A slash lookalike hides a private folder: judge the first folder of the tag as it reads.
-    first_as_read = tag.translate(_SLASHES).split("/", 1)[0]
-    plain_private = parts[0].casefold() == "private"
-    if _reads_as(first_as_read) == "private" and not plain_private:
-        return LOOKS_PRIVATE  # tagging plan, decision 2
-    if is_private_tag(tag) != plain_private:
-        return LOOKS_PRIVATE  # the app's rule and the archive's plain rule must agree
+    if is_private_lookalike(tag):
+        return LOOKS_PRIVATE  # tagging plan, decision 2; the app's and the plain rule agree
     folded = tag.casefold()
     if any(other != tag and other.casefold() == folded for other in existing):
         return CASE_VARIANT

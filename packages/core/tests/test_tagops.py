@@ -26,6 +26,7 @@ from recordings.tagops import (
     RestoreTags,
     WouldExpose,
     effect_of,
+    is_private_lookalike,
     removes_last_private,
     validate_new_tag,
 )
@@ -447,3 +448,39 @@ def test_operations_refuse_a_single_tagref_or_plain_strings_to_add():
         AddTags(("work",))
     with pytest.raises(TypeError):
         RemoveTags(TagRef(tag="a"))
+
+
+# ---- the privacy checks on their own (Task 2's review, M2) ---------------------------------------
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "\u0440rivate",  # Cyrillic er
+        "\uff50\uff52\uff49\uff56\uff41\uff54\uff45",  # fullwidth: private to the app only
+        "private\u2044journal",  # a slash lookalike
+        "\u0440ri\u200bvate",  # a lookalike that also breaks an earlier rule (INVISIBLE)
+        "pri\u0301vate",  # a lookalike that also breaks an earlier rule (NOT_NFC)
+    ],
+)
+def test_a_lookalike_is_found_whatever_other_rule_it_breaks(tag):
+    # why: Task 2's review (M2). The tag service checks a tag the archive already has with the
+    # privacy rules alone; validate_new_tag names only the first rule a tag breaks, which can be
+    # an earlier one, so it can't be asked whether an existing tag is a lookalike.
+    assert is_private_lookalike(tag)
+    assert validate_new_tag(tag, note_types={"lecture"}) is not None
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "private",
+        "PRIVATE",
+        "Private/health",
+        "privateer",
+        "notes/private",
+        "x/private",
+        "talks",
+        "my\u00a0talks",  # refused as a new tag (SPACE), but nothing to do with privacy
+    ],
+)
+def test_a_tag_spelled_plainly_is_no_lookalike(tag):
+    assert not is_private_lookalike(tag)
