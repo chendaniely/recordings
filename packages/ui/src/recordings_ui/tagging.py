@@ -551,13 +551,29 @@ class TagSession:
                         "ids": list(losing),
                     },
                 )
-        reply = await self._batch(job, targets, make, send)
+        reply, settled = await self._batch(job, targets, make, send)
         if job.action == "undo" and job.undo is not None:
-            self._undo.pop(job.undo, None)  # used up once applied, never when gated
-            self._used[job.undo] = None
-            while len(self._used) > USED_UNDO_KEPT:
-                self._used.popitem(last=False)
+            self._settle_undo(job.undo, effects, settled)
         return reply
+
+    def _settle_undo(self, token: str, effects: dict[str, Effect], settled: set[str]) -> None:
+        """An Undo that was applied uses up its token; a gated one never does (spec §5). What it
+        didn't settle, because it failed there (busy, say) or the batch stopped first, stays
+        under the same token, so "try again" can."""
+        left = {rid: e for rid, e in effects.items() if rid not in settled}
+        if left:
+            self._keep(token, left)
+            return
+        self._undo.pop(token, None)
+        self._used[token] = None
+        while len(self._used) > USED_UNDO_KEPT:
+            self._used.popitem(last=False)
+
+    def _keep(self, token: str, effects: dict[str, Effect]) -> None:
+        """Keep an action for Undo; the session keeps the last UNDO_KEEP (spec §5)."""
+        self._undo[token] = effects
+        while len(self._undo) > UNDO_KEEP:
+            self._undo.popitem(last=False)
 
     async def _prepass(
         self, targets: tuple[str, ...], make: Callable[[str, frozenset[str]], Op]
@@ -592,10 +608,12 @@ class TagSession:
         targets: tuple[str, ...],
         make: Callable[[str, frozenset[str]], Op],
         send: Send,
-    ) -> dict:
+    ) -> tuple[dict, set[str]]:
         """Recording by recording, not all-or-nothing: each gets its own write, wrapped for every
-        exception (spec §5)."""
+        exception (spec §5). Returns the reply, and the recordings settled: changed, or found
+        already as asked."""
         effects: dict[str, Effect] = {}
+        settled: set[str] = set()
         afters: dict[str, Recording] = {}
         failures: list[dict] = []
         unchanged = now_visible = busy = done = 0
@@ -622,6 +640,7 @@ class TagSession:
             done += 1
             if after is not None and op.before is not None:
                 busy = 0
+                settled.add(rid)
                 effect = effect_of(op.before, after)
                 if effect.empty:
                     unchanged += 1
@@ -649,15 +668,13 @@ class TagSession:
         token = None
         if effects:
             token = secrets.token_urlsafe(16)
-            self._undo[token] = effects
-            while len(self._undo) > UNDO_KEEP:
-                self._undo.popitem(last=False)
+            self._keep(token, effects)
         rows = []
         for rid, rec in afters.items():
             self.rows[rid] = views.row(rec)
             rows.append(self.rows[rid])
             self._types.update(rec.excluded_note_types)  # a removed type stays known (decision 18)
-        return self._reply(
+        reply = self._reply(
             job.request_id,
             "failed" if stopped else "done",
             changed=len(effects),
@@ -671,6 +688,7 @@ class TagSession:
             message=stopped,
             **views.summarise(self.rows.values(), self._types),
         )
+        return reply, settled
 
     def _landed(self, rid: str, op: Recorded) -> Recording | None:
         """After an exception, read the file again. A change can land and then fail, when an

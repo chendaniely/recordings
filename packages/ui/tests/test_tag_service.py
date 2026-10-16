@@ -635,6 +635,34 @@ def test_undo_is_single_use_and_an_unknown_token_says_so(service, tag_archive):
     assert redone["status"] == "done" and tags_of(service.store, rid) == ["work"]
 
 
+def test_an_undo_that_stops_part_way_keeps_its_token_for_the_rest(
+    service, tag_archive, monkeypatch
+):
+    # why: spec §5, "a token is used up when its Undo is applied". An Undo stopped by a disk
+    # error, or by busy recordings ("try again"), must leave what it didn't reach undoable with
+    # the same token; a probe showed the token used up with nothing undone.
+    ids = tag_archive.ids
+    session = session_of(service)
+    added = ask(session, req("add", [ids["untagged"], ids["plain"]], ["work"])).final
+    real = service.store.apply
+
+    def apply(rid, op):
+        if rid == ids["plain"]:
+            raise OSError(errno.EIO, "a disk error")
+        return real(rid, op)
+
+    monkeypatch.setattr(service.store, "apply", apply)
+    stopped = ask(session, req("undo", undo=added["undo"])).final
+    assert stopped["message"] == STOP_IO and stopped["changed"] == 1
+    assert tags_of(service.store, ids["untagged"]) == []
+    assert tags_of(service.store, ids["plain"]) == ["talks", "work"]
+    monkeypatch.setattr(service.store, "apply", real)
+    rest = ask(session, req("undo", undo=added["undo"])).final
+    assert rest["status"] == "done" and rest["changed"] == 1
+    assert tags_of(service.store, ids["plain"]) == ["talks"]
+    assert ask(session, req("undo", undo=added["undo"])).final["message"] == ALREADY_UNDONE
+
+
 def test_a_gated_undo_keeps_its_token(service, tag_archive):
     rid = tag_archive.ids["untagged"]
     session = session_of(service)
