@@ -40,9 +40,14 @@ function refind(spot: Spot): HTMLElement | null {
  * Spread the result on the dialog's Content. `onOpenAutoFocus` remembers what has focus, before
  * Radix moves it in; `onCloseAutoFocus` gives it back, or to the same control in its row drawn
  * again. When neither can take focus, or it was <body> or a toast's button (a dialog opened from a
- * toast's Undo), focus goes to the open row or the header's title instead (toaster.ts). */
-export function useReturnFocus(): ReturnFocus {
+ * toast's Undo), focus goes to the open row or the header's title instead (toaster.ts).
+ *
+ * `prefer`, read on close, names a place that wins when it finds one: the + a phone's sheet was
+ * opened from, which a tap in Safari never focused. */
+export function useReturnFocus(prefer?: () => HTMLElement | null): ReturnFocus {
   const back = useRef<Spot | null>(null);
+  const preferred = useRef(prefer);
+  preferred.current = prefer;
   return useMemo(() => ({
     onOpenAutoFocus: () => {
       const el = document.activeElement;
@@ -52,7 +57,7 @@ export function useReturnFocus(): ReturnFocus {
       event.preventDefault(); // Radix would focus the Trigger, which these dialogs don't have
       const spot = back.current;
       back.current = null;
-      const found = spot ? refind(spot) : null;
+      const found = preferred.current?.() ?? (spot ? refind(spot) : null);
       const to = found && !inToaster(found) ? found : null;
       to?.focus({ preventScroll: true });
       if (!to || document.activeElement !== to) focusFallback()?.focus({ preventScroll: true });

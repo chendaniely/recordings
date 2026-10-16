@@ -1,5 +1,8 @@
 import { Lock, Plus, X } from "lucide-react";
-import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -9,8 +12,10 @@ import { shownTags } from "@/lib/library";
 import {
   alreadyWords, createOffer, createRefusal, pickerGroups, pickerTags, stateWords, tagStates, type PickerTag, type TagState,
 } from "@/lib/picker";
+import { PHONE, useMediaQuery } from "@/lib/useMediaQuery";
+import { useSheetRoom } from "@/lib/viewport";
 import { useReturnFocus } from "@/tagging/useReturnFocus";
-import { useTaggingContext, type PickerTarget } from "@/tagging/useTagging";
+import { useTaggingContext, type PickerFrom, type PickerTarget } from "@/tagging/useTagging";
 
 export function pickerTitle(ids: readonly string[], titleOf: (id: string) => string): string {
   return ids.length === 1 ? `Tag ${titleOf(ids[0])}` : `Tag ${ids.length.toLocaleString("en")} recordings`;
@@ -299,7 +304,16 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
   );
 }
 
-/** The dialog form: `T`, the selection bar's Tag…, a drop (spec §6). Mounted once, in App.
+/** The + a phone's sheet was opened from, found again (Task 11 carry): a row's, by its row's id,
+ * as a virtual list may have drawn the row anew; or the header's. */
+export function plusFor(from: PickerFrom): HTMLElement | null {
+  if (from.place === "header") return document.querySelector<HTMLElement>('[data-testid="recording-header"] [data-control=add]');
+  const row = [...document.querySelectorAll<HTMLElement>("[role=row][data-id]")].find((r) => r.dataset.id === from.id);
+  return row?.querySelector<HTMLElement>("[data-control=add]") ?? null;
+}
+
+/** The dialog form: `T`, the selection bar's Tag…, a drop (spec §6), and on a phone the + too,
+ * where it is a full-width bottom sheet (app.css). Mounted once, in App.
  *
  * Not `CommandDialog`: as generated, it renders its children as they are and puts its sr-only
  * title outside the dialog's content (Task 8), and `PickerBody`'s `<Command>`, which carries
@@ -308,18 +322,28 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
  * describes the keys, so the dialog has no description of its own.
  *
  * Radix returns focus only to a Trigger, and this dialog has none, so useReturnFocus gives focus
- * back to what had it (the row or cell `T` was pressed on, the selection bar's button). The last
- * target stays drawn while the dialog animates out. */
+ * back to what had it (the row or cell `T` was pressed on, the selection bar's button), or to the
+ * + a phone's sheet came from, which a tap in Safari never focused. The last target stays drawn
+ * while the dialog animates out.
+ *
+ * On a phone the sheet sits on what the screen shows: above an on-screen keyboard, its list
+ * giving up the room (useSheetRoom; checked: MDN, VisualViewport and the dynamic viewport units). */
 export function TagPickerDialog() {
   const tagging = useTaggingContext();
-  const returnFocus = useReturnFocus();
   const target = tagging.picker;
   const [shown, setShown] = useState<PickerTarget | null>(target);
   if (target !== null && target !== shown) setShown(target);
+  const from = useRef<PickerFrom | null>(null);
+  from.current = shown?.from ?? null;
+  const returnFocus = useReturnFocus(() => (from.current ? plusFor(from.current) : null));
+  const phone = useMediaQuery(PHONE);
+  const room = useSheetRoom(phone && target !== null);
+  const sheet = room ? ({ "--sheet-bottom": `${room.bottom}px`, "--sheet-height": `${room.height}px` } as CSSProperties) : undefined;
   return (
     <Dialog open={target !== null} onOpenChange={(open) => { if (!open) tagging.closePicker(); }}>
       <DialogContent
-        className="picker-dialog top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0"
+        className="picker-dialog top-1/3 translate-y-0 overflow-hidden p-0"
+        style={sheet}
         showCloseButton={false}
         aria-describedby={undefined}
         onEscapeKeyDown={imeEscape}
@@ -344,18 +368,27 @@ const inConfirmation = (target: EventTarget | null) => target instanceof Element
  * on the +, whose row stays rendered (spec §6). Clicking it never changes the selection or opens
  * the row. Radix gives focus back to the + when the popover closes. `onOpenChange` hears every
  * open and close, so a virtual list can keep the row drawn while its picker is open (a click
- * doesn't focus a button in Safari or Firefox, or on touch, so focus can't keep it). */
+ * doesn't focus a button in Safari or Firefox, or on touch, so focus can't keep it).
+ *
+ * On a phone the + opens the dialog form instead, as a full-width bottom sheet (spec §6), told
+ * which + it came from. The button is the same element either way, so turning a tablet into a
+ * phone's width closes an open popover, reports the close, and leaves focus on the + (Task 11
+ * carry: Radix gives focus back to the trigger when a controlled popover closes). */
 export function AddTagsButton({ id, title, place, onOpenChange }: {
   id: string; title: string; place: "row" | "header"; onOpenChange?: (open: boolean) => void;
 }) {
   const tagging = useTaggingContext();
   const headingId = useId();
+  const phone = useMediaQuery(PHONE);
   const [open, setOpen] = useState(false);
   const ids = useMemo(() => [id], [id]);
   const change = (next: boolean) => {
     setOpen(next);
     onOpenChange?.(next);
   };
+  useEffect(() => {
+    if (phone && open) change(false);
+  }, [phone, open]);
   // The confirmation opens over the picker without closing it (spec §6). A focus move into the
   // Alert Dialog is "outside" this Popover, which Radix would close, so it is refused while the
   // confirmation is open or when it lands in one. (A pointer can't reach outside: the modal
@@ -364,7 +397,7 @@ export function AddTagsButton({ id, title, place, onOpenChange }: {
     if (tagging.confirm !== null || inConfirmation(e.target)) e.preventDefault();
   };
   return (
-    <Popover open={open} onOpenChange={change}>
+    <Popover open={open && !phone} onOpenChange={change}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -373,7 +406,12 @@ export function AddTagsButton({ id, title, place, onOpenChange }: {
           data-testid="add-tag"
           tabIndex={place === "row" ? -1 : 0}
           aria-label={`Add tags to ${title}`}
-          onClick={(e) => e.stopPropagation()} // never a row click: no selection change, nothing opens
+          onClick={(e) => {
+            e.stopPropagation(); // never a row click: no selection change, nothing opens
+            if (!phone) return;
+            e.preventDefault(); // Radix skips its toggle: on a phone, the sheet instead
+            tagging.openPicker({ ids, title: pickerTitle(ids, () => title), from: { id, place } });
+          }}
         >
           <Plus aria-hidden="true" />
         </button>

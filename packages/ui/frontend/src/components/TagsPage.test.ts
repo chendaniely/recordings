@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useGridState, type GridState } from "../lib/useGridState";
+import { UNTAGGED, useListState } from "../lib/useListState";
 import { TaggingContext, useTaggingContext, type Tagging } from "../tagging/useTagging";
 import type { LibraryRow, LibraryView, TagCount, TagRequest } from "../types";
 
@@ -70,10 +71,13 @@ afterEach(() => {
   host.remove();
 });
 
-/** As App: the grid's state lives above the page, which comes and goes with the route. */
+/** As App: the grid's state, and the phone's Untagged list's, live above the page, which comes and
+ * goes with the route. */
 function Harness({ shown }: { shown: boolean }) {
-  grid = useGridState(useTaggingContext());
-  return shown ? createElement(TagsPage, { grid }) : null;
+  const tagging = useTaggingContext();
+  grid = useGridState(tagging);
+  const untagged = useListState(tagging, UNTAGGED);
+  return shown ? createElement(TagsPage, { grid, untagged }) : null;
 }
 async function draw(tagging: Tagging, shown = true) {
   flushSync(() => root.render(createElement(TaggingContext.Provider, { value: tagging }, createElement(Harness, { shown }))));
@@ -517,5 +521,50 @@ describe("the grid's header line (spec §6, §7)", () => {
   it("shows Refresh with how many rows were tagged", async () => {
     await draw(fake(three(), { touched: 5 }));
     expect($("[data-testid=grid-refresh]")!.textContent).toBe("5 tagged · Refresh");
+  });
+});
+
+describe("on a phone (spec §6: the Untagged list with the picker, not the grid)", () => {
+  /** jsdom has no matchMedia: a phone's width, and a device that can't hover. */
+  const phone = () => vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+    matches: query === "(max-width: 760px)" || query === "(hover: none)",
+    addEventListener: () => {}, removeEventListener: () => {},
+  })));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("lists the untagged recordings, with a live count and the picker's +, and no grid", async () => {
+    phone();
+    await draw(fake(three()));
+    expect($("[data-testid=tags-grid]")).toBe(null);
+    expect($$("[data-testid=recording-row]").map((r) => r.dataset.id)).toEqual(["a", "b"]);
+    expect($("[data-testid=left-count]")!.textContent).toBe("2 left");
+    expect($$("[data-testid=recording-row] [data-testid=add-tag]")).toHaveLength(2);
+    expect($("[role=grid]")!.getAttribute("aria-label")).toBe("Recordings");
+  });
+
+  it("a tap selects a row and opens nothing; the + opens the sheet for that row", async () => {
+    phone();
+    const tagging = fake(three());
+    await draw(tagging);
+    const a = $("[data-testid=recording-row][data-id=a]")!;
+    await click(a.querySelector(".row-title")!);
+    expect(a.getAttribute("aria-selected")).toBe("true");
+    expect(a.getAttribute("aria-current")).toBe(null);
+    await click(a.querySelector("[data-testid=add-tag]")!);
+    expect(tagging.openPicker).toHaveBeenLastCalledWith({ ids: ["a"], title: "Tag Week a", from: { id: "a", place: "row" } });
+  });
+
+  it("keeps its rows in place and its selection through a visit to another page", async () => {
+    phone();
+    const v = three();
+    const tagging = fake(v);
+    await draw(tagging);
+    await click($("[data-testid=recording-row][data-id=b] .check")!);
+    // a is tagged meanwhile: it stays put, marked, until Refresh (spec §6).
+    const next = view([tagged(v.recordings[0], "talks"), v.recordings[1], v.recordings[2]], [count("talks", 2)]);
+    await draw({ ...tagging, view: next }, false);
+    await draw({ ...tagging, view: next });
+    expect($$("[data-testid=recording-row]").map((r) => r.dataset.id)).toEqual(["a", "b"]);
+    expect($("[data-testid=recording-row][data-id=b]")!.getAttribute("aria-selected")).toBe("true");
   });
 });

@@ -11,8 +11,8 @@ import { TagsPage } from "./components/TagsPage";
 import { TopBar } from "./components/TopBar";
 import { hashFor, routeFromHash } from "./lib/nav";
 import { useGridState } from "./lib/useGridState";
-import { useOrderedRows, useRowOrder } from "./lib/useRowOrder";
-import { useSelection } from "./lib/useSelection";
+import { UNTAGGED, useListState } from "./lib/useListState";
+import { PHONE, useMediaQuery } from "./lib/useMediaQuery";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
 import { ConfirmDialog } from "./tagging/ConfirmDialog";
 import { TaggingContext, useTagging } from "./tagging/useTagging";
@@ -33,17 +33,18 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [route, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
   const view = tagging.view;
-  // The order, its rows and the selection (with its pruning and announcement) come from the
-  // hooks the phone's Untagged list shares (Task 15).
-  const order = useRowOrder(view, filter, tagging.loadKey, tagging.revealed);
-  const { sel, act, announce, fitted } = useSelection(order);
-  const rows = useOrderedRows(order.ids, view);
+  // The order, its rows and the selection (with its pruning and announcement), from the hook the
+  // phone's Untagged list shares (Task 15).
+  const { order, rows, sel, act, announce, fitted } = useListState(tagging, filter);
   const openRow = useMemo(() => view?.recordings.find((r) => r.id === selectedId) ?? null, [view, selectedId]);
   // Held here, not in the sidebar, which unmounts on the Status page while the filter stays.
   const lastListed = useListedFilter(filter, view);
   // The Tags grid's filters, sort, selection and columns, held here so they survive a visit to
   // another page (Task 14 fix round 1), as the Library's do.
   const grid = useGridState(tagging);
+  // On a phone the Tags page is the Untagged list instead (spec §6): its state is held here too.
+  const untagged = useListState(tagging, UNTAGGED);
+  const phone = useMediaQuery(PHONE);
 
   // Hash routes: Back returns to the page you came from, and the server never logs them. The hash
   // only chooses what to show: `#/library/<id>` opens that recording, read-only (spec §7, §15).
@@ -66,7 +67,7 @@ export default function App() {
       <div className="app">
         <TopBar page={route.page} onPage={go} />
         {/* The Tags grid reads the same merged library, with its own order and selection (spec §7). */}
-        {route.page === "status" ? <StatusPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} /> : (
+        {route.page === "status" ? <StatusPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} untagged={untagged} /> : (
           <main className="panes">
             {/* + New tag…: a drop opens the picker for the dragged recordings, a click for the
                 selection (spec §6). */}
@@ -78,7 +79,9 @@ export default function App() {
         )}
         <TagPickerDialog />
         <ConfirmDialog />
-        <Toaster position="bottom-right" />
+        {/* On a phone toasts come in at the top: at the bottom they covered the selection bar and
+            the picker's sheet (spec §6: the bar stays above the bottom of the screen). */}
+        <Toaster position={phone ? "top-center" : "bottom-right"} />
       </div>
     </TaggingContext.Provider>
   );

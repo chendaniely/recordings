@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { PickerTarget } from "../tagging/useTagging";
 import type { LibraryRow, LibraryView, TagRequest } from "../types";
 
 // The tagging context, faked with a real React context of the test's own, so a test can change
@@ -14,7 +15,7 @@ vi.mock("@/tagging/useTagging", async () => {
   return { useTaggingContext: () => useContext(fake.Context) };
 });
 
-import { AddTagsButton, PickerBody, TagPickerDialog, keysLine, pickerTitle } from "./TagPicker";
+import { AddTagsButton, PickerBody, TagPickerDialog, keysLine, pickerTitle, plusFor } from "./TagPicker";
 
 describe("pickerTitle (spec §6: the title names the target)", () => {
   it("names one recording, or counts several", () => {
@@ -569,5 +570,95 @@ describe("the + and its popover", () => {
     const elsewhere = document.body.appendChild(document.createElement("button"));
     flushSync(() => elsewhere.focus());
     expect($("[data-testid=picker-input]")).toBe(null);
+  });
+});
+
+/** jsdom has no matchMedia: a stand-in for a phone (max-width: 760px), turnable. */
+function phoneMedia(on: boolean) {
+  const listeners = new Set<() => void>();
+  const media = {
+    matches: on,
+    addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+  };
+  vi.stubGlobal("matchMedia", vi.fn((query: string) => (query === "(max-width: 760px)" ? media : { ...media, matches: false })));
+  return {
+    turn(next: boolean) {
+      media.matches = next;
+      flushSync(() => listeners.forEach((fn) => fn()));
+    },
+  };
+}
+
+describe("on a phone (spec §6: the picker is a full-width bottom sheet)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("the + opens the dialog form for its recording, stashing where it came from", () => {
+    phoneMedia(true);
+    const openPicker = vi.fn();
+    const rowClick = vi.fn();
+    draw(provide(tagging({ openPicker }), createElement("div", { onClick: rowClick },
+      createElement(AddTagsButton, { id: "a", title: "Week a", place: "row" }))));
+    flushSync(() => $<HTMLButtonElement>("[data-testid=add-tag]")!.click());
+    expect(openPicker).toHaveBeenCalledWith({ ids: ["a"], title: "Tag Week a", from: { id: "a", place: "row" } });
+    expect($("[data-slot=popover-content]")).toBe(null); // never the popover
+    expect(rowClick).not.toHaveBeenCalled();
+  });
+
+  it("turning a tablet to a phone closes an open popover, reports it, and keeps focus on the +", async () => {
+    const media = phoneMedia(false);
+    const changes: boolean[] = [];
+    draw(provide(tagging(), createElement(AddTagsButton, {
+      id: "a", title: "Week a", place: "header", onOpenChange: (o: boolean) => changes.push(o),
+    })));
+    const plus = $<HTMLButtonElement>("[data-testid=add-tag]")!;
+    flushSync(() => plus.click());
+    expect($("[data-testid=picker-input]")).not.toBe(null);
+    media.turn(true);
+    await tick(); // Radix's FocusScope hands focus on after a 0 ms timer
+    expect($("[data-testid=picker-input]")).toBe(null);
+    expect(changes).toEqual([true, false]);
+    expect(document.activeElement).toBe(plus); // the same +, never <body>
+    media.turn(false); // and back: it stays closed
+    await tick();
+    expect($("[data-testid=picker-input]")).toBe(null);
+  });
+
+  it("closing the sheet gives focus to the + it came from, though a tap never focused it", async () => {
+    let open!: (target: PickerTarget | null) => void;
+    function Harness() {
+      const [picker, setPicker] = useState<PickerTarget | null>(null);
+      open = setPicker;
+      return provide(tagging({ picker, closePicker: () => setPicker(null) }), createElement(TagPickerDialog));
+    }
+    const row = document.body.appendChild(document.createElement("div"));
+    row.setAttribute("role", "row");
+    row.dataset.id = "a";
+    const plus = row.appendChild(document.createElement("button"));
+    plus.dataset.control = "add";
+    draw(createElement(Harness));
+    (document.activeElement as HTMLElement | null)?.blur();
+    flushSync(() => open({ ids: ["a"], title: "Tag Week a", from: { id: "a", place: "row" } }));
+    expect(document.activeElement).toBe(input());
+    press("Escape");
+    await tick();
+    expect(document.activeElement).toBe(plus);
+  });
+});
+
+describe("plusFor (where a sheet's focus goes back)", () => {
+  it("finds a row's + by the row's id, and the header's +", () => {
+    const row = document.body.appendChild(document.createElement("div"));
+    row.setAttribute("role", "row");
+    row.dataset.id = "a";
+    const rowPlus = row.appendChild(document.createElement("button"));
+    rowPlus.dataset.control = "add";
+    const header = document.body.appendChild(document.createElement("div"));
+    header.dataset.testid = "recording-header";
+    const headerPlus = header.appendChild(document.createElement("button"));
+    headerPlus.dataset.control = "add";
+    expect(plusFor({ id: "a", place: "row" })).toBe(rowPlus);
+    expect(plusFor({ id: "a", place: "header" })).toBe(headerPlus);
+    expect(plusFor({ id: "gone", place: "row" })).toBe(null);
   });
 });

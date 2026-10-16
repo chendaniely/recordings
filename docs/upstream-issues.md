@@ -141,6 +141,37 @@ other than Esc.
 
 **When this note can go.** When Radix's docs say both. Re-run that test on every `radix-ui` bump.
 
+## Sonner 2.0.8, tw-animate-css 1.4.0 and Tailwind v4: reduced motion and forced colours
+
+Found 2026-10-16, making tagging part A work with `prefers-reduced-motion` and forced colours
+(Task 15).
+
+**What the docs say.** Neither Sonner's docs (context7 `/emilkowalski/sonner`) nor
+tw-animate-css's README says what happens under `prefers-reduced-motion`. Tailwind's docs say
+`outline-hidden` keeps an outline in forced colours mode, but not what that does to a list whose
+items all carry it.
+
+**What they do.**
+- Sonner's stylesheet stills each toast under `prefers-reduced-motion` (`[data-sonner-toast]` and
+  its children get `transition: none; animation: none`), but not the toaster's own lift
+  (`[data-sonner-toaster] { transition: transform .4s }`).
+- tw-animate-css's `animate-in` and `animate-out`, which shadcn's Popover, Dialog, Alert Dialog
+  and DropdownMenu use, run whatever the preference.
+- In forced colours, `outline-hidden` (Tailwind v4) gives every shadcn `CommandItem` a 2px
+  outline, so the picker's highlighted item, whose ring is also an outline, can't be told apart.
+  Box shadows, shadcn's rings and the open row's bar among them, are dropped.
+
+**What relies on it, and the workarounds.** `app.css` stills the toaster, the toasts, the chips
+and the overlays under `prefers-reduced-motion`, and under `forced-colors: active` takes the
+outline off every picker item but the highlighted one, gives the dialogs and menus a border, and
+draws the open row's bar as a border. The e2e tests
+`test_reduced_motion_turns_off_overlay_and_toaster_animations` and
+`test_forced_colours_keep_each_state_and_each_overlays_edge` check them.
+
+**When this note can go.** When Sonner stills its toaster, tw-animate-css or shadcn's components
+honour the preference, and shadcn's items stop outlining themselves in forced colours. Re-run
+those tests on a bump of any of the three.
+
 ## shinyreact-build-app skill: what it doesn't cover
 
 - **How long an output lives once its components unmount** (the first entry above). The skill doesn't

@@ -17,6 +17,11 @@ import { TagChips } from "./TagChips";
 import { AddTagsButton } from "./TagPicker";
 import { TranscriptTab } from "./TranscriptTab";
 
+/** An inactive tab's text: shadcn's `text-foreground/60` is 4.28:1 on the light theme's --muted,
+ * under WCAG's 4.5:1; --muted-foreground is 4.9:1 there (axe, Task 10 carry). cn() drops the
+ * template's colour for it; the dark theme already used it. */
+const TAB = "text-muted-foreground";
+
 export function RecordingPane({ selectedId, row }: { selectedId: string | null; row: LibraryRow | null }) {
   const rec = useShinyOutputValue<RecordingView | null>("recording");
   const status = useShinyOutputStatus("recording");
@@ -74,11 +79,11 @@ function RecordingDetail({ rec, row, dimmed }: { rec: RecordingView; row: Librar
       {rec.media_url && <Player url={rec.media_url} kind={rec.kind} mediaRef={mediaRef} onTime={setTime} />}
       <Tabs defaultValue="transcript" className="flex min-h-0 flex-1 flex-col">
         <TabsList className="tabs-list" aria-label="Recording">
-          <TabsTrigger value="transcript" data-testid="tab-transcript">Transcript</TabsTrigger>
-          <TabsTrigger value="notes" data-testid="tab-notes">Notes ({rec.notes.reduce((n, g) => n + g.outputs.length, 0)})</TabsTrigger>
-          <TabsTrigger value="plaud" data-testid="tab-plaud">Plaud</TabsTrigger>
-          <TabsTrigger value="my-notes" data-testid="tab-my-notes">My notes</TabsTrigger>
-          <TabsTrigger value="details" data-testid="tab-details">Details</TabsTrigger>
+          <TabsTrigger value="transcript" className={TAB} data-testid="tab-transcript">Transcript</TabsTrigger>
+          <TabsTrigger value="notes" className={TAB} data-testid="tab-notes">Notes ({rec.notes.reduce((n, g) => n + g.outputs.length, 0)})</TabsTrigger>
+          <TabsTrigger value="plaud" className={TAB} data-testid="tab-plaud">Plaud</TabsTrigger>
+          <TabsTrigger value="my-notes" className={TAB} data-testid="tab-my-notes">My notes</TabsTrigger>
+          <TabsTrigger value="details" className={TAB} data-testid="tab-details">Details</TabsTrigger>
         </TabsList>
         <TabsContent value="transcript" className="tab">
           <TranscriptTab transcripts={rec.transcripts} chosen={rec.chosen_transcript} time={time} onSeek={seek} />

@@ -17,7 +17,10 @@ body { background: var(--background); color: var(--foreground); font-family: "At
 .muted { color: var(--muted-foreground); }
 :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
-.app { display: flex; flex-direction: column; height: 100vh; }
+/* 100dvh: the viewport as the browser's own bars leave it now. 100vh is the large viewport, taller
+   than the screen while a phone browser's bars show, so the bottom of the page (the phone's
+   selection bar) sat under them (checked: MDN, <length>). 100vh stays as the fallback. */
+.app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 .topbar { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
 .logo { font-weight: 700; display: flex; align-items: center; gap: 6px; }
 .logo i { width: 10px; height: 10px; border-radius: 50%; background: var(--brand-orange); box-shadow: 4px 0 0 0 var(--primary); margin-right: 4px; }
@@ -55,7 +58,7 @@ body { background: var(--background); color: var(--foreground); font-family: "At
 .tabs-list { margin: 8px 18px 0; }
 .tab { flex: 1; min-height: 0; overflow: auto; padding: 12px 18px 24px; }
 .tools { display: flex; gap: 10px; align-items: center; color: var(--muted-foreground); font-size: 12.5px; margin-bottom: 10px; flex-wrap: wrap; }
-.tools .r { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.tools .r { margin-left: auto; display: flex; gap: 6px; align-items: center; min-height: 24px; }
 select { font: inherit; color: var(--foreground); background: var(--card); border: 1px solid var(--input); border-radius: 6px; padding: 2px 6px; }
 
 .turn { display: grid; grid-template-columns: 56px 1fr; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: pointer; width: 100%; text-align: left; }
@@ -125,6 +128,11 @@ tr.attn td { color: var(--destructive); }
   .head .chip-x { opacity: 1; min-width: 44px; min-height: 44px; margin: -12px -14px -12px -6px; }
   .head .chips { gap: 24px 8px; }
   .head .chip-label { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+  /* The header's + is a 44 px target too, its 24 px dashed ring drawn inside it. It overhangs
+     its line by 10 px above and below, within the 24 px gap between lines, and not at all
+     sideways, so it overlaps no ×'s target. */
+  .head .add-tag { position: relative; min-width: 44px; min-height: 44px; margin: -10px 0; border: 0; }
+  .head .add-tag::before { content: ""; position: absolute; inset: 10px; border: 1px dashed var(--muted-foreground); border-radius: 999px; }
 }
 /* A pending change shows at once, with a dashed outline in --muted-foreground (spec §6). */
 .chip.pending { outline: 1px dashed var(--muted-foreground); outline-offset: 1px; }
@@ -146,6 +154,8 @@ tr.attn td { color: var(--destructive); }
 .picker { width: 100%; }
 /* The title is the form's name: the dialog's DialogTitle (an h2), or the popover's heading. */
 .picker-title { margin: 0; padding: 10px 12px 2px; font-size: inherit; line-height: 1.35; font-weight: 700; overflow-wrap: anywhere; }
+/* The box fills its 32 px group, so all of it takes a tap, not only the 20 px line of text. */
+.picker [cmdk-input] { align-self: stretch; }
 /* The focus ring goes round the whole box, icon included, not inside it on the bare input. */
 .picker [cmdk-input]:focus-visible { outline: none; }
 .picker [data-slot=input-group]:focus-within { outline: 2px solid var(--ring); outline-offset: 1px; }
@@ -218,6 +228,8 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 @media (hover: none) {
   .check { visibility: visible; }
   .row .chip-x { display: none; }
+  /* No keys to hint at on touch (Task 12 carry): the list's, the grid's and the phone's Tags page's. */
+  .key-hint { display: none; }
 }
 
 /* Drop targets: a 2px orange outline; the text keeps its colour (tagging spec §6). In the light
@@ -308,3 +320,59 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 .columns-picker fieldset { border: 0; margin: 0 0 8px; padding: 0; }
 .columns-picker legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
 .column-choice { display: flex; align-items: center; gap: 6px; min-height: 24px; overflow-wrap: anywhere; }
+
+/* Phones (tagging spec §6). The picker is a full-width bottom sheet: the dialog form, which the +
+   opens there too (TagPicker.tsx). These rules are unlayered, so they win over the Tailwind
+   utilities placing the centred dialog (top-1/3, -translate-x-1/2 and translate-y-0, which set the
+   translate property; checked: Tailwind v4 docs, translate). It sits on what the screen shows,
+   above an on-screen keyboard (--sheet-bottom), and its list gives up the room
+   (--sheet-height), both from the visual viewport (useSheetRoom); without them, the bottom edge
+   and the dynamic viewport. It slides up rather than zooming (tw-animate-css's enter and exit
+   keyframes read these variables). */
+@media (max-width: 760px) {
+  .picker-dialog {
+    top: auto; bottom: var(--sheet-bottom, 0px); left: 0; right: 0; width: 100%; max-width: none; translate: none;
+    max-height: calc(var(--sheet-height, 100dvh) - 16px);
+    display: flex; flex-direction: column;
+    border-radius: 12px 12px 0 0;
+    --tw-enter-scale: 1; --tw-exit-scale: 1; --tw-enter-translate-y: 100%; --tw-exit-translate-y: 100%;
+  }
+  .picker-dialog > .picker, .picker-dialog [cmdk-list] { flex: 0 1 auto; min-height: 0; }
+  /* iOS Safari zooms the page into a text field whose text is under 16 px as it takes focus. */
+  .picker-dialog [cmdk-input] { font-size: 16px; }
+  /* The selection bar stays above the bottom of the screen: it sticks to the bottom of the page's
+     scroller. The list clips rather than hides, as overflow: hidden made the list a scroll
+     container of its own, which the bar would have stuck to instead. */
+  .list { overflow: clip; }
+  .selection-bar { position: sticky; bottom: 0; z-index: 3; }
+  /* The phone's Tags page is the Untagged list: it takes the page's height. */
+  .tags-page.phone .list { max-height: none; flex: 1; min-height: 0; border-bottom: 0; }
+}
+
+/* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its
+   toasts, but not the toaster's lift; tw-animate-css stills nothing. With no animation, Radix
+   unmounts a closing overlay at once. */
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toaster], [data-sonner-toast], [data-sonner-toast] *, .chip, .chip *,
+  [data-slot=popover-content], [data-slot=dialog-content], [data-slot=dialog-overlay],
+  [data-slot=alert-dialog-content], [data-slot=alert-dialog-overlay], [data-slot=dropdown-menu-content] {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Forced colours (Windows High Contrast) drop box-shadows and repaint backgrounds: a state or an
+   edge drawn only that way vanishes (spec §6: each row state is distinct without colour). */
+@media (forced-colors: active) {
+  /* The open row's 3 px bar, as a border the mode paints. */
+  .row.on { border-left: 3px solid CanvasText; padding-left: 9px; }
+  /* shadcn's items carry Tailwind's outline-hidden, which in this mode outlines every item, so the
+     highlighted one's ring told nothing apart: only it keeps one, in the picker and the sort menus. */
+  .picker .picker-item, .tg-menu-list [role=menuitemradio] { outline: none; }
+  .picker[data-highlight=on] .picker-item[data-selected=true],
+  .tg-menu-list [role=menuitemradio]:focus-visible, .tg-menu-list [role=menuitemradio][data-highlighted] {
+    outline: 2px solid Highlight; outline-offset: -2px;
+  }
+  /* The dialogs' and menus' edges were a ring (a shadow). The popover's outline-hidden draws one. */
+  [data-slot=dialog-content], [data-slot=alert-dialog-content], [data-slot=dropdown-menu-content] { border: 1px solid CanvasText; }
+}

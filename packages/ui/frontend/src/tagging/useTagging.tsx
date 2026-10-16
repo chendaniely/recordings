@@ -20,7 +20,12 @@ import {
   cellsId, dismissProgress, showAlert, showCannotTag, showCells, showDropped, showProgress, showResult, showStillWorking,
 } from "./toasts";
 
-export interface PickerTarget { ids: string[]; title: string } // the dialog form: T, the selection bar, a drop
+/** The dialog form's target: T, the selection bar, a drop, or on a phone a + (as a bottom sheet). */
+export interface PickerTarget { ids: string[]; title: string; from?: PickerFrom }
+/** The + a phone's sheet was opened from, so closing it gives focus back there: a tap focuses
+ * nothing in Safari, so what had focus can't say (Task 11 carry). By the row's id, as a virtual
+ * list may draw that row anew. */
+export interface PickerFrom { id: string; place: "row" | "header" }
 export interface ConfirmState { request: TagRequest; origin: Origin; reply: TagResult; redo: boolean }
 
 export interface Tagging {
