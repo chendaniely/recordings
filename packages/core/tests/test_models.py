@@ -85,13 +85,30 @@ def test_is_private(tags, private):
     assert is_private(recording(tags=tags)) is private
 
 
-@pytest.mark.parametrize("tag", ["private", "Private", "PRIVATE/journal", "private/health"])
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "private",
+        "Private",
+        "PRIVATE/journal",
+        "private/health",
+        "ｐｒｉｖａｔｅ",  # fullwidth: NFKC folds it (tagging spec §4)
+        "pri​vate/notes",  # a zero-width space is a format character, dropped
+        "‍Private",  # a zero-width joiner in front
+        "private­",  # a soft hyphen
+        "private／journal",  # a fullwidth solidus is a folder separator after NFKC
+    ],
+)
 def test_a_tag_whose_first_folder_is_private_in_any_case_is_private(tag):
     assert is_private_tag(tag) is True
 
 
-@pytest.mark.parametrize("tag", ["privateer", "notes/private", "public", "Privateer/x"])
+@pytest.mark.parametrize(
+    "tag", ["privateer", "notes/private", "public", "Privateer/x", "рrivate", "pri vate"]
+)
 def test_other_tags_are_not_private(tag):
+    # "рrivate" starts with a Cyrillic er: not private here, and refused as a new tag
+    # (tagops.validate_new_tag), so it can never be created by the app.
     assert is_private_tag(tag) is False
 
 

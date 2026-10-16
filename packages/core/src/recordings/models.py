@@ -6,6 +6,7 @@ Every key added in stage 2a is optional, so files written before it read unchang
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Annotated, Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -170,9 +171,14 @@ def is_private_tag(tag: str) -> bool:
     """Spec §7.4: the tag's first folder is `private`, in any capitalisation.
 
     The one place the rule lives. `Private/health` is private; `privateer` and
-    `notes/private` are not.
+    `notes/private` are not. It errs towards private: the tag is folded with Unicode NFKC
+    (so a fullwidth `ｐｒｉｖａｔｅ`, or a fullwidth solidus, counts) and format characters
+    such as a zero-width space are dropped, before `casefold()` (tagging spec §4).
     """
-    return tag.split("/", 1)[0].casefold() == "private"
+    folded = unicodedata.normalize("NFKC", tag)
+    first = folded.split("/", 1)[0]
+    first = "".join(c for c in first if unicodedata.category(c) != "Cf")
+    return first.casefold() == "private"
 
 
 def is_private(rec: Recording) -> bool:
