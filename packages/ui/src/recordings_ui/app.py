@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 from collections.abc import AsyncIterator, Callable
@@ -13,13 +14,13 @@ from fastapi.responses import FileResponse
 from recordings.archive import Archive
 from recordings.ids import ID_RE
 from recordings.index import Index
-from recordings.init import InitError, adopt_archive
+from recordings.init import adopt_archive
 from recordings.state import State
 from recordings.writer import NotTheWriter, Writer
 
 from recordings_ui import runtime
 from recordings_ui.hosts import HostGuard, WriteGuard
-from recordings_ui.settings import Settings
+from recordings_ui.settings import Settings, find_demo_archive
 from recordings_ui.status import status_settings
 from recordings_ui.tagging import LOCK_WAIT, ArchiveStore, TagService
 
@@ -28,30 +29,34 @@ log = logging.getLogger(__name__)
 NO_CONFIG = "there's no config.toml, so this app only reads the archive"
 
 
-def demo_writer(copy: Path) -> Callable[[], Writer]:
+def demo_writer(copy: Path, folder: Path | None) -> Callable[[], Writer]:
     """Demo mode's Writer (tagging spec §5). Its state.db, index and locks live in the demo's
     temporary folder, beside the copy, and go with it at exit, SIGTERM included (§17). It never
-    reads the config, RECORDINGS_STATE or RECORDINGS_INDEX. Called from create_app, never from
-    settings.from_env, which the Pages demo also runs."""
-    folder = copy.parent
-    state = folder / "state"
-    refused: str | None = None
-    if not (state / "state.db").exists():  # tagging plan, decision 13
-        try:
-            adopt_archive(copy, state, writer_id="demo")
-        except InitError as exc:  # the mirror's marker, or no sentinel: tagging is off
-            refused = str(exc)
+    reads the config, RECORDINGS_STATE or RECORDINGS_INDEX, and writes beside nothing but the
+    folder settings.from_env made: with none, or on the committed demo, it refuses. Called from
+    create_app, never from settings.from_env, which the Pages demo also runs. Adopting the copy
+    happens in the returned function, on the writer thread, so startup does no disk work and the
+    thread classifies its errors."""
 
     def open_writer() -> Writer:
-        if refused is not None:
-            raise NotTheWriter(refused)
+        if folder is None or copy.parent.resolve() != folder.resolve():
+            raise NotTheWriter("demo mode writes only into its own temporary folder")
+        try:
+            committed = find_demo_archive({}).resolve()
+        except SystemExit:
+            committed = None
+        if copy.resolve() == committed:
+            raise NotTheWriter("this is the committed demo archive, which is never written")
+        state = folder / "state"
+        if not (state / "state.db").exists():  # tagging plan, decision 13
+            adopt_archive(copy, state, writer_id="demo")  # InitError: the mirror's marker, etc.
         writer = Writer(
             copy,
             State.open(state),
             Index(folder / "index.db"),
             writer_id="demo",
             lock_timeout=LOCK_WAIT,
-        )
+        )  # State and Index hold no connection between uses, so a failure leaves nothing to close
         writer.write_docs()  # §6.7, as Writer.open does for the real archive
         return writer
 
@@ -63,7 +68,7 @@ def writer_opener(settings: Settings) -> Callable[[], Writer]:
     opening writes the archive's docs (§6.7), and only into an archive this process may write;
     anywhere else the app still serves, read-only, with the reason as `cannot_tag_reason`."""
     if settings.demo:
-        return demo_writer(settings.archive)
+        return demo_writer(settings.archive, settings.demo_folder)
     cfg = settings.config
     if cfg is None:
 
@@ -88,6 +93,9 @@ def create_app(settings: Settings) -> HostGuard:
     async def lifespan(_api: FastAPI) -> AsyncIterator[None]:
         yield
         tagging.stop()  # a batch stops between recordings; every write is atomic
+        # Queued writes fail instead of running; wait, bounded and off the event loop, for the
+        # one running, so it can't re-create the demo's folder after atexit removes it.
+        await asyncio.to_thread(tagging.store.join, 5.0)
 
     api = FastAPI(
         title="recordings", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan

@@ -1,5 +1,5 @@
 import pytest
-from recordings_ui.settings import from_env
+from recordings_ui.settings import Settings, from_env
 
 
 def test_demo_works_on_a_fresh_copy_and_ignores_the_real_archive(tmp_path):
@@ -152,3 +152,9 @@ def test_base_urls_host_is_checked_like_an_allowed_hosts_entry(tmp_path):
     assert "fd7a::1" in settings_for("http://[fd7a:0:0::1]:8000").allowed_hosts
     with pytest.raises(SystemExit, match="base_url"):
         settings_for("http://my_host:8000")
+
+
+def test_only_from_env_names_the_demos_temporary_folder():
+    s = from_env({}, demo=True)
+    assert s.demo_folder == s.archive.parent
+    assert Settings(archive=s.archive, demo=True).demo_folder is None

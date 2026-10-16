@@ -23,6 +23,9 @@ class Settings:
     # The names the app answers to (recordings_ui.hosts.HostGuard); always the local ones.
     allowed_hosts: frozenset[str] = LOCAL_HOSTS
     config: Config | None = None  # None in demo mode, which never reads config.toml
+    # Demo mode's temporary folder, holding the copy, its state, index and locks. Set only by
+    # from_env, which made it: the writer writes beside nothing else (tagging spec §5).
+    demo_folder: Path | None = None
 
 
 def env_hosts(environ: Mapping[str, str]) -> frozenset[str]:
@@ -70,10 +73,16 @@ def from_env(environ: Mapping[str, str], *, demo: bool | None = None) -> Setting
     if demo:
         # A fresh copy every start: the same state for every bug report, and the committed
         # demo is never modified. config.toml, RECORDINGS_ARCHIVE and secrets are never read.
-        copy = Path(tempfile.mkdtemp(prefix="recordings-demo-")) / "archive"
-        atexit.register(shutil.rmtree, copy.parent, ignore_errors=True)  # stage-1 carry-over
+        folder = Path(tempfile.mkdtemp(prefix="recordings-demo-"))
+        copy = folder / "archive"
+        atexit.register(shutil.rmtree, folder, ignore_errors=True)  # stage-1 carry-over
         shutil.copytree(find_demo_archive(environ), copy)
-        return Settings(archive=copy, demo=True, allowed_hosts=LOCAL_HOSTS | env_hosts(environ))
+        return Settings(
+            archive=copy,
+            demo=True,
+            allowed_hosts=LOCAL_HOSTS | env_hosts(environ),
+            demo_folder=folder,
+        )
     try:
         cfg = load_config(environ)
     except ConfigError as exc:

@@ -53,6 +53,7 @@ class OneThread(Executor):
     def __init__(self, name: str) -> None:
         self._jobs: queue.SimpleQueue = queue.SimpleQueue()
         self._closed = False
+        self._cancel = False
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         self._thread.start()
@@ -75,6 +76,7 @@ class OneThread(Executor):
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         with self._lock:
+            self._cancel = self._cancel or cancel_futures
             if not self._closed:
                 self._closed = True
                 self._jobs.put(None)  # after every job already queued
@@ -86,6 +88,9 @@ class OneThread(Executor):
             while (job := self._jobs.get()) is not None:
                 future, fn, args, kwargs = job
                 if not future.set_running_or_notify_cancel():
+                    continue
+                if self._cancel:  # shutdown(cancel_futures=True): the running job finished, no more
+                    future.set_exception(ThreadStopped(STOPPED))
                     continue
                 try:
                     future.set_result(fn(*args, **kwargs))
@@ -162,4 +167,10 @@ class WriterThread:
         return True, None
 
     def close(self) -> None:
-        self.executor.shutdown(wait=False)
+        """At shutdown: what is queued fails with ThreadStopped, and only the job already running
+        finishes, so nothing re-creates files after the demo's folder is removed."""
+        self.executor.shutdown(wait=False, cancel_futures=True)
+
+    def join(self, timeout: float) -> None:
+        """Wait, bounded, for the thread to exit after close."""
+        self.executor._thread.join(timeout)

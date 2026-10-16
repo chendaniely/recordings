@@ -10,6 +10,7 @@ from recordings_ui import runtime
 from recordings_ui.app import create_app
 from recordings_ui.settings import Settings
 from recordings_ui.tagging import ArchiveStore
+from recordings_ui.writing import ThreadStopped
 
 WWW = Path(__file__).resolve().parents[1] / "src" / "recordings_ui" / "www"
 
@@ -170,7 +171,7 @@ def test_demo_mode_keeps_its_writer_beside_its_copy(tmp_path, demo_archive):
     folder = tmp_path / "recordings-demo-x"
     copy = folder / "archive"
     shutil.copytree(demo_archive, copy)
-    create_app(Settings(archive=copy, demo=True))
+    create_app(Settings(archive=copy, demo=True, demo_folder=folder))
     try:
         assert runtime.tagging().store.wait_open(30) == (True, None)
     finally:
@@ -187,7 +188,7 @@ def test_demo_mode_on_the_mirrors_copy_cannot_tag(tmp_path, demo_archive):
     copy = folder / "archive"
     shutil.copytree(demo_archive, copy)
     (copy / MIRROR).write_text("the mirror's copy\n", encoding="utf-8")
-    create_app(Settings(archive=copy, demo=True))
+    create_app(Settings(archive=copy, demo=True, demo_folder=folder))
     try:
         ok, reason = runtime.tagging().store.wait_open(30)
     finally:
@@ -205,6 +206,64 @@ def test_without_a_config_the_app_only_reads(tmp_path, demo_archive):
         runtime.tagging().stop()
         runtime.configure(None)
     assert not ok and "config.toml" in reason
+
+
+def test_a_write_queued_at_shutdown_does_not_run_and_the_thread_is_gone(tmp_path, demo_archive):
+    # why: the demo's temporary folder is removed at exit; a late write (a lock file, the docs'
+    # parent folders) would create it again.
+    import threading
+
+    app = create_app(Settings(archive=demo_archive, demo=True, demo_folder=tmp_path))
+    store = runtime.tagging().store
+    assert store.wait_open(30) == (True, None)
+    executor = store._thread.executor
+    gate = threading.Event()
+    blocked = executor.submit(gate.wait, 10)
+    late = tmp_path / "late"
+    queued = executor.submit(late.mkdir)
+    threading.Timer(0.3, gate.set).start()
+    with TestClient(app, base_url="http://localhost") as c:
+        assert c.get("/healthz").status_code == 200
+    assert blocked.result(1) is True
+    assert isinstance(queued.exception(1), ThreadStopped) and not late.exists()
+    assert not executor._thread.is_alive()  # the lifespan waited for it
+    runtime.configure(None)
+
+
+def test_demo_mode_without_its_own_folder_or_on_the_committed_demo_cannot_tag(demo_archive):
+    from recordings_ui.settings import find_demo_archive
+
+    committed = find_demo_archive({})
+    for settings in (
+        Settings(archive=demo_archive, demo=True),  # not from_env's folder
+        Settings(archive=committed, demo=True, demo_folder=committed.parent),
+    ):
+        create_app(settings)
+        try:
+            ok, reason = runtime.tagging().store.wait_open(30)
+        finally:
+            runtime.tagging().stop()
+            runtime.configure(None)
+        assert not ok and reason
+    assert (
+        not (committed.parent / "state").exists() and not (committed.parent / "index.db").exists()
+    )
+
+
+def test_a_failing_adoption_does_not_stop_startup(tmp_path, demo_archive, monkeypatch):
+    # why: adoption runs on the writer thread, so an unexpected disk error is classified there
+    # and the app still serves, read-only.
+    def boom(*args, **kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr("recordings_ui.app.adopt_archive", boom)
+    create_app(Settings(archive=demo_archive, demo=True, demo_folder=tmp_path))
+    try:
+        ok, reason = runtime.tagging().store.wait_open(30)
+    finally:
+        runtime.tagging().stop()
+        runtime.configure(None)
+    assert not ok and "PermissionError" in reason
 
 
 def test_shutdown_stops_the_tag_service(demo_archive):

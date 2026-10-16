@@ -7,6 +7,7 @@ import contextlib
 import json
 import mimetypes
 import os
+import shutil
 import signal
 import socket
 import sqlite3
@@ -45,6 +46,26 @@ ANY_EVENTS = (
     "os.system",
     "os.fork",
 )
+# What changes the file system. "open" is a write only when its mode or flags say so; the rest
+# always are. The audit event names are Python's own; os.replace emits "os.rename".
+WRITE_EVENTS = {
+    "os.rename": (0, 1),
+    "os.mkdir": (0,),
+    "os.remove": (0,),
+    "os.rmdir": (0,),
+    "shutil.rmtree": (0,),
+    "os.chmod": (0,),
+    "os.chown": (0,),
+    "os.utime": (0,),
+    "os.symlink": (1,),
+    "os.link": (0, 1),
+    "os.truncate": (0,),
+    "shutil.copyfile": (1,),
+    "shutil.copymode": (1,),
+    "shutil.copystat": (1,),
+    "shutil.move": (1,),
+}
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 _events: list[tuple[str, str]] | None = None
 
 
@@ -55,9 +76,24 @@ def _path(value: str | bytes | os.PathLike) -> str:
     return path
 
 
+def _opens_for_writing(args: tuple) -> bool:
+    mode = args[1] if len(args) > 1 else None
+    flags = args[2] if len(args) > 2 else None
+    if isinstance(mode, str) and set(mode) & set("wax+"):
+        return True
+    return isinstance(flags, int) and bool(flags & _WRITE_FLAGS)
+
+
 def _hook(event: str, args: tuple) -> None:
     if _events is None:
         return
+    if event == "open" and args and isinstance(args[0], (str, bytes, os.PathLike)):
+        if _opens_for_writing(args):
+            _events.append(("write:open", _path(args[0])))
+    elif event in WRITE_EVENTS:
+        for i in WRITE_EVENTS[event]:
+            if len(args) > i and isinstance(args[i], (str, bytes, os.PathLike)):
+                _events.append(("write:" + event, _path(args[i])))
     if event in PATH_EVENTS:
         if args and isinstance(args[0], (str, bytes, os.PathLike)):
             _events.append((event, _path(args[0])))
@@ -72,10 +108,57 @@ sys.addaudithook(_hook)  # stays for the session; idle unless a test switches it
 def _watching() -> Iterator[list[tuple[str, str]]]:
     global _events
     _events = events = []
+    bytecode = sys.dont_write_bytecode  # compiling a module the first time isn't the demo's write
+    sys.dont_write_bytecode = True
     try:
         yield events
     finally:
+        sys.dont_write_bytecode = bytecode
         _events = None
+
+
+def _inside(path: str, root: str) -> bool:
+    path, root = os.path.realpath(path), os.path.realpath(root)
+    return os.path.commonpath([path, root]) == root
+
+
+def test_the_hook_sees_every_kind_of_write_but_not_reads(tmp_path):
+    # The write guard below is only as good as what the hook sees.
+    src, other = tmp_path / "a.txt", tmp_path / "b.txt"
+    src.write_text("x", encoding="utf-8")
+    with _watching() as events:
+        src.read_text(encoding="utf-8")
+        os.open(src, os.O_RDONLY | os.O_CLOEXEC) and None
+    assert [e for e in events if e[0].startswith("write:")] == []
+    with _watching() as events:
+        src.open("a", encoding="utf-8").close()
+        os.close(os.open(other, os.O_WRONLY | os.O_CREAT))
+        os.replace(other, tmp_path / "c.txt")
+        os.mkdir(tmp_path / "d")
+        os.chmod(src, 0o644)
+        os.utime(src)
+        os.symlink(src, tmp_path / "s")
+        os.link(src, tmp_path / "l")
+        os.truncate(src, 0)
+        os.remove(tmp_path / "s")
+        os.rmdir(tmp_path / "d")
+        shutil.rmtree(tmp_path / "gone", ignore_errors=True)
+    wrote = {(e[0], os.path.basename(e[1])) for e in events if e[0].startswith("write:")}
+    assert wrote >= {
+        ("write:open", "a.txt"),
+        ("write:open", "b.txt"),
+        ("write:os.rename", "b.txt"),
+        ("write:os.rename", "c.txt"),
+        ("write:os.mkdir", "d"),
+        ("write:os.chmod", "a.txt"),
+        ("write:os.utime", "a.txt"),
+        ("write:os.symlink", "s"),
+        ("write:os.link", "l"),
+        ("write:os.truncate", "a.txt"),
+        ("write:os.remove", "s"),
+        ("write:os.rmdir", "d"),
+        ("write:shutil.rmtree", "gone"),
+    }
 
 
 def test_the_hook_sees_sqlite_listings_other_programs_and_name_lookups(tmp_path):
@@ -187,7 +270,7 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
     assert any(p.endswith("state.db") for p in opened) and any(
         p.endswith("index.db") for p in opened
     )
-    assert all(os.path.realpath(p).startswith(folder) for p in opened)
+    assert all(_inside(p, folder) for p in opened)
     # Nothing else either: every path opened is in the demo's copy, the committed demo, the
     # Python install or the UI's own folder (code, and its built front end in www/). This also
     # catches the relative default config.toml and any reading of os.environ that the lines above
@@ -219,6 +302,19 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
         )
 
     assert [e for e in events if e[0] in PATH_EVENTS and not allowed(e[1])] == []
+
+    # Writes: only inside the demo's temporary folder (the copy, its state, index and locks), or
+    # Shiny's per-session upload folder. Nothing in the committed demo, the Python install, the
+    # UI's folder or the core package's format/ folder (read-only) changes.
+    def may_write(path: str) -> bool:
+        real = os.path.realpath(path)
+        return _inside(real, str(settings.archive.parent)) or (
+            os.path.dirname(real) == temp and os.path.basename(real).startswith("fileupload-")
+        )
+
+    writes = [e for e in events if e[0].startswith("write:")]
+    assert writes, "the demo's Writer wrote nothing: the hook isn't seeing writes"
+    assert [e for e in writes if not may_write(e[1])] == []
 
 
 def test_demo_mode_removes_its_temporary_copy_at_exit(monkeypatch):

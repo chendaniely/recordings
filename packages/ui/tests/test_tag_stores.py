@@ -342,6 +342,24 @@ def test_one_thread_finishes_what_was_queued_then_refuses_more():
         pool.submit(lambda: "after")
 
 
+def test_one_thread_cancelling_fails_what_was_queued_and_finishes_the_running_job():
+    # why: at the demo's exit nothing queued may run: it would re-create the deleted folder.
+    pool = OneThread("test-one-thread")
+    gate = threading.Event()
+    started = threading.Event()
+    blocked = pool.submit(lambda: started.set() or gate.wait(10))
+    assert started.wait(5)  # running, so a cancel can't take it
+    queued = [pool.submit(lambda: "ran") for _ in range(3)]
+    pool.shutdown(wait=False, cancel_futures=True)
+    gate.set()
+    assert blocked.result(5) is True  # the job already running finishes
+    for f in queued:
+        with pytest.raises(ThreadStopped):
+            f.result(5)
+    pool._thread.join(5)
+    assert not pool._thread.is_alive()
+
+
 @pytest.mark.parametrize("key", ["docs", "index"])
 def test_a_lock_the_cli_holds_during_open_is_a_transient_failure_not_a_permanent_one(
     tag_archive, run, key

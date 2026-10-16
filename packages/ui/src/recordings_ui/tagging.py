@@ -112,6 +112,8 @@ class Store(Protocol):
 
     def close(self) -> None: ...
 
+    def join(self, timeout: float) -> None: ...
+
 
 class MemoryStore:
     """The Pages demo's recordings, with this page's changes kept in memory (spec §5). It takes
@@ -166,6 +168,9 @@ class MemoryStore:
         return None  # nothing of its own: the service's common rules cover it
 
     def close(self) -> None:
+        pass
+
+    def join(self, timeout: float) -> None:
         pass
 
 
@@ -272,7 +277,11 @@ class ArchiveStore:
 
     def close(self) -> None:
         self._thread.close()
-        self._reader.shutdown(wait=False)
+        self._reader.shutdown(wait=False, cancel_futures=True)
+
+    def join(self, timeout: float) -> None:
+        """After close: wait, bounded, for the writer thread to finish the job it was running."""
+        self._thread.join(timeout)
 
 
 MAX_TAGS = 20
