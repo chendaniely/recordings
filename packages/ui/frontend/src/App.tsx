@@ -2,14 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Toaster } from "@/components/ui/sonner";
 
-import { RecordingList, openPickerFor } from "./components/RecordingList";
+import { RecordingList, openNewTag } from "./components/RecordingList";
 import { RecordingPane } from "./components/RecordingPane";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, useListedFilter } from "./components/Sidebar";
 import { StatusPage } from "./components/StatusPage";
 import { TagPickerDialog } from "./components/TagPicker";
 import { TopBar } from "./components/TopBar";
 import { hashFor, routeFromHash } from "./lib/nav";
-import { targetsOf } from "./lib/selection";
 import { useOrderedRows, useRowOrder } from "./lib/useRowOrder";
 import { useSelection } from "./lib/useSelection";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
@@ -38,6 +37,8 @@ export default function App() {
   const { sel, act, announce, fitted } = useSelection(order);
   const rows = useOrderedRows(order.ids, view);
   const openRow = useMemo(() => view?.recordings.find((r) => r.id === selectedId) ?? null, [view, selectedId]);
+  // Held here, not in the sidebar, which unmounts on the Status page while the filter stays.
+  const lastListed = useListedFilter(filter, view);
 
   // Hash routes: Back returns to the page you came from, and the server never logs them. The hash
   // only chooses what to show: `#/library/<id>` opens that recording, read-only (spec §7, §15).
@@ -62,9 +63,9 @@ export default function App() {
         {route.page === "status" ? <StatusPage /> : view ? (
           <main className="panes">
             {/* + New tag…: a drop opens the picker for the dragged recordings, a click for the
-                selection, as T does (spec §6). */}
-            <Sidebar library={view} filter={filter} onFilter={setFilter}
-              onNewTag={(ids) => openPickerFor(ids ?? targetsOf(sel, order.ids), rows, tagging)} />
+                selection (spec §6). */}
+            <Sidebar library={view} filter={filter} onFilter={setFilter} lastListed={lastListed}
+              onNewTag={(ids) => openNewTag(ids, sel, order.ids, rows, tagging)} />
             <RecordingList rows={rows} sel={sel} act={act} openId={selectedId} onOpen={setSelectedId} announce={announce} fitted={fitted} />
             <RecordingPane selectedId={selectedId} row={openRow} />
           </main>

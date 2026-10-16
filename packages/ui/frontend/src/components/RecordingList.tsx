@@ -8,9 +8,11 @@ import { composing, isTextEntry, toggleFocusedKey } from "../lib/keys";
 import { nextNote, shownTags, startNote } from "../lib/library";
 import { targetsOf, type Move, type Sel, type SelAction } from "../lib/selection";
 import { useListShortcuts } from "../lib/useListShortcuts";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import type { Announcement, Fitted } from "../lib/useSelection";
 import { useVirtualRows } from "../lib/useVirtualRows";
-import { showCannotTag } from "../tagging/toasts";
+import { newDragMark } from "../tagging/drag";
+import { showCannotTag, showSelectFirst } from "../tagging/toasts";
 import { useTaggingContext, type Tagging } from "../tagging/useTagging";
 import type { LibraryRow } from "../types";
 import { SelectionBar } from "./SelectionBar";
@@ -34,6 +36,17 @@ export function openPickerFor(ids: string[], rows: readonly LibraryRow[], taggin
   }
   const titles = new Map(rows.map((r) => [r.id, r.title]));
   tagging.openPicker({ ids, title: pickerTitle(ids, (id) => titles.get(id) ?? id) });
+}
+
+/** + New tag… (spec §6): a drop opens the picker for the dragged recordings; a click, for the
+ * selection only, never the focused row alone, which the sidebar can't show. With nothing
+ * selected it says so (Task 13 fix round 1). */
+export function openNewTag(
+  ids: string[] | null, sel: Sel, order: readonly string[], rows: readonly LibraryRow[], tagging: Tagging,
+): void {
+  const targets = ids ?? order.filter((id) => sel.selected.has(id));
+  if (targets.length === 0) showSelectFirst();
+  else openPickerFor(targets, rows, tagging);
 }
 
 /** The drag image: "12 recordings" (spec §6). One element, made for this and kept off-screen:
@@ -103,6 +116,8 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   const [dragId, setDragId] = useState<string | null>(null); // the row being dragged
   const pressedOn = useRef<Element | null>(null); // where the pointer went down: a drag starts there
   const drag = tagging.drag;
+  // Rows drag only where a pointer can hover: on touch the picker is the way (fix round 1).
+  const canHover = useMediaQuery("(hover: hover)");
   const order = useMemo(() => rows.map((r) => r.id), [rows]);
   const index = useMemo(() => new Map(order.map((id, i) => [id, i])), [order]);
   const at = (id: string | null) => (id === null ? -1 : (index.get(id) ?? -1));
@@ -302,7 +317,8 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
 
   // A drag carries the selection when its row is in it, in list order and in one add, else that
   // row alone, leaving the selection as it is (spec §6). Its IDs live in this page, set here and
-  // never put in dataTransfer, which gets only the image's words. dragstart's target is the
+  // never put in dataTransfer, which gets only the image's words and the drag's own marker, a
+  // custom type a drop target must also find (drag.ts). dragstart's target is the
   // draggable row, so where it began comes from pointerdown: a drag that begins on the checkbox,
   // a chip's × or the +, or in the + picker (a portal, whose events bubble through this row), is
   // cancelled.
@@ -315,11 +331,13 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
       return;
     }
     const ids = sel.selected.has(id) ? targetsOf(sel, order) : [id];
-    drag.current = ids;
+    const mark = newDragMark();
+    drag.current = { ids, mark };
     setDragId(id);
     const label = `${ids.length.toLocaleString("en")} recording${ids.length === 1 ? "" : "s"}`;
     e.dataTransfer.effectAllowed = "copy";
     e.dataTransfer.setData("text/plain", label); // some browsers need data to drag; never read back
+    e.dataTransfer.setData(mark, "1");
     e.dataTransfer.setDragImage(dragImage(label), 12, 12);
   };
   const onDragEnd = () => {
@@ -356,7 +374,7 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
         className={cn("row", selected && "sel", r.id === openId && "on", mark?.done && "done", mark?.failed && "failed")}
         style={{ transform: `translateY(${v.start}px)` }}
         onClick={(e) => onRowClick(e, r.id)}
-        draggable={tagging.canTag}
+        draggable={tagging.canTag && canHover}
         onPointerDownCapture={(e) => { pressedOn.current = e.target as Element; }}
         onDragStart={(e) => onDragStart(e, r.id)}
         onDragEnd={onDragEnd}

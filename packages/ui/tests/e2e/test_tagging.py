@@ -626,6 +626,8 @@ def test_rows_on_a_touch_screen_show_their_checkbox_and_no_x(page: Page, server,
     row.focus()
     page.keyboard.press("ArrowRight")
     expect(row.get_by_test_id("add-tag")).to_be_focused()
+    # No drag where nothing can hover: the picker is the touch path (Task 13 fix round 1).
+    expect(row).to_have_attribute("draggable", "false")
 
 
 def test_refresh_hands_focus_on_when_the_focused_row_goes(page: Page, big_server, console):
@@ -1145,3 +1147,131 @@ def test_dragging_a_selection_onto_a_sidebar_tag_and_a_foreign_drop(
     expect(page.get_by_role("dialog", name="Tag 2 recordings")).to_be_visible()
     page.keyboard.press("Escape")
     expect(new_tag).to_be_focused()  # back where it came from
+
+
+# Task 13 fix round 1.
+
+
+def hold_over(page: Page, target) -> None:
+    """Move a drag under way onto `target`, and hold it there. Two moves: dragover fires in every
+    browser only after a second one (Playwright's input guide, "Dragging manually")."""
+    box = target.bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(x, y, steps=5)
+    page.mouse.move(x, y)
+
+
+def start_drag(page: Page, row) -> None:
+    """Press on a row's title and move: a drag starts, from the title, never from a control."""
+    title = row.locator(".row-title").bounding_box()
+    x, y = title["x"] + 4, title["y"] + title["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 10, y + 10, steps=3)
+
+
+DROP_COLOURS = """(el) => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 1;
+    const x = c.getContext('2d');
+    const paint = (...layers) => {
+        x.clearRect(0, 0, 1, 1);
+        for (const l of layers) { x.fillStyle = l; x.fillRect(0, 0, 1, 1); }
+        return [...x.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    };
+    const s = getComputedStyle(el);
+    const sidebar = getComputedStyle(document.querySelector('.sidebar')).backgroundColor;
+    return {
+        outline: paint(s.outlineColor), bg: paint('#fff', sidebar, s.backgroundColor),
+        style: s.outlineStyle, width: parseFloat(s.outlineWidth),
+    };
+}"""
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_a_drop_targets_outline_stands_out_in_both_themes(page: Page, server, console, scheme):
+    # why: the brand orange was 2.59:1 on the light sidebar and 2.20:1 on the active item, under
+    # WCAG 1.4.11's 3:1. Measured on a real hovered drop target, plain and active.
+    page.emulate_media(color_scheme=scheme)
+    open_library(page, server.url)
+    active = page.get_by_test_id("filter-tag").filter(has_text="talks")
+    active.click()  # the active filter's item: its tinted background
+    rows = page.get_by_test_id("recording-row")
+    expect(rows).to_have_count(1)
+    plain = page.get_by_test_id("filter-tag").filter(has_text="space/apollo")
+    start_drag(page, rows.first)
+    for target, name in ((plain, "plain"), (active, "active")):
+        hold_over(page, target)
+        expect(target).to_have_class(re.compile(r"\bdrop\b"))
+        c = target.evaluate(DROP_COLOURS)
+        assert c["style"] == "solid" and c["width"] >= 2, (scheme, name, c)
+        assert contrast(c["outline"], c["bg"]) >= 3, (scheme, name, c)
+    hold_over(page, rows.first)  # let go over the list, which takes no drop
+    page.mouse.up()
+    expect(page.locator(".si.drop")).to_have_count(0)
+
+
+PASTE_BOX = """() => {
+    const box = document.createElement('input');
+    box.id = 'e2e-box';
+    box.style.cssText = 'position:fixed;left:240px;bottom:12px;width:220px;height:32px;'
+        + 'z-index:9999';
+    window.__drops = [];
+    box.addEventListener('drop', (e) => window.__drops.push(e.defaultPrevented));
+    document.body.appendChild(box);
+}"""
+
+
+def test_a_row_dropped_on_a_text_field_pastes_nothing(page: Page, server, console):
+    # why: the drag carries text/plain ("1 recording") so every browser starts it, and a text
+    # field takes text/plain by default. The Library has no text field of its own outside the
+    # picker, so the test adds one.
+    open_library(page, server.url)
+    page.evaluate(PASTE_BOX)
+    box = page.locator("#e2e-box")
+    drag_by_title(page.get_by_test_id("recording-row").filter(has_text="JFK"), box)
+    assert page.evaluate("() => window.__drops") == [True]  # it got there, and was cancelled
+    expect(box).to_have_value("")
+
+
+def test_new_tag_with_nothing_selected_says_so(page: Page, server, console):
+    # why: a click acted on the focused first row through targetsOf's fallback, unseen from the
+    # sidebar. A click acts on the selection only.
+    open_library(page, server.url)
+    expect(page.get_by_test_id("selection-bar")).to_have_count(0)
+    page.get_by_test_id("new-tag").click()
+    toast = page.get_by_test_id("action-toast")
+    expect(toast).to_contain_text("Select recordings first, or drag them here")
+    expect(page.get_by_role("dialog")).to_have_count(0)
+
+
+GROUP_OF = """(el) => {
+    let at = el.previousElementSibling;
+    while (at && !at.classList.contains('grp')) at = at.previousElementSibling;
+    return at ? at.textContent : null;
+}"""
+
+
+def test_a_gone_private_tag_keeps_its_group_through_the_status_page(page: Page, server, console):
+    # why: the last-listed private flag lived in the sidebar, which unmounts on Status while the
+    # filter stays, so the kept item came back under Tags without its lock.
+    open_library(page, server.url)
+    item = page.get_by_test_id("filter-tag").filter(has_text="private")
+    item.click()
+    open_row(page, "Fireside")
+    header = page.get_by_test_id("recording-header")
+    header.get_by_role("button", name=re.compile(r"^Remove tag private from Fireside")).click()
+    page.get_by_role("alertdialog").get_by_role("button", name="Remove").click()
+    expect(page.get_by_test_id("action-toast")).to_contain_text("Removed private from 1 recording")
+
+    def kept() -> None:
+        expect(item).to_have_class(re.compile(r"\bon\b"))
+        expect(item.locator(".n")).to_have_text("0")
+        expect(item.locator(".lock")).to_have_count(1)
+        assert item.evaluate(GROUP_OF) == "Private"
+
+    kept()
+    page.get_by_role("button", name="Status").click()
+    expect(page.get_by_test_id("filter-tag")).to_have_count(0)
+    page.get_by_role("button", name="Library").click()
+    kept()

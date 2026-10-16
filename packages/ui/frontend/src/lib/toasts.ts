@@ -5,6 +5,8 @@ import type { LosesPrivate, TagRequest, TagResult } from "../types";
 export type Text = (string | { code: string })[];
 
 export const STILL_WORKING = "Still working…";
+/** A click on the sidebar's + New tag… with nothing selected (Task 13 fix round 1). */
+export const SELECT_FIRST = "Select recordings first, or drag them here";
 const n = (count: number) => count.toLocaleString("en");
 const recordings = (count: number) => `${n(count)} recording${count === 1 ? "" : "s"}`;
 

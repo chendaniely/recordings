@@ -220,7 +220,15 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   .row .chip-x { display: none; }
 }
 
-/* Drop targets: a 2px orange outline; the text keeps its colour (tagging spec §6). */
-.si.drop { outline: 2px solid var(--brand-orange); outline-offset: -2px; }
+/* Drop targets: a 2px orange outline; the text keeps its colour (tagging spec §6). In the light
+   theme the brand orange is 2.6:1 on the sidebar, so the outline is a darker shade of it: 4.3:1
+   there and 3.6:1 on the active item (WCAG 1.4.11; Task 13 fix round 1). The dark theme keeps
+   the brand orange: 5.5:1 and 4.5:1. */
+:root { --drop: color-mix(in srgb, var(--brand-orange) 75%, black); }
+.dark { --drop: var(--brand-orange); }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light):not(.dark) { --drop: var(--brand-orange); }
+}
+.si.drop { outline: 2px solid var(--drop); outline-offset: -2px; }
 .si.new-tag { color: var(--muted-foreground); }
 .drag-image { position: fixed; top: -200px; left: -200px; padding: 4px 10px; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); font-weight: 700; }

@@ -14,6 +14,7 @@ import {
 import { useSetShinyInput, useShinyMessageHandler } from "@/sr";
 import type { LibraryView, SnippetRequest, SnippetResult, TagRequest, TagResult } from "@/types";
 
+import { watchDrags, type DragRef, type InPageDrag } from "./drag";
 import { watchToaster } from "./toaster";
 import {
   cellsId, dismissProgress, showAlert, showCannotTag, showCells, showDropped, showProgress, showResult, showStillWorking,
@@ -33,7 +34,7 @@ export interface Tagging {
   lastTagged: JustTagged | null; // the last add that changed something, and where it went
   lastUndone: Undone | null; // the last Undo that ran, by the token of what it reversed
   sessionTags: string[];
-  drag: { current: string[] | null }; // set at dragstart, never read from dataTransfer
+  drag: DragRef; // set at dragstart, never read from dataTransfer (drag.ts)
   canTag: boolean;
   opening: boolean; // the archive's first open is still running: tagging is off for a moment only
   reason: string | null; // why tagging is off for good (may be a long path); null while opening
@@ -94,7 +95,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   const lostRef = useRef(false);
   const undos = useRef<Undos>(NO_UNDOS); // Cmd-Z's stack and the grid's running toast, together
   const refreshes = useRef(0);
-  const drag = useRef<string[] | null>(null);
+  const drag = useRef<InPageDrag | null>(null);
   const stillShown = useRef<string | null>(null);
   const snippets = useRef<Snippets>(NO_SNIPPETS);
 
@@ -270,6 +271,10 @@ export function useTagging(library: LibraryView | undefined): Tagging {
 
   // The toaster's one shared pause, and what had focus before it (toaster.ts).
   useEffect(() => watchToaster(), []);
+
+  // The window forgets a drag on any dragend, after any drop and on the next press, and keeps
+  // this page's drag off text fields (drag.ts).
+  useEffect(() => watchDrags(drag), []);
 
   // Shiny's reconnect stays off: on a lost connection the queue is dropped, the progress toast
   // closes, the toast says so, and nothing more is sent (spec §5, §8).

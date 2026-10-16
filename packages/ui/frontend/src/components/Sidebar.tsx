@@ -4,44 +4,57 @@ import { useState, type DragEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 import { filterIsShown } from "../lib/library";
+import { DROP_TARGET, ours } from "../tagging/drag";
 import { useTaggingContext } from "../tagging/useTagging";
 import type { Filter, LibraryView, TagCount } from "../types";
 
 type Props = {
   library: LibraryView; filter: Filter; onFilter: (f: Filter) => void;
   onNewTag: (ids: string[] | null) => void; // null: the selection
+  lastListed: TagCount | null; // useListedFilter's, from App
 };
 
 const keyOf = (f: Filter) => (f.kind === "tag" ? `tag:${f.tag}` : f.kind);
 const NOTES = "notes/";
 
+/** The active tag filter's tag as the sidebar last listed it, with its `private` flag, so an item
+ * kept at 0 stays in its group (the browser never works out privacy itself, spec §5). Called by
+ * App, which outlives the sidebar: the sidebar unmounts on the Status page, and the filter
+ * doesn't (Task 13 fix round 1). React's documented pattern for keeping something from an
+ * earlier render. */
+export function useListedFilter(filter: Filter, library: LibraryView | null): TagCount | null {
+  const active = filter.kind === "tag" ? filter.tag : null;
+  const listed = active === null ? undefined : library?.tags.find((t) => t.tag === active);
+  const [last, setLast] = useState<TagCount | null>(null);
+  if (listed && (last?.tag !== listed.tag || last.private !== listed.private)) setLast(listed);
+  return listed ?? last;
+}
+
 /** The filters, and the drop targets for tagging by drag and drop (spec §6). A drop acts only on
  * a drag that started in this page: the IDs come from in-page state set at dragstart, never from
- * dataTransfer, so files, text and other windows' drags are ignored. Any other drag is refused at
- * dragover, so the browser never drops it here, and a drop that comes anyway does nothing.
+ * dataTransfer, and the event must carry that drag's own marker (drag.ts), so files, text and
+ * other windows' drags are ignored, even with state a lost dragend left behind. Any other drag is
+ * refused at dragover, so the browser never drops it here, and a drop that comes anyway does
+ * nothing.
  *
  * The active tag filter's item stays, at 0, when its tag has lost its last recording (Review
  * Focus 4), in the group the sidebar last listed it in: the browser never works out privacy
  * itself (spec §5). A note type at 0, which the archive has only through an exclusion, is hidden
  * unless it is the active filter (WM6 refinement); the picker still offers it. */
-export function Sidebar({ library, filter, onFilter, onNewTag }: Props) {
+export function Sidebar({ library, filter, onFilter, onNewTag, lastListed: last }: Props) {
   const tagging = useTaggingContext();
   const [over, setOver] = useState<string | null>(null);
   const active = filter.kind === "tag" ? filter.tag : null;
-  // The active tag as last listed, for its group once it is gone (React's documented pattern for
-  // keeping something from an earlier render).
-  const listed = active === null ? undefined : library.tags.find((t) => t.tag === active);
-  const [last, setLast] = useState<TagCount | null>(null);
-  if (listed && (last?.tag !== listed.tag || last.private !== listed.private)) setLast(listed);
 
   const drop = (target: string, tag: string | null) => {
     const allow = (e: DragEvent<HTMLElement>) => {
-      if (!tagging.drag.current) return; // not ours: no drop allowed here
+      if (!ours(tagging.drag.current, e)) return; // not ours: no drop allowed here
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
       setOver(target);
     };
     return {
+      [DROP_TARGET]: "",
       onDragEnter: allow,
       onDragOver: allow,
       onDragLeave: (e: DragEvent<HTMLElement>) => {
@@ -50,10 +63,11 @@ export function Sidebar({ library, filter, onFilter, onNewTag }: Props) {
       },
       onDrop: (e: DragEvent<HTMLElement>) => {
         setOver(null);
-        const ids = tagging.drag.current;
-        if (!ids) return; // a foreign drop: ignored
+        const drag = tagging.drag.current;
+        if (!ours(drag, e)) return; // a foreign drop: ignored
         e.preventDefault();
         tagging.drag.current = null;
+        const { ids } = drag;
         // With tagging off (it went off mid-drag), tag() and the picker say why in a toast.
         if (tag === null) onNewTag(ids);
         else tagging.tag("add", ids, [tag], { kind: "drop" });

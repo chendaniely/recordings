@@ -8,11 +8,11 @@ import { NO_SEL, type Sel } from "../lib/selection";
 import { TaggingContext, type Tagging } from "../tagging/useTagging";
 import type { LibraryRow } from "../types";
 
-const toasts = vi.hoisted(() => ({ showCannotTag: vi.fn() }));
+const toasts = vi.hoisted(() => ({ showCannotTag: vi.fn(), showSelectFirst: vi.fn() }));
 vi.mock("../tagging/toasts", () => toasts);
 vi.mock("../sr", () => ({})); // useTagging's Shiny side: the list only reads the context
 
-import { Announcer, KEY_HINT, RecordingList, dragImage, openPickerFor } from "./RecordingList";
+import { Announcer, KEY_HINT, RecordingList, dragImage, openNewTag, openPickerFor } from "./RecordingList";
 
 const row = (id: string): LibraryRow => ({
   id, title: `Week ${id}`, recorded_at: "2026-10-06T14:00:00-07:00", when: "", duration: null, duration_ms: null,
@@ -41,7 +41,10 @@ const draw = (tagging: Tagging, list = rows) =>
     ),
   );
 
-beforeEach(() => toasts.showCannotTag.mockClear());
+beforeEach(() => {
+  toasts.showCannotTag.mockClear();
+  toasts.showSelectFirst.mockClear();
+});
 
 describe("openPickerFor: T, the selection bar and a drop (spec §6)", () => {
   it("opens the picker's dialog form, titled for its targets", () => {
@@ -65,6 +68,27 @@ describe("openPickerFor: T, the selection bar and a drop (spec §6)", () => {
     const opening = fake({ canTag: false, opening: true });
     openPickerFor(["a"], rows, opening);
     expect(toasts.showCannotTag).toHaveBeenLastCalledWith({ canTag: false, opening: true, reason: null });
+  });
+});
+
+describe("+ New tag… (spec §6; Task 13 fix round 1)", () => {
+  const order = ["a", "b", "c"];
+  const sel = (selected: string[], focus: string | null = "b"): Sel => ({ selected: new Set(selected), anchor: focus, focus });
+  it("opens the picker for the dragged recordings on a drop", () => {
+    const tagging = fake();
+    openNewTag(["c"], sel(["a", "b"]), order, rows, tagging);
+    expect(tagging.openPicker).toHaveBeenCalledWith({ ids: ["c"], title: "Tag Week c" });
+  });
+  it("opens it for the selection on a click, in list order", () => {
+    const tagging = fake();
+    openNewTag(null, sel(["c", "a"]), order, rows, tagging);
+    expect(tagging.openPicker).toHaveBeenCalledWith({ ids: ["a", "c"], title: "Tag 2 recordings" });
+  });
+  it("says so with nothing selected, never targeting the focused row the sidebar can't show", () => {
+    const tagging = fake();
+    openNewTag(null, sel([], "b"), order, rows, tagging);
+    expect(tagging.openPicker).not.toHaveBeenCalled();
+    expect(toasts.showSelectFirst).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -124,21 +148,29 @@ describe("dragging rows (spec §6)", () => {
   // jsdom lays nothing out: the virtualiser draws rows only for a scroll element with a size.
   const sizes = ["offsetHeight", "offsetWidth"] as const;
   const saved = sizes.map((k) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, k));
+  /** A device that can hover, or not: rows drag only where it can (fix round 1). */
+  const hover = (can: boolean) => {
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(hover: hover)" ? can : false, media: query, addEventListener() {}, removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+  };
   beforeAll(() => {
     for (const k of sizes) Object.defineProperty(HTMLElement.prototype, k, { configurable: true, get: () => 800 });
   });
+  beforeEach(() => hover(true));
   afterAll(() => {
     sizes.forEach((k, i) => Object.defineProperty(HTMLElement.prototype, k, saved[i]!));
+    delete (window as { matchMedia?: unknown }).matchMedia;
   });
 
   const tagged = rows.map((r) => (r.id === "b" ? { ...r, tags: [{ tag: "talks", by: "you" as const }], untagged: false } : r));
   type Transfer = { effectAllowed: string; setData: ReturnType<typeof vi.fn>; setDragImage: ReturnType<typeof vi.fn> };
   const transfer = (): Transfer => ({ effectAllowed: "all", setData: vi.fn(), setDragImage: vi.fn() });
 
-  function mount(tagging: Tagging, sel: Sel) {
+  function mount(tagging: Tagging, sel: Sel, first: LibraryRow[] = tagged) {
     const host = document.body.appendChild(document.createElement("div"));
     const root = createRoot(host);
-    const draw = (list: LibraryRow[] = tagged) =>
+    const draw = (list: LibraryRow[] = first) =>
       flushSync(() =>
         root.render(
           createElement(
@@ -153,6 +185,7 @@ describe("dragging rows (spec §6)", () => {
       );
     draw();
     const row = (id: string) => host.querySelector<HTMLElement>(`[role=row][data-id="${id}"]`)!;
+    const grid = () => host.querySelector<HTMLElement>("[role=grid]")!;
     /** A press on `on`, then a drag from its row: dragstart's target is the draggable row. */
     const drag = (id: string, on: (row: HTMLElement) => Element = (r) => r.querySelector(".row-title")!) => {
       const from = on(row(id));
@@ -168,7 +201,7 @@ describe("dragging rows (spec §6)", () => {
       root.unmount();
       host.remove();
     };
-    return { host, draw, row, drag, end, done };
+    return { host, draw, row, grid, drag, end, done };
   }
 
   it("drags the selection, in list order, when the row is in it; else that row alone", () => {
@@ -177,16 +210,21 @@ describe("dragging rows (spec §6)", () => {
     expect(list.row("c").getAttribute("draggable")).toBe("true");
     const { start, data } = list.drag("c");
     expect(start.defaultPrevented).toBe(false);
-    expect(tagging.drag.current).toEqual(["a", "c"]);
+    expect(tagging.drag.current?.ids).toEqual(["a", "c"]);
     expect(data.effectAllowed).toBe("copy");
     expect(data.setData).toHaveBeenCalledWith("text/plain", "2 recordings"); // never an ID or a title
+    // The drag's own marker, which a drop target looks for among the event's types (fix round 1).
+    const mark = tagging.drag.current!.mark;
+    expect(mark).toMatch(/^application\/x-recordings-drag-[0-9a-f]{16}$/);
+    expect(data.setData).toHaveBeenCalledWith(mark, "1");
     const [image] = data.setDragImage.mock.calls[0];
     expect(image.textContent).toBe("2 recordings");
     expect(image.isConnected).toBe(true); // setDragImage draws an element in the document
     list.end("c");
     expect(tagging.drag.current).toBeNull();
     const other = list.drag("b");
-    expect(tagging.drag.current).toEqual(["b"]); // the selection is left alone
+    expect(tagging.drag.current?.ids).toEqual(["b"]); // the selection is left alone
+    expect(tagging.drag.current?.mark).not.toBe(mark); // a new marker for each drag
     expect(other.data.setData).toHaveBeenCalledWith("text/plain", "1 recording");
     list.done();
   });
@@ -201,7 +239,7 @@ describe("dragging rows (spec §6)", () => {
     }
     // A chip's label is the row's, as a click on it is.
     list.drag("b", (r) => r.querySelector(".chip-label")!);
-    expect(tagging.drag.current).toEqual(["b"]);
+    expect(tagging.drag.current?.ids).toEqual(["b"]);
     list.done();
   });
 
@@ -211,11 +249,35 @@ describe("dragging rows (spec §6)", () => {
     list.done();
   });
 
+  it("draws no row draggable on a device that can't hover: the picker is the touch path", () => {
+    hover(false);
+    const list = mount(fake(), NO_SEL);
+    expect(list.row("a").getAttribute("draggable")).toBe("false");
+    list.done();
+  });
+
+  it("keeps the dragged row drawn while the list scrolls away from it, with focus and the anchor elsewhere", async () => {
+    const many = Array.from({ length: 300 }, (_, i) => row(String(i).padStart(3, "0")));
+    const tagging = fake();
+    const list = mount(tagging, { selected: new Set(), anchor: "000", focus: "000" }, many);
+    list.drag("005");
+    // To the end of the list, far past the dragged row.
+    Object.defineProperty(list.grid(), "scrollTop", { configurable: true, get: () => 10_000_000 });
+    list.grid().dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(list.row("299")).not.toBeNull());
+    expect(list.row("100")).toBeNull(); // rows far from the view aren't drawn
+    expect(list.row("000")).not.toBeNull(); // focus and the anchor
+    expect(list.row("005")).not.toBeNull(); // the dragged row: its dragend comes to it
+    list.end("005");
+    await vi.waitFor(() => expect(list.row("005")).toBeNull());
+    list.done();
+  });
+
   it("forgets a drag whose row leaves the list, since no dragend comes for it, and on leaving the Library", () => {
     const tagging = fake();
     const list = mount(tagging, NO_SEL);
     list.drag("b");
-    expect(tagging.drag.current).toEqual(["b"]);
+    expect(tagging.drag.current?.ids).toEqual(["b"]);
     list.draw(tagged.filter((r) => r.id !== "b")); // a Refresh or a filter change mid-drag
     expect(tagging.drag.current).toBeNull();
     list.drag("a");

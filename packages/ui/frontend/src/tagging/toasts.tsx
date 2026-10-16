@@ -2,7 +2,7 @@ import { toast } from "sonner";
 
 import { cannotTagText, type TagStatus } from "@/lib/library";
 import {
-  STILL_WORKING, actionText, cellText, droppedText, failureLines, progressStart, progressText, type ProgressKind, type Text,
+  SELECT_FIRST, STILL_WORKING, actionText, cellText, droppedText, failureLines, progressStart, progressText, type ProgressKind, type Text,
 } from "@/lib/toasts";
 import type { TagRequest, TagResult } from "@/types";
 
@@ -88,6 +88,16 @@ export function showCannotTag(status: TagStatus): void {
   const id = `cannot-tag-${cannotTagShown}`;
   if (status.opening) showNote(id, [cannotTagText(status)]);
   else showAlert(id, [cannotTagText(status)]);
+}
+
+let selectFirstShown = 0;
+
+/** + New tag… clicked with nothing selected: it says so instead of opening nothing in silence. A
+ * fresh toast each time, so it is announced again, replacing the last. */
+export function showSelectFirst(): void {
+  toast.dismiss(`select-first-${selectFirstShown}`);
+  selectFirstShown += 1;
+  showNote(`select-first-${selectFirstShown}`, [SELECT_FIRST]);
 }
 
 export function showDropped(dropped: number, inFlight: boolean): void {
