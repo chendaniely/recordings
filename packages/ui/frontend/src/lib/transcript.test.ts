@@ -42,7 +42,7 @@ describe("formatClock", () => {
 
 describe("filterRows", () => {
   const row = (id: string, tags: string[]): LibraryRow => ({
-    id, title: id, recorded_at: "", when: "", duration: null, kind: "audio", sources: [],
+    id, title: id, recorded_at: "", when: "", duration: null, duration_ms: null, kind: "audio", sources: [],
     tags: tags.map((tag) => ({ tag, by: "you" as const })), private: false, untagged: tags.length === 0,
   });
   const rows = [row("a", []), row("b", ["school/course-101"]), row("c", ["school"])];
