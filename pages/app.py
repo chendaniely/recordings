@@ -17,11 +17,16 @@ import pydantic  # noqa: F401
 from recordings.archive import Archive
 from recordings_ui import runtime
 from recordings_ui.settings import from_env
+from recordings_ui.tagging import TagService, pages_store
 
 # A fresh copy of the demo archive (in Pyodide's in-memory file system), as `make demo` makes.
 settings = from_env({}, demo=True)
+archive = Archive(settings.archive)
+# Tags are kept in memory and lost on reload: nothing is written, not even to Pyodide's own file
+# system, and the UI says "Demo: changes aren't saved" (tagging spec §5). pages_store refuses to
+# run anywhere but Pyodide.
 # The app runs at <site>/app_<id>/, so the site's media/ folder is one level up.
-runtime.configure(Archive(settings.archive), media_base="../media/")
+runtime.configure(archive, media_base="../media/", tagging=TagService(pages_store(archive)))
 
 from recordings_ui.shiny_app import app  # noqa: E402  after configure()
 

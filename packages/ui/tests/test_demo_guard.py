@@ -19,7 +19,9 @@ import urllib.request
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
+import recordings
 from fastapi.testclient import TestClient
 from recordings.archive import Archive
 from recordings_ui import runtime, views
@@ -46,12 +48,19 @@ ANY_EVENTS = (
 _events: list[tuple[str, str]] | None = None
 
 
+def _path(value: str | bytes | os.PathLike) -> str:
+    path = os.fsdecode(value)
+    if path.startswith("file:"):  # State opens state.db by URI, so mode=rw never creates it
+        path = unquote(urlsplit(path).path)
+    return path
+
+
 def _hook(event: str, args: tuple) -> None:
     if _events is None:
         return
     if event in PATH_EVENTS:
         if args and isinstance(args[0], (str, bytes, os.PathLike)):
-            _events.append((event, os.fsdecode(args[0])))
+            _events.append((event, _path(args[0])))
     elif event in ANY_EVENTS:
         _events.append((event, repr(args[:2])))
 
@@ -160,6 +169,7 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
                     reader.start()
                     reader.join(20)  # receive_text has no timeout: a missing output must not hang
                     assert wanted <= seen, f"the demo's websocket sent only {sorted(seen)}"
+                assert runtime.tagging().store.wait_open(30) == (True, None)
             archive = Archive(settings.archive)
             views.library_view(archive)
             for rid in demo_ids.values():
@@ -170,6 +180,14 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
         finally:
             runtime.configure(None)
     assert [e for e in events if e[0] in PATH_EVENTS and str(real) in e[1]] == []
+    # Demo mode's own Writer (tagging spec §5): its state.db and index were opened, both inside
+    # the demo's temporary folder.
+    opened = [e[1] for e in events if e[0] == "sqlite3.connect"]
+    folder = os.path.realpath(settings.archive.parent)
+    assert any(p.endswith("state.db") for p in opened) and any(
+        p.endswith("index.db") for p in opened
+    )
+    assert all(os.path.realpath(p).startswith(folder) for p in opened)
     # Nothing else either: every path opened is in the demo's copy, the committed demo, the
     # Python install or the UI's own folder (code, and its built front end in www/). This also
     # catches the relative default config.toml and any reading of os.environ that the lines above
@@ -184,6 +202,9 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
             sys.prefix,
             sys.base_prefix,
             Path(views.__file__).parent,
+            # The archive's docs, which demo mode's Writer copies into its archive (§6.7): read-only
+            # files of the core package (selfdoc reads them with importlib.resources).
+            Path(recordings.__file__).parent / "format",
         )
     ]
     mime_tables = {os.path.realpath(p) for p in mimetypes.knownfiles}

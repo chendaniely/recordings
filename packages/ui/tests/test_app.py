@@ -1,12 +1,15 @@
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from recordings.sentinel import MIRROR
 from recordings_ui import runtime
 from recordings_ui.app import create_app
 from recordings_ui.settings import Settings
+from recordings_ui.tagging import ArchiveStore
 
 WWW = Path(__file__).resolve().parents[1] / "src" / "recordings_ui" / "www"
 
@@ -118,6 +121,8 @@ def test_unreadable_recording_json_is_404(client, demo_archive, demo_ids):
 
 
 def test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write(tmp_path, caplog):
+    # why: §6.7. The writer thread's Writer.open replaces write_docs_at_startup (tagging spec §5):
+    # one Writer per process, and the docs only where this process may write.
     from recordings.config import load_config
     from recordings.init import init_archive
 
@@ -131,13 +136,82 @@ def test_the_docs_are_written_at_startup_only_into_an_archive_it_may_write(tmp_p
     cfg = load_config({"RECORDINGS_CONFIG": str(cfg_file)})
     (tmp_path / "archive" / "FORMAT.md").unlink()
     create_app(Settings(archive=cfg.archive_path, demo=False, config=cfg))
-    assert (tmp_path / "archive" / "FORMAT.md").is_file()
-    runtime.configure(None)
+    try:
+        assert runtime.tagging().store.wait_open(30) == (True, None)
+        assert (tmp_path / "archive" / "FORMAT.md").is_file()
+    finally:
+        runtime.tagging().stop()
+        runtime.configure(None)
 
     bare = tmp_path / "bare"
     (bare / "recordings").mkdir(parents=True)
     other = load_config({"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_ARCHIVE": str(bare)})
     with caplog.at_level("WARNING"):
         create_app(Settings(archive=bare, demo=False, config=other))
+        try:
+            ok, reason = runtime.tagging().store.wait_open(30)
+        finally:
+            runtime.tagging().stop()
+            runtime.configure(None)
+    assert not ok and "archive.json" in reason
     assert not (bare / "FORMAT.md").exists() and "not writing the archive's docs" in caplog.text
+
+
+def test_the_app_tags_through_the_archive_never_in_memory(client):
+    # why: spec §5. Outside Pyodide the service never falls back to memory, so `make demo`
+    # can't silently stop saving.
+    store = runtime.tagging().store
+    assert isinstance(store, ArchiveStore) and store.saves is True
+
+
+def test_demo_mode_keeps_its_writer_beside_its_copy(tmp_path, demo_archive):
+    # why: spec §5, "Demo mode". The state, index and locks live in the demo's temporary folder,
+    # beside the copy, so they go with it at exit; nothing reads the config or RECORDINGS_STATE.
+    folder = tmp_path / "recordings-demo-x"
+    copy = folder / "archive"
+    shutil.copytree(demo_archive, copy)
+    create_app(Settings(archive=copy, demo=True))
+    try:
+        assert runtime.tagging().store.wait_open(30) == (True, None)
+    finally:
+        runtime.tagging().stop()
+        runtime.configure(None)
+    assert (folder / "state" / "state.db").is_file()
+    assert (folder / "index.db").is_file()
+    assert (folder / "state" / "locks").is_dir()
+    assert {p.name for p in folder.iterdir()} >= {"archive", "index.db", "state"}
+
+
+def test_demo_mode_on_the_mirrors_copy_cannot_tag(tmp_path, demo_archive):
+    folder = tmp_path / "recordings-demo-x"
+    copy = folder / "archive"
+    shutil.copytree(demo_archive, copy)
+    (copy / MIRROR).write_text("the mirror's copy\n", encoding="utf-8")
+    create_app(Settings(archive=copy, demo=True))
+    try:
+        ok, reason = runtime.tagging().store.wait_open(30)
+    finally:
+        runtime.tagging().stop()
+        runtime.configure(None)
+    assert not ok and "mirror" in reason
+    assert not (folder / "state" / "state.db").exists()
+
+
+def test_without_a_config_the_app_only_reads(tmp_path, demo_archive):
+    create_app(Settings(archive=demo_archive, demo=False))
+    try:
+        ok, reason = runtime.tagging().store.wait_open(30)
+    finally:
+        runtime.tagging().stop()
+        runtime.configure(None)
+    assert not ok and "config.toml" in reason
+
+
+def test_shutdown_stops_the_tag_service(demo_archive):
+    app = create_app(Settings(archive=demo_archive, demo=True))
+    service = runtime.tagging()
+    with TestClient(app, base_url="http://localhost") as c:
+        assert c.get("/healthz").status_code == 200
+        assert service.stopping is False
+    assert service.stopping is True  # the lifespan's shutdown: a batch stops between recordings
     runtime.configure(None)

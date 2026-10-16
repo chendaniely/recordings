@@ -4,47 +4,94 @@ from __future__ import annotations
 
 import logging
 import mimetypes
-import sqlite3
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from recordings.archive import Archive
-from recordings.config import Config
 from recordings.ids import ID_RE
-from recordings.locks import LockTimeout
-from recordings.writer import Writer, WriterError
+from recordings.index import Index
+from recordings.init import InitError, adopt_archive
+from recordings.state import State
+from recordings.writer import NotTheWriter, Writer
 
 from recordings_ui import runtime
 from recordings_ui.hosts import HostGuard, WriteGuard
 from recordings_ui.settings import Settings
 from recordings_ui.status import status_settings
+from recordings_ui.tagging import LOCK_WAIT, ArchiveStore, TagService
 
 log = logging.getLogger(__name__)
 
+NO_CONFIG = "there's no config.toml, so this app only reads the archive"
 
-def write_docs_at_startup(cfg: Config) -> None:
-    """§6.7: write the archive's docs at startup, but only into an archive this process may
-    write. Anywhere else (no sentinel, not the writer, an index it can't open) the app still
-    serves, read-only. sqlite3's errors are not OSErrors, so they are named here.
 
-    The Writer is dropped on return and holds no lock afterwards: re-entrancy is per Locks
-    instance, so a second instance on the same state folder is safe only because this one is
-    never in use while another is. A long-lived Writer in the app (stage 3) must be the one
-    instance every caller shares."""
-    try:
-        Writer.open(cfg)
-    except (WriterError, LockTimeout, OSError, sqlite3.Error) as exc:
-        log.warning("not writing the archive's docs: %s", exc)
+def demo_writer(copy: Path) -> Callable[[], Writer]:
+    """Demo mode's Writer (tagging spec §5). Its state.db, index and locks live in the demo's
+    temporary folder, beside the copy, and go with it at exit, SIGTERM included (§17). It never
+    reads the config, RECORDINGS_STATE or RECORDINGS_INDEX. Called from create_app, never from
+    settings.from_env, which the Pages demo also runs."""
+    folder = copy.parent
+    state = folder / "state"
+    refused: str | None = None
+    if not (state / "state.db").exists():  # tagging plan, decision 13
+        try:
+            adopt_archive(copy, state, writer_id="demo")
+        except InitError as exc:  # the mirror's marker, or no sentinel: tagging is off
+            refused = str(exc)
+
+    def open_writer() -> Writer:
+        if refused is not None:
+            raise NotTheWriter(refused)
+        writer = Writer(
+            copy,
+            State.open(state),
+            Index(folder / "index.db"),
+            writer_id="demo",
+            lock_timeout=LOCK_WAIT,
+        )
+        writer.write_docs()  # §6.7, as Writer.open does for the real archive
+        return writer
+
+    return open_writer
+
+
+def writer_opener(settings: Settings) -> Callable[[], Writer]:
+    """How the writer thread opens the process's one Writer. It replaces write_docs_at_startup:
+    opening writes the archive's docs (§6.7), and only into an archive this process may write;
+    anywhere else the app still serves, read-only, with the reason as `cannot_tag_reason`."""
+    if settings.demo:
+        return demo_writer(settings.archive)
+    cfg = settings.config
+    if cfg is None:
+
+        def refuse() -> Writer:
+            raise NotTheWriter(NO_CONFIG)
+
+        return refuse
+    return lambda: Writer.open(cfg, lock_timeout=LOCK_WAIT)
 
 
 def create_app(settings: Settings) -> HostGuard:
-    if settings.config is not None:
-        write_docs_at_startup(settings.config)
     archive = Archive(settings.archive)
-    runtime.configure(archive, status=status_settings(settings.config) if settings.config else None)
+    tagging = TagService(ArchiveStore(archive, writer_opener(settings)))
+    runtime.configure(
+        archive,
+        status=status_settings(settings.config) if settings.config else None,
+        tagging=tagging,
+    )
     from recordings_ui.shiny_app import app as shiny_app  # after configure()
 
-    api = FastAPI(title="recordings", docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(_api: FastAPI) -> AsyncIterator[None]:
+        yield
+        tagging.stop()  # a batch stops between recordings; every write is atomic
+
+    api = FastAPI(
+        title="recordings", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
+    )
 
     @api.get("/healthz")
     def healthz() -> dict:

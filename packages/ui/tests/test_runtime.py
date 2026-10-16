@@ -9,3 +9,16 @@ def test_the_media_base_is_set_with_the_archive_and_cleared_with_it(tmp_path):
     assert runtime.media_base() == "../media/"
     runtime.configure(None)
     assert runtime.media_base() is None
+
+
+def test_the_tag_service_is_configured_with_the_archive(tmp_path):
+    import pytest
+    from recordings_ui.tagging import MemoryStore, TagService
+
+    runtime.configure(Archive(tmp_path))
+    with pytest.raises(RuntimeError, match="tag service"):
+        runtime.tagging()
+    service = TagService(MemoryStore(Archive(tmp_path)))
+    runtime.configure(Archive(tmp_path), tagging=service)
+    assert runtime.tagging() is service
+    runtime.configure(None)

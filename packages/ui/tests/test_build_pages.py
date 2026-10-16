@@ -128,6 +128,7 @@ def test_a_symlink_in_the_demo_archive_stops_the_build(build_pages, tmp_path, de
 
 
 def test_the_pages_entry_is_demo_only_and_links_media_files(tmp_path, monkeypatch):
+    monkeypatch.setattr("recordings_ui.tagging.under_pyodide", lambda: True)
     real = tmp_path / "real-archive"
     real.mkdir()
     monkeypatch.setenv("RECORDINGS_ARCHIVE", str(real))
@@ -144,5 +145,10 @@ def test_the_pages_entry_is_demo_only_and_links_media_files(tmp_path, monkeypatc
         from recordings_ui.shiny_app import app
 
         assert entry.app is app
+        from recordings_ui.tagging import MemoryStore
+
+        # Pages tags in memory and says so (spec §5): never the archive store.
+        store = runtime.tagging().store
+        assert isinstance(store, MemoryStore) and store.saves is False
     finally:
         runtime.configure(None)
