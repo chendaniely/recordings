@@ -2,8 +2,8 @@ import type { TagRequest, TagResult } from "../types";
 import type { Origin } from "./queue";
 
 /** The browser's Undo tokens, in one place (spec §6; tagging plan, decision 7): Cmd/Ctrl+Z's
- * stack, and the Tags grid's running toast for single-cell toggles ("4 changes · Undo last"),
- * whose tokens are always also on the stack. A token leaves both only when the server has used
+ * stack, the Tags grid's running toast for single-cell toggles ("4 changes · Undo last"), whose
+ * tokens are always also on the stack, and the tokens Undos sent back, offered as Redo. A token leaves both only when the server has used
  * it up, so Cmd-Z and "Undo last" never send a used token, and an Undo that stopped part way can
  * be tried again, as the server allows. */
 
@@ -15,14 +15,26 @@ export const ALREADY_UNDONE = "already undone";
 export const UNDO_GONE = "Undo is no longer available (the page was reloaded)";
 
 export interface CellToast { key: number; open: boolean; changes: number; tokens: readonly string[] }
-export interface Undos { stack: readonly string[]; cells: CellToast }
+/** `redos`: tokens that came back on Undo replies. An Undo of one of them is a Redo: its toast
+ * says "Redone" and offers Undo, and its own token goes on the stack, so Cmd-Z can undo the
+ * redone action again. Never on the stack themselves, so Cmd-Z twice after an action undoes two
+ * actions, never undo then redo. */
+export interface Undos { stack: readonly string[]; cells: CellToast; redos: readonly string[] }
 
-export const NO_UNDOS: Undos = { stack: [], cells: { key: 0, open: false, changes: 0, tokens: [] } };
+export const NO_UNDOS: Undos = { stack: [], cells: { key: 0, open: false, changes: 0, tokens: [] }, redos: [] };
 
-/** A single-cell change that went cleanly joins the running toast; anything else gets its own. */
+/** A single-cell change that went cleanly joins the running toast. Anything else gets its own,
+ * and so does one whose toast has more to say than "N changes": recordings made visible to
+ * external agents, or a note type removed (auto-pick won't add it back). */
 export function mergesIntoCells(origin: Origin, request: TagRequest, reply: TagResult): boolean {
+  const notes = request.action === "remove" && request.tags.some((t) => t.startsWith("notes/"));
   return origin.kind === "cell" && request.action !== "undo" && reply.status === "done" && !reply.message
-    && reply.failures.length === 0 && reply.undo !== null;
+    && reply.failures.length === 0 && reply.undo !== null && reply.now_visible === 0 && !notes;
+}
+
+/** An Undo whose token an earlier Undo sent back: a Redo. */
+export function isRedo(u: Undos, request: TagRequest): boolean {
+  return request.action === "undo" && !!request.undo && u.redos.includes(request.undo);
 }
 
 /** Whether an Undo used its token up, as the server decides (`_settle_undo`): applied everywhere
@@ -37,6 +49,7 @@ export function usedUp(reply: TagResult): boolean {
 function drop(u: Undos, token: string): Undos {
   const inCells = u.cells.tokens.includes(token);
   return {
+    redos: u.redos.filter((t) => t !== token),
     stack: u.stack.filter((t) => t !== token),
     cells: inCells
       ? { ...u.cells, changes: Math.max(0, u.cells.changes - 1), tokens: u.cells.tokens.filter((t) => t !== token) }
@@ -44,13 +57,23 @@ function drop(u: Undos, token: string): Undos {
   };
 }
 
-/** A reply that ends a request. An action's token goes on the stack (and, for a cell, into the
- * running toast); an Undo's own token, offered as Redo, never does (decision 7). */
+/** A reply that ends a request. An action's token, or a Redo's, goes on the stack (and, for a
+ * cell, into the running toast); an Undo's own token is kept apart, to be offered as Redo. */
 export function heardUndo(u: Undos, request: TagRequest, origin: Origin, reply: TagResult): Undos {
   if (reply.status === "progress" || reply.status === "confirm") return u;
-  if (request.action === "undo") return request.undo && usedUp(reply) ? drop(u, request.undo) : u;
   const token = reply.undo;
+  if (request.action === "undo") {
+    const redo = isRedo(u, request);
+    const settled = request.undo && usedUp(reply) ? drop(u, request.undo) : u;
+    if (!token) return settled;
+    if (redo) return kept(settled, token, origin, request, reply);
+    return { ...settled, redos: [...settled.redos.filter((t) => t !== token), token].slice(-UNDO_STACK) };
+  }
   if (!token) return u;
+  return kept(u, token, origin, request, reply);
+}
+
+function kept(u: Undos, token: string, origin: Origin, request: TagRequest, reply: TagResult): Undos {
   const stack = [...u.stack.filter((t) => t !== token), token].slice(-UNDO_STACK);
   const onStack = new Set(stack);
   let cells: CellToast = { ...u.cells, tokens: u.cells.tokens.filter((t) => onStack.has(t)) };
@@ -59,7 +82,7 @@ export function heardUndo(u: Undos, request: TagRequest, origin: Origin, reply: 
       ? { ...cells, changes: cells.changes + 1, tokens: [...cells.tokens, token] }
       : { key: cells.key + 1, open: true, changes: 1, tokens: [token] };
   }
-  return { stack, cells };
+  return { ...u, stack, cells };
 }
 
 function newest(tokens: readonly string[], busy: ReadonlySet<string>): string | null {

@@ -1,6 +1,7 @@
 """Browser tests that tag (tagging spec §9). Each gets a server of its own, so what one test
 writes never shows in another; each reads the files the app wrote, through Archive."""
 
+import itertools
 import re
 import time
 
@@ -41,10 +42,14 @@ def test_the_headers_x_removes_a_tag_and_undo_puts_it_back(page: Page, server, c
     expect(toast).to_contain_text("Removed talks from 1 recording")
     expect(header.locator("[data-testid=chip][data-tag=talks]")).to_have_count(0)
     assert server.tags(jfk) == [("notes/conference-talk", "auto")]
-    # Focus went to the next control in the row: the remaining chip's ×.
-    expect(
-        header.get_by_role("button", name=re.compile(r"^Remove tag notes\/conference-talk"))
-    ).to_be_focused()
+    # Focus went to the next control in the row: the remaining chip's ×. It shows, though the
+    # click was a mouse's, and its chip shows the whole tag (Task 10 council).
+    after = header.get_by_role("button", name=re.compile(r"^Remove tag notes\/conference-talk"))
+    expect(after).to_be_focused()
+    page.mouse.move(0, 0)
+    expect(after).to_have_css("opacity", "1")
+    label = header.locator("[data-testid=chip][data-tag='notes/conference-talk'] .chip-label")
+    expect(label).to_have_css("max-width", "none")
     toast.get_by_role("button", name="Undo").click()
     expect(header.locator("[data-testid=chip][data-tag=talks]")).to_have_count(1)
     wait_until(lambda: server.tags(jfk) == [("talks", "you"), ("notes/conference-talk", "auto")])
@@ -72,3 +77,84 @@ def test_removing_a_last_private_tag_asks_first(page: Page, server, console, dem
     expect(page.get_by_test_id("action-toast")).to_contain_text("Removed private from 1 recording")
     wait_until(lambda: server.tags(fdr) == [])
     expect(header.get_by_test_id("lock")).to_have_count(0)  # the row's flag, from the server
+
+
+IN_TOASTER = "() => document.activeElement?.closest('[data-sonner-toaster]') != null"
+
+
+def test_a_toast_reached_from_the_keyboard_stays_and_its_undo_gives_focus_back(
+    page: Page, server, console, demo_ids
+):
+    # why: the pause sat on the toast's inner text, so focus on its <li> (Alt+T, Tab) let it go
+    # at 8 s; and Undo from the keyboard left focus on <body> (Task 10 council).
+    jfk = demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    header = page.get_by_test_id("recording-header")
+    header.get_by_role("button", name=re.compile(r"^Remove tag talks from JFK")).focus()
+    page.keyboard.press("Enter")
+    toast = page.get_by_test_id("action-toast")
+    expect(toast).to_contain_text("Removed talks from 1 recording")
+    after = header.get_by_role("button", name=re.compile(r"^Remove tag notes\/conference-talk"))
+    expect(after).to_be_focused()
+    page.keyboard.press("Alt+KeyT")  # Sonner's "go to notifications"
+    page.keyboard.press("Tab")
+    assert page.evaluate(IN_TOASTER)
+    page.wait_for_timeout(9_000)  # longer than a toast's 8 s
+    expect(toast).to_be_visible()
+    undo = toast.get_by_role("button", name="Undo")
+    while not page.evaluate("() => document.activeElement?.textContent === 'Undo'"):
+        page.keyboard.press("Tab")
+        assert page.evaluate(IN_TOASTER)
+    page.keyboard.press("Enter")
+    expect(undo).to_have_count(0)
+    expect(after).to_be_focused()  # back where it was, not on <body>
+    wait_until(lambda: server.tags(jfk) == [("talks", "you"), ("notes/conference-talk", "auto")])
+
+
+def test_redo_says_redone_and_offers_undo(page: Page, server, console, demo_ids):
+    jfk = demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    header = page.get_by_test_id("recording-header")
+    header.locator("[data-testid=chip][data-tag=talks]").hover()
+    header.get_by_role("button", name=re.compile(r"^Remove tag talks from JFK")).click()
+    page.get_by_test_id("action-toast").filter(has_text="Removed talks").get_by_role(
+        "button", name="Undo"
+    ).click()
+    undone = page.get_by_test_id("action-toast").filter(has_text="Undone on 1 recording")
+    undone.get_by_role("button", name="Redo").click()
+    redone = page.get_by_test_id("action-toast").filter(has_text="Redone on 1 recording")
+    expect(redone.get_by_role("button", name="Undo")).to_be_visible()
+    wait_until(lambda: server.tags(jfk) == [("notes/conference-talk", "auto")])
+
+
+@pytest.mark.browser_context_args(
+    is_mobile=True, has_touch=True, viewport={"width": 300, "height": 700}
+)
+def test_the_headers_touch_targets_are_44_px_and_never_overlap(page: Page, server, console):
+    # why: 44 px targets that overhang their chips, on rows 12 px apart, overlapped, so a slightly
+    # low tap removed the tag on the row below (Task 10 council). Whether two targets line up
+    # depends on the tags' lengths, so this checks what makes it impossible for any tags: the
+    # targets of one row end before the next row's begin.
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    assert page.evaluate("() => matchMedia('(hover: none)').matches")
+    header = page.get_by_test_id("recording-header")
+    chips = header.get_by_test_id("chip")
+    xs = header.locator(".chip-x")
+    assert xs.count() == chips.count()
+    rows: dict[int, list[dict]] = {}
+    for i in range(chips.count()):
+        target = xs.nth(i).bounding_box()
+        assert target["width"] >= 44 and target["height"] >= 44
+        rows.setdefault(round(chips.nth(i).bounding_box()["y"]), []).append(target)
+    assert len(rows) >= 2, "the chips must wrap for this test to mean anything"
+    bands = [rows[y] for y in sorted(rows)]
+    for above, below in itertools.pairwise(bands):
+        lowest = max(b["y"] + b["height"] for b in above)
+        highest = min(b["y"] for b in below)
+        assert lowest <= highest + 0.5, f"targets overlap by {lowest - highest:.1f} px"
+    for row in bands:  # and side by side, never
+        for a, b in itertools.pairwise(row):
+            assert a["x"] + a["width"] <= b["x"] + 0.5

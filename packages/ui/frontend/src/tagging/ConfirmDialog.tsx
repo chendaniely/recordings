@@ -7,6 +7,7 @@ import {
 import { confirmBody, confirmTitle } from "@/lib/toasts";
 
 import { Rich } from "./ActionToast";
+import { focusFallback, inToaster } from "./toaster";
 import { useTaggingContext } from "./useTagging";
 
 /** The privacy confirmation (spec §6). It opens only when the server replies `confirm`, over the
@@ -15,7 +16,9 @@ import { useTaggingContext } from "./useTagging";
  *
  * Focus goes back to what had it when the dialog opened (the picker's input, the title, a row's
  * next control). Radix's Dialog only returns focus to its Trigger, and this dialog has none: it
- * opens on a server reply. So it is remembered here, before Radix moves focus to Cancel. */
+ * opens on a server reply. So it is remembered here, before Radix moves focus to Cancel; when it
+ * has gone, or was a toast's button (a dialog opened from a toast's Undo), focus goes to the open
+ * row or the header's title instead (toaster.ts). */
 export function ConfirmDialog() {
   const tagging = useTaggingContext();
   const back = useRef<HTMLElement | null>(null);
@@ -33,11 +36,12 @@ export function ConfirmDialog() {
             e.preventDefault();
             const el = back.current;
             back.current = null;
-            if (el?.isConnected) el.focus({ preventScroll: true });
+            const to = el?.isConnected && !inToaster(el) ? el : focusFallback();
+            to?.focus({ preventScroll: true });
           }}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle className="confirm-title"><Rich text={confirmTitle(c.request, lp, tagging.isPrivate)} /></AlertDialogTitle>
+            <AlertDialogTitle className="confirm-title"><Rich text={confirmTitle(c.request, lp, tagging.isPrivate, c.redo)} /></AlertDialogTitle>
             <AlertDialogDescription>{confirmBody(lp)}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

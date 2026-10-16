@@ -16,13 +16,14 @@ function listed(tags: readonly string[]): Text {
   return tags.flatMap((tag, i) => (i === 0 ? [{ code: tag }] : [", ", { code: tag }]));
 }
 
-export function actionText(request: TagRequest, reply: TagResult, saves: boolean): Text {
+/** An Undo of an Undo's own token is a Redo (plan decision 7): "Redone on N". */
+export function actionText(request: TagRequest, reply: TagResult, saves: boolean, redo = false): Text {
   let text: Text;
   const tags = request.tags;
   // Nothing changed and nothing was already so: the writes failed or were refused, and the
   // failure alert speaks. Never "Already on…" for a write that did not happen.
   if (reply.changed === 0 && (request.action === "undo" || reply.unchanged === 0)) return [];
-  if (request.action === "undo") text = [`Undone on ${recordings(reply.changed)}`];
+  if (request.action === "undo") text = [`${redo ? "Redone" : "Undone"} on ${recordings(reply.changed)}`];
   else if (reply.changed === 0) {
     // Only what the server counted as already so: "Already on all 12", "Already off 3 of 12".
     const of = reply.unchanged;
@@ -49,9 +50,9 @@ export function failureLines(failures: readonly { id: string; reason: string }[]
   return [...counts].map(([reason, count]) => `${n(count)} ${reason}`);
 }
 
-export function confirmTitle(request: TagRequest, lp: LosesPrivate, isPrivate: (tag: string) => boolean): Text {
+export function confirmTitle(request: TagRequest, lp: LosesPrivate, isPrivate: (tag: string) => boolean, redo = false): Text {
   const count = recordings(lp.ids.length);
-  if (request.action === "undo") return ["Undo will remove ", { code: "private" }, ` from ${count}?`];
+  if (request.action === "undo") return [`${redo ? "Redo" : "Undo"} will remove `, { code: "private" }, ` from ${count}?`];
   const named = request.tags.filter(isPrivate);
   return ["Remove ", ...listed(named.length ? named : ["private"]), ` from ${count}?`];
 }
@@ -68,13 +69,30 @@ export function confirmBody(lp: LosesPrivate): string {
   return parts.join(" ");
 }
 
-export function progressText(done: number, total: number): string {
-  return `Tagging ${n(done)} of ${n(total)}…`;
+/** What a batch is doing, for its progress toast. A removal never reads "Removing 2,000
+ * recordings", which sounds like deleting them. */
+export type ProgressKind = "add" | "remove" | "undo" | "redo";
+
+export function progressKind(request: TagRequest, redo: boolean): ProgressKind {
+  return request.action === "undo" ? (redo ? "redo" : "undo") : request.action;
+}
+
+const START: Record<ProgressKind, string> = { add: "Tagging", remove: "Removing tags from", undo: "Undoing on", redo: "Redoing on" };
+const RUNNING: Record<ProgressKind, string> = { add: "Tagging", remove: "Removing tags:", undo: "Undoing:", redo: "Redoing:" };
+
+/** What the live region says once, at the start: "Tagging 2,000 recordings…". */
+export function progressStart(total: number, kind: ProgressKind): string {
+  return `${START[kind]} ${recordings(total)}…`;
+}
+
+/** The moving count, shown outside the live region: "Tagging 1,200 of 2,000…". */
+export function progressText(done: number, total: number, kind: ProgressKind = "add"): string {
+  return `${RUNNING[kind]} ${n(done)} of ${n(total)}…`;
 }
 
 /** The Tags grid's merged toast for single-cell toggles: "4 changes · Undo last". */
-export function cellText(changes: number): string {
-  return `${n(changes)} change${changes === 1 ? "" : "s"}`;
+export function cellText(changes: number, saves = true): string {
+  return `${n(changes)} change${changes === 1 ? "" : "s"}${saves ? "" : " · Demo: changes aren't saved"}`;
 }
 
 export function droppedText(dropped: number, inFlight: boolean): string {

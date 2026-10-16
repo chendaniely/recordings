@@ -79,9 +79,9 @@ const toasts = () => sonner.toast.mock.calls as [ReactElement<Props>, Options][]
 const toastsFor = (id: string) => toasts().filter(([, o]) => o.id === id);
 const latest = (id: string) => toastsFor(id).at(-1);
 const said = (id: string) => textOf(latest(id)?.[0].props.text ?? []);
+const cannotTag = () => toasts().filter(([, o]) => o.id.startsWith("cannot-tag"));
 
 beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   shiny.sent = {};
   sonner.toast.mockClear();
   sonner.dismiss.mockClear();
@@ -253,7 +253,7 @@ describe("useTagging: lost connections and slow replies (spec §6, §8)", () => 
     expect(tagging.canTag).toBe(false);
     act(() => tagging.tag("add", ["a"], ["y"], picker));
     expect(sent()).toHaveLength(1);
-    expect(latest("cannot-tag")?.[0].props.lines).toEqual(["Lost the connection. Reload to keep working."]);
+    expect(cannotTag().at(-1)?.[0].props.lines).toEqual(["Lost the connection. Reload to keep working."]);
   });
   it("says Still working after 30 seconds with no reply, in the progress toast's place, and never re-sends", () => {
     vi.useFakeTimers();
@@ -276,7 +276,10 @@ describe("useTagging: the library (spec §5; Task 7 carry)", () => {
     expect(tagging).toMatchObject({ canTag: false, opening: true, reason: null, loadKey: 1 });
     act(() => tagging.tag("add", ["a"], ["w"], picker));
     expect(sent()).toHaveLength(0);
-    expect(latest("cannot-tag")?.[0].props.lines).toEqual(["Opening the archive… try again in a moment."]);
+    // A moment, not tagging off: an ordinary toast that goes by itself, not an alert that stays.
+    expect(textOf(cannotTag().at(-1)?.[0].props.text ?? [])).toBe("Opening the archive… try again in a moment.");
+    expect(cannotTag().at(-1)?.[0].props.lines).toBeUndefined();
+    expect(tagging.sessionTags).toEqual([]); // nothing was submitted
     draw(library());
     expect(tagging).toMatchObject({ canTag: true, opening: false, reason: null, loadKey: 2 });
   });
@@ -318,5 +321,86 @@ describe("useTagging: snippets (spec §5; Task 7 carry)", () => {
     expect(tagging.snippet("a")).toBe("hello");
     expect(tagging.snippet("b")).toBe(null);
     expect(tagging.snippet("c")).toBeUndefined();
+  });
+});
+
+describe("useTagging: Task 10 council fixes", () => {
+  const confirmOf = (request: TagRequest) => result(request, {
+    status: "confirm", changed: 0, done_so_far: 0, loses_private: { visible: 1, untagged: 0, ids: ["c"] },
+  });
+  it("gives a cell change that makes recordings visible a toast of its own, which says so", () => {
+    draw(library());
+    act(() => tagging.tag("add", ["b"], ["work"], cell));
+    const request = last();
+    reply(result(request, { undo: "t1", now_visible: 1 }));
+    expect(said(`tag-${request.request_id}`)).toBe("Added work to 1 recording · 1 now visible to external agents");
+    expect(toastsFor("grid-cells-1")).toHaveLength(0);
+  });
+  it("the running cell toast says the demo doesn't save, on Pages", () => {
+    draw(library({ saves: false }));
+    act(() => tagging.tag("add", ["a"], ["one"], cell));
+    reply(result(last(), { undo: "t1" }));
+    expect(said("grid-cells-1")).toBe("1 change · Demo: changes aren't saved");
+  });
+  it("Undo offers Redo; Redo says Redone, offers Undo, and Cmd-Z can then undo it again", () => {
+    draw(library());
+    act(() => tagging.tag("remove", ["a"], ["talks"], { kind: "header" }));
+    reply(result(last(), { undo: "t1" }));
+    act(() => latest(`tag-${last().request_id}`)?.[0].props.undo?.run());
+    const undoRequest = last();
+    reply(result(undoRequest, { changed: 1, undo: "r1", rows: [row("a", ["talks"])] })); // an Undo carries no ids
+    expect(said(`tag-${undoRequest.request_id}`)).toBe("Undone on 1 recording");
+    expect(latest(`tag-${undoRequest.request_id}`)?.[0].props.undo?.label).toBe("Redo");
+    act(() => latest(`tag-${undoRequest.request_id}`)?.[0].props.undo?.run());
+    const redo = last();
+    expect(redo).toMatchObject({ action: "undo", undo: "r1" });
+    reply(result(redo, { changed: 1, undo: "t1b", rows: [row("a")] }));
+    expect(said(`tag-${redo.request_id}`)).toBe("Redone on 1 recording");
+    expect(latest(`tag-${redo.request_id}`)?.[0].props.undo?.label).toBe("Undo");
+    act(() => tagging.undoLast());
+    expect(last()).toMatchObject({ action: "undo", undo: "t1b" });
+  });
+  it("a Redo that needs the confirmation says it is a Redo", () => {
+    draw(library());
+    act(() => tagging.tag("remove", ["c"], ["private"], { kind: "header" }));
+    reply(confirmOf(last()));
+    act(() => tagging.answerConfirm(true));
+    reply(result(last(), { undo: "t1" }));
+    act(() => tagging.undo("t1"));
+    reply(result(last(), { undo: "r1" }));
+    act(() => tagging.undo("r1"));
+    reply(confirmOf(last()));
+    expect(tagging.confirm?.redo).toBe(true);
+  });
+  it("says why it can't tag each time it's asked, as a fresh alert", () => {
+    draw(library({ can_tag: false, cannot_tag_reason: "this is the NAS mirror's copy" }));
+    act(() => tagging.tag("add", ["a"], ["w"], picker));
+    act(() => tagging.tag("add", ["a"], ["w"], picker));
+    const [first, second] = cannotTag();
+    expect(first[1].id).not.toBe(second[1].id);
+    expect(sonner.dismiss).toHaveBeenCalledWith(first[1].id);
+    expect(second[0].props.lines).toEqual(["this is the NAS mirror's copy"]);
+    expect(tagging.sessionTags).toEqual([]);
+  });
+  it("words a big removal's progress as a removal, and never re-announces after Still working", () => {
+    vi.useFakeTimers();
+    draw(library());
+    act(() => tagging.tag("remove", many(60), ["talks"], picker));
+    const request = last();
+    const id = `tag-${request.request_id}`;
+    expect(latest(id)?.[0].props).toMatchObject({ announced: "Removing tags from 60 recordings…", shown: "Removing tags: 0 of 60…" });
+    act(() => vi.advanceTimersByTime(35_000));
+    expect(latest(id)?.[0].props).toMatchObject({ announced: STILL_WORKING, shown: STILL_WORKING });
+    reply(result(request, { status: "progress", done_so_far: 40 }));
+    // The count moves on screen; the live region keeps what it last said (start and end only).
+    expect(latest(id)?.[0].props).toMatchObject({ announced: STILL_WORKING, shown: "Removing tags: 40 of 60…" });
+  });
+  it("says so when a confirmation names nothing, rather than dropping the change silently", () => {
+    draw(library());
+    act(() => tagging.tag("remove", ["c"], ["private"], picker));
+    const request = last();
+    reply(result(request, { status: "confirm", changed: 0, loses_private: null }));
+    expect(tagging.confirm).toBe(null);
+    expect(latest(`stop-${request.request_id}`)?.[0].props.lines).toEqual(["Nothing was changed: the confirmation named no recordings."]);
   });
 });

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { TagRequest, TagResult } from "../types";
 import type { Origin } from "./queue";
 import {
-  ALREADY_UNDONE, GONE, NO_UNDOS, UNDO_GONE, UNDO_STACK, busyTokens, cellsClosed, heardUndo, mergesIntoCells,
+  ALREADY_UNDONE, GONE, NO_UNDOS, UNDO_GONE, UNDO_STACK, busyTokens, cellsClosed, heardUndo, isRedo, mergesIntoCells,
   nextCellUndo, nextUndo, usedUp, type Undos,
 } from "./undo";
 
@@ -88,6 +88,14 @@ describe("Cmd/Ctrl+Z's stack (spec §6; plan decision 7)", () => {
 });
 
 describe("the grid's running toast shares the stack's tokens (Task 9 carry)", () => {
+  it("gives a change that makes recordings visible, or removes a note type, a toast of its own", () => {
+    // why: the running toast's text would drop "· N now visible to external agents" and
+    // "· auto-pick won't add it back" (Task 10 council).
+    expect(mergesIntoCells(cell, add("r"), reply({ undo: "t", now_visible: 1 }))).toBe(false);
+    const notes: TagRequest = { request_id: "r", action: "remove", ids: ["a"], tags: ["notes/lecture"] };
+    expect(mergesIntoCells(cell, notes, reply({ undo: "t" }))).toBe(false);
+    expect(mergesIntoCells(cell, { ...notes, action: "add" }, reply({ undo: "t" }))).toBe(true);
+  });
   it("merges only a clean, finished single-cell change", () => {
     expect(mergesIntoCells(cell, add("r"), reply({ undo: "t" }))).toBe(true);
     expect(mergesIntoCells(picker, add("r"), reply({ undo: "t" }))).toBe(false);
@@ -129,5 +137,39 @@ describe("the grid's running toast shares the stack's tokens (Task 9 carry)", ()
     expect(u.stack).not.toContain("c0");
     expect(u.cells.tokens).toEqual([]);
     expect(nextCellUndo(u, none)).toBe(null);
+  });
+});
+
+describe("Redo (plan decision 7; Task 10 council)", () => {
+  const undone = (u: Undos, token: string, redoToken: string) =>
+    heardUndo(u, undoOf(token), { kind: "undo" }, reply({ undo: redoToken }));
+  it("knows an Undo of an Undo's token is a Redo, and puts the Redo's token on the stack", () => {
+    let u = did(NO_UNDOS, "t1");
+    u = undone(u, "t1", "r1");
+    expect(u.stack).toEqual([]);
+    expect(isRedo(u, undoOf("r1"))).toBe(true);
+    expect(isRedo(u, undoOf("t1"))).toBe(false);
+    u = heardUndo(u, undoOf("r1"), { kind: "undo" }, reply({ undo: "t1b" }));
+    expect(u.stack).toEqual(["t1b"]); // Cmd-Z can undo the redone action again
+    expect(isRedo(u, undoOf("r1"))).toBe(false); // used up
+    expect(isRedo(u, undoOf("t1b"))).toBe(false);
+  });
+  it("Cmd-Z twice after an action undoes two actions, never undo then redo", () => {
+    let u = did(did(NO_UNDOS, "t1"), "t2");
+    u = undone(u, "t2", "r2");
+    expect(nextUndo(u, none)).toBe("t1");
+  });
+  it("keeps a Redo token whose Redo stopped part way", () => {
+    let u = undone(did(NO_UNDOS, "t1"), "t1", "r1");
+    u = heardUndo(u, undoOf("r1"), { kind: "undo" }, reply({ status: "failed", message: "Stopped: a disk error", undo: "t1b" }));
+    expect(isRedo(u, undoOf("r1"))).toBe(true);
+    expect(u.stack).toEqual(["t1b"]);
+  });
+  it("remembers at most 20 Redo tokens", () => {
+    let u = NO_UNDOS;
+    for (let i = 0; i < UNDO_STACK + 3; i++) u = undone(did(u, `t${i}`), `t${i}`, `r${i}`);
+    expect(u.redos).toHaveLength(UNDO_STACK);
+    expect(isRedo(u, undoOf("r0"))).toBe(false);
+    expect(isRedo(u, undoOf(`r${UNDO_STACK + 2}`))).toBe(true);
   });
 });

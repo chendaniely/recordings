@@ -1,6 +1,9 @@
 import { toast } from "sonner";
 
-import { STILL_WORKING, actionText, cellText, droppedText, failureLines, progressText, type Text } from "@/lib/toasts";
+import { cannotTagText, type TagStatus } from "@/lib/library";
+import {
+  STILL_WORKING, actionText, cellText, droppedText, failureLines, progressStart, progressText, type ProgressKind, type Text,
+} from "@/lib/toasts";
 import type { TagRequest, TagResult } from "@/types";
 
 import { ActionToast, AlertToast, ProgressToast } from "./ActionToast";
@@ -8,21 +11,30 @@ import { ActionToast, AlertToast, ProgressToast } from "./ActionToast";
 const forever = { duration: Infinity }; // our own timers dismiss them (plan decision 9)
 const toastId = (request: TagRequest) => `tag-${request.request_id}`;
 
+/** What each request's toast has said in the live region. Progress is announced at the start
+ * and, by the result, at the end only (spec §6): the moving count stays out of it, and once
+ * "Still working…" has been said, a later progress reply doesn't swap the text back. */
+const announced = new Map<string, string>();
+
 /** A request's own toast holds its progress, then "Still working…", then its result: one id, so
  * each replaces the one before, and dismissProgress closes whichever is showing. */
-export function showProgress(request: TagRequest, done: number, total: number): void {
-  const announced = `Tagging ${total.toLocaleString("en")} recordings…`;
-  toast(<ProgressToast announced={announced} shown={progressText(done, total)} />, { ...forever, id: toastId(request) });
+export function showProgress(request: TagRequest, done: number, total: number, kind: ProgressKind): void {
+  const id = toastId(request);
+  if (!announced.has(id)) announced.set(id, progressStart(total, kind));
+  toast(<ProgressToast announced={announced.get(id)!} shown={progressText(done, total, kind)} />, { ...forever, id });
 }
 
 /** "Still working…" takes the progress toast's place: the same id (spec §6). */
 export function showStillWorking(request: TagRequest): void {
-  toast(<ProgressToast announced={STILL_WORKING} shown={STILL_WORKING} />, { ...forever, id: toastId(request) });
+  const id = toastId(request);
+  announced.set(id, STILL_WORKING);
+  toast(<ProgressToast announced={STILL_WORKING} shown={STILL_WORKING} />, { ...forever, id });
 }
 
 /** Closes a request's progress or "Still working…" toast: on a `confirm` reply, when the
  * connection is lost, and when a result has nothing to say. */
 export function dismissProgress(request: TagRequest): void {
+  announced.delete(toastId(request));
   toast.dismiss(toastId(request));
 }
 
@@ -30,16 +42,18 @@ function showAction(id: string, text: Text, undo: { label: string; run: () => vo
   toast(<ActionToast id={id} text={text} undo={undo} />, { ...forever, id, onDismiss: onGone });
 }
 
-/** The toast an ending reply shows: the action with its Undo (or Redo, for an Undo; plan
- * decision 7), and, when the batch stopped or was refused, an alert with the fixed phrase. When
- * nothing changed and nothing was already so, there is no action toast: the alert speaks. */
-export function showResult(request: TagRequest, reply: TagResult, saves: boolean, onUndo: (token: string) => void): void {
+/** The toast an ending reply shows: the action with its Undo (an Undo's offers Redo, a Redo's
+ * offers Undo; plan decision 7), and, when the batch stopped or was refused, an alert with the
+ * fixed phrase. When nothing changed and nothing was already so, there is no action toast: the
+ * alert speaks. */
+export function showResult(request: TagRequest, reply: TagResult, saves: boolean, onUndo: (token: string) => void, redo = false): void {
   const id = toastId(request);
-  const text = reply.status === "done" || reply.changed > 0 ? actionText(request, reply, saves) : [];
+  announced.delete(id);
+  const text = reply.status === "done" || reply.changed > 0 ? actionText(request, reply, saves, redo) : [];
   if (text.length > 0) {
     const token = reply.undo;
-    const undo = token ? { label: request.action === "undo" ? "Redo" : "Undo", run: () => onUndo(token) } : null;
-    showAction(id, text, undo);
+    const label = request.action === "undo" && !redo ? "Redo" : "Undo";
+    showAction(id, text, token ? { label, run: () => onUndo(token) } : null);
   } else {
     toast.dismiss(id);
   }
@@ -49,8 +63,8 @@ export function showResult(request: TagRequest, reply: TagResult, saves: boolean
 
 /** Single-cell toggles in the grid share one running toast: "4 changes · Undo last". Each new
  * toast has its own key, so a late close of the last one can't swallow it. */
-export function showCells(key: number, changes: number, onUndoLast: (() => void) | null, onGone: () => void): void {
-  showAction(cellsId(key), [cellText(changes)], onUndoLast && { label: "Undo last", run: onUndoLast }, onGone);
+export function showCells(key: number, changes: number, saves: boolean, onUndoLast: (() => void) | null, onGone: () => void): void {
+  showAction(cellsId(key), [cellText(changes, saves)], onUndoLast && { label: "Undo last", run: onUndoLast }, onGone);
 }
 
 export const cellsId = (key: number) => `grid-cells-${key}`;
@@ -61,6 +75,19 @@ export function showAlert(id: string, lines: string[]): void {
 
 export function showNote(id: string, text: Text): void {
   showAction(id, text, null);
+}
+
+let cannotTagShown = 0;
+
+/** Why tagging is off, said again on each `T`, drop or Undo: a fresh toast each time, so it is
+ * announced again, replacing the last. The archive still being opened is a moment, so an
+ * ordinary toast that goes by itself; anything else is an alert that stays until dismissed. */
+export function showCannotTag(status: TagStatus): void {
+  toast.dismiss(`cannot-tag-${cannotTagShown}`);
+  cannotTagShown += 1;
+  const id = `cannot-tag-${cannotTagShown}`;
+  if (status.opening) showNote(id, [cannotTagText(status)]);
+  else showAlert(id, [cannotTagText(status)]);
 }
 
 export function showDropped(dropped: number, inFlight: boolean): void {

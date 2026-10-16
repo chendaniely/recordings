@@ -8,6 +8,7 @@ const sonner = vi.hoisted(() => ({ dismiss: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { dismiss: sonner.dismiss }) }));
 
 import { ActionToast, AlertToast, ProgressToast, Rich } from "./ActionToast";
+import { watchToaster } from "./toaster";
 
 describe("toast bodies (spec §6)", () => {
   it("draws a tag as code, as text and never as HTML", () => {
@@ -31,23 +32,31 @@ describe("toast bodies (spec §6)", () => {
 const act = (fn: () => void) => flushSync(fn);
 
 describe("an action toast's own timer (plan decision 9)", () => {
-  let host: HTMLDivElement;
+  // The toast sits in a toaster, as Sonner draws it: the pause is the whole toaster's.
+  let toaster: HTMLOListElement;
+  let host: HTMLLIElement;
   let root: ReturnType<typeof createRoot>;
+  let stop: () => void;
   const draw = (text: string) => act(() => root.render(createElement(ActionToast, { id: "grid-cells-1", text: [text], undo: null })));
-  const hover = (type: "mouseover" | "mouseout") =>
+  const pointer = (into: boolean) =>
     act(() => {
-      host.firstElementChild!.dispatchEvent(new MouseEvent(type, { bubbles: true, relatedTarget: document.body }));
+      const at = into ? host : document.body;
+      at.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
     });
 
   beforeEach(() => {
     vi.useFakeTimers();
     sonner.dismiss.mockClear();
-    host = document.body.appendChild(document.createElement("div"));
+    toaster = document.body.appendChild(document.createElement("ol"));
+    toaster.setAttribute("data-sonner-toaster", "");
+    host = toaster.appendChild(document.createElement("li"));
     root = createRoot(host);
+    stop = watchToaster();
   });
   afterEach(() => {
     root.unmount();
-    host.remove();
+    stop();
+    toaster.remove();
     vi.useRealTimers();
   });
 
@@ -63,11 +72,11 @@ describe("an action toast's own timer (plan decision 9)", () => {
     // the hover would dismiss it under the pointer (Task 9 review).
     draw("1 change");
     vi.advanceTimersByTime(6000);
-    hover("mouseover");
+    pointer(true); // on the toast's own <li>, outside its text: still the toaster
     draw("2 changes");
     vi.advanceTimersByTime(60_000);
     expect(sonner.dismiss).not.toHaveBeenCalled();
-    hover("mouseout");
+    pointer(false);
     vi.advanceTimersByTime(7999);
     expect(sonner.dismiss).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
@@ -81,5 +90,24 @@ describe("an action toast's own timer (plan decision 9)", () => {
     expect(sonner.dismiss).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(sonner.dismiss).toHaveBeenCalledTimes(1);
+  });
+  it("gives focus back to the page before its Undo or Dismiss takes the toast away", () => {
+    // why: from the keyboard, focus stayed on a button that went, so on <body> (Task 10 council).
+    const before = document.body.appendChild(document.createElement("button"));
+    const run = vi.fn();
+    act(() => root.render(createElement(ActionToast, { id: "t", text: ["Removed"], undo: { label: "Undo", run } })));
+    before.focus();
+    const undo = host.querySelector("button")!;
+    undo.focus();
+    act(() => undo.click());
+    expect(document.activeElement).toBe(before);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(sonner.dismiss).toHaveBeenCalledWith("t");
+    act(() => root.render(createElement(AlertToast, { id: "a", lines: ["3 the recording is gone"] })));
+    const dismiss = host.querySelector("button")!;
+    dismiss.focus();
+    act(() => dismiss.click());
+    expect(document.activeElement).toBe(before);
+    before.remove();
   });
 });

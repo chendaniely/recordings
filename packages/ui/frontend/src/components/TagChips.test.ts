@@ -31,8 +31,9 @@ describe("chips (spec §6)", () => {
 });
 
 describe("nextControl: where focus goes after × (spec §6)", () => {
+  // A detached row: nextControl needs no document, and nothing is left behind in one.
   const row = (n: number): HTMLElement[] => {
-    const box = document.body.appendChild(document.createElement("div"));
+    const box = document.createElement("div");
     box.setAttribute("data-controls", "");
     return Array.from({ length: n }, () => {
       const button = box.appendChild(document.createElement("button"));

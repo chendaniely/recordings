@@ -1,22 +1,26 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { cannotTagText, markReply, mergeReply, tagStatus, type Marks } from "@/lib/library";
+import { markReply, mergeReply, tagStatus, type Marks } from "@/lib/library";
 import {
   EMPTY_QUEUE, dropAll, enqueue, enqueueFront, heard, newRequestId, pendingRequests, resume, stillWorking,
   takeNext, type Origin, type Queue,
 } from "@/lib/queue";
 import { NO_SNIPPETS, heardSnippets, nextSnippets, wanted, type Snippets } from "@/lib/snippets";
-import { NO_UNDOS, busyTokens, cellsClosed, heardUndo, mergesIntoCells, nextCellUndo, nextUndo, type CellToast, type Undos } from "@/lib/undo";
+import { progressKind } from "@/lib/toasts";
+import {
+  NO_UNDOS, busyTokens, cellsClosed, heardUndo, isRedo, mergesIntoCells, nextCellUndo, nextUndo, type CellToast, type Undos,
+} from "@/lib/undo";
 import { useSetShinyInput, useShinyMessageHandler } from "@/sr";
 import type { LibraryView, SnippetRequest, SnippetResult, TagRequest, TagResult } from "@/types";
 
+import { watchToaster } from "./toaster";
 import {
-  cellsId, dismissProgress, showAlert, showCells, showDropped, showProgress, showResult, showStillWorking,
+  cellsId, dismissProgress, showAlert, showCannotTag, showCells, showDropped, showProgress, showResult, showStillWorking,
 } from "./toasts";
 
 export interface PickerTarget { ids: string[]; title: string } // the dialog form: T, the selection bar, a drop
-export interface ConfirmState { request: TagRequest; origin: Origin; reply: TagResult }
+export interface ConfirmState { request: TagRequest; origin: Origin; reply: TagResult; redo: boolean }
 
 export interface Tagging {
   view: LibraryView | null;
@@ -64,7 +68,8 @@ const sameCells = (a: CellToast, b: CellToast) =>
 /** Every input, message handler, queue and toast for tagging. Called by App, which never
  * unmounts: shinyreact drops a message that has no handler (spec §6). */
 export function useTagging(library: LibraryView | undefined): Tagging {
-  // Mounted once, here, with null defaults; nothing is ever sent on load (spec §5).
+  // Mounted once, here, with null defaults. shinyreact sends that null at mount, and the server's
+  // @reactive.event (ignore_none) skips it, so no request is ever made on load (spec §5).
   const sendTag = useSetShinyInput<TagRequest | null>("tag_request", null, event);
   const sendRefresh = useSetShinyInput<number | null>("refresh", null, event);
   const sendSnippets = useSetShinyInput<SnippetRequest | null>("snippet_request", null, event);
@@ -119,25 +124,29 @@ export function useTagging(library: LibraryView | undefined): Tagging {
     if (send) {
       sendTag(send);
       // Shown when sent, never while it waits behind another (Task 9 carry).
-      if (send.ids.length >= PROGRESS_FROM) showProgress(send, 0, send.ids.length);
+      if (send.ids.length >= PROGRESS_FROM) {
+        showProgress(send, 0, send.ids.length, progressKind(send, isRedo(undos.current, send)));
+      }
     }
     setPending(pendingRequests(next));
   }, [sendTag]);
 
-  const submit = useCallback((request: TagRequest, origin: Origin) => {
+  /** Queues a request, or says why tagging is off; true when it was queued. */
+  const submit = useCallback((request: TagRequest, origin: Origin): boolean => {
     const status = tagStatus(viewRef.current, lostRef.current);
     if (!status.canTag) {
-      showAlert("cannot-tag", [cannotTagText(status)]);
-      return;
+      showCannotTag(status);
+      return false;
     }
     queue.current = enqueue(queue.current, request, origin);
     pump();
+    return true;
   }, [pump]);
 
   const tag = useCallback((action: "add" | "remove", ids: string[], tags: string[], origin: Origin) => {
     if (ids.length === 0 || tags.length === 0) return;
-    if (action === "add") setSessionTags((s) => [...s, ...tags.filter((t) => !s.includes(t))]);
-    submit({ request_id: newRequestId(), action, ids, tags, confirm_ids: [] }, origin);
+    const accepted = submit({ request_id: newRequestId(), action, ids, tags, confirm_ids: [] }, origin);
+    if (accepted && action === "add") setSessionTags((s) => [...s, ...tags.filter((t) => !s.includes(t))]);
   }, [submit]);
 
   const undo = useCallback((token: string) => {
@@ -164,7 +173,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       undos.current = cellsClosed(undos.current, key);
       if (token) undo(token);
     };
-    showCells(key, changes, tokens.length > 0 ? undoLastCell : null, () => {
+    showCells(key, changes, viewRef.current?.saves ?? true, tokens.length > 0 ? undoLastCell : null, () => {
       undos.current = cellsClosed(undos.current, key);
     });
   }, [busy, undo]);
@@ -196,22 +205,27 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       if (!flight || flight.request.request_id !== reply.request_id) return;
       // By the server's total, not the request's ids: an Undo carries none, so a 300-row Undo
       // shows its progress from the first progress reply on.
-      if (reply.total >= PROGRESS_FROM) showProgress(flight.request, reply.done_so_far, reply.total);
+      if (reply.total >= PROGRESS_FROM) {
+        const kind = progressKind(flight.request, isRedo(undos.current, flight.request));
+        showProgress(flight.request, reply.done_so_far, reply.total, kind);
+      }
       if (stillShown.current === flight.request.request_id) stillShown.current = null; // a new stall says so again
       return;
     }
     if (!finished) return; // another window's, or a request already ended
     const { request, origin } = finished;
+    const redo = isRedo(undos.current, request); // before the reply settles its token
     if (reply.status === "confirm") {
       // heard() has paused the queue: nothing is sent behind the dialog.
       dismissProgress(request);
       if (!reply.loses_private) {
-        // Never expected: a confirmation that names nothing can't be answered, so go on.
+        // Never expected: a confirmation that names nothing can't be answered. Say so, and go on.
+        showAlert(`stop-${request.request_id}`, ["Nothing was changed: the confirmation named no recordings."]);
         queue.current = resume(queue.current);
         pump();
         return;
       }
-      confirmRef.current = { request, origin, reply };
+      confirmRef.current = { request, origin, reply, redo };
       setConfirm(confirmRef.current);
       setPending(pendingRequests(queue.current));
       return;
@@ -230,7 +244,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       dismissProgress(request); // "Still working…", if a cell was that slow
       drawCells();
     } else {
-      showResult(request, reply, viewRef.current?.saves ?? true, undo);
+      showResult(request, reply, viewRef.current?.saves ?? true, undo, redo);
       // Cmd-Z undid one of the running toast's changes: it says so, or goes.
       if (!sameCells(cellsBefore, undos.current.cells)) drawCells();
     }
@@ -249,6 +263,9 @@ export function useTagging(library: LibraryView | undefined): Tagging {
     }, 5000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // The toaster's one shared pause, and what had focus before it (toaster.ts).
+  useEffect(() => watchToaster(), []);
 
   // Shiny's reconnect stays off: on a lost connection the queue is dropped, the progress toast
   // closes, the toast says so, and nothing more is sent (spec §5, §8).

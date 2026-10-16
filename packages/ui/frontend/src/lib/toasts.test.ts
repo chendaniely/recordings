@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { TagRequest, TagResult } from "../types";
-import { actionText, cellText, confirmBody, confirmTitle, droppedText, failureLines, progressText, textOf } from "./toasts";
+import {
+  actionText, cellText, confirmBody, confirmTitle, droppedText, failureLines, progressKind, progressStart, progressText, textOf,
+} from "./toasts";
 
 const req = (over: Partial<TagRequest>): TagRequest => ({ request_id: "r", action: "add", ids: [], tags: [], ...over });
 const res = (over: Partial<TagResult>): TagResult => ({
@@ -84,5 +86,42 @@ describe("never says Already for writes that failed", () => {
     const partial = res({ changed: 0, unchanged: 3, failures: Array(9).fill({ id: "y", reason: "busy" }) });
     expect(textOf(actionText(req({ tags: ["t"], ids: ids12 }), partial, true))).toBe("Already on 3 of 12");
     expect(textOf(actionText(req({ action: "remove", tags: ["t"], ids: ids12 }), partial, true))).toBe("Already off 3 of 12");
+  });
+});
+
+describe("Redo (Task 10 council)", () => {
+  it("says Redone for an Undo of an Undo", () => {
+    expect(textOf(actionText(req({ action: "undo", undo: "r" }), res({ changed: 3 }), true, true))).toBe("Redone on 3 recordings");
+    expect(textOf(actionText(req({ action: "undo", undo: "r" }), res({ changed: 1 }), false, true)))
+      .toBe("Redone on 1 recording · Demo: changes aren't saved");
+  });
+  it("asks before a Redo removes private, naming it a Redo", () => {
+    const lp = { visible: 1, untagged: 0, ids: ["a"] };
+    expect(textOf(confirmTitle(req({ action: "undo", undo: "r" }), lp, () => true, true))).toBe("Redo will remove private from 1 recording?");
+  });
+});
+
+describe("the grid's running toast on Pages (Task 10 council)", () => {
+  it("says the demo doesn't save", () => {
+    expect(cellText(4, false)).toBe("4 changes · Demo: changes aren't saved");
+    expect(cellText(4, true)).toBe("4 changes");
+  });
+});
+
+describe("progress follows the action (Task 10 council)", () => {
+  it("says what is being done, and never 'Removing N recordings'", () => {
+    expect(progressStart(2000, "add")).toBe("Tagging 2,000 recordings…");
+    expect(progressStart(2000, "remove")).toBe("Removing tags from 2,000 recordings…");
+    expect(progressStart(300, "undo")).toBe("Undoing on 300 recordings…");
+    expect(progressStart(300, "redo")).toBe("Redoing on 300 recordings…");
+    expect(progressText(1200, 2000, "remove")).toBe("Removing tags: 1,200 of 2,000…");
+    expect(progressText(10, 300, "undo")).toBe("Undoing: 10 of 300…");
+    expect(progressText(10, 300, "redo")).toBe("Redoing: 10 of 300…");
+  });
+  it("knows the kind from the request", () => {
+    expect(progressKind(req({ action: "add" }), false)).toBe("add");
+    expect(progressKind(req({ action: "remove" }), false)).toBe("remove");
+    expect(progressKind(req({ action: "undo", undo: "u" }), false)).toBe("undo");
+    expect(progressKind(req({ action: "undo", undo: "u" }), true)).toBe("redo");
   });
 });
