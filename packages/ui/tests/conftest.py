@@ -17,6 +17,20 @@ REPO = Path(__file__).resolve().parents[3]
 DEMO_ARCHIVE = REPO / "demo" / "archive"
 
 
+@pytest.fixture(autouse=True)
+def fresh_reactive_lock():
+    """shiny's reactive lock is one asyncio.Lock per process, and a Lock binds to the first event
+    loop it is contended on (shiny's own docstring on ReactiveEnvironment.lock says so). anyio
+    gives every test its own loop, so without this a test that contends the lock fails once any
+    earlier test has (test_reactive_lock.py). shiny makes the lock lazily, so dropping it makes a
+    new one."""
+    from shiny.reactive import _core
+
+    _core._reactive_environment._lock = None
+    yield
+    _core._reactive_environment._lock = None
+
+
 @pytest.fixture
 def demo_archive(tmp_path) -> Path:
     """A fresh copy, so no test can change the committed demo."""
