@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { commandShortcut, composing, isTextEntry, plainShortcut, toggleFocusedKey, type KeyLike } from "./keys";
+import { commandShortcut, composing, isMac, isTextEntry, plainShortcut, toggleFocusedKey, type KeyLike } from "./keys";
 
 const key = (over: Partial<KeyLike> = {}): KeyLike => ({
   key: "t", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, isComposing: false,
@@ -68,5 +68,16 @@ describe("toggling the focused row", () => {
     expect(toggleFocusedKey(key({ key: " ", metaKey: true }))).toBe(true);
     expect(toggleFocusedKey(key({ key: " ", ctrlKey: true }))).toBe(true);
     expect(toggleFocusedKey(key({ key: " " }))).toBe(false);
+  });
+});
+
+describe("isMac: which key the picker's hint names", () => {
+  it("reads the platform, newest API first", () => {
+    expect(isMac({ platform: "MacIntel" })).toBe(true);
+    expect(isMac({ platform: "iPad" })).toBe(true);
+    expect(isMac({ userAgentData: { platform: "macOS" }, platform: "" })).toBe(true);
+    expect(isMac({ platform: "Win32" })).toBe(false);
+    expect(isMac({ userAgentData: { platform: "Linux" }, platform: "Linux x86_64" })).toBe(false);
+    expect(isMac({})).toBe(false);
   });
 });

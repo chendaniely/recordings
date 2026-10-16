@@ -70,6 +70,10 @@ describe("pickerTags", () => {
       tag("talks", 2), tag("Private/x", 1, true), tag("notes/lecture", 3), tag("fresh", 0),
     ]);
   });
+  it("keeps tags the picker touched, at 0 and with the flag the server last gave, when the view drops them", () => {
+    const view = { tags: [{ tag: "talks", count: 2, private: false }], note_types: [] } as unknown as LibraryView;
+    expect(pickerTags(view, [], [tag("private", 1, true), tag("talks", 9)])).toEqual([tag("talks", 2), tag("private", 0, true)]);
+  });
 });
 
 describe("pickerGroups (the first item shown is the first ranked)", () => {

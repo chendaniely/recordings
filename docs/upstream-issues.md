@@ -87,6 +87,32 @@ back to it, delete the line in `vite.config.js` and `build.test.ts`'s expectatio
 **The skill doesn't say this either.** Its Vite config maps `react-dom` to the global without
 noting that the global lacks the index module's exports.
 
+## cmdk 1.1.1: aria-activedescendant lags the highlight under a controlled `value`
+
+Found 2026-10-16, by Task 11's council (a real-browser screen-reader probe of the tag picker).
+
+**What cmdk does.** The input's (and the list's) `aria-activedescendant` is cmdk's
+`selectedItemId`. cmdk sets it in a scheduled layout effect that reads the DOM's
+`[aria-selected="true"]` item. With a controlled `value`, the root's scheduler effect runs before
+the effect that applies the new value (`dist/index.mjs`: `ke()` is registered before the
+controlled-value effect). So it reads the item highlighted before, or none. And a re-highlight to
+an item whose value is unchanged never updates it at all. After opening, after typing, and after
+the box is cleared, the input points at the old item, or at nothing, until an arrow key moves the
+highlight.
+
+**Why it matters.** A screen reader announces the wrong tag, or none, as the highlighted one,
+while Enter acts on the item the eye sees.
+
+**The workaround.** `TagPicker.tsx`'s `mirrorActiveItem` watches the list with a
+`MutationObserver` (`aria-selected`, subtree, child list) and the input's own
+`aria-activedescendant`. It copies the highlighted item's id onto the input and the list whenever
+they differ, and removes it when nothing is highlighted. A Vitest test and the e2e test
+`test_the_box_names_the_highlighted_item_as_it_moves` check it.
+
+**When it can go.** When a cmdk release keeps `selectedItemId` in step with a controlled `value`.
+To check, delete the `useLayoutEffect` that calls `mirrorActiveItem` and run that e2e test. If it
+passes, the workaround can go. Re-check on every cmdk bump.
+
 ## shinyreact-build-app skill: what it doesn't cover
 
 - **How long an output lives once its components unmount** (the first entry above). The skill doesn't

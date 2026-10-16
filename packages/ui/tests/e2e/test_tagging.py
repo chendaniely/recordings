@@ -178,6 +178,8 @@ def test_the_plus_adds_several_tags_creates_removes_and_stays_open(
     box.press("Enter")  # Enter on a partial name picks the existing tag, never Create
     expect(box).to_be_visible()  # the picker stays open for the next tag
     wait_until(lambda: server.tags(apollo13) == [("lectures", "you"), ("space/apollo", "you")])
+    box.press("Enter")  # the box is clear and nothing was chosen: no tag nobody picked (ruled)
+    expect(page.get_by_test_id("picker-note")).to_have_text("Type a tag name, or use the arrows")
     box.fill("apollo")
     item = page.locator("[data-testid=picker-item][data-tag='space/apollo']")
     expect(item).to_have_attribute("data-state", "all")
@@ -233,7 +235,11 @@ def test_the_confirmation_opens_over_the_plus_picker_and_leaves_it_open(
     expect(confirm).to_have_count(0)
     expect(box).to_be_focused()
     wait_until(lambda: server.tags(fdr) == [])
-    expect(item).to_have_count(0)  # no recording has it now: the server's recount drops it
+    # No recording has it now, so the server's recount drops it; the picker keeps it, as none,
+    # under its lock, so a second Shift+Delete can't move on to another tag.
+    expect(item).to_have_attribute("data-state", "none")
+    box.press("Shift+Delete")
+    expect(confirm).to_have_count(0)
     page.keyboard.press("Escape")  # now the picker
     expect(box).to_have_count(0)
     expect(plus).to_be_focused()  # Radix gives focus back to the +
@@ -241,3 +247,92 @@ def test_the_confirmation_opens_over_the_plus_picker_and_leaves_it_open(
     expect(box).to_be_focused()
     header.locator("h1").click()  # an outside click still closes it
     expect(box).to_have_count(0)
+
+
+ACTIVE = """() => {
+    const box = document.querySelector('[data-testid=picker-input]');
+    const on = document.querySelector('[cmdk-item][aria-selected=true]');
+    return [box.getAttribute('aria-activedescendant'), on ? on.id : null];
+}"""
+
+
+def test_the_box_names_the_highlighted_item_as_it_moves(page: Page, server, console):
+    # why: cmdk 1.1.1 left aria-activedescendant on the item before (or none) until an arrow key,
+    # so a screen reader announced the wrong tag after opening, typing or an add (Task 11 council).
+    def follows() -> bool:
+        active, selected = page.evaluate(ACTIVE)
+        return selected is not None and active == selected
+
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Add tags to JFK")
+    ).click()
+    box = page.get_by_test_id("picker-input")
+    expect(box).to_be_focused()
+    wait_until(follows, timeout=3)  # after opening
+    box.fill("spa")
+    wait_until(follows, timeout=3)  # after typing
+    box.press("Enter")
+    expect(box).to_have_value("")
+    wait_until(follows, timeout=3)  # after Enter cleared the box
+
+
+def luminance(rgb: list[int]) -> float:
+    def channel(v: int) -> float:
+        c = v / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (channel(v) for v in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a: list[int], b: list[int]) -> float:
+    hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+COLOURS = """() => {
+    const rgb = (css) => {
+        const c = document.createElement('canvas');
+        c.width = c.height = 1;
+        const x = c.getContext('2d');
+        x.fillStyle = css;
+        x.fillRect(0, 0, 1, 1);
+        return [...x.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    };
+    const item = document.querySelector('[data-testid=picker-item][aria-selected=true]');
+    const s = getComputedStyle(item);
+    const plus = getComputedStyle(document.querySelector(
+        '[data-testid=recording-header] [data-testid=add-tag]'));
+    const probe = document.body.appendChild(document.createElement('span'));
+    probe.style.color = 'var(--muted-foreground)';
+    const muted = getComputedStyle(probe).color;
+    probe.remove();
+    return {
+        ring: rgb(s.outlineColor), ringStyle: s.outlineStyle, ringWidth: parseFloat(s.outlineWidth),
+        item: rgb(s.backgroundColor),
+        popover: rgb(getComputedStyle(item.closest('[data-slot=popover-content]')).backgroundColor),
+        plusBorder: plus.borderTopColor, plusStyle: plus.borderTopStyle, muted,
+    };
+}"""
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_highlighted_item_and_the_plus_stand_out_in_both_themes(
+    page: Page, server, console, scheme
+):
+    # why: the highlight was a background change of 1.2:1 (light) and 1.07:1 (dark), and the +'s
+    # dashed border used --border, not --muted-foreground (main spec §12.6a; Task 11 council).
+    page.emulate_media(color_scheme=scheme)
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Add tags to JFK")
+    ).click()
+    expect(page.locator("[data-testid=picker-item][aria-selected=true]")).to_have_count(1)
+    c = page.evaluate(COLOURS)
+    assert c["ringStyle"] == "solid" and c["ringWidth"] >= 2
+    assert contrast(c["ring"], c["popover"]) >= 3, c
+    assert contrast(c["ring"], c["item"]) >= 3, c
+    assert c["plusStyle"] == "dashed" and c["plusBorder"] == c["muted"], c

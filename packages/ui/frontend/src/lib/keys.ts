@@ -20,6 +20,14 @@ export function isTextEntry(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(TEXT_ENTRY) !== null;
 }
 
+interface NavigatorLike { platform?: string; userAgentData?: { platform?: string } }
+
+/** A Mac, iPad or iPhone, where hints name the Cmd key ⌘. The newer userAgentData first, then
+ * the older (deprecated, still everywhere) navigator.platform. */
+export function isMac(nav: NavigatorLike = navigator as NavigatorLike): boolean {
+  return /mac|iphone|ipad|ipod/i.test(nav.userAgentData?.platform || nav.platform || "");
+}
+
 /** Cmd on a Mac, Ctrl elsewhere: the key map's "Cmd/Ctrl". */
 export function commandKey(e: Pick<KeyLike, "metaKey" | "ctrlKey">): boolean {
   return e.metaKey || e.ctrlKey;

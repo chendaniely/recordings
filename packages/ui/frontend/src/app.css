@@ -144,7 +144,8 @@ tr.attn td { color: var(--destructive); }
    tag's text is isolated left to right and truncated when long; the highlighted item shows it
    whole, so a keyboard or touch user can read it (its full name is the option's name). */
 .picker { width: 100%; }
-.picker-title { padding: 10px 12px 2px; font-weight: 700; overflow-wrap: anywhere; }
+/* The title is the form's name: the dialog's DialogTitle (an h2), or the popover's heading. */
+.picker-title { margin: 0; padding: 10px 12px 2px; font-size: inherit; line-height: 1.35; font-weight: 700; overflow-wrap: anywhere; }
 /* The focus ring goes round the whole box, icon included, not inside it on the bare input. */
 .picker [cmdk-input]:focus-visible { outline: none; }
 .picker [data-slot=input-group]:focus-within { outline: 2px solid var(--ring); outline-offset: 1px; }
@@ -153,6 +154,9 @@ tr.attn td { color: var(--destructive); }
 .picker-tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-tag bdi { unicode-bidi: isolate; direction: ltr; }
 .picker-item[data-selected=true] .picker-tag { white-space: normal; overflow-wrap: anywhere; }
+/* The highlighted item has a ring, not only shadcn's --muted background (1.2:1 light, 1.07:1
+   dark): --ring is about 6:1 against the popover and the item in both themes (WCAG 1.4.11). */
+.picker-item[data-selected=true] { outline: 2px solid var(--ring); outline-offset: -2px; }
 .picker-state { flex: none; margin-left: auto; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
 .picker-x { flex: none; display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; border-radius: 999px; cursor: pointer; }
 .picker-x:hover { background: var(--muted); }
@@ -162,5 +166,6 @@ tr.attn td { color: var(--destructive); }
 .picker-note { min-height: 1.4em; margin: 0; padding: 2px 12px; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
 .picker-keys { margin: 0; padding: 6px 12px 10px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 11.5px; }
 .picker-popover { width: min(340px, calc(100vw - 32px)); }
-.add-tag { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; padding: 0; border: 1px dashed var(--border); border-radius: 999px; background: none; color: var(--muted-foreground); cursor: pointer; }
+/* The + is drawn in --muted-foreground, border included (main spec §12.6a). */
+.add-tag { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; padding: 0; border: 1px dashed var(--muted-foreground); border-radius: 999px; background: none; color: var(--muted-foreground); cursor: pointer; }
 .add-tag svg { width: 12px; height: 12px; }
