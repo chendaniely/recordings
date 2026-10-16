@@ -4,7 +4,14 @@ import pytest
 from recordings.archive import Archive, RawSource
 from recordings.models import Rendition
 from recordings.writer import Incoming
-from recordings_ui.views import library_view, recording_view, render_markdown
+from recordings_ui.views import (
+    library_view,
+    library_view_from,
+    recording_view,
+    render_markdown,
+    row,
+    summarise,
+)
 
 
 def test_library_lists_the_demo_newest_first(demo_archive, demo_ids):
@@ -281,3 +288,41 @@ def test_a_turn_shows_plauds_name_for_its_speaker(tmp_path, writer):
     ).recording
     turns = recording_view(writer.archive, rec.id)["transcripts"][0]["turns"]
     assert [t["speaker"] for t in turns] == ["Ada", "Speaker 2"]
+
+
+def test_rows_carry_the_duration_in_milliseconds(demo_archive, demo_ids):
+    # why: the Tags grid sorts by duration (tagging spec §7); the label alone can't sort.
+    rows = {r["id"]: r for r in library_view(Archive(demo_archive))["recordings"]}
+    assert rows[demo_ids["jfk-rice"]]["duration_ms"] == 90009
+    assert rows[demo_ids["jfk-rice"]]["duration"] == "1 min"
+
+
+def test_summarise_recounts_from_the_rows_alone(demo_archive):
+    view = library_view(Archive(demo_archive))
+    again = summarise(view["recordings"])
+    assert again == {k: view[k] for k in ("counts", "tags", "note_types")}
+    tagged = [
+        {**r, "tags": [*r["tags"], {"tag": "Private/x", "by": "you"}]} for r in view["recordings"]
+    ]
+    counted = summarise(tagged)
+    assert counted["counts"] == {"all": 4, "untagged": 0}
+    assert {"tag": "Private/x", "count": 4, "private": True} in counted["tags"]
+
+
+def test_a_view_from_recordings_matches_the_archives_own(demo_archive):
+    archive = Archive(demo_archive)
+    recordings = list(archive.iter_recordings())
+    assert library_view_from(recordings, archive.problems) == library_view(archive)
+    assert row(recordings[0])["id"] == recordings[0].id
+
+
+def test_a_note_type_known_only_from_an_exclusion_is_listed_at_zero(demo_archive):
+    # why: tagging plan, decision 18. A type removed from every recording is still one the
+    # archive has, through the exclusion, so the picker and the sidebar keep offering it.
+    archive = Archive(demo_archive)
+    first, *rest = archive.iter_recordings()
+    excluded = first.model_copy(update={"excluded_note_types": ["lecture"]})
+    view = library_view_from([excluded, *rest], archive.problems)
+    assert {"note_type": "lecture", "count": 0} in view["note_types"]
+    assert summarise(view["recordings"], ["lecture"])["note_types"] == view["note_types"]
+    assert {"note_type": "lecture", "count": 0} not in summarise(view["recordings"])["note_types"]

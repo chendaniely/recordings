@@ -7,6 +7,7 @@ skill, "Verify it": factor pure logic out of the app file).
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from datetime import datetime
 from urllib.parse import quote
 
@@ -45,13 +46,15 @@ def _tags(rec: Recording) -> list[dict]:
     return [{"tag": t.tag, "by": t.by} for t in rec.tags]
 
 
-def _row(rec: Recording) -> dict:
+def row(rec: Recording) -> dict:
+    """One Library row. The tag service patches rows with it after a tag change (spec §5)."""
     return {
         "id": rec.id,
         "title": rec.title,
         "recorded_at": rec.recorded_at.isoformat(),
         "when": when_label(rec.recorded_at),
         "duration": duration_label(rec.media.duration_ms),
+        "duration_ms": rec.media.duration_ms,
         "kind": rec.media.kind,
         "sources": sorted({s.kind for s in rec.sources}),
         "tags": _tags(rec),
@@ -60,24 +63,41 @@ def _row(rec: Recording) -> dict:
     }
 
 
-def library_view(archive: Archive) -> dict:
-    recordings = sorted(archive.iter_recordings(), key=lambda r: r.recorded_at, reverse=True)
-    counts = Counter(t.tag for rec in recordings for t in rec.tags)
+def summarise(rows: Iterable[dict], known_types: Iterable[str] = ()) -> dict:
+    """The library view's counts, tags (each with its `private` flag) and note types, from its
+    rows alone. The tag service recounts them after every change (spec §5); the browser never
+    re-implements the privacy rule. A note type in `known_types` that no row carries is listed
+    with a count of 0: the archive still has it, through an exclusion, so the picker and the
+    sidebar keep offering it (tagging plan, decision 18)."""
+    rows = list(rows)
+    counts = Counter(t["tag"] for r in rows for t in r["tags"])
+    types = dict.fromkeys(known_types, 0)
+    types |= {t.removeprefix("notes/"): n for t, n in counts.items() if t.startswith("notes/")}
     return {
-        "recordings": [_row(r) for r in recordings],
-        "counts": {"all": len(recordings), "untagged": sum(is_untagged(r) for r in recordings)},
+        "counts": {"all": len(rows), "untagged": sum(not r["tags"] for r in rows)},
         "tags": [
             {"tag": tag, "count": n, "private": is_private_tag(tag)}
             for tag, n in sorted(counts.items())
             if not tag.startswith("notes/")
         ],
-        "note_types": [
-            {"note_type": tag.removeprefix("notes/"), "count": n}
-            for tag, n in sorted(counts.items())
-            if tag.startswith("notes/")
-        ],
-        "problems": [{"path": str(p.path), "message": p.message} for p in archive.problems],
+        "note_types": [{"note_type": t, "count": n} for t, n in sorted(types.items())],
     }
+
+
+def library_view_from(recordings: Iterable[Recording], problems: Iterable[Problem]) -> dict:
+    ordered = sorted(recordings, key=lambda r: r.recorded_at, reverse=True)
+    rows = [row(r) for r in ordered]
+    excluded = {n for r in ordered for n in r.excluded_note_types}  # decision 18
+    return {
+        "recordings": rows,
+        **summarise(rows, excluded),
+        "problems": [{"path": str(p.path), "message": p.message} for p in problems],
+    }
+
+
+def library_view(archive: Archive) -> dict:
+    recordings = list(archive.iter_recordings())  # fills archive.problems as it goes
+    return library_view_from(recordings, archive.problems)
 
 
 def _turns(r: Rendition) -> list[dict]:
