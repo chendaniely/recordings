@@ -22,7 +22,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from recordings.models import Recording, TagRef, is_private
+from recordings.models import Recording, TagRef, is_private, is_private_tag
 
 NOTES = "notes/"
 
@@ -34,32 +34,54 @@ TOO_LONG = "Each folder part is at most 64 characters, and the whole tag at most
 PATH_LIKE = "A folder part can't be . or .., and a tag can't hold a backslash."
 NOTE_TYPE = "Note types come from prompt files: notes/<type> must name one the archive has."
 LOOKS_PRIVATE = "Did you mean `private`?"
+TOO_MANY_MARKS = "Too many combining marks are stacked on one letter."
 CASE_VARIANT = "A tag with the same letters in another case exists already."
 
 MAX_PART = 64
 MAX_TAG = 200
-_REFUSED = frozenset({"Cc", "Cf", "Zl", "Zp", "Co", "Cs"})
+_REFUSED = frozenset({"Cc", "Cf", "Cn", "Zl", "Zp", "Co", "Cs"})
 _NOTE_TYPE = re.compile(r"[a-z0-9-]+")
 # Cyrillic and Greek letters that look like the Latin letters of "private" (spec §4).
 _CONFUSABLES = str.maketrans(
     {
-        "р": "p",  # Cyrillic er
-        "ρ": "p",  # Greek rho
-        "г": "r",  # Cyrillic ghe
-        "і": "i",  # Cyrillic byelorussian-ukrainian i
-        "ι": "i",  # Greek iota
-        "ı": "i",  # dotless i
-        "ӏ": "i",  # Cyrillic palochka
-        "ѵ": "v",  # Cyrillic izhitsa
-        "ν": "v",  # Greek nu
-        "а": "a",  # Cyrillic a
-        "α": "a",  # Greek alpha
-        "т": "t",  # Cyrillic te
-        "τ": "t",  # Greek tau
-        "е": "e",  # Cyrillic ie
-        "ε": "e",  # Greek epsilon
+        "\u0440": "p",  # Cyrillic er
+        "\u03c1": "p",  # Greek rho
+        "\u0433": "r",  # Cyrillic ghe
+        "\u0456": "i",  # Cyrillic byelorussian-ukrainian i
+        "\u03b9": "i",  # Greek iota
+        "\u0131": "i",  # dotless i
+        "\u04cf": "i",  # Cyrillic palochka
+        "\u0475": "v",  # Cyrillic izhitsa
+        "\u03bd": "v",  # Greek nu
+        "\u0430": "a",  # Cyrillic a
+        "\u03b1": "a",  # Greek alpha
+        "\u0442": "t",  # Cyrillic te
+        "\u03c4": "t",  # Greek tau
+        "\u0435": "e",  # Cyrillic ie
+        "\u03b5": "e",  # Greek epsilon
+        "\u0251": "a",  # Latin alpha
+        "\u0269": "i",  # Latin iota
+        "\u1d20": "v",  # small capital V
+        "\u1d00": "a",  # small capital A
+        "\u2228": "v",  # logical or
+        "\u13e2": "p",  # Cherokee letter
+        "\u13a1": "r",  # Cherokee letter
+        "\u13d9": "v",  # Cherokee letter
+        "\u13aa": "a",  # Cherokee letter
+        "\u13a2": "t",  # Cherokee letter
+        "\u13ac": "e",  # Cherokee letter
     }
 )
+# Characters that read as a "/" (U+FF0F is the one NFKC folds), so a lookalike folder is seen.
+_SLASHES = str.maketrans(dict.fromkeys("\u2044\u2215\u29f8\u2571\uff0f", "/"))
+# Default-ignorable code points outside category Cf that draw nothing (refused as INVISIBLE).
+_HIDDEN = frozenset(
+    {0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x3164, 0xFFA0, 0x2800}
+    | set(range(0x180B, 0x1810))
+    | set(range(0xFE00, 0xFE10))
+    | set(range(0xE0100, 0xE01F0))
+)
+MAX_MARKS = 3
 
 
 class WouldExpose(RuntimeError):
@@ -69,6 +91,11 @@ class WouldExpose(RuntimeError):
     def __init__(self, recording_id: str) -> None:
         super().__init__(recording_id)
         self.recording_id = recording_id
+
+
+def _no_bare_string(value: object, what: str) -> None:
+    if isinstance(value, str):
+        raise TypeError(f"{what} must be a collection, not a str")
 
 
 class Op(Protocol):
@@ -136,6 +163,10 @@ class AddTags:
     tags: tuple[TagRef, ...]
     name: str = "add-tags"
 
+    def __post_init__(self) -> None:
+        _no_bare_string(self.tags, "tags")
+        object.__setattr__(self, "tags", tuple(self.tags))
+
     def apply(self, rec: Recording) -> Recording:
         tags, have = list(rec.tags), {t.tag for t in rec.tags}
         for tag in self.tags:
@@ -162,6 +193,12 @@ class RemoveTags:
     may_expose: frozenset[str] = frozenset()
     name: str = "remove-tags"
 
+    def __post_init__(self) -> None:
+        _no_bare_string(self.tags, "tags")
+        _no_bare_string(self.may_expose, "may_expose")
+        object.__setattr__(self, "tags", tuple(self.tags))
+        object.__setattr__(self, "may_expose", frozenset(self.may_expose))
+
     def apply(self, rec: Recording) -> Recording:
         drop = set(self.tags)
         kept = [t for t in rec.tags if t.tag not in drop]
@@ -184,7 +221,13 @@ class RestoreTags:
     may_expose: frozenset[str] = frozenset()
     name: str = "restore-tags"
 
+    def __post_init__(self) -> None:
+        _no_bare_string(self.may_expose, "may_expose")
+        object.__setattr__(self, "may_expose", frozenset(self.may_expose))
+
     def apply(self, rec: Recording) -> Recording:
+        if rec.id != self.effect.recording_id:
+            raise ValueError("this effect belongs to another recording")
         gained = set(self.effect.gained)
         tags = [t for t in rec.tags if t.tag not in gained]
         have = {t.tag for t in tags}
@@ -218,6 +261,7 @@ class Recorded:
 
     def apply(self, rec: Recording) -> Recording:
         self.before = rec
+        self.after = None  # an op that raises must not leave the last call's result behind
         self.after = self.op.apply(rec)
         return self.after
 
@@ -233,6 +277,15 @@ def _reads_as(part: str) -> str:
     return text.translate(_CONFUSABLES)
 
 
+def _has_many_marks(text: str) -> bool:
+    run = 0
+    for c in text:
+        run = run + 1 if unicodedata.category(c).startswith("M") else 0
+        if run > MAX_MARKS:
+            return True
+    return False
+
+
 def validate_new_tag(
     tag: str, *, note_types: Collection[str] = (), existing: Collection[str] = ()
 ) -> str | None:
@@ -240,11 +293,13 @@ def validate_new_tag(
     is never checked: adding it again, or removing it, accepts any spelling."""
     if not unicodedata.is_normalized("NFC", tag):
         return NOT_NFC
-    if any(unicodedata.category(c) in _REFUSED for c in tag):
+    if any(unicodedata.category(c) in _REFUSED or ord(c) in _HIDDEN for c in tag):
         return INVISIBLE
     parts = tag.split("/")
     if any(not p or p != p.strip() for p in parts):
         return EMPTY_PART
+    if _has_many_marks(tag):
+        return TOO_MANY_MARKS
     if len(tag) > MAX_TAG or any(len(p) > MAX_PART for p in parts):
         return TOO_LONG
     if "\\" in tag or any(p in (".", "..") for p in parts):
@@ -259,8 +314,13 @@ def validate_new_tag(
         )
         if not ok:
             return NOTE_TYPE
-    if _reads_as(parts[0]) == "private" and parts[0].casefold() != "private":
+    # A slash lookalike hides a private folder: judge the first folder of the tag as it reads.
+    first_as_read = tag.translate(_SLASHES).split("/", 1)[0]
+    plain_private = parts[0].casefold() == "private"
+    if _reads_as(first_as_read) == "private" and not plain_private:
         return LOOKS_PRIVATE  # tagging plan, decision 2
+    if is_private_tag(tag) != plain_private:
+        return LOOKS_PRIVATE  # the app's rule and the archive's plain rule must agree
     folded = tag.casefold()
     if any(other != tag and other.casefold() == folded for other in existing):
         return CASE_VARIANT

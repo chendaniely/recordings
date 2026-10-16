@@ -92,11 +92,11 @@ def test_is_private(tags, private):
         "Private",
         "PRIVATE/journal",
         "private/health",
-        "ｐｒｉｖａｔｅ",  # fullwidth: NFKC folds it (tagging spec §4)
-        "pri​vate/notes",  # a zero-width space is a format character, dropped
-        "‍Private",  # a zero-width joiner in front
-        "private­",  # a soft hyphen
-        "private／journal",  # a fullwidth solidus is a folder separator after NFKC
+        "\uff50\uff52\uff49\uff56\uff41\uff54\uff45",  # fullwidth: NFKC folds it (tagging spec §4)
+        "pri\u200bvate/notes",  # a zero-width space is a format character, dropped
+        "\u200dPrivate",  # a zero-width joiner in front
+        "private\u00ad",  # a soft hyphen
+        "private\uff0fjournal",  # a fullwidth solidus is a folder separator after NFKC
     ],
 )
 def test_a_tag_whose_first_folder_is_private_in_any_case_is_private(tag):
@@ -104,10 +104,10 @@ def test_a_tag_whose_first_folder_is_private_in_any_case_is_private(tag):
 
 
 @pytest.mark.parametrize(
-    "tag", ["privateer", "notes/private", "public", "Privateer/x", "рrivate", "pri vate"]
+    "tag", ["privateer", "notes/private", "public", "Privateer/x", "\u0440rivate", "pri vate"]
 )
 def test_other_tags_are_not_private(tag):
-    # "рrivate" starts with a Cyrillic er: not private here, and refused as a new tag
+    # "\u0440rivate" starts with a Cyrillic er: not private here, and refused as a new tag
     # (tagops.validate_new_tag), so it can never be created by the app.
     assert is_private_tag(tag) is False
 

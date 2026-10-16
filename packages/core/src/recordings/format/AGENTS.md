@@ -7,7 +7,10 @@
 1. **Read `README.md` and `FORMAT.md` first.**
 2. **Privacy.** A recording is private when its `recording.json` has a
    `private` or `private/…` tag, in any capitalisation: any tag whose first folder is
-   `private`, such as `Private` or `Private/health`. A private recording is for local
+   `private`, such as `Private` or `Private/health`. The first folder is read after ignoring
+   width and compatibility forms (Unicode NFKC) and invisible format characters, and a
+   fullwidth `／` counts as `/`: `ｐｒｉｖａｔｅ` and `private／x` are private too. When unsure
+   whether a tag is private, treat it as private. A private recording is for local
    models only: models running on the owner's own hardware (the DGX Spark, the homelab
    server or the owner's Mac). What counts is where the *model* runs, not where the agent
    program runs, so Claude Code is external on every machine. If you are any other agent or

@@ -94,6 +94,8 @@ def test_the_docs_say_privacy_ignores_capitalisation_and_means_local_models_only
         assert "`Private/health`" in text, doc
         assert "local models only" in text, doc
         assert "own hardware" in text, doc
+        # the hardened rule (tagging spec section 4): NFKC, invisible characters, fullwidth slash
+        assert "NFKC" in text and "invisible" in text and "when unsure" in text.lower(), doc
     agents = read("AGENTS.md")
     assert "any other agent or model" in agents
     assert "treat yourself as external" in agents

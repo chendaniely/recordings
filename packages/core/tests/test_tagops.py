@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 from pydantic import ValidationError
-from recordings.models import Recording, TagRef
+from recordings.models import Recording, TagRef, is_private_tag
 from recordings.tagops import (
     CASE_VARIANT,
     EMPTY_PART,
@@ -16,6 +16,7 @@ from recordings.tagops import (
     NOTE_TYPE,
     PATH_LIKE,
     TOO_LONG,
+    TOO_MANY_MARKS,
     AddTags,
     Effect,
     LostTag,
@@ -93,12 +94,19 @@ def test_removing_a_note_type_records_the_exclusion_whoever_added_it():
 
 def test_a_removal_accepts_an_existing_odd_spelling():
     # why: spec §4, "Removal accepts any existing spelling". New tags with it are refused.
-    odd = "talks​"
+    odd = "talks\u200b"
     assert names(RemoveTags((odd,)).apply(rec(odd, "school"))) == ["school"]
 
 
 @pytest.mark.parametrize(
-    "spelling", ["private", "Private/health", "PRIVATE", "ｐｒｉｖａｔｅ", "pri​vate"]
+    "spelling",
+    [
+        "private",
+        "Private/health",
+        "PRIVATE",
+        "\uff50\uff52\uff49\uff56\uff41\uff54\uff45",
+        "pri\u200bvate",
+    ],
 )
 def test_removing_the_last_private_tag_is_refused_without_may_expose(spelling):
     before = rec(spelling, "talks")
@@ -189,22 +197,25 @@ def test_removes_last_private():
 @pytest.mark.parametrize(
     ("tag", "message"),
     [
-        ("pri​vate", INVISIBLE),  # zero-width space
-        ("‮private", INVISIBLE),  # right-to-left override
-        ("ｐｒｉｖａｔｅ", LOOKS_PRIVATE),  # fullwidth (tagging plan, decision 2)
-        ("рrivate", LOOKS_PRIVATE),  # Cyrillic er
-        ("privαte/x", LOOKS_PRIVATE),  # Greek alpha
-        ("prİvate", LOOKS_PRIVATE),  # capital I with a dot
-        ("prívate", LOOKS_PRIVATE),  # an accent
+        ("pri\u200bvate", INVISIBLE),  # zero-width space
+        ("\u202eprivate", INVISIBLE),  # right-to-left override
+        (
+            "\uff50\uff52\uff49\uff56\uff41\uff54\uff45",
+            LOOKS_PRIVATE,
+        ),  # fullwidth (tagging plan, decision 2)
+        ("\u0440rivate", LOOKS_PRIVATE),  # Cyrillic er
+        ("priv\u03b1te/x", LOOKS_PRIVATE),  # Greek alpha
+        ("pr\u0130vate", LOOKS_PRIVATE),  # capital I with a dot
+        ("pr\u00edvate", LOOKS_PRIVATE),  # an accent
         ("..", PATH_LIKE),
         ("school/../x", PATH_LIKE),
         ("a\\b", PATH_LIKE),
         ("a\x00b", INVISIBLE),
         ("a\nb", INVISIBLE),
-        ("a b", INVISIBLE),  # line separator
+        ("a\u2028b", INVISIBLE),  # line separator
         ("x" * 65, TOO_LONG),
         ("/".join(["x" * 60] * 4), TOO_LONG),  # 243 characters
-        ("café", NOT_NFC),
+        ("cafe\u0301", NOT_NFC),
         ("a//b", EMPTY_PART),
         (" a", EMPTY_PART),
         ("notes/unknown", NOTE_TYPE),  # not a type the archive has
@@ -224,7 +235,7 @@ def test_a_new_tag_that_breaks_a_rule_is_refused(tag, message):
         "school/course-101",
         "private",
         "Private/health",
-        "café",
+        "caf\u00e9",
         "notes/lecture",
         "日本語/メモ",
         "my talks",
@@ -234,7 +245,7 @@ def test_a_new_tag_that_meets_the_rules_is_allowed(tag):
     assert validate_new_tag(tag, note_types={"lecture"}) is None
 
 
-@pytest.mark.parametrize("tag", ["private ", " private", "private ", " private"])
+@pytest.mark.parametrize("tag", ["private ", " private", "private\u00a0", "\u00a0private"])
 def test_a_padded_first_part_is_refused_before_it_can_become_a_tag(tag):
     # why: the controller's ruling on Task 1. Such a tag would not fold to `private`, so it must
     # never exist: validate_new_tag refuses it, and TagRef itself refuses a space-padded part
@@ -252,13 +263,13 @@ def test_a_case_variant_of_an_existing_tag_is_refused():
 @pytest.mark.parametrize(
     ("tag", "message"),
     [
-        ("zebra​secret", INVISIBLE),
-        ("zebracé", NOT_NFC),
+        ("zebra\u200bsecret", INVISIBLE),
+        ("zebrace\u0301", NOT_NFC),
         ("zebra//secret", EMPTY_PART),
         ("zebra" * 20, TOO_LONG),
         ("zebra/../secret", PATH_LIKE),
         ("notes/zebra", NOTE_TYPE),
-        ("рrivate/zebra", LOOKS_PRIVATE),
+        ("\u0440rivate/zebra", LOOKS_PRIVATE),
         ("Zebra", CASE_VARIANT),
     ],
 )
@@ -284,3 +295,110 @@ def test_tagops_imports_with_sqlite3_and_fcntl_blocked():
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert done.returncode == 0, done.stderr
+
+
+# ---- fix round 1: the two privacy rules agree, invisible and lookalike characters ------------
+def _plain_rule(tag: str) -> bool:
+    """The archive's own rule for agents (format/AGENTS.md): first ASCII-slash folder."""
+    return tag.split("/", 1)[0].casefold() == "private"
+
+
+def _fullwidth(text: str) -> str:
+    return "".join(chr(ord(c) + 0xFEE0) for c in text)
+
+
+SLASHES = ["\u2044", "\u2215", "\u29f8", "\u2571", "\uff0f"]
+HIDDEN = [
+    "\u3164", "\u115f", "\u1160", "\uffa0", "\u2800", "\u2065", "\u034f", "\u17b4", "\u17b5",
+    "\u180b", "\u180c", "\u180d", "\u180e", "\u180f", "\ufe00", "\ufe0f", "\U000e0100",
+    "\U000e01ef",
+]  # fmt: skip
+CONFUSABLE_CASES = [
+    ("\u0251", "priv{}te"), ("\u0269", "pr{}vate"), ("\u1d20", "pri{}ate"),
+    ("\u1d00", "priv{}te"), ("\u2228", "pri{}ate"), ("\u13e2", "{}rivate"),
+    ("\u13a1", "p{}ivate"), ("\u13d9", "pri{}ate"), ("\u13aa", "priv{}te"),
+    ("\u13a2", "priva{}e"), ("\u13ac", "privat{}"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("slash", SLASHES)
+def test_a_slash_lookalike_after_private_is_refused_as_looking_private(slash):
+    assert validate_new_tag(f"private{slash}journal") == LOOKS_PRIVATE
+
+
+def test_a_fullwidth_private_before_a_fullwidth_slash_is_refused():
+    assert validate_new_tag(_fullwidth("private") + "\uff0fx") == LOOKS_PRIVATE
+
+
+@pytest.mark.parametrize("char", HIDDEN, ids=[f"U+{ord(c):04X}" for c in HIDDEN])
+def test_an_invisible_character_is_refused(char):
+    assert validate_new_tag(f"private{char}") == INVISIBLE
+
+
+@pytest.mark.parametrize(
+    ("char", "pattern"), CONFUSABLE_CASES, ids=[f"U+{ord(c):04X}" for c, _ in CONFUSABLE_CASES]
+)
+def test_more_lookalike_letters_of_private_are_refused(char, pattern):
+    assert validate_new_tag(pattern.format(char)) == LOOKS_PRIVATE
+
+
+def test_a_tag_with_many_stacked_combining_marks_is_refused():
+    assert validate_new_tag("x" + "\u0301" * 4) == TOO_MANY_MARKS
+    assert validate_new_tag("x" + "\u0301" * 3) is None
+    assert "a" not in TOO_MANY_MARKS.split()
+
+
+def test_every_accepted_tag_is_private_exactly_when_the_plain_rule_says():
+    probes = [
+        "private", "Private/x", "privateer", "notes/private", "my talks", "pri vate", "private/",
+        "PRIVATE\uff0fx", "\u0440rivate", "caf\u00e9", "private\u00ad", "\u200dprivate",
+        "\ufb00/x", "\u2160/x", "private\u00a0", "a\u2044b", "private\u2044x", "x/private",
+        *(f"private{s}journal" for s in SLASHES),
+        *(f"private{h}" for h in HIDDEN),
+        *(p.format(c) for c, p in CONFUSABLE_CASES),
+        _fullwidth("private") + "\uff0fx",
+        _fullwidth("private"),
+    ]  # fmt: skip
+    accepted = [t for t in probes if validate_new_tag(t, note_types={"lecture"}) is None]
+    assert "private" in accepted and "Private/x" in accepted  # the sweep isn't vacuous
+    for tag in accepted:
+        assert is_private_tag(tag) == _plain_rule(tag), ascii(tag)
+
+
+# ---- fix round 1: guards on the operations -------------------------------------------------
+def test_operations_refuse_a_bare_string_and_coerce_sequences():
+    with pytest.raises(TypeError):
+        AddTags("work")
+    with pytest.raises(TypeError):
+        RemoveTags("talks")
+    with pytest.raises(TypeError):
+        RemoveTags(("a",), may_expose=RID)
+    with pytest.raises(TypeError):
+        RestoreTags(effect_of(rec(), rec()), may_expose=RID)
+    op = RemoveTags(["a"], {RID})
+    assert op.tags == ("a",) and op.may_expose == frozenset({RID})
+    assert AddTags([TagRef(tag="a")]).tags == (TagRef(tag="a"),)
+
+
+def test_restore_refuses_another_recordings_effect():
+    before = rec("a")
+    effect = effect_of(before, AddTags(you("b")).apply(before))
+    other = rec("a").model_copy(update={"id": "20261007T140003-0700_bbbbbbbb"})
+    with pytest.raises(ValueError, match="recording"):
+        RestoreTags(effect).apply(other)
+
+
+def test_recorded_clears_after_before_calling_the_op():
+    class Boom:
+        name = "boom"
+
+        def apply(self, rec):
+            raise RuntimeError
+
+    op = Recorded(AddTags(you("work")), "req0001abcd")
+    op.apply(rec("talks"))
+    assert op.after is not None
+    op.op = Boom()
+    with pytest.raises(RuntimeError):
+        op.apply(rec("talks"))
+    assert op.after is None

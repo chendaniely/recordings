@@ -172,7 +172,7 @@ def is_private_tag(tag: str) -> bool:
 
     The one place the rule lives. `Private/health` is private; `privateer` and
     `notes/private` are not. It errs towards private: the tag is folded with Unicode NFKC
-    (so a fullwidth `ｐｒｉｖａｔｅ`, or a fullwidth solidus, counts) and format characters
+    (so a fullwidth spelling of the word, or a fullwidth solidus, counts) and format characters
     such as a zero-width space are dropped, before `casefold()` (tagging spec §4).
     """
     folded = unicodedata.normalize("NFKC", tag)
