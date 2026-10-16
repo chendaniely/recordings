@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { LibraryRow, LibraryView, TagResult } from "../types";
-import { filterIsShown, markReply, mergeReply, orderFor, shownTags, withIds } from "./library";
+import {
+  OPENING, cannotTagText, filterIsShown, markReply, mergeReply, orderFor, shownTags, tagStatus, withIds,
+} from "./library";
 
 const row = (id: string, tags: string[] = []): LibraryRow => ({
   id, title: id, recorded_at: "2026-10-06T14:00:00-07:00", when: "", duration: null, duration_ms: null,
@@ -90,5 +92,30 @@ describe("pending add after a pending remove", () => {
       { request_id: "2", action: "remove" as const, ids: ["b"], tags: ["x"] },
     ];
     expect(shownTags(view.recordings[1], pending)).toEqual([]);
+  });
+});
+
+describe("whether tagging is on (spec §5 can_tag; Task 7 carry)", () => {
+  it("is on when the server says so", () => {
+    expect(tagStatus(view, false)).toEqual({ canTag: true, opening: false, reason: null });
+  });
+  it("treats the first draw's 'being opened' as a moment, not tagging off for good", () => {
+    const opening = { ...view, can_tag: false, cannot_tag_reason: OPENING };
+    const status = tagStatus(opening, false);
+    expect(status).toEqual({ canTag: false, opening: true, reason: null });
+    expect(cannotTagText(status)).toBe("Opening the archive… try again in a moment.");
+    expect(tagStatus(null, false)).toEqual({ canTag: false, opening: true, reason: null });
+  });
+  it("gives the server's reason, a long path included, when tagging is off", () => {
+    const reason = "this is the NAS mirror's copy (/volume1/archives/recordings-mirror/archive)";
+    const status = tagStatus({ ...view, can_tag: false, cannot_tag_reason: reason }, false);
+    expect(status).toEqual({ canTag: false, opening: false, reason });
+    expect(cannotTagText(status)).toBe(reason);
+    expect(cannotTagText(tagStatus({ ...view, can_tag: false, cannot_tag_reason: null }, false))).toBe("Tagging is off.");
+  });
+  it("is off once the connection is lost: nothing more can reach the server", () => {
+    const status = tagStatus(view, true);
+    expect(status.canTag).toBe(false);
+    expect(cannotTagText(status)).toBe("Lost the connection. Reload to keep working.");
   });
 });

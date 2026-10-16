@@ -82,3 +82,26 @@ export function filterIsShown(filter: Filter, view: Pick<LibraryView, "tags" | "
   if (filter.tag.startsWith("notes/")) return view.note_types.some((n) => `notes/${n.note_type}` === filter.tag);
   return view.tags.some((t) => t.tag === filter.tag);
 }
+
+/** The server's reason while the first open of the archive is still running (recordings_ui
+ * writing.OPENING): the Library is drawn at once without tagging, then again when the open ends
+ * (spec §5). A moment, not tagging off. */
+export const OPENING = "the archive is being opened";
+const LOST = "Lost the connection. Reload to keep working.";
+
+export interface TagStatus { canTag: boolean; opening: boolean; reason: string | null }
+
+/** Whether tagging is on. `reason` is why it is off for good (the server's words, which may be a
+ * long path), null while the archive is still being opened or the library hasn't come yet. */
+export function tagStatus(view: Pick<LibraryView, "can_tag" | "cannot_tag_reason"> | null, lost: boolean): TagStatus {
+  if (lost) return { canTag: false, opening: false, reason: LOST };
+  if (!view) return { canTag: false, opening: true, reason: null };
+  if (view.can_tag) return { canTag: true, opening: false, reason: null };
+  if (view.cannot_tag_reason === OPENING) return { canTag: false, opening: true, reason: null };
+  return { canTag: false, opening: false, reason: view.cannot_tag_reason ?? "Tagging is off." };
+}
+
+/** What `T`, a drop or an Undo say when tagging is off. */
+export function cannotTagText(status: TagStatus): string {
+  return status.opening ? "Opening the archive… try again in a moment." : status.reason ?? "Tagging is off.";
+}
