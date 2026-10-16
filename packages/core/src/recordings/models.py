@@ -13,6 +13,15 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 
 from recordings.ids import ID_PATTERN, ID_RE
 
+# Code points that draw nothing but are not format characters (category Cf): Hangul fillers, the
+# Braille blank, variation selectors and the like. `is_private_tag` ignores them, and a new tag
+# may not hold them (`tagops.validate_new_tag`).
+HIDDEN_CODEPOINTS = frozenset(
+    {0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x3164, 0xFFA0, 0x2800}
+    | set(range(0x180B, 0x1810))
+    | set(range(0xFE00, 0xFE10))
+    | set(range(0xE0100, 0xE01F0))
+)
 FORMAT = "recordings-archive@1"
 RENDITION_SCHEMA = "recordings/rendition@1"
 # recording.json sits at recordings/YYYY/MM/<id>/, four levels below the archive root.
@@ -173,11 +182,14 @@ def is_private_tag(tag: str) -> bool:
     The one place the rule lives. `Private/health` is private; `privateer` and
     `notes/private` are not. It errs towards private: the tag is folded with Unicode NFKC
     (so a fullwidth spelling of the word, or a fullwidth solidus, counts) and format characters
-    such as a zero-width space are dropped, before `casefold()` (tagging spec §4).
+    such as a zero-width space, and the other invisible code points in `HIDDEN_CODEPOINTS`, are
+    dropped, before `casefold()` (tagging spec §4).
     """
     folded = unicodedata.normalize("NFKC", tag)
     first = folded.split("/", 1)[0]
-    first = "".join(c for c in first if unicodedata.category(c) != "Cf")
+    first = "".join(
+        c for c in first if unicodedata.category(c) != "Cf" and ord(c) not in HIDDEN_CODEPOINTS
+    )
     return first.casefold() == "private"
 
 

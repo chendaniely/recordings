@@ -8,6 +8,12 @@ under the recording's lock, with `rev` and the refusal of files edited outside t
 This module imports only `recordings.models` and the standard library: the Pages demo can't
 import sqlite3 or fcntl (stage-2a decision 6).
 
+**Threat model.** The name rules guard against the owner's accidental input (a paste, an
+autocorrect, a lookalike keyboard), not against an adversary: exotic homoglyphs beyond the
+table below are out of scope. Refusing unassigned code points (category Cn) ties validation to
+the runtime's Unicode version: Pyodide's older tables may refuse a newly encoded character as
+invisible.
+
 **The privacy gate.** An operation that can remove a tag raises `WouldExpose` when its result
 would leave a recording that had a private tag with none, unless the recording's ID is in
 `may_expose`. It decides on the Recording it is given, which under `mutate` is the file as it is
@@ -22,7 +28,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from recordings.models import Recording, TagRef, is_private, is_private_tag
+from recordings.models import HIDDEN_CODEPOINTS, Recording, TagRef, is_private, is_private_tag
 
 NOTES = "notes/"
 
@@ -34,6 +40,7 @@ TOO_LONG = "Each folder part is at most 64 characters, and the whole tag at most
 PATH_LIKE = "A folder part can't be . or .., and a tag can't hold a backslash."
 NOTE_TYPE = "Note types come from prompt files: notes/<type> must name one the archive has."
 LOOKS_PRIVATE = "Did you mean `private`?"
+SPACE = "Use a plain space, not another kind of space character."
 TOO_MANY_MARKS = "Too many combining marks are stacked on one letter."
 CASE_VARIANT = "A tag with the same letters in another case exists already."
 
@@ -70,17 +77,23 @@ _CONFUSABLES = str.maketrans(
         "\u13aa": "a",  # Cherokee letter
         "\u13a2": "t",  # Cherokee letter
         "\u13ac": "e",  # Cherokee letter
+        "\u1d18": "p",  # small capital P
+        "\u0280": "r",  # small capital R
+        "\u026a": "i",  # small capital I
+        "\u1d1b": "t",  # small capital T
+        "\u1d07": "e",  # small capital E
     }
 )
 # Characters that read as a "/" (U+FF0F is the one NFKC folds), so a lookalike folder is seen.
-_SLASHES = str.maketrans(dict.fromkeys("\u2044\u2215\u29f8\u2571\uff0f", "/"))
-# Default-ignorable code points outside category Cf that draw nothing (refused as INVISIBLE).
-_HIDDEN = frozenset(
-    {0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x3164, 0xFFA0, 0x2800}
-    | set(range(0x180B, 0x1810))
-    | set(range(0xFE00, 0xFE10))
-    | set(range(0xE0100, 0xE01F0))
+_SLASHES = str.maketrans(
+    dict.fromkeys(
+        "\u2044\u2215\u29f8\u2571\uff0f\u27cb\u2e4a\u29f6\u2afd\u1735\u3033\u30ce\u31d3\u4e3f\u2f03"
+        "\u2cc6\U0001d23a\u2041",
+        "/",
+    )
 )
+# Combining solidus overlays: they draw a slash over the letter before.
+_OVERLAYS = frozenset({0x0337, 0x0338})
 MAX_MARKS = 3
 
 
@@ -94,8 +107,8 @@ class WouldExpose(RuntimeError):
 
 
 def _no_bare_string(value: object, what: str) -> None:
-    if isinstance(value, str):
-        raise TypeError(f"{what} must be a collection, not a str")
+    if isinstance(value, str | TagRef):
+        raise TypeError(f"{what} must be a collection, not a single {type(value).__name__}")
 
 
 class Op(Protocol):
@@ -166,6 +179,8 @@ class AddTags:
     def __post_init__(self) -> None:
         _no_bare_string(self.tags, "tags")
         object.__setattr__(self, "tags", tuple(self.tags))
+        if not all(isinstance(t, TagRef) for t in self.tags):
+            raise TypeError("tags must be TagRef objects")
 
     def apply(self, rec: Recording) -> Recording:
         tags, have = list(rec.tags), {t.tag for t in rec.tags}
@@ -280,7 +295,7 @@ def _reads_as(part: str) -> str:
 def _has_many_marks(text: str) -> bool:
     run = 0
     for c in text:
-        run = run + 1 if unicodedata.category(c).startswith("M") else 0
+        run = run + 1 if unicodedata.category(c) in ("Mn", "Me") else 0
         if run > MAX_MARKS:
             return True
     return False
@@ -293,11 +308,16 @@ def validate_new_tag(
     is never checked: adding it again, or removing it, accepts any spelling."""
     if not unicodedata.is_normalized("NFC", tag):
         return NOT_NFC
-    if any(unicodedata.category(c) in _REFUSED or ord(c) in _HIDDEN for c in tag):
+    if any(
+        unicodedata.category(c) in _REFUSED or ord(c) in HIDDEN_CODEPOINTS or ord(c) in _OVERLAYS
+        for c in tag
+    ):
         return INVISIBLE
     parts = tag.split("/")
     if any(not p or p != p.strip() for p in parts):
         return EMPTY_PART
+    if any(unicodedata.category(c) == "Zs" and c != " " for c in tag):
+        return SPACE
     if _has_many_marks(tag):
         return TOO_MANY_MARKS
     if len(tag) > MAX_TAG or any(len(p) > MAX_PART for p in parts):

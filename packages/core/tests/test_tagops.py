@@ -15,6 +15,7 @@ from recordings.tagops import (
     NOT_NFC,
     NOTE_TYPE,
     PATH_LIKE,
+    SPACE,
     TOO_LONG,
     TOO_MANY_MARKS,
     AddTags,
@@ -267,6 +268,9 @@ def test_a_case_variant_of_an_existing_tag_is_refused():
         ("zebrace\u0301", NOT_NFC),
         ("zebra//secret", EMPTY_PART),
         ("zebra" * 20, TOO_LONG),
+        ("zebrax" + "\u0301" * 4, TOO_MANY_MARKS),
+        ("zebra\u00a0secret", SPACE),
+        ("zebra\u0338", INVISIBLE),
         ("zebra/../secret", PATH_LIKE),
         ("notes/zebra", NOTE_TYPE),
         ("\u0440rivate/zebra", LOOKS_PRIVATE),
@@ -307,7 +311,10 @@ def _fullwidth(text: str) -> str:
     return "".join(chr(ord(c) + 0xFEE0) for c in text)
 
 
-SLASHES = ["\u2044", "\u2215", "\u29f8", "\u2571", "\uff0f"]
+SLASHES = [
+    "\u2044", "\u2215", "\u29f8", "\u2571", "\uff0f", "\u27cb", "\u2e4a", "\u29f6", "\u2afd",
+    "\u1735", "\u3033", "\u30ce", "\u31d3", "\u4e3f", "\u2f03", "\u2cc6", "\U0001d23a", "\u2041",
+]  # fmt: skip
 HIDDEN = [
     "\u3164", "\u115f", "\u1160", "\uffa0", "\u2800", "\u2065", "\u034f", "\u17b4", "\u17b5",
     "\u180b", "\u180c", "\u180d", "\u180e", "\u180f", "\ufe00", "\ufe0f", "\U000e0100",
@@ -317,7 +324,9 @@ CONFUSABLE_CASES = [
     ("\u0251", "priv{}te"), ("\u0269", "pr{}vate"), ("\u1d20", "pri{}ate"),
     ("\u1d00", "priv{}te"), ("\u2228", "pri{}ate"), ("\u13e2", "{}rivate"),
     ("\u13a1", "p{}ivate"), ("\u13d9", "pri{}ate"), ("\u13aa", "priv{}te"),
-    ("\u13a2", "priva{}e"), ("\u13ac", "privat{}"),
+    ("\u13a2", "priva{}e"), ("\u13ac", "privat{}"), ("\u1d18", "{}rivate"),
+    ("\u0280", "p{}ivate"), ("\u026a", "pr{}vate"), ("\u1d1b", "priva{}e"),
+    ("\u1d07", "privat{}"),
 ]  # fmt: skip
 
 
@@ -345,7 +354,8 @@ def test_more_lookalike_letters_of_private_are_refused(char, pattern):
 def test_a_tag_with_many_stacked_combining_marks_is_refused():
     assert validate_new_tag("x" + "\u0301" * 4) == TOO_MANY_MARKS
     assert validate_new_tag("x" + "\u0301" * 3) is None
-    assert "a" not in TOO_MANY_MARKS.split()
+    assert validate_new_tag("zebrax" + "\u0301" * 4) == TOO_MANY_MARKS
+    assert "zebra" not in TOO_MANY_MARKS.casefold()
 
 
 def test_every_accepted_tag_is_private_exactly_when_the_plain_rule_says():
@@ -402,3 +412,38 @@ def test_recorded_clears_after_before_calling_the_op():
     with pytest.raises(RuntimeError):
         op.apply(rec("talks"))
     assert op.after is None
+
+
+# ---- fix round 2: the owner's accidental input, not an adversary ----------------------------
+def test_japanese_tags_still_pass_though_the_katakana_no_is_a_slash_lookalike():
+    # why: the slash mapping only feeds the lookalike test, so a tag whose first folder isn't a
+    # private lookalike is untouched.
+    assert validate_new_tag("\u30e1\u30e2/\u30ce\u30fc\u30c8") is None
+    assert validate_new_tag("\u30ce\u30fc\u30c8") is None
+
+
+@pytest.mark.parametrize("char", ["\u0337", "\u0338"], ids=["U+0337", "U+0338"])
+def test_a_combining_solidus_overlay_is_refused(char):
+    assert validate_new_tag(f"private{char}journal") == INVISIBLE
+    assert validate_new_tag(f"x{char}") == INVISIBLE
+
+
+@pytest.mark.parametrize("char", ["\u00a0", "\u2003", "\u3000", "\u202f"])
+def test_a_space_that_is_not_a_plain_space_is_refused_inside_a_tag(char):
+    assert validate_new_tag(f"my{char}talks") == SPACE
+    assert validate_new_tag("my talks") is None
+
+
+def test_spacing_marks_are_not_counted_as_stacked_marks():
+    assert validate_new_tag("\u1000\u103c\u103d\u1031\u1038") is None  # Burmese
+    assert validate_new_tag("x" + "\u0903" * 5) is None  # spacing marks (Mc)
+    assert validate_new_tag("x" + "\u20dd" * 4) == TOO_MANY_MARKS  # enclosing marks (Me)
+
+
+def test_operations_refuse_a_single_tagref_or_plain_strings_to_add():
+    with pytest.raises(TypeError):
+        AddTags(TagRef(tag="a"))
+    with pytest.raises(TypeError):
+        AddTags(("work",))
+    with pytest.raises(TypeError):
+        RemoveTags(TagRef(tag="a"))

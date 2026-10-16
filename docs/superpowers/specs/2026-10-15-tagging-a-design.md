@@ -119,9 +119,10 @@ later.
 
   `mutate` itself is unchanged. A tag that another writer added between the browser's view and
   the write is therefore never in the effect, and Undo leaves it alone.
-- **Names.** Removal accepts any existing spelling. A *new* tag must also meet these rules:
+- **Names.** Removal accepts any existing spelling. A *new* tag must also meet these rules, which guard against the owner's accidental input (a paste, an autocorrect), not an adversary:
   - It is in Unicode normal form NFC, with no control, format, separator, private-use or
-    surrogate characters (categories Cc, Cf, Zl, Zp, Co, Cs).
+    surrogate or unassigned characters (categories Cc, Cf, Zl, Zp, Co, Cs, Cn), no other
+    invisible code point, and no space other than U+0020.
   - Each folder part is at most 64 characters, and the whole tag at most 200.
   - No part is `.` or `..`, and there's no `\`.
   - `notes/<type>` names a type the archive already has, with `<type>` matching `[a-z0-9-]+`.

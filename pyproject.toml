@@ -59,7 +59,8 @@ extend-exclude = ["*.md"]
 select = [
     "E", "F", "W", "I", "UP", "B", "SIM", "C4", "DTZ", "PERF", "BLE", "PLW", "FURB", "RUF",
     "ISC004",
-    "PLE2502",  # bidi controls in source (Trojan Source): write them as \u escapes
+    # bidi and invisible characters in source (Trojan Source): write them as \u escapes
+    "PLE2502", "PLE2510", "PLE2512", "PLE2513", "PLE2514", "PLE2515",
 ]
 ignore = [
     "RUF001", "RUF002", "RUF003",  # deliberate typographic dashes; test_ids.py's lookalike digits

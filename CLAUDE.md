@@ -83,7 +83,7 @@ smoke test on purpose until someone does the steps below:
 - **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
   make archives with `recordings.init.init_archive` (or the `writer` fixture).
 - **Privacy:** a recording is private if a tag is `private` or under `private/`, in any
-  capitalisation, read after NFKC and without invisible format characters, a fullwidth `／`
+  capitalisation, read after NFKC and without invisible characters, a fullwidth `／`
   counting as `/` (`recordings.models.is_private_tag`). The private tag lands before any source or
   output does. Don't read a private recording's transcript or notes. No report, alert or log
   carries a title.

@@ -8,7 +8,7 @@
 2. **Privacy.** A recording is private when its `recording.json` has a
    `private` or `private/…` tag, in any capitalisation: any tag whose first folder is
    `private`, such as `Private` or `Private/health`. The first folder is read after ignoring
-   width and compatibility forms (Unicode NFKC) and invisible format characters, and a
+   width and compatibility forms (Unicode NFKC) and invisible characters, and a
    fullwidth `／` counts as `/`: `ｐｒｉｖａｔｅ` and `private／x` are private too. When unsure
    whether a tag is private, treat it as private. A private recording is for local
    models only: models running on the owner's own hardware (the DGX Spark, the homelab

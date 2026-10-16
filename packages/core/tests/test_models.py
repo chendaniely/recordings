@@ -97,6 +97,9 @@ def test_is_private(tags, private):
         "\u200dPrivate",  # a zero-width joiner in front
         "private\u00ad",  # a soft hyphen
         "private\uff0fjournal",  # a fullwidth solidus is a folder separator after NFKC
+        "private\u3164",  # a Hangul filler: invisible, not a format character, still dropped
+        "private\u2800",  # a Braille blank
+        "pri\ufe0fvate",  # a variation selector
     ],
 )
 def test_a_tag_whose_first_folder_is_private_in_any_case_is_private(tag):

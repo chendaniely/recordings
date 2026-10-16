@@ -154,7 +154,7 @@ records its snapshot in `inputs.source` and the hash of what it carries in
 - **A recording is private** when any tag in its `recording.json` has `private` as its first
   folder, in any capitalisation: `private`, `private/journal`, `Private/health` and so on,
   but not `privateer` or `notes/private`. The first folder is read after ignoring width and
-  compatibility forms (Unicode NFKC) and invisible format characters, and a fullwidth `／`
+  compatibility forms (Unicode NFKC) and invisible characters, and a fullwidth `／`
   counts as `/`; when unsure, treat the tag as private. Private recordings are for local models only,
   meaning models running on the owner's own hardware (where the model runs counts, not
   where the agent program runs). No other agent or model reads or receives their
