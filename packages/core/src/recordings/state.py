@@ -98,7 +98,7 @@ class Revision:
     rev: int
     sha256: str
     body: bytes
-    origin: str  # the op's name, "create" or "adopted"
+    origin: str  # the op's name ("create", "adopted", "merge-duplicate"), or <op>:<request_id>
     committed: bool
 
 

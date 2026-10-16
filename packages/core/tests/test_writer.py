@@ -16,9 +16,11 @@ from recordings.archive import Archive, RawSource, sha256_file
 from recordings.config import load_config
 from recordings.index import Index, IndexRefused
 from recordings.init import adopt_archive
+from recordings.locks import Locks, LockTimeout
 from recordings.models import Rendition, TagRef, is_private
 from recordings.sentinel import MIRROR, SENTINEL
 from recordings.state import State
+from recordings.tagops import Recorded, RemoveTags, WouldExpose
 from recordings.writer import (
     AddTags,
     IndexUnavailable,
@@ -910,3 +912,61 @@ def test_two_writer_processes_never_lose_an_update(writer, make_incoming):
     assert [p.wait(timeout=120) for p in procs] == [0, 0]
     final = writer.archive.load(rec.id)
     assert len(final.tags) == 50 and final.rev == 51
+
+
+def test_add_tags_is_the_tagops_one():
+    # why: tagging spec §4. The operations live in tagops, which Pages can import; writer.py
+    # re-exports AddTags so every existing caller keeps working.
+    from recordings import tagops
+
+    assert AddTags is tagops.AddTags
+
+
+def test_the_lock_timeout_is_each_writers_own(make_writer, make_incoming):
+    # why: tagging spec §5 and §11. The tag service waits 2 s; the CLI and the import keep 30 s.
+    writer = make_writer()
+    rec = writer.add(make_incoming()).recording
+    quick = Writer(writer.root, writer.state, writer.index, writer_id="test", lock_timeout=0.1)
+    assert quick.locks.timeout == 0.1 and writer.locks.timeout == 30.0
+    with Locks(writer.state.locks_dir).hold(rec.id), pytest.raises(LockTimeout):
+        quick.mutate(rec.id, AddTags((TagRef(tag="talks"),)))
+
+
+def test_writer_open_passes_the_lock_timeout_through(writer, tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n'
+        f'[state]\npath = "{writer.state.path}"\n'
+        f'[index]\npath = "{writer.index.path}"\n',
+        encoding="utf-8",
+    )
+    opened = Writer.open(load_config({"RECORDINGS_CONFIG": str(cfg_file)}), lock_timeout=2.0)
+    assert opened.locks.timeout == 2.0
+
+
+def test_a_tag_write_records_its_request_and_the_merge_base_still_works(writer, make_incoming):
+    # why: tagging spec §5, "The record", and §11: revisions.origin becomes <op>:<request_id>,
+    # and nothing that reads revisions (reindex, the merge bases) may break.
+    rec = writer.add(make_incoming()).recording
+    rel = writer._rel(rec.id)
+    writer.mutate(rec.id, Recorded(AddTags((TagRef(tag="talks"),)), "req0001abcd"))
+    assert writer.state.last_committed(rel).origin == "add-tags:req0001abcd"
+    report = writer.reindex()
+    assert report.adopted == () and report.invalid == ()
+    assert writer.mutate(rec.id, AddTags((TagRef(tag="next"),))).rev == 3
+
+
+def test_would_expose_leaves_the_file_and_its_revisions_untouched(writer, make_incoming):
+    # why: tagging spec §4. The gate raises inside apply, under the lock, before anything is
+    # written: no file, no rev, no pending revision.
+    rec = writer.add(make_incoming(tags=(TagRef(tag="private"),))).recording
+    rel = writer._rel(rec.id)
+    path = writer.root / rel
+    before = path.read_bytes()
+    with pytest.raises(WouldExpose):
+        writer.mutate(rec.id, Recorded(RemoveTags(("private",)), "req0002abcd"))
+    assert path.read_bytes() == before
+    assert writer.state.pending(rel) is None
+    assert writer.state.last_committed(rel).rev == 1
+    allowed = writer.mutate(rec.id, RemoveTags(("private",), frozenset({rec.id})))
+    assert allowed.tags == [] and allowed.rev == 2

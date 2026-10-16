@@ -68,6 +68,7 @@ from recordings.refs import canonical_ref
 from recordings.selfdoc import write_docs
 from recordings.sentinel import MIRROR, SentinelError, is_mirror, read_sentinel
 from recordings.state import State, StateError, unreadable
+from recordings.tagops import AddTags  # re-exported: the tag operations live in tagops (spec §4)
 
 INDEX_LOCK = "index"
 DOCS_LOCK = "docs"
@@ -101,23 +102,13 @@ class IndexUnavailable(WriterError):
 
 
 class Op(Protocol):
-    name: str
+    """What `mutate` applies. `name` is recorded as the revision's origin in state.db: the
+    operation's name, or `<op>:<request_id>` for a tag write (tagops.Recorded)."""
+
+    @property
+    def name(self) -> str: ...
 
     def apply(self, rec: Recording) -> Recording: ...
-
-
-@dataclass(frozen=True)
-class AddTags:
-    tags: tuple[TagRef, ...]
-    name: str = "add-tags"
-
-    def apply(self, rec: Recording) -> Recording:
-        tags, have = list(rec.tags), {t.tag for t in rec.tags}
-        for tag in self.tags:
-            if tag.tag not in have:
-                tags.append(tag)
-                have.add(tag.tag)
-        return rec.model_copy(update={"tags": tags})
 
 
 @dataclass(frozen=True)
@@ -279,6 +270,7 @@ class Writer:
         writer_id: str,
         rebuild: bool = True,
         auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE,
+        lock_timeout: float = 30.0,
     ) -> None:
         self.auto_private = tuple(auto_private)
         self.root = Path(root)
@@ -309,7 +301,9 @@ class Writer:
             )
         self.state, self.index, self.writer_id = state, index, writer_id
         self.archive = Archive(self.root)  # its own reader, never the UI's
-        self.locks = Locks(state.locks_dir)
+        # Each Writer's own wait: the tag service waits 2 s, so a busy recording is reported
+        # instead of freezing a click (tagging spec §5); the CLI and the import keep 30 s.
+        self.locks = Locks(state.locks_dir, timeout=lock_timeout)
         self._sweep_tmp()
         foreign = index.archive_uuid() != self.identity.uuid  # new, damaged or another archive's
         # rebuild=False is for `reindex`, which rebuilds on its own terms (--allow-missing).
@@ -337,7 +331,9 @@ class Writer:
                 ) from None
 
     @classmethod
-    def open(cls, cfg: Config, *, docs: bool = True, rebuild: bool = True) -> Writer:
+    def open(
+        cls, cfg: Config, *, docs: bool = True, rebuild: bool = True, lock_timeout: float = 30.0
+    ) -> Writer:
         missing = [
             name
             for name, value in (
@@ -365,6 +361,7 @@ class Writer:
             writer_id=cfg.writer_id,
             rebuild=rebuild,
             auto_private=patterns,
+            lock_timeout=lock_timeout,
         )
         if docs:
             writer.write_docs()  # §6.7: at startup, and only into an archive with its sentinel
