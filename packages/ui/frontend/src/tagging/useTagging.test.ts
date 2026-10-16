@@ -118,7 +118,7 @@ describe("useTagging: inputs and the queue (spec §5, §6)", () => {
     expect(tagging.view?.recordings[0].tags.map((t) => t.tag)).toEqual(["talks", "work"]);
     expect(tagging.marks.a).toEqual({ done: true });
     expect(tagging.touched).toBe(1);
-    expect(tagging.lastTagged).toBe("work");
+    expect(tagging.lastTagged).toEqual({ tags: ["work"], ids: ["a"], key: 1 }); // the IDs it went to
     expect(said(`tag-${sent()[0].request_id}`)).toBe("Added work to 1 recording");
   });
   it("shows a big request's progress when it is sent, not while it waits", () => {

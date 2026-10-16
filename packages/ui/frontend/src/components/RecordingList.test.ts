@@ -1,4 +1,6 @@
 import { createElement } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,7 +12,7 @@ const toasts = vi.hoisted(() => ({ showCannotTag: vi.fn() }));
 vi.mock("../tagging/toasts", () => toasts);
 vi.mock("../sr", () => ({})); // useTagging's Shiny side: the list only reads the context
 
-import { KEY_HINT, RecordingList, openPickerFor } from "./RecordingList";
+import { Announcer, KEY_HINT, RecordingList, openPickerFor } from "./RecordingList";
 
 const row = (id: string): LibraryRow => ({
   id, title: `Week ${id}`, recorded_at: "2026-10-06T14:00:00-07:00", when: "", duration: null, duration_ms: null,
@@ -32,7 +34,10 @@ const draw = (tagging: Tagging, list = rows) =>
     createElement(
       TaggingContext.Provider,
       { value: tagging },
-      createElement(RecordingList, { rows: list, sel: NO_SEL, act: () => {}, openId: null, onOpen: () => {}, announce: "" }),
+      createElement(RecordingList, {
+        rows: list, sel: NO_SEL, act: () => {}, openId: null, onOpen: () => {}, announce: { text: "", key: 0 },
+        fitted: { key: 0, reason: "load" },
+      }),
     ),
   );
 
@@ -88,5 +93,29 @@ describe("the list's header (spec §6)", () => {
   it("says on the demo that changes aren't saved", () => {
     expect(draw(fake({ saves: false }))).toMatch(/Demo: changes aren(&#x27;|')t saved/);
     expect(draw(fake())).not.toContain("Demo:");
+  });
+});
+
+describe("the list, fix round 1 (Task 12)", () => {
+  it("is named once: the grid is Recordings, its section isn't a second Recordings", () => {
+    const html = draw(fake());
+    expect(html.match(/aria-label="Recordings"/g)).toHaveLength(1);
+    expect(html).toMatch(/role="grid"[^>]*aria-label="Recordings"|aria-label="Recordings"[^>]*role="grid"/);
+  });
+  it("reads out an announcement again when the same words come round again", async () => {
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    const frame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+    const say = (text: string, key: number) => flushSync(() => root.render(createElement(Announcer, { text, at: key })));
+    const region = () => host.querySelector("[role=status]")!.textContent;
+    say("2 hidden rows deselected", 1);
+    await frame();
+    expect(region()).toBe("2 hidden rows deselected");
+    say("2 hidden rows deselected", 2);
+    expect(region()).toBe(""); // emptied first, so the same words are a change
+    await frame();
+    expect(region()).toBe("2 hidden rows deselected");
+    root.unmount();
+    host.remove();
   });
 });

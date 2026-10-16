@@ -81,6 +81,30 @@ export function prune(sel: Sel, order: readonly string[]): { sel: Sel; hidden: n
   };
 }
 
+/** Where a row that left the order (a Refresh) hands its place on: itself while it is still there;
+ * else the first row at or after its place in the order before that is still there; else the
+ * nearest one before it (ruled, Task 12 fix round 1). Null when none is left, or it was never in
+ * the order. */
+export function survivor(id: string | null, before: readonly string[], after: ReadonlySet<string>): string | null {
+  if (id === null) return null;
+  if (after.has(id)) return id;
+  const at = before.indexOf(id);
+  if (at < 0) return null;
+  for (let i = at + 1; i < before.length; i++) if (after.has(before[i])) return before[i];
+  for (let i = at - 1; i >= 0; i--) if (after.has(before[i])) return before[i];
+  return null;
+}
+
+/** A load or Refresh: the selection keeps the rows still there, quietly; focus and the anchor
+ * stay, or move to the row that took their place, so the user keeps their place in the list. With
+ * no focus yet (the first load), both start on the first row. */
+export function refit(sel: Sel, before: readonly string[], order: readonly string[]): Sel {
+  const keep = new Set(order);
+  const selected = new Set([...sel.selected].filter((id) => keep.has(id)));
+  const focus = survivor(sel.focus, before, keep) ?? order[0] ?? null;
+  return { selected, anchor: survivor(sel.anchor, before, keep) ?? focus, focus };
+}
+
 /** What `T`, the selection bar and Cmd-Z's neighbours act on: the selection in list order, or the
  * focused row when nothing is selected (tagging plan, decision 4). */
 export function targetsOf(sel: Sel, order: readonly string[]): string[] {

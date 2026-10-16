@@ -47,3 +47,13 @@ describe("useMediaQuery", () => {
     expect(media.listeners.size).toBe(0);
   });
 });
+
+describe("useMediaQuery without matchMedia (fix round 1, Task 12)", () => {
+  it("answers false, and doesn't throw, where there is no matchMedia (jsdom)", () => {
+    expect(typeof window.matchMedia).toBe("undefined"); // jsdom, unstubbed
+    const root = createRoot(document.createElement("div"));
+    flushSync(() => root.render(createElement(Probe)));
+    expect(seen).toEqual([false]);
+    root.unmount();
+  });
+});

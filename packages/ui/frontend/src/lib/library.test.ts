@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { LibraryRow, LibraryView, TagResult } from "../types";
 import {
-  OPENING, cannotTagText, filterIsShown, markReply, mergeReply, orderFor, shownTags, tagStatus, withIds,
+  OPENING, cannotTagText, filterIsShown, justTaggedTags, markReply, mergeReply, orderFor, shownTags, tagStatus, withIds,
 } from "./library";
 
 const row = (id: string, tags: string[] = []): LibraryRow => ({
@@ -117,5 +117,19 @@ describe("whether tagging is on (spec §5 can_tag; Task 7 carry)", () => {
     const status = tagStatus(view, true);
     expect(status.canTag).toBe(false);
     expect(cannotTagText(status)).toBe("Lost the connection. Reload to keep working.");
+  });
+});
+
+describe('"just tagged" describes the selection it was applied to (ruled, Task 12 fix round 1)', () => {
+  const last = { tags: ["work"], ids: ["a", "b"], key: 3 };
+  it("names an add made to exactly the selection, since the selection last changed", () => {
+    expect(justTaggedTags(last, new Set(["b", "a"]), 2)).toEqual(["work"]);
+  });
+  it("names nothing for another selection, one row's +, or an add from before the selection changed", () => {
+    expect(justTaggedTags(last, new Set(["a", "b", "c"]), 2)).toBe(null);
+    expect(justTaggedTags({ ...last, ids: ["a"] }, new Set(["a", "b"]), 2)).toBe(null);
+    expect(justTaggedTags(last, new Set(["a", "c"]), 2)).toBe(null);
+    expect(justTaggedTags(last, new Set(["a", "b"]), 3)).toBe(null); // the selection changed after it
+    expect(justTaggedTags(null, new Set(["a", "b"]), 0)).toBe(null);
   });
 });

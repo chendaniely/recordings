@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { NO_SEL, hiddenText, prune, reduceSel, targetsOf, type Sel, type SelAction } from "./selection";
+import { NO_SEL, hiddenText, prune, reduceSel, refit, survivor, targetsOf, type Sel, type SelAction } from "./selection";
 
 const order = ["a", "b", "c", "d", "e"];
 const run = (...actions: SelAction[]): Sel => actions.reduce((s, a) => reduceSel(s, a, order), NO_SEL);
@@ -101,5 +101,30 @@ describe("after a filter change", () => {
     expect(hiddenText(1)).toBe("1 hidden row deselected");
     expect(hiddenText(9)).toBe("9 hidden rows deselected");
     expect(hiddenText(0)).toBe("");
+  });
+});
+
+describe("after a load or Refresh (ruled, Task 12 fix round 1)", () => {
+  it("a row that left is replaced by the first survivor at or after its place, else the nearest before", () => {
+    const after = new Set(["a", "d", "e"]);
+    expect(survivor("b", order, after)).toBe("d"); // b and c left: d followed them
+    expect(survivor("d", order, after)).toBe("d"); // still there
+    expect(survivor("e", order, new Set(["a", "b"]))).toBe("b"); // nothing after: the nearest before
+    expect(survivor("c", order, new Set())).toBe(null);
+    expect(survivor(null, order, after)).toBe(null);
+    expect(survivor("x", order, after)).toBe(null); // never in the order
+  });
+  it("keeps the rows still there, and moves focus and the anchor to their survivors", () => {
+    const before: Sel = { selected: new Set(["b", "c", "e"]), anchor: "b", focus: "c" };
+    const next = refit(before, order, ["a", "d", "e"]);
+    expect(ids(next)).toEqual(["e"]);
+    expect(next.focus).toBe("d"); // c's place, in the new order
+    expect(next.anchor).toBe("d"); // b's too
+    const kept = refit({ ...before, focus: "e", anchor: "a" }, order, ["a", "d", "e"]);
+    expect([kept.anchor, kept.focus]).toEqual(["a", "e"]); // both still there: nothing moves
+    expect(refit(before, order, [])).toEqual({ selected: new Set(), anchor: null, focus: null });
+  });
+  it("with no focus yet (the first load), focus and the anchor start on the first row", () => {
+    expect(refit(NO_SEL, [], ["b", "c"])).toEqual({ selected: new Set(), anchor: "b", focus: "b" });
   });
 });

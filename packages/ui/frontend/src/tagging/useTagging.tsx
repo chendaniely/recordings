@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { markReply, mergeReply, tagStatus, type Marks } from "@/lib/library";
+import { markReply, mergeReply, tagStatus, type JustTagged, type Marks } from "@/lib/library";
 import {
   EMPTY_QUEUE, dropAll, enqueue, enqueueFront, heard, newRequestId, pendingRequests, resume, stillWorking,
   takeNext, type Origin, type Queue,
@@ -30,7 +30,7 @@ export interface Tagging {
   confirm: ConfirmState | null;
   revealed: { key: number; ids: string[] }; // rows an Undo put back into the view
   touched: number;
-  lastTagged: string | null;
+  lastTagged: JustTagged | null; // the last add that changed something, and where it went
   sessionTags: string[];
   drag: { current: string[] | null }; // set at dragstart, never read from dataTransfer
   canTag: boolean;
@@ -80,7 +80,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   const [pending, setPending] = useState<TagRequest[]>([]);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [revealed, setRevealed] = useState({ key: 0, ids: [] as string[] });
-  const [lastTagged, setLastTagged] = useState<string | null>(null);
+  const [lastTagged, setLastTagged] = useState<JustTagged | null>(null);
   const [sessionTags, setSessionTags] = useState<string[]>([]);
   const [picker, setPicker] = useState<PickerTarget | null>(null);
   const [snippetVersion, setSnippetVersion] = useState(0);
@@ -238,7 +238,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       setRevealed((r) => ({ key: r.key + 1, ids: reply.rows.map((row) => row.id) }));
     }
     if (request.action === "add" && reply.changed > 0) {
-      setLastTagged(request.tags.length === 1 ? request.tags[0] : `${request.tags.length} tags`);
+      setLastTagged((last) => ({ tags: request.tags, ids: request.ids, key: (last?.key ?? 0) + 1 }));
     }
     if (mergesIntoCells(origin, request, reply)) {
       dismissProgress(request); // "Still working…", if a cell was that slow

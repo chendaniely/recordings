@@ -375,10 +375,15 @@ def test_arrows_select_as_they_move_and_enter_opens(page: Page, server, console)
     page.keyboard.press("ArrowDown")
     expect(rows.nth(1)).to_have_attribute("aria-selected", "true")
     expect(selected(page)).to_have_count(1)
+    expect(rows.nth(1)).to_have_attribute(
+        "aria-current", "true"
+    )  # the pane followed, after a pause
     page.keyboard.press("Shift+ArrowDown")
     expect(selected(page)).to_have_count(2)
     expect(rows.nth(2)).to_be_focused()  # focus moves in a frame after the key: wait for it
-    page.keyboard.press("Enter")
+    page.wait_for_timeout(600)  # past the pane's pause: Shift moves never open a row
+    expect(rows.nth(1)).to_have_attribute("aria-current", "true")
+    page.keyboard.press("Enter")  # so only Enter can open this one
     expect(rows.nth(2)).to_have_attribute("aria-current", "true")
 
 
@@ -506,6 +511,7 @@ def test_cmd_a_selects_rows_not_drawn_and_page_down_moves_a_screenful(
     rows.first.click()
     page.keyboard.press("ControlOrMeta+a")
     expect(page.get_by_test_id("selection-bar")).to_contain_text("300 selected")
+    expect(page.locator(".list-head [role=status]")).to_have_text("300 selected")  # and says so
     page.keyboard.press("Escape")
     expect(page.get_by_test_id("selection-bar")).to_have_count(0)
     page.keyboard.press("PageDown")
@@ -530,9 +536,10 @@ def test_a_rows_plus_picker_stays_open_when_its_row_scrolls_away(page: Page, big
     grid.evaluate("el => { el.scrollTop = 6000; }")
     # The rows near the top are gone, so the list has been drawn again since the scroll...
     expect(page.locator("[data-testid=recording-row][aria-rowindex='12']")).to_have_count(0)
-    # ...and the picker's row is still drawn, with the picker open on it.
+    # ...and the picker's row is still drawn, with the picker open on it, on screen.
     expect(page.locator(f"[data-testid=recording-row][data-id='{rid}']")).to_have_count(1)
     expect(box).to_be_focused()
+    expect(box).to_be_in_viewport()  # not following its row off the top (fix round 1)
     box.press("Escape")
     expect(box).to_have_count(0)
 
@@ -608,6 +615,10 @@ def test_rows_on_a_touch_screen_show_their_checkbox_and_no_x(page: Page, server,
     assert page.evaluate("() => matchMedia('(hover: none)').matches")
     row = page.get_by_test_id("recording-row").filter(has_text="JFK")
     expect(row.locator(".check")).to_be_visible()
+    # The only way to add to a selection by touch: a 24 px target (fix round 1), inside its row.
+    check, box = row.locator(".check").bounding_box(), row.bounding_box()
+    assert check["width"] >= 24 and check["height"] >= 24, check
+    assert box["y"] <= check["y"] and check["y"] + check["height"] <= box["y"] + box["height"]
     expect(row.locator(".chip-x")).to_have_count(2)
     for i in range(2):
         expect(row.locator(".chip-x").nth(i)).to_be_hidden()
@@ -643,3 +654,288 @@ def test_refresh_hands_focus_on_when_the_focused_row_goes(page: Page, big_server
     page.keyboard.press("ArrowDown")
     expect(selected(page)).to_have_attribute("aria-rowindex", "3")
     expect(selected(page)).to_be_focused()
+
+
+# Fix round 1 (Task 12 council). Each test says what was wrong.
+
+
+def focused_row(page: Page):
+    return page.locator("[data-testid=recording-row]:focus")
+
+
+def tag_with_t(page: Page, name: re.Pattern | str, tag: str, done: str) -> None:
+    """T on the focused row or the selection: add an existing tag, then Esc back to the list."""
+    page.keyboard.press("t")
+    box = page.get_by_role("dialog", name=name).get_by_test_id("picker-input")
+    box.fill(tag)
+    box.press("Enter")
+    expect(page.get_by_test_id("refresh")).to_contain_text(done)
+    page.keyboard.press("Escape")
+    expect(box).to_have_count(0)
+
+
+def test_refresh_keeps_the_focused_row_in_view_when_rows_above_it_go(
+    page: Page, big_server, console
+):
+    # why: rows above the focused row left on Refresh, the row moved up, and the list stayed where
+    # it was, with the focused row off-screen.
+    page.goto(big_server.url)
+    page.get_by_test_id("filter-untagged").click()
+    grid = page.get_by_test_id("recording-list")
+    expect(grid).to_have_attribute("aria-rowcount", "201")
+    page.get_by_test_id("recording-row").first.click()
+    for _ in range(20):
+        page.keyboard.press("Shift+ArrowDown")
+    expect(page.get_by_test_id("selection-bar")).to_contain_text("21 selected")
+    page.keyboard.press("ControlOrMeta+ArrowDown")  # focus moves on, outside the selection
+    expect(focused_row(page)).to_have_attribute("aria-rowindex", "23")
+    kept = focused_row(page).get_attribute("data-id")
+    tag_with_t(page, "Tag 21 recordings", "topic/t01", "21 tagged")
+    row = page.locator(f"[data-testid=recording-row][data-id='{kept}']")
+    expect(row).to_be_focused()
+    page.keyboard.press("r")
+    expect(grid).to_have_attribute("aria-rowcount", "180")
+    expect(row).to_have_attribute("aria-rowindex", "2")
+    expect(row).to_be_in_viewport()
+    expect(row).to_be_focused()
+
+
+def test_refresh_moves_focus_to_the_row_that_followed_a_tagged_one(page: Page, big_server, console):
+    # why: when the focused row itself left on Refresh (T, tag, R), focus went back to the first
+    # row and the list to the top, losing the user's place (ruled: the row that followed it).
+    page.goto(big_server.url)
+    page.get_by_test_id("filter-untagged").click()
+    grid = page.get_by_test_id("recording-list")
+    expect(grid).to_have_attribute("aria-rowcount", "201")
+    page.get_by_test_id("recording-row").first.click()
+    for _ in range(4):
+        page.keyboard.press("PageDown")
+    wait_until(lambda: int(focused_row(page).get_attribute("aria-rowindex")) > 20)
+    index = int(focused_row(page).get_attribute("aria-rowindex"))
+    then = page.locator(f"[data-testid=recording-row][aria-rowindex='{index + 1}']")
+    after = then.get_attribute("data-id")
+    tag_with_t(page, re.compile(r"^Tag Synthetic"), "topic/t01", "1 tagged")
+    page.keyboard.press("r")
+    expect(grid).to_have_attribute("aria-rowcount", "200")
+    following = page.locator(f"[data-testid=recording-row][data-id='{after}']")
+    expect(following).to_be_focused()
+    expect(following).to_have_attribute("aria-selected", "false")  # focus only: nothing selected
+    expect(following).to_be_in_viewport()
+    assert grid.evaluate("el => el.scrollTop") > 0
+
+
+def test_just_tagged_describes_the_selection_it_was_applied_to(
+    page: Page, server, console, demo_ids
+):
+    # why: "just tagged" was set by every add, a row's + included, and outlived the selection.
+    apollo11 = demo_ids["apollo11-first-steps"]
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.filter(has_text="Apollo 13").click()
+    rows.filter(has_text="JFK").click(modifiers=["ControlOrMeta"])
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    other = rows.filter(has_text="Apollo 11")
+    other.hover()
+    other.get_by_role("button", name=re.compile(r"^Add tags to Apollo 11")).click()
+    box = page.get_by_test_id("picker-input")
+    box.fill("review")
+    box.press("Shift+Enter")
+    wait_until(lambda: ("review", "you") in server.tags(apollo11))
+    box.press("Escape")
+    expect(box).to_have_count(0)
+    expect(bar).to_contain_text("2 selected")
+    expect(bar).not_to_contain_text("just tagged")  # a row's own + tagged that row only
+    tag_with_t(page, "Tag 2 recordings", "review", "3 tagged")
+    expect(bar).to_contain_text("just tagged review")
+    rows.filter(has_text="Fireside").click(modifiers=["ControlOrMeta"])
+    expect(bar).to_contain_text("3 selected")
+    expect(bar).not_to_contain_text("just tagged")  # another selection
+
+
+def test_a_filter_change_shows_the_first_row_and_leaves_focus_in_the_sidebar(
+    page: Page, big_server, console
+):
+    # why: the list stayed scrolled where the old filter was, so the new first row (the tab stop)
+    # was off-screen.
+    page.goto(big_server.url)
+    grid = page.get_by_test_id("recording-list")
+    expect(grid).to_have_attribute("aria-rowcount", "301")
+    grid.evaluate("el => { el.scrollTop = 6000; }")
+    wait_until(lambda: grid.evaluate("el => el.scrollTop") > 3000)
+    untagged = page.get_by_test_id("filter-untagged")
+    untagged.click()
+    expect(grid).to_have_attribute("aria-rowcount", "201")
+    first = page.locator("[data-testid=recording-row][aria-rowindex='2']")
+    expect(first).to_be_in_viewport()
+    expect(first).to_have_attribute("tabindex", "0")  # the tab stop
+    expect(untagged).to_be_focused()  # real focus stays in the sidebar
+
+
+ROW_COLOURS = """() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 1;
+    const x = c.getContext('2d');
+    const paint = (...layers) => {
+        x.clearRect(0, 0, 1, 1);
+        for (const l of layers) { x.fillStyle = l; x.fillRect(0, 0, 1, 1); }
+        return [...x.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    };
+    const vrows = document.querySelector('.vrows');
+    const list = getComputedStyle(document.querySelector('.list')).backgroundColor;
+    const states = {
+        plain: '', selected: 'sel', done: 'done', 'selected+done': 'sel done',
+        'selected+failed': 'sel failed',
+    };
+    const out = {};
+    for (const [name, cls] of Object.entries(states)) {
+        const row = document.createElement('div');
+        row.className = ('row ' + cls).trim();
+        row.innerHTML = '<div class="row-cell"><span class="check"></span><div class="row-body">'
+            + '<div class="m">meta</div><span class="done-label">Tagged</span>'
+            + '<span class="failed-label"><svg></svg><span>reason</span></span></div></div>';
+        vrows.appendChild(row);
+        const of = (sel) => paint(getComputedStyle(row.querySelector(sel)).color);
+        out[name] = {
+            bg: paint('#fff', list, getComputedStyle(row).backgroundColor),
+            meta: of('.m'), done: of('.done-label'), reason: of('.failed-label span'),
+            glyph: of('.failed-label svg'),
+        };
+        row.remove();
+    }
+    return out;
+}"""
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_list_rows_text_stays_readable_in_every_state(page: Page, server, console, scheme):
+    # why: a selected row's failure reason, in --destructive on the selection's tint, was 4.44:1 in
+    # the dark theme; and the brief's selected-and-done tint put muted text at 4.18:1 in the light.
+    page.emulate_media(color_scheme=scheme)
+    open_library(page, server.url)
+    page.mouse.move(0, 0)  # no row hovered
+    states = page.evaluate(ROW_COLOURS)
+    for state, c in states.items():
+        for text in ("meta", "done", "reason"):
+            assert contrast(c[text], c["bg"]) >= 4.5, (scheme, state, text, c)
+        assert contrast(c["glyph"], c["bg"]) >= 3, (scheme, state, "the ⚠", c)
+
+
+def test_clear_in_the_selection_bar_gives_focus_back_to_the_list(page: Page, server, console):
+    # why: Clear unmounted the bar under its own focused button, so focus fell to <body> and the
+    # list's keys stopped until Tab (WCAG 2.4.3). Esc inside the bar does what its "Clear Esc" says.
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.filter(has_text="Apollo 13").click()
+    jfk = rows.filter(has_text="JFK")
+    jfk.click(modifiers=["ControlOrMeta"])
+    bar = page.get_by_test_id("selection-bar")
+    bar.get_by_role("button", name=re.compile(r"^Clear")).click()
+    expect(bar).to_have_count(0)
+    expect(jfk).to_be_focused()
+    page.keyboard.press("Shift+ArrowDown")  # the list's keys work at once
+    expect(bar).to_contain_text("2 selected")
+    expect(focused_row(page)).to_have_count(1)
+    back = focused_row(page).get_attribute("data-id")
+    bar.get_by_role("button", name=re.compile(r"^Clear")).focus()
+    page.keyboard.press("Escape")
+    expect(bar).to_have_count(0)
+    expect(page.locator(f"[data-testid=recording-row][data-id='{back}']")).to_be_focused()
+
+
+def test_a_cmd_arrow_cancels_the_pane_following_a_plain_one(page: Page, server, console):
+    # why: a plain arrow's 300 ms follow outlived a Cmd/Ctrl+arrow pressed straight after it, and
+    # opened the row focus had moved to, outside the selection (Cmd/Ctrl moves focus only).
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.first.click()
+    expect(rows.first).to_have_attribute("aria-current", "true")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("ControlOrMeta+ArrowDown")
+    expect(rows.nth(2)).to_be_focused()
+    page.wait_for_timeout(600)  # past the pane's pause
+    expect(rows.nth(2)).not_to_have_attribute("aria-current", "true")
+    expect(rows.first).to_have_attribute("aria-current", "true")
+
+
+def test_space_on_a_row_doesnt_scroll_the_list(page: Page, big_server, console):
+    # why: Space is the player's (main spec §12); with no player in the list, it scrolled the list
+    # a page instead.
+    page.goto(big_server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.first.click()
+    grid = page.get_by_test_id("recording-list")
+    page.keyboard.press("Space")
+    page.wait_for_timeout(400)
+    assert grid.evaluate("el => el.scrollTop") == 0
+    expect(rows.first).to_be_focused()
+
+
+TWO_FRAMES = "() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
+
+def test_a_filter_click_that_takes_no_focus_leaves_focus_alone(
+    page: Page, server, console, demo_ids
+):
+    # why: Safari and Firefox on macOS don't focus a button on click: the row blurs with no
+    # relatedTarget, as a removed row does, so a filter change pulled focus into the list. A
+    # pointerdown outside the list now says focus left it. Simulated here: pointerdown, blur, click.
+    jfk = demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    row.click()
+    expect(row).to_be_focused()
+    apollo = page.get_by_test_id("filter-tag").filter(has_text="space/apollo")
+    apollo.dispatch_event("pointerdown")
+    page.evaluate("() => document.activeElement.blur()")
+    apollo.dispatch_event("click")
+    expect(page.locator(f"[data-testid=recording-row][data-id='{jfk}']")).to_have_count(0)
+    page.evaluate(TWO_FRAMES)
+    page.evaluate(TWO_FRAMES)
+    assert page.evaluate("() => document.activeElement === document.body")
+
+
+def test_the_selection_bar_never_covers_the_focused_row(page: Page, big_server, console):
+    # why: the bar mounts 43 px tall after the focused row was scrolled into view, over its bottom.
+    page.goto(big_server.url)
+    grid = page.get_by_test_id("recording-list")
+    page.get_by_test_id("recording-row").first.click()
+    for i in range(40):  # down to the bottom of the list's view: then it starts to scroll
+        page.keyboard.press("ArrowDown")
+        expect(focused_row(page)).to_have_attribute("aria-rowindex", str(i + 3))
+        if grid.evaluate("el => el.scrollTop") > 0:
+            break
+    page.keyboard.press("Shift+ArrowDown")
+    expect(page.get_by_test_id("selection-bar")).to_contain_text("2 selected")
+    expect(focused_row(page)).to_have_attribute("aria-rowindex", str(i + 4))
+    expect(focused_row(page)).to_be_in_viewport(ratio=1)
+
+
+def test_a_rows_name_is_its_title_meta_and_tags_not_its_controls(page: Page, server, console):
+    # why: a row was named by all its text, every × and + name with the title again included,
+    # about 330 characters read out on every arrow.
+    open_library(page, server.url)
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    expect(row).to_have_accessible_name(re.compile(r"^JFK.*1962.*talks notes/conference-talk"))
+    expect(row).not_to_have_accessible_name(re.compile(r"Remove tag|Add tags"))
+
+
+def test_a_key_on_a_focused_row_scrolled_away_brings_it_back(page: Page, big_server, console):
+    # why: X toggled the focused row while it was scrolled out of view, with nothing to show it.
+    page.goto(big_server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.nth(2).click()
+    rid = rows.nth(2).get_attribute("data-id")
+    row = page.locator(f"[data-testid=recording-row][data-id='{rid}']")
+    grid = page.get_by_test_id("recording-list")
+    for key, check in (("x", "false"), ("x", "true")):
+        grid.hover()
+        page.mouse.wheel(0, 9000)
+        wait_until(lambda: grid.evaluate("el => el.scrollTop") > 3000)
+        page.keyboard.press(key)
+        expect(row).to_have_attribute("aria-selected", check)
+        expect(row).to_be_in_viewport()
+    grid.evaluate("el => { el.scrollTop = 9000; }")
+    wait_until(lambda: grid.evaluate("el => el.scrollTop") > 3000)
+    page.keyboard.press("Enter")
+    expect(row).to_be_in_viewport()

@@ -64,6 +64,19 @@ export function shownTags(row: LibraryRow, pending: readonly TagRequest[]): Show
   return tags;
 }
 
+/** The last add that changed something: its tags and the recordings it went to. `key` counts
+ * them, so the list can tell one made since its selection last changed. */
+export interface JustTagged { tags: string[]; ids: string[]; key: number }
+
+/** "just tagged …" in the selection bar describes the selection it was applied to (ruled, Task 12
+ * fix round 1): an add whose recordings are exactly the selection (T, the bar's Tag…, a drop of
+ * the selection; a + targets one row), made since the selection last changed (`since`, the key
+ * then). Its tags, or null. */
+export function justTaggedTags(last: JustTagged | null, selected: ReadonlySet<string>, since: number): string[] | null {
+  if (!last || last.key <= since || last.ids.length !== selected.size) return null;
+  return last.ids.every((id) => selected.has(id)) ? last.tags : null;
+}
+
 export interface Mark { done?: boolean; failed?: string }
 export type Marks = Readonly<Record<string, Mark>>;
 

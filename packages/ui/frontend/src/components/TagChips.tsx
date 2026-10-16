@@ -17,13 +17,16 @@ export function nextControl(button: HTMLElement): HTMLElement | null {
  * pending chip shows its new state at once, marked pending. A tag's text is isolated left to
  * right (<bdi dir="ltr">), so a right-to-left name can't reorder what's around it, and truncated
  * when long; the full tag is in the chip's title and the ×'s name (Review Focus 5). */
-export function TagChips({ tags, title, canTag, place, onRemove, children }: {
+export function TagChips({ tags, title, canTag, place, onRemove, labelIds, children }: {
   tags: ShownTag[]; title: string; canTag: boolean; place: "row" | "header";
-  onRemove: (tag: string, next: HTMLElement | null) => void; children?: ReactNode;
+  onRemove: (tag: string, next: HTMLElement | null) => void;
+  /** Ids for the chips' labels, `${labelIds}${i}`, so a list row can be named by them. */
+  labelIds?: string;
+  children?: ReactNode;
 }) {
   return (
     <div className="chips" data-testid="chips" data-controls="">
-      {tags.map((t) => (
+      {tags.map((t, i) => (
         <span
           key={t.tag}
           className={cn("chip", t.by === "auto" && "auto", t.tag.startsWith("notes/") && "nt", t.pending && "pending", t.pending === "remove" && "pending-remove")}
@@ -31,7 +34,7 @@ export function TagChips({ tags, title, canTag, place, onRemove, children }: {
           data-tag={t.tag}
           title={t.tag}
         >
-          <span className="chip-label">
+          <span className="chip-label" id={labelIds === undefined ? undefined : `${labelIds}${i}`}>
             <bdi dir="ltr">{t.tag}</bdi>
             {t.by === "auto" ? " · auto" : ""}
           </span>

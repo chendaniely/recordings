@@ -331,6 +331,13 @@ export function TagPickerDialog() {
   );
 }
 
+/** A row's picker opens beside its +, and stays on screen when a virtual list scrolls its row away
+ * (the row stays drawn while the picker is open). Radix shifts the content only along the
+ * alignment axis, and `sticky: "always"` keeps it inside the viewport there whatever the trigger
+ * does; beside the +, that axis is the vertical one (checked: Radix Popper 1.4.0's shift
+ * middleware, `crossAxis: false`; the Popover docs' `side`, `sticky`, `collisionPadding`). */
+const ROW_PLACEMENT = { side: "right", sticky: "always", collisionPadding: 8 } as const;
+
 const inConfirmation = (target: EventTarget | null) => target instanceof Element && target.closest("[role=alertdialog]") !== null;
 
 /** The + after a row's chips, and in the header: the picker for that one recording, as a Popover
@@ -374,6 +381,7 @@ export function AddTagsButton({ id, title, place, onOpenChange }: {
       <PopoverContent
         className="picker-popover p-0"
         align="start"
+        {...(place === "row" ? ROW_PLACEMENT : {})}
         aria-labelledby={headingId}
         onEscapeKeyDown={imeEscape}
         onFocusOutside={keepOpen}

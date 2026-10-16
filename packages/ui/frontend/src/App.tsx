@@ -34,7 +34,7 @@ export default function App() {
   // The order, its rows and the selection (with its pruning and announcement) come from the
   // hooks the phone's Untagged list shares (Task 15).
   const order = useRowOrder(view, filter, tagging.loadKey, tagging.revealed);
-  const { sel, act, announce } = useSelection(order);
+  const { sel, act, announce, fitted } = useSelection(order);
   const rows = useOrderedRows(order.ids, view);
   const openRow = useMemo(() => view?.recordings.find((r) => r.id === selectedId) ?? null, [view, selectedId]);
 
@@ -61,7 +61,7 @@ export default function App() {
         {route.page === "status" ? <StatusPage /> : view ? (
           <main className="panes">
             <Sidebar library={view} filter={filter} onFilter={setFilter} />
-            <RecordingList rows={rows} sel={sel} act={act} openId={selectedId} onOpen={setSelectedId} announce={announce} />
+            <RecordingList rows={rows} sel={sel} act={act} openId={selectedId} onOpen={setSelectedId} announce={announce} fitted={fitted} />
             <RecordingPane selectedId={selectedId} row={openRow} />
           </main>
         ) : <p className="empty">Loading…</p>}

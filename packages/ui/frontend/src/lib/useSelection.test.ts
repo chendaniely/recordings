@@ -97,11 +97,11 @@ describe("useSelection: Finder selection over the order (spec §6)", () => {
     expect(selected()).toEqual(["b", "c", "d"]);
     await draw({ filter: { kind: "tag", tag: "talks" } });
     expect(selected()).toEqual(["c"]);
-    expect(selection.announce).toBe("2 hidden rows deselected");
+    expect(selection.announce.text).toBe("2 hidden rows deselected");
     expect(selection.sel.focus).toBe("a");
     expect(selection.sel.anchor).toBe("a");
     await draw({ filter: ALL });
-    expect(selection.announce).toBe(""); // nothing hidden this time
+    expect(selection.announce.text).toBe(""); // nothing hidden this time
   });
   it("a load or Refresh drops vanished rows quietly, keeping focus and anchor where it can", async () => {
     const five = ["a", "b", "c", "d", "e"].map((id) => row(id));
@@ -111,11 +111,11 @@ describe("useSelection: Finder selection over the order (spec §6)", () => {
     expect(selection.sel).toMatchObject({ anchor: "c", focus: "e" });
     await draw({ v: view(row("a"), row("b"), row("c"), row("d"), row("e", ["work"])), loadKey: 2 });
     expect(selected()).toEqual(["c", "d"]);
-    // e has gone, so focus goes to the first row; the anchor stays, so Shift extends from it.
-    expect(selection.sel).toMatchObject({ anchor: "c", focus: "a" });
-    expect(selection.announce).toBe("");
+    // e has gone, and was last: focus goes to the nearest row before it, d; the anchor stays.
+    expect(selection.sel).toMatchObject({ anchor: "c", focus: "d" });
+    expect(selection.announce.text).toBe("");
     await draw({ v: view(row("a"), row("b"), row("c"), row("d"), row("e", ["work"])), loadKey: 3 });
-    expect(selection.sel).toMatchObject({ anchor: "c", focus: "a" }); // nothing gone: nothing moves
+    expect(selection.sel).toMatchObject({ anchor: "c", focus: "d" }); // nothing gone: nothing moves
   });
   it("an Undo's rows coming back change nothing", async () => {
     await draw({ v: four, loadKey: 1, filter: UNTAGGED });
@@ -129,5 +129,46 @@ describe("useSelection: Finder selection over the order (spec §6)", () => {
     await draw({ v: four, loadKey: 1, filter: UNTAGGED });
     await act(() => selection.act({ type: "all" }));
     expect(selected()).toEqual(["b", "d"]);
+  });
+});
+
+describe("useSelection, fix round 1 (Task 12)", () => {
+  const five = () => ["a", "b", "c", "d", "e"].map((id) => row(id));
+
+  it("a Refresh that drops the focused row moves focus to the row that followed it", async () => {
+    await draw({ v: view(...five()), loadKey: 1, filter: UNTAGGED });
+    await act(() => selection.act({ type: "click", id: "c", meta: false, shift: false }));
+    await draw({ v: view(row("a"), row("b"), row("c", ["work"]), row("d"), row("e")), loadKey: 2 });
+    expect(order.ids).toEqual(["a", "b", "d", "e"]);
+    expect(selection.sel).toMatchObject({ focus: "d", anchor: "d" }); // not back to the top
+  });
+  it("says which order the selection was last fitted to, and why, for the list to scroll", async () => {
+    await draw({ v: view(...five()), loadKey: 1, filter: UNTAGGED });
+    expect(selection.fitted).toEqual({ key: order.key, reason: "load" });
+    await draw({ filter: ALL });
+    expect(selection.fitted).toEqual({ key: order.key, reason: "filter" });
+    await draw({ v: view(row("a", ["work"]), row("b"), row("c"), row("d"), row("e")), loadKey: 2, filter: UNTAGGED });
+    expect(selection.fitted.reason).toBe("load");
+    const before = selection.sel;
+    await draw({ revealed: { key: 1, ids: ["a"] } });
+    expect(selection.fitted).toEqual({ key: order.key, reason: "reveal" }); // the rows moved
+    expect(selection.sel).toBe(before);
+  });
+  it("says the same thing again as a new announcement, and Cmd-A says how many", async () => {
+    const four = view(row("a", ["talks"]), row("b"), row("c", ["talks"]), row("d"));
+    const click = (id: string, meta = false) => act(() => selection.act({ type: "click", id, meta, shift: false }));
+    await draw({ v: four, loadKey: 1 });
+    await click("b");
+    await click("d", true);
+    await draw({ filter: { kind: "tag", tag: "talks" } }); // b and d hidden
+    const first = selection.announce;
+    expect(first.text).toBe("2 hidden rows deselected");
+    await click("a");
+    await click("c", true);
+    await draw({ filter: UNTAGGED }); // a and c hidden: the very same words
+    expect(selection.announce.text).toBe("2 hidden rows deselected");
+    expect(selection.announce.key).toBeGreaterThan(first.key); // so it is read out again
+    await act(() => selection.act({ type: "all" }));
+    expect(selection.announce.text).toBe("2 selected");
   });
 });
