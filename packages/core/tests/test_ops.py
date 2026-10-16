@@ -628,7 +628,9 @@ def test_a_failure_with_a_title_of_its_own_is_said_at_once_and_one_recovery_clea
     clock.now += timedelta(minutes=20)
     run_job(ctx, "disk")  # still missing: quiet
     writer.state.set_meta("archive_uuid", real_uuid)
-    monkeypatch.undo()
+    monkeypatch.setattr(  # plenty free: recovery must not depend on the host's real disk
+        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=900, f_frsize=1024, f_blocks=1000)
+    )
     clock.now += timedelta(minutes=20)
     run_job(ctx, "disk")
     assert [r["headers"]["Title"] for r in pushes(ntfy)] == [
@@ -667,10 +669,15 @@ def test_a_future_stamp_and_a_full_state_disk_still_alert_once(tmp_path, writer,
 
 
 def test_a_marker_failure_that_recovers_alone_is_cleared_and_said_again_when_it_returns(
-    tmp_path, writer, ntfy
+    tmp_path, writer, ntfy, monkeypatch
 ):
     # why: one recovery must clear the marker failure's own alert key, not only job:disk's, or the
     # next marker failure within 24 hours is taken for the same one and not said (Task 13 re-review)
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(  # 90% free, whatever the host's disk holds
+        disk.os, "statvfs", lambda p: SimpleNamespace(f_bavail=900, f_frsize=1024, f_blocks=1000)
+    )
     clock = Clock()
     ctx = context(tmp_path, writer, ntfy, clock=clock)
     real_uuid = writer.state.meta("archive_uuid")
