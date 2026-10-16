@@ -232,3 +232,70 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 .si.drop { outline: 2px solid var(--drop); outline-offset: -2px; }
 .si.new-tag { color: var(--muted-foreground); }
 .drag-image { position: fixed; top: -200px; left: -200px; padding: 4px 10px; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); font-weight: 700; }
+
+/* The Tags page grid (tagging spec §7). The header row, the first column and the `private` column
+   beside it are pinned (sticky), so their backgrounds are opaque: a row's state is its --row-bg,
+   the same tints as the list's rows mixed over the card, and the pinned cells paint it too, so
+   cells scrolled under them never show through. Each state is distinct without colour, as the
+   list's: focused has the ring, selected the tint and a visible check, done the muted background
+   and "✓ Tagged", failed the ⚠ and its reason. Never opacity. Widths match TagsPage.tsx. */
+.tags-page { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--card); }
+.grid-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.grid-head h1 { margin: 0; font-size: 19px; font-weight: 700; }
+.grid-opt { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; cursor: pointer; }
+.left-count { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+/* A text box's edge is drawn in --muted-foreground, 3:1 or more (WCAG 1.4.11). */
+.title-filter { min-width: 200px; min-height: 24px; padding: 2px 8px; border: 1px solid var(--muted-foreground); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; }
+.title-filter::placeholder { color: var(--muted-foreground); }
+.grid-btn { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; cursor: pointer; }
+.grid-hint { width: 100%; font-size: 12px; color: var(--muted-foreground); }
+.tg-empty { margin: 12px 16px 0; color: var(--muted-foreground); }
+.tgrid { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.tg-headgroup { position: sticky; top: 0; z-index: 3; width: max(100%, var(--tg-width)); }
+.tg-body { position: relative; width: max(100%, var(--tg-width)); }
+.tg-body > .tg-row { position: absolute; top: 0; left: 0; }
+.tg-row { --row-bg: var(--card); display: grid; width: max(100%, var(--tg-width)); border-bottom: 1px solid var(--border); background: var(--row-bg); user-select: none; -webkit-user-select: none; }
+.tg-body > .tg-row:hover { --row-bg: var(--background); }
+.tg-body > .tg-row.sel { --row-bg: color-mix(in srgb, var(--primary) 12%, var(--card)); }
+.tg-body > .tg-row.done { --row-bg: var(--muted); }
+.tg-body > .tg-row.sel.done { --row-bg: color-mix(in srgb, var(--primary) 5%, var(--muted)); }
+.tg-head { font-size: 12px; }
+.tg-pin { position: sticky; left: 0; z-index: 2; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 6px; padding: 8px 10px; background: var(--row-bg); border-right: 1px solid var(--border); outline-offset: -2px; }
+.tg-head .tg-pin { grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 4px 10px; font-weight: 700; }
+.tg-cell.pinned, .tg-h.pinned { position: sticky; left: 300px; z-index: 2; background: var(--row-bg); box-shadow: 1px 0 0 var(--muted-foreground); }
+.tgrid.has-selection .check, .tg-body > .tg-row:hover .check { visibility: visible; }
+.tg-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.tg-title-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.tg-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.tg-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; color: var(--muted-foreground); font-size: 12px; }
+.tg-sub .done-label, .tg-sub .failed-label { margin-top: 0; }
+.tg-snippet { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--muted-foreground); font-size: 12px; }
+.tg-open { min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; font-size: 12px; cursor: pointer; }
+.tg-sort { display: inline-flex; align-items: center; gap: 4px; min-width: 0; min-height: 24px; max-width: 100%; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; font-weight: 400; cursor: pointer; }
+.tg-sort bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tg-h { position: relative; display: flex; min-width: 0; border-right: 1px solid var(--border); background: var(--row-bg); }
+/* The header's button adds its tag to the selection; its digit above, then the tag, whole or on
+   two lines (its full path is the header's name and the button's title). The menu sits top right. */
+.tg-add { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 4px 6px; border: 0; background: none; color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
+.tg-hkeys { display: flex; align-items: center; gap: 3px; min-height: 18px; padding-right: 22px; }
+.tg-hname { max-width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.25; }
+.tg-hname bdi { unicode-bidi: isolate; direction: ltr; }
+.tg-h.sorted .tg-add { box-shadow: inset 0 -3px 0 var(--primary); }
+.tg-menu { position: absolute; top: 0; right: 0; display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--muted-foreground); cursor: pointer; }
+.tg-add:focus-visible, .tg-menu:focus-visible, .tg-sort:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tg-menu-list { display: grid; width: auto; min-width: 180px; padding: 4px; }
+.tg-menu-list button { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 10px; border: 0; border-radius: 4px; background: none; color: var(--foreground); font: inherit; text-align: left; cursor: pointer; }
+.tg-menu-list button:hover { background: var(--muted); }
+.tg-cell { display: grid; place-items: center; border-right: 1px solid var(--border); cursor: pointer; }
+.tg-box { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid var(--muted-foreground); border-radius: 4px; }
+.tg-box[aria-checked=true] { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.tg-box[aria-disabled=true] { cursor: not-allowed; }
+.tg-box svg { width: 14px; height: 14px; }
+/* A pending change shows at once, with a dashed outline in --muted-foreground (spec §6). */
+.tg-box.pending { outline: 1px dashed var(--muted-foreground); outline-offset: 2px; }
+.tg-pin:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.tg-box:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.columns-picker { max-height: 60vh; overflow: auto; }
+.columns-picker fieldset { border: 0; margin: 0 0 8px; padding: 0; }
+.columns-picker legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
+.column-choice { display: flex; align-items: center; gap: 6px; min-height: 24px; overflow-wrap: anywhere; }

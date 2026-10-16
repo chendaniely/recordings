@@ -1,7 +1,9 @@
 import type { Page } from "../types";
 import { ThemeSwitch } from "./ThemeSwitch";
 
-const PAGES: { page: Page; label: string }[] = [{ page: "library", label: "Library" }, { page: "status", label: "Status" }];
+const PAGES: { page: Page; label: string }[] = [
+  { page: "library", label: "Library" }, { page: "tags", label: "Tags" }, { page: "status", label: "Status" },
+];
 
 export function TopBar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
   return (

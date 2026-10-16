@@ -82,8 +82,8 @@ export function Announcer({ text, at }: { text: string; at: number }) {
 
 /** The tags "just tagged" names (library.ts's nextNote): the last add to exactly this selection,
  * kept through adds that went elsewhere and through a Refresh that keeps every selected row, and
- * gone with a new selection or an Undo of that add. */
-function useJustTagged(selected: ReadonlySet<string>, tagging: Tagging): string[] | null {
+ * gone with a new selection or an Undo of that add. Shared with the Tags grid's selection bar. */
+export function useJustTagged(selected: ReadonlySet<string>, tagging: Tagging): string[] | null {
   const [note, setNote] = useState(() => startNote(selected, tagging.lastTagged, tagging.lastUndone));
   const next = nextNote(note, selected, tagging.lastTagged, tagging.lastUndone);
   if (next !== note) setNote(next); // React redraws at once, before committing

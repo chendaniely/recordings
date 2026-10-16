@@ -128,6 +128,14 @@ describe("focus after a toast's Undo, Redo or Dismiss (Task 10 council)", () => 
     p.row.remove();
     expect(focusFallback()).toBe(p.h1);
   });
+  it("falls back to the Tags grid's focused cell, where there is no open row or header (Task 14)", () => {
+    p.row.remove();
+    p.h1.remove();
+    const grid = p.root.appendChild(document.createElement("div"));
+    grid.setAttribute("role", "grid");
+    grid.innerHTML = '<div role="row"><span role="checkbox" tabindex="-1"></span><span role="checkbox" tabindex="0"></span></div>';
+    expect(focusFallback()).toBe(grid.querySelector("[tabindex='0']"));
+  });
   it("leaves focus alone when it isn't in the toaster (a mouse user elsewhere)", () => {
     p.h1.focus();
     p.row.focus();

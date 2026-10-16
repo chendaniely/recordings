@@ -113,6 +113,27 @@ they differ, and removes it when nothing is highlighted. A Vitest test and the e
 To check, delete the `useLayoutEffect` that calls `mirrorActiveItem` and run that e2e test. If it
 passes, the workaround can go. Re-check on every cmdk bump.
 
+## Radix Popover 1.3.1: where focus goes on a close other than Esc isn't documented
+
+Found 2026-10-16, writing the Tags grid's sort menus (tagging part A, Task 14).
+
+**What the docs say.** Radix's Popover page (reached through `npx shadcn@4.21.4 docs popover`)
+says only that Esc closes the popover and moves focus to the trigger. It doesn't say where focus
+goes when the popover closes any other way, such as a controlled `open` set to false after an
+item is picked.
+
+**What Radix does.** The non-modal content's `onCloseAutoFocus` focuses the trigger on every
+close, unless the close came from an interaction outside the popover
+(`@radix-ui/react-popover` 1.3.1, `dist/index.mjs`, `PopoverContentNonModal`).
+
+**What relies on it.** `TagsPage.tsx`'s `RowSortMenu` and `ColumnMenu` close themselves after a
+pick, and focus must go back to their header button, so the grid's keys go on working. The e2e
+test `test_the_sort_menus_reorder_the_rows_and_say_which_column_is_sorted` checks it. Nothing
+works around it.
+
+**When this note can go.** When Radix's docs say where focus goes on a controlled close. Re-run
+that test on every `radix-ui` bump.
+
 ## shinyreact-build-app skill: what it doesn't cover
 
 - **How long an output lives once its components unmount** (the first entry above). The skill doesn't

@@ -1275,3 +1275,420 @@ def test_a_gone_private_tag_keeps_its_group_through_the_status_page(page: Page, 
     expect(page.get_by_test_id("filter-tag")).to_have_count(0)
     page.get_by_role("button", name="Library").click()
     kept()
+
+
+# The Tags page grid (spec §7; Task 14).
+
+
+def cell(page: Page, title: str, tag: str):
+    return (
+        page.get_by_test_id("grid-row")
+        .filter(has_text=title)
+        .locator(f"[data-testid=grid-cell][data-tag='{tag}']")
+    )
+
+
+def test_the_grid_starts_untagged_only_and_a_cell_toggles(page: Page, server, console, demo_ids):
+    apollo13 = demo_ids["apollo13-problem"]
+    page.goto(f"{server.url}/#/tags")
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(1)  # Untagged only, by default
+    expect(page.get_by_test_id("left-count")).to_have_text("1 left")
+    expect(page.get_by_test_id("tags-grid")).to_have_attribute("aria-rowcount", "2")
+    talks = cell(page, "Apollo 13", "talks")
+    expect(talks).to_have_attribute("aria-checked", "false")
+    talks.click()
+    expect(talks).to_have_attribute("aria-checked", "true")
+    wait_until(lambda: server.tags(apollo13) == [("talks", "you")])
+    # Its first tag makes the recording visible to external agents: a toast of its own says so
+    # (spec §6), never folded into the cells' running toast.
+    expect(page.get_by_test_id("action-toast")).to_contain_text(
+        "Added talks to 1 recording · 1 now visible to external agents"
+    )
+    expect(page.get_by_test_id("left-count")).to_have_text("0 left")
+    cell(page, "Apollo 13", "space/apollo").click()  # an ordinary toggle: the running toast
+    wait_until(lambda: ("space/apollo", "you") in server.tags(apollo13))
+    expect(page.get_by_test_id("action-toast").filter(has_text="1 change")).to_have_count(1)
+    expect(rows).to_have_count(1)  # stays put until Refresh
+    page.get_by_test_id("grid-refresh").click()
+    expect(rows).to_have_count(0)
+
+
+def test_a_header_adds_to_the_selection_and_digits_toggle_the_first_columns(
+    page: Page, server, console, demo_ids
+):
+    apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
+    page.goto(f"{server.url}/#/tags")
+    page.get_by_test_id("untagged-only").uncheck()
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(4)
+    header = page.locator("[data-testid=grid-header][data-tag='space/apollo']")
+    header.get_by_role("button", name=re.compile(r"^Add space\/apollo")).click()  # nothing selected
+    expect(page.locator(".grid-hint")).to_contain_text("Select rows first")
+    rows.filter(has_text="Apollo 13").locator(".tg-title").click()
+    rows.filter(has_text="JFK").locator(".tg-title").click(modifiers=["ControlOrMeta"])
+    header.get_by_role("button", name=re.compile(r"^Add space\/apollo")).click()
+    wait_until(
+        lambda: (
+            ("space/apollo", "you") in server.tags(apollo13)
+            and ("space/apollo", "you") in server.tags(jfk)
+        )
+    )
+    expect(header.locator("kbd")).to_have_count(1)  # each of the first ten headers shows its digit
+    # One row focused, nothing else selected: "1" toggles the first column, the pinned `private`.
+    rows.filter(has_text="Apollo 13").locator(".tg-title").click()
+    page.keyboard.press("1")
+    wait_until(lambda: ("private", "you") in server.tags(apollo13))
+    # The cell must have its reply before the second "1": a toggle on a pending cell does nothing.
+    private = cell(page, "Apollo 13", "private")
+    expect(private).to_have_attribute("aria-checked", "true")
+    expect(private).not_to_have_class(re.compile(r"\bpending\b"))
+    page.keyboard.press("1")  # its last private tag: the confirmation, and Cancel applies nothing
+    expect(page.get_by_role("alertdialog")).to_contain_text("Remove private from 1 recording?")
+    page.get_by_role("alertdialog").get_by_role("button", name="Cancel").click()
+    assert ("private", "you") in server.tags(apollo13)
+
+
+def test_enter_on_a_column_header_adds_its_tag_to_the_selection(
+    page: Page, server, console, demo_ids
+):
+    # why: spec §7, "A header activated with Enter adds its tag to the selection". The grid's own
+    # keys leave a header's buttons alone, so its sort menu opens by keyboard too.
+    apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
+    page.goto(f"{server.url}/#/tags")
+    page.get_by_test_id("untagged-only").uncheck()
+    rows = page.get_by_test_id("grid-row")
+    rows.filter(has_text="Apollo 13").locator(".tg-title").click()
+    rows.filter(has_text="JFK").locator(".tg-title").click(modifiers=["ControlOrMeta"])
+    header = page.locator("[data-testid=grid-header][data-tag='space/apollo']")
+    header.get_by_role("button", name=re.compile(r"^Add space\/apollo")).focus()
+    page.keyboard.press("Enter")
+    wait_until(
+        lambda: (
+            ("space/apollo", "you") in server.tags(apollo13)
+            and ("space/apollo", "you") in server.tags(jfk)
+        )
+    )
+    expect(page.locator("[data-testid=grid-row][aria-selected=true]")).to_have_count(2)  # kept
+    header.get_by_role("button", name="Sort by space/apollo").focus()
+    page.keyboard.press("Enter")
+    expect(page.get_by_role("button", name="Has this tag first")).to_be_visible()
+
+
+def test_open_opens_the_recording_in_a_new_tab(page: Page, server, console):
+    page.goto(f"{server.url}/#/tags")
+    row = page.get_by_test_id("grid-row").filter(has_text="Apollo 13")
+    with page.context.expect_page() as opened:
+        row.get_by_role("button", name=re.compile(r"^Open Apollo 13")).click()
+    other = opened.value
+    other.wait_for_load_state()
+    assert "#/library/" in other.url
+    expect(other.get_by_test_id("recording-header")).to_contain_text("Apollo 13")
+    expect(page.get_by_test_id("tags-grid")).to_be_visible()  # the grid keeps its place
+
+
+def test_the_grid_shows_the_transcripts_first_words(page: Page, server, console):
+    # The demo's Apollo 13 has no chosen transcript, so the newest one gives its first words.
+    page.goto(f"{server.url}/#/tags")
+    snippet = page.get_by_test_id("grid-row").filter(has_text="Apollo 13").locator(".tg-snippet")
+    expect(snippet).to_contain_text("Okay, Houston, we've had a problem here.")
+    assert len(snippet.inner_text()) <= 160
+
+
+def test_the_grid_says_when_there_is_no_transcript_yet(page: Page, big_server, console):
+    # The synthetic recordings have no transcript and no Plaud note: the fallback line shows.
+    page.goto(f"{big_server.url}/#/tags")
+    snippet = page.get_by_test_id("grid-row").first.locator(".tg-snippet")
+    expect(snippet).to_contain_text("No transcript yet")
+    expect(snippet).to_contain_text("no source")
+
+
+def test_the_default_columns_and_the_live_count_on_a_large_archive(page: Page, big_server, console):
+    page.goto(f"{big_server.url}/#/tags")
+    expect(page.get_by_test_id("left-count")).to_have_text("200 left")
+    headers = page.get_by_test_id("grid-header")
+    # The 15 most-used tags are `private` (10 recordings) and 14 of the 20 topics (5 each); the
+    # first is pinned. No more: columns are fixed per load, and the count waits for them.
+    expect(headers).to_have_count(15)
+    expect(headers.first).to_have_attribute("data-tag", "private")
+    first = page.get_by_test_id("grid-row").first
+    first.locator("[data-testid=grid-cell]").nth(1).click()
+    expect(page.get_by_test_id("left-count")).to_have_text("199 left")
+
+
+def test_a_long_tag_truncates_and_keeps_its_name(page: Page, server, console):
+    # why: Review Focus 5. A 200-character tag must not break the row, the chip or the header.
+    long_tag = "folder/" + "x" * 60 + "/" + "y" * 60 + "/" + "z" * 60  # 189 characters
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Add tags to JFK")
+    ).click()
+    box = page.get_by_test_id("picker-input")
+    box.fill(long_tag)
+    box.press("Shift+Enter")
+    box.press("Escape")
+    row = page.get_by_test_id("recording-row").filter(has_text="JFK")
+    chip = row.locator(f"[data-testid=chip][data-tag='{long_tag}']")
+    expect(chip).to_have_attribute("title", long_tag)
+    expect(
+        row.get_by_role(
+            "button", name=f"Remove tag {long_tag} from {row.locator('.row-title').inner_text()}"
+        )
+    ).to_have_count(1)
+    overflow = page.evaluate(
+        """() => {
+            const list = document.querySelector('[data-testid=recording-list]');
+            return list.scrollWidth - list.clientWidth;
+        }"""
+    )
+    assert overflow <= 0
+    page.goto(f"{server.url}/#/tags")
+    page.get_by_test_id("untagged-only").uncheck()
+    header = page.locator(f"[data-testid=grid-header][data-tag='{long_tag}']")
+    expect(header).to_have_attribute("aria-label", long_tag)
+    assert header.bounding_box()["width"] <= 90
+
+
+# The grid, beyond the brief (Task 14 carries): pinned columns, keys alone, focus kept through
+# Refresh, the column picker, the sort menus, and readable text in every state.
+
+PINNED = """el => {
+    const b = el.getBoundingClientRect();
+    const at = (x, y) => document.elementFromPoint(b.left + x, b.top + y);
+    const pin = at(150, 56 + 120)?.closest('[role=rowheader]');
+    return {
+        pin: pin ? pin.getBoundingClientRect().left - b.left : null,
+        cell: at(340, 56 + 120)?.closest('[role=gridcell]')
+            ?.querySelector('[data-tag]')?.dataset.tag,
+        header: at(340, 20)?.closest('[role=columnheader]')?.dataset.tag,
+        first: at(150, 20)?.closest('[role=columnheader]')?.getAttribute('aria-colindex'),
+    };
+}"""
+
+
+@pytest.mark.parametrize("width", [1000])
+def test_the_header_and_the_first_columns_stay_pinned_as_the_grid_scrolls(
+    page: Page, big_server, console, width
+):
+    # why: spec §7. The header row stays pinned, and so do the first column and `private` beside
+    # it; what shows there is them, opaque, never a cell scrolled under them.
+    page.set_viewport_size({"width": width, "height": 700})
+    page.goto(f"{big_server.url}/#/tags")
+    grid = page.get_by_test_id("tags-grid")
+    expect(page.get_by_test_id("grid-header")).to_have_count(15)
+    grid.evaluate("el => { el.scrollLeft = 600; el.scrollTop = 4000; }")
+    wait_until(lambda: grid.evaluate("el => el.scrollLeft > 500 && el.scrollTop > 3000"))
+    seen = grid.evaluate(PINNED)
+    assert seen == {"pin": 0, "cell": "private", "header": "private", "first": "1"}, seen
+    box = grid.bounding_box()
+    head = page.locator("[data-testid=grid-header][data-tag=private]").bounding_box()
+    assert abs(head["y"] - box["y"]) < 1 and abs(head["x"] - (box["x"] + 300)) < 1
+
+
+def test_the_grid_is_one_tab_stop_and_its_keys_reach_cells_headers_and_the_picker(
+    page: Page, server, console, demo_ids
+):
+    # why: WAI-ARIA grid pattern and spec §6, §7: one tab stop; arrows between cells; Up from the
+    # first row reaches the headers (they sort, so they take focus), Down comes back; Space
+    # toggles; T opens the picker for the focused row, and Esc gives focus back to the cell.
+    apollo13 = demo_ids["apollo13-problem"]
+    page.goto(f"{server.url}/#/tags")
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(1)
+    page.get_by_test_id("grid-refresh").focus()
+    page.keyboard.press("Tab")
+    pinned = rows.first.locator("[role=rowheader]")
+    expect(pinned).to_be_focused()
+    page.keyboard.press("Tab")  # the grid's one stop: Tab leaves it
+    assert page.evaluate("document.activeElement.closest('[role=grid]') === null")
+    page.keyboard.press("Shift+Tab")
+    expect(pinned).to_be_focused()
+    for _ in range(4):  # private, notes/conference-talk, notes/general-fallback, space/apollo
+        page.keyboard.press("ArrowRight")
+    apollo = cell(page, "Apollo 13", "space/apollo")
+    expect(apollo).to_be_focused()
+    page.keyboard.press("Space")
+    wait_until(lambda: server.tags(apollo13) == [("space/apollo", "you")])
+    expect(apollo).to_have_attribute("aria-checked", "true")
+    page.keyboard.press("ArrowUp")
+    header = page.locator("[data-testid=grid-header][data-tag='space/apollo']")
+    expect(header.get_by_role("button", name=re.compile(r"^Add space\/apollo"))).to_be_focused()
+    page.keyboard.press("ArrowRight")
+    expect(header.get_by_role("button", name="Sort by space/apollo")).to_be_focused()
+    page.keyboard.press("ArrowDown")
+    expect(apollo).to_be_focused()
+    page.keyboard.press("t")  # nothing selected: the focused row (tagging plan, decision 4)
+    dialog = page.get_by_role("dialog", name=re.compile(r"^Tag Apollo 13"))
+    expect(dialog).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(apollo).to_be_focused()
+
+
+def test_refresh_hands_the_grids_focus_to_the_row_that_followed(page: Page, big_server, console):
+    # why: as in the list (Task 12): the row just tagged leaves Untagged only on Refresh; focus
+    # goes to the same column of the row that followed it, in view, so the keys go on working.
+    page.goto(f"{big_server.url}/#/tags")
+    grid = page.get_by_test_id("tags-grid")
+    expect(grid).to_have_attribute("aria-rowcount", "201")
+    page.get_by_test_id("grid-row").first.locator(".tg-title").click()
+    for _ in range(3):
+        page.keyboard.press("PageDown")
+    # Focus follows the selection a frame later: wait until it has caught up with the last key.
+    caught_up = """() => {
+        const row = document.activeElement.closest('[role=row]');
+        const on = row?.getAttribute('aria-selected') === 'true';
+        return on ? +row.getAttribute('aria-rowindex') : 0;
+    }"""
+    wait_until(lambda: page.evaluate(caught_up) > 10)
+    index = page.evaluate(caught_up)
+    expect(page.locator("[data-testid=grid-row][aria-selected=true]")).to_have_attribute(
+        "aria-rowindex", str(index)
+    )
+    after = page.locator(f"[data-testid=grid-row][aria-rowindex='{index + 1}']").get_attribute(
+        "data-id"
+    )
+    page.keyboard.press("ArrowRight")
+    page.keyboard.press("ArrowRight")  # the first topic's column
+    page.keyboard.press("Space")
+    expect(page.locator(f"[data-testid=grid-row][aria-rowindex='{index}']")).to_contain_text(
+        "Tagged"
+    )
+    page.keyboard.press("r")
+    expect(grid).to_have_attribute("aria-rowcount", "200")
+    following = page.locator(f"[data-testid=grid-row][data-id='{after}'] [data-testid=grid-cell]")
+    expect(following.nth(1)).to_be_focused()
+    expect(following.nth(1)).to_be_in_viewport()
+    assert grid.evaluate("el => el.scrollTop") > 0
+
+
+def test_the_column_picker_hides_a_column_and_this_browser_remembers(page: Page, server, console):
+    # why: spec §7. Only non-private choices are stored, in try/catch (grid.ts saveChoices).
+    page.goto(f"{server.url}/#/tags")
+    headers = page.get_by_test_id("grid-header")
+    expect(headers).to_have_count(5)
+    page.get_by_test_id("columns").click()
+    page.locator("[data-testid=column-choice][data-tag=talks]").uncheck()
+    expect(page.locator("[data-testid=grid-header][data-tag=talks]")).to_have_count(0)
+    stored = page.evaluate("localStorage.getItem('recordings.tagColumns')")
+    assert stored == '{"talks":false}'
+    page.reload()
+    expect(headers).to_have_count(4)
+
+
+def test_the_sort_menus_reorder_the_rows_and_say_which_column_is_sorted(
+    page: Page, server, console
+):
+    page.goto(f"{server.url}/#/tags")
+    page.get_by_test_id("untagged-only").uncheck()
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(4)
+    first = page.locator("[role=columnheader][aria-colindex='1']")
+    expect(first).to_have_attribute("aria-sort", "descending")  # Newest, the default
+    menu = page.get_by_role("button", name="Sort by talks")
+    menu.click()
+    page.get_by_role("button", name="Has this tag first").click()
+    expect(rows.first).to_contain_text("JFK")
+    talks = page.locator("[data-testid=grid-header][data-tag=talks]")
+    expect(talks).to_have_attribute("aria-sort", "descending")
+    expect(first).not_to_have_attribute("aria-sort", re.compile(".*"))
+    expect(menu).to_be_focused()  # the menu closed and gave focus back to its button
+    page.get_by_role("button", name=re.compile(r"^Sort rows")).click()
+    page.get_by_role("button", name="Oldest").click()
+    expect(rows.first).to_contain_text("Fireside")
+    expect(first).to_have_attribute("aria-sort", "ascending")
+    expect(talks).not_to_have_attribute("aria-sort", re.compile(".*"))
+
+
+GRID_COLOURS = """() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 1;
+    const x = c.getContext('2d');
+    const paint = (...layers) => {
+        x.clearRect(0, 0, 1, 1);
+        for (const l of layers) { x.fillStyle = l; x.fillRect(0, 0, 1, 1); }
+        return [...x.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    };
+    const body = document.querySelector('.tg-body');
+    const under = getComputedStyle(document.querySelector('.tags-page')).backgroundColor;
+    const probe = document.body.appendChild(document.createElement('span'));
+    probe.style.color = 'var(--ring)';
+    const ring = paint(getComputedStyle(probe).color);
+    probe.remove();
+    const states = {
+        plain: '', selected: 'sel', done: 'done', 'selected+done': 'sel done', failed: 'failed',
+        'selected+failed': 'sel failed',
+    };
+    const out = {};
+    for (const [name, cls] of Object.entries(states)) {
+        const row = document.createElement('div');
+        row.className = ('tg-row ' + cls).trim();
+        row.style.gridTemplateColumns = '300px repeat(4, 84px)';
+        row.innerHTML = '<div class="tg-pin"><span class="check"></span><span class="tg-meta">'
+            + '<span class="tg-title-line"><span class="tg-title">Title</span></span>'
+            + '<span class="tg-sub"><span class="w">date</span>'
+            + '<span class="done-label">Tagged</span>'
+            + '<span class="failed-label"><svg></svg><span>reason</span></span></span>'
+            + '<span class="tg-snippet">words</span></span>'
+            + '<button class="tg-open">Open</button></div>'
+            + '<div class="tg-cell pinned">'
+            + '<span class="tg-box off" aria-checked="false"></span></div>'
+            + '<div class="tg-cell">'
+            + '<span class="tg-box on" aria-checked="true"><svg></svg></span></div>'
+            + '<div class="tg-cell"><span class="tg-box pending" aria-checked="true"></span></div>'
+            + '<div class="tg-cell"><span class="tg-box ring" aria-checked="false"></span></div>';
+        body.appendChild(row);
+        const s = (sel) => getComputedStyle(row.querySelector(sel));
+        const bg = (sel) => paint(
+            '#fff', under, (sel ? s(sel) : getComputedStyle(row)).backgroundColor);
+        out[name] = {
+            bg: bg(), pin: bg('.tg-pin'), pinned: bg('.tg-cell.pinned'),
+            title: paint(s('.tg-title').color), date: paint(s('.tg-sub .w').color),
+            snippet: paint(s('.tg-snippet').color), done: paint(s('.done-label').color),
+            reason: paint(s('.failed-label span').color),
+            glyph: paint(s('.failed-label svg').color),
+            off: paint(s('.off').borderTopColor), on: paint(s('.on').backgroundColor),
+            check: paint(s('.on').color), pending: paint(s('.pending').outlineColor),
+            pendingStyle: s('.pending').outlineStyle, ring,
+        };
+        row.remove();
+    }
+    const h = document.querySelector('[data-testid=grid-header]');
+    const hs = getComputedStyle(h);
+    out.header = {
+        bg: paint('#fff', under, hs.backgroundColor),
+        name: paint(getComputedStyle(h.querySelector('.tg-hname')).color),
+        digit: paint(getComputedStyle(h.querySelector('kbd')).color),
+        menu: paint(getComputedStyle(h.querySelector('.tg-menu')).color),
+    };
+    return out;
+}"""
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_grids_text_and_boxes_stay_readable_in_every_state(page: Page, server, console, scheme):
+    # why: Task 12 ruling, for the grid too: text against every row and cell state is 4.5:1 or
+    # more, and a box, its check, the pending outline and the focus ring 3:1 (WCAG 1.4.3, 1.4.11),
+    # in both themes. The pinned cells paint the row's own colour, opaque.
+    page.emulate_media(color_scheme=scheme)
+    page.goto(f"{server.url}/#/tags")
+    expect(page.get_by_test_id("grid-row")).to_have_count(1)
+    page.mouse.move(0, 0)  # no row hovered
+    states = page.evaluate(GRID_COLOURS)
+    header = states.pop("header")
+    for state, c in states.items():
+        where = (scheme, state, c)
+        assert c["pin"] == c["bg"] and c["pinned"] == c["bg"], where
+        for text in ("title", "date", "snippet", "done", "reason"):
+            assert contrast(c[text], c["bg"]) >= 4.5, (text, *where)
+        assert contrast(c["glyph"], c["bg"]) >= 3, ("the ⚠", *where)
+        assert contrast(c["off"], c["bg"]) >= 3, ("an empty box", *where)
+        assert contrast(c["on"], c["bg"]) >= 3, ("a checked box", *where)
+        assert contrast(c["check"], c["on"]) >= 3, ("its check", *where)
+        assert c["pendingStyle"] == "dashed", where
+        assert contrast(c["pending"], c["bg"]) >= 3, ("the pending outline", *where)
+        assert contrast(c["ring"], c["bg"]) >= 3, ("the focus ring", *where)
+    for text in ("name", "digit"):
+        assert contrast(header[text], header["bg"]) >= 4.5, (scheme, text, header)
+    assert contrast(header["menu"], header["bg"]) >= 3, (scheme, "the menu's glyph", header)

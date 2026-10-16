@@ -16,12 +16,18 @@ function useSameIds(ids: readonly string[]): readonly string[] {
  * `data-index`; a ResizeObserver re-measures a row that grows, as a focused long tag unwraps.
  * `getItemKey` changes only when the rows do: the virtualiser rebuilds its measurements whenever
  * it changes, and the spec expects thousands of rows. `useFlushSync` is off: the bundled
- * react-dom's flushSync can't flush the global React (spec §6). */
+ * react-dom's flushSync can't flush the global React (spec §6).
+ *
+ * Under a pinned header in the same scroll element (the Tags grid), `scrollMargin` is the header's
+ * height, where the rows begin, and `scrollPaddingStart` the same, so a row scrolled to never
+ * sits under the header. Each row's `start` then counts the header: draw it at
+ * `start - scrollMargin` in the rows' own group (checked: TanStack Virtual's `scrollMargin` and
+ * `scrollPaddingStart`, and its scroll-padding example). */
 export function useVirtualRows(opts: {
   ids: readonly string[]; scrollRef: RefObject<HTMLDivElement | null>; rowSize: number;
-  overscan: number; keep: readonly number[]; scrollPaddingStart?: number;
+  overscan: number; keep: readonly number[]; scrollPaddingStart?: number; scrollMargin?: number;
 }) {
-  const { scrollRef, rowSize, overscan, keep, scrollPaddingStart = 0 } = opts;
+  const { scrollRef, rowSize, overscan, keep, scrollPaddingStart = 0, scrollMargin = 0 } = opts;
   const ids = useSameIds(opts.ids);
   const kept = keep.join(","); // a new array each render: its contents decide
   const rangeExtractor = useCallback((range: Range) => {
@@ -40,5 +46,6 @@ export function useVirtualRows(opts: {
     rangeExtractor,
     useFlushSync: false,
     scrollPaddingStart,
+    scrollMargin,
   });
 }

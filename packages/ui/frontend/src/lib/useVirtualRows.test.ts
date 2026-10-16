@@ -27,3 +27,19 @@ describe("useVirtualRows (fix round 1, Task 12)", () => {
     root.unmount();
   });
 });
+
+describe("useVirtualRows under a pinned header (Task 14)", () => {
+  it("passes the header's height on as the list's offset and scroll padding", () => {
+    let grid: Virtualizer | undefined;
+    function Grid() {
+      const scrollRef = useRef<HTMLDivElement>(null);
+      grid = useVirtualRows({ ids: ["a"], scrollRef, rowSize: 10, overscan: 1, keep: [], scrollMargin: 56, scrollPaddingStart: 56 });
+      return null;
+    }
+    const root = createRoot(document.createElement("div"));
+    flushSync(() => root.render(createElement(Grid)));
+    expect(grid!.options.scrollMargin).toBe(56);
+    expect(grid!.options.scrollPaddingStart).toBe(56);
+    root.unmount();
+  });
+});

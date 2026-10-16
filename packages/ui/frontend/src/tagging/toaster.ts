@@ -44,10 +44,12 @@ export const toasterPause = createToasterPause();
 
 let outside: HTMLElement | null = null; // what last had focus outside the toaster
 
-/** Where focus goes when what had it has gone: the open row, then the recording header's title. */
+/** Where focus goes when what had it has gone: the open row, then the recording header's title;
+ * on the Tags page, which has neither, the grid's focused cell (its one tab stop). */
 export function focusFallback(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[aria-current="true"], .row.on')
-    ?? document.querySelector<HTMLElement>('[data-testid="recording-header"] h1');
+    ?? document.querySelector<HTMLElement>('[data-testid="recording-header"] h1')
+    ?? document.querySelector<HTMLElement>('[role="grid"] [tabindex="0"]');
 }
 
 /** Before a toast's Undo, Redo or Dismiss takes it away: if focus is in the toaster, give it back
