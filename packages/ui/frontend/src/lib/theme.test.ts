@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { applyTheme, browserStorage, loadChoice, resolveTheme, saveChoice } from "./theme";
+import { applyTheme, browserStorage, currentTheme, loadChoice, resolveTheme, saveChoice } from "./theme";
 
 describe("theme", () => {
   it("follows the OS only in system mode", () => {
@@ -46,5 +46,15 @@ describe("theme", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("currentTheme", () => {
+  it("reads the resolved theme from the dark class that applyTheme sets", () => {
+    const root = document.createElement("html");
+    applyTheme(root, "dark");
+    expect(currentTheme(root)).toBe("dark");
+    applyTheme(root, "light");
+    expect(currentTheme(root)).toBe("light");
   });
 });

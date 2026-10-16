@@ -29,8 +29,11 @@ anything to an upstream project: issues, comments and PRs there are for Dan to w
 | Tailwind v4 | none | https://tailwindcss.com/docs |
 
 The rules the code depends on:
-- **React stays external,** mapped to `window.shinyreact.React`. Two React copies make
-  every hook silently return nothing.
+- **React stays external,** mapped to `window.shinyreact.React`, and `react-dom/client` to
+  `window.shinyreact.ReactDOM`. Two React copies make every hook silently return nothing. The one
+  exception is the `react-dom` index, which is bundled because shinyreact's `ReactDOM` global
+  lacks `createPortal` and `flushSync` (`docs/upstream-issues.md`); it requires the external
+  `react`. Never bundle `react` itself.
 - **`www/ui.js` is build output.** Never edit it. Rebuild with `make build`.
 - **`ReactApp(server)` in `shiny_app.py`** finds `www/` next to that file.
 - **Every output is subscribed in `App`.** shinyreact 0.1.0 leaves an output bound to a removed
@@ -48,9 +51,12 @@ exactly. To upgrade:
 4. Check that `.nvmrc` still matches shinyreact's `pkg-js/.nvmrc`.
 5. Check that its examples' Vite, plugin-react, TypeScript and Vitest versions still match
    ours. Move `react`, `react-dom` and their `@types` to the React minor version that
-   `shinyreact.js` bundles (`grep -o '"19\.[0-9.]*"' …/shinyreact/www/shinyreact.js`).
+   `shinyreact.js` bundles (`grep -o '"19\.[0-9.]*"' …/shinyreact/www/shinyreact.js`). The bundled
+   `react-dom` index must stay on that same minor.
 6. Check each shinyreact entry in `docs/upstream-issues.md`, which says how to tell when its
-   workaround can go.
+   workaround can go. In particular re-check the react-dom entry: if
+   `typeof window.shinyreact.ReactDOM.createPortal === 'function'` in the console of a running app,
+   the bundled `react-dom` index can go.
 7. `make test e2e`.
 
 ## Upgrading Shinylive (the Pages demo)

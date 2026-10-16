@@ -7,9 +7,18 @@ import { defineConfig } from "vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// React/ReactDOM are externalized and read from window.shinyreact at runtime, so this bundle
-// (shadcn's components included) shares the React instance that owns the shinyreact hooks.
-// Two copies = hooks silently empty.
+// React stays external: `react` and `react-dom/client` come from window.shinyreact, so this bundle
+// (shadcn's components included) shares the React instance that owns the shinyreact hooks. Two
+// copies = hooks silently empty. The `react-dom` INDEX module is bundled: shinyreact's ReactDOM
+// global is react-dom/client only, without createPortal or flushSync, which Radix, Sonner and
+// TanStack Virtual import (tagging spec §6; docs/upstream-issues.md). That module requires
+// `react`, which stays external, so there is still one React.
+export const EXTERNAL = ["react", "react-dom/client"];
+export const GLOBALS = {
+  react: "window.shinyreact.React",
+  "react-dom/client": "window.shinyreact.ReactDOM",
+};
+
 export default defineConfig({
   define: { "process.env.NODE_ENV": JSON.stringify("production") },
   plugins: [react(), tailwindcss()],
@@ -26,15 +35,8 @@ export default defineConfig({
       fileName: () => "ui.js",
     },
     rollupOptions: {
-      external: ["react", "react-dom", "react-dom/client"],
-      output: {
-        assetFileNames: "ui.[ext]",
-        globals: {
-          react: "window.shinyreact.React",
-          "react-dom": "window.shinyreact.ReactDOM",
-          "react-dom/client": "window.shinyreact.ReactDOM",
-        },
-      },
+      external: EXTERNAL,
+      output: { assetFileNames: "ui.[ext]", globals: GLOBALS },
     },
   },
   test: { environment: "jsdom", include: ["src/**/*.test.ts"] },

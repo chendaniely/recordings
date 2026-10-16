@@ -40,3 +40,8 @@ export function browserStorage(): Storage | null {
     return null;
   }
 }
+
+/** The theme applyTheme last set on `root`: the `dark` class, or light. */
+export function currentTheme(root: HTMLElement): Resolved {
+  return root.classList.contains("dark") ? "dark" : "light";
+}
