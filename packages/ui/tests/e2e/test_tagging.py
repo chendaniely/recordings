@@ -256,26 +256,46 @@ ACTIVE = """() => {
 }"""
 
 
-def test_the_box_names_the_highlighted_item_as_it_moves(page: Page, server, console):
+def test_the_box_names_the_highlighted_item_as_it_moves(page: Page, server, console, demo_ids):
     # why: cmdk 1.1.1 left aria-activedescendant on the item before (or none) until an arrow key,
     # so a screen reader announced the wrong tag after opening, typing or an add (Task 11 council).
+    # And with an empty box nothing is chosen, so nothing is shown or announced until an arrow
+    # (fix round 2): what is seen and heard matches what Enter does.
+    apollo13 = demo_ids["apollo13-problem"]
+
     def follows() -> bool:
         active, selected = page.evaluate(ACTIVE)
         return selected is not None and active == selected
 
+    def silent() -> bool:
+        return page.evaluate(ACTIVE)[0] is None
+
     open_library(page, server.url)
-    open_row(page, "JFK")
+    open_row(page, "Apollo 13")
     page.get_by_test_id("recording-header").get_by_role(
-        "button", name=re.compile(r"^Add tags to JFK")
+        "button", name=re.compile(r"^Add tags to Apollo 13")
     ).click()
     box = page.get_by_test_id("picker-input")
     expect(box).to_be_focused()
-    wait_until(follows, timeout=3)  # after opening
+    root = page.locator("[cmdk-root]")
+    expect(root).to_have_attribute("data-highlight", "off")  # empty, nothing chosen: none shown
+    wait_until(silent, timeout=3)  # and none announced
+    first = page.get_by_test_id("picker-item").first
+    top = first.get_attribute("data-tag")
+    box.press("ArrowDown")  # the first arrow shows the top item, without stepping past it
+    expect(root).to_have_attribute("data-highlight", "on")
+    expect(first).to_have_attribute("aria-selected", "true")
+    wait_until(follows, timeout=3)
+    box.press("Enter")  # adds it
+    wait_until(lambda: server.tags(apollo13) == [(top, "you")])
+    expect(root).to_have_attribute("data-highlight", "off")  # the add cleared the box
+    wait_until(silent, timeout=3)
     box.fill("spa")
+    expect(root).to_have_attribute("data-highlight", "on")  # typing shows it
     wait_until(follows, timeout=3)  # after typing
     box.press("Enter")
     expect(box).to_have_value("")
-    wait_until(follows, timeout=3)  # after Enter cleared the box
+    wait_until(silent, timeout=3)  # after Enter cleared the box
 
 
 def luminance(rgb: list[int]) -> float:
@@ -330,7 +350,13 @@ def test_the_highlighted_item_and_the_plus_stand_out_in_both_themes(
     page.get_by_test_id("recording-header").get_by_role(
         "button", name=re.compile(r"^Add tags to JFK")
     ).click()
-    expect(page.locator("[data-testid=picker-item][aria-selected=true]")).to_have_count(1)
+    item = page.locator("[data-testid=picker-item][aria-selected=true]")
+    expect(item).to_have_count(1)
+    # An empty box with nothing chosen shows no highlight at all (fix round 2)...
+    expect(item).to_have_css("outline-style", "none")
+    expect(item).to_have_css("background-color", "rgba(0, 0, 0, 0)")
+    page.get_by_test_id("picker-input").press("ArrowDown")  # ...until an arrow shows it
+    expect(item).to_have_css("outline-style", "solid")
     c = page.evaluate(COLOURS)
     assert c["ringStyle"] == "solid" and c["ringWidth"] >= 2
     assert contrast(c["ring"], c["popover"]) >= 3, c

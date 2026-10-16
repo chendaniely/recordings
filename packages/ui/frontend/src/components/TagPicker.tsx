@@ -30,7 +30,8 @@ const NO_MATCH = "No tag matches.";
 const PAGE = 8; // items a Page Up or Page Down moves
 // The keys that move the highlight: cmdk's (arrows, Home, End, and Ctrl+N/J/P/K), and paging.
 const MOVES = new Set(["ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
-const moves = (e: KeyboardEvent) => MOVES.has(e.key) || (e.ctrlKey && ["n", "j", "p", "k"].includes(e.key));
+const steps = (e: KeyboardEvent) => e.key === "ArrowUp" || e.key === "ArrowDown" || (e.ctrlKey && ["n", "j", "p", "k"].includes(e.key));
+const moves = (e: KeyboardEvent) => MOVES.has(e.key) || steps(e);
 
 /** A click in the list keeps focus in the box, so typing goes on there (and a touch keeps the
  * on-screen keyboard up). */
@@ -45,14 +46,16 @@ const imeEscape = (e: globalThis.KeyboardEvent) => {
  * after the highlight moves without an arrow key (on opening, typing, or the box clearing): it
  * reads the highlighted item before a controlled value has been applied
  * (docs/upstream-issues.md). So the highlighted item's id is mirrored onto the box, and the list,
- * whenever an item's aria-selected changes or cmdk writes its own value back. */
+ * whenever an item's aria-selected changes, cmdk writes its own value back, or the root's
+ * data-highlight turns the highlight on or off: while it is off, nothing is announced. */
 function mirrorActiveItem(root: HTMLElement): () => void {
   const ATTR = "aria-activedescendant";
   const box = root.querySelector("[cmdk-input]");
   const list = root.querySelector("[cmdk-list]");
   if (!box || !list) return () => {};
   const sync = () => {
-    const id = list.querySelector("[cmdk-item][aria-selected=true]")?.id || null;
+    const on = root.getAttribute("data-highlight") !== "off";
+    const id = (on && list.querySelector("[cmdk-item][aria-selected=true]")?.id) || null;
     for (const el of [box, list]) {
       if (id === null) {
         if (el.hasAttribute(ATTR)) el.removeAttribute(ATTR);
@@ -64,6 +67,7 @@ function mirrorActiveItem(root: HTMLElement): () => void {
   const observer = new MutationObserver(sync);
   observer.observe(list, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-selected", ATTR] });
   observer.observe(box, { attributes: true, attributeFilter: [ATTR] });
+  observer.observe(root, { attributes: true, attributeFilter: ["data-highlight"] });
   sync();
   return () => observer.disconnect();
 }
@@ -75,7 +79,9 @@ function mirrorActiveItem(root: HTMLElement): () => void {
  *   a ✓ item it says "Already on all 12" and sends nothing. With nothing listed it says why.
  * - With an empty box, Enter and the removal keys act only on an item the user moved to (arrows,
  *   Home, End, Page Up or Down, the pointer); never on the top item unasked, as after opening or
- *   after an add has cleared the box (ruled, Task 11 council).
+ *   after an add has cleared the box (ruled, Task 11 council). Until then no item is shown or
+ *   announced as highlighted, so what is seen and heard matches what Enter does; the first arrow
+ *   shows the top item without stepping past it (ruled, fix round 2).
  * - Shift+Enter creates exactly the typed text (trimmed, NFC), when Create is offered; otherwise
  *   it says why not.
  * - Shift+Delete removes the highlighted ✓ or – tag from the targets; so does Cmd/Ctrl+Backspace
@@ -112,6 +118,7 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
   const create = createOffer(all, query);
   const listed = groups.length > 0 || create !== null;
   const blank = query.trim() === "";
+  const shown = chosen || !blank; // the highlight is shown and announced (data-highlight)
   // cmdk highlights the first item of each new list (React renders the input, and cmdk's
   // re-highlight, before the next key), and reports each highlight here.
   const highlighted = value.startsWith(TAG) ? value.slice(TAG.length) : null;
@@ -121,8 +128,17 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
   const touch = (tag: string) => {
     if (touched.get(tag) !== tagging.isPrivate(tag)) setTouched((m) => new Map(m).set(tag, tagging.isPrivate(tag)));
   };
+  /** The value of the first item listed for a query: each search starts there (cmdk does the same
+   * when the query changes; this also covers an add that clears an already empty box). */
+  const firstOf = (q: string) => {
+    const top = pickerGroups(all, q)[0]?.tags[0];
+    if (top) return `${TAG}${top.tag}`;
+    const offer = createOffer(all, q);
+    return offer ? `${CREATE}${offer}` : "";
+  };
   const search = (q: string) => {
     setQuery(q);
+    setValue(firstOf(q));
     setNote("");
     setChosen(false);
   };
@@ -157,6 +173,10 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
     if (composing(e)) return; // an IME's Enter or Backspace is the IME's
     if (moves(e)) {
       setChosen(true);
+      if (!shown && steps(e)) {
+        e.preventDefault(); // the first arrow shows the top item; cmdk would step past it
+        return;
+      }
       if (e.key === "PageUp" || e.key === "PageDown") {
         e.preventDefault();
         page(e.currentTarget, e.key === "PageDown" ? PAGE : -PAGE);
@@ -242,6 +262,7 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
       onKeyDown={onKeyDown}
       label={BOX}
       className="picker"
+      data-highlight={shown ? "on" : "off"}
     >
       {heading}
       <CommandInput value={query} onValueChange={search} placeholder={BOX} aria-describedby={keysId} data-testid="picker-input" />

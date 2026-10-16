@@ -74,6 +74,13 @@ const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelect
 const $$ = (sel: string) => [...document.querySelectorAll<HTMLElement>(sel)];
 const input = () => $<HTMLInputElement>("[data-testid=picker-input]")!;
 const highlighted = () => $("[data-testid=picker-item][aria-selected=true]")?.dataset.tag ?? null;
+/** Whether the highlight is shown (and announced): only once chosen, or with text in the box. */
+const shown = () => $("[cmdk-root]")!.getAttribute("data-highlight");
+const announced = async () => {
+  await Promise.resolve(); // the mirror runs as a mutation observer, in a microtask
+  return input().getAttribute("aria-activedescendant");
+};
+const idOf = (tag: string) => $(`[data-testid=picker-item][data-tag='${tag}']`)!.id;
 const note = () => $("[data-testid=picker-note]")!.textContent;
 const items = () => $$("[data-testid=picker-item]").map((el) => el.dataset.tag);
 
@@ -87,6 +94,7 @@ function type(text: string) {
 function press(key: string, init: KeyboardEventInit = {}, at: Element = input()) {
   flushSync(() => { at.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init })); });
 }
+const choose = (key = "ArrowDown") => press(key); // moving the highlight is a choice
 
 beforeEach(() => {
   calls = [];
@@ -103,7 +111,6 @@ describe("the picker's body (spec §6)", () => {
   const heading = createElement("div", { className: "picker-title" }, "Tag 2 recordings");
   const body = (ids = ["a", "b"], over: Record<string, unknown> = {}) =>
     draw(provide(tagging(over), createElement(PickerBody, { ids, heading })));
-  const choose = (key = "ArrowDown") => press(key); // moving the highlight is a choice
 
   it("names its box once, apart from the title, and describes its keys", () => {
     body();
@@ -126,13 +133,50 @@ describe("the picker's body (spec §6)", () => {
     press("Enter"); // right after opening
     expect(calls).toEqual([]);
     expect(note()).toBe("Type a tag name, or use the arrows");
-    choose(); // to the second item
+    choose(); // the first arrow shows the top item, and goes no further
+    choose(); // the second moves
     expect(highlighted()).toBe("school/course-101");
     press("Enter");
     expect(calls).toEqual([["add", ["a", "b"], ["school/course-101"]]]);
     press("Enter"); // after an add, the choice is spent
     expect(calls).toHaveLength(1);
     expect(note()).toBe("Type a tag name, or use the arrows");
+  });
+
+  it("shows and announces no highlight in an empty box until an item is chosen (ruled)", async () => {
+    body();
+    expect(shown()).toBe("off");
+    expect(await announced()).toBe(null);
+    choose("ArrowDown"); // reveals the top item, without stepping past it
+    expect(shown()).toBe("on");
+    expect(highlighted()).toBe("talks");
+    expect(await announced()).toBe(idOf("talks"));
+    choose("ArrowDown");
+    press("Enter"); // adds the item chosen, and the cleared box hides the highlight again
+    expect(calls).toEqual([["add", ["a", "b"], ["school/course-101"]]]);
+    expect(shown()).toBe("off");
+    expect(await announced()).toBe(null);
+    choose("ArrowUp"); // the first arrow either way shows the top item again
+    expect(highlighted()).toBe("talks");
+    expect(await announced()).toBe(idOf("talks"));
+    type("cours"); // text shows the highlight, as Enter acts on it
+    type("");
+    expect(shown()).toBe("off");
+    type("cours");
+    expect(shown()).toBe("on");
+    expect(await announced()).toBe(idOf("school/course-101"));
+  });
+
+  it("Home, End and paging show the highlight as they move it, and so does the pointer", async () => {
+    body();
+    choose("End");
+    expect([shown(), highlighted()]).toEqual(["on", "private"]);
+    expect(await announced()).toBe(idOf("private"));
+    type("x");
+    type(""); // a new search: hidden again
+    $("[data-tag='notes/lecture']")!.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    await tick();
+    expect([shown(), highlighted()]).toEqual(["on", "notes/lecture"]);
   });
 
   it("Page Up and Down move a page at a time (cmdk has no paging), and are a choice", () => {
@@ -321,15 +365,17 @@ describe("the picker's body (spec §6)", () => {
       await Promise.resolve(); // the mirror runs as a mutation observer, in a microtask
       return [box.getAttribute("aria-activedescendant"), $("[cmdk-item][aria-selected=true]")?.id ?? null];
     };
-    const [opened, openedItem] = await active();
-    expect(opened).toBe(openedItem);
-    expect(opened).not.toBe(null);
+    expect((await active())[0]).toBe(null); // empty and unchosen: none (round 2)
     type("cours");
     const [typed, typedItem] = await active();
     expect(typed).toBe(typedItem);
+    expect(typed).not.toBe(null);
+    choose("ArrowDown");
+    const [moved, movedItem] = await active();
+    expect(moved).toBe(movedItem);
+    expect(moved).not.toBe(typed);
     press("Enter");
-    const [cleared, clearedItem] = await active();
-    expect(cleared).toBe(clearedItem);
+    expect((await active())[0]).toBe(null); // the add cleared the box
     type("zzzz/..");
     expect(await active()).toEqual([null, null]); // nothing listed: no active descendant
   });
@@ -400,11 +446,19 @@ describe("the dialog form (T, the selection bar, a drop)", () => {
     expect(document.activeElement).toBe(input());
   });
 
-  it("adds nothing on Enter right after opening", () => {
+  it("adds nothing on Enter right after opening, shows no highlight, and the first arrow shows the top item", async () => {
     start(document.body.appendChild(document.createElement("button")));
     press("Enter");
     expect(calls).toEqual([]);
     expect(note()).toBe("Type a tag name, or use the arrows");
+    expect(shown()).toBe("off");
+    expect(await announced()).toBe(null);
+    choose("ArrowDown");
+    expect(highlighted()).toBe("talks");
+    expect(await announced()).toBe(idOf("talks"));
+    press("Enter"); // acts on the item shown: "talks" is on both
+    expect(calls).toEqual([]);
+    expect(note()).toBe("Already on all 2");
   });
 
   it("stays open on an Esc an IME is composing with", () => {
@@ -478,6 +532,17 @@ describe("the + and its popover", () => {
     const dialog = $("[role=dialog]")!;
     expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)?.textContent).toBe("Tag Week a");
     expect(document.activeElement).toBe(input());
+  });
+
+  it("opens with no highlight shown or announced; the first arrow shows the top item", async () => {
+    plus();
+    flushSync(() => $<HTMLButtonElement>("[data-testid=add-tag]")!.click());
+    expect(shown()).toBe("off");
+    expect(await announced()).toBe(null);
+    choose("ArrowUp");
+    expect(shown()).toBe("on");
+    expect(highlighted()).toBe("talks");
+    expect(await announced()).toBe(idOf("talks"));
   });
 
   it("reports every open and close, so a virtual list can keep its row drawn", () => {

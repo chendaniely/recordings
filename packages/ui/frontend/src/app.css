@@ -153,10 +153,13 @@ tr.attn td { color: var(--destructive); }
 .picker-glyph { flex: none; width: 1em; text-align: center; }
 .picker-tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-tag bdi { unicode-bidi: isolate; direction: ltr; }
-.picker-item[data-selected=true] .picker-tag { white-space: normal; overflow-wrap: anywhere; }
+.picker[data-highlight=on] .picker-item[data-selected=true] .picker-tag { white-space: normal; overflow-wrap: anywhere; }
 /* The highlighted item has a ring, not only shadcn's --muted background (1.2:1 light, 1.07:1
    dark): --ring is about 6:1 against the popover and the item in both themes (WCAG 1.4.11). */
-.picker-item[data-selected=true] { outline: 2px solid var(--ring); outline-offset: -2px; }
+.picker[data-highlight=on] .picker-item[data-selected=true] { outline: 2px solid var(--ring); outline-offset: -2px; }
+/* With an empty box and nothing chosen, Enter acts on nothing, so nothing shows as highlighted
+   (and nothing is announced: mirrorActiveItem). cmdk still keeps its place on the top item. */
+.picker[data-highlight=off] .picker-item[data-selected=true] { background-color: transparent; }
 .picker-state { flex: none; margin-left: auto; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
 .picker-x { flex: none; display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; border-radius: 999px; cursor: pointer; }
 .picker-x:hover { background: var(--muted); }
