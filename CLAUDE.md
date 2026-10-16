@@ -52,7 +52,8 @@ exactly. To upgrade:
 5. Check that its examples' Vite, plugin-react, TypeScript and Vitest versions still match
    ours. Move `react`, `react-dom` and their `@types` to the React minor version that
    `shinyreact.js` bundles (`grep -o '"19\.[0-9.]*"' …/shinyreact/www/shinyreact.js`). The bundled
-   `react-dom` index must stay on that same minor.
+   `react-dom` index must stay on that same minor: it reads the external React's internals, so a
+   mismatch breaks portals and `flushSync` at runtime.
 6. Check each shinyreact entry in `docs/upstream-issues.md`, which says how to tell when its
    workaround can go. In particular re-check the react-dom entry: if
    `typeof window.shinyreact.ReactDOM.createPortal === 'function'` in the console of a running app,
