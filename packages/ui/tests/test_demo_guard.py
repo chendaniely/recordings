@@ -252,6 +252,30 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
                     reader.start()
                     reader.join(20)  # receive_text has no timeout: a missing output must not hang
                     assert wanted <= seen, f"the demo's websocket sent only {sorted(seen)}"
+                    # A tag write (tagging spec §9, "Demo isolation"): every file it opens, and
+                    # every sqlite3.connect, must stay in the demo's temporary folder.
+                    request = {
+                        "request_id": "guard0001demo",
+                        "action": "add",
+                        "ids": [demo_ids["apollo13-problem"]],
+                        "tags": ["talks"],
+                        "confirm_ids": [],
+                    }
+                    update = {"tag_request:shinyreact.default": request}
+                    ws.send_text(json.dumps({"method": "update", "data": update}))
+                    replies: list[dict] = []
+
+                    def read_reply() -> None:
+                        while not any(r.get("status") == "done" for r in replies):
+                            custom = json.loads(ws.receive_text()).get("custom", {})
+                            message = custom.get("shinyReactMessage", {})
+                            if message.get("id") == "tag_result":
+                                replies.append(message["data"])
+
+                    reader = threading.Thread(target=read_reply, daemon=True)
+                    reader.start()
+                    reader.join(20)
+                    assert [r["status"] for r in replies][-1:] == ["done"], replies
                 assert runtime.tagging().store.wait_open(30) == (True, None)
             archive = Archive(settings.archive)
             views.library_view(archive)
@@ -260,6 +284,8 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
             # What create_app configured for Status in demo mode: if it ever read the real config's
             # [state] path, opening the real state.db would show up in the audit hook's events.
             views.status_view(archive, runtime.status_settings())
+            tagged = archive.load(demo_ids["apollo13-problem"])
+            assert [(t.tag, t.by) for t in tagged.tags] == [("talks", "you")]
         finally:
             runtime.configure(None)
     assert [e for e in events if e[0] in PATH_EVENTS and str(real) in e[1]] == []

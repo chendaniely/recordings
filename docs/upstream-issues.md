@@ -89,3 +89,23 @@ noting that the global lacks the index module's exports.
   say an output can outlive its last component, or that it then breaks.
 - **`reactive.invalidate_later`**, for an output that refreshes on its own (Status's 60-second
   refresh, `shiny_app.py`). Stage 2a checked it against the installed Shiny's docstring instead.
+- **Testing `send_message`.** The testing reference reads outputs and inputs through
+  `local_server` and `test_server`, but says nothing about messages. Shiny 1.8.0's test server
+  can't show them: its `MockConnection.send` (`shiny/_connection.py`) discards everything. The
+  tests here monkeypatch `shinyreact.send_message`, which reaches the app only because
+  `shiny_app.py` calls it through the module (`shinyreact.send_message(...)`), never as an
+  imported name (`test_shiny_server.py`, `test_tag_sessions.py`; tagging part A, Task 7).
+- **Event inputs with a `null` default.** The skill's action-button pattern reads its event with
+  `ignore_init=True`, which suits a counter starting at 0. For a request mounted with a `null`
+  default, `ignore_init` can swallow a first request that coalesced with the mount default and
+  so reached the server as the input's first value. Shiny's default `ignore_none=True` skips the
+  `null` instead (`reactive/_reactives.py`, `event`). `tag_request`, `refresh` and
+  `snippet_request` use it (tagging spec §5;
+  `test_a_request_that_is_the_inputs_first_value_still_runs`).
+- **Long work behind an input.** The skill's `send_message` example sends from an async effect.
+  It doesn't say that an effect awaiting slow work holds Shiny's process-wide reactive lock, so
+  every window freezes, or that a `reactive.extended_task` is the way out. That task runs outside
+  the lock, refuses reactive reads, and queues a second invocation behind a running one. Its
+  `send_message` still resolves the message id in the right namespace, a context variable the
+  task inherits (`shiny/_namespaces.py`). Checked in shiny 1.8.0's `reactive/_extended_task.py`
+  and shinyreact's `_send_message.py` (Task 7).

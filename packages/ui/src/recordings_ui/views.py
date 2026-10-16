@@ -6,9 +6,11 @@ skill, "Verify it": factor pure logic out of the app file).
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
 from markdown_it import MarkdownIt
@@ -233,3 +235,76 @@ def recording_view(archive: Archive, rid: str, *, media_base: str | None = None)
 
 def status_view(archive: Archive, settings: StatusSettings | None) -> dict:
     return _status_view(archive.root, settings)
+
+
+SNIPPET_CHARS = 160  # spec §5
+_STAMP = re.compile(r"-(\d{8}T\d{6}Z)\.json$")  # rendition_filename's UTC stamp
+
+
+def _stamp(name: str) -> tuple[str, str]:
+    found = _STAMP.search(name)
+    return (found.group(1) if found else "", name)
+
+
+def plain_text(markdown: str) -> str:
+    """Markdown as plain words, for a snippet: the text of each inline run, and nothing else.
+    The browser draws snippets as text nodes, never as HTML (spec §5)."""
+    words: list[str] = []
+    for token in _md.parse(markdown):
+        for child in token.children or []:
+            if child.type in ("text", "code_inline"):
+                words.append(child.content)
+            elif child.type in ("softbreak", "hardbreak"):
+                words.append(" ")
+        words.append(" ")
+    return " ".join("".join(words).split())
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _transcript_text(path: Path, limit: int) -> str:
+    try:
+        rendition = Rendition.model_validate_json(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return ""
+    out: list[str] = []
+    size = 0
+    for segment in rendition.payload.get("segments", []):
+        out.append(str(segment.get("text", "")))
+        size += len(out[-1]) + 1
+        if size > limit:
+            break
+    return " ".join(out)
+
+
+def _notes_text(path: Path) -> str:
+    try:
+        rendition = Rendition.model_validate_json(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return ""
+    if rendition.kind != "notes" or rendition.engine != "plaud":
+        return ""
+    return plain_text(str(rendition.payload.get("markdown", "")))
+
+
+def snippet(archive: Archive, rid: str, *, limit: int = SNIPPET_CHARS) -> str | None:
+    """A recording's first words, as plain text (spec §5): from its chosen transcript (or the
+    newest), or else its first Plaud note. It reads that one file (tagging plan, decision 11)
+    and stops at `limit` characters. None: nothing to show yet."""
+    try:
+        rec = archive.load(rid)
+        folder = archive.path_for(rid) / "renditions"
+        names = sorted(p.name for p in folder.glob("*.json"))
+    except (KeyError, ValueError, OSError):
+        return None
+    transcripts = [n for n in names if n.startswith("transcript-")]
+    chosen = (rec.chosen.transcript or "").removeprefix("renditions/")
+    pick = chosen if chosen in transcripts else max(transcripts, key=_stamp, default=None)
+    text = _transcript_text(folder / pick, limit) if pick else ""
+    if not text:
+        notes = sorted((n for n in names if n.startswith("notes-plaud-")), key=_stamp)
+        text = _notes_text(folder / notes[0]) if notes else ""
+    return _clip(text, limit) if text else None

@@ -371,6 +371,39 @@ def _ids_ok(ids: tuple[str, ...]) -> bool:
     return True
 
 
+MAX_SNIPPET_IDS = 200  # spec §5
+TOO_MANY_SNIPPETS = f"At most {MAX_SNIPPET_IDS} snippets at a time."
+SNIPPETS_FAILED = "The snippets couldn't be read."
+
+
+@dataclass(frozen=True)
+class SnippetJob:
+    request_id: str
+    ids: tuple[str, ...]
+
+
+def _snippets(store: Store, ids: tuple[str, ...]) -> dict[str, str | None]:
+    return {rid: views.snippet(store.archive, rid) for rid in ids}
+
+
+def _check_snippets(raw: object) -> SnippetJob | Refusal:
+    """The same checks as a tag request's (`_request_id`, `_texts`, `_ids_ok`), with its own cap."""
+    if not isinstance(raw, dict):
+        return Refusal(None, UNREADABLE)
+    request_id = _request_id(raw)
+    if request_id is None:
+        return Refusal(None, UNREADABLE)
+    ids = raw.get("ids")
+    if not _texts(ids):
+        return Refusal(request_id, UNREADABLE)
+    ids = tuple(dict.fromkeys(ids))
+    if len(ids) > MAX_SNIPPET_IDS:
+        return Refusal(request_id, TOO_MANY_SNIPPETS)
+    if not _ids_ok(ids):
+        return Refusal(request_id, BAD_ID)
+    return SnippetJob(request_id, ids)
+
+
 def _outcome_read(request_id: str, rid: str, write: asyncio.Future) -> None:
     """A write's outcome, always read. A write that outlasts its cancelled request is read by
     no one else, and asyncio would log an unread exception with its text and traceback (Global
@@ -533,6 +566,33 @@ class TagSession:
                 if problem is not None:
                     return Refusal(request_id, problem)
         return Job(request_id, action, ids, tags, confirm_ids=frozenset(confirm))
+
+    # ---- snippets ----------------------------------------------------------------------------
+    def check_snippets(self, raw: object) -> SnippetJob | Refusal:
+        """Never raises (spec §5)."""
+        try:
+            return _check_snippets(raw)
+        except Exception as exc:  # noqa: BLE001  a malformed request must never close the session
+            log.warning("snippet request refused (%s)", type(exc).__name__)
+            return Refusal(None, UNREADABLE)
+
+    async def snippets(self, job: SnippetJob | Refusal, send: Send) -> None:
+        """Reads on the snippet reader, never the writer thread. The session's extended task
+        runs one request at a time, queueing the next (spec §5). It always replies, a failed read
+        included: the browser asks for one batch at a time and waits for its reply."""
+        try:
+            if isinstance(job, Refusal):
+                await send({"request_id": job.request_id, "snippets": {}, "message": job.message})
+                return
+            texts = await self.store.read_off_loop(partial(_snippets, self.store, job.ids))
+            await send({"request_id": job.request_id, "snippets": texts, "message": None})
+        except Exception as exc:  # noqa: BLE001  the session must stay up
+            log.warning("snippets %s failed (%s)", job.request_id, type(exc).__name__)
+            failed = {"request_id": job.request_id, "snippets": {}, "message": SNIPPETS_FAILED}
+            try:
+                await send(failed)
+            except Exception as again:  # noqa: BLE001  the window has gone: nothing to tell
+                log.info("snippets %s: no reply sent (%s)", job.request_id, type(again).__name__)
 
     # ---- running a request -----------------------------------------------------------------
     async def run(self, job: Job | Refusal, send: Send) -> None:

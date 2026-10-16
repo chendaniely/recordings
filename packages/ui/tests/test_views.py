@@ -7,9 +7,11 @@ from recordings.writer import Incoming
 from recordings_ui.views import (
     library_view,
     library_view_from,
+    plain_text,
     recording_view,
     render_markdown,
     row,
+    snippet,
     summarise,
 )
 
@@ -326,3 +328,50 @@ def test_a_note_type_known_only_from_an_exclusion_is_listed_at_zero(demo_archive
     assert {"note_type": "lecture", "count": 0} in view["note_types"]
     assert summarise(view["recordings"], ["lecture"])["note_types"] == view["note_types"]
     assert {"note_type": "lecture", "count": 0} not in summarise(view["recordings"])["note_types"]
+
+
+def test_a_snippet_is_the_chosen_transcripts_first_words_as_plain_text(demo_archive, demo_ids):
+    text = snippet(Archive(demo_archive), demo_ids["jfk-rice"])
+    assert text and len(text) <= 160 and "\n" not in text
+
+
+def test_a_snippet_falls_back_to_the_first_plaud_note_without_markdown(tmp_path, writer):
+    media = tmp_path / "x.mp3"
+    media.write_bytes(b"ID3 synthetic")
+    rec = writer.add(
+        Incoming(
+            media=media,
+            recorded_at=datetime(2026, 10, 1, 9, tzinfo=UTC),
+            timezone_name="UTC",
+            time_source="ingest",
+            title="Week 4",
+            kind="audio",
+            sources=(),
+        )
+    ).recording
+    assert snippet(writer.archive, rec.id) is None  # nothing yet: the grid says so
+    writer.write_rendition(
+        rec.id,
+        Rendition(
+            kind="notes",
+            note_type="plaud-summary",
+            engine="plaud",
+            version="plaud@1",
+            created_at=datetime(2026, 10, 1, 10, tzinfo=UTC),
+            payload={"markdown": "# Week 4\n\n**Bold** words and `code` here.\n\n- one\n- two"},
+        ),
+    )
+    assert snippet(writer.archive, rec.id) == "Week 4 Bold words and code here. one two"
+
+
+def test_a_long_snippet_stops_at_160_characters():
+    assert plain_text("*a* " * 200).startswith("a a a")
+    long = " ".join(["word"] * 100)
+    from recordings_ui.views import _clip
+
+    clipped = _clip(long, 160)
+    assert len(clipped) == 160 and clipped.endswith("…")
+
+
+def test_a_snippet_of_an_unknown_recording_is_none(demo_archive):
+    assert snippet(Archive(demo_archive), "20200101T000000+0000_0000beef") is None
