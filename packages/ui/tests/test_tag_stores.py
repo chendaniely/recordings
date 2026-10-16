@@ -1,6 +1,7 @@
 """The tag service's stores and the writer thread (tagging spec §5). The `store` fixture (both
 stores) and `run` are in conftest.py, shared with test_tag_service.py."""
 
+import asyncio
 import fcntl
 import logging
 import subprocess
@@ -255,15 +256,56 @@ def test_the_archive_store_names_the_writers_refusals(tag_archive, exc, found):
         store.close()
 
 
-def test_a_sqlite_error_is_busy_or_stops_the_batch(tag_archive):
+@pytest.mark.parametrize(
+    "name", ["SQLITE_BUSY", "SQLITE_BUSY_SNAPSHOT", "SQLITE_LOCKED", "SQLITE_LOCKED_SHAREDCACHE"]
+)
+def test_a_sqlite_error_is_busy_or_stops_the_batch(tag_archive, name):
+    # why: an extended result code names the busy kind (SQLITE_BUSY_SNAPSHOT, …); it is still
+    # busy, matched by prefix as index.py does, never a stop.
     import sqlite3
 
     store = ArchiveStore(Archive(tag_archive.root), tag_archive.open_writer)
     try:
         busy = sqlite3.OperationalError("database is locked")
-        busy.sqlite_errorname = "SQLITE_BUSY"
+        busy.sqlite_errorname = name
         assert store.classify(busy) == Classified(BUSY, False)
         assert store.classify(sqlite3.DatabaseError("x")) == Classified(STOP_STATE, True)
+    finally:
+        store.close()
+
+
+def test_a_write_off_the_writer_thread_fails_loudly(tag_archive, run):
+    # why: spec §5. Every write runs on the one writer thread; a path that forgets
+    # `store.write(...)` must fail at once, in tests, never write from the event loop.
+    store = ArchiveStore(Archive(tag_archive.root), tag_archive.open_writer)
+    rid = tag_archive.ids["untagged"]
+    try:
+        assert store.wait_open(30) == (True, None)
+        with pytest.raises(RuntimeError, match="writer thread"):
+            store.apply(rid, add("talks"))
+        with pytest.raises(RuntimeError, match="writer thread"):
+            store._thread.ensure_open()
+        assert tag_archive.tags("untagged") == []
+        run(store.write(lambda: store.apply(rid, add("talks"))))  # through write: it runs
+        assert tag_archive.tags("untagged") == ["talks"]
+    finally:
+        store.close()
+
+
+def test_a_cancelled_wait_for_the_open_never_cancels_the_open(tag_archive, run):
+    # why: every session awaits the one `opened` future. A window that goes away while the open
+    # is still queued cancels its own wait; asyncio's wrap_future would pass that cancellation on
+    # to the shared future, and the open would never run for anyone.
+    from concurrent.futures import Future
+
+    store = ArchiveStore(Archive(tag_archive.root), tag_archive.open_writer)
+    try:
+        store.wait_open(30)
+        queued: Future = Future()  # an open the thread hasn't started yet
+        store._thread.opened = queued
+        with pytest.raises(TimeoutError):
+            run(asyncio.wait_for(store.ready(), 0.05))
+        assert not queued.cancelled()
     finally:
         store.close()
 

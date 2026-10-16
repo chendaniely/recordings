@@ -68,6 +68,11 @@ class OneThread(Executor):
     def alive(self) -> bool:
         return self._thread.is_alive() and not self._closed
 
+    def require_thread(self, what: str) -> None:
+        """Fail loudly when `what` runs anywhere but this executor's own thread."""
+        if threading.current_thread() is not self._thread:
+            raise RuntimeError(f"{what} runs on the {self._thread.name} thread only")
+
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         with self._lock:
             if not self._closed:
@@ -118,6 +123,7 @@ class WriterThread:
 
     def ensure_open(self) -> bool:
         """On the thread. True once the Writer is open."""
+        self.executor.require_thread("WriterThread.ensure_open")
         if self.writer is not None:
             return True
         try:
