@@ -225,3 +225,12 @@ def test_every_recordings_command_the_runbook_names_parses():
     assert any(c[:2] == ["backup", "restore-test"] for c in commands)
     # Two commands the runbook names only in prose, where the parse used to skip them.
     assert ["mirror", "--max-delete", "1"] in commands and ["mirror", "--debug"] in commands
+
+
+def test_the_runbook_says_the_first_real_tag_ends_the_disposable_window():
+    # why: tagging spec §1 and §10. Part A ships before stage 2b's spikes and dry run, so tagging
+    # the real archive is Dan's call, and a rollback by re-import before then loses the tags.
+    text = _section("## 4. Import")
+    assert "the first real tag" in text
+    assert "loses every tag" in text
+    assert "Dan's call" in text

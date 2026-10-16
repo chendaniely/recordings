@@ -54,6 +54,35 @@ version that unbinds the placeholder before removing it (`Shiny.unbindAll(el, tr
 To check a new version, remove the two `useShinyOutputStatus` lines from `App` and run
 `make e2e`: if the test above passes, the bug is fixed. Keeping the lines is harmless either way.
 
+## shinyreact 0.1.0: its ReactDOM global is `react-dom/client` only
+
+Found 2026-10-15, while designing tagging part A (spec §6).
+
+**What shinyreact does.** `window.shinyreact.ReactDOM` is React's `react-dom/client` module:
+`createRoot` and `hydrateRoot`. It has no `createPortal` and no `flushSync`, which live in the
+`react-dom` index module.
+
+**Why it matters.** Radix (Popover, Alert Dialog, Dialog, Tooltip), Sonner and TanStack Virtual
+import both from `react-dom`. Mapped to the global, as the shinyreact-build-app skill's Vite
+config does for `react-dom`, they find `undefined` and throw on first use.
+
+**The workaround.** `packages/ui/frontend/vite.config.js` maps only `react` and
+`react-dom/client` to the globals, and bundles the `react-dom` index. That module requires
+`react`, which stays external, so there is still one React. Its `createPortal` builds a plain
+element, which the global copy renders. Its `flushSync` runs the callback but can't force the
+other copy to flush synchronously; that is acceptable for these libraries, and TanStack Virtual
+is set to `useFlushSync: false`. `src/build.test.ts` pins the mapping, and the e2e test
+`test_the_built_bundle_portals_toasts_dialogs_and_scrolls` checks the built bundle with a clean
+console.
+
+**When it can go.** When shinyreact's global gains `createPortal` (check
+`grep -o 'ReactDOM:[A-Za-z]*' …/shinyreact/www/shinyreact.js` and what that object exports), map
+`react-dom` back to it, delete the line in `vite.config.js` and `build.test.ts`'s expectation,
+and run `make e2e`.
+
+**The skill doesn't say this either.** Its Vite config maps `react-dom` to the global without
+noting that the global lacks the index module's exports.
+
 ## shinyreact-build-app skill: what it doesn't cover
 
 - **How long an output lives once its components unmount** (the entry above). The skill doesn't

@@ -683,7 +683,7 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    refuses to open it (`StateError`: "newer than this release's"), and `web` and `backup` will not
    stay up. `rc run --rm web recordings doctor --role web` names it as a problem. Then either
    deploy forward, or restore `state/` from the last backup (Restoring for real, step 3, and its
-   `state.db` lines) before starting the older image. Before stage 3's first tag, the archive
+   `state.db` lines) before starting the older image. Until the first real tag, the archive
    itself can be moved aside and imported again (spec §19, and the end of step 4).
 
 ## 3. Bring the source over
@@ -781,7 +781,14 @@ Then open the Library on one of your devices. It lists the imported recordings, 
 time). If it takes longer, stop: the Library moves onto `index.db` before stage 2b (stage-2a
 plan, decision 6).
 
-**Rolling back, until stage 3's first tag** (§19): the deployment is disposable.
+**Rolling back, until the first real tag** (§19): the deployment is disposable.
+
+Tagging (part A of stage 3a) can ship before stage 2b's spikes and `sync --dry-run`. When to give
+the real archive its first tag is Dan's call. Until then a rollback by re-import is free; after
+it, a rollback by re-import loses every tag, because the tags live only in the archive's
+`recording.json` files. A re-run of `import-audio-router` also puts back any privacy tag that
+was removed with confirmation (spec §9.3); that is by design.
+
 ```bash
 rc down
 mv "$RECORDINGS_HOME/archive" "$RECORDINGS_HOME/archive.failed-$(date +%Y%m%d)"

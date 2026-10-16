@@ -595,8 +595,15 @@ State has three homes:
 Also:
 - **Locks** use `flock`, which is released if the process crashes.
 - **Reads never need `state/`.** The Mac's mirror has none and can't write.
-- **Demo mode and tests** use a temporary state folder. The Pages demo gets a no-op lock;
-  whether `flock` works under Emscripten is still to be checked.
+- **Demo mode and tests** use a temporary state folder. Demo mode's holds a `Writer`'s
+  `state.db`, index and locks, beside the demo's copy, and goes with it at exit (Dan,
+  2026-10-15). **The Pages demo takes no lock at all:** it tags in memory and saves nothing
+  (Dan, 2026-10-15).
+- **Tagging's Undo records live in the session's memory, not in `state.db`** (Dan,
+  2026-10-15). A session keeps its last 20 actions; a reload ends them. Each revision a tag
+  write commits records `origin` as `<op>:<request_id>` (for example `add-tags:3f2a…`), so a
+  batch stopped by a crash or `docker stop` still leaves a record of the recordings it
+  changed. A full journal, with Undo across reloads, waits for the CLI in the rest of 3a.
 
 ## 7. Tags, note types and privacy
 
@@ -662,8 +669,9 @@ school/course-101:
       `general-fallback`.
     - **By hand:** in the UI or through the CLI.
     - **Tag rules:** a tag's `notes:` list adds types.
-  - **Your choice wins.** Unchecking an auto-picked type records it in
-    `excluded_note_types`, and re-running auto-pick never adds it back.
+  - **Your choice wins.** Removing any `notes/<type>` tag, `auto` or `you`, records `<type>`
+    in `excluded_note_types`, and re-running auto-pick never adds it back. Adding
+    `notes/<type>` back yourself clears the exclusion (Dan, 2026-10-15).
 
 ### 7.4 Privacy (tag-based)
 
@@ -672,7 +680,15 @@ school/course-101:
 - **The rule:** a recording is **private** if its `recording.json` has the tag `private`
   or any tag under `private/` (for example `private/journal` or `private/personal`), in any
   capitalisation: `Private` and `PRIVATE/journal` count too. The rule errs towards private.
-  One function decides it (`recordings.models.is_private_tag`).
+  One function decides it (`recordings.models.is_private_tag`). It applies Unicode NFKC and
+  drops format characters before `casefold()`, so a fullwidth or zero-width-split `private`
+  is private too (Dan, 2026-10-15).
+  - **New tag names follow tagging part A's rules** (Dan, 2026-10-15;
+    `docs/superpowers/specs/2026-10-15-tagging-a-design.md` §4): NFC, no control, format,
+    separator, private-use or surrogate characters, folder parts of at most 64 characters and
+    a whole tag of at most 200, no `.` or `..` part and no `\`, `notes/<type>` only for a type
+    the archive has, and nothing that *looks like* `private` without being spelled so. A
+    removal accepts any existing spelling.
   - **`recording.json` is the single source of truth.** Privacy needs no other file, no
     marker files and no lists to keep up to date (Dan, 2026-10-08).
   - **The UI's Private section is the `private/` folder.**
@@ -1622,15 +1638,27 @@ later" until its build stage (§20):
 
   | Key | Does | Where it works |
   |---|---|---|
-  | `T` | opens the tag picker for the selection | Library list, Tags grid |
+  | `T` | opens the tag picker for the selection; in the Tags grid with nothing selected, for the focused row | Library list, Tags grid |
+  | Up / Down | moves focus and selects only the focused row (Dan, 2026-10-15) | Library list, Tags grid |
+  | Shift+Up / Down | extends the selection from the anchor | Library list, Tags grid |
+  | Cmd/Ctrl+Up / Down | moves focus without changing the selection | Library list, Tags grid |
+  | Cmd/Ctrl+Space | toggles the focused row | Library list, Tags grid |
+  | Page Up / Down, Home / End | a screenful, the first or last row (the grid uses Ctrl+Home / End); Shift extends | Library list, Tags grid |
+  | Enter | opens the focused row (the grid's pinned cell: Open) | Library list, Tags grid |
+  | Cmd-A, Esc | select every row in the filter; clear the selection | Library list, Tags grid |
+  | Cmd/Ctrl+Z | undoes the newest tag action still in this session | Library list, Tags grid |
+  | `R` | refreshes the list | Library list, Tags grid |
+  | `1`–`9`, `0` | toggles the first ten tag columns on the focused row, or adds to the selection | Tags grid |
   | `P` | opens the speaker picker | the focused transcript line |
   | `D` | opens the date control | Library list header, Insights |
   | `1`–`9` | picks a person already in this recording | the speaker picker |
   | `Y` / `N` | accepts or rejects, and moves to the next clip | *Suggestions* |
   | `S` / `U` | skips, or undoes the last decision | *Suggestions* |
   | `[` `]` | jumps to the previous or next line of the selected label | Transcript |
-  | Space | plays or pauses; in *Suggestions*, plays the clip | everywhere a player is shown |
+  | Space | plays or pauses; in *Suggestions*, plays the clip; in the Tags grid, which has no player, toggles the focused cell | everywhere a player is shown; the Tags grid |
   | `?` | opens the help sheet | everywhere |
+
+  (Dan, 2026-10-15: the selection, Undo, Refresh and digit keys, from tagging part A.)
 
 ### 12.1 Library (home)
 
@@ -1685,8 +1713,15 @@ later" until its build stage (§20):
     a partial name chooses the existing tag. (A bug found in testing.)
   - Enter adds a tag, and the picker stays open for more. Esc closes it.
   - `/` creates folders.
-- **No confirmation dialogs** in the UI. Every action shows an Undo toast. There are two
-  exceptions, both about privacy:
+- **+ and ×** (Dan, 2026-10-15): a **+** after each row's chips, and in the header, opens the
+  picker for that recording; each chip has an **×** that removes that tag from that recording.
+- **In the picker** (Dan, 2026-10-15), Enter only ever adds, Shift+Enter creates exactly the
+  typed text, and Shift+Delete removes the highlighted tag. Create never makes a `notes/` tag or
+  a case-variant of an existing tag.
+- **No confirmation dialogs** in the UI. Every action shows an Undo toast. There are three
+  exceptions, all about privacy:
+  - Removing a recording's last private tag, including by an Undo, asks first, naming how many
+    recordings (Dan, 2026-10-15; tagging part A §3, decision 2).
   - *Forget*, which can't be undone: you type the person's name to confirm (§7.6).
   - Moving a person from `people.private.yaml` into `people.yaml`, which makes their name
     visible to external readers (§7.6).
@@ -1695,11 +1730,20 @@ later" until its build stage (§20):
 
 - **Grid:**
   - one row per recording, one checkbox column per tag, including `notes/*`
+  - a pinned first column (selection, title, date, **Open**, and with Untagged only a two-line
+    snippet under the title), then the pinned `private` column; other private tags grouped
+    at the right (Dan, 2026-10-15)
   - **a click anywhere in a cell** toggles it
-  - clicking a column header adds that tag to the selected rows
-  - Finder-style row selection and `T` work here too
-  - **Untagged only**, with a summary snippet column
-  - tagged rows stay where they are until you refresh
+  - clicking a column header adds that tag to the selected rows; sorting is in each header's
+    menu, apart from the header click (Dan, 2026-10-15)
+  - Finder-style row selection and `T` work here too; `1`–`9` and `0` toggle the first ten
+    columns (Dan, 2026-10-15)
+  - **Untagged only** by default, with a live "N left" (Dan, 2026-10-15)
+  - **Refresh** (`R`, and a button); the default columns are fixed per load (Dan, 2026-10-15)
+  - **Open** opens the recording in the Library in a new tab, at a read-only
+    `#/library/<id>` (Dan, 2026-10-15)
+  - rows stay where they are until you refresh, in the Library list as in the grid, and in
+    every filter (Dan, 2026-10-15)
   - a column picker by folder
 - **Tree:**
   - tag folders with counts
@@ -2207,7 +2251,9 @@ come from that frame.
   framed, nothing on the app's origin runs foreign script (`/media` serves only audio and video;
   no route may serve HTML, SVG, XML or PDF inline from this origin), and loading a URL never
   writes. Shiny bookmarking stays off (it restores inputs from the query string), and the URL's
-  hash only chooses what to show. Every response also carries `Cross-Origin-Opener-Policy:
+  hash only chooses what to show. Tag and snippet requests are never sent from a URL, a hash or
+  storage, and drag and drop acts only on drags that started in the page itself (Dan,
+  2026-10-15). Every response also carries `Cross-Origin-Opener-Policy:
   same-origin` and `Referrer-Policy: same-origin`, and `/media` is `Cache-Control: no-store`,
   so private audio isn't kept in each device's disk cache.
 - **Slugs never reach logs** (added 2026-10-08). `/people/<slug>` paths would land in
@@ -2371,7 +2417,8 @@ come from that frame.
 - **Isolation:**
   - it ignores the real config and all secrets
   - every start uses a fresh copy of the demo archive and a temporary state folder (§6.8),
-    removed again at exit, including on SIGTERM (`docker stop`)
+    removed again at exit, including on SIGTERM (`docker stop`). The folder holds a `Writer`'s
+    `state.db`, index and locks, so tagging in `make demo` saves to the copy (Dan, 2026-10-15).
   - demo mode serves only the demo: it refuses an archive whose `archive.json` UUID isn't the
     demo's, or a folder with none, whatever `RECORDINGS_DEMO_ARCHIVE` names
   - it makes no network calls
@@ -2401,6 +2448,8 @@ come from that frame.
   layer and can't answer Range requests. So Pages serves the media itself, as static files at
   `media/<id>.<ext>`, and the app links to them through a configurable media base URL. The
   server keeps `/media/{id}`.
+- **Tagging in memory** (Dan, 2026-10-15): the Pages demo tags in the browser, through the
+  same operations, kept in memory and lost on reload. The UI says "Demo: changes aren't saved".
 - **Older runtime:** the browser runs Python 3.12, with Pyodide's pydantic 2.10 and
   markdown-it-py 3.0. The Pages smoke test in CI guards against code that only works on the
   server's newer versions.
@@ -2469,9 +2518,11 @@ come from that frame.
   Then Dan tags the imported recordings in the grid (stage 3), and local processing runs as
   tags land (stage 4).
 
-  **Until stage 3's first tag, the deployment is disposable:** rolling back means moving
+  **Until the first real tag, the deployment is disposable:** rolling back means moving
   the archive aside and importing again. A parallel run with `audio-router` is pointless,
-  because its sync is broken; its frozen archive is the yardstick.
+  because its sync is broken; its frozen archive is the yardstick. Tagging part A may ship
+  before step 5's spikes and step 6's dry run; when the real archive gets its first tag is
+  Dan's call, and a rollback by re-import after it loses the tags (Dan, 2026-10-15).
 - **Obsidian waits.** Nothing new reaches the vaults until `recordings` and the separate
   vault listener exist. That is deliberate: deciding which recordings reach which vault is
   part of why this app exists. Once the listener runs, `audio-router`'s launchd jobs are
@@ -2560,7 +2611,10 @@ Each stage leaves a working, demonstrable app.
    raw and reconcile can be re-run, so no migration is needed.
 3. **Tagging, then people,** in two parts (split 2026-10-08):
 
-   **3a. Tagging:**
+   **3a. Tagging** (Dan, 2026-10-15): part A (applying tags,
+   `docs/superpowers/specs/2026-10-15-tagging-a-design.md`) is built first, ahead of 2b; part B
+   (the tag tree, rename, move, delete, and the `tags.yaml` form) follows it; the rest of 3a is
+   unchanged.
    - editing `tags.yaml` and `recording.json`
    - drag, `T`, the grid and the tree, with Undo
    - the Private section and privacy calculation
