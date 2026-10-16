@@ -6,7 +6,7 @@ requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "recordings",
-    "fastapi==0.142.3",
+    "fastapi==0.143.0",
     "uvicorn==0.54.0",
     "shiny==1.8.0",
     # Pinned exactly and upgraded on purpose (CLAUDE.md "Upgrading shinyreact").
