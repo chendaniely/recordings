@@ -362,6 +362,17 @@ def _ids_ok(ids: tuple[str, ...]) -> bool:
     return True
 
 
+def _outcome_read(request_id: str, rid: str, write: asyncio.Future) -> None:
+    """A write's outcome, always read. A write that outlasts its cancelled request is read by
+    no one else, and asyncio would log an unread exception with its text and traceback (Global
+    Constraints): only its class is logged, here."""
+    if write.cancelled():
+        return
+    exc = write.exception()
+    if exc is not None:
+        log.info("tag %s: the write on %s ended in %s", request_id, rid, type(exc).__name__)
+
+
 @dataclass
 class _Tally:
     """What a batch has done so far: what its reply and its Undo are built from, however the
@@ -674,6 +685,7 @@ class TagSession:
                 # cancels what it waits for; asyncio.shield would also shield it, but would log
                 # the text of a write that failed after the cancel (CPython 3.13+).
                 write = asyncio.ensure_future(self.store.write(partial(self.store.apply, rid, op)))
+                write.add_done_callback(partial(_outcome_read, job.request_id, rid))
                 try:
                     await asyncio.wait({write})
                     after = write.result()

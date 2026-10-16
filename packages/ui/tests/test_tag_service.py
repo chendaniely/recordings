@@ -4,6 +4,7 @@ change between this request's check and its write."""
 
 import asyncio
 import errno
+import gc
 import logging
 import secrets
 import threading
@@ -733,6 +734,48 @@ def test_a_write_that_fails_after_a_cancel_logs_no_exception_text(
     with caplog.at_level(logging.DEBUG):
         asyncio.run(window())
     assert "Week" not in caplog.text and "private/ada" not in caplog.text
+
+
+@pytest.mark.parametrize("second_cancel", [False, True])
+def test_a_write_that_outlasts_its_cancel_and_fails_logs_only_its_class(
+    service, tag_archive, monkeypatch, caplog, second_cancel
+):
+    # why: the re-review. A write still running when its cancelled request stops waiting for it
+    # (the wait ran out, or a second cancel cut it short) is never read; if it then fails,
+    # asyncio logs "Task exception was never retrieved" once the task is collected, with the
+    # exception's text and traceback.
+    monkeypatch.setattr(tagging, "CANCEL_WAIT", 5.0 if second_cancel else 0.05)
+    rid = tag_archive.ids["untagged"]
+    session = session_of(service)
+    running: dict = {}
+
+    def cancel() -> None:
+        running["task"].cancel()
+        if second_cancel:
+            running["loop"].call_later(0.05, running["task"].cancel)
+
+    def apply(r, op):
+        running["loop"].call_soon_threadsafe(cancel)
+        if threading.current_thread() is not threading.main_thread():
+            time.sleep(0.4)  # outlasts the wait
+        raise RuntimeError("Week 3 is tagged private/ada")
+
+    monkeypatch.setattr(service.store, "apply", apply)
+
+    async def window() -> None:
+        running["loop"] = asyncio.get_running_loop()
+        work = session.run(session.check(req("add", [rid], ["work"])), Replies())
+        running["task"] = asyncio.ensure_future(work)
+        with pytest.raises(asyncio.CancelledError):
+            await running["task"]
+        await asyncio.sleep(0.6)  # the write fails meanwhile, while the loop still runs
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(window())
+        running.clear()
+        gc.collect()
+    assert "Week" not in caplog.text and "private/ada" not in caplog.text
+    assert "RuntimeError" in caplog.text  # the class alone
 
 
 def test_a_stop_at_shutdown_ends_the_batch_between_recordings(service, tag_archive, monkeypatch):
