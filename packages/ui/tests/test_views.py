@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 from recordings.archive import Archive, RawSource
-from recordings.models import Rendition
+from recordings.models import Rendition, TagRef
 from recordings.writer import Incoming
 from recordings_ui.views import (
     library_view,
@@ -375,3 +375,42 @@ def test_a_long_snippet_stops_at_160_characters():
 
 def test_a_snippet_of_an_unknown_recording_is_none(demo_archive):
     assert snippet(Archive(demo_archive), "20200101T000000+0000_0000beef") is None
+
+
+def _with_transcript(tmp_path, writer, name: str, minute: int, tags: tuple[TagRef, ...]) -> str:
+    media = tmp_path / f"{name}.mp3"
+    media.write_bytes(f"ID3 synthetic {name}".encode())
+    t = datetime(2026, 10, 1, 9, minute, tzinfo=UTC)
+    transcript = Rendition(
+        kind="transcript",
+        engine="canned",
+        model="m",
+        version="m@1",
+        created_at=t,
+        payload={"segments": [{"start": 0, "end": 1, "text": "Synthetic words"}]},
+    )
+    incoming = Incoming(
+        media=media,
+        recorded_at=t,
+        timezone_name="UTC",
+        time_source="ingest",
+        title="Synthetic 042",
+        kind="audio",
+        sources=(),
+        tags=tags,
+        renditions=(transcript,),
+    )
+    return writer.add(incoming).recording.id
+
+
+def test_a_private_recording_has_no_snippet(tmp_path, writer):
+    # why: least privilege (Task 7's council). The browser asks only for untagged rows, which are
+    # never private, but the server doesn't count on it: it never reads a private transcript.
+    shown = _with_transcript(tmp_path, writer, "open", 0, ())
+    assert snippet(writer.archive, shown) == "Synthetic words"
+    for minute, tag in enumerate(("private", "Private/journal"), start=1):
+        hidden = _with_transcript(
+            tmp_path, writer, f"p{minute}", minute, (TagRef(tag=tag, by="you"),)
+        )
+        withheld = snippet(writer.archive, hidden) is None  # a boolean: a failure prints no text
+        assert withheld, tag

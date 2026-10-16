@@ -104,6 +104,8 @@ class Store(Protocol):
 
     async def ready(self) -> None: ...
 
+    def first_open_done(self) -> bool: ...
+
     def status(self, *, retry: bool = False) -> tuple[bool, str | None]: ...
 
     async def open_for_write(self) -> tuple[bool, str | None]: ...
@@ -157,6 +159,9 @@ class MemoryStore:
 
     async def ready(self) -> None:
         return None  # nothing to open: the demo's recordings are in memory
+
+    def first_open_done(self) -> bool:
+        return True
 
     def status(self, *, retry: bool = False) -> tuple[bool, str | None]:
         return True, None
@@ -232,6 +237,11 @@ class ArchiveStore:
         future, so the wait is shielded: a cancelled wait never cancels the open itself."""
         with contextlib.suppress(self._thread_stopped):
             await asyncio.shield(asyncio.wrap_future(self._thread.opened))
+
+    def first_open_done(self) -> bool:
+        """Whether the first open has ended, worked or not. Until it has, `status` says the
+        archive is being opened, and the Library waits for it outside the reactive flush."""
+        return self._thread.opened.done()
 
     def status(self, *, retry: bool = False) -> tuple[bool, str | None]:
         """`can_tag` and, when it is false, why, as last found. It never waits, so reads never
@@ -382,8 +392,23 @@ class SnippetJob:
     ids: tuple[str, ...]
 
 
+def _snippet(store: Store, rid: str) -> str | None:
+    """One recording's snippet, or None. Never a private recording's, as the store sees it: the
+    Pages demo keeps this page's tags in memory, so its files can still say "untagged". A failure
+    is this ID's alone, so one odd file never costs the page its other snippets."""
+    try:
+        if is_private(store.read(rid)):
+            return None  # least privilege: its transcript isn't read at all
+        return views.snippet(store.archive, rid)
+    except KeyError:
+        return None  # gone since the page's view: nothing to show, and nothing unexpected
+    except Exception as exc:  # noqa: BLE001  logged by class and ID only (Global Constraints)
+        log.warning("snippet for %s failed (%s)", rid, type(exc).__name__)
+        return None
+
+
 def _snippets(store: Store, ids: tuple[str, ...]) -> dict[str, str | None]:
-    return {rid: views.snippet(store.archive, rid) for rid in ids}
+    return {rid: _snippet(store, rid) for rid in ids}
 
 
 def _check_snippets(raw: object) -> SnippetJob | Refusal:
@@ -492,12 +517,18 @@ class TagSession:
 
     # ---- the view ------------------------------------------------------------------------
     async def library(self, *, refresh: bool = False) -> dict:
-        """The full view, on load and on Refresh (spec §5). It waits only for the store's first
-        open, never behind a write: the view is read on the event loop, and `can_tag` is the
-        store's status as last found. Refresh also queues a retry of a failed open, without
-        waiting for it, so a retry that works shows on the next Refresh. Undo tokens survive it;
-        only a reload, which makes a new session, ends them."""
+        """`library_now`, once the store's first open has ended. Never inside Shiny's reactive
+        flush: the open can take as long as the archive is big (Task 7's council)."""
         await self.store.ready()
+        return self.library_now(refresh=refresh)
+
+    def library_now(self, *, refresh: bool = False) -> dict:
+        """The full view, on load and on Refresh (spec §5), at once: it never waits, for the
+        first open or behind a write. The view is read on the event loop, and `can_tag` is the
+        store's status as last found, false with "the archive is being opened" until the first
+        open ends. Refresh also queues a retry of a failed open, without waiting for it, so a
+        retry that works shows on the next Refresh. Undo tokens survive it; only a reload, which
+        makes a new session, ends them."""
         view = self.store.library()
         can_tag, reason = self.store.status(retry=refresh)
         self.rows = {r["id"]: r for r in view["recordings"]}

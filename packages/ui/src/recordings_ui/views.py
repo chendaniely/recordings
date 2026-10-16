@@ -293,9 +293,12 @@ def _notes_text(path: Path) -> str:
 def snippet(archive: Archive, rid: str, *, limit: int = SNIPPET_CHARS) -> str | None:
     """A recording's first words, as plain text (spec §5): from its chosen transcript (or the
     newest), or else its first Plaud note. It reads that one file (tagging plan, decision 11)
-    and stops at `limit` characters. None: nothing to show yet."""
+    and stops at `limit` characters. None: nothing to show yet, or a private recording, whose
+    renditions it never opens (least privilege: the browser asks only for untagged rows)."""
     try:
         rec = archive.load(rid)
+        if is_private(rec):
+            return None
         folder = archive.path_for(rid) / "renditions"
         names = sorted(p.name for p in folder.glob("*.json"))
     except (KeyError, ValueError, OSError):

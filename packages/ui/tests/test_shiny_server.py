@@ -1,3 +1,4 @@
+import logging
 import time
 from pathlib import Path
 
@@ -7,7 +8,13 @@ from recordings.archive import Archive
 from recordings.models import TagRef
 from recordings.tagops import AddTags, Recorded
 from recordings_ui import runtime, views
-from recordings_ui.tagging import SNIPPETS_FAILED, TOO_MANY_SNIPPETS, MemoryStore, TagService
+from recordings_ui.tagging import (
+    SNIPPETS_FAILED,
+    TOO_MANY_SNIPPETS,
+    MemoryStore,
+    TagService,
+    TagSession,
+)
 from shiny.testserver import TestServerSession
 
 SHINY_APP = Path(__file__).resolve().parents[1] / "src" / "recordings_ui" / "shiny_app.py"
@@ -149,14 +156,72 @@ def test_too_many_snippet_ids_are_refused(local_server, sent):
     assert reply["snippets"] == {} and reply["message"] == TOO_MANY_SNIPPETS
 
 
-def test_a_snippet_read_that_fails_still_replies(local_server, sent, demo_ids, monkeypatch):
+def test_a_snippet_read_that_fails_still_replies(local_server, sent, demo_ids, monkeypatch, caplog):
     # why: the browser asks for one batch of snippets at a time and waits for its reply, so a
-    # lost reply would stop every later snippet on that page.
-    def broken(*_args, **_kwargs):
+    # lost reply would stop every later snippet on that page. The read as a whole fails here (the
+    # reader thread has stopped, say); one recording's failure is the next test's.
+    async def broken(self, fn):
         raise RuntimeError("Week 4's transcript is unreadable")
 
-    monkeypatch.setattr(views, "snippet", broken)
+    monkeypatch.setattr(MemoryStore, "read_off_loop", broken)
     jfk = demo_ids["jfk-rice"]
-    local_server.set_inputs(snippet_request={"request_id": "snip0003test", "ids": [jfk]})
-    reply = wait_for(local_server, sent, "snippets", "snip0003test")
+    with caplog.at_level(logging.DEBUG):
+        local_server.set_inputs(snippet_request={"request_id": "snip0003test", "ids": [jfk]})
+        reply = wait_for(local_server, sent, "snippets", "snip0003test")
     assert reply["snippets"] == {} and reply["message"] == SNIPPETS_FAILED
+    assert "RuntimeError" in caplog.text and "Week" not in caplog.text
+
+
+def test_one_unreadable_snippet_is_none_and_the_rest_are_answered(
+    local_server, sent, demo_ids, monkeypatch, caplog
+):
+    # why: one odd file must not cost the whole page its snippets (Task 7's council).
+    jfk, apollo = demo_ids["jfk-rice"], demo_ids["apollo11-first-steps"]
+    real = views.snippet
+
+    def flaky(archive, rid, **kwargs):
+        if rid == jfk:
+            raise RuntimeError("Week 4's transcript is unreadable")
+        return real(archive, rid, **kwargs)
+
+    monkeypatch.setattr(views, "snippet", flaky)
+    request = {"request_id": "snip0004test", "ids": [jfk, apollo]}
+    with caplog.at_level(logging.DEBUG):
+        local_server.set_inputs(snippet_request=request)
+        reply = wait_for(local_server, sent, "snippets", "snip0004test")
+    assert reply["message"] is None
+    assert reply["snippets"][jfk] is None and reply["snippets"][apollo]
+    assert "RuntimeError" in caplog.text and "Week" not in caplog.text
+
+
+def test_a_recording_made_private_on_this_page_has_no_snippet(
+    local_server, sent, _archive, demo_ids
+):
+    # why: the Pages demo keeps this page's tags in memory, so its files still say "untagged".
+    # A snippet follows the store's own view, as everything else does (spec §5).
+    rid = demo_ids["apollo13-problem"]
+    _archive.store.apply(rid, Recorded(AddTags((TagRef(tag="private", by="you"),)), "elsewhere"))
+    local_server.set_inputs(snippet_request={"request_id": "snip0005test", "ids": [rid]})
+    reply = wait_for(local_server, sent, "snippets", "snip0005test")
+    withheld = reply["snippets"][rid] is None  # a boolean: a failure prints no text
+    assert withheld and reply["message"] is None
+
+
+@pytest.mark.parametrize(
+    ("method", "name"), [("run", "tag_request"), ("snippets", "snippet_request")]
+)
+def test_a_job_that_raises_logs_only_its_class(local_server, monkeypatch, caplog, method, name):
+    # why: shiny keeps an extended task's exception in its `.error`, which nothing here reads, so
+    # without a log a bug in a job would pass unseen (Task 7's council). Its class only.
+    async def broken(self, job, send):
+        raise RuntimeError("Week 4 went wrong")
+
+    monkeypatch.setattr(TagSession, method, broken)
+    with caplog.at_level(logging.DEBUG):
+        local_server.set_inputs(**{name: {"request_id": "boom0001test", "ids": []}})
+        deadline = time.monotonic() + 3
+        while "RuntimeError" not in caplog.text and time.monotonic() < deadline:
+            local_server.flush()
+            time.sleep(0.02)
+    assert "RuntimeError" in caplog.text and "Week" not in caplog.text
+    assert local_server.is_ok

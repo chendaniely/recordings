@@ -102,10 +102,17 @@ noting that the global lacks the index module's exports.
   `null` instead (`reactive/_reactives.py`, `event`). `tag_request`, `refresh` and
   `snippet_request` use it (tagging spec §5;
   `test_a_request_that_is_the_inputs_first_value_still_runs`).
-- **Long work behind an input.** The skill's `send_message` example sends from an async effect.
-  It doesn't say that an effect awaiting slow work holds Shiny's process-wide reactive lock, so
-  every window freezes, or that a `reactive.extended_task` is the way out. That task runs outside
-  the lock, refuses reactive reads, and queues a second invocation behind a running one. Its
-  `send_message` still resolves the message id in the right namespace, a context variable the
-  task inherits (`shiny/_namespaces.py`). Checked in shiny 1.8.0's `reactive/_extended_task.py`
-  and shinyreact's `_send_message.py` (Task 7).
+- **Long work behind an input.** The skill mentions `send_message` in one line ("for things that
+  are events, not state") and gives no pattern for slow work that an input starts. An effect or
+  an output that awaits that work holds Shiny's process-wide reactive lock across the flush, so
+  every window waits for it. That includes an output that awaits a slow open before it draws:
+  the Library did, until Task 7's council. A `reactive.extended_task` is the way out.
+  - It runs outside the lock, refuses reactive reads, and queues a second invocation behind a
+    running one.
+  - When it ends, its `status` changes under the lock, with a flush, so an output that reads
+    `status()` is drawn again then.
+  - Its `send_message` still resolves the message id in the right namespace, a context variable
+    the task inherits (`shiny/_namespaces.py`).
+
+  Checked in shiny 1.8.0's `reactive/_extended_task.py` and `session/_session.py`, and
+  shinyreact's `_send_message.py` (Task 7).
