@@ -44,6 +44,45 @@ export function columnOrder(columns: Columns): string[] {
   return [...(columns.pinned ? [columns.pinned] : []), ...columns.normal, ...columns.privateGroup];
 }
 
+/** Every tag the view knows, `notes/*` included: the column picker's choices. */
+export function tagsOf(view: Pick<LibraryView, "tags" | "note_types">): string[] {
+  return [...view.tags.map((t) => t.tag), ...view.note_types.map((n) => `notes/${n.note_type}`)];
+}
+
+/** The grid's columns are frozen per load (spec §7, never live; Task 14 fix round 1). They are
+ * worked out here once, on load and on Refresh. After that they are only added to, at the end of
+ * a group (addColumn, withSessionTags), or dropped when the user unticks one in the picker
+ * (dropColumn). Nothing reads the counts again, so a reply's recount, or a column falling to 0
+ * uses, moves nothing, and the digits stay put. */
+export function startColumns(
+  view: Pick<LibraryView, "tags" | "note_types">,
+  opts: { session: readonly string[]; isPrivate: (tag: string) => boolean; choices: Readonly<Record<string, boolean>>; hidden: ReadonlySet<string> },
+): Columns {
+  return layoutColumns({ base: defaultColumns(view), all: tagsOf(view), ...opts });
+}
+
+/** A tag seen for the first time (a session add, or ticked in the picker), at the end of its
+ * group; the same columns when it has one already. */
+export function addColumn(columns: Columns, tag: string, isPrivate: (tag: string) => boolean): Columns {
+  if (tag === columns.pinned || columns.normal.includes(tag) || columns.privateGroup.includes(tag)) return columns;
+  return isPrivate(tag)
+    ? { ...columns, privateGroup: [...columns.privateGroup, tag] }
+    : { ...columns, normal: [...columns.normal, tag] };
+}
+
+/** A column the user unticked in the picker. `private` stays pinned. */
+export function dropColumn(columns: Columns, tag: string): Columns {
+  if (tag === columns.pinned || (!columns.normal.includes(tag) && !columns.privateGroup.includes(tag))) return columns;
+  return { ...columns, normal: columns.normal.filter((t) => t !== tag), privateGroup: columns.privateGroup.filter((t) => t !== tag) };
+}
+
+/** This session's tags get their columns straight away (spec §7), unless the user unticked them. */
+export function withSessionTags(
+  columns: Columns, session: readonly string[], off: (tag: string) => boolean, isPrivate: (tag: string) => boolean,
+): Columns {
+  return session.reduce((cols, tag) => (off(tag) ? cols : addColumn(cols, tag, isPrivate)), columns);
+}
+
 export type RowSort = { by: "newest" | "oldest" | "title" | "duration" } | { by: "has"; tag: string };
 
 export function sortRows(rows: readonly LibraryRow[], sort: RowSort): LibraryRow[] {

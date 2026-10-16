@@ -14,22 +14,32 @@ export const GONE = "the recording is gone";
 export const ALREADY_UNDONE = "already undone";
 export const UNDO_GONE = "Undo is no longer available (the page was reloaded)";
 
-export interface CellToast { key: number; open: boolean; changes: number; tokens: readonly string[] }
+/** The running toast: its changes, the undoable ones' tokens, and how many recordings its changes
+ * made visible to external agents (`visibleBy`, per token, so an Undo takes its share off). */
+export interface CellToast {
+  key: number; open: boolean; changes: number; tokens: readonly string[]; visible: number;
+  visibleBy: Readonly<Record<string, number>>;
+}
 /** `redos`: tokens that came back on Undo replies. An Undo of one of them is a Redo: its toast
  * says "Redone" and offers Undo, and its own token goes on the stack, so Cmd-Z can undo the
  * redone action again. Never on the stack themselves, so Cmd-Z twice after an action undoes two
  * actions, never undo then redo. */
 export interface Undos { stack: readonly string[]; cells: CellToast; redos: readonly string[] }
 
-export const NO_UNDOS: Undos = { stack: [], cells: { key: 0, open: false, changes: 0, tokens: [] }, redos: [] };
+const CLOSED = { open: false, changes: 0, tokens: [], visible: 0, visibleBy: {} } as const;
+export const NO_UNDOS: Undos = { stack: [], cells: { key: 0, ...CLOSED }, redos: [] };
 
 /** A single-cell change that went cleanly joins the running toast. Anything else gets its own,
- * and so does one whose toast has more to say than "N changes": recordings made visible to
- * external agents, or a note type removed (auto-pick won't add it back). */
+ * and so does a removal whose toast has more to say than "N changes": recordings made visible to
+ * external agents, or a note type removed (auto-pick won't add it back). An add that makes
+ * recordings visible joins it, and the toast adds them up ("5 changes · 5 now visible to external
+ * agents"): in Untagged only, every row's first tag does, and a toast each stacked them up (Task 14
+ * fix round 1, revising Task 10's ruling for adds). */
 export function mergesIntoCells(origin: Origin, request: TagRequest, reply: TagResult): boolean {
   const notes = request.action === "remove" && request.tags.some((t) => t.startsWith("notes/"));
+  const says = request.action !== "add" && reply.now_visible > 0;
   return origin.kind === "cell" && request.action !== "undo" && reply.status === "done" && !reply.message
-    && reply.failures.length === 0 && reply.undo !== null && reply.now_visible === 0 && !notes;
+    && reply.failures.length === 0 && reply.undo !== null && !says && !notes;
 }
 
 /** An Undo whose token an earlier Undo sent back: a Redo. */
@@ -52,7 +62,10 @@ function drop(u: Undos, token: string): Undos {
     redos: u.redos.filter((t) => t !== token),
     stack: u.stack.filter((t) => t !== token),
     cells: inCells
-      ? { ...u.cells, changes: Math.max(0, u.cells.changes - 1), tokens: u.cells.tokens.filter((t) => t !== token) }
+      ? {
+        ...u.cells, changes: Math.max(0, u.cells.changes - 1), tokens: u.cells.tokens.filter((t) => t !== token),
+        visible: Math.max(0, u.cells.visible - (u.cells.visibleBy[token] ?? 0)),
+      }
       : u.cells,
   };
 }
@@ -78,9 +91,13 @@ function kept(u: Undos, token: string, origin: Origin, request: TagRequest, repl
   const onStack = new Set(stack);
   let cells: CellToast = { ...u.cells, tokens: u.cells.tokens.filter((t) => onStack.has(t)) };
   if (mergesIntoCells(origin, request, reply)) {
+    const shown = reply.now_visible;
     cells = cells.open
-      ? { ...cells, changes: cells.changes + 1, tokens: [...cells.tokens, token] }
-      : { key: cells.key + 1, open: true, changes: 1, tokens: [token] };
+      ? {
+        ...cells, changes: cells.changes + 1, tokens: [...cells.tokens, token], visible: cells.visible + shown,
+        visibleBy: { ...cells.visibleBy, [token]: shown },
+      }
+      : { key: cells.key + 1, open: true, changes: 1, tokens: [token], visible: shown, visibleBy: { [token]: shown } };
   }
   return { ...u, stack, cells };
 }
@@ -105,7 +122,7 @@ export function nextCellUndo(u: Undos, busy: ReadonlySet<string>): string | null
  * late close of an older toast leaves a newer one alone. */
 export function cellsClosed(u: Undos, key: number): Undos {
   if (u.cells.key !== key || !u.cells.open) return u;
-  return { ...u, cells: { key, open: false, changes: 0, tokens: [] } };
+  return { ...u, cells: { key, ...CLOSED } };
 }
 
 /** The tokens of Undo requests that are queued, in flight, or waiting on the confirmation. */

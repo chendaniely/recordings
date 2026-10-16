@@ -273,6 +273,18 @@ describe("dragging rows (spec §6)", () => {
     list.done();
   });
 
+  it("keeps the first row, the tab stop, drawn while nothing is focused, however far it scrolls", async () => {
+    // why: Task 14 fix round 1. With no focused row, the tab stop is the first row; scrolled out of
+    // the drawn range, nothing in the list had tabindex=0 and Tab skipped the list.
+    const many = Array.from({ length: 300 }, (_, i) => row(String(i).padStart(3, "0")));
+    const list = mount(fake(), NO_SEL, many);
+    Object.defineProperty(list.grid(), "scrollTop", { configurable: true, get: () => 10_000_000 });
+    list.grid().dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(list.row("299")).not.toBeNull());
+    expect(list.row("000")?.tabIndex).toBe(0);
+    list.done();
+  });
+
   it("forgets a drag whose row leaves the list, since no dragend comes for it, and on leaving the Library", () => {
     const tagging = fake();
     const list = mount(tagging, NO_SEL);

@@ -88,13 +88,26 @@ describe("Cmd/Ctrl+Z's stack (spec §6; plan decision 7)", () => {
 });
 
 describe("the grid's running toast shares the stack's tokens (Task 9 carry)", () => {
-  it("gives a change that makes recordings visible, or removes a note type, a toast of its own", () => {
-    // why: the running toast's text would drop "· N now visible to external agents" and
-    // "· auto-pick won't add it back" (Task 10 council).
-    expect(mergesIntoCells(cell, add("r"), reply({ undo: "t", now_visible: 1 }))).toBe(false);
+  it("gives a removal that makes recordings visible, or removes a note type, a toast of its own", () => {
+    // why: the running toast's text would drop "· auto-pick won't add it back" (Task 10 council).
+    const remove: TagRequest = { request_id: "r", action: "remove", ids: ["a"], tags: ["private"] };
+    expect(mergesIntoCells(cell, remove, reply({ undo: "t", now_visible: 1 }))).toBe(false);
     const notes: TagRequest = { request_id: "r", action: "remove", ids: ["a"], tags: ["notes/lecture"] };
     expect(mergesIntoCells(cell, notes, reply({ undo: "t" }))).toBe(false);
     expect(mergesIntoCells(cell, { ...notes, action: "add" }, reply({ undo: "t" }))).toBe(true);
+  });
+  it("lets a cell's add that makes a recording visible join the running toast, which counts them", () => {
+    // why: with Untagged only on, every row's first tag makes it visible, so tagging 20 rows left
+    // 21 toasts, each read out (Task 14 fix round 1, revising Task 10's ruling for adds only).
+    expect(mergesIntoCells(cell, add("r"), reply({ undo: "t", now_visible: 1 }))).toBe(true);
+    let u = heardUndo(NO_UNDOS, add("r1"), cell, reply({ undo: "c1", now_visible: 1 }));
+    u = heardUndo(u, add("r2"), cell, reply({ undo: "c2" }));
+    u = heardUndo(u, add("r3"), cell, reply({ undo: "c3", now_visible: 1 }));
+    expect(u.cells).toMatchObject({ changes: 3, visible: 2, tokens: ["c1", "c2", "c3"] });
+    // An Undo of one of them takes its change, and what it made visible, off the toast.
+    u = heardUndo(u, undoOf("c3"), { kind: "undo" }, reply({ undo: "redo" }));
+    expect(u.cells).toMatchObject({ changes: 2, visible: 1 });
+    expect(cellsClosed(u, u.cells.key).cells).toMatchObject({ open: false, changes: 0, visible: 0 });
   });
   it("merges only a clean, finished single-cell change", () => {
     expect(mergesIntoCells(cell, add("r"), reply({ undo: "t" }))).toBe(true);
@@ -105,13 +118,13 @@ describe("the grid's running toast shares the stack's tokens (Task 9 carry)", ()
   });
   it("counts the changes in one running toast, and starts a new one after it closes", () => {
     let u = did(did(NO_UNDOS, "c1", cell), "c2", cell);
-    expect(u.cells).toEqual({ key: 1, open: true, changes: 2, tokens: ["c1", "c2"] });
+    expect(u.cells).toMatchObject({ key: 1, open: true, changes: 2, tokens: ["c1", "c2"] });
     expect(u.stack).toEqual(["c1", "c2"]);
     u = cellsClosed(u, 1);
-    expect(u.cells).toEqual({ key: 1, open: false, changes: 0, tokens: [] });
+    expect(u.cells).toMatchObject({ key: 1, open: false, changes: 0, tokens: [] });
     expect(u.stack).toEqual(["c1", "c2"]); // Cmd-Z still has them
     u = did(u, "c3", cell);
-    expect(u.cells).toEqual({ key: 2, open: true, changes: 1, tokens: ["c3"] });
+    expect(u.cells).toMatchObject({ key: 2, open: true, changes: 1, tokens: ["c3"] });
   });
   it("a close of an older toast doesn't empty a newer one", () => {
     const u = did(cellsClosed(did(NO_UNDOS, "c1", cell), 1), "c2", cell);

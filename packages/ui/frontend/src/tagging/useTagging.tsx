@@ -65,7 +65,8 @@ const event = { priority: "event" as const, debounceMs: 0 };
 type JQuery = (el: Document) => { on(e: string, f: () => void): void; off(e: string, f: () => void): void };
 
 const sameCells = (a: CellToast, b: CellToast) =>
-  a.key === b.key && a.open === b.open && a.changes === b.changes && a.tokens.length === b.tokens.length;
+  a.key === b.key && a.open === b.open && a.changes === b.changes && a.tokens.length === b.tokens.length
+  && a.visible === b.visible;
 
 /** Every input, message handler, queue and toast for tagging. Called by App, which never
  * unmounts: shinyreact drops a message that has no handler (spec §6). */
@@ -165,7 +166,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   /** The grid's running toast, drawn from the shared Undo state. "Undo last" closes it at once,
    * so no reply can bring it back after the click dismissed it. */
   const drawCells = useCallback(() => {
-    const { key, open, changes, tokens } = undos.current.cells;
+    const { key, open, changes, tokens, visible } = undos.current.cells;
     if (!open) return;
     if (changes === 0) {
       toast.dismiss(cellsId(key));
@@ -176,7 +177,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       undos.current = cellsClosed(undos.current, key);
       if (token) undo(token);
     };
-    showCells(key, changes, viewRef.current?.saves ?? true, tokens.length > 0 ? undoLastCell : null, () => {
+    showCells(key, changes, visible, viewRef.current?.saves ?? true, tokens.length > 0 ? undoLastCell : null, () => {
       undos.current = cellsClosed(undos.current, key);
     });
   }, [busy, undo]);

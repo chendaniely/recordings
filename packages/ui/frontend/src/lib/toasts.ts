@@ -92,9 +92,11 @@ export function progressText(done: number, total: number, kind: ProgressKind = "
   return `${RUNNING[kind]} ${n(done)} of ${n(total)}…`;
 }
 
-/** The Tags grid's merged toast for single-cell toggles: "4 changes · Undo last". */
-export function cellText(changes: number, saves = true): string {
-  return `${n(changes)} change${changes === 1 ? "" : "s"}${saves ? "" : " · Demo: changes aren't saved"}`;
+/** The Tags grid's merged toast for single-cell toggles: "4 changes · Undo last", adding up what
+ * its changes made visible: "5 changes · 5 now visible to external agents" (spec §6). */
+export function cellText(changes: number, saves = true, visible = 0): string {
+  const shown = visible > 0 ? ` · ${n(visible)} now visible to external agents` : "";
+  return `${n(changes)} change${changes === 1 ? "" : "s"}${shown}${saves ? "" : " · Demo: changes aren't saved"}`;
 }
 
 export function droppedText(dropped: number, inFlight: boolean): string {

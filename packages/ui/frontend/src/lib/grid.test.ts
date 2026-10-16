@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { LibraryRow, LibraryView } from "../types";
 import {
-  columnOrder, defaultColumns, digitColumn, digitFor, drawRows, foldersOf, gridOrder, gridRows, layoutColumns, loadChoices,
-  saveChoices, snippetsToFetch, sortRows,
+  addColumn, columnOrder, defaultColumns, digitColumn, digitFor, drawRows, dropColumn, foldersOf, gridOrder, gridRows,
+  layoutColumns, loadChoices, saveChoices, snippetsToFetch, sortRows, startColumns, tagsOf, withSessionTags,
 } from "./grid";
 
 const view = {
@@ -35,6 +35,51 @@ describe("columns (spec §7)", () => {
     expect(columns.normal).toEqual(["t19"]);
     expect(columns.privateGroup).toEqual([]);
     expect(columns.pinned).toBe("private");
+  });
+});
+
+describe("columns frozen per load (spec §7, never live; Task 14 fix round 1)", () => {
+  const start = () => startColumns(view, { session: [], isPrivate, choices: {}, hidden: new Set() });
+  const where = (order: string[]) => new Map(order.map((t, i) => [t, i]));
+
+  it("works out the load's columns once: the 15 most-used, then the session's and the picker's", () => {
+    const cols = startColumns(view, { session: ["fresh"], isPrivate, choices: { t19: true }, hidden: new Set() });
+    expect(cols.normal.slice(-3)).toEqual(["t13", "fresh", "t19"]);
+    expect(tagsOf(view)).toContain("notes/lecture");
+  });
+  it("keeps every column's place when a picker column is ticked and a session tag arrives", () => {
+    const before = start();
+    const was = where(columnOrder(before));
+    let cols = addColumn(before, "t17", isPrivate); // ticked in the picker
+    cols = withSessionTags(cols, ["t17", "zebra"], () => false, isPrivate); // then tagged, and a new tag
+    const now = columnOrder(cols);
+    for (const [tag, i] of was) {
+      // The private group sits at the right: a new column in the group before it moves it along.
+      if (!cols.privateGroup.includes(tag)) expect(now[i], tag).toBe(tag);
+    }
+    expect(cols.normal.slice(-2)).toEqual(["t17", "zebra"]); // at the end of their group
+  });
+  it("appends a new private tag at the end of the private group, moving nothing", () => {
+    const before = start();
+    const cols = addColumn(before, "Private/new", (t) => isPrivate(t) || t === "Private/new");
+    expect(cols.privateGroup).toEqual(["Private/health", "Private/new"]);
+    expect(columnOrder(cols).slice(0, -1)).toEqual(columnOrder(before));
+  });
+  it("never moves or drops a column on a recount: same tags, same columns", () => {
+    const cols = addColumn(start(), "t17", isPrivate);
+    // A reply's recount: t17 at 0 uses, t00 gone from the view. Nothing here reads the counts.
+    expect(withSessionTags(cols, [], () => false, isPrivate)).toBe(cols);
+    expect(addColumn(cols, "t17", isPrivate)).toBe(cols);
+    expect(columnOrder(cols)).toContain("t17");
+  });
+  it("drops a column only when unticked; ticked again, it comes back at the end of its group", () => {
+    let cols = dropColumn(start(), "t03");
+    expect(columnOrder(cols)).not.toContain("t03");
+    // An unticked session tag stays off: the session never brings it back.
+    expect(withSessionTags(cols, ["t03"], (t) => t === "t03", isPrivate)).toBe(cols);
+    cols = addColumn(cols, "t03", isPrivate);
+    expect(cols.normal.at(-1)).toBe("t03");
+    expect(dropColumn(cols, "private")).toBe(cols); // `private` is pinned
   });
 });
 

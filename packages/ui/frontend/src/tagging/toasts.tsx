@@ -63,8 +63,10 @@ export function showResult(request: TagRequest, reply: TagResult, saves: boolean
 
 /** Single-cell toggles in the grid share one running toast: "4 changes · Undo last". Each new
  * toast has its own key, so a late close of the last one can't swallow it. */
-export function showCells(key: number, changes: number, saves: boolean, onUndoLast: (() => void) | null, onGone: () => void): void {
-  showAction(cellsId(key), [cellText(changes, saves)], onUndoLast && { label: "Undo last", run: onUndoLast }, onGone);
+export function showCells(
+  key: number, changes: number, visible: number, saves: boolean, onUndoLast: (() => void) | null, onGone: () => void,
+): void {
+  showAction(cellsId(key), [cellText(changes, saves, visible)], onUndoLast && { label: "Undo last", run: onUndoLast }, onGone);
 }
 
 export const cellsId = (key: number) => `grid-cells-${key}`;

@@ -8,9 +8,10 @@ export interface RowOrder { ids: string[]; key: number; reason: "load" | "filter
 
 /** An order's IDs, worked out on load, on Refresh and when what decides it changes (`settings`,
  * compared as JSON), never on a tag change: a row whose tags change stays put, marked done (spec
- * §6). An Undo puts the rows it touched back, at their place in `all`; an Undo heard before the
- * order was first worked out (one made in the Library before the Tags page opened) puts nothing
- * back. */
+ * §6). An Undo puts the rows it touched back, at their place in `all`. Both orders live in App,
+ * which never unmounts, so each hears every Undo, wherever it was made (the grid's order is App's
+ * since Task 14 fix round 1, and survives a visit to the Library). An Undo heard before the order
+ * was mounted puts nothing back: that guard only matters to an order mounted later. */
 function useOrder(
   view: LibraryView | null, settings: unknown, idsOf: (v: LibraryView) => string[], allOf: (v: LibraryView) => readonly LibraryRow[],
   loadKey: number, revealed: { key: number; ids: string[] },

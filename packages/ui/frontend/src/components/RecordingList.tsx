@@ -1,20 +1,21 @@
 import type { VirtualItem } from "@tanstack/react-virtual";
 import { Check, Lock, TriangleAlert } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 
 import { cn } from "@/lib/utils";
 
-import { composing, isTextEntry, toggleFocusedKey } from "../lib/keys";
 import { nextNote, shownTags, startNote } from "../lib/library";
 import { targetsOf, type Move, type Sel, type SelAction } from "../lib/selection";
 import { useListShortcuts } from "../lib/useListShortcuts";
 import { useMediaQuery } from "../lib/useMediaQuery";
+import { tabStopIndex, useRovingFocus } from "../lib/useRovingFocus";
 import type { Announcement, Fitted } from "../lib/useSelection";
 import { useVirtualRows } from "../lib/useVirtualRows";
 import { newDragMark } from "../tagging/drag";
 import { showCannotTag, showSelectFirst } from "../tagging/toasts";
 import { useTaggingContext, type Tagging } from "../tagging/useTagging";
 import type { LibraryRow } from "../types";
+import { HeadNotes, RefreshButton } from "./HeadNotes";
 import { SelectionBar } from "./SelectionBar";
 import { TagChips } from "./TagChips";
 import { AddTagsButton, pickerTitle } from "./TagPicker";
@@ -65,20 +66,7 @@ export function dragImage(text: string): HTMLElement {
   return el;
 }
 
-/** The list's live region. It empties, then says the words a frame later, so the same words
- * said again (a second "2 hidden rows deselected") are read out again: a status region reads only
- * a change. `at` is new for each announcement. */
-export function Announcer({ text, at }: { text: string; at: number }) {
-  const [said, setSaid] = useState({ at, shown: text });
-  // Emptied in the very commit that brings new words, never batched away with them.
-  if (said.at !== at) setSaid({ at, shown: "" });
-  useEffect(() => {
-    if (said.shown === text) return;
-    const frame = requestAnimationFrame(() => setSaid({ at, shown: text }));
-    return () => cancelAnimationFrame(frame);
-  }, [said, text, at]);
-  return <span className="sr-only" role="status">{said.shown}</span>;
-}
+export { Announcer } from "./HeadNotes"; // the list's live region, shared with the grid
 
 /** The tags "just tagged" names (library.ts's nextNote): the last add to exactly this selection,
  * kept through adds that went elsewhere and through a Refresh that keeps every selected row, and
@@ -107,11 +95,7 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   const tagging = useTaggingContext();
   const ids = useId();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const wantFocus = useRef(false);
-  const focusIn = useRef<string | null>(null); // the row holding focus, while the list holds it
   const follow = useRef<number | null>(null);
-  const selRef = useRef(sel);
-  selRef.current = sel;
   const [pickerId, setPickerId] = useState<string | null>(null); // the row whose + picker is open
   const [dragId, setDragId] = useState<string | null>(null); // the row being dragged
   const pressedOn = useRef<Element | null>(null); // where the pointer went down: a drag starts there
@@ -124,19 +108,14 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   const focusIdx = at(sel.focus);
   const barShown = sel.selected.size >= 2;
   const justTagged = useJustTagged(sel.selected, tagging);
-  /** A drawn row, found in the page: the virtualiser draws and drops them as the list scrolls. */
-  const rowEl = (id: string | null) =>
-    id === null ? undefined : [...(scrollRef.current?.querySelectorAll<HTMLElement>("[role=row][data-id]") ?? [])].find((el) => el.dataset.id === id);
 
-  // The focused row, the anchor, the row whose + picker is open and the row being dragged always
-  // stay rendered: the picker is anchored on that row's +, and a drag's dragend comes to its row.
+  // The focused row (or, with none, the first: the tab stop), the anchor, the row whose + picker
+  // is open and the row being dragged always stay rendered: the picker is anchored on that row's
+  // +, and a drag's dragend comes to its row.
   const virtualizer = useVirtualRows({
-    ids: order, scrollRef, rowSize: ROW_ESTIMATE, overscan: 8, keep: [focusIdx, at(sel.anchor), at(pickerId), at(dragId)],
+    ids: order, scrollRef, rowSize: ROW_ESTIMATE, overscan: 8,
+    keep: [tabStopIndex(focusIdx), at(sel.anchor), at(pickerId), at(dragId)],
   });
-  /** Brings the focused row into view: before a key acts on it, and after the order changes. */
-  const reveal = (i = focusIdx) => {
-    if (i >= 0) virtualizer.scrollToIndex(i, { align: "auto" });
-  };
 
   // A picker's row that leaves the list (a filter change, Refresh) takes the picker with it, and
   // the + reports no close when it unmounts: forget it here (Task 11 carry).
@@ -155,65 +134,12 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   }, [index, dragId, drag]);
   useEffect(() => () => { drag.current = null; }, [drag]);
 
-  // The row that had focus left the list (Refresh, a filter change): focus goes to the row the
-  // selection now focuses, so the keys go on working, unless focus has gone somewhere else.
-  useEffect(() => {
-    const id = focusIn.current;
-    if (id === null || index.has(id)) return;
-    focusIn.current = null;
-    const active = document.activeElement;
-    if (order.length > 0 && (active === null || active === document.body)) wantFocus.current = true;
-  }, [index, order]);
-
-  // Moving focus by key scrolls the row into view, then focuses it once it is drawn. After a new
-  // order, the selection catches up a render later.
-  useEffect(() => {
-    if (!wantFocus.current) return;
-    if (order.length === 0) {
-      wantFocus.current = false;
-      return;
-    }
-    if (focusIdx < 0) return;
-    wantFocus.current = false;
-    reveal();
-    const id = sel.focus;
-    requestAnimationFrame(() => rowEl(id)?.focus({ preventScroll: true }));
-  }, [sel, focusIdx, order, virtualizer]);
-
-  // Once the selection is fitted to a new order: a filter change shows the list from the top,
-  // where its first row (the tab stop) is, and leaves real focus where it is (in the sidebar).
-  // Otherwise (a Refresh, an Undo's rows coming back) the focused row may have moved: it comes
-  // back into view, so the user keeps their place.
-  useEffect(() => {
-    if (fitted.reason === "filter") virtualizer.scrollToOffset(0);
-    else reveal();
-  }, [fitted.key]);
-
-  // The selection bar takes 43 px from the list as it comes, after the focused row was scrolled
-  // into view: a frame later, with the list's real height laid out, a focused row it now cuts
-  // into is shown whole (the virtualiser's own pass still has the old height).
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const list = scrollRef.current?.getBoundingClientRect();
-      const row = rowEl(selRef.current.focus);
-      const box = row?.getBoundingClientRect();
-      if (!list || !row || !box) return;
-      const partly = box.bottom > list.top && box.top < list.bottom;
-      if (partly && (box.bottom > list.bottom || box.top < list.top)) row.scrollIntoView({ block: "nearest" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [barShown]);
-
-  // Focus that only seemed to stay: Safari and Firefox on macOS don't focus a button on click,
-  // so a click outside blurs the row with no relatedTarget, as a removed row does. A pointer
-  // pressed outside the list means focus left it.
-  useEffect(() => {
-    const down = (e: PointerEvent) => {
-      if (!scrollRef.current?.contains(e.target as Node)) focusIn.current = null;
-    };
-    document.addEventListener("pointerdown", down, true);
-    return () => document.removeEventListener("pointerdown", down, true);
-  }, []);
+  // Focus follows keys, survives its row leaving, and comes back into view after a new order, as
+  // the grid's does (useRovingFocus). In the list, a row itself takes focus.
+  const roving = useRovingFocus({
+    scrollRef, virtualizer, ids: order, index, sel, act, fitted, barShown, target: (row) => row,
+  });
+  const { rowEl, reveal, selRef } = roving;
 
   useEffect(() => () => { if (follow.current) window.clearTimeout(follow.current); }, []);
 
@@ -224,14 +150,15 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
    * list's focused row, not to <body>. */
   const clear = () => {
     act({ type: "clear" });
-    wantFocus.current = true;
+    roving.focusSoon();
   };
 
+  // Cmd/Ctrl moves focus only, Home and End included (spec §6); Shift extends.
   const move = (e: KeyboardEvent, to: Move) => {
     e.preventDefault();
-    wantFocus.current = true;
     const meta = e.metaKey || e.ctrlKey;
     act({ type: "move", to, shift: e.shiftKey, meta, page: page() });
+    roving.focusSoon();
     // Every move ends the last one's pause; only a plain move starts one (Cmd/Ctrl and Shift
     // never open a row).
     if (follow.current) window.clearTimeout(follow.current);
@@ -253,13 +180,7 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.contains(e.target as Node) || isTextEntry(e.target) || composing(e) || e.altKey) return;
-    if (toggleFocusedKey(e)) {
-      e.preventDefault();
-      reveal(); // a key acts on the focused row: show it, wherever the wheel left the list
-      act({ type: "toggleFocused" });
-      return;
-    }
+    if (roving.ignores(e) || roving.toggleKey(e)) return;
     switch (e.key) {
       case "ArrowDown": return move(e, "next");
       case "ArrowUp": return move(e, "prev");
@@ -286,20 +207,6 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
         return;
     }
     if (shortcut(e) && e.key.toLowerCase() === "t") reveal();
-  };
-
-  const onFocus = (e: FocusEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.contains(e.target as Node)) return; // focus in the + picker's portal
-    const id = (e.target as Element).closest<HTMLElement>("[data-id]")?.dataset.id ?? null;
-    focusIn.current = id;
-    if (id !== null && selRef.current.focus !== id) act({ type: "focus", id });
-  };
-  const onBlur = (e: FocusEvent<HTMLDivElement>) => {
-    // Focus left for somewhere named: the list no longer holds it. A null relatedTarget is a
-    // removed row (Chromium says so as it goes), another window, or a click on nothing: kept, so
-    // a row that left the list hands focus on (a pointer pressed outside clears it, above).
-    const to = e.relatedTarget;
-    if (to !== null && !e.currentTarget.contains(to as Node)) focusIn.current = null;
   };
 
   const onRowClick = (e: MouseEvent<HTMLDivElement>, id: string) => {
@@ -422,17 +329,8 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
     <section className="list">
       <div className="list-head">
         <span>{rows.length.toLocaleString("en")} recording{rows.length === 1 ? "" : "s"} {"·"} newest first</span>
-        <button type="button" className="refresh" data-testid="refresh" onClick={tagging.refresh}>
-          {tagging.touched > 0 ? `${tagging.touched.toLocaleString("en")} tagged · Refresh` : "Refresh"}
-        </button>
-        {!tagging.saves && <span className="demo-note">Demo: changes aren't saved</span>}
-        {tagging.opening ? (
-          <span className="cannot-tag opening" data-testid="cannot-tag">Opening the archive{"…"}</span>
-        ) : !tagging.canTag && (
-          <span className="cannot-tag" data-testid="cannot-tag">Tagging is off: {tagging.reason}</span>
-        )}
-        <span className="key-hint" data-testid="key-hint">{KEY_HINT}</span>
-        <Announcer text={announce.text} at={announce.key} />
+        <RefreshButton testId="refresh" />
+        <HeadNotes hint={KEY_HINT} announce={announce} />
       </div>
       <div
         ref={scrollRef}
@@ -443,8 +341,8 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
         aria-label="Recordings"
         data-testid="recording-list"
         onKeyDown={onKeyDown}
-        onFocus={onFocus}
-        onBlur={onBlur}
+        onFocus={roving.onFocus}
+        onBlur={roving.onBlur}
       >
         <div role="rowgroup" className="sr-only">
           <div role="row" aria-rowindex={1}><div role="columnheader">Recording</div></div>

@@ -10,6 +10,7 @@ import { TagPickerDialog } from "./components/TagPicker";
 import { TagsPage } from "./components/TagsPage";
 import { TopBar } from "./components/TopBar";
 import { hashFor, routeFromHash } from "./lib/nav";
+import { useGridState } from "./lib/useGridState";
 import { useOrderedRows, useRowOrder } from "./lib/useRowOrder";
 import { useSelection } from "./lib/useSelection";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
@@ -40,6 +41,9 @@ export default function App() {
   const openRow = useMemo(() => view?.recordings.find((r) => r.id === selectedId) ?? null, [view, selectedId]);
   // Held here, not in the sidebar, which unmounts on the Status page while the filter stays.
   const lastListed = useListedFilter(filter, view);
+  // The Tags grid's filters, sort, selection and columns, held here so they survive a visit to
+  // another page (Task 14 fix round 1), as the Library's do.
+  const grid = useGridState(tagging);
 
   // Hash routes: Back returns to the page you came from, and the server never logs them. The hash
   // only chooses what to show: `#/library/<id>` opens that recording, read-only (spec §7, §15).
@@ -62,7 +66,7 @@ export default function App() {
       <div className="app">
         <TopBar page={route.page} onPage={go} />
         {/* The Tags grid reads the same merged library, with its own order and selection (spec §7). */}
-        {route.page === "status" ? <StatusPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage /> : (
+        {route.page === "status" ? <StatusPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} /> : (
           <main className="panes">
             {/* + New tag…: a drop opens the picker for the dragged recordings, a click for the
                 selection (spec §6). */}

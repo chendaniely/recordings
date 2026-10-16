@@ -105,6 +105,9 @@ describe("the grid's running toast on Pages (Task 10 council)", () => {
   it("says the demo doesn't save", () => {
     expect(cellText(4, false)).toBe("4 changes · Demo: changes aren't saved");
     expect(cellText(4, true)).toBe("4 changes");
+    // The running toast adds up what its changes made visible (Task 14 fix round 1).
+    expect(cellText(5, true, 5)).toBe("5 changes · 5 now visible to external agents");
+    expect(cellText(2, false, 1)).toBe("2 changes · 1 now visible to external agents · Demo: changes aren't saved");
   });
 });
 

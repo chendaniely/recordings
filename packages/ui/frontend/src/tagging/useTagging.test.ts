@@ -330,12 +330,23 @@ describe("useTagging: Task 10 council fixes", () => {
   const confirmOf = (request: TagRequest) => result(request, {
     status: "confirm", changed: 0, done_so_far: 0, loses_private: { visible: 1, untagged: 0, ids: ["c"] },
   });
-  it("gives a cell change that makes recordings visible a toast of its own, which says so", () => {
+  it("folds a cell's add that makes recordings visible into the running toast, which adds them up", () => {
+    // why: Task 14 fix round 1. One toast per row in Untagged only stacked 21 toasts for 20 rows.
     draw(library());
     act(() => tagging.tag("add", ["b"], ["work"], cell));
+    const first = last();
+    reply(result(first, { undo: "t1", now_visible: 1 }));
+    act(() => tagging.tag("add", ["c"], ["work"], cell));
+    reply(result(last(), { undo: "t2", now_visible: 1 }));
+    expect(toastsFor(`tag-${first.request_id}`)).toHaveLength(0);
+    expect(said("grid-cells-1")).toBe("2 changes · 2 now visible to external agents");
+  });
+  it("still gives a cell's removal that makes recordings visible a toast of its own", () => {
+    draw(library());
+    act(() => tagging.tag("remove", ["c"], ["private"], cell));
     const request = last();
     reply(result(request, { undo: "t1", now_visible: 1 }));
-    expect(said(`tag-${request.request_id}`)).toBe("Added work to 1 recording · 1 now visible to external agents");
+    expect(said(`tag-${request.request_id}`)).toBe("Removed private from 1 recording · 1 now visible to external agents");
     expect(toastsFor("grid-cells-1")).toHaveLength(0);
   });
   it("the running cell toast says the demo doesn't save, on Pages", () => {

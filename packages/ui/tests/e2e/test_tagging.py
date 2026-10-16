@@ -1300,18 +1300,21 @@ def test_the_grid_starts_untagged_only_and_a_cell_toggles(page: Page, server, co
     talks.click()
     expect(talks).to_have_attribute("aria-checked", "true")
     wait_until(lambda: server.tags(apollo13) == [("talks", "you")])
-    # Its first tag makes the recording visible to external agents: a toast of its own says so
-    # (spec §6), never folded into the cells' running toast.
-    expect(page.get_by_test_id("action-toast")).to_contain_text(
-        "Added talks to 1 recording · 1 now visible to external agents"
-    )
+    # Its first tag makes the recording visible to external agents: the running toast says so,
+    # and adds them up (spec §6; fix round 1, item 2).
+    toast = page.get_by_test_id("action-toast")
+    expect(toast).to_have_text("1 change · 1 now visible to external agentsUndo last")
     expect(page.get_by_test_id("left-count")).to_have_text("0 left")
-    cell(page, "Apollo 13", "space/apollo").click()  # an ordinary toggle: the running toast
+    cell(page, "Apollo 13", "space/apollo").click()
     wait_until(lambda: ("space/apollo", "you") in server.tags(apollo13))
-    expect(page.get_by_test_id("action-toast").filter(has_text="1 change")).to_have_count(1)
+    expect(toast).to_have_text("2 changes · 1 now visible to external agentsUndo last")
     expect(rows).to_have_count(1)  # stays put until Refresh
     page.get_by_test_id("grid-refresh").click()
     expect(rows).to_have_count(0)
+    # No rows: the first header is the grid's tab stop, so the sort stays reachable (item 5).
+    page.get_by_test_id("grid-refresh").focus()
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("button", name=re.compile(r"^Sort rows"))).to_be_focused()
 
 
 def test_a_header_adds_to_the_selection_and_digits_toggle_the_first_columns(
@@ -1372,7 +1375,7 @@ def test_enter_on_a_column_header_adds_its_tag_to_the_selection(
     expect(page.locator("[data-testid=grid-row][aria-selected=true]")).to_have_count(2)  # kept
     header.get_by_role("button", name="Sort by space/apollo").focus()
     page.keyboard.press("Enter")
-    expect(page.get_by_role("button", name="Has this tag first")).to_be_visible()
+    expect(page.get_by_role("menuitemradio", name="Has this tag first")).to_be_focused()
 
 
 def test_open_opens_the_recording_in_a_new_tab(page: Page, server, console):
@@ -1467,13 +1470,12 @@ PINNED = """el => {
 }"""
 
 
-@pytest.mark.parametrize("width", [1000])
 def test_the_header_and_the_first_columns_stay_pinned_as_the_grid_scrolls(
-    page: Page, big_server, console, width
+    page: Page, big_server, console
 ):
     # why: spec §7. The header row stays pinned, and so do the first column and `private` beside
     # it; what shows there is them, opaque, never a cell scrolled under them.
-    page.set_viewport_size({"width": width, "height": 700})
+    page.set_viewport_size({"width": 1000, "height": 700})
     page.goto(f"{big_server.url}/#/tags")
     grid = page.get_by_test_id("tags-grid")
     expect(page.get_by_test_id("grid-header")).to_have_count(15)
@@ -1588,17 +1590,36 @@ def test_the_sort_menus_reorder_the_rows_and_say_which_column_is_sorted(
     expect(first).to_have_attribute("aria-sort", "descending")  # Newest, the default
     menu = page.get_by_role("button", name="Sort by talks")
     menu.click()
-    page.get_by_role("button", name="Has this tag first").click()
+    has = page.get_by_role("menuitemradio", name="Has this tag first")
+    expect(has).to_have_attribute("aria-checked", "false")
+    has.click()
     expect(rows.first).to_contain_text("JFK")
     talks = page.locator("[data-testid=grid-header][data-tag=talks]")
     expect(talks).to_have_attribute("aria-sort", "descending")
     expect(first).not_to_have_attribute("aria-sort", re.compile(".*"))
     expect(menu).to_be_focused()  # the menu closed and gave focus back to its button
-    page.get_by_role("button", name=re.compile(r"^Sort rows")).click()
-    page.get_by_role("button", name="Oldest").click()
+    # The first column's menu by keyboard (fix round 1, item 12): radio items, Down between them,
+    # Enter picks, Esc closes, and focus goes back to the button each time.
+    sort = page.get_by_role("button", name=re.compile(r"^Sort rows"))
+    sort.focus()
+    page.keyboard.press("Enter")
+    items = page.get_by_role("menuitemradio")
+    expect(items).to_have_count(4)
+    expect(items.first).to_be_focused()  # Newest
+    page.keyboard.press("ArrowDown")
+    expect(page.get_by_role("menuitemradio", name="Oldest")).to_be_focused()
+    page.keyboard.press("Enter")
     expect(rows.first).to_contain_text("Fireside")
     expect(first).to_have_attribute("aria-sort", "ascending")
     expect(talks).not_to_have_attribute("aria-sort", re.compile(".*"))
+    expect(sort).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(page.get_by_role("menuitemradio", name="Oldest")).to_have_attribute(
+        "aria-checked", "true"
+    )
+    page.keyboard.press("Escape")
+    expect(items).to_have_count(0)
+    expect(sort).to_be_focused()
 
 
 GRID_COLOURS = """() => {
@@ -1692,3 +1713,196 @@ def test_the_grids_text_and_boxes_stay_readable_in_every_state(page: Page, serve
     for text in ("name", "digit"):
         assert contrast(header[text], header["bg"]) >= 4.5, (scheme, text, header)
     assert contrast(header["menu"], header["bg"]) >= 3, (scheme, "the menu's glyph", header)
+
+
+# Task 14 fix round 1. Each test says what was wrong.
+
+
+def header_tags(page: Page) -> list[str]:
+    return page.get_by_test_id("grid-header").evaluate_all("els => els.map((e) => e.dataset.tag)")
+
+
+def test_a_cell_click_in_a_column_shown_from_the_picker_moves_no_column(
+    page: Page, big_server, console
+):
+    # why: item 1. Columns were rebuilt from the live tags on every render: a tag used this session
+    # moved from the picker's place to the session's, so topic/t17 jumped ahead of topic/t15.
+    page.goto(f"{big_server.url}/#/tags")
+    headers = page.get_by_test_id("grid-header")
+    expect(headers).to_have_count(15)
+    page.get_by_test_id("columns").click()
+    page.locator("[data-testid=column-choice][data-tag='topic/t15']").check()
+    page.locator("[data-testid=column-choice][data-tag='topic/t17']").check()
+    page.keyboard.press("Escape")
+    expect(headers).to_have_count(17)
+    before = header_tags(page)
+    assert before[-2:] == ["topic/t15", "topic/t17"], before
+    first = page.get_by_test_id("grid-row").first
+    first.locator("[data-testid=grid-cell][data-tag='topic/t17']").click()
+    expect(page.get_by_test_id("left-count")).to_have_text("199 left")
+    assert header_tags(page) == before
+
+
+def test_tagging_rows_one_by_one_keeps_one_running_toast(page: Page, big_server, console):
+    # why: item 2. In Untagged only, every row's first tag makes it visible to external agents,
+    # and each such change had a toast of its own: 20 rows left 21 toasts, each read out.
+    page.goto(f"{big_server.url}/#/tags")
+    page.get_by_test_id("grid-row").first.locator(".tg-title").click()
+    for i in range(5):
+        if i:
+            page.keyboard.press("ArrowDown")
+        page.keyboard.press("2")
+    toast = page.get_by_test_id("action-toast")
+    expect(toast).to_contain_text("5 changes · 5 now visible to external agents")
+    expect(toast).to_have_count(1)
+
+
+def test_the_grid_keeps_its_filters_sort_selection_and_columns_through_the_library(
+    page: Page, server, console
+):
+    # why: item 4 (ruled). The grid's state lived in the page, which unmounts on the Library.
+    page.goto(f"{server.url}/#/tags")
+    page.get_by_test_id("untagged-only").uncheck()
+    page.get_by_test_id("title-filter").fill("apollo")
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(2)
+    sort = page.get_by_role("button", name=re.compile(r"^Sort rows"))
+    sort.click()
+    page.get_by_role("menuitemradio", name="Oldest").click()
+    expect(sort).to_be_focused()  # the menu has closed
+    page.get_by_test_id("columns").click()
+    page.locator("[data-testid=column-choice][data-tag=talks]").uncheck()
+    page.keyboard.press("Escape")
+    rows.first.locator(".tg-title").click()
+    rows.nth(1).locator(".tg-title").click(modifiers=["ControlOrMeta"])
+    selected = page.locator("[data-testid=grid-row][aria-selected=true]")
+    expect(selected).to_have_count(2)
+    order = rows.evaluate_all("els => els.map((e) => e.dataset.id)")
+    columns = header_tags(page)
+    pages = page.get_by_role("navigation", name="Pages")
+    pages.get_by_role("button", name="Library").click()
+    expect(page.get_by_test_id("recording-row")).to_have_count(4)
+    pages.get_by_role("button", name="Tags").click()
+    expect(rows).to_have_count(2)
+    expect(page.get_by_test_id("untagged-only")).not_to_be_checked()
+    expect(page.get_by_test_id("title-filter")).to_have_value("apollo")
+    first = page.locator("[role=columnheader][aria-colindex='1']")
+    expect(first).to_have_attribute("aria-sort", "ascending")
+    assert rows.evaluate_all("els => els.map((e) => e.dataset.id)") == order
+    expect(selected).to_have_count(2)
+    assert header_tags(page) == columns
+    assert "talks" not in columns
+
+
+def test_cmd_home_keeps_the_selection_so_a_header_adds_to_every_selected_row(
+    page: Page, server, console, demo_ids
+):
+    # why: item 5. Ctrl+Home was a plain move, so it replaced the selection, and the header's add,
+    # reached from the top row, went to one row (spec §6: Cmd/Ctrl moves focus only).
+    jfk, fdr = demo_ids["jfk-rice"], demo_ids["fdr-fireside-1"]
+    page.goto(f"{server.url}/#/tags")
+    page.get_by_test_id("untagged-only").uncheck()
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(4)  # Apollo 13, Apollo 11, JFK, Fireside
+    rows.filter(has_text="JFK").locator(".tg-title").click()
+    rows.filter(has_text="Fireside").locator(".tg-title").click(modifiers=["ControlOrMeta"])
+    for _ in range(4):  # private, notes/conference-talk, notes/general-fallback, space/apollo
+        page.keyboard.press("ArrowRight")
+    page.keyboard.press("ControlOrMeta+Home")
+    expect(cell(page, "Apollo 13", "space/apollo")).to_be_focused()
+    selected = page.locator("[data-testid=grid-row][aria-selected=true]")
+    expect(selected).to_have_count(2)
+    page.keyboard.press("ArrowUp")
+    header = page.locator("[data-testid=grid-header][data-tag='space/apollo']")
+    add = header.get_by_role("button", name=re.compile(r"^Add space\/apollo to 2 selected"))
+    expect(add).to_be_focused()
+    page.keyboard.press("Enter")
+    wait_until(
+        lambda: (
+            ("space/apollo", "you") in server.tags(jfk)
+            and ("space/apollo", "you") in server.tags(fdr)
+        )
+    )
+    expect(selected).to_have_count(2)
+
+
+def hold_tag_results(page: Page) -> dict:
+    """Routes the app's websocket so the test can hold tag_result messages, then let them go."""
+    held: dict = {"on": False, "messages": [], "page": None}
+
+    def route(ws) -> None:
+        upstream = ws.connect_to_server()
+        held["page"] = ws
+
+        def from_server(message) -> None:
+            if held["on"] and "tag_result" in str(message):
+                held["messages"].append(message)
+            else:
+                ws.send(message)
+
+        upstream.on_message(from_server)
+
+    page.route_web_socket(re.compile(r"/websocket/?$"), route)
+    return held
+
+
+def test_a_focused_pending_cell_shows_its_ring_and_its_pending_outline(page: Page, server, console):
+    # why: item 6. The focus ring replaced the pending marker's dashed outline, so a keyboard
+    # user never saw a change in flight (spec §6).
+    held = hold_tag_results(page)
+    page.goto(f"{server.url}/#/tags")
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(1)
+    rows.first.locator(".tg-title").click()
+    for _ in range(5):  # to talks
+        page.keyboard.press("ArrowRight")
+    talks = cell(page, "Apollo 13", "talks")
+    expect(talks).to_be_focused()
+    held["on"] = True
+    page.keyboard.press("Space")
+    expect(talks).to_have_class(re.compile(r"\bpending\b"))
+    seen = talks.evaluate(
+        """el => {
+            const s = getComputedStyle(el);
+            const probe = document.body.appendChild(document.createElement('span'));
+            probe.style.color = 'var(--ring)';
+            const ring = getComputedStyle(probe).color;
+            probe.style.color = 'var(--muted-foreground)';
+            const muted = getComputedStyle(probe).color;
+            probe.remove();
+            return {
+                outline: s.outlineStyle, outlineColor: s.outlineColor, shadow: s.boxShadow,
+                ring, muted,
+            };
+        }"""
+    )
+    assert seen["outline"] == "dashed" and seen["outlineColor"] == seen["muted"], seen
+    assert seen["ring"] in seen["shadow"], seen
+    held["on"] = False
+    for message in held["messages"]:
+        held["page"].send(message)
+    expect(talks).not_to_have_class(re.compile(r"\bpending\b"))
+    expect(talks).to_have_attribute("aria-checked", "true")
+
+
+def test_a_key_on_a_cell_scrolled_away_sideways_brings_it_back(page: Page, big_server, console):
+    # why: item 7. reveal() scrolled only down and up, so Space toggled a cell hidden under the
+    # pinned columns.
+    page.set_viewport_size({"width": 1000, "height": 700})
+    page.goto(f"{big_server.url}/#/tags")
+    grid = page.get_by_test_id("tags-grid")
+    first = page.get_by_test_id("grid-row").first
+    first.locator(".tg-title").click()
+    page.keyboard.press("ArrowRight")
+    page.keyboard.press("ArrowRight")  # the first topic's column, beside the pinned ones
+    box = first.locator("[data-testid=grid-cell]").nth(1)
+    expect(box).to_be_focused()
+    grid.evaluate("el => { el.scrollLeft = el.scrollWidth; }")
+    wait_until(lambda: grid.evaluate("el => el.scrollLeft") > 300)
+    hidden = box.bounding_box()
+    edge = grid.bounding_box()["x"] + 384  # the first column and `private`, pinned
+    assert hidden["x"] + hidden["width"] < edge  # under the pinned columns
+    page.keyboard.press("Space")
+    expect(box).to_have_attribute("aria-checked", "true")
+    shown = box.bounding_box()
+    assert shown["x"] >= edge, (shown, edge)
