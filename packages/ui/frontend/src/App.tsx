@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Toaster } from "@/components/ui/sonner";
 
-import { RecordingList } from "./components/RecordingList";
+import { RecordingList, openPickerFor } from "./components/RecordingList";
 import { RecordingPane } from "./components/RecordingPane";
 import { Sidebar } from "./components/Sidebar";
 import { StatusPage } from "./components/StatusPage";
 import { TagPickerDialog } from "./components/TagPicker";
 import { TopBar } from "./components/TopBar";
 import { hashFor, routeFromHash } from "./lib/nav";
+import { targetsOf } from "./lib/selection";
 import { useOrderedRows, useRowOrder } from "./lib/useRowOrder";
 import { useSelection } from "./lib/useSelection";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
@@ -60,7 +61,10 @@ export default function App() {
         <TopBar page={route.page} onPage={go} />
         {route.page === "status" ? <StatusPage /> : view ? (
           <main className="panes">
-            <Sidebar library={view} filter={filter} onFilter={setFilter} />
+            {/* + New tag…: a drop opens the picker for the dragged recordings, a click for the
+                selection, as T does (spec §6). */}
+            <Sidebar library={view} filter={filter} onFilter={setFilter}
+              onNewTag={(ids) => openPickerFor(ids ?? targetsOf(sel, order.ids), rows, tagging)} />
             <RecordingList rows={rows} sel={sel} act={act} openId={selectedId} onOpen={setSelectedId} announce={announce} fitted={fitted} />
             <RecordingPane selectedId={selectedId} row={openRow} />
           </main>

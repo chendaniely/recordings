@@ -219,3 +219,8 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   .check { visibility: visible; }
   .row .chip-x { display: none; }
 }
+
+/* Drop targets: a 2px orange outline; the text keeps its colour (tagging spec §6). */
+.si.drop { outline: 2px solid var(--brand-orange); outline-offset: -2px; }
+.si.new-tag { color: var(--muted-foreground); }
+.drag-image { position: fixed; top: -200px; left: -200px; padding: 4px 10px; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); font-weight: 700; }

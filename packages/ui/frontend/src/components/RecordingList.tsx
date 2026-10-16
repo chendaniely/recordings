@@ -1,6 +1,6 @@
 import type { VirtualItem } from "@tanstack/react-virtual";
 import { Check, Lock, TriangleAlert } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type FocusEvent, type KeyboardEvent, type MouseEvent } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -34,6 +34,22 @@ export function openPickerFor(ids: string[], rows: readonly LibraryRow[], taggin
   }
   const titles = new Map(rows.map((r) => [r.id, r.title]));
   tagging.openPicker({ ids, title: pickerTitle(ids, (id) => titles.get(id) ?? id) });
+}
+
+/** The drag image: "12 recordings" (spec §6). One element, made for this and kept off-screen:
+ * setDragImage draws an element in the document (checked: MDN, DataTransfer.setDragImage). It
+ * never carries an ID or a title. */
+export function dragImage(text: string): HTMLElement {
+  let el = document.getElementById("drag-image");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "drag-image";
+    el.className = "drag-image";
+    el.setAttribute("aria-hidden", "true");
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  return el;
 }
 
 /** The list's live region. It empties, then says the words a frame later, so the same words
@@ -72,7 +88,8 @@ type Props = {
  * row's controls. Space is left to the player. Selection changes on click, never on mousedown.
  * Keys, clicks and focus from a portal (the + picker), whose React events bubble through its row,
  * are never the list's. Each row is named by its title, details, tags and state, not by its
- * controls, which keep their own names when focused. */
+ * controls, which keep their own names when focused. A row, or the selection it is in, drags onto
+ * the sidebar's tags, note types and + New tag… (Sidebar). */
 export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted }: Props) {
   const tagging = useTaggingContext();
   const ids = useId();
@@ -83,6 +100,9 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   const selRef = useRef(sel);
   selRef.current = sel;
   const [pickerId, setPickerId] = useState<string | null>(null); // the row whose + picker is open
+  const [dragId, setDragId] = useState<string | null>(null); // the row being dragged
+  const pressedOn = useRef<Element | null>(null); // where the pointer went down: a drag starts there
+  const drag = tagging.drag;
   const order = useMemo(() => rows.map((r) => r.id), [rows]);
   const index = useMemo(() => new Map(order.map((id, i) => [id, i])), [order]);
   const at = (id: string | null) => (id === null ? -1 : (index.get(id) ?? -1));
@@ -93,10 +113,10 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   const rowEl = (id: string | null) =>
     id === null ? undefined : [...(scrollRef.current?.querySelectorAll<HTMLElement>("[role=row][data-id]") ?? [])].find((el) => el.dataset.id === id);
 
-  // The focused row, the anchor, and the row whose + picker is open always stay rendered (in
-  // Task 13, a dragged row too): the picker is anchored on that row's +.
+  // The focused row, the anchor, the row whose + picker is open and the row being dragged always
+  // stay rendered: the picker is anchored on that row's +, and a drag's dragend comes to its row.
   const virtualizer = useVirtualRows({
-    ids: order, scrollRef, rowSize: ROW_ESTIMATE, overscan: 8, keep: [focusIdx, at(sel.anchor), at(pickerId)],
+    ids: order, scrollRef, rowSize: ROW_ESTIMATE, overscan: 8, keep: [focusIdx, at(sel.anchor), at(pickerId), at(dragId)],
   });
   /** Brings the focused row into view: before a key acts on it, and after the order changes. */
   const reveal = (i = focusIdx) => {
@@ -108,6 +128,17 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   useEffect(() => {
     if (pickerId !== null && !index.has(pickerId)) setPickerId(null);
   }, [index, pickerId]);
+
+  // A dragged row that leaves the list (Refresh, a filter change) unmounts, and no dragend comes
+  // for it: the drag is forgotten, so a later drop can't act on it. The same on leaving the
+  // Library mid-drag.
+  useEffect(() => {
+    if (dragId !== null && !index.has(dragId)) {
+      drag.current = null;
+      setDragId(null);
+    }
+  }, [index, dragId, drag]);
+  useEffect(() => () => { drag.current = null; }, [drag]);
 
   // The row that had focus left the list (Refresh, a filter change): focus goes to the row the
   // selection now focuses, so the keys go on working, unless focus has gone somewhere else.
@@ -269,6 +300,33 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
     if (!meta && !e.shiftKey) onOpen(id);
   };
 
+  // A drag carries the selection when its row is in it, in list order and in one add, else that
+  // row alone, leaving the selection as it is (spec §6). Its IDs live in this page, set here and
+  // never put in dataTransfer, which gets only the image's words. dragstart's target is the
+  // draggable row, so where it began comes from pointerdown: a drag that begins on the checkbox,
+  // a chip's × or the +, or in the + picker (a portal, whose events bubble through this row), is
+  // cancelled.
+  const onDragStart = (e: DragEvent<HTMLDivElement>, id: string) => {
+    const from = pressedOn.current;
+    pressedOn.current = null;
+    const row = e.currentTarget;
+    if (!row.contains(e.target as Node) || !from || !row.contains(from) || from.closest("[data-control]")) {
+      e.preventDefault();
+      return;
+    }
+    const ids = sel.selected.has(id) ? targetsOf(sel, order) : [id];
+    drag.current = ids;
+    setDragId(id);
+    const label = `${ids.length.toLocaleString("en")} recording${ids.length === 1 ? "" : "s"}`;
+    e.dataTransfer.effectAllowed = "copy";
+    e.dataTransfer.setData("text/plain", label); // some browsers need data to drag; never read back
+    e.dataTransfer.setDragImage(dragImage(label), 12, 12);
+  };
+  const onDragEnd = () => {
+    drag.current = null;
+    setDragId(null);
+  };
+
   const drawRow = (v: VirtualItem) => {
     const r = rows[v.index];
     const selected = sel.selected.has(r.id);
@@ -298,6 +356,10 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
         className={cn("row", selected && "sel", r.id === openId && "on", mark?.done && "done", mark?.failed && "failed")}
         style={{ transform: `translateY(${v.start}px)` }}
         onClick={(e) => onRowClick(e, r.id)}
+        draggable={tagging.canTag}
+        onPointerDownCapture={(e) => { pressedOn.current = e.target as Element; }}
+        onDragStart={(e) => onDragStart(e, r.id)}
+        onDragEnd={onDragEnd}
       >
         <div role="gridcell" className="row-cell" data-controls="">
           <span className="check" aria-hidden="true" data-control="checkbox">{selected ? <Check /> : null}</span>

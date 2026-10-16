@@ -6,6 +6,7 @@ import re
 import time
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, expect
 
 pytestmark = pytest.mark.e2e
@@ -1054,3 +1055,93 @@ def test_a_rows_name_says_a_chip_is_pending(page: Page, server, console):
         socket["page"].send(message)
     expect(chip).to_have_count(0)
     expect(row).not_to_have_accessible_name(re.compile(r"removing"))
+
+
+# Task 13: drag and drop onto the sidebar (spec §6, §9).
+
+FOREIGN_DROP = """([id]) => {
+    // A drop that didn't start in this page: text naming a recording, dropped on `private`.
+    const target = [...document.querySelectorAll('[data-testid=filter-tag]')]
+        .find((el) => el.textContent.includes('private'));
+    const data = new DataTransfer();
+    data.setData('text/plain', id);
+    for (const type of ['dragenter', 'dragover', 'drop']) {
+        const init = { bubbles: true, cancelable: true, dataTransfer: data };
+        target.dispatchEvent(new DragEvent(type, init));
+    }
+}"""
+
+
+def drag_by_title(row, target) -> None:
+    """Drag a row by its title. drag_to presses at some visible point of the row unless told
+    where, and a press on a chip's x, the + or the checkbox cancels the drag (onDragStart): the
+    title is never one."""
+    row_box = row.bounding_box()
+    title = row.locator(".row-title").bounding_box()
+    at = {"x": title["x"] - row_box["x"] + 4, "y": title["y"] - row_box["y"] + title["height"] / 2}
+    row.drag_to(target, source_position=at)
+
+
+def test_dragging_a_selection_onto_a_sidebar_tag_and_a_foreign_drop(
+    page: Page, server, console, demo_ids
+):
+    apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
+    frames: list[str] = []  # what the page sends on Shiny's websocket, from the first frame
+    sockets: list = []
+
+    def watch(ws) -> None:
+        sockets.append(ws)
+        ws.on("framesent", lambda payload: frames.append(str(payload)))
+
+    page.on("websocket", watch)
+    open_library(page, server.url)
+    rows = page.get_by_test_id("recording-row")
+    rows.filter(has_text="Apollo 13").click()
+    rows.filter(has_text="JFK").click(modifiers=["ControlOrMeta"])
+    target = page.get_by_test_id("filter-tag").filter(has_text="space/apollo")
+    drag_by_title(rows.filter(has_text="JFK"), target)
+    expect(page.get_by_test_id("action-toast")).to_contain_text(
+        "Added space/apollo to 2 recordings"
+    )
+    wait_until(
+        lambda: (
+            ("space/apollo", "you") in server.tags(apollo13)
+            and ("space/apollo", "you") in server.tags(jfk)
+        )
+    )
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("just tagged space/apollo")  # one add, of the whole selection
+    drag_by_title(rows.filter(has_text="JFK"), target)  # nothing changes, and it says so
+    expect(page.get_by_test_id("action-toast").filter(has_text="Already on all 2")).to_be_visible()
+
+    def sent(name: str) -> int:
+        return sum(f'"{name}' in f for f in frames)
+
+    requests_before = sent("tag_request")
+    page.evaluate(FOREIGN_DROP, [jfk])  # a drop event that comes anyway does nothing
+    # A drop from outside the page, of text or a file, is refused at dragover, so the browser
+    # never drops it here (Playwright's locator.drop throws when dragover isn't cancelled).
+    hidden = page.get_by_test_id("filter-tag").filter(has_text="private")
+    file = {"name": "ids.txt", "mimeType": "text/plain", "buffer": jfk.encode()}
+    for payload in ({"data": {"text/plain": jfk}}, {"files": [file]}):
+        with pytest.raises(PlaywrightError, match="did not accept the drop"):
+            hidden.drop(payload)
+    expect(hidden).not_to_have_class(re.compile(r"\bdrop\b"))
+    # A positive sync point instead of a sleep: Refresh's input goes out after anything the drops
+    # could have sent (Shiny sends inputs in order), so once it is heard, the count is final.
+    # Playwright hears frames only while it is called (never in time.sleep): it waits here.
+    (shiny,) = [ws for ws in sockets if ws.url.endswith("/websocket/")]
+    with shiny.expect_event("framesent", lambda payload: '"refresh' in str(payload)):
+        page.get_by_test_id("refresh").click()
+    assert sent("tag_request") == requests_before  # the foreign drops sent no request
+    assert ("private", "you") not in server.tags(jfk)
+    # outside the selection
+    drag_by_title(rows.filter(has_text="Apollo 11"), page.get_by_test_id("new-tag"))
+    expect(page.get_by_role("dialog", name=re.compile(r"^Tag Apollo 11"))).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(bar).to_contain_text("2 selected")  # left alone
+    new_tag = page.get_by_test_id("new-tag")
+    new_tag.click()  # a click: the picker for the selection, as T
+    expect(page.get_by_role("dialog", name="Tag 2 recordings")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(new_tag).to_be_focused()  # back where it came from

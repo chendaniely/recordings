@@ -2,9 +2,9 @@ import { createElement } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NO_SEL } from "../lib/selection";
+import { NO_SEL, type Sel } from "../lib/selection";
 import { TaggingContext, type Tagging } from "../tagging/useTagging";
 import type { LibraryRow } from "../types";
 
@@ -12,7 +12,7 @@ const toasts = vi.hoisted(() => ({ showCannotTag: vi.fn() }));
 vi.mock("../tagging/toasts", () => toasts);
 vi.mock("../sr", () => ({})); // useTagging's Shiny side: the list only reads the context
 
-import { Announcer, KEY_HINT, RecordingList, openPickerFor } from "./RecordingList";
+import { Announcer, KEY_HINT, RecordingList, dragImage, openPickerFor } from "./RecordingList";
 
 const row = (id: string): LibraryRow => ({
   id, title: `Week ${id}`, recorded_at: "2026-10-06T14:00:00-07:00", when: "", duration: null, duration_ms: null,
@@ -117,5 +117,120 @@ describe("the list, fix round 1 (Task 12)", () => {
     expect(region()).toBe("2 hidden rows deselected");
     root.unmount();
     host.remove();
+  });
+});
+
+describe("dragging rows (spec §6)", () => {
+  // jsdom lays nothing out: the virtualiser draws rows only for a scroll element with a size.
+  const sizes = ["offsetHeight", "offsetWidth"] as const;
+  const saved = sizes.map((k) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, k));
+  beforeAll(() => {
+    for (const k of sizes) Object.defineProperty(HTMLElement.prototype, k, { configurable: true, get: () => 800 });
+  });
+  afterAll(() => {
+    sizes.forEach((k, i) => Object.defineProperty(HTMLElement.prototype, k, saved[i]!));
+  });
+
+  const tagged = rows.map((r) => (r.id === "b" ? { ...r, tags: [{ tag: "talks", by: "you" as const }], untagged: false } : r));
+  type Transfer = { effectAllowed: string; setData: ReturnType<typeof vi.fn>; setDragImage: ReturnType<typeof vi.fn> };
+  const transfer = (): Transfer => ({ effectAllowed: "all", setData: vi.fn(), setDragImage: vi.fn() });
+
+  function mount(tagging: Tagging, sel: Sel) {
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    const draw = (list: LibraryRow[] = tagged) =>
+      flushSync(() =>
+        root.render(
+          createElement(
+            TaggingContext.Provider,
+            { value: tagging },
+            createElement(RecordingList, {
+              rows: list, sel, act: () => {}, openId: null, onOpen: () => {}, announce: { text: "", key: 0 },
+              fitted: { key: 0, reason: "load" },
+            }),
+          ),
+        ),
+      );
+    draw();
+    const row = (id: string) => host.querySelector<HTMLElement>(`[role=row][data-id="${id}"]`)!;
+    /** A press on `on`, then a drag from its row: dragstart's target is the draggable row. */
+    const drag = (id: string, on: (row: HTMLElement) => Element = (r) => r.querySelector(".row-title")!) => {
+      const from = on(row(id));
+      flushSync(() => from.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+      const start = new Event("dragstart", { bubbles: true, cancelable: true });
+      const data = transfer();
+      Object.defineProperty(start, "dataTransfer", { value: data });
+      flushSync(() => row(id).dispatchEvent(start));
+      return { start, data };
+    };
+    const end = (id: string) => flushSync(() => row(id).dispatchEvent(new Event("dragend", { bubbles: true })));
+    const done = () => {
+      root.unmount();
+      host.remove();
+    };
+    return { host, draw, row, drag, end, done };
+  }
+
+  it("drags the selection, in list order, when the row is in it; else that row alone", () => {
+    const tagging = fake();
+    const list = mount(tagging, { selected: new Set(["c", "a"]), anchor: "a", focus: "a" });
+    expect(list.row("c").getAttribute("draggable")).toBe("true");
+    const { start, data } = list.drag("c");
+    expect(start.defaultPrevented).toBe(false);
+    expect(tagging.drag.current).toEqual(["a", "c"]);
+    expect(data.effectAllowed).toBe("copy");
+    expect(data.setData).toHaveBeenCalledWith("text/plain", "2 recordings"); // never an ID or a title
+    const [image] = data.setDragImage.mock.calls[0];
+    expect(image.textContent).toBe("2 recordings");
+    expect(image.isConnected).toBe(true); // setDragImage draws an element in the document
+    list.end("c");
+    expect(tagging.drag.current).toBeNull();
+    const other = list.drag("b");
+    expect(tagging.drag.current).toEqual(["b"]); // the selection is left alone
+    expect(other.data.setData).toHaveBeenCalledWith("text/plain", "1 recording");
+    list.done();
+  });
+
+  it("cancels a drag that starts on the checkbox, a chip's × or the +", () => {
+    const tagging = fake();
+    const list = mount(tagging, { selected: new Set(["b"]), anchor: "b", focus: "b" });
+    for (const control of [".check", "[data-control=remove]", "[data-control=add]"]) {
+      const { start } = list.drag("b", (r) => r.querySelector(control)!);
+      expect(start.defaultPrevented, control).toBe(true);
+      expect(tagging.drag.current, control).toBeNull();
+    }
+    // A chip's label is the row's, as a click on it is.
+    list.drag("b", (r) => r.querySelector(".chip-label")!);
+    expect(tagging.drag.current).toEqual(["b"]);
+    list.done();
+  });
+
+  it("draws no row draggable while tagging is off", () => {
+    const list = mount(fake({ canTag: false, reason: "read-only" }), NO_SEL);
+    expect(list.row("a").getAttribute("draggable")).toBe("false");
+    list.done();
+  });
+
+  it("forgets a drag whose row leaves the list, since no dragend comes for it, and on leaving the Library", () => {
+    const tagging = fake();
+    const list = mount(tagging, NO_SEL);
+    list.drag("b");
+    expect(tagging.drag.current).toEqual(["b"]);
+    list.draw(tagged.filter((r) => r.id !== "b")); // a Refresh or a filter change mid-drag
+    expect(tagging.drag.current).toBeNull();
+    list.drag("a");
+    list.done(); // the Status page, mid-drag
+    expect(tagging.drag.current).toBeNull();
+  });
+});
+
+describe("dragImage (spec §6)", () => {
+  it("is one hidden element in the document, saying how many recordings", () => {
+    const one = dragImage("12 recordings");
+    expect(one.isConnected).toBe(true);
+    expect(one.getAttribute("aria-hidden")).toBe("true");
+    expect(one.textContent).toBe("12 recordings");
+    expect(dragImage("1 recording")).toBe(one);
+    expect(one.textContent).toBe("1 recording");
   });
 });
