@@ -784,11 +784,16 @@ plan, decision 6).
 **Rolling back, until the first real tag** (§19): the deployment is disposable.
 
 Tagging (part A of stage 3a) can ship before stage 2b's spikes and `sync --dry-run`. When to give
-the real archive its first tag is Dan's call. Until then a rollback by re-import is free; after
-it, a rollback by re-import loses every tag, because the tags live only in the archive's
-`recording.json` files. A re-run of `import-audio-router` also puts back any privacy tag that
-was removed with confirmation (spec §9.3); that is by design.
+the real archive its first tag is Dan's call. "The first real tag" means the first tag applied in
+the app, not the ones imported. Until then a rollback by re-import is free; after it, a rollback
+by re-import loses every tag applied in the app (the imported ones come back), because the tags
+live only in the archive's `recording.json` files. After the first app-applied tag, the rollback
+is restoring the archive from its last backup ("Restoring for real", below), not a re-import.
+Before the first real tag, take a backup and run `recordings doctor`. A re-run of
+`import-audio-router` also puts back any privacy tag that was removed with confirmation
+(spec §9.3); that is by design.
 
+This block loses app-applied tags once the first real tag exists.
 ```bash
 rc down
 mv "$RECORDINGS_HOME/archive" "$RECORDINGS_HOME/archive.failed-$(date +%Y%m%d)"

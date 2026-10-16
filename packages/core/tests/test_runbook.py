@@ -232,5 +232,7 @@ def test_the_runbook_says_the_first_real_tag_ends_the_disposable_window():
     # the real archive is Dan's call, and a rollback by re-import before then loses the tags.
     text = _section("## 4. Import")
     assert "the first real tag" in text
-    assert "loses every tag" in text
     assert "Dan's call" in text
+    # The definition, so "the first real tag" can't be read as the imported ones.
+    assert "applied in the app, not the ones imported" in " ".join(text.split())
+    assert "loses every tag applied in the app" in " ".join(text.split())

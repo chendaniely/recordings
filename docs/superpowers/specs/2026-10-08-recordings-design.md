@@ -683,9 +683,12 @@ school/course-101:
   One function decides it (`recordings.models.is_private_tag`). It applies Unicode NFKC and
   drops format characters before `casefold()`, so a fullwidth or zero-width-split `private`
   is private too (Dan, 2026-10-15).
+  - **The privacy gate lives in the tag operation itself** (Dan, 2026-10-15), so every path
+    that removes tags, whether the UI, the CLI, the API or part B's Rename, Move and Delete, is
+    gated by it. The UI's dialog is how the UI confirms; the CLI's is `dry_run`.
   - **New tag names follow tagging part A's rules** (Dan, 2026-10-15;
     `docs/superpowers/specs/2026-10-15-tagging-a-design.md` §4): NFC, no control, format,
-    separator, private-use or surrogate characters, folder parts of at most 64 characters and
+    line or paragraph separator (Zl, Zp), private-use or surrogate characters, folder parts of at most 64 characters and
     a whole tag of at most 200, no `.` or `..` part and no `\`, `notes/<type>` only for a type
     the archive has, and nothing that *looks like* `private` without being spelled so. A
     removal accepts any existing spelling.
@@ -1718,6 +1721,8 @@ later" until its build stage (§20):
 - **In the picker** (Dan, 2026-10-15), Enter only ever adds, Shift+Enter creates exactly the
   typed text, and Shift+Delete removes the highlighted tag. Create never makes a `notes/` tag or
   a case-variant of an existing tag.
+- **Tagging an untagged recording never asks;** the toast says how many became visible to
+  external agents (Dan, 2026-10-15).
 - **No confirmation dialogs** in the UI. Every action shows an Undo toast. There are three
   exceptions, all about privacy:
   - Removing a recording's last private tag, including by an Undo, asks first, naming how many
