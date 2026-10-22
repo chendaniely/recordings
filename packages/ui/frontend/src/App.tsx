@@ -18,6 +18,9 @@ import { ConfirmDialog } from "./tagging/ConfirmDialog";
 import { TaggingContext, useTagging } from "./tagging/useTagging";
 import type { Filter, LibraryView, Page, Route } from "./types";
 
+/** Sonner's offsets take a CSS length: the toaster and the pickers' band read the same variable. */
+const TOAST_OFFSET = "var(--toast-offset)";
+
 export default function App() {
   const initialized = useShinyInitialized();
   const library = useShinyOutputValue<LibraryView>("library");
@@ -82,7 +85,9 @@ export default function App() {
         )}
         <TagPickerDialog />
         <ConfirmDialog />
-        <Toaster position={topToasts ? "top-center" : "bottom-right"} />
+        {/* One offset at every width, from app.css, where the pickers keep clear of the toasts' band;
+            Sonner's own are 24 px, and 16 px only up to 600 px wide (Task 15 fix round 2, item 2). */}
+        <Toaster position={topToasts ? "top-center" : "bottom-right"} offset={TOAST_OFFSET} mobileOffset={TOAST_OFFSET} />
       </div>
     </TaggingContext.Provider>
   );

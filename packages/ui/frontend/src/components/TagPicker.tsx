@@ -348,12 +348,14 @@ export function TagPickerDialog() {
   const sheet = room
     ? ({ "--sheet-top": `${room.top}px`, "--sheet-bottom": `${room.bottom}px`, "--sheet-height": `${room.height}px` } as CSSProperties)
     : undefined;
+  // The phone's sheet has a Close button with a 44 px target (app.css): with the keyboard up there
+  // is no Esc, and the overlay shows only a gutter (Task 15 fix round 2, item 3).
   return (
     <Dialog open={target !== null} onOpenChange={(open) => { if (!open) tagging.closePicker(); }}>
       <DialogContent
         className="picker-dialog top-1/3 translate-y-0 overflow-hidden p-0"
         style={sheet}
-        showCloseButton={false}
+        showCloseButton={phone}
         aria-describedby={undefined}
         onEscapeKeyDown={imeEscape}
         onPointerDownOutside={(e) => { if (inToaster(e.target)) e.preventDefault(); }}
@@ -387,23 +389,21 @@ const inConfirmation = (target: EventTarget | null) => target instanceof Element
  * and close are reported too, so a virtual list keeps the row drawn meanwhile (fix round 1, item
  * 10).
  *
- * On a touch screen the popover keeps clear of an on-screen keyboard: Radix keeps it inside the
- * viewport less its collision padding, and sizes it to what is left
- * (--radix-popover-content-available-height), so the keyboard's height is padding at the bottom
- * (fix round 1, item 5; checked: the Popover docs' collisionPadding and CSS variables, and Radix
- * Popper's size middleware, which applies the padding). */
+ * On a touch screen the popover keeps clear of an on-screen keyboard with nothing added here:
+ * floating-ui, which Radix places it with, measures against the visual viewport, and its
+ * autoUpdate follows the visual viewport's resize (an overflow ancestor), so the popover moves and
+ * its max-height (--radix-popover-content-available-height) shrinks as the keyboard comes. Adding
+ * the keyboard to the collision padding counted it twice (Task 15 fix round 2, item 1; checked:
+ * floating-ui's autoUpdate docs, and @floating-ui/dom 1.8.0's getViewportRect and
+ * getOverflowAncestors, which the docs don't cover). */
 export function AddTagsButton({ id, title, place, onOpenChange }: {
   id: string; title: string; place: "row" | "header"; onOpenChange?: (open: boolean) => void;
 }) {
   const tagging = useTaggingContext();
   const headingId = useId();
   const phone = useMediaQuery(PHONE);
-  const touch = useMediaQuery(TOUCH);
   const [open, setOpen] = useState(false);
   const ids = useMemo(() => [id], [id]);
-  const room = useSheetRoom(touch && open && !phone);
-  const keyboard = touch ? (room?.bottom ?? 0) : 0;
-  const padding = useMemo(() => ({ top: 8, right: 8, bottom: 8 + keyboard, left: 8 }), [keyboard]);
   const change = (next: boolean) => {
     setOpen(next);
     onOpenChange?.(next);
@@ -452,7 +452,7 @@ export function AddTagsButton({ id, title, place, onOpenChange }: {
         className="picker-popover p-0"
         align="start"
         {...(place === "row" ? ROW_PLACEMENT : {})}
-        collisionPadding={padding}
+        collisionPadding={8}
         aria-labelledby={headingId}
         onEscapeKeyDown={imeEscape}
         onFocusOutside={keepOpen}

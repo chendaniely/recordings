@@ -172,6 +172,31 @@ draws the open row's bar as a border. The e2e tests
 honour the preference, and shadcn's items stop outlining themselves in forced colours. Re-run
 those tests on a bump of any of the three.
 
+## floating-ui 1.8.0 (under Radix Popover): the visual viewport isn't documented
+
+Found 2026-10-16, keeping the tag picker's + popover above a touch screen's on-screen keyboard
+(tagging part A, Task 15 fix round 2).
+
+**What the docs say.** floating-ui's `autoUpdate` page says `ancestorResize` updates the position
+"when an overflow ancestor is resized", using the `resize` event. It doesn't say the visual
+viewport is one of those ancestors, or that the default boundary is the visual viewport, not the
+layout viewport.
+
+**What it does** (`@floating-ui/dom` 1.8.0 and `@floating-ui/utils`):
+- `getOverflowAncestors` adds `window.visualViewport` to the list `autoUpdate` listens to.
+- `getViewportRect` measures the default `viewport` boundary with `visualViewport.width` and
+  `height`.
+- So a popover follows an on-screen keyboard by itself, and Radix's
+  `--radix-popover-content-available-height` already leaves the keyboard out.
+
+**What relies on it.** `TagPicker.tsx`'s `AddTagsButton` adds nothing for the keyboard. Fix
+round 1 added the keyboard's height to the collision padding, which counted it twice: the
+popover shrank to 56 px, or flipped off screen. The e2e test
+`test_on_touch_the_plus_popover_keeps_its_box_and_an_option_above_the_keyboard` checks it on a
+portrait tablet, a landscape tablet and a phone on its side.
+
+**When this note can go.** When floating-ui's docs say both. Re-run that test on a `radix-ui` bump.
+
 ## shinyreact-build-app skill: what it doesn't cover
 
 - **How long an output lives once its components unmount** (the first entry above). The skill doesn't

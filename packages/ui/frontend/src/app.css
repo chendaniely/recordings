@@ -345,7 +345,11 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
    list gives up the room. These rules are unlayered, so they win over the Tailwind utilities
    placing the centred dialog (top-1/3, -translate-x-1/2 and translate-y-0, which set the translate
    property; checked: Tailwind v4 docs, translate). */
-.picker-dialog { --toast-band: min(112px, calc(var(--sheet-height, 100dvh) * 0.3)); }
+/* The toaster's offset from the screen's edge, at every width (App.tsx passes it to Sonner), and
+   the band the toasts take: that offset and a two-line toast, or 30% of what shows when that is
+   less (Task 15 fix round 2, item 2). */
+:root { --toast-offset: 16px; }
+.picker-dialog { --toast-band: min(calc(var(--toast-offset) + 96px), calc(var(--sheet-height, 100dvh) * 0.3)); }
 @media (hover: none) and (min-width: 761px) {
   /* A touch tablet, or a large phone on its side: the dialog stays centred across, near the top. */
   .picker-dialog {
@@ -369,6 +373,9 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   .picker-dialog > .picker, .picker-dialog [cmdk-list] { flex: 0 1 auto; min-height: 0; }
   /* iOS Safari zooms the page into a text field whose text is under 16 px as it takes focus. */
   .picker-dialog [cmdk-input] { font-size: 16px; }
+  /* The sheet's Close (TagPickerDialog): a 44 px target in its top corner, the title clear of it. */
+  .picker-dialog [data-slot=dialog-close] { top: 4px; right: 4px; width: 44px; height: 44px; }
+  .picker-dialog .picker-title { padding-right: 52px; }
   /* The selection bar stays whole and above the bottom of the screen. The panes' grid squeezes its
      rows to fit the screen, and squeezed the list (min-height: 0) below its header and bar, which
      it cut off. A list that clips is no scroll container, so with min-height: auto its content's

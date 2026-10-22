@@ -13,10 +13,11 @@ from playwright.sync_api import Page, expect
 pytestmark = pytest.mark.e2e
 
 
-def wait_until(check, timeout: float = 10.0) -> None:
+def wait_until(check, timeout: float = 10.0, seen=None) -> None:
+    """Polls `check` until it is true; on a timeout, says what `seen()` last returned, if given."""
     deadline = time.monotonic() + timeout
     while not check():
-        assert time.monotonic() < deadline, "timed out"
+        assert time.monotonic() < deadline, "timed out" + (f"; last seen {seen()}" if seen else "")
         time.sleep(0.05)
 
 
@@ -1519,7 +1520,7 @@ def test_the_header_and_the_first_columns_stay_pinned_as_the_grid_scrolls(
         seen.update(grid.evaluate(PINNED))
         return seen == want
 
-    wait_until(pinned)
+    wait_until(pinned, seen=lambda: seen)
     box = grid.bounding_box()
     head = page.locator("[data-testid=grid-header][data-tag=private]").bounding_box()
     assert abs(head["y"] - box["y"]) < 1 and abs(head["x"] - (box["x"] + 300)) < 1
@@ -2803,18 +2804,6 @@ def test_on_a_touch_tablet_the_picker_stays_above_the_on_screen_keyboard(
     # a phone; on a 1024×768 tablet the T dialog ended 318 px under it.
     open_library(page, server.url)
     assert page.evaluate("() => matchMedia('(hover: none)').matches")
-    open_row(page, "JFK")
-    page.get_by_test_id("recording-header").get_by_role(
-        "button", name=re.compile(r"^Add tags to")
-    ).click()
-    popover = page.locator("[data-slot=popover-content]")
-    expect(popover).to_be_visible()
-    page.evaluate(FAKE_KEYBOARD, 420)
-    wait_until(lambda: within(popover, 0, 420))
-    assert within(popover.locator("[data-slot=input-group]"), 0, 420)
-    page.keyboard.press("Escape")
-    expect(popover).to_have_count(0)
-    page.evaluate(FAKE_KEYBOARD, 768)
     page.get_by_test_id("recording-row").filter(has_text="JFK").click()
     page.keyboard.press("t")
     dialog = page.locator("[data-slot=dialog-content]")
@@ -2928,3 +2917,124 @@ def test_the_phone_lists_heights_follow_the_dynamic_viewport(page: Page, server,
     # Item 11: 40vh is the large viewport's, taller than the screen while a phone's bars show.
     open_library(page, server.url)
     assert page.evaluate(PHONE_LIST_HEIGHTS) == ["40dvh"]
+
+
+# Task 15 fix round 2.
+
+POPOVER_FIT = """(edge) => {
+    const p = document.querySelector('[data-slot=popover-content]');
+    const pop = p.getBoundingClientRect();
+    const group = p.querySelector('[data-slot=input-group]').getBoundingClientRect();
+    const list = p.querySelector('[cmdk-list]').getBoundingClientRect();
+    const seen = (b) => b.height > 0 && b.top >= -0.5 && b.bottom <= edge + 0.5;
+    const inside = (b, o) => b.top >= o.top - 0.5 && b.bottom <= o.bottom + 0.5;
+    const options = [...p.querySelectorAll('[cmdk-item]')]
+        .map((i) => i.getBoundingClientRect())
+        .filter((b) => seen(b) && inside(b, list) && inside(b, pop)).length;
+    return {
+        box: seen(group) && inside(group, pop), options,
+        pop: [Math.round(pop.top), Math.round(pop.bottom)],
+        group: [Math.round(group.top), Math.round(group.bottom)],
+    };
+}"""
+
+
+@pytest.mark.parametrize("where", ["header", "row"])
+@pytest.mark.parametrize(
+    "dims",
+    [(820, 1180, 870), (1024, 768, 380), (839, 412, 210)],
+    ids=["tablet-portrait", "tablet-landscape", "phone-landscape"],
+)
+@pytest.mark.browser_context_args(is_mobile=True, has_touch=True)
+def test_on_touch_the_plus_popover_keeps_its_box_and_an_option_above_the_keyboard(
+    page: Page, server, console, dims, where
+):
+    # Fix round 2, item 1: the keyboard was counted twice (collision padding, and floating-ui's
+    # visual-viewport boundary), so the popover shrank to 56 px or flipped off the screen. The
+    # check looks inside the popover: its box, and an option, on screen and inside it.
+    width, height, visible = dims
+    page.set_viewport_size({"width": width, "height": height})
+    open_library(page, server.url)
+    row = page.get_by_test_id("recording-row").filter(has_text="Apollo 11")
+    row.click()
+    scope = page.get_by_test_id("recording-header") if where == "header" else row
+    scope.get_by_role("button", name=re.compile(r"^Add tags to")).click()
+    popover = page.locator("[data-slot=popover-content]")
+    expect(popover).to_be_visible()
+    popover.evaluate(SETTLED)
+    page.evaluate(FAKE_KEYBOARD, visible)
+    fit: dict = {}
+
+    def fits() -> bool:
+        fit.update(page.evaluate(POPOVER_FIT, visible))
+        return fit["box"] and fit["options"] >= 1
+
+    wait_until(fits, seen=lambda: fit)
+    expect(page.get_by_test_id("picker-input")).to_be_focused()
+
+
+@pytest.mark.browser_context_args(
+    viewport={"width": 667, "height": 375}, is_mobile=True, has_touch=True
+)
+def test_on_a_phone_on_its_side_a_toast_leaves_the_sheets_box_clear(
+    page: Page, server, console, demo_ids
+):
+    # Fix round 2, item 2: above 600 px Sonner's offset was 24 px, not the 16 px the band kept.
+    jfk = demo_ids["jfk-rice"]
+    open_library(page, server.url)
+    page.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    page.keyboard.press("t")
+    sheet = page.locator("[data-slot=dialog-content]")
+    expect(sheet).to_be_visible()
+    page.evaluate(FAKE_KEYBOARD, 150)
+    box = page.get_by_test_id("picker-input")
+    box.fill("sideways")
+    box.press("Shift+Enter")
+    wait_until(lambda: ("sideways", "you") in server.tags(jfk))
+    toast = page.locator("[data-sonner-toast]").filter(has_text="Added sideways")
+    expect(toast).to_be_visible()
+    toast.evaluate(SETTLED)
+    sheet.evaluate(SETTLED)
+    group = page.locator("[data-slot=dialog-content] [data-slot=input-group]").bounding_box()
+    assert within(page.locator("[data-slot=dialog-content] [data-slot=input-group]"), 0, 150)
+    assert apart(toast.bounding_box(), group), (toast.bounding_box(), group)
+
+
+@pytest.mark.browser_context_args(**PHONE)
+def test_the_phone_sheet_has_a_close_button(page: Page, server, console):
+    # Fix round 2, item 3: with the keyboard up there's no Esc, and the only way out was a 16 px
+    # gutter of the overlay.
+    open_library(page, server.url)
+    open_row(page, "JFK")
+    plus = page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Add tags to")
+    )
+    page.evaluate("() => document.activeElement?.blur()")
+    plus.dispatch_event("click")  # a tap, which focuses nothing in Safari
+    sheet = page.get_by_role("dialog")
+    expect(sheet).to_be_visible()
+    sheet.evaluate(SETTLED)
+    close = sheet.get_by_role("button", name="Close")
+    expect(close).to_be_visible()
+    target = close.bounding_box()
+    assert target["width"] >= 44 and target["height"] >= 44, target
+    # The title's text stays clear of it (its box runs under it, as padding).
+    text_right = sheet.locator(".picker-title").evaluate(
+        "el => { const r = document.createRange(); r.selectNodeContents(el);"
+        " return r.getBoundingClientRect().right; }"
+    )
+    assert text_right <= target["x"] + 0.5, (text_right, target)
+    close.tap()
+    expect(sheet).to_have_count(0)
+    expect(plus).to_be_focused()
+    # Esc still closes it.
+    plus.click()
+    expect(sheet).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(sheet).to_have_count(0)
+    # Wider than a phone it is the centred dialog, with Esc and no close button of its own.
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    page.keyboard.press("t")
+    expect(page.get_by_role("dialog")).to_be_visible()
+    expect(page.get_by_role("dialog").get_by_role("button", name="Close")).to_have_count(0)
