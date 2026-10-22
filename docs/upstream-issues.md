@@ -230,3 +230,15 @@ portrait tablet, a landscape tablet and a phone on its side.
 
   Checked in shiny 1.8.0's `reactive/_extended_task.py` and `session/_session.py`, and
   shinyreact's `_send_message.py` (Task 7).
+
+## Shinylive 0.8.12 (assets 0.10.15): the phone sheet inside its iframe
+
+Local note only; nothing is reported upstream. The Pages demo runs the app in an iframe, and in a
+subframe `100dvh` is the parent's large viewport height, and `window.visualViewport` doesn't
+report the on-screen keyboard (see the floating-ui entry above). So on a phone the bottom sheet
+can sit behind the keyboard. It degrades safely: the sheet is still reachable and scrolls, and
+the Pages phone test (375×740, touch) checks the layout, the dialog and the top toast, but cannot
+check a real keyboard. Dan should try the demo on a real phone once.
+
+Delivery of `send_message` on Pages is confirmed: the Pages tagging test sees the reply land as a
+toast and the chip leave "pending" (tagging part A, Task 16).

@@ -158,3 +158,107 @@ def test_the_status_page_shows_no_made_up_disk(page: Page, site_url, watch):
     expect(app.get_by_test_id("disk-unknown")).to_be_visible(timeout=RENDER_TIMEOUT)
     expect(app.get_by_role("meter")).to_have_count(0)
     watch.assert_clean()
+
+
+def test_tagging_works_in_the_browser_and_a_reload_brings_the_demo_back(
+    page: Page, site_url, watch
+):
+    # why: tagging spec §1 and §5. Pages tags in memory through the same operations, says so, and
+    # saves nothing: a reload shows the demo as it was. It also proves recordings_ui.tagging and
+    # recordings.tagops import on Pyodide, and that Shinylive delivers send_message (spec §11):
+    # the reply lands as a toast and the chip leaves "pending". The demo must not look like a lost
+    # connection (no alert toast), and a second tag still works afterwards (Task 10 carry).
+    app, _ = open_demo(page, site_url)
+    expect(app.locator(".demo-note").first).to_have_text(
+        "Demo: changes aren't saved", timeout=RENDER_TIMEOUT
+    )
+    row = app.get_by_test_id("recording-row").filter(has_text="Apollo 13")
+    row.hover()
+    row.get_by_role("button", name=re.compile(r"^Add tags to Apollo 13")).click()
+    box = app.get_by_test_id("picker-input")
+    box.fill("in-the-browser")
+    box.press("Shift+Enter")
+    chip = row.locator("[data-testid=chip][data-tag='in-the-browser']")
+    expect(chip).to_have_count(1, timeout=RENDER_TIMEOUT)
+    expect(chip).not_to_have_class(re.compile(r"\bpending\b"), timeout=RENDER_TIMEOUT)  # the reply
+    expect(app.get_by_test_id("action-toast").first).to_contain_text(
+        "Demo: changes aren't saved", timeout=RENDER_TIMEOUT
+    )
+    expect(app.get_by_test_id("alert-toast")).to_have_count(0)
+    box.fill("second-one")
+    box.press("Shift+Enter")
+    second = row.locator("[data-testid=chip][data-tag='second-one']")
+    expect(second).to_have_count(1, timeout=RENDER_TIMEOUT)
+    expect(second).not_to_have_class(re.compile(r"\bpending\b"), timeout=RENDER_TIMEOUT)
+    expect(app.get_by_test_id("alert-toast")).to_have_count(0)
+    box.press("Escape")
+    app, _ = open_demo(page, site_url)  # a reload
+    again = app.get_by_test_id("recording-row").filter(has_text="Apollo 13")
+    expect(again.locator("[data-testid=chip]")).to_have_count(0, timeout=RENDER_TIMEOUT)
+    watch.assert_clean()
+
+
+def test_removing_a_last_private_tag_asks_first_on_pages_too(page: Page, site_url, watch):
+    app, _ = open_demo(page, site_url)
+    app.get_by_test_id("recording-row").filter(has_text="Fireside").click()
+    header = app.get_by_test_id("recording-header")
+    expect(header).to_contain_text("Fireside", timeout=RENDER_TIMEOUT)
+    header.get_by_role("button", name=re.compile(r"^Remove tag private from Fireside")).click()
+    dialog = app.get_by_role("alertdialog")
+    expect(dialog).to_contain_text("Remove private from 1 recording?", timeout=RENDER_TIMEOUT)
+    dialog.get_by_role("button", name="Cancel").click()
+    expect(header.locator("[data-testid=chip][data-tag=private]")).to_have_count(
+        1, timeout=RENDER_TIMEOUT
+    )
+    watch.assert_clean()
+
+
+def test_dragging_a_row_onto_a_sidebar_tag_tags_it_in_memory(page: Page, site_url, watch):
+    # why: Task 13 carry. The Library's drag and drop runs on Pyodide too (rows drag only with
+    # (hover: hover), which desktop Chromium has), with the demo's toast.
+    app, _ = open_demo(page, site_url)
+    row = app.get_by_test_id("recording-row").filter(has_text="Apollo 13")
+    target = app.get_by_test_id("filter-tag").filter(has_text="space/apollo")
+    expect(target).to_have_count(1, timeout=RENDER_TIMEOUT)
+    row_box = row.bounding_box()
+    title = row.locator(".row-title").bounding_box()
+    at = {"x": title["x"] - row_box["x"] + 4, "y": title["y"] - row_box["y"] + title["height"] / 2}
+    row.drag_to(target, source_position=at)
+    toast = app.get_by_test_id("action-toast").first
+    expect(toast).to_contain_text("Added space/apollo to 1 recording", timeout=RENDER_TIMEOUT)
+    expect(toast).to_contain_text("Demo: changes aren't saved")
+    expect(app.get_by_test_id("alert-toast")).to_have_count(0)
+    watch.assert_clean()
+
+
+@pytest.mark.browser_context_args(
+    viewport={"width": 375, "height": 740}, is_mobile=True, has_touch=True
+)
+def test_on_a_phone_the_tags_page_is_the_untagged_list_and_toasts_sit_at_the_top(
+    page: Page, site_url, watch
+):
+    # why: Task 15 carry. Every other Pages test runs at desktop size. The phone layout runs here
+    # once (Pyodide boots cold for each test): no grid, the + opens a dialog, toasts at the top.
+    page.goto(site_url)
+    app = page.frame_locator("iframe").first
+    rows = app.get_by_test_id("recording-row")
+    expect(rows.first).to_be_visible(timeout=BOOT_TIMEOUT)
+    frame = page.locator("iframe").first.element_handle().content_frame()
+    frame.evaluate("() => { location.hash = '#/tags'; }")
+    expect(app.get_by_test_id("left-count")).to_be_visible(timeout=RENDER_TIMEOUT)
+    expect(app.get_by_test_id("tags-grid")).to_have_count(0)
+    expect(rows).to_have_count(1, timeout=RENDER_TIMEOUT)  # the Untagged list: Apollo 13
+    rows.first.get_by_role("button", name=re.compile(r"^Add tags to Apollo 13")).dispatch_event(
+        "click"
+    )
+    sheet = app.get_by_role("dialog")
+    expect(sheet).to_be_visible(timeout=RENDER_TIMEOUT)
+    box = sheet.get_by_test_id("picker-input")
+    box.fill("on-the-go")
+    box.press("Shift+Enter")
+    expect(app.get_by_test_id("action-toast").first).to_contain_text(
+        "Added on-the-go to 1 recording", timeout=RENDER_TIMEOUT
+    )
+    toaster = app.locator("[data-sonner-toaster]")
+    assert toaster.bounding_box()["y"] < 370, toaster.bounding_box()  # the top half of the screen
+    watch.assert_clean()
