@@ -39,6 +39,9 @@ export interface Tagging {
   lastTagged: JustTagged | null; // the last add that changed something, and where it went
   lastUndone: Undone | null; // the last Undo that ran, by the token of what it reversed
   sessionTags: string[];
+  /** The tags the last refusal took out of `sessionTags` (key counts refusals): the Tags grid
+   * drops exactly their columns and no other. */
+  refused: { key: number; tags: string[] } | null;
   drag: DragRef; // set at dragstart, never read from dataTransfer (drag.ts)
   canTag: boolean;
   opening: boolean; // the archive's first open is still running: tagging is off for a moment only
@@ -91,6 +94,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   const [lastTagged, setLastTagged] = useState<JustTagged | null>(null);
   const [lastUndone, setLastUndone] = useState<Undone | null>(null);
   const [sessionTags, setSessionTags] = useState<string[]>([]);
+  const [refused, setRefused] = useState<{ key: number; tags: string[] } | null>(null);
   const [picker, setPicker] = useState<PickerTarget | null>(null);
   const [snippetVersion, setSnippetVersion] = useState(0);
   const [lost, setLost] = useState(false);
@@ -244,8 +248,13 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       // picker and the grid stop offering them, unless the view really lists them.
       const real = new Set((viewRef.current?.tags ?? []).map((t) => t.tag));
       for (const n of viewRef.current?.note_types ?? []) real.add(`notes/${n.note_type}`);
-      const gone = request.tags.filter((t) => !real.has(t));
-      if (gone.length > 0) setSessionTags((s) => s.filter((t) => !gone.includes(t)));
+      // Nor a tag that a request still queued would add: that one may yet succeed.
+      const coming = new Set(pendingRequests(queue.current).flatMap((r) => (r.action === "add" ? r.tags : [])));
+      const gone = request.tags.filter((t) => !real.has(t) && !coming.has(t));
+      if (gone.length > 0) {
+        setSessionTags((s) => s.filter((t) => !gone.includes(t)));
+        setRefused((r) => ({ key: (r?.key ?? 0) + 1, tags: gone }));
+      }
     }
     setView((v) => (v ? mergeReply(v, reply) : v));
     setMarks((m) => markReply(m, reply));
@@ -346,8 +355,8 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   const status = useMemo(() => tagStatus(view, lost), [view, lost]);
 
   return useMemo(() => ({
-    view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, drag,
+    view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, refused, drag,
     canTag: status.canTag, opening: status.opening, reason: status.reason, saves: view?.saves ?? true,
     isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets,
-  }), [view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, status, isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets]);
+  }), [view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, refused, status, isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets]);
 }

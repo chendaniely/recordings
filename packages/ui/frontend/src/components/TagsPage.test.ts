@@ -33,7 +33,7 @@ const fake = (v: LibraryView, over: Partial<Tagging> = {}): Tagging => {
   const flags = new Set(v.tags.filter((t) => t.private).map((t) => t.tag));
   return {
     view: v, loadKey: 1, marks: {}, pending: [], confirm: null, revealed: { key: 0, ids: [] }, touched: 0,
-    lastTagged: null, lastUndone: null, sessionTags: [], drag: { current: null }, canTag: true, opening: false, reason: null,
+    lastTagged: null, lastUndone: null, sessionTags: [], refused: null, drag: { current: null }, canTag: true, opening: false, reason: null,
     saves: true, isPrivate: (t) => flags.has(t), tag: vi.fn(), undo: vi.fn(), undoLast: vi.fn(), refresh: vi.fn(),
     answerConfirm: vi.fn(), picker: null, openPicker: vi.fn(), closePicker: vi.fn(), snippet: () => undefined,
     wantSnippets: vi.fn(), ...over,
@@ -437,11 +437,23 @@ describe("columns, frozen per load (spec §7; fix round 1, item 1)", () => {
     const tagging = fake(three());
     await draw({ ...tagging, sessionTags: ["bad name"] });
     expect(headers()).toEqual(["private", "talks", "bad name"]);
-    await draw({ ...tagging, sessionTags: [] }); // the refusal took the session tag out
+    await draw({ ...tagging, sessionTags: [], refused: { key: 1, tags: ["bad name"] } }); // the refusal's tags
     expect(headers()).toEqual(["private", "talks"]);
-    // talks lost its last use (the view drops it) and isn't a session tag: its column stays.
-    await draw({ ...tagging, view: view(three().recordings, []) });
+    // talks lost its last use (the view drops it) and was no refusal's: its column stays.
+    await draw({ ...tagging, view: view(three().recordings, []), refused: { key: 1, tags: ["bad name"] } });
     expect(headers()).toEqual(["private", "talks"]);
+  });
+
+  it("keeps a column the user ticked for a tag that appeared after load when its last use goes (residual 1)", async () => {
+    const tagging = fake(three());
+    await draw(tagging);
+    const more = view(three().recordings, [count("talks", 1), count("late", 2)]); // another window's tag
+    await draw({ ...tagging, view: more });
+    flushSync(() => grid.toggleColumn("late"));
+    await settle();
+    expect(headers()).toEqual(["private", "talks", "late"]);
+    await draw({ ...tagging, view: view(three().recordings, [count("talks", 1)]) }); // its last use goes
+    expect(headers()).toEqual(["private", "talks", "late"]);
   });
 
   it("a picker column ticked, then tagged, keeps its place, and so does every other", async () => {

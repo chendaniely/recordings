@@ -23,7 +23,7 @@ const rows = [row("a"), row("b"), row("c")];
 /** The fields of Tagging the list reads; the rest are never touched here. */
 const fake = (over: Partial<Tagging> = {}): Tagging => ({
   view: null, loadKey: 1, marks: {}, pending: [], confirm: null, revealed: { key: 0, ids: [] }, touched: 0,
-  lastTagged: null, lastUndone: null, sessionTags: [], drag: { current: null }, canTag: true, opening: false, reason: null, saves: true,
+  lastTagged: null, lastUndone: null, sessionTags: [], refused: null, drag: { current: null }, canTag: true, opening: false, reason: null, saves: true,
   isPrivate: () => false, tag: vi.fn(), undo: vi.fn(), undoLast: vi.fn(), refresh: vi.fn(), answerConfirm: vi.fn(),
   picker: null, openPicker: vi.fn(), closePicker: vi.fn(), snippet: () => undefined, wantSnippets: vi.fn(),
   ...over,

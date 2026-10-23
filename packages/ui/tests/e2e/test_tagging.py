@@ -4,6 +4,7 @@ writes never shows in another; each reads the files the app wrote, through Archi
 import itertools
 import re
 import time
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -1289,11 +1290,15 @@ def test_a_refused_name_leaves_no_phantom_item_in_the_picker(page: Page, server,
     expect(
         page.get_by_test_id("alert-toast").first
     ).to_be_visible()  # the refusal, shown as an alert
-    wait_until(lambda: not page.locator(f"[data-testid=picker-item][data-tag='{stacked}']").count())
+    shown = unicodedata.normalize("NFC", stacked)  # items and columns carry the composed form
+    item = page.locator(f"[data-testid=picker-item][data-tag='{shown}']")
+    expect(item).to_have_count(0)  # while the add is queued it is listed; once refused it goes
     box.fill(stacked)
-    exists = page.locator("[data-testid=picker-item]").filter(has_text="That tag exists")
-    expect(exists).to_have_count(0)
-    expect(page.get_by_test_id("picker-create")).to_have_count(1)  # offered afresh, not "exists"
+    expect(page.get_by_test_id("picker-create")).to_have_count(1)  # offered afresh, not as a tag
+    box.press("Escape")
+    page.get_by_role("navigation", name="Pages").get_by_role("button", name="Tags").click()
+    expect(page.get_by_test_id("grid-header").first).to_be_visible()
+    expect(page.locator(f"[data-testid=grid-header][data-tag='{shown}']")).to_have_count(0)
     assert server.tags(apollo13) == before
 
 

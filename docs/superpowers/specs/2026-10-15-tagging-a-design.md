@@ -311,8 +311,10 @@ later.
     longer available" or "Undo keeps only the last 20 actions"; any other failure, "busy" included, keeps it. The Undo's reply carries a
     token of its own, offered as **Redo**; Redo tokens are never on the Cmd/Ctrl+Z stack, so
     pressing it twice undoes two actions, never an undo and then its redo.
-  - A token this process never issued, for example after a reload, replies `failed`: "Undo is no
-    longer available (the page was reloaded)".
+  - A token this window's session doesn't know replies `failed`: "Undo is no longer available
+    (the page was reloaded)". That is the case after a reload (a reload makes a new session), for
+    a token another session issued, or for one never issued. The lookup is per session. Shiny's
+    reconnect is off, so a page can't reach a restarted process.
   - **A token the last-20 rule pushed out** replies `failed`: "Undo keeps only the last 20
     actions". The 20 slots also hold Redo tokens, which the browser's 20 don't count, so the
     browser can still hold a token the server has dropped. The session remembers the dropped ones
@@ -499,13 +501,14 @@ later.
   4. **Create "…"**, last
 
   Create is hidden when any tag equals the typed text (trimmed, in NFC) ignoring case, and it
-  never offers a `notes/…` tag. It is also hidden, before anything is sent, for a space character
-  other than a plain space (U+0020, such as an NBSP pasted from a web page) and for a format
-  character (a zero-width space), in the server's words. A name the server still refuses (too many
-  combining marks, a look-alike of `private`, a case-variant `casefold` finds and the browser
-  doesn't) is taken out of the picker and the Tags grid again when its add fails with nothing
-  applied, unless the library lists the tag. So Enter on a partial name picks the existing tag.
-  When Create isn't offered, Shift+Enter says why, in words that never repeat the tag.
+  never offers a `notes/…` tag. So Enter on a partial name picks the existing tag. Create is also
+  hidden, before anything is sent, for a space character other than a plain space (U+0020, such
+  as an NBSP pasted from a web page) and for a format character (a zero-width space). When Create
+  isn't offered, Shift+Enter says why, in the server's own words where it has them, and never
+  repeating the tag. A name the server still refuses (too many combining marks, a look-alike of
+  `private`, a case-variant `casefold` finds and the browser doesn't) is taken out of the picker
+  and the Tags grid again when its add fails with nothing applied, unless the library lists the
+  tag or a queued request would still add it.
 - **Keys in the picker:**
   - **Enter only ever adds.** It adds the highlighted tag, clears the box and stays open for the
     next tag. On a ✓ item, it says "Already on all 12".
@@ -649,7 +652,7 @@ TanStack Virtual for rows. Each is checked against the shadcn skill or its docs 
 - **Columns:**
   - The default set is the 15 most-used tags, counted across all tags. The set and its order are
     worked out when the page loads and on Refresh, never live, so columns don't move under the
-    cursor. Until Refresh the set is frozen per load and only grows.
+    cursor. Until Refresh the set is frozen per load: a column goes only when the user unticks it, or when it was made for a name the server refused.
   - A tag used or created in this session is added at the end of its group, and gets its column
     straight away.
   - A column picker, by folder, shows or hides the rest. Only the choices for non-private columns

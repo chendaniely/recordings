@@ -61,6 +61,10 @@ describe("item states, in words as well as glyphs (spec §6)", () => {
 });
 
 describe("pickerTags", () => {
+  it("keeps a private tag whose last use went under the lock, though the session also holds it (residual 6)", () => {
+    const view = { tags: [], note_types: [] } as unknown as Parameters<typeof pickerTags>[0];
+    expect(pickerTags(view, ["hush/x"], [tag("hush/x", 0, true)])).toEqual([tag("hush/x", 0, true)]);
+  });
   it("takes tags with the server's private flags, note types as notes/<type>, and this session's new tags", () => {
     const view = {
       tags: [{ tag: "talks", count: 2, private: false }, { tag: "Private/x", count: 1, private: true }],

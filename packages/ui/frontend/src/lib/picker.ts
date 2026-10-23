@@ -5,15 +5,16 @@ export interface PickerTag { tag: string; private: boolean; count: number }
 export interface TagState { on: number; of: number; state: "all" | "some" | "none" }
 
 /** The view's tags and note types with the server's flags; then `extra`, this session's new tags
- * the server hasn't listed yet; then `kept`, tags the picker touched that the view has dropped
- * (their last use was removed), at 0 and with the flag the server last gave them. */
+ * the server hasn't listed yet; and `kept`, tags the picker touched that the view has dropped
+ * (their last use was removed), at 0 and with the flag the server last gave them. `kept` comes
+ * first, so a private tag the session also holds stays under the lock. */
 export function pickerTags(
   view: Pick<LibraryView, "tags" | "note_types">, extra: readonly string[] = [], kept: readonly PickerTag[] = [],
 ): PickerTag[] {
   const tags: PickerTag[] = view.tags.map((t) => ({ tag: t.tag, private: t.private, count: t.count }));
   for (const n of view.note_types) tags.push({ tag: `notes/${n.note_type}`, private: false, count: n.count });
   const have = new Set(tags.map((t) => t.tag));
-  for (const t of [...extra.map((tag) => ({ tag, private: false })), ...kept]) {
+  for (const t of [...kept, ...extra.map((tag) => ({ tag, private: false }))]) {
     if (!have.has(t.tag)) {
       tags.push({ tag: t.tag, private: t.private, count: 0 });
       have.add(t.tag);

@@ -50,10 +50,11 @@ export function tagsOf(view: Pick<LibraryView, "tags" | "note_types">): string[]
 }
 
 /** The grid's columns are frozen per load (spec §7, never live; Task 14 fix round 1). They are
- * worked out here once, on load and on Refresh. After that they are only added to, at the end of
- * a group (addColumn, withSessionTags), or dropped when the user unticks one in the picker
- * (dropColumn). Nothing reads the counts again, so a reply's recount, or a column falling to 0
- * uses, moves nothing, and the digits stay put. */
+ * worked out here once, on load and on Refresh. After that a tag seen for the first time is added
+ * at the end of its group (addColumn, withSessionTags), and a column is dropped only when the user
+ * unticks it in the picker or when it was made for a name the server refused (dropColumn).
+ * Nothing reads the counts again, so a reply's recount, or a column falling to 0 uses, moves
+ * nothing, and the digits stay put. */
 export function startColumns(
   view: Pick<LibraryView, "tags" | "note_types">,
   opts: { session: readonly string[]; isPrivate: (tag: string) => boolean; choices: Readonly<Record<string, boolean>>; hidden: ReadonlySet<string> },
@@ -74,15 +75,6 @@ export function addColumn(columns: Columns, tag: string, isPrivate: (tag: string
 export function dropColumn(columns: Columns, tag: string): Columns {
   if (tag === columns.pinned || (!columns.normal.includes(tag) && !columns.privateGroup.includes(tag))) return columns;
   return { ...columns, normal: columns.normal.filter((t) => t !== tag), privateGroup: columns.privateGroup.filter((t) => t !== tag) };
-}
-
-/** The columns without those whose tag is not in `live`: what a refused session tag left behind.
- * The same columns when none go. `private` stays pinned. */
-export function pruneColumns(columns: Columns, live: ReadonlySet<string>): Columns {
-  const normal = columns.normal.filter((t) => live.has(t));
-  const privateGroup = columns.privateGroup.filter((t) => live.has(t));
-  if (normal.length === columns.normal.length && privateGroup.length === columns.privateGroup.length) return columns;
-  return { ...columns, normal, privateGroup };
 }
 
 /** This session's tags get their columns straight away (spec §7), unless the user unticked them. */

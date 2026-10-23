@@ -107,7 +107,8 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
   const [value, setValue] = useState("");
   const [note, setNote] = useState("");
   const [chosen, setChosen] = useState(false); // the user moved the highlight since the last search
-  // Tags added or removed here, with the server's private flag as it was then (it listed them).
+  // Tags removed here, with the server's private flag as it was then (it listed them). An add isn't
+  // recorded: it can be refused, and a new tag is held by sessionTags.
   const [touched, setTouched] = useState<ReadonlyMap<string, boolean>>(new Map());
 
   const kept = useMemo(() => [...touched].map(([tag, flag]) => ({ tag, private: flag, count: 0 })), [touched]);

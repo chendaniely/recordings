@@ -167,6 +167,26 @@ describe("useTagging: a refused name leaves no phantom (final review, item 1)", 
   });
 });
 
+describe("useTagging: refusals and pending adds (residual 2)", () => {
+  it("says which tags a refusal took out, once per refusal", () => {
+    draw(library());
+    expect(tagging.refused).toBe(null);
+    act(() => tagging.tag("add", ["b"], ["bad name"], picker));
+    reply(result(last(), { status: "failed", changed: 0, message: "Stopped: refused" }));
+    expect(tagging.refused).toEqual({ key: 1, tags: ["bad name"] });
+  });
+  it("keeps a tag that a request still pending would add", () => {
+    draw(library());
+    act(() => {
+      tagging.tag("add", ["b"], ["fresh"], picker);
+      tagging.tag("add", ["a"], ["fresh"], picker); // queued behind the first
+    });
+    reply(result(sent()[0], { status: "failed", changed: 0, message: "Stopped: busy" }));
+    expect(tagging.sessionTags).toEqual(["fresh"]);
+    expect(tagging.refused).toBe(null);
+  });
+});
+
 describe("useTagging: the confirmation (spec §6)", () => {
   const confirmOf = (request: TagRequest) => result(request, {
     status: "confirm", changed: 0, done_so_far: 0, loses_private: { visible: 1, untagged: 0, ids: ["r1"] },

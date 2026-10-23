@@ -134,7 +134,9 @@ smoke test on purpose until someone does the steps below:
   only `recordings.models`, because the Pages demo runs it on Pyodide, and Pages' `MemoryStore`
   rebuilds a record with `model_dump` and `model_validate`, never `dump_json`, because of
   Pyodide's pydantic. The other paths that set tags are the import's: `Writer.add` and
-  `MergeIncoming` (`writer.py`, via `_append_tags`), both inside the Writer.
+  `MergeIncoming` (`writer.py`, via `_append_tags`), and `SetPlaudFields`, which adds the automatic
+  `private` tag through `AddTags` in `Writer.reconcile_plaud` (from `Writer.reindex` and the
+  audio-router import). All run inside the Writer.
 - **To add a tag operation or rule:** write the operation in `tagops.py` (its `apply`, and the
   `Effect` it records so `RestoreTags` can undo it), put it behind the privacy gate, then teach the
   service in `recordings_ui/tagging.py` (`classify` for any new refusal, the request checks, the

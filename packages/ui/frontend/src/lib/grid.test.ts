@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { LibraryRow, LibraryView } from "../types";
 import {
   addColumn, columnOrder, defaultColumns, digitColumn, digitFor, drawRows, dropColumn, foldersOf, gridOrder, gridRows,
-  layoutColumns, loadChoices, pruneColumns, saveChoices, snippetsToFetch, sortRows, startColumns, tagsOf, withSessionTags,
+  layoutColumns, loadChoices, saveChoices, snippetsToFetch, sortRows, startColumns, tagsOf, withSessionTags,
 } from "./grid";
 
 const view = {
@@ -168,14 +168,5 @@ describe("rows stay put in the grid (spec §6, §7)", () => {
     expect(gridRows(rows, { untaggedOnly: false, title: "cafe\u0301" }).map((r) => r.id)).toEqual(["c"]);
     const decomposed = [row("d", { title: "Cafe\u0301" })];
     expect(gridRows(decomposed, { untaggedOnly: false, title: "caf\u00e9" }).map((r) => r.id)).toEqual(["d"]);
-  });
-});
-
-describe("a refused session tag's column goes (final review, item 1)", () => {
-  const cols = { pinned: "private" as const, normal: ["talks", "bad"], privateGroup: ["hush/x"] };
-  it("drops only columns nothing lists, and returns the same columns when none go", () => {
-    expect(pruneColumns(cols, new Set(["talks", "hush/x"]))).toEqual({ ...cols, normal: ["talks"] });
-    expect(pruneColumns(cols, new Set(["talks", "bad", "hush/x"]))).toBe(cols);
-    expect(pruneColumns(cols, new Set()).pinned).toBe("private");
   });
 });

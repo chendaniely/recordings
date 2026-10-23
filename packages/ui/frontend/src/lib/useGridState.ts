@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import type { Tagging } from "../tagging/useTagging";
 import type { LibraryRow } from "../types";
 import {
-  addColumn, columnOrder, dropColumn, loadChoices, pruneColumns, saveChoices, startColumns, tagsOf, withSessionTags, type Columns, type RowSort,
+  addColumn, columnOrder, dropColumn, loadChoices, saveChoices, startColumns, withSessionTags, type Columns, type RowSort,
 } from "./grid";
 import type { Sel, SelAction } from "./selection";
 import { browserStorage } from "./theme";
@@ -54,23 +54,28 @@ export function useGridState(tagging: Tagging): GridState {
   const [choices, setChoices] = useState(() => loadChoices(browserStorage()));
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
 
-  // The columns are worked out once per load, then only added to (spec §7, never live; Task 14 fix
-  // round 1): a tag seen for the first time this session goes at the end of its group, unless
-  // the user unticked it; nothing else moves them until Refresh.
-  const [frozen, setFrozen] = useState<{ key: number; columns: Columns; listed: ReadonlySet<string> } | null>(null);
+  // The columns are worked out once per load (spec §7, never live; Task 14 fix round 1): a tag
+  // seen for the first time this session goes at the end of its group, unless the user unticked
+  // it. A column goes only when the user unticks it, or when it was made for a name the server
+  // refused; nothing else moves them until Refresh.
+  const [handled, setHandled] = useState(0); // the last refusal whose columns were dropped
+  const [frozen, setFrozen] = useState<{ key: number; columns: Columns } | null>(null);
   let next = frozen;
   if (view && (next === null || next.key !== tagging.loadKey)) {
     const columns = startColumns(view, { session: tagging.sessionTags, isPrivate: tagging.isPrivate, choices, hidden });
-    next = { key: tagging.loadKey, columns, listed: new Set(tagsOf(view)) };
+    next = { key: tagging.loadKey, columns };
   }
   if (next) {
     const off = (tag: string) => hidden.has(tag) || choices[tag] === false;
     const columns = withSessionTags(next.columns, tagging.sessionTags, off, tagging.isPrivate);
-    // A session tag the server refused is gone from sessionTags: its column goes, but a column
-    // the view listed when this load began stays, even at 0 uses (the frozen-order rule).
-    const live = new Set([...tagsOf(view ?? { tags: [], note_types: [] }), ...next.listed, ...tagging.sessionTags]);
-    const pruned = pruneColumns(columns, live);
-    if (pruned !== next.columns) next = { ...next, columns: pruned };
+    if (columns !== next.columns) next = { ...next, columns };
+  }
+  // A refusal took tags out of sessionTags: only their columns go, once each (the refusal's key).
+  const refusal = tagging.refused;
+  if (next && refusal && refusal.key !== handled) {
+    setHandled(refusal.key);
+    const kept = refusal.tags.reduce((cols, tag) => dropColumn(cols, tag), next.columns);
+    if (kept !== next.columns) next = { ...next, columns: kept };
   }
   if (next !== frozen) setFrozen(next); // React redraws at once, before committing
   const columns = next?.columns ?? NO_COLUMNS;
