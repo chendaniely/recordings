@@ -76,6 +76,15 @@ export function dropColumn(columns: Columns, tag: string): Columns {
   return { ...columns, normal: columns.normal.filter((t) => t !== tag), privateGroup: columns.privateGroup.filter((t) => t !== tag) };
 }
 
+/** The columns without those whose tag is not in `live`: what a refused session tag left behind.
+ * The same columns when none go. `private` stays pinned. */
+export function pruneColumns(columns: Columns, live: ReadonlySet<string>): Columns {
+  const normal = columns.normal.filter((t) => live.has(t));
+  const privateGroup = columns.privateGroup.filter((t) => live.has(t));
+  if (normal.length === columns.normal.length && privateGroup.length === columns.privateGroup.length) return columns;
+  return { ...columns, normal, privateGroup };
+}
+
 /** This session's tags get their columns straight away (spec §7), unless the user unticked them. */
 export function withSessionTags(
   columns: Columns, session: readonly string[], off: (tag: string) => boolean, isPrivate: (tag: string) => boolean,

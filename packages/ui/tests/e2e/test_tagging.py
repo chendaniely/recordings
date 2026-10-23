@@ -1264,6 +1264,39 @@ def test_a_row_dropped_on_a_text_field_pastes_nothing(page: Page, server, consol
     expect(box).to_have_value("")
 
 
+def test_a_refused_name_leaves_no_phantom_item_in_the_picker(page: Page, server, console, demo_ids):
+    # why: a name the server refused stayed in the picker at count 0 ("That tag exists") until a
+    # reload (final review, item 1).
+    apollo13 = demo_ids["apollo13-problem"]
+    before = server.tags(apollo13)
+    open_library(page, server.url)
+    open_row(page, "Apollo 13")
+    page.get_by_test_id("recording-header").get_by_role(
+        "button", name=re.compile(r"^Add tags to Apollo 13")
+    ).click()
+    box = page.get_by_test_id("picker-input")
+    # An NBSP, as pasted from a web page: refused before anything is sent.
+    box.fill("big\u00a0idea")
+    expect(page.get_by_test_id("picker-create")).to_have_count(0)
+    box.press("Shift+Enter")
+    expect(
+        page.locator("[data-testid=picker-item][data-tag]").filter(has_text="idea")
+    ).to_have_count(0)
+    # Too many combining marks on one letter: only the server knows; it refuses, and nothing stays.
+    stacked = "e" + "\u0301" * 5  # four marks are left after NFC composes the first
+    box.fill(stacked)
+    box.press("Shift+Enter")
+    expect(
+        page.get_by_test_id("alert-toast").first
+    ).to_be_visible()  # the refusal, shown as an alert
+    wait_until(lambda: not page.locator(f"[data-testid=picker-item][data-tag='{stacked}']").count())
+    box.fill(stacked)
+    exists = page.locator("[data-testid=picker-item]").filter(has_text="That tag exists")
+    expect(exists).to_have_count(0)
+    expect(page.get_by_test_id("picker-create")).to_have_count(1)  # offered afresh, not "exists"
+    assert server.tags(apollo13) == before
+
+
 def test_new_tag_with_nothing_selected_says_so(page: Page, server, console):
     # why: a click acted on the focused first row through targetsOf's fallback, unseen from the
     # sidebar. A click acts on the selection only.

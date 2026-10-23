@@ -154,7 +154,8 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
       setNote(alreadyWords(state));
       return;
     }
-    touch(tag);
+    // Not touched: an add can be refused, and a touched tag stays listed at 0. A new tag is held
+    // by sessionTags (which a refusal clears); a listed one is in the view.
     tagging.tag("add", ids, [tag], { kind: "picker" });
     search("");
   };

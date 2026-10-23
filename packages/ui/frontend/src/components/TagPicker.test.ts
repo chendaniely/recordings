@@ -406,6 +406,19 @@ describe("the picker's body (spec §6)", () => {
     expect($("[data-testid=picker-create] bdi")?.textContent).toBe("אב/x");
   });
 
+  it("lists a new tag only while the session holds it: a refused add leaves no item (final review, item 1)", () => {
+    body(["a", "b"]);
+    type("fresh");
+    press("Enter", { shiftKey: true });
+    expect(calls).toEqual([["add", ["a", "b"], ["fresh"]]]);
+    body(["a", "b"], { sessionTags: ["fresh"] }); // queued: the session holds it
+    type("fresh");
+    expect(items()).toContain("fresh");
+    body(["a", "b"], { sessionTags: [] }); // refused: the session let it go
+    type("fresh");
+    expect(items()).not.toContain("fresh");
+    expect($("[data-testid=picker-create]")).not.toBeNull();
+  });
   it("groups private tags under a lock by the server's flags only", () => {
     body(["a", "b"], { sessionTags: ["private/new"] }); // made this session: the server hasn't said
     const groups = $$("[cmdk-group]").map((g) => [

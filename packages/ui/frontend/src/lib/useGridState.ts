@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import type { Tagging } from "../tagging/useTagging";
 import type { LibraryRow } from "../types";
 import {
-  addColumn, columnOrder, dropColumn, loadChoices, saveChoices, startColumns, withSessionTags, type Columns, type RowSort,
+  addColumn, columnOrder, dropColumn, loadChoices, pruneColumns, saveChoices, startColumns, tagsOf, withSessionTags, type Columns, type RowSort,
 } from "./grid";
 import type { Sel, SelAction } from "./selection";
 import { browserStorage } from "./theme";
@@ -57,16 +57,20 @@ export function useGridState(tagging: Tagging): GridState {
   // The columns are worked out once per load, then only added to (spec §7, never live; Task 14 fix
   // round 1): a tag seen for the first time this session goes at the end of its group, unless
   // the user unticked it; nothing else moves them until Refresh.
-  const [frozen, setFrozen] = useState<{ key: number; columns: Columns } | null>(null);
+  const [frozen, setFrozen] = useState<{ key: number; columns: Columns; listed: ReadonlySet<string> } | null>(null);
   let next = frozen;
   if (view && (next === null || next.key !== tagging.loadKey)) {
     const columns = startColumns(view, { session: tagging.sessionTags, isPrivate: tagging.isPrivate, choices, hidden });
-    next = { key: tagging.loadKey, columns };
+    next = { key: tagging.loadKey, columns, listed: new Set(tagsOf(view)) };
   }
   if (next) {
     const off = (tag: string) => hidden.has(tag) || choices[tag] === false;
     const columns = withSessionTags(next.columns, tagging.sessionTags, off, tagging.isPrivate);
-    if (columns !== next.columns) next = { ...next, columns };
+    // A session tag the server refused is gone from sessionTags: its column goes, but a column
+    // the view listed when this load began stays, even at 0 uses (the frozen-order rule).
+    const live = new Set([...tagsOf(view ?? { tags: [], note_types: [] }), ...next.listed, ...tagging.sessionTags]);
+    const pruned = pruneColumns(columns, live);
+    if (pruned !== next.columns) next = { ...next, columns: pruned };
   }
   if (next !== frozen) setFrozen(next); // React redraws at once, before committing
   const columns = next?.columns ?? NO_COLUMNS;

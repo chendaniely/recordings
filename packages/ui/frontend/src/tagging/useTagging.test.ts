@@ -148,6 +148,25 @@ describe("useTagging: inputs and the queue (spec §5, §6)", () => {
   });
 });
 
+describe("useTagging: a refused name leaves no phantom (final review, item 1)", () => {
+  it("drops the session tag of an add that failed with no rows applied", () => {
+    draw(library());
+    act(() => tagging.tag("add", ["b"], ["bad name"], picker));
+    expect(tagging.sessionTags).toEqual(["bad name"]);
+    reply(result(last(), { status: "failed", changed: 0, message: "Stopped: refused" }));
+    expect(tagging.sessionTags).toEqual([]);
+  });
+  it("keeps a tag the view lists, and one that changed rows", () => {
+    draw(library());
+    act(() => tagging.tag("add", ["b"], ["talks", "fresh"], picker));
+    reply(result(last(), { status: "failed", changed: 0, message: "Stopped: refused" }));
+    expect(tagging.sessionTags).toEqual(["talks"]); // fresh goes; talks is a real tag
+    act(() => tagging.tag("add", ["b"], ["other"], picker));
+    reply(result(last(), { status: "failed", changed: 1, message: "Stopped: busy", undo: "t1" }));
+    expect(tagging.sessionTags).toEqual(["talks", "other"]);
+  });
+});
+
 describe("useTagging: the confirmation (spec §6)", () => {
   const confirmOf = (request: TagRequest) => result(request, {
     status: "confirm", changed: 0, done_so_far: 0, loses_private: { visible: 1, untagged: 0, ids: ["r1"] },

@@ -70,11 +70,14 @@ const CASE_VARIANT = "A tag with the same letters in another case exists already
 const NOTE_TYPE = "Note types come from prompt files: notes/<type> must name one the archive has.";
 const EMPTY_PART = "A folder part is empty, or starts or ends with a space.";
 const TOO_LONG = "Each folder part is at most 64 characters, and the whole tag at most 200.";
+const SPACE = "Use a plain space, not another kind of space character.";
+const INVISIBLE = "A tag can't hold invisible, control or line-separator characters.";
 const PATH_LIKE = "A folder part can't be . or .., and a tag can't hold a backslash.";
 
 /** Why Create isn't offered for the typed text, or null when it is (or the box is empty). An
  * existing tag in any case, a notes/ tag, and the names the server refuses anyway: an empty part
- * (a leading, trailing or double `/`) or one with a space at either end, a part over 64
+ * (a leading, trailing or double `/`) or one with a space at either end, a space character other
+ * than a plain space (an NBSP pasted from a web page), a format character (a zero-width space), a part over 64
  * characters or a tag over 200, a `.` or `..` part, a backslash. The rest of §4's rules are the
  * server's to apply. */
 export function createRefusal(tags: readonly PickerTag[], query: string): string | null {
@@ -83,6 +86,8 @@ export function createRefusal(tags: readonly PickerTag[], query: string): string
   const folded = fold(text);
   const same = tags.find((t) => fold(t.tag) === folded);
   if (same) return same.tag === text ? EXISTS : CASE_VARIANT;
+  if (/\p{Zs}/u.test(text.replace(/ /g, ""))) return SPACE;
+  if (/\p{Cf}/u.test(text)) return INVISIBLE;
   const parts = text.split("/");
   if (parts.some((part) => part === "" || part !== part.trim())) return EMPTY_PART;
   if (Array.from(text).length > MAX_TAG || parts.some((part) => Array.from(part).length > MAX_PART)) return TOO_LONG;

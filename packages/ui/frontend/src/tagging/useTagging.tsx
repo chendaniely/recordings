@@ -239,6 +239,14 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       setPending(pendingRequests(queue.current));
       return;
     }
+    if (request.action === "add" && reply.status === "failed" && reply.changed === 0) {
+      // The server refused the add and applied nothing: its new tags were never made, so the
+      // picker and the grid stop offering them, unless the view really lists them.
+      const real = new Set((viewRef.current?.tags ?? []).map((t) => t.tag));
+      for (const n of viewRef.current?.note_types ?? []) real.add(`notes/${n.note_type}`);
+      const gone = request.tags.filter((t) => !real.has(t));
+      if (gone.length > 0) setSessionTags((s) => s.filter((t) => !gone.includes(t)));
+    }
     setView((v) => (v ? mergeReply(v, reply) : v));
     setMarks((m) => markReply(m, reply));
     const cellsBefore = undos.current.cells;

@@ -115,6 +115,16 @@ describe("why Create isn't offered (Shift+Enter says so, in the server's words)"
     expect(createRefusal(tags, "a/../b")).toBe("A folder part can't be . or .., and a tag can't hold a backslash.");
     expect(createRefusal(tags, "a\\b")).toBe("A folder part can't be . or .., and a tag can't hold a backslash.");
   });
+  it("refuses before sending a space that isn't U+0020 and a format character, in the server's words", () => {
+    const space = "Use a plain space, not another kind of space character.";
+    const invisible = "A tag can't hold invisible, control or line-separator characters.";
+    expect(createRefusal(tags, "a\u00a0b")).toBe(space);
+    expect(createRefusal(tags, "a\u2009b")).toBe(space);
+    expect(createRefusal(tags, "a\u200bb")).toBe(invisible);
+    expect(createRefusal(tags, "a\u00adb")).toBe(invisible);
+    expect(createOffer(tags, "a\u00a0b")).toBe(null);
+    expect(createRefusal(tags, "a b")).toBe(null);
+  });
   it("is null exactly when Create is offered, or the box is empty", () => {
     for (const q of ["", "  ", "work", "course", "notebook", "café"]) {
       expect(createRefusal(tags, q)).toBe(null);

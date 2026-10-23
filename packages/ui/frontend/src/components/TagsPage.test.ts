@@ -433,6 +433,17 @@ describe("columns, frozen per load (spec §7; fix round 1, item 1)", () => {
     expect(headers()).toEqual(["private", "work", "talks", "zebra"]);
   });
 
+  it("takes away the column of a session tag the server refused, and no other (final review, item 1)", async () => {
+    const tagging = fake(three());
+    await draw({ ...tagging, sessionTags: ["bad name"] });
+    expect(headers()).toEqual(["private", "talks", "bad name"]);
+    await draw({ ...tagging, sessionTags: [] }); // the refusal took the session tag out
+    expect(headers()).toEqual(["private", "talks"]);
+    // talks lost its last use (the view drops it) and isn't a session tag: its column stays.
+    await draw({ ...tagging, view: view(three().recordings, []) });
+    expect(headers()).toEqual(["private", "talks"]);
+  });
+
   it("a picker column ticked, then tagged, keeps its place, and so does every other", async () => {
     // why: a tag used this session moved from the picker's place to the session's: t17 jumped
     // ahead of t15.
