@@ -652,7 +652,8 @@ TanStack Virtual for rows. Each is checked against the shadcn skill or its docs 
 - **Columns:**
   - The default set is the 15 most-used tags, counted across all tags. The set and its order are
     worked out when the page loads and on Refresh, never live, so columns don't move under the
-    cursor. Until Refresh the set is frozen per load: a column goes only when the user unticks it, or when it was made for a name the server refused.
+    cursor. Until Refresh the set is frozen per load: a column goes only when the user unticks it,
+    or when it was made for a name the server refused.
   - A tag used or created in this session is added at the end of its group, and gets its column
     straight away.
   - A column picker, by folder, shows or hides the rest. Only the choices for non-private columns
