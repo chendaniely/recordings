@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 import { digitColumn, digitFor, foldersOf, tagsOf, type RowSort } from "../lib/grid";
 import { plainShortcut } from "../lib/keys";
-import { shownTags } from "../lib/library";
+import { doneLabel, shownTags } from "../lib/library";
 import { openHref } from "../lib/nav";
 import { targetsOf, type Move } from "../lib/selection";
 import type { GridState } from "../lib/useGridState";
@@ -455,7 +455,7 @@ function TagsGrid({ grid }: { grid: GridState }) {
             </span>
             <span className="tg-sub">
               <span id={`${id}w`}>{r.when}</span>
-              {mark?.done && <span className="done-label" id={`${id}d`}>{"✓"} Tagged</span>}
+              {mark?.done && <span className="done-label" id={`${id}d`}>{"✓"} {doneLabel(mark.done)}</span>}
               {mark?.failed && (
                 <span className="failed-label" id={`${id}f`}><TriangleAlert aria-hidden="true" size={13} /> {mark.failed}</span>
               )}

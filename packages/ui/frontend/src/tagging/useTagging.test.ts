@@ -116,7 +116,7 @@ describe("useTagging: inputs and the queue (spec §5, §6)", () => {
     reply(result(sent()[0], { undo: "t1", rows: [row("a", ["talks", "work"])] }));
     expect(sent()).toHaveLength(2);
     expect(tagging.view?.recordings[0].tags.map((t) => t.tag)).toEqual(["talks", "work"]);
-    expect(tagging.marks.a).toEqual({ done: true });
+    expect(tagging.marks.a).toEqual({ done: "add" });
     expect(tagging.touched).toBe(1);
     expect(tagging.lastTagged).toEqual({ tags: ["work"], ids: ["a"], key: 1, undo: "t1" }); // where it went
     expect(said(`tag-${sent()[0].request_id}`)).toBe("Added work to 1 recording");
@@ -231,6 +231,24 @@ describe("useTagging: Undo (Task 9 carry)", () => {
     act(() => tagging.tag("add", ["b"], ["two"], origin));
     reply(result(last(), { undo: "t2" }));
   }
+  it("marks a row by what the reply did: an Undo of an add reads removed, its Redo added, an Undo of a removal added", () => {
+    draw(library());
+    act(() => tagging.tag("add", ["a"], ["one"], picker));
+    reply(result(last(), { undo: "t1", rows: [row("a", ["talks", "one"])] }));
+    expect(tagging.marks.a).toEqual({ done: "add" });
+    act(() => tagging.undo("t1"));
+    reply(result(last(), { undo: "redo1", rows: [row("a", ["talks"])] }));
+    expect(tagging.marks.a).toEqual({ done: "remove" });
+    act(() => tagging.undo("redo1"));
+    reply(result(last(), { undo: "t1b", rows: [row("a", ["talks", "one"])] }));
+    expect(tagging.marks.a).toEqual({ done: "add" });
+    act(() => tagging.tag("remove", ["a"], ["one"], picker));
+    reply(result(last(), { undo: "t2", rows: [row("a", ["talks"])] }));
+    expect(tagging.marks.a).toEqual({ done: "remove" });
+    act(() => tagging.undo("t2"));
+    reply(result(last(), { undo: "redo2", rows: [row("a", ["talks", "one"])] }));
+    expect(tagging.marks.a).toEqual({ done: "add" });
+  });
   it("Cmd-Z peeks, a second press undoes the action before, and the same token is never queued twice", () => {
     draw(library());
     twoActions();
@@ -328,7 +346,7 @@ describe("useTagging: the library (spec §5; Task 7 carry)", () => {
     draw(library());
     act(() => tagging.tag("add", ["b"], ["w"], picker));
     reply(result(last(), { undo: "t1", rows: [row("b", ["w"])] }));
-    expect(tagging.marks.b).toEqual({ done: true });
+    expect(tagging.marks.b).toEqual({ done: "add" });
     act(() => tagging.refresh());
     act(() => tagging.refresh());
     expect(shiny.sent.refresh).toEqual([1, 2]);

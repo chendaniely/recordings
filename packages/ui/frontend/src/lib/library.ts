@@ -1,5 +1,6 @@
 import type { Filter, LibraryRow, LibraryView, TagRef, TagRequest, TagResult } from "../types";
 import { filterRows } from "./transcript";
+import type { Effect } from "./undo";
 
 /** Merge a reply's delta into the library the browser holds (spec §5): the changed rows in
  * place, and the recounted counts, tags and note types. The full view comes only on load and
@@ -108,13 +109,19 @@ export function nextNote(note: BarNote, selected: ReadonlySet<string>, last: Jus
   return next;
 }
 
-export interface Mark { done?: boolean; failed?: string }
+/** `done`: what the reply that marked the row did, "add" or "remove" (a row added to and then
+ * removed from reads as the last one). */
+export interface Mark { done?: Effect; failed?: string }
 export type Marks = Readonly<Record<string, Mark>>;
 
-/** Done rows keep a "✓ Tagged" mark, failed rows their reason, until Refresh (spec §6). */
-export function markReply(marks: Marks, reply: TagResult): Marks {
+/** A done row's label: "Tagged" when its last change added a tag, "Tag removed" when it removed one. */
+export const doneLabel = (done: Effect): string => (done === "add" ? "Tagged" : "Tag removed");
+
+/** Done rows keep a "✓ Tagged" or "✓ Tag removed" mark, by the last change, failed rows their
+ * reason, until Refresh (spec §6). */
+export function markReply(marks: Marks, reply: TagResult, effect: Effect): Marks {
   const next: Record<string, Mark> = { ...marks };
-  for (const r of reply.rows) next[r.id] = { done: true };
+  for (const r of reply.rows) next[r.id] = { done: effect };
   for (const f of reply.failures) next[f.id] = { ...next[f.id], failed: f.reason };
   return next;
 }

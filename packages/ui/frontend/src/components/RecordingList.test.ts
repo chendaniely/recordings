@@ -104,7 +104,7 @@ describe("the list's header (spec §6)", () => {
     expect(KEY_HINT).toBe("T tag · Cmd-A all · Esc clear · Cmd-Z undo · R refresh");
     expect(draw(fake())).toContain(KEY_HINT);
     expect(draw(fake())).toMatch(/data-testid="refresh"[^>]*>Refresh</);
-    expect(draw(fake({ touched: 5 }))).toContain("5 tagged · Refresh");
+    expect(draw(fake({ touched: 5 }))).toContain("5 changed · Refresh");
   });
   it("says once why tagging is off, and that the archive is being opened while it is", () => {
     const off = draw(fake({ canTag: false, reason: "/Volumes/Mirror/archive is read-only" }));
@@ -203,6 +203,15 @@ describe("dragging rows (spec §6)", () => {
     };
     return { host, draw, row, grid, drag, end, done };
   }
+
+  it("labels a done row by its last change: Tagged for an add, Tag removed for a removal", () => {
+    const list = mount(fake({ marks: { a: { done: "add" }, b: { done: "remove" } } }), { selected: new Set(), anchor: null, focus: null });
+    const label = (id: string) => list.row(id).querySelector(".done-label")!.textContent;
+    expect(label("a")).toBe("✓ Tagged");
+    expect(label("b")).toBe("✓ Tag removed");
+    expect(list.row("c").querySelector(".done-label")).toBe(null);
+    list.done();
+  });
 
   it("drags the selection, in list order, when the row is in it; else that row alone", () => {
     const tagging = fake();

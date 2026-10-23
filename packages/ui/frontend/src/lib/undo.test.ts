@@ -4,7 +4,7 @@ import type { TagRequest, TagResult } from "../types";
 import type { Origin } from "./queue";
 import {
   ALREADY_UNDONE, GONE, NO_UNDOS, UNDO_GONE, UNDO_LIMIT, UNDO_STACK, busyTokens, cellsClosed, heardUndo, isRedo, mergesIntoCells,
-  nextCellUndo, nextUndo, usedUp, type Undos,
+  nextCellUndo, nextUndo, replyEffect, learnReversal, usedUp, type Undos,
 } from "./undo";
 
 const add = (id: string): TagRequest => ({ request_id: id, action: "add", ids: ["a"], tags: ["t"] });
@@ -185,5 +185,23 @@ describe("Redo (plan decision 7; Task 10 council)", () => {
     expect(u.redos).toHaveLength(UNDO_STACK);
     expect(isRedo(u, undoOf("r0"))).toBe(false);
     expect(isRedo(u, undoOf(`r${UNDO_STACK + 2}`))).toBe(true);
+  });
+});
+
+describe("what a reply did, for the row's done label (Dan, 2026-10-22)", () => {
+  it("an add adds and a removal removes", () => {
+    expect(replyEffect({}, add("r1"))).toBe("add");
+    expect(replyEffect({}, { ...add("r2"), action: "remove" })).toBe("remove");
+  });
+  it("an Undo does the opposite of the action it reverses, and its Redo the opposite of that", () => {
+    let known = learnReversal({}, add("r1"), reply({ undo: "t1" }));
+    expect(replyEffect(known, undoOf("t1"))).toBe("remove"); // Undo of an add removes
+    known = learnReversal(known, undoOf("t1"), reply({ undo: "redo1" }));
+    expect(replyEffect(known, undoOf("redo1"))).toBe("add"); // Redo adds again
+    const removal = learnReversal(known, { ...add("r3"), action: "remove" }, reply({ undo: "t3" }));
+    expect(replyEffect(removal, undoOf("t3"))).toBe("add"); // Undo of a removal adds
+  });
+  it("learns nothing from a reply with no token", () => {
+    expect(learnReversal({}, add("r1"), reply({ undo: null }))).toEqual({});
   });
 });

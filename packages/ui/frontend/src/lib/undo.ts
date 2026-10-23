@@ -130,3 +130,23 @@ export function cellsClosed(u: Undos, key: number): Undos {
 export function busyTokens(requests: readonly TagRequest[]): Set<string> {
   return new Set(requests.flatMap((r) => (r.action === "undo" && r.undo ? [r.undo] : [])));
 }
+
+/** What a reply did to its rows' tags: the row's done label says it ("✓ Tagged", "✓ Tag removed"). */
+export type Effect = "add" | "remove";
+/** Per Undo token, the effect of undoing it (the opposite of what the action it reverses did). */
+export type Reversals = Readonly<Record<string, Effect>>;
+
+const opposite = (e: Effect): Effect => (e === "add" ? "remove" : "add");
+
+/** What a request did: an add adds, a removal removes, and an Undo (or Redo) does the opposite of
+ * the action it reverses, whichever button was pressed. A token this window never saw (the reply
+ * is a failure with no rows) reads as a removal. */
+export function replyEffect(known: Reversals, request: TagRequest): Effect {
+  if (request.action !== "undo") return request.action;
+  return (request.undo && known[request.undo]) || "remove";
+}
+
+/** Remember what undoing the token in `reply` would do, so its own Undo (or Redo) is read right. */
+export function learnReversal(known: Reversals, request: TagRequest, reply: TagResult): Reversals {
+  return reply.undo ? { ...known, [reply.undo]: opposite(replyEffect(known, request)) } : known;
+}

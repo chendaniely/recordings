@@ -65,8 +65,13 @@ describe("pending changes show at once (spec §6)", () => {
 
 describe("marks", () => {
   it("marks changed rows done and failed rows with their reason", () => {
-    const marks = markReply({}, result({ rows: [row("a")], failures: [{ id: "b", reason: "the recording is gone" }] }));
-    expect(marks).toEqual({ a: { done: true }, b: { failed: "the recording is gone" } });
+    const marks = markReply({}, result({ rows: [row("a")], failures: [{ id: "b", reason: "the recording is gone" }] }), "add");
+    expect(marks).toEqual({ a: { done: "add" }, b: { failed: "the recording is gone" } });
+  });
+  it("records the effect of the reply that marked the row; the last one wins", () => {
+    const added = markReply({}, result({ rows: [row("a")] }), "add");
+    expect(added.a).toEqual({ done: "add" });
+    expect(markReply(added, result({ rows: [row("a")] }), "remove").a).toEqual({ done: "remove" });
   });
 });
 

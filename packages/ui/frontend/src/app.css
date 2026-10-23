@@ -199,7 +199,7 @@ tr.attn td { color: var(--destructive); }
 
 /* The Library list as an ARIA grid, drawn virtually (tagging spec §6). Each state is distinct
    without colour: focused has the ring, selected the tint and a visible check, open the 3px bar,
-   done the muted background and "✓ Tagged" at full-strength text. Never opacity. */
+   done the muted background and "✓ Tagged" or "✓ Tag removed" at full-strength text. Never opacity. */
 .list-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .refresh { margin-left: auto; min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; cursor: pointer; }
 .key-hint, .demo-note { width: 100%; font-size: 11.5px; color: var(--muted-foreground); }
@@ -266,7 +266,7 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
    the same tints as the list's rows mixed over the card, and the pinned cells paint it too, so
    cells scrolled under them never show through. Each state is distinct without colour, as the
    list's: focused has the ring, selected the tint and a visible check, done the muted background
-   and "✓ Tagged", failed the ⚠ and its reason. Never opacity. Widths match TagsPage.tsx. */
+   and "✓ Tagged" or "✓ Tag removed", failed the ⚠ and its reason. Never opacity. Widths match TagsPage.tsx. */
 .tags-page { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--card); }
 .grid-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
 .grid-head h1 { margin: 0; font-size: 19px; font-weight: 700; }

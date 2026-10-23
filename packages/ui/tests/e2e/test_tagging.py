@@ -476,6 +476,25 @@ def test_t_on_a_selection_esc_keeps_it_and_cmd_z_undoes_after_the_toast(
     )
 
 
+def test_a_done_row_says_which_kind_of_change_it_had(page: Page, server, console):
+    # Dan, 2026-10-22: "✓ Tagged" after an add, "✓ Tag removed" after a removal, and an Undo
+    # reads by what it did, not by the button pressed.
+    open_library(page, server.url)
+    page.get_by_test_id("filter-untagged").click()
+    rows = page.get_by_test_id("recording-row")
+    rows.first.hover()
+    rows.first.get_by_role("button", name=re.compile(r"^Add tags to Apollo 13")).click()
+    box = page.get_by_test_id("picker-input")
+    box.fill("talks")
+    box.press("Enter")
+    expect(rows.first.locator(".done-label")).to_have_text("✓ Tagged")
+    box.press("Escape")
+    rows.first.focus()
+    page.keyboard.press("ControlOrMeta+z")  # an Undo of an add removes the tag
+    expect(rows.first.locator(".done-label")).to_have_text("✓ Tag removed")
+    expect(page.get_by_test_id("refresh")).to_contain_text("1 changed")
+
+
 def test_rows_stay_put_until_refresh(page: Page, server, console):
     open_library(page, server.url)
     page.get_by_test_id("filter-untagged").click()
@@ -489,7 +508,7 @@ def test_rows_stay_put_until_refresh(page: Page, server, console):
     expect(rows.first).to_contain_text("Tagged")
     box.press("Escape")
     expect(rows).to_have_count(1)  # no longer untagged, and still here, marked done
-    expect(page.get_by_test_id("refresh")).to_contain_text("1 tagged")
+    expect(page.get_by_test_id("refresh")).to_contain_text("1 changed")
     rows.first.focus()
     page.keyboard.press("r")
     expect(rows).to_have_count(0)

@@ -9,7 +9,7 @@ import {
 import { NO_SNIPPETS, heardSnippets, nextSnippets, wanted, type Snippets } from "@/lib/snippets";
 import { progressKind } from "@/lib/toasts";
 import {
-  NO_UNDOS, busyTokens, cellsClosed, heardUndo, isRedo, mergesIntoCells, nextCellUndo, nextUndo, type CellToast, type Undos,
+  NO_UNDOS, busyTokens, cellsClosed, heardUndo, isRedo, learnReversal, mergesIntoCells, nextCellUndo, nextUndo, replyEffect, type CellToast, type Reversals, type Undos,
 } from "@/lib/undo";
 import { useSetShinyInput, useShinyMessageHandler } from "@/sr";
 import type { LibraryView, SnippetRequest, SnippetResult, TagRequest, TagResult } from "@/types";
@@ -103,6 +103,7 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   const confirmRef = useRef<ConfirmState | null>(null);
   const viewRef = useRef<LibraryView | null>(null);
   const lostRef = useRef(false);
+  const reversals = useRef<Reversals>({}); // what undoing each token does, for the done labels
   const undos = useRef<Undos>(NO_UNDOS); // Cmd-Z's stack and the grid's running toast, together
   const refreshes = useRef(0);
   const drag = useRef<InPageDrag | null>(null);
@@ -257,7 +258,8 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       }
     }
     setView((v) => (v ? mergeReply(v, reply) : v));
-    setMarks((m) => markReply(m, reply));
+    setMarks((m) => markReply(m, reply, replyEffect(reversals.current, request)));
+    reversals.current = learnReversal(reversals.current, request, reply);
     const cellsBefore = undos.current.cells;
     undos.current = heardUndo(undos.current, request, origin, reply);
     if (request.action === "undo") {

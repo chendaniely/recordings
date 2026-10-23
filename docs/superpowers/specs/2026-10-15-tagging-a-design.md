@@ -459,8 +459,10 @@ later.
   - **focused:** the focus ring
   - **selected:** the `--sel` tint and the visible checkbox
   - **open:** the 3px inset bar that `.row.on` uses now
-  - **done:** the `--muted` row background and a "✓ Tagged" label in `--muted-foreground`, with
-    text at full colour. Never `opacity`, which drops muted text below 4.5:1 (main spec §12.6).
+  - **done:** the `--muted` row background and a label in `--muted-foreground`, with text at full
+    colour: "✓ Tagged" when the row's last change added a tag, "✓ Tag removed" when it removed one.
+    The label follows what the reply did, not the button pressed: an Undo of an add reads "✓ Tag
+    removed", an Undo of a removal "✓ Tagged". A row added to and then removed from shows the last. Never `opacity`, which drops muted text below 4.5:1 (main spec §12.6).
 - **Rows stay put.** A row whose tags change keeps its place, marked done, until **Refresh** or a
   filter change, in the list as in the grid. The same goes for a row that no longer matches its
   filter, in any filter.
@@ -469,7 +471,7 @@ later.
   straight away, with a pending marker (a dashed outline in `--muted-foreground`). It reverts if
   the request fails or needs confirmation.
 - **A failed row** carries a ⚠ with its reason, as text and in its accessible name, until Refresh.
-- **Refresh** is `R`, and a button in the list header and the grid header ("5 tagged · Refresh").
+- **Refresh** is `R`, and a button in the list header and the grid header ("5 changed · Refresh", counting every done row, removals included).
   It sends `refresh` (§5).
 
 ### Chips, +, `T` and the picker

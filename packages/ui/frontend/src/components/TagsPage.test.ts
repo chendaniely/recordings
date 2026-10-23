@@ -142,11 +142,13 @@ describe("the grid's roles (spec §6, §7; WAI-ARIA grid pattern)", () => {
 
   it("names a row and its row header by the title and state, never by every column's tag", async () => {
     // why: fix round 1, item 11. The row's name was all its checkboxes' tags.
-    await draw(fake(three(), { snippet: () => "Okay, Houston", marks: { a: { done: true } } }));
+    await draw(fake(three(), { snippet: () => "Okay, Houston", marks: { a: { done: "add" }, b: { done: "remove" } } }));
     const names = (el: HTMLElement) =>
       el.getAttribute("aria-labelledby")!.split(" ").map((id) => document.getElementById(id)!.textContent).join(" | ");
     expect(names(pin("a"))).toBe("Week a | Oct 6 | ✓ Tagged");
     expect(names(gridRow("a"))).toBe("Week a | Oct 6 | ✓ Tagged");
+    expect(names(pin("b"))).toBe("Week b | Oct 5 | ✓ Tag removed");
+    expect(names(gridRow("b"))).toBe("Week b | Oct 5 | ✓ Tag removed");
     expect(document.getElementById(pin("a").getAttribute("aria-describedby")!)!.textContent).toBe("Okay, Houston");
   });
 
@@ -541,9 +543,9 @@ describe("the grid's header line (spec §6, §7)", () => {
     expect($("[data-testid=cannot-tag]")!.textContent).toBe("Opening the archive…");
   });
 
-  it("shows Refresh with how many rows were tagged", async () => {
+  it("shows Refresh with how many rows were changed", async () => {
     await draw(fake(three(), { touched: 5 }));
-    expect($("[data-testid=grid-refresh]")!.textContent).toBe("5 tagged · Refresh");
+    expect($("[data-testid=grid-refresh]")!.textContent).toBe("5 changed · Refresh");
   });
 });
 

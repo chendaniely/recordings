@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type Keybo
 
 import { cn } from "@/lib/utils";
 
-import { nextNote, shownTags, startNote } from "../lib/library";
+import { doneLabel, nextNote, shownTags, startNote } from "../lib/library";
 import { targetsOf, type Move, type Sel, type SelAction } from "../lib/selection";
 import { useListShortcuts } from "../lib/useListShortcuts";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -317,7 +317,7 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
                 />
               )}
             </TagChips>
-            {mark?.done && <span className="done-label" id={`${id}d`}>{"✓"} Tagged</span>}
+            {mark?.done && <span className="done-label" id={`${id}d`}>{"✓"} {doneLabel(mark.done)}</span>}
             {mark?.failed && (
               <span className="failed-label" id={`${id}f`}><TriangleAlert aria-hidden="true" size={13} /> {mark.failed}</span>
             )}

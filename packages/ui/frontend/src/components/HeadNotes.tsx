@@ -18,12 +18,12 @@ export function Announcer({ text, at }: { text: string; at: number }) {
   return <span className="sr-only" role="status">{said.shown}</span>;
 }
 
-/** Refresh, in the list's and the grid's header: "5 tagged · Refresh" (spec §6). */
+/** Refresh, in the list's and the grid's header: "5 changed · Refresh", every done row counted (spec §6). */
 export function RefreshButton({ testId }: { testId: string }) {
   const tagging = useTaggingContext();
   return (
     <button type="button" className="refresh" data-testid={testId} onClick={tagging.refresh}>
-      {tagging.touched > 0 ? `${tagging.touched.toLocaleString("en")} tagged · Refresh` : "Refresh"}
+      {tagging.touched > 0 ? `${tagging.touched.toLocaleString("en")} changed · Refresh` : "Refresh"}
     </button>
   );
 }
