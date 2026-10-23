@@ -517,8 +517,14 @@ describe("the dialog form (T, the selection bar, a drop)", () => {
 });
 
 describe("the + and its popover", () => {
+  // The row's own handler: it ignores a click on a [data-control] (RecordingList's CONTROLS). The +
+  // doesn't stop the click itself, because Radix would then take it as consumed and leave another
+  // open picker open.
+  const rowHandler = (rowClick: () => void) => (e: { target: EventTarget }) => {
+    if (!(e.target as Element).closest("[data-control]")) rowClick();
+  };
   const plus = (onRowClick = () => {}) =>
-    draw(provide(tagging(), createElement("div", { onClick: onRowClick },
+    draw(provide(tagging(), createElement("div", { onClick: rowHandler(onRowClick) },
       createElement(AddTagsButton, { id: "a", title: "Week a", place: "row" }))));
 
   it("is named for its recording, and a click opens the picker without reaching the row", () => {
@@ -597,7 +603,7 @@ describe("on a phone (spec §6: the picker is a full-width bottom sheet)", () =>
     phoneMedia(true);
     const openPicker = vi.fn();
     const rowClick = vi.fn();
-    draw(provide(tagging({ openPicker }), createElement("div", { onClick: rowClick },
+    draw(provide(tagging({ openPicker }), createElement("div", { onClick: (e: { target: EventTarget }) => { if (!(e.target as Element).closest("[data-control]")) rowClick(); } },
       createElement(AddTagsButton, { id: "a", title: "Week a", place: "row" }))));
     flushSync(() => $<HTMLButtonElement>("[data-testid=add-tag]")!.click());
     expect(openPicker).toHaveBeenCalledWith({ ids: ["a"], title: "Tag Week a", from: { id: "a", place: "row" } });

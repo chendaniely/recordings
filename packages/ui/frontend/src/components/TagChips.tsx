@@ -48,7 +48,8 @@ export function TagChips({ tags, title, canTag, place, onRemove, labelIds, child
               tabIndex={place === "row" ? -1 : 0}
               aria-label={`Remove tag ${t.tag} from ${title}`}
               onClick={(e) => {
-                e.stopPropagation(); // never a row click: no selection change, nothing opens
+                // No stopPropagation, so an open picker still sees this click as outside (the row's
+                // click ignores a [data-control]: no selection change, nothing opens).
                 onRemove(t.tag, nextControl(e.currentTarget));
               }}
             >

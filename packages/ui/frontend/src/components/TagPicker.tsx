@@ -439,7 +439,9 @@ export function AddTagsButton({ id, title, place, onOpenChange }: {
           tabIndex={place === "row" ? -1 : 0}
           aria-label={`Add tags to ${title}`}
           onClick={(e) => {
-            e.stopPropagation(); // never a row click: no selection change, nothing opens
+            // No stopPropagation: the row's click already ignores a [data-control], and Radix takes
+            // a click that never reaches the document as consumed, so another open picker would
+            // stay open (found by the built-bundle e2e test).
             if (!phone) return;
             e.preventDefault(); // Radix skips its toggle: on a phone, the sheet instead
             tagging.openPicker({ ids, title: pickerTitle(ids, () => title), from: { id, place } });
