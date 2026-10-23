@@ -100,6 +100,16 @@ He gave no further reasons, so the reasons below come from the options as they w
      reason.
    - Healthchecks speaks only when the worker itself is dead or stuck, or when a push it owes Dan
      can't be delivered. In that case the worker withholds its ping.
+9. **Alerts while there's no ntfy: "3 + 1"**, the design as built plus Status and Healthchecks.
+   Leave space for ntfy later. Dan doesn't have ntfy on his Synology setup yet, and doesn't much
+   care about phone pushes for now: "there isn't much i can do with the recording on the phone".
+   - The controller's reading of "3 + 1": keep the push design as built, so it works once ntfy is
+     set up, and until then rely on Status and Healthchecks.
+   - With no ntfy configured, every push the worker owes Dan counts as undelivered. The worker then
+     withholds its Healthchecks ping, and Healthchecks emails him after its grace. Status says why.
+   - Once ntfy is set up, the same events push to his phone instead, and Healthchecks goes quiet
+     again. No other change is needed.
+   - In the runbook, ntfy is an optional step for later. The sync's Healthchecks check is required.
 
 ## 2. Your days with 2b
 
