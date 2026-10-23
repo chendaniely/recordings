@@ -776,6 +776,9 @@ chmod -R u+w "$RECORDINGS_HOME/import"
 rm -rf "$RECORDINGS_HOME/import" "$RECORDINGS_HOME/import.sha256"
 ```
 
+Before you tag anything in the real archive, read "Rolling back, until the first real tag" below:
+the first tag you apply ends the disposable window (spec §19).
+
 Then open the Library on one of your devices. It lists the imported recordings, with
 `audio-router`'s tags, and its first load takes under 2 seconds (your browser's network panel shows the
 time). If it takes longer, stop: the Library moves onto `index.db` before stage 2b (stage-2a
@@ -852,6 +855,34 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
      N for that run; the config keeps its limit.
    - `MirrorError` alone: the rsync dry run printed a line the mirror can't read, perhaps from a
      new rsync on the NAS or in the image. Nothing was deleted.
+
+## Tagging
+
+Tagging (part A of stage 3a) is on when the Library shows **+** after a row's chips. When it is off,
+the list header and the Tags page header say "Tagging is off: <reason>" once, and `T` or a drop
+shows the reason in a toast that stays until dismissed. The reasons are fixed phrases (they name
+paths and IDs, never a title). **Refresh** tries a failed open again, whatever the reason; only
+"the writer thread stopped" needs a restart.
+
+| You see | It means | Do |
+|---|---|---|
+| "Opening the archive…" | The app is opening the archive for writing (the first open, which rebuilds the index if it is missing). It is a moment, not a fault. | Wait; on a big archive it can take a while. |
+| "the archive's index or state.db was busy (LockTimeout): press Refresh to try again" (the class may also be `OperationalError`) | Another job (the CLI, a backup, an import) held a lock or the index when the app opened. | Press **Refresh** (or tag: a request retries once). If it stays, find the job (`rc ps`, Status). |
+| "the archive couldn't be opened (PermissionError): check its permissions and the disk, then press Refresh" (or another `OSError`, or any other class) | The open failed on a permission, a mount or a full disk. | Check that the archive and `index.db`'s folder are mounted and belong to the app's user, and that the disk has room; press **Refresh**. |
+| A sentence naming a path: "<path> holds MIRROR.md: it is the NAS mirror's copy…", "<state.db> belongs to another archive…", "this process's writer_id … is not the archive's writer", "<path> has no archive.json…", or "rebuilding the index at <path> failed" | The Writer refused (`NotTheWriter`, `StateError`, `InitError`): this app is not the archive's one writer. | Read the path. For the mirror's copy (the page adds "Open the archive's own app to tag."), tag in the archive's own app; the copy is overwritten hourly. For the others, fix what it names, then press **Refresh**. |
+| "Lost the connection. Reload to keep working." | The browser's websocket to the app dropped. Queued changes were dropped; one already sent was applied once or not at all. | Reload the page; Undo no longer reaches earlier actions. |
+| "Stopped: the writer thread stopped; restart the app" | The writer thread exited. | Restart the app (`rc restart web`). |
+| "Stopped: the disk is full" / "Stopped: the disk is read-only" / "Stopped: a disk error" | A batch stopped part-way. The reply lists what was applied and offers Undo for it. | Free space (see "When the data disk fills"), or fix the mount, then run the rest again. |
+| "Stopped: busy: other jobs hold these recordings; try again" | Five recordings in a row were busy. | Wait for the other job, then run it again. |
+| "Stopped: state.db can't be used" | `state.db` is unreadable or locked for good. | Check it (`recordings doctor`); see "Restoring for real" if it is lost. |
+| "Stopped: this app can't write the archive now" | The Writer refused mid-batch (the same causes as the path sentences above). | As for those. |
+| "Stopped: the app is shutting down" / "Stopped: the request was cancelled" | The app or the browser window went away mid-batch. | Reload; check what was applied, then run the rest. |
+| "Stopped: an unexpected error (the server log has its class)" | A bug. The batch stopped at the first one. | `rc logs web`: the line names the exception's class, never a tag or a title. Report it to Dan. |
+
+A single recording can also fail in a batch without stopping it: "edited outside the app: run
+`recordings reindex`", "the file doesn't validate", "busy: another job holds this recording; try
+again" ("1 recording busy…" for one), "the recording is gone", "not confirmed: would become
+visible". The toast groups them by reason, with counts, and stays until dismissed.
 
 ## When the data disk fills
 

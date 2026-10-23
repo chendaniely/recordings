@@ -144,7 +144,9 @@ later.
   - Tags are compared exactly. The picker matches case-insensitively and never offers a
     case-variant of an existing tag (§6).
 - **`is_private_tag` hardens** (main spec §7.4 change, §10). It applies NFKC, and drops format
-  characters and the hidden code points above, before `casefold()`. A fullwidth solidus is a
+  characters and the code points in `HIDDEN_CODEPOINTS` (`models.py`: the Hangul fillers, the
+  Braille blank, the Mongolian and ordinary variation selectors, and the supplementary variation
+  selectors; not the solidus overlays, which only new tags refuse), before `casefold()`. A fullwidth solidus is a
   folder separator after NFKC. It still errs towards private, and it is still the one function.
 - **`removes_last_private(before, after)`** is true when `before` has a private tag and `after`
   has none. The dialog splits those recordings in two:
@@ -202,7 +204,9 @@ later.
 
 - The service opens its store at start. The library view carries:
   - `can_tag`
-  - when it is false, `cannot_tag_reason`, in plain words
+  - when it is false, `cannot_tag_reason`, in plain words, and `cannot_tag_mirror`, true when the
+    archive is the NAS mirror's copy (the UI adds its advice from the flag, never by reading the
+    words)
   - `saves`, which is false only on Pages, where the UI says "Demo: changes aren't saved"
 - **Tagging is impossible on:**
   - the NAS mirror's copy
@@ -210,7 +214,10 @@ later.
   - an unreadable or foreign `state.db`
   - another machine's `writer_id`
 - **A failed open is retried** on Refresh, and on the next request after a transient failure such
-  as a busy index. A busy moment at start therefore doesn't disable tagging until a restart.
+  as a busy index. Its reason is a fixed phrase by class: "the archive's index or state.db was busy
+  (<class>)" for a lock timeout or a `sqlite3` error, and "the archive couldn't be opened (<class>):
+  check its permissions and the disk, then press Refresh" for an `OSError` (also retried on the next
+  request), neither with the exception's text. A busy moment at start therefore doesn't disable tagging until a restart.
 
 ### Requests
 
@@ -355,7 +362,9 @@ later.
   - `src/build.test.ts` checks the config, and, once `make build` has run, the built `www/ui.js`:
     the IIFE is called with `window.shinyreact.React`, it carries no `react`, `react-dom/client`
     or `scheduler` production banner, and its `react-dom` has the same major.minor as the React
-    in `shinyreact.js`.
+    in `shinyreact.js`. CI runs the config check and the IIFE and banner checks in the `frontend` job (which builds first), and
+    the React-version check in the `e2e` job, the only one with a `.venv`; where a piece is
+    missing the tests skip locally and fail under `CI`.
   - The e2e test `test_the_built_bundle_portals_toasts_dialogs_and_scrolls` runs with a clean
     console (any console error or uncaught exception fails it):
     - the picker opens on screen, closes on an outside click, and closes on Esc with focus back
@@ -389,9 +398,10 @@ later.
     Cmd/Ctrl+Home and Cmd/Ctrl+End, in the list and the grid. Cmd/Ctrl+Space toggles the focused
     row, and so does **`X`**: on a Mac, Spotlight and the input-source switcher usually take
     Cmd+Space and Ctrl+Space before the page sees them.
-  - Page Up and Page Down move a screenful. Home and End go to the first and last row (in the
-    grid, Ctrl+Home and Ctrl+End, because Home and End stay in the row). Shift extends the
-    selection with each of them.
+  - Page Up and Page Down move a screenful. In the list, Home and End go to the first and last
+    row, and Shift extends the selection with each of them. In the grid, Home and End stay in the
+    row (first and last cell), and Ctrl/Cmd+Home and Ctrl/Cmd+End (with or without Shift) only
+    move focus to the first and last row, never the selection.
   - Enter opens the focused row.
   - Left and Right move across the focused row's own controls (its chips' × and its +). Up or
     Down from a control moves to the next row itself.
@@ -429,7 +439,8 @@ later.
 - **Where focus returns:**
   - When the picker, the confirmation or a menu closes, it returns to the row or cell that had it.
   - After × removes a chip, it moves to the next control in the row (the next ×, or the +).
-  - After a filter change, it moves to the first row.
+  - After a filter change, the list's tab stop moves to the first row. DOM focus stays where it
+    was, in the filter control, so a second filter click or arrow key still works.
 
 ### Row states, and rows staying put
 
@@ -463,7 +474,7 @@ later.
   row. Moving focus with Cmd/Ctrl adds no row to the selection, so `T` then targets only the
   selection. (An explicit selection beats an unselected focus ring, as in Explorer and Gmail; the
   bar already says "N selected · Tag… (T)". To tag the focused row too, select it first with
-  Space or `X`.) The dialog's title names the count. The selection bar's **Tag…** does the same
+  Cmd/Ctrl+Space or `X`; plain Space does nothing in the list.) The dialog's title names the count. The selection bar's **Tag…** does the same
   as `T`.
 - **The picker is one of two forms:**
   - opened by `T`, the selection bar or a drop: a centred dialog, built from shadcn's `Dialog`
@@ -506,7 +517,8 @@ later.
   picker still lists every note type). An active filter item that has gone from the library stays
   in the group it was last listed in.
 - **+ New tag…** sits at the end of the sidebar's Tags group. A drop on it opens the picker for
-  those recordings, and clicking it opens the picker for the selection.
+  those recordings, and clicking it opens the picker for the selection. With nothing selected a
+  click opens nothing and says "Select recordings first…" in a toast.
 - **A drop target** shows a 2px orange outline, and its text keeps its colour. A drop that
   changes nothing says "Already on all 12".
 - **A drop acts only on a drag that started in this page.**
@@ -553,7 +565,9 @@ later.
 
 - **When `can_tag` is false,** the + and × controls aren't drawn, rows aren't draggable, and the
   reason shows once in the list header and the grid header ("Tagging is off: …"). `T` or a drop
-  shows it in a toast. While the archive is still being opened, the headers say "Opening the
+  shows it in a toast; asking twice reuses the one toast, so identical alerts never stack. On the
+  mirror's copy the reason ends "Open the archive's own app to tag.". While the archive is still
+  being opened, the headers say "Opening the
   archive…" instead, which is a moment, not a fault.
 - **Shortcuts** fire only when focus is in the list or the grid, and never:
   - with Cmd, Ctrl or Alt, except where the key map lists them
@@ -577,9 +591,11 @@ later.
 
 ### Components
 
-shadcn's Command (with `CommandDialog`) and Popover for the picker, Sonner for toasts, Alert
-Dialog for the confirmation, and TanStack Virtual for rows. Each is checked against the shadcn
-skill or its docs before it is added (CLAUDE.md). A gap goes in `docs/upstream-issues.md`.
+shadcn's Command inside its Dialog (the picker's dialog form, built from the `Dialog` parts, not
+`CommandDialog`) and Popover (the + form) for the picker, Dropdown Menu for the grid's sort menus,
+a Popover for its column picker, Sonner for toasts, Alert Dialog for the confirmation, and
+TanStack Virtual for rows. Each is checked against the shadcn skill or its docs before it is added
+(CLAUDE.md). A gap goes in `docs/upstream-issues.md`.
 
 ## 7. The Tags page grid
 
@@ -644,6 +660,8 @@ skill or its docs before it is added (CLAUDE.md). A gap goes in `docs/upstream-i
   - "edited outside the app: run `recordings reindex`"
   - "the file doesn't validate"
   - "busy: another job holds this recording; try again", for a lock timeout or a busy `state.db`
+    (the toast says "1 recording busy: another job holds it; try again" for one recording, and
+    "3 busy: …" for several)
   - "the recording is gone"
   - "not confirmed: would become visible"
 - **A batch stops** with "Stopped: <fixed phrase>" on an archive-level error (§5). Every reply

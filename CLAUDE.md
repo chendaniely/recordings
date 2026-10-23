@@ -12,6 +12,10 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
 - **`make e2e`'s writing tests** (`packages/ui/tests/e2e/test_tagging.py`) get a server each,
   started with `TMPDIR=<tmp_path>`, and read what the app wrote through `Archive`. axe-core runs
   from `packages/ui/frontend/node_modules`, so run `npm ci` first.
+  To debug one: run it alone with `uv run pytest -m e2e -k <name>`. Its server's log is
+  `<tmp_path>/server/server.log` (pytest prints the folder; CI keeps them with
+  `--basetemp=e2e-tmp`), and the demo's temporary copy of the archive is
+  `$TMPDIR/recordings-demo-*/archive` (`Server.copy` finds it).
 - **`make lint`** runs ruff (check and format --check). CI runs it too. The rule set is pinned in
   pyproject.toml.
 - **`make pages`** builds the static GitHub Pages demo into `_site/` (spec §17.1). Only the demo
@@ -36,8 +40,12 @@ The rules the code depends on:
   `window.shinyreact.ReactDOM`. Two React copies make every hook silently return nothing. The one
   exception is the `react-dom` index, which is bundled because shinyreact's `ReactDOM` global
   lacks `createPortal` and `flushSync` (`docs/upstream-issues.md`); it requires the external
-  `react`. Never bundle `react` itself. `src/build.test.ts` pins this, in the config and in the
-  built `www/ui.js` (skipped until `make build` has run).
+  `react`. Never bundle `react` itself. `src/build.test.ts` pins this: the config, and the built
+  `www/ui.js` (the IIFE's argument, no `react`, `react-dom/client` or `scheduler` copy). CI's
+  `frontend` job builds first, so those run there; the `e2e` job also runs the check that the
+  bundled `react-dom` has `shinyreact.js`'s React major.minor, because only it has the `.venv`
+  (`RECORDINGS_REQUIRE_SHINYREACT=1`). Locally the built-bundle tests skip until `make build` (and
+  `uv sync`); with `CI` set, a missing `ui.js` fails.
 - **`www/ui.js` is build output.** Never edit it. Rebuild with `make build`.
 - **`ReactApp(server)` in `shiny_app.py`** finds `www/` next to that file.
 - **Every output is subscribed in `App`.** shinyreact 0.1.0 leaves an output bound to a removed
@@ -49,10 +57,17 @@ The rules the code depends on:
   the Library and the phone's Untagged list, `useGridState` for the Tags grid) is held in `App`
   too, so it survives route switches and the switch from tablet to phone width.
 - **`PHONE` is `(max-width: 760px)`** (`useMediaQuery.ts`), and the two `@media (max-width: 760px)`
-  blocks in `app.css` must stay equal to it.
-- **The sheet and reduced-motion rules in `app.css` are unlayered on purpose,** so that they beat
-  Tailwind's layered utilities. Don't move them into a layer, and don't add `!important` to make
-  a utility lose.
+  blocks in `app.css` must stay equal to it. So must PHONE's complement there, `@media (hover:
+  none) and (min-width: 761px)` (the touch tablet's picker dialog): move all three together.
+- **The sheet rules in `app.css` are unlayered on purpose,** so that they beat Tailwind's layered
+  utilities without `!important`. Don't move them into a layer. The reduced-motion block's
+  `animation: none !important` and `transition: none !important` are also deliberate: they must
+  beat Sonner's own injected, unlayered stylesheet, whose `[data-sonner-toast][data-styled=true]`
+  rules are more specific. Keep that `!important`, and add no other.
+- **Never `stopPropagation` a click.** Radix's dismissable layer reads a click that never reaches
+  the document as an interaction something else consumed, and leaves its popover open
+  (`docs/upstream-issues.md`). Guard a row's or a cell's handler with `closest("[data-control]")`
+  or `contains` instead, as `onRowClick` does.
 
 ## Upgrading shinyreact
 
@@ -115,10 +130,19 @@ smoke test on purpose until someone does the steps below:
   only `recordings.models`, because the Pages demo runs it on Pyodide, and Pages' `MemoryStore`
   rebuilds a record with `model_dump` and `model_validate`, never `dump_json`, because of
   Pyodide's pydantic.
-- **Tagging's logs and replies carry fixed phrases,** IDs, counts and exception class names:
-  never a tag name, a title or `str(exc)`. The one exception is `cannot_tag_reason` (and the
-  "Stopped: …" that repeats it): the Writer's own refusal, written for display, which names
-  paths and IDs, never a title. A log never carries even that.
+- **To add a tag operation or rule:** write the operation in `tagops.py` (its `apply`, and the
+  `Effect` it records so `RestoreTags` can undo it), put it behind the privacy gate, then teach the
+  service in `recordings_ui/tagging.py` (`classify` for any new refusal, the request checks, the
+  Undo token) and the `Tagging` hook in `useTagging.tsx`. Test it against both stores, `ArchiveStore`
+  and Pages' `MemoryStore` (spec §4–§5). The fake-failure tests (busy, full disk, read-only, a
+  failed open, a stopped thread) are in `packages/ui/tests/test_tag_stores.py` and
+  `test_tag_service.py`: copy one.
+- **Tagging's logs carry fixed phrases,** IDs, counts and exception class names: never a tag
+  name, a title or `str(exc)`. So do replies' `message` and failure reasons. Replies also carry
+  `rows` (with titles) and `tags` by design, for the one person using the app. The one text that
+  comes from an exception is `cannot_tag_reason` (and the "Stopped: …" that repeats it): the
+  Writer's own refusal, written for display, which names paths and IDs, never a title. A log never
+  carries even that.
 - **Fixtures are synthetic:** `packages/core/tests/conftest.py` builds Plaud envelopes and an
   `audio-router` archive by hand. Never copy real data in.
 - **The archive's own docs** come from `packages/core/src/recordings/format/`. Edit them there.

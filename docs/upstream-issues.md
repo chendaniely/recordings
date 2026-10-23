@@ -82,7 +82,9 @@ console.
 console on a running app: `typeof window.shinyreact.ReactDOM.createPortal === 'function'` (a grep
 of the minified `shinyreact.js` for identifiers is unreliable). If it is `true`, map `react-dom`
 back to it, delete the line in `vite.config.js` and `build.test.ts`'s expectation, and run
-`make e2e`. Re-check on every shinyreact bump.
+`make e2e`. Re-check on every shinyreact bump. Also remove the built-bundle block in
+`build.test.ts` that expects `react-dom.production` in `ui.js` and compares the bundled
+`react-dom`'s major.minor with `shinyreact.js`'s React (the e2e CI job runs that comparison).
 
 **The skill doesn't say this either.** Its Vite config maps `react-dom` to the global without
 noting that the global lacks the index module's exports.
@@ -242,3 +244,24 @@ check a real keyboard. Dan should try the demo on a real phone once.
 
 Delivery of `send_message` on Pages is confirmed: the Pages tagging test sees the reply land as a
 toast and the chip leave "pending" (tagging part A, Task 16).
+
+## Radix Dismissable Layer 1.2.1: a click stopped before the document counts as consumed
+
+Local note only; nothing is reported upstream. Found 2026-10-22, by the built-bundle e2e test.
+
+**What it does.** For a mouse press outside a layer, `usePointerDownOutside` waits for the click
+(`deferPointerDownOutside`). Capture and bubble listeners on the document record whether the
+click reached the document (`handleInteractionCapture`, `handleInteractionBubble`, `dist/index.mjs`
+lines 216-240). If it was seen in the capture phase but never in the bubble phase, the interaction
+counts as intercepted (`isOutsideInteractionIntercepted`, line 212) and the dismissal is skipped
+(line 246). React's `e.stopPropagation()` stops the native event at the root container, so a
+control that stops its click leaves any other open popover open.
+
+**What we do.** Nothing calls `stopPropagation` on a click. The + (`TagPicker.tsx`), the chip ×
+(`TagChips.tsx`) and the grid's Open (`TagsPage.tsx`) used to; the row's and the pinned cell's
+handlers now ignore a click inside `[data-control]` instead. The e2e tests
+`test_the_built_bundle_portals_toasts_dialogs_and_scrolls` (a second + closes the first picker) and
+`test_open_closes_an_open_columns_popover` check it.
+
+**When it can go.** It isn't a workaround, only a rule (CLAUDE.md). Re-check the source lines on a
+Radix bump, because the deferred handling is new.
