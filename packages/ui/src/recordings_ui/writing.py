@@ -39,6 +39,9 @@ log = logging.getLogger(__name__)
 OPENING = "the archive is being opened"
 STOPPED = "the writer thread stopped; restart the app"  # tagging.STOP_THREAD is "Stopped: " + it
 TRANSIENT = "the archive's index or state.db was busy ({}): press Refresh to try again"
+OS_ERROR = (
+    "the archive couldn't be opened ({}): check its permissions and the disk, then press Refresh"
+)
 
 
 class ThreadStopped(RuntimeError):
@@ -137,8 +140,10 @@ class WriterThread:
             # Written for display: they name paths and IDs, never a title (spec §5). The text is
             # cannot_tag_reason only; the log carries the class (Global Constraints).
             self._failed(exc, str(exc), transient=False)
-        except (LockTimeout, sqlite3.Error, OSError) as exc:
+        except (LockTimeout, sqlite3.Error) as exc:
             self._failed(exc, TRANSIENT.format(type(exc).__name__), transient=True)
+        except OSError as exc:  # a permission or disk error is no busy index, but may pass
+            self._failed(exc, OS_ERROR.format(type(exc).__name__), transient=True)
         except Exception as exc:  # noqa: BLE001  any other failure must leave the app serving
             reason = f"the archive couldn't be opened ({type(exc).__name__})"
             self._failed(exc, reason, transient=False)

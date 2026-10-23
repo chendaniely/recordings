@@ -17,6 +17,7 @@ export interface LibraryView {
   note_types: { note_type: string; count: number }[];
   problems: { path: string; message: string }[];
   can_tag: boolean; cannot_tag_reason: string | null;
+  cannot_tag_mirror?: boolean; // the archive is the NAS mirror's copy (the UI adds its advice)
   saves: boolean; // false only on the Pages demo: "Demo: changes aren't saved"
 }
 

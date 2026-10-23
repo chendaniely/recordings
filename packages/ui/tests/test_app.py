@@ -198,6 +198,32 @@ def test_demo_mode_on_the_mirrors_copy_cannot_tag(tmp_path, demo_archive):
     assert not (folder / "state" / "state.db").exists()
 
 
+def test_the_view_flags_the_mirrors_copy_so_the_ui_need_not_read_the_reason(tmp_path, demo_archive):
+    # why: the UI adds "Open the archive's own app to tag." for the mirror only; it chooses the case
+    # from this flag, never by parsing the reason's text.
+    folder = tmp_path / "recordings-demo-x"
+    copy = folder / "archive"
+    shutil.copytree(demo_archive, copy)
+    (copy / MIRROR).write_text("the mirror's copy\n", encoding="utf-8")
+    create_app(Settings(archive=copy, demo=True, demo_folder=folder))
+    try:
+        runtime.tagging().store.wait_open(30)
+        view = runtime.tagging().session().library_now()
+    finally:
+        runtime.tagging().stop()
+        runtime.configure(None)
+    assert view["can_tag"] is False and view["cannot_tag_mirror"] is True
+    other = tmp_path / "plain"
+    shutil.copytree(demo_archive, other)
+    create_app(Settings(archive=other, demo=True, demo_folder=tmp_path / "recordings-demo-y"))
+    try:
+        runtime.tagging().store.wait_open(30)
+        assert runtime.tagging().session().library_now()["cannot_tag_mirror"] is False
+    finally:
+        runtime.tagging().stop()
+        runtime.configure(None)
+
+
 def test_without_a_config_the_app_only_reads(tmp_path, demo_archive):
     create_app(Settings(archive=demo_archive, demo=False))
     try:

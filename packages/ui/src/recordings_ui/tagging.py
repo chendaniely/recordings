@@ -90,6 +90,7 @@ class Store(Protocol):
     """Where tags are kept, as the tag service sees it."""
 
     saves: bool  # False only on Pages, where the UI says "Demo: changes aren't saved"
+    is_mirror: bool  # the archive is the NAS mirror's copy: tagging is off, and the UI says so
     archive: Archive  # read-only: the library view and snippets
 
     def library(self) -> dict: ...
@@ -122,6 +123,7 @@ class MemoryStore:
     no lock at all, and a reload brings the demo back unchanged."""
 
     saves = False
+    is_mirror = False
 
     def __init__(self, archive: Archive) -> None:
         self.archive = archive
@@ -209,6 +211,12 @@ class ArchiveStore:
         self._thread_stopped = ThreadStopped
         self._thread = WriterThread(open_writer)
         self._reader = OneThread("recordings-reader")
+
+    @property
+    def is_mirror(self) -> bool:
+        from recordings.sentinel import is_mirror  # not at the top: Pages has no mirror
+
+        return is_mirror(self.archive.root)
 
     def library(self) -> dict:
         return views.library_view(self.archive)
@@ -533,7 +541,14 @@ class TagSession:
         can_tag, reason = self.store.status(retry=refresh)
         self.rows = {r["id"]: r for r in view["recordings"]}
         self._types = {n["note_type"] for n in view["note_types"]}
-        return {**view, "can_tag": can_tag, "cannot_tag_reason": reason, "saves": self.store.saves}
+        return {
+            **view,
+            "can_tag": can_tag,
+            "cannot_tag_reason": reason,
+            # a flag, so the UI adds its advice without parsing the reason's words
+            "cannot_tag_mirror": not can_tag and self.store.is_mirror,
+            "saves": self.store.saves,
+        }
 
     def _known_tags(self) -> set[str]:
         return {t["tag"] for r in self.rows.values() for t in r["tags"]}

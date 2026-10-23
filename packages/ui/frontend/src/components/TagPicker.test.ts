@@ -527,7 +527,7 @@ describe("the + and its popover", () => {
     draw(provide(tagging(), createElement("div", { onClick: rowHandler(onRowClick) },
       createElement(AddTagsButton, { id: "a", title: "Week a", place: "row" }))));
 
-  it("is named for its recording, and a click opens the picker without reaching the row", () => {
+  it("is named for its recording, and a click opens the picker and is ignored by a row that guards [data-control]", () => {
     const rowClick = vi.fn();
     plus(rowClick);
     const button = $<HTMLButtonElement>("[data-testid=add-tag]")!;
@@ -539,6 +539,20 @@ describe("the + and its popover", () => {
     const dialog = $("[role=dialog]")!;
     expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)?.textContent).toBe("Tag Week a");
     expect(document.activeElement).toBe(input());
+  });
+
+  it("lets its click reach the document, so Radix sees an open picker elsewhere as clicked outside", () => {
+    // why: a stopped click counts, to Radix's dismissable layer, as consumed, and the other popover
+    // would stay open (docs/upstream-issues.md).
+    plus();
+    const seen = vi.fn();
+    document.addEventListener("click", seen);
+    try {
+      flushSync(() => $<HTMLButtonElement>("[data-testid=add-tag]")!.click());
+    } finally {
+      document.removeEventListener("click", seen);
+    }
+    expect(seen).toHaveBeenCalledTimes(1);
   });
 
   it("opens with no highlight shown or announced; the first arrow shows the top item", async () => {

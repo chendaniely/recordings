@@ -133,16 +133,21 @@ export function filterIsShown(filter: Filter, view: Pick<LibraryView, "tags" | "
 export const OPENING = "the archive is being opened";
 const LOST = "Lost the connection. Reload to keep working.";
 
+const MIRROR_ADVICE = "Open the archive's own app to tag.";
+
 export interface TagStatus { canTag: boolean; opening: boolean; reason: string | null }
 
 /** Whether tagging is on. `reason` is why it is off for good (the server's words, which may be a
  * long path), null while the archive is still being opened or the library hasn't come yet. */
-export function tagStatus(view: Pick<LibraryView, "can_tag" | "cannot_tag_reason"> | null, lost: boolean): TagStatus {
+export function tagStatus(view: Pick<LibraryView, "can_tag" | "cannot_tag_reason" | "cannot_tag_mirror"> | null, lost: boolean): TagStatus {
   if (lost) return { canTag: false, opening: false, reason: LOST };
   if (!view) return { canTag: false, opening: true, reason: null };
   if (view.can_tag) return { canTag: true, opening: false, reason: null };
   if (view.cannot_tag_reason === OPENING) return { canTag: false, opening: true, reason: null };
-  return { canTag: false, opening: false, reason: view.cannot_tag_reason ?? "Tagging is off." };
+  const reason = view.cannot_tag_reason ?? "Tagging is off.";
+  // The server's words end with adopt's advice ("anywhere else, use the app"), which is no use to
+  // someone already in the app; the flag, not the words, picks this case.
+  return { canTag: false, opening: false, reason: view.cannot_tag_mirror ? `${reason} ${MIRROR_ADVICE}` : reason };
 }
 
 /** What `T`, a drop or an Undo say when tagging is off. */

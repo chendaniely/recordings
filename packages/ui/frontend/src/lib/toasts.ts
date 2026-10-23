@@ -51,11 +51,17 @@ export function actionText(request: TagRequest, reply: TagResult, saves: boolean
   return text;
 }
 
+// The server's phrase (tagging.BUSY), and how one recording reads: "1 busy: …" sounds like a count.
+const BUSY = "busy: another job holds this recording; try again";
+const BUSY_ONE = "1 recording busy: another job holds it; try again";
+
 /** Partial failures, grouped by reason, with counts: "3 edited outside the app: run …". */
 export function failureLines(failures: readonly { id: string; reason: string }[]): string[] {
   const counts = new Map<string, number>();
   for (const f of failures) counts.set(f.reason, (counts.get(f.reason) ?? 0) + 1);
-  return [...counts].map(([reason, count]) => `${n(count)} ${reason}`);
+  return [...counts].map(([reason, count]) =>
+    count === 1 && reason === BUSY ? BUSY_ONE : `${n(count)} ${reason}`,
+  );
 }
 
 export function confirmTitle(request: TagRequest, lp: LosesPrivate, isPrivate: (tag: string) => boolean, redo = false): Text {

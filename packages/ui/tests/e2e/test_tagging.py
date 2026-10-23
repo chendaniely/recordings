@@ -1420,6 +1420,19 @@ def test_open_opens_the_recording_in_a_new_tab(page: Page, server, console):
     expect(page.get_by_test_id("tags-grid")).to_be_visible()  # the grid keeps its place
 
 
+def test_open_closes_an_open_columns_popover(page: Page, server, console):
+    # why: a click that is stopped before the document counts, to Radix, as consumed, so the
+    # non-modal columns popover stayed open (the + had the same bug: docs/upstream-issues.md).
+    page.goto(f"{server.url}/#/tags")
+    page.get_by_test_id("columns").click()
+    choice = page.locator("[data-testid=column-choice][data-tag=talks]")
+    expect(choice).to_be_visible()
+    row = page.get_by_test_id("grid-row").filter(has_text="Apollo 13")
+    with page.context.expect_page():
+        row.get_by_role("button", name=re.compile(r"^Open Apollo 13")).click()
+    expect(choice).to_have_count(0)
+
+
 def test_the_grid_shows_the_transcripts_first_words(page: Page, server, console):
     # The demo's Apollo 13 has no chosen transcript, so the newest one gives its first words.
     page.goto(f"{server.url}/#/tags")
@@ -3054,6 +3067,17 @@ def test_the_mirrors_copy_cannot_tag_and_says_why(page: Page, mirror_server, con
     expect(page.get_by_test_id("alert-toast")).to_contain_text("mirror")
     page.goto(f"{mirror_server.url}/#/tags")
     expect(page.get_by_test_id("cannot-tag")).to_contain_text("mirror")
+    # The reason carries the app's advice, chosen by the server's flag; and the grid's cells are
+    # drawn but disabled: a click changes nothing and says why.
+    expect(page.get_by_test_id("cannot-tag")).to_contain_text("Open the archive's own app to tag.")
+    grid_cell = page.locator("[data-testid=grid-cell]").first
+    expect(grid_cell).to_be_visible()
+    expect(grid_cell).to_have_attribute("aria-disabled", "true")
+    before = grid_cell.get_attribute("aria-checked")
+    grid_cell.click(force=True)  # Playwright refuses to click an aria-disabled control
+    expect(grid_cell).to_have_attribute("aria-checked", before)
+    expect(page.get_by_test_id("action-toast")).to_have_count(0)
+    expect(page.get_by_test_id("pending")).to_have_count(0)
 
 
 def test_the_built_bundle_portals_toasts_dialogs_and_scrolls(page: Page, big_server, console):
@@ -3094,7 +3118,7 @@ def test_the_built_bundle_portals_toasts_dialogs_and_scrolls(page: Page, big_ser
     page.get_by_role("alertdialog").get_by_role("button", name="Cancel").click()
     expect(page.get_by_role("alertdialog")).to_have_count(0)
     # Radix sets pointer-events: none on the body while a dialog is open, and must take it off
-    assert page.evaluate("getComputedStyle(document.body).pointerEvents") != "none"
+    expect(page.locator("body")).not_to_have_css("pointer-events", "none")
     page.get_by_test_id("filter-all").click()
     expect(page.get_by_test_id("recording-list")).to_have_attribute("aria-rowcount", "301")
     rows.first.focus()

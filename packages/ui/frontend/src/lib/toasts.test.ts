@@ -49,6 +49,11 @@ describe("toast wording (spec §6)", () => {
     expect(failureLines([{ id: "a", reason: stale }, { id: "b", reason: stale }, { id: "c", reason: "the recording is gone" }]))
       .toEqual([`2 ${stale}`, "1 the recording is gone"]);
   });
+  it("says one busy recording in words, and keeps the counted form for more", () => {
+    const busy = "busy: another job holds this recording; try again";
+    expect(failureLines([{ id: "a", reason: busy }])).toEqual(["1 recording busy: another job holds it; try again"]);
+    expect(failureLines([{ id: "a", reason: busy }, { id: "b", reason: busy }])).toEqual([`2 ${busy}`]);
+  });
   it("says what a lost connection dropped", () => {
     expect(droppedText(2, true)).toBe("Lost the connection: 2 queued changes were dropped. The change already sent was applied once or not at all; reload to see.");
     expect(droppedText(0, false)).toBe("Lost the connection. Reload to keep working.");

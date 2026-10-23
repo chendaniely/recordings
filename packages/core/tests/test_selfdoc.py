@@ -97,7 +97,12 @@ def test_the_docs_say_privacy_ignores_capitalisation_and_means_local_models_only
         # the hardened rule (tagging spec section 4): NFKC, invisible characters, fullwidth slash
         assert "(Unicode NFKC) and invisible characters" in text, doc
         assert "a fullwidth `\uff0f` counts as `/`" in text, doc
-        assert "when unsure" in text.casefold(), doc
+        # the rule's own clause, not just any mention of the words
+        clause = {
+            "AGENTS.md": "When unsure whether a tag is private, treat it as private.",
+            "FORMAT.md": "when unsure, treat the tag as private",
+        }[doc]
+        assert clause in text, doc
         assert "treat" in text and "as private" in text, doc
     agents = read("AGENTS.md")
     assert "any other agent or model" in agents

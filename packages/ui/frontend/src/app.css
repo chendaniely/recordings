@@ -389,7 +389,11 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its
    toasts, but not the toaster's lift; tw-animate-css stills nothing. With no animation, Radix
-   unmounts a closing overlay at once. */
+   unmounts a closing overlay at once. The `!important` here is deliberate and the only one:
+   Sonner injects its own unlayered stylesheet, whose `[data-sonner-toast][data-styled=true]` and
+   `[data-sonner-toaster]` rules are more specific than these selectors and set the transitions
+   and the lift (checked: sonner 2.0.8 dist/index.mjs). Being unlayered is what beats Tailwind's
+   utilities; only Sonner's rules need `!important`. */
 @media (prefers-reduced-motion: reduce) {
   [data-sonner-toaster], [data-sonner-toast], [data-sonner-toast] *, .chip, .chip *,
   [data-slot=popover-content], [data-slot=dialog-content], [data-slot=dialog-overlay],

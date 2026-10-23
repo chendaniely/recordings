@@ -42,8 +42,9 @@ jobs:
         with: { node-version-file: packages/ui/frontend/.nvmrc, cache: npm, cache-dependency-path: packages/ui/frontend/package-lock.json }
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      # Build first: build.test.ts checks the built www/ui.js, and CI=true makes a missing one fail.
       - run: npm run build
+      - run: npm test
 
   e2e:
     runs-on: ubuntu-24.04
@@ -58,7 +59,19 @@ jobs:
       - run: npm ci && npm run build
         working-directory: packages/ui/frontend
       - run: uv run --frozen playwright install --with-deps chromium
-      - run: uv run --frozen pytest -m e2e
+      # The venv now holds shinyreact.js, so the built bundle's React major.minor check runs here
+      # (the frontend job has no venv). A skip is a failure with this set.
+      - run: npx vitest run src/build.test.ts
+        working-directory: packages/ui/frontend
+        env: { RECORDINGS_REQUIRE_SHINYREACT: "1" }
+      - run: uv run --frozen pytest -m e2e --basetemp=e2e-tmp
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-server-logs
+          path: e2e-tmp/**/server.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   leaks:
     runs-on: ubuntu-24.04

@@ -197,6 +197,26 @@ def test_a_transient_failure_is_retried_by_the_next_request(tag_archive, run):
         store.close()
 
 
+def test_an_oserror_at_open_says_so_and_is_not_called_busy(tag_archive, caplog):
+    # why: a permission or disk error is not a busy index. Fixed phrase: the class, never str(exc).
+    def refused() -> Writer:
+        raise PermissionError(13, "Week 4 lives at /somewhere/secret")
+
+    store = ArchiveStore(Archive(tag_archive.root), refused)
+    try:
+        ok, reason = store.wait_open(30)
+        assert not ok
+        assert reason == (
+            "the archive couldn't be opened (PermissionError): check its permissions and the "
+            "disk, then press Refresh"
+        )
+        assert "busy" not in reason and "secret" not in reason
+        assert store._thread.transient is True  # a Refresh or the next request tries again
+        assert "secret" not in caplog.text and "Week 4" not in caplog.text
+    finally:
+        store.close()
+
+
 def test_other_failures_are_retried_only_by_refresh_which_never_waits(tag_archive, run):
     # why: spec §5. A request retries only a transient failure; Refresh retries any, and queues
     # the retry without waiting for it, so a read never queues behind the writer thread.

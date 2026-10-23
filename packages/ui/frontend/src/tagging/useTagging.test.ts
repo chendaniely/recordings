@@ -385,13 +385,12 @@ describe("useTagging: Task 10 council fixes", () => {
     reply(confirmOf(last()));
     expect(tagging.confirm?.redo).toBe(true);
   });
-  it("says why it can't tag each time it's asked, as a fresh alert", () => {
+  it("says why it can't tag each time it's asked, in one alert: the same text reuses its toast", () => {
     draw(library({ can_tag: false, cannot_tag_reason: "this is the NAS mirror's copy" }));
     act(() => tagging.tag("add", ["a"], ["w"], picker));
     act(() => tagging.tag("add", ["a"], ["w"], picker));
     const [first, second] = cannotTag();
-    expect(first[1].id).not.toBe(second[1].id);
-    expect(sonner.dismiss).toHaveBeenCalledWith(first[1].id);
+    expect(first[1].id).toBe(second[1].id); // updates in place: two identical alerts never stack
     expect(second[0].props.lines).toEqual(["this is the NAS mirror's copy"]);
     expect(tagging.sessionTags).toEqual([]);
   });

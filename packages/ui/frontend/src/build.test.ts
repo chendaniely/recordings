@@ -23,11 +23,15 @@ describe("the build", () => {
 });
 
 // why: the config test above checks what the build is told; this one checks what it made. It reads
-// the built www/ui.js (build output, not in git) and shinyreact.js from the project's venv, and
-// is skipped when either isn't there: `make e2e` and `make pages` build first.
+// the built www/ui.js (build output, not in git) and shinyreact.js from the project's venv. Where
+// either is missing the checks skip, unless CI says they must run: CI=true (set by GitHub Actions)
+// fails a missing ui.js, and RECORDINGS_REQUIRE_SHINYREACT=1 (the e2e job, which has the venv) fails
+// a missing shinyreact.js. The frontend job builds first and has no venv; the e2e job has both.
 const here = dirname(fileURLToPath(import.meta.url));
 const built = join(here, "../../src/recordings_ui/www/ui.js");
 const venvLib = join(here, "../../../../.venv/lib");
+const mustBuild = Boolean(process.env.CI);
+const mustHaveShinyreact = process.env.RECORDINGS_REQUIRE_SHINYREACT === "1";
 
 function shinyreactJs(): string | undefined {
   if (!existsSync(venvLib)) return undefined;
@@ -40,10 +44,15 @@ function shinyreactJs(): string | undefined {
 
 const shinyreact = shinyreactJs();
 
-describe.skipIf(!existsSync(built))("the built bundle", () => {
-  const bundle = existsSync(built) ? readFileSync(built, "utf8") : "";
+describe.skipIf(!existsSync(built) && !mustBuild)("the built bundle", () => {
+  const have = existsSync(built);
+  const bundle = have ? readFileSync(built, "utf8") : "";
 
-  it("is called with the one React that shinyreact exposes, and carries no copy of its own", () => {
+  it("exists (CI builds before it tests)", () => {
+    expect(have, `${built} is missing: run npm run build first`).toBe(true);
+  });
+
+  it.skipIf(!have)("is called with the one React that shinyreact exposes, and carries no copy of its own", () => {
     expect(bundle.trimEnd().endsWith("(window.shinyreact.React);")).toBe(true);
     expect(bundle).not.toMatch(/react\.production/);
     expect(bundle).not.toMatch(/react-dom-client/);
@@ -52,12 +61,16 @@ describe.skipIf(!existsSync(built))("the built bundle", () => {
     expect(bundle).toMatch(/react-dom\.production/);
   });
 
-  it.skipIf(shinyreact === undefined)(
+  it.skipIf(!have || (shinyreact === undefined && !mustHaveShinyreact))(
     "bundles a react-dom of the same major.minor as the React it runs beside",
     () => {
-      const mine = bundle.match(/version="(\d+\.\d+)\.\d+"/)?.[1];
-      const theirs = readFileSync(shinyreact as string, "utf8").match(/"(19\.\d+)\.\d+"/)?.[1];
+      expect(shinyreact, "shinyreact.js not found in .venv: run uv sync").toBeDefined();
+      // react-dom's own version line follows its useHostTransitionStatus export; React's in
+      // shinyreact.js is the one before `.exports=`.
+      const mine = bundle.match(/useHostTransitionStatus\(\)\},\w+\.version="(\d+\.\d+)\.\d+"/)?.[1];
+      const theirs = readFileSync(shinyreact as string, "utf8").match(/\.version="(\d+\.\d+)\.\d+",\w+\.exports=/)?.[1];
       expect(mine).toBeDefined();
+      expect(theirs).toBeDefined();
       expect(mine).toBe(theirs);
     },
   );

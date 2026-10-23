@@ -469,7 +469,8 @@ function TagsGrid({ grid }: { grid: GridState }) {
             tabIndex={-1}
             aria-label={`Open ${r.title} in a new tab`}
             onClick={(e) => {
-              e.stopPropagation(); // never a pinned-cell click: the selection stays as it is
+              // No stopPropagation (Radix would take the click as consumed and keep a popover
+              // open); onPinClick ignores [data-control=open], so the selection stays as it is.
               openInNewTab(r.id);
             }}
           >

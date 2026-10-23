@@ -113,6 +113,13 @@ describe("whether tagging is on (spec §5 can_tag; Task 7 carry)", () => {
     expect(cannotTagText(status)).toBe(reason);
     expect(cannotTagText(tagStatus({ ...view, can_tag: false, cannot_tag_reason: null }, false))).toBe("Tagging is off.");
   });
+  it("adds the mirror's advice from the server's flag, never from its words", () => {
+    const reason = "/x holds MIRROR.md: it is the NAS mirror's copy. Use the app.";
+    const mirror = tagStatus({ ...view, can_tag: false, cannot_tag_reason: reason, cannot_tag_mirror: true }, false);
+    expect(mirror.reason).toBe(`${reason} Open the archive's own app to tag.`);
+    const other = tagStatus({ ...view, can_tag: false, cannot_tag_reason: reason, cannot_tag_mirror: false }, false);
+    expect(other.reason).toBe(reason); // same words, no flag: nothing added
+  });
   it("is off once the connection is lost: nothing more can reach the server", () => {
     const status = tagStatus(view, true);
     expect(status.canTag).toBe(false);
