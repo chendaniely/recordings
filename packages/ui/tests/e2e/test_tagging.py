@@ -1315,7 +1315,9 @@ def test_a_refused_name_leaves_no_phantom_item_in_the_picker(page: Page, server,
     box.fill(stacked)
     expect(page.get_by_test_id("picker-create")).to_have_count(1)  # offered afresh, not as a tag
     box.press("Escape")
-    page.get_by_role("navigation", name="Pages").get_by_role("button", name="Tags").click()
+    page.get_by_role("navigation", name="Pages").get_by_role(
+        "button", name="Tags", exact=True
+    ).click()
     expect(page.get_by_test_id("grid-header").first).to_be_visible()
     expect(page.locator(f"[data-testid=grid-header][data-tag='{shown}']")).to_have_count(0)
     assert server.tags(apollo13) == before
@@ -1358,9 +1360,9 @@ def test_a_gone_private_tag_keeps_its_group_through_the_status_page(page: Page, 
         assert item.evaluate(GROUP_OF) == "Private"
 
     kept()
-    page.get_by_role("button", name="Status").click()
+    page.get_by_role("button", name="Status", exact=True).click()
     expect(page.get_by_test_id("filter-tag")).to_have_count(0)
-    page.get_by_role("button", name="Library").click()
+    page.get_by_role("button", name="Library", exact=True).click()
     kept()
 
 
@@ -1890,9 +1892,9 @@ def test_the_grid_keeps_its_filters_sort_selection_and_columns_through_the_libra
     order = rows.evaluate_all("els => els.map((e) => e.dataset.id)")
     columns = header_tags(page)
     pages = page.get_by_role("navigation", name="Pages")
-    pages.get_by_role("button", name="Library").click()
+    pages.get_by_role("button", name="Library", exact=True).click()
     expect(page.get_by_test_id("recording-row")).to_have_count(4)
-    pages.get_by_role("button", name="Tags").click()
+    pages.get_by_role("button", name="Tags", exact=True).click()
     expect(rows).to_have_count(2)
     expect(page.get_by_test_id("untagged-only")).not_to_be_checked()
     expect(page.get_by_test_id("title-filter")).to_have_value("apollo")
@@ -2269,8 +2271,8 @@ def test_the_phone_layout_passes_axe_in_both_themes(page: Page, server, console,
     assert axe(page, "[data-slot=dialog-content]", WCAG22) == []
     page.keyboard.press("Escape")
     page.goto(f"{server.url}/#/tags")
-    expect(page.get_by_test_id("recording-row")).to_have_count(1)
-    assert axe(page, ".tags-page", WCAG22) == []
+    expect(page.get_by_test_id("recording-row")).to_have_count(1)  # the Library's Untagged
+    assert axe(page, ".list", WCAG22) == []
 
 
 def test_the_toasts_follow_the_apps_theme(page: Page, server, console, demo_ids):
@@ -2394,18 +2396,28 @@ def test_a_phone_layout(page: Page, server, console):
     expect(plus).to_be_focused()
     page.goto(f"{server.url}/#/tags")
     expect(page.get_by_test_id("tags-grid")).to_have_count(0)
-    expect(page.get_by_test_id("recording-row")).to_have_count(1)  # the Untagged list
+    expect(page.get_by_test_id("recording-row")).to_have_count(1)  # the Library's Untagged
+
+
+ON = re.compile(r"\bon\b")
 
 
 @pytest.mark.browser_context_args(**PHONE)
-def test_on_a_phone_the_tags_page_is_the_untagged_list_with_the_picker(
+def test_on_a_phone_the_tags_page_is_the_librarys_untagged_filter(
     page: Page, server, console, demo_ids
 ):
+    # Dan, 2026-10-22: the Tags tab opens the Library filtered to Untagged, where a tap opens the
+    # player. The address is replaced, so it, the top bar and Back agree.
     apollo13 = demo_ids["apollo13-problem"]
     page.goto(f"{server.url}/#/tags")
     rows = page.get_by_test_id("recording-row")
     expect(rows).to_have_count(1)
-    expect(page.get_by_test_id("left-count")).to_have_text("1 left")
+    expect(page.get_by_test_id("tags-grid")).to_have_count(0)
+    expect(page.get_by_test_id("filter-untagged")).to_have_class(ON)
+    wait_until(lambda: page.evaluate("location.hash") in ("", "#/"))
+    expect(page.get_by_role("button", name="Library", exact=True)).to_have_attribute(
+        "aria-current", "page"
+    )
     expect(page.get_by_test_id("key-hint")).to_be_hidden()
     row = rows.first
     expect(row.locator(".check")).to_be_visible()
@@ -2424,11 +2436,44 @@ def test_on_a_phone_the_tags_page_is_the_untagged_list_with_the_picker(
     expect(plus).to_be_focused()  # back on the + it came from
     expect(rows).to_have_count(1)  # rows stay put until Refresh, marked done
     expect(row).to_contain_text("Tagged")
-    expect(page.get_by_test_id("left-count")).to_have_text("0 left")
-    row.click()  # a tap selects; there is no pane to open here
-    expect(row).to_have_attribute("aria-selected", "true")
+    row.click()  # a tap opens the player and transcript
+    expect(row).to_have_attribute("aria-current", "true")
+    expect(page.get_by_test_id("recording-header")).to_contain_text("Apollo 13")
     page.get_by_test_id("refresh").click()
     expect(rows).to_have_count(0)
+
+
+@pytest.mark.browser_context_args(**PHONE)
+def test_on_a_phone_the_tags_tab_goes_to_the_library_and_back_agrees(page: Page, server, console):
+    open_library(page, server.url)
+    page.get_by_role("button", name="Tags", exact=True).click()
+    expect(page.get_by_test_id("recording-row")).to_have_count(1)
+    expect(page.get_by_test_id("filter-untagged")).to_have_class(ON)
+    expect(page.get_by_role("button", name="Library", exact=True)).to_have_attribute(
+        "aria-current", "page"
+    )
+    expect(page.get_by_test_id("tags-grid")).to_have_count(0)
+    assert page.evaluate("location.hash") in ("", "#/")
+    page.get_by_role("button", name="Status", exact=True).click()
+    expect(page).to_have_url(re.compile(r"#/status$"))
+    page.go_back()  # to the Library, not through a #/tags that would redirect again
+    expect(page.get_by_test_id("recording-row")).to_have_count(1)
+
+
+@pytest.mark.browser_context_args(**PHONE)
+def test_turning_a_tablet_onto_the_tags_grid_makes_it_the_untagged_library(
+    page: Page, server, console
+):
+    page.set_viewport_size({"width": 1024, "height": 768})
+    page.goto(f"{server.url}/#/tags")
+    expect(page.get_by_test_id("tags-grid")).to_be_visible()
+    page.set_viewport_size({"width": 375, "height": 667})
+    expect(page.get_by_test_id("tags-grid")).to_have_count(0)
+    expect(page.get_by_test_id("recording-row")).to_have_count(1)
+    expect(page.get_by_test_id("filter-untagged")).to_have_class(ON)
+    assert page.evaluate("location.hash") in ("", "#/")
+    page.set_viewport_size({"width": 1024, "height": 768})  # the grid is not forced back
+    expect(page.get_by_test_id("tags-grid")).to_have_count(0)
 
 
 SETTLED = "el => Promise.all(el.getAnimations().map((a) => a.finished.catch(() => {})))"
@@ -2447,7 +2492,7 @@ def on_screen(page: Page, locator) -> bool:
     viewport={"width": 375, "height": 667}, is_mobile=True, has_touch=True
 )
 def test_on_a_phone_the_selection_bar_stays_on_screen(page: Page, big_server, console):
-    # The Tags page: the Untagged list, with its bar at the bottom of the screen.
+    # The Tags tab on a phone: the Library's Untagged, with its bar at the bottom of the screen.
     page.goto(f"{big_server.url}/#/tags")
     rows = page.get_by_test_id("recording-row")
     bar = page.get_by_test_id("selection-bar")
@@ -3223,7 +3268,7 @@ def test_an_undo_after_a_refresh_brings_the_row_back_to_the_library_and_the_grid
     page.keyboard.press("ControlOrMeta+z")
     wait_until(lambda: server.tags(apollo13) == [])
     expect(rows).to_have_count(1)  # back in the grid with Untagged only
-    page.get_by_role("button", name="Library").click()
+    page.get_by_role("button", name="Library", exact=True).click()
     page.get_by_test_id("filter-untagged").click()
     expect(page.get_by_test_id("recording-row")).to_have_count(1)
     expect(page.get_by_test_id("recording-row")).to_contain_text("Apollo 13")

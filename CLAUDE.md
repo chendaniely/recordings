@@ -55,8 +55,9 @@ The rules the code depends on:
 - **Every message handler and input lives in `App`** (through `useTagging`), mounted once:
   shinyreact drops a message that has no handler. Tag requests are only ever sent by a person's
   action: never on load, from a URL or its hash, or from storage. List state (`useListState` for
-  the Library and the phone's Untagged list, `useGridState` for the Tags grid) is held in `App`
-  too, so it survives route switches and the switch from tablet to phone width.
+  the Library, `useGridState` for the Tags grid) is held in `App` too, so it survives route
+  switches and the switch from tablet to phone width. On a phone, `#/tags` is the Library with the
+  Untagged filter (`App` replaces the hash and sets the filter); there is no phone Tags page.
 - **`PHONE` is `(max-width: 760px)`** (`useMediaQuery.ts`), and the two `@media (max-width: 760px)`
   blocks in `app.css` must stay equal to it. So must PHONE's complement there, `@media (hover:
   none) and (min-width: 761px)` (the touch tablet's picker dialog): move all three together.

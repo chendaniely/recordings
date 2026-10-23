@@ -605,8 +605,12 @@ later.
   with a 44px target.
 - Toasts come in at the top centre on phones, clear of the sheet and the keyboard.
 - Rows aren't draggable on touch: the picker is the touch path (§6, drag and drop).
-- On phones, the Tags page shows the Untagged list with the picker, not the grid. A tap there
-  selects, and nothing opens. There are no key hints on touch.
+- On phones, the Tags tab opens the Library with the Untagged filter, not the grid. That is so
+  whenever the width is a phone's: the tab, a `#/tags` address, or a tablet turned onto `#/tags`.
+  App replaces the address with the Library's (`#/`), so the address, the top bar's current tab and
+  Back agree, and sets the Library's filter (which is App's, so the Library tab shows it next too).
+  A tap on a row opens the player and transcript, and + and the selection bar work as usual. Wider
+  than a phone, `#/tags` is the grid. There are no key hints on touch.
 
 ### Components
 
@@ -778,7 +782,7 @@ All test archives are synthetic (`init_archive`, the `writer` fixture). No real 
   - focus returning after the picker, the dialog and ×
   - the roles and attributes in §6 and §7
 - **Phones:** a 375px layout, with checkboxes visible, × targets of at least 24px, and the Tags
-  page showing the list.
+  tab opening the Library with the Untagged filter.
 - **Motion:** `prefers-reduced-motion` turns off the toast and chip animations, and those of the
   overlays too (the picker's popover and dialog, the confirmation, the menus) and the toaster.
 - **Forced colours:** under `forced-colors: active`, the open row keeps its bar as a border, the

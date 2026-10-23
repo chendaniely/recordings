@@ -252,7 +252,7 @@ def test_dragging_a_row_onto_a_sidebar_tag_tags_it_in_memory(page: Page, site_ur
     expect(toast).to_contain_text("Demo: changes aren't saved")
     no_alert_toast(page, app)
     # The second send_message path: the Tags grid's snippets arrive on Pages too (Task 16 fix 2).
-    # The phone's Untagged list draws none.
+    # Only the grid draws snippets.
     frame.evaluate("() => { location.hash = '#/tags'; }")
     snippet = app.get_by_test_id("grid-row").filter(has_text="Apollo 13").locator(".tg-snippet")
     expect(snippet).to_contain_text(
@@ -264,20 +264,23 @@ def test_dragging_a_row_onto_a_sidebar_tag_tags_it_in_memory(page: Page, site_ur
 @pytest.mark.browser_context_args(
     viewport={"width": 375, "height": 740}, is_mobile=True, has_touch=True
 )
-def test_on_a_phone_the_tags_page_is_the_untagged_list_and_toasts_sit_at_the_top(
+def test_on_a_phone_the_tags_tab_is_the_untagged_library_and_toasts_sit_at_the_top(
     page: Page, site_url, watch
 ):
     # why: Task 15 carry. Every other Pages test runs at desktop size. The phone layout runs here
-    # once (Pyodide boots cold for each test): no grid, the + opens a dialog, toasts at the top.
+    # once (Pyodide boots cold for each test): the Tags route is the Library with Untagged, no grid,
+    # the + opens a dialog, toasts at the top.
     page.goto(site_url)
     app = page.frame_locator("iframe").first
     rows = app.get_by_test_id("recording-row")
     expect(rows.first).to_be_visible(timeout=BOOT_TIMEOUT)
     frame = page.locator("iframe").first.element_handle().content_frame()
     frame.evaluate("() => { location.hash = '#/tags'; }")
-    expect(app.get_by_test_id("left-count")).to_be_visible(timeout=RENDER_TIMEOUT)
+    expect(app.get_by_test_id("filter-untagged")).to_have_class(
+        re.compile(r"\bon\b"), timeout=RENDER_TIMEOUT
+    )
     expect(app.get_by_test_id("tags-grid")).to_have_count(0)
-    expect(rows).to_have_count(1, timeout=RENDER_TIMEOUT)  # the Untagged list: Apollo 13
+    expect(rows).to_have_count(1, timeout=RENDER_TIMEOUT)  # the Library's Untagged: Apollo 13
     rows.first.get_by_role("button", name=re.compile(r"^Add tags to Apollo 13")).dispatch_event(
         "click"
     )

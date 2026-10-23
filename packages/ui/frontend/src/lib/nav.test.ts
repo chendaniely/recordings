@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hashFor, openHref, pageFromHash, routeFromHash } from "./nav";
+import { hashFor, openHref, pageFromHash, phoneRoute, routeFromHash } from "./nav";
 
 describe("pageFromHash", () => {
   it("reads the page from the hash, and anything else is the Library", () => {
@@ -30,5 +30,19 @@ describe("routeFromHash", () => {
   });
   it("round-trips the Tags page", () => {
     expect(routeFromHash(hashFor("tags")).page).toBe("tags");
+  });
+});
+
+describe("phoneRoute (Dan, 2026-10-22: a phone's Tags tab is the Library's Untagged)", () => {
+  const tags = routeFromHash("#/tags");
+  it("sends the Tags route to the Library on a phone, whichever way it was reached", () => {
+    expect(phoneRoute(tags, true)).toEqual({ page: "library", open: null });
+  });
+  it("leaves the Tags route alone wider than a phone, and every other route alone anywhere", () => {
+    expect(phoneRoute(tags, false)).toBe(tags);
+    const status = routeFromHash("#/status");
+    expect(phoneRoute(status, true)).toBe(status);
+    const library = routeFromHash("#/");
+    expect(phoneRoute(library, true)).toBe(library);
   });
 });

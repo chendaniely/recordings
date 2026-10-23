@@ -12,9 +12,9 @@ export interface RowOrder { ids: string[]; key: number; reason: "load" | "filter
  * §6). An Undo puts the rows it touched back into the current view, at their place in `all`:
  * only those that pass this view's own filter (`passes`, read after the Undo's reply; Task 14 fix
  * round 2), so the Library's Untagged never gets a tagged row back from a grid Undo, nor the grid
- * one its title filter leaves out. The three orders (the Library's, the phone's Untagged list's
- * and the grid's) live in App, which never unmounts, so each hears every Undo, wherever it was made. An Undo heard before the order was mounted puts nothing back:
- * that guard only matters to an order mounted later. */
+ * one its title filter leaves out. The two orders (the Library's and the grid's) live in App, which
+ * never unmounts, so each hears every Undo, wherever it was made. An Undo heard before the order was
+ * mounted puts nothing back: that guard only matters to an order mounted later. */
 function useOrder(
   view: LibraryView | null, settings: unknown, idsOf: (v: LibraryView) => string[], allOf: (v: LibraryView) => readonly LibraryRow[],
   passes: (row: LibraryRow) => boolean, loadKey: number, revealed: { key: number; ids: string[] },

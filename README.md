@@ -13,8 +13,8 @@ Tagging, part A (`docs/superpowers/specs/2026-10-15-tagging-a-design.md`) adds t
 Finder-style selection, the tag picker (`T`, or the **+** on a row), × on chips, drag and drop
 onto sidebar tags, the Tags page grid at `#/tags`, Undo for everything (Cmd/Ctrl+Z), and a
 confirmation before any recording loses its last private tag. `make demo` saves tags to its
-temporary copy; the Live demo keeps them in memory until you reload. On a phone, the Tags page is
-the Untagged list and the **+** opens a bottom sheet; there are no key hints on touch.
+temporary copy; the Live demo keeps them in memory until you reload. On a phone, the Tags tab opens
+the Library filtered to Untagged and the **+** opens a bottom sheet; there are no key hints on touch.
 
 The first tag you apply to the real archive ends the disposable window (main spec §19): after it,
 rolling back by re-import loses your tags, and the rollback is a restore

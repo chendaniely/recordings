@@ -12,8 +12,7 @@ export interface Fitted { key: number; reason: RowOrder["reason"] }
 
 export interface Selection { sel: Sel; act: (action: SelAction) => void; announce: Announcement; fitted: Fitted }
 
-/** Finder selection over a row order (spec §6), for the Library list and the phone's Untagged
- * list.
+/** Finder selection over a row order (spec §6), for the Library list.
  * - A filter change drops hidden rows from the selection, says so ("9 hidden rows deselected"),
  *   and puts focus and the anchor on the first row.
  * - A load or Refresh drops vanished rows quietly. Focus and the anchor stay, or go to the row

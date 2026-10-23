@@ -28,6 +28,13 @@ export function hashFor(page: Page): string {
   return page === "status" ? "#/status" : page === "tags" ? "#/tags" : "#/";
 }
 
+/** On a phone the Tags tab is the Library filtered to Untagged (spec §6): the Tags route shows the
+ * Library, and App moves the address and the filter to match. Other routes, and any route on a wider
+ * screen, are as they are. */
+export function phoneRoute(route: Route, phone: boolean): Route {
+  return phone && route.page === "tags" ? { page: "library", open: null } : route;
+}
+
 /** The Tags grid's Open: the recording in the Library, in a new tab (spec §7). */
 export function openHref(id: string): string {
   return `#/library/${encodeURIComponent(id)}`;

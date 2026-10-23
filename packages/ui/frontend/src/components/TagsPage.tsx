@@ -17,15 +17,13 @@ import { openHref } from "../lib/nav";
 import { targetsOf, type Move } from "../lib/selection";
 import type { GridState } from "../lib/useGridState";
 import { useListShortcuts } from "../lib/useListShortcuts";
-import type { ListState } from "../lib/useListState";
-import { PHONE, useMediaQuery } from "../lib/useMediaQuery";
 import { tabStopIndex, useRovingFocus } from "../lib/useRovingFocus";
 import type { Announcement } from "../lib/useSelection";
 import { useVirtualRows } from "../lib/useVirtualRows";
 import { useTaggingContext } from "../tagging/useTagging";
 import type { LibraryRow, LibraryView } from "../types";
 import { HeadNotes, RefreshButton } from "./HeadNotes";
-import { KEY_HINT, RecordingList, openPickerFor, useJustTagged } from "./RecordingList";
+import { KEY_HINT, openPickerFor, useJustTagged } from "./RecordingList";
 import { SelectionBar } from "./SelectionBar";
 
 const ROW_ESTIMATE = 84; // with a two-line snippet; rows are measured as drawn
@@ -603,30 +601,8 @@ function TagsGrid({ grid }: { grid: GridState }) {
   );
 }
 
-/** On a phone the Tags page shows the Untagged list with the picker, not the grid (spec §6): the
- * Library's list, over its Untagged filter, with the live "N left". A tap selects (there is no pane
- * to open); a row's + and the selection bar's Tag… open the picker, as a bottom sheet. Its order,
- * rows and selection are App's (useListState), so rows tagged here stay put, marked done, until
- * Refresh, as everywhere (spec §6). */
-function PhoneUntagged({ list }: { list: ListState }) {
-  const tagging = useTaggingContext();
-  const view = tagging.view as LibraryView; // App draws this page only once the library is in
-  return (
-    <main className="tags-page phone" data-testid="tags-page">
-      <div className="grid-head">
-        <h1>Tags</h1>
-        <span className="left-count" data-testid="left-count">{view.counts.untagged.toLocaleString("en")} left</span>
-      </div>
-      <RecordingList
-        rows={list.rows} sel={list.sel} act={list.act} openId={null} onOpen={() => {}} announce={list.announce} fitted={list.fitted}
-      />
-    </main>
-  );
-}
-
-/** The Tags page (spec §7): the grid, or on a phone the Untagged list (spec §6). Both states are
- * App's, so turning a tablet swaps one for the other without either losing its place. */
-export function TagsPage({ grid, untagged }: { grid: GridState; untagged: ListState }) {
-  const phone = useMediaQuery(PHONE);
-  return phone ? <PhoneUntagged list={untagged} /> : <TagsGrid grid={grid} />;
+/** The Tags page (spec §7): the grid. On a phone App never draws it: the Tags tab is the Library's
+ * Untagged filter there (spec §6). */
+export function TagsPage({ grid }: { grid: GridState }) {
+  return <TagsGrid grid={grid} />;
 }

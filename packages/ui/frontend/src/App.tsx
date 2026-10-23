@@ -9,10 +9,10 @@ import { StatusPage } from "./components/StatusPage";
 import { TagPickerDialog } from "./components/TagPicker";
 import { TagsPage } from "./components/TagsPage";
 import { TopBar } from "./components/TopBar";
-import { hashFor, routeFromHash } from "./lib/nav";
+import { hashFor, phoneRoute, routeFromHash } from "./lib/nav";
 import { useGridState } from "./lib/useGridState";
 import { UNTAGGED, useListState } from "./lib/useListState";
-import { useMediaQuery } from "./lib/useMediaQuery";
+import { PHONE, useMediaQuery } from "./lib/useMediaQuery";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
 import { ConfirmDialog } from "./tagging/ConfirmDialog";
 import { TaggingContext, useTagging } from "./tagging/useTagging";
@@ -34,10 +34,13 @@ export default function App() {
   const tagging = useTagging(library);
   const [selectedId, setSelectedId] = useShinyInput<string | null>("selected_id", null);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
-  const [route, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
+  const [asked, setRoute] = useState<Route>(() => routeFromHash(window.location.hash));
+  // On a phone the Tags tab is the Library filtered to Untagged, so a Tags route shows the Library
+  // at once; the effect below moves the address and the filter to match (spec §6).
+  const phone = useMediaQuery(PHONE);
+  const route = phoneRoute(asked, phone);
   const view = tagging.view;
-  // The order, its rows and the selection (with its pruning and announcement), from the hook the
-  // phone's Untagged list shares (Task 15).
+  // The order, its rows and the selection (with its pruning and announcement).
   const { order, rows, sel, act, announce, fitted } = useListState(tagging, filter);
   const openRow = useMemo(() => view?.recordings.find((r) => r.id === selectedId) ?? null, [view, selectedId]);
   // Held here, not in the sidebar, which unmounts on the Status page while the filter stays.
@@ -45,8 +48,6 @@ export default function App() {
   // The Tags grid's filters, sort, selection and columns, held here so they survive a visit to
   // another page (Task 14 fix round 1), as the Library's do.
   const grid = useGridState(tagging);
-  // On a phone the Tags page is the Untagged list instead (spec §6): its state is held here too.
-  const untagged = useListState(tagging, UNTAGGED);
   // Toasts come in at the top on touch screens and in windows up to 1,000 px wide: at the bottom
   // they covered the selection bar, its Clear included, and a phone's sheet (spec §6; Task 15 fix
   // round 1, item 4). A touch tablet has no Esc to clear with instead.
@@ -62,7 +63,21 @@ export default function App() {
   useEffect(() => {
     if (initialized && route.open) setSelectedId(route.open);
   }, [initialized, route.open, setSelectedId]);
+  // The Tags tab on a phone, by the tab, by a `#/tags` address or by turning a tablet onto one: the
+  // Library with the Untagged filter. The address is replaced, not added to, so it, the top bar's
+  // current tab and Back all agree. The filter is App's, so the Library tab shows it next too.
+  useEffect(() => {
+    if (phone && asked.page === "tags") {
+      setFilter(UNTAGGED);
+      window.location.replace(hashFor("library"));
+      setRoute({ page: "library", open: null });
+    }
+  }, [phone, asked.page]);
   const go = (next: Page) => {
+    if (phone && next === "tags") {
+      setFilter(UNTAGGED);
+      next = "library";
+    }
     window.location.hash = hashFor(next);
     setRoute({ page: next, open: null });
   };
@@ -73,7 +88,7 @@ export default function App() {
       <div className="app">
         <TopBar page={route.page} onPage={go} />
         {/* The Tags grid reads the same merged library, with its own order and selection (spec §7). */}
-        {route.page === "status" ? <StatusPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} untagged={untagged} /> : (
+        {route.page === "status" ? <StatusPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} /> : (
           <main className="panes">
             {/* + New tag…: a drop opens the picker for the dragged recordings, a click for the
                 selection (spec §6). */}

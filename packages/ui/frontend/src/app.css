@@ -242,7 +242,7 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 @media (hover: none) {
   .check { visibility: visible; }
   .row .chip-x { display: none; }
-  /* No keys to hint at on touch (Task 12 carry): the list's, the grid's and the phone's Tags page's
+  /* No keys to hint at on touch (Task 12 carry): the list's and the grid's
      hints, the picker's keys line and the selection bar's keys (Task 15 fix round 1, item 6). The
      keys line still describes the picker's box: aria-describedby reads hidden text. */
   .key-hint, .picker-keys, .selection-bar kbd { display: none; }
@@ -383,8 +383,6 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
      sticks to their bottom (Task 15 fix round 1, item 12). */
   .list { overflow: clip; min-height: auto; }
   .selection-bar { position: sticky; bottom: 0; z-index: 3; }
-  /* The phone's Tags page is the Untagged list: it takes the page's height. */
-  .tags-page.phone .list { max-height: none; flex: 1; min-height: 0; border-bottom: 0; }
 }
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its
