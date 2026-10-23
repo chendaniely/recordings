@@ -160,6 +160,12 @@ def test_the_status_page_shows_no_made_up_disk(page: Page, site_url, watch):
     watch.assert_clean()
 
 
+def no_alert_toast(page: Page, app: FrameLocator) -> None:
+    """A short wait, then none: a late alert (a lost connection, a failed write) would fail."""
+    page.wait_for_timeout(1500)
+    expect(app.get_by_test_id("alert-toast")).to_have_count(0)
+
+
 def test_tagging_works_in_the_browser_and_a_reload_brings_the_demo_back(
     page: Page, site_url, watch
 ):
@@ -173,6 +179,7 @@ def test_tagging_works_in_the_browser_and_a_reload_brings_the_demo_back(
         "Demo: changes aren't saved", timeout=RENDER_TIMEOUT
     )
     row = app.get_by_test_id("recording-row").filter(has_text="Apollo 13")
+    expect(row.locator("[data-testid=chip]")).to_have_count(0)  # the baseline: untagged
     row.hover()
     row.get_by_role("button", name=re.compile(r"^Add tags to Apollo 13")).click()
     box = app.get_by_test_id("picker-input")
@@ -184,21 +191,37 @@ def test_tagging_works_in_the_browser_and_a_reload_brings_the_demo_back(
     expect(app.get_by_test_id("action-toast").first).to_contain_text(
         "Demo: changes aren't saved", timeout=RENDER_TIMEOUT
     )
-    expect(app.get_by_test_id("alert-toast")).to_have_count(0)
+    no_alert_toast(page, app)
     box.fill("second-one")
     box.press("Shift+Enter")
     second = row.locator("[data-testid=chip][data-tag='second-one']")
     expect(second).to_have_count(1, timeout=RENDER_TIMEOUT)
     expect(second).not_to_have_class(re.compile(r"\bpending\b"), timeout=RENDER_TIMEOUT)
-    expect(app.get_by_test_id("alert-toast")).to_have_count(0)
+    no_alert_toast(page, app)
+    # Adding private never asks (decision 2). Open another recording and come back: the pane's
+    # record is now read through the in-memory store (Task 16 fix 1), and still draws.
+    box.fill("private")
+    box.press("Enter")
+    expect(row.locator("[data-testid=chip][data-tag=private]")).to_have_count(
+        1, timeout=RENDER_TIMEOUT
+    )
     box.press("Escape")
+    app.get_by_test_id("recording-row").filter(has_text="JFK").click()
+    expect(app.get_by_test_id("recording-header")).to_contain_text("JFK", timeout=RENDER_TIMEOUT)
+    row.click()
+    header = app.get_by_test_id("recording-header")
+    expect(header).to_contain_text("Apollo 13", timeout=RENDER_TIMEOUT)
+    expect(header.get_by_test_id("lock")).to_have_count(1, timeout=RENDER_TIMEOUT)
     app, _ = open_demo(page, site_url)  # a reload
     again = app.get_by_test_id("recording-row").filter(has_text="Apollo 13")
     expect(again.locator("[data-testid=chip]")).to_have_count(0, timeout=RENDER_TIMEOUT)
+    no_alert_toast(page, app)
     watch.assert_clean()
 
 
 def test_removing_a_last_private_tag_asks_first_on_pages_too(page: Page, site_url, watch):
+    # why: tagging spec §4 and §9. The privacy gate is in the shared operations, so the in-memory
+    # demo asks before a recording's last private tag goes, and Cancel leaves it as it was.
     app, _ = open_demo(page, site_url)
     app.get_by_test_id("recording-row").filter(has_text="Fireside").click()
     header = app.get_by_test_id("recording-header")
@@ -214,9 +237,9 @@ def test_removing_a_last_private_tag_asks_first_on_pages_too(page: Page, site_ur
 
 
 def test_dragging_a_row_onto_a_sidebar_tag_tags_it_in_memory(page: Page, site_url, watch):
-    # why: Task 13 carry. The Library's drag and drop runs on Pyodide too (rows drag only with
-    # (hover: hover), which desktop Chromium has), with the demo's toast.
-    app, _ = open_demo(page, site_url)
+    # why: tagging spec §7 (drag and drop). The Library's drag and drop runs on Pyodide too (rows
+    # drag only with (hover: hover), which desktop Chromium has), with the demo's toast.
+    app, frame = open_demo(page, site_url)
     row = app.get_by_test_id("recording-row").filter(has_text="Apollo 13")
     target = app.get_by_test_id("filter-tag").filter(has_text="space/apollo")
     expect(target).to_have_count(1, timeout=RENDER_TIMEOUT)
@@ -227,7 +250,14 @@ def test_dragging_a_row_onto_a_sidebar_tag_tags_it_in_memory(page: Page, site_ur
     toast = app.get_by_test_id("action-toast").first
     expect(toast).to_contain_text("Added space/apollo to 1 recording", timeout=RENDER_TIMEOUT)
     expect(toast).to_contain_text("Demo: changes aren't saved")
-    expect(app.get_by_test_id("alert-toast")).to_have_count(0)
+    no_alert_toast(page, app)
+    # The second send_message path: the Tags grid's snippets arrive on Pages too (Task 16 fix 2).
+    # The phone's Untagged list draws none.
+    frame.evaluate("() => { location.hash = '#/tags'; }")
+    snippet = app.get_by_test_id("grid-row").filter(has_text="Apollo 13").locator(".tg-snippet")
+    expect(snippet).to_contain_text(
+        "Okay, Houston, we've had a problem here.", timeout=RENDER_TIMEOUT
+    )
     watch.assert_clean()
 
 
@@ -260,5 +290,6 @@ def test_on_a_phone_the_tags_page_is_the_untagged_list_and_toasts_sit_at_the_top
         "Added on-the-go to 1 recording", timeout=RENDER_TIMEOUT
     )
     toaster = app.locator("[data-sonner-toaster]")
-    assert toaster.bounding_box()["y"] < 370, toaster.bounding_box()  # the top half of the screen
+    top = toaster.bounding_box()["y"]
+    assert top < 370, top  # the top half of the screen
     watch.assert_clean()

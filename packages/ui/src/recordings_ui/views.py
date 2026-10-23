@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -150,11 +150,19 @@ def _media_url(
     return f"{media_base}{quote(name, safe='')}"
 
 
-def recording_view(archive: Archive, rid: str, *, media_base: str | None = None) -> dict | None:
+def recording_view(
+    archive: Archive,
+    rid: str,
+    *,
+    media_base: str | None = None,
+    read: Callable[[str], Recording] | None = None,
+) -> dict | None:
+    """`read` is the Pages demo's store, whose in-memory tags the files don't have (tagging spec
+    §5); without it the record is read from the files."""
     if not ID_RE.fullmatch(rid or ""):
         return None
     try:
-        rec = archive.load(rid)
+        rec = (read or archive.load)(rid)
     except (KeyError, ValueError):  # unknown id, impossible date in the id, or a broken file
         return None
     problems: list[Problem] = []

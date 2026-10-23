@@ -414,3 +414,21 @@ def test_a_private_recording_has_no_snippet(tmp_path, writer):
         )
         withheld = snippet(writer.archive, hidden) is None  # a boolean: a failure prints no text
         assert withheld, tag
+
+
+def test_the_recording_view_follows_the_stores_in_memory_tags(demo_archive, demo_ids):
+    # why: Pages keeps tags in memory (tagging spec §5), so the pane's record must come from the
+    # store the service holds, not the files, which never change there. One source of truth.
+    from recordings.models import TagRef
+    from recordings.tagops import AddTags, Recorded, RemoveTags
+    from recordings_ui.tagging import MemoryStore
+
+    archive = Archive(demo_archive)
+    store = MemoryStore(archive)
+    rid = demo_ids["apollo13-problem"]
+    store.apply(rid, Recorded(AddTags((TagRef(tag="private", by="you"),)), "req0001abcd"))
+    assert recording_view(archive, rid)["private"] is False  # the files, as the real app reads them
+    view = recording_view(archive, rid, read=store.read)
+    assert view["private"] is True and "private" in {t["tag"] for t in view["tags"]}
+    store.apply(rid, Recorded(RemoveTags(("private",), may_expose=frozenset({rid})), "req0002abcd"))
+    assert recording_view(archive, rid, read=store.read)["private"] is False

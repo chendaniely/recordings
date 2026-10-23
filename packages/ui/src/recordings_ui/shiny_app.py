@@ -106,7 +106,11 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         # Unset (before the client's first message) is a silent exception, which the client
         # sees as "pending"; an explicit null clears the pane.
         rid = input.selected_id()
-        return views.recording_view(archive, rid, media_base=media_base) if rid else None
+        if not rid:
+            return None
+        # Pages keeps its tags in memory: its record comes from the store. Elsewhere, the files.
+        read = None if tags.store.saves else tags.store.read
+        return views.recording_view(archive, rid, media_base=media_base, read=read)
 
     @reactive_output
     def status():
