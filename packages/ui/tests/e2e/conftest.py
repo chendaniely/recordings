@@ -4,6 +4,7 @@ wrote there, through Archive."""
 
 import io
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from recordings.archive import Archive
 from recordings.index import Index
 from recordings.init import init_archive
 from recordings.models import TagRef
+from recordings.sentinel import MIRROR
 from recordings.state import State
 from recordings.writer import Incoming, Writer
 from recordings_ui.settings import DEMO_UUID
@@ -156,5 +158,16 @@ def big_archive(tmp_path_factory) -> Path:
 @pytest.fixture
 def big_server(tmp_path, big_archive):
     started = start_server(tmp_path / "server", archive=big_archive)
+    yield started
+    started.stop()
+
+
+@pytest.fixture
+def mirror_server(tmp_path, big_archive):
+    """The 300-recording archive as the NAS mirror's copy, which no Writer will write (spec §9)."""
+    copy = tmp_path / "mirror-archive"
+    shutil.copytree(big_archive, copy)
+    (copy / MIRROR).write_text("the NAS mirror's copy\n", encoding="utf-8")
+    started = start_server(tmp_path / "server", archive=copy)
     yield started
     started.stop()

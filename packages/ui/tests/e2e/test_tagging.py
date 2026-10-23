@@ -3038,3 +3038,111 @@ def test_the_phone_sheet_has_a_close_button(page: Page, server, console):
     page.keyboard.press("t")
     expect(page.get_by_role("dialog")).to_be_visible()
     expect(page.get_by_role("dialog").get_by_role("button", name="Close")).to_have_count(0)
+
+
+def test_the_mirrors_copy_cannot_tag_and_says_why(page: Page, mirror_server, console):
+    page.goto(mirror_server.url)
+    rows = page.get_by_test_id("recording-row")
+    expect(rows.first).to_be_visible()
+    expect(page.get_by_test_id("cannot-tag")).to_contain_text("mirror")  # once, in the list header
+    expect(page.get_by_test_id("add-tag")).to_have_count(0)
+    expect(page.locator(".chip-x")).to_have_count(0)
+    expect(page.get_by_test_id("new-tag")).to_have_count(0)
+    expect(rows.first).to_have_attribute("draggable", "false")
+    rows.first.click()
+    page.keyboard.press("t")  # T shows the reason in a toast
+    expect(page.get_by_test_id("alert-toast")).to_contain_text("mirror")
+    page.goto(f"{mirror_server.url}/#/tags")
+    expect(page.get_by_test_id("cannot-tag")).to_contain_text("mirror")
+
+
+def test_the_built_bundle_portals_toasts_dialogs_and_scrolls(page: Page, big_server, console):
+    # why: spec §6. react-dom is bundled beside shinyreact's react-dom/client global, so the
+    # built bundle must open the picker (a portal) and close it on an outside click, show a toast,
+    # open the dialog, and scroll a list longer than the viewport, with a clean console.
+    page.goto(big_server.url)
+    rows = page.get_by_test_id("recording-row")
+    first = rows.first
+    first.hover()
+    first.get_by_role("button", name=re.compile(r"^Add tags to")).click()
+    box = page.get_by_test_id("picker-input")
+    expect(box).to_be_visible()
+    expect(box).to_be_in_viewport()  # the portal puts it on screen, not off to one side
+    page.mouse.click(5, 5)  # outside
+    expect(box).to_have_count(0)
+    first.hover()
+    first.get_by_role("button", name=re.compile(r"^Add tags to")).click()
+    expect(box).to_be_visible()
+    second = rows.nth(1)
+    second.hover()
+    second.get_by_role("button", name=re.compile(r"^Add tags to")).click()
+    expect(box).to_have_count(1)  # a second picker closes the first
+    first.hover()
+    first.get_by_role("button", name=re.compile(r"^Add tags to")).click()
+    expect(box).to_have_count(1)  # the second one has closed again
+    box.fill("bundle")
+    box.press("Shift+Enter")
+    expect(page.get_by_test_id("action-toast")).to_contain_text("Added bundle to 1 recording")
+    box.press("Escape")
+    expect(box).to_have_count(0)
+    expect(first.get_by_role("button", name=re.compile(r"^Add tags to"))).to_be_focused()
+    page.get_by_test_id("filter-tag").filter(has_text="private").click()
+    rows.first.click()
+    header = page.get_by_test_id("recording-header")
+    header.get_by_role("button", name=re.compile(r"^Remove tag private from")).click()
+    expect(page.get_by_role("alertdialog")).to_be_visible()
+    page.get_by_role("alertdialog").get_by_role("button", name="Cancel").click()
+    expect(page.get_by_role("alertdialog")).to_have_count(0)
+    # Radix sets pointer-events: none on the body while a dialog is open, and must take it off
+    assert page.evaluate("getComputedStyle(document.body).pointerEvents") != "none"
+    page.get_by_test_id("filter-all").click()
+    expect(page.get_by_test_id("recording-list")).to_have_attribute("aria-rowcount", "301")
+    rows.first.focus()
+    expect(rows.first).to_be_focused()
+    page.keyboard.press("End")
+    last = page.locator("[data-testid=recording-row][aria-rowindex='301']")
+    expect(last).to_be_in_viewport()
+    expect(last).to_contain_text("Synthetic 000")
+
+
+def test_a_large_batch_shows_progress_then_its_result(page: Page, big_server, console):
+    page.goto(big_server.url)
+    page.get_by_test_id("recording-row").first.click()
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.press("t")
+    box = page.get_by_role("dialog", name="Tag 300 recordings").get_by_test_id("picker-input")
+    box.fill("bulk")
+    box.press("Shift+Enter")
+    progress = page.get_by_test_id("progress-toast")
+    expect(progress.locator(".sr-only")).to_have_text("Tagging 300 recordings…")  # announced once
+    # outside the live region
+    expect(progress.locator("[aria-hidden=true]")).to_contain_text("of 300")
+    expect(page.get_by_test_id("action-toast")).to_contain_text(
+        "Added bulk to 300 recordings", timeout=60_000
+    )
+    expect(progress).to_have_count(0)  # the result replaced it
+
+
+def test_an_undo_after_a_refresh_brings_the_row_back_to_the_library_and_the_grid(
+    page: Page, server, console, demo_ids
+):
+    # why: the real chain in both views. Tag the one untagged recording, Refresh (it leaves the
+    # Untagged filter), then Cmd/Ctrl+Z: it must reappear in the Library's Untagged filter and in
+    # the grid with Untagged only (spec §6: an Undo puts the rows it touched back).
+    apollo13 = demo_ids["apollo13-problem"]
+    page.goto(f"{server.url}/#/tags")
+    rows = page.get_by_test_id("grid-row")
+    expect(rows).to_have_count(1)
+    cell(page, "Apollo 13", "talks").click()
+    wait_until(lambda: server.tags(apollo13) == [("talks", "you")])
+    page.get_by_test_id("grid-refresh").click()
+    expect(rows).to_have_count(0)
+    # No rows: the first header is the grid's tab stop, and a key there is the grid's
+    page.get_by_role("button", name=re.compile(r"^Sort rows")).focus()
+    page.keyboard.press("ControlOrMeta+z")
+    wait_until(lambda: server.tags(apollo13) == [])
+    expect(rows).to_have_count(1)  # back in the grid with Untagged only
+    page.get_by_role("button", name="Library").click()
+    page.get_by_test_id("filter-untagged").click()
+    expect(page.get_by_test_id("recording-row")).to_have_count(1)
+    expect(page.get_by_test_id("recording-row")).to_contain_text("Apollo 13")
