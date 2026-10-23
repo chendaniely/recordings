@@ -146,3 +146,17 @@ Every `Ruling:` line from the SDD ledger, verbatim and in the order made (91 in 
 
 - final fix wave = final-fix.md (7 items): drop a refused add's tags from sessionTags and their session-only grid columns, and refuse \p{Zs}≠U+0020 and \p{Cf} in createRefusal; drop the impossible runbook clause; remember _keep's dropped tokens and say "Undo keeps only the last 20 actions"; snippet takes the store's read on Pages; the committed-demo test uses a temp copy; the Timer(0.3) test waits on a condition; CLAUDE.md tag-change wording.
 - (residual adjudication) fix all residuals now in one short pass by the same implementer, verified by the controller's full gate and diff read rather than another review loop — wrong docs ship otherwise (Dan's docs rule), two assertions assert nothing, and the prune breaks Task 14's ruling; the privacy-display order fix rides along (cheap, privacy) — if wrong, one small extra commit set on the branch.
+
+## Dan's answers (2026-10-22)
+
+The questions the rulings left for Dan, asked one at a time after the final review.
+
+1. **The phone's Tags page.** It was select-only: no way to open or hear a recording from it. Dan chose
+   "Library's Untagged" (the recommended option): on a phone, the Tags tab opens the Library filtered to
+   Untagged, where a tap opens the player and transcript, and + and the selection bar work. He gave no
+   further reason.
+2. **The label after a change.** A row read "✓ Tagged" even after a tag was removed. Dan chose
+   "Tagged / Tag removed" over the recommended "✓ Changed": a row says "✓ Tagged" after an add and
+   "✓ Tag removed" after a removal, and the header counts both. My reading is that the header says
+   "N changed · Refresh", since "N tagged" would be wrong once it counts removals. He gave no further
+   reason.
