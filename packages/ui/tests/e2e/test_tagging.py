@@ -727,7 +727,7 @@ def test_refresh_keeps_the_focused_row_in_view_when_rows_above_it_go(
     page.keyboard.press("ControlOrMeta+ArrowDown")  # focus moves on, outside the selection
     expect(focused_row(page)).to_have_attribute("aria-rowindex", "23")
     kept = focused_row(page).get_attribute("data-id")
-    tag_with_t(page, "Tag 21 recordings", "topic/t01", "21 tagged")
+    tag_with_t(page, "Tag 21 recordings", "topic/t01", "21 changed")
     row = page.locator(f"[data-testid=recording-row][data-id='{kept}']")
     expect(row).to_be_focused()
     page.keyboard.press("r")
@@ -751,7 +751,7 @@ def test_refresh_moves_focus_to_the_row_that_followed_a_tagged_one(page: Page, b
     index = int(focused_row(page).get_attribute("aria-rowindex"))
     then = page.locator(f"[data-testid=recording-row][aria-rowindex='{index + 1}']")
     after = then.get_attribute("data-id")
-    tag_with_t(page, re.compile(r"^Tag Synthetic"), "topic/t01", "1 tagged")
+    tag_with_t(page, re.compile(r"^Tag Synthetic"), "topic/t01", "1 changed")
     page.keyboard.press("r")
     expect(grid).to_have_attribute("aria-rowcount", "200")
     following = page.locator(f"[data-testid=recording-row][data-id='{after}']")
@@ -783,7 +783,7 @@ def test_just_tagged_describes_the_selection_it_was_applied_to(
     expect(box).to_have_count(0)
     expect(bar).to_contain_text("2 selected")
     expect(bar).not_to_contain_text("just tagged")  # a row's own + tagged that row only
-    tag_with_t(page, "Tag 2 recordings", "review", "3 tagged")
+    tag_with_t(page, "Tag 2 recordings", "review", "3 changed")
     expect(bar).to_contain_text("just tagged review")
     rows.filter(has_text="Fireside").click(modifiers=["ControlOrMeta"])
     expect(bar).to_contain_text("3 selected")
@@ -1047,7 +1047,7 @@ def test_just_tagged_stays_through_a_refresh_that_keeps_the_selection(
     # Sets by identity.
     select_two_and_tag(page, server, demo_ids)
     refresh = page.get_by_test_id("refresh")
-    expect(refresh).to_contain_text("2 tagged")
+    expect(refresh).to_contain_text("2 changed")
     page.keyboard.press("r")  # focus is back on the row T was pressed on
     expect(refresh).to_have_text("Refresh")  # the new library has come: the marks are gone
     bar = page.get_by_test_id("selection-bar")
