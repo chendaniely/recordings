@@ -258,7 +258,9 @@ export function useTagging(library: LibraryView | undefined): Tagging {
       }
     }
     setView((v) => (v ? mergeReply(v, reply) : v));
-    setMarks((m) => markReply(m, reply, replyEffect(reversals.current, request)));
+    // Read before learnReversal below changes the ref: React may run the updater later.
+    const effect = replyEffect(reversals.current, request);
+    setMarks((m) => markReply(m, reply, effect));
     reversals.current = learnReversal(reversals.current, request, reply);
     const cellsBefore = undos.current.cells;
     undos.current = heardUndo(undos.current, request, origin, reply);
