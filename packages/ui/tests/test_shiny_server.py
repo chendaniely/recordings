@@ -6,7 +6,7 @@ import pytest
 import shinyreact
 from recordings.archive import Archive
 from recordings.models import TagRef
-from recordings.tagops import AddTags, Recorded
+from recordings.tagops import AddTags, Recorded, RemoveTags
 from recordings_ui import runtime, views
 from recordings_ui.tagging import (
     SNIPPETS_FAILED,
@@ -205,6 +205,27 @@ def test_a_recording_made_private_on_this_page_has_no_snippet(
     reply = wait_for(local_server, sent, "snippets", "snip0005test")
     withheld = reply["snippets"][rid] is None  # a boolean: a failure prints no text
     assert withheld and reply["message"] is None
+
+
+def test_a_recording_made_not_private_on_this_page_has_its_snippet(
+    local_server, sent, _archive, demo_ids
+):
+    # why: final review, item 4. Its files still say private, and the snippet read them again
+    # after the store had said otherwise, so it showed "No transcript yet".
+    rid = demo_ids["fdr-fireside-1"]
+    store = _archive.store
+    assert any(t.tag == "private" for t in store.read(rid).tags)
+    store.apply(
+        rid,
+        Recorded(
+            RemoveTags(tuple(t.tag for t in store.read(rid).tags), may_expose=frozenset({rid})),
+            "elsewhere",
+        ),
+    )
+    assert not any(t.tag == "private" for t in store.read(rid).tags)
+    local_server.set_inputs(snippet_request={"request_id": "snip0006test", "ids": [rid]})
+    reply = wait_for(local_server, sent, "snippets", "snip0006test")
+    assert reply["snippets"][rid]  # the words, not None
 
 
 @pytest.mark.parametrize(
