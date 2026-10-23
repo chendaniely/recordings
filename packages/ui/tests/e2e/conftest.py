@@ -1,6 +1,6 @@
 """Servers for the browser tests. A test that writes gets a server of its own (tagging spec §9),
-started with TMPDIR=<its tmp_path>/server, so it finds the demo's temporary copy and reads what the app
-wrote there, through Archive."""
+started with TMPDIR=<its tmp_path>/server, so it finds the demo's temporary copy and reads what
+the app wrote there, through Archive."""
 
 import io
 import os
