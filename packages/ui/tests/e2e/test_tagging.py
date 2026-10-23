@@ -134,13 +134,14 @@ def test_redo_says_redone_and_offers_undo(page: Page, server, console, demo_ids)
 
 
 @pytest.mark.browser_context_args(
-    is_mobile=True, has_touch=True, viewport={"width": 300, "height": 700}
+    is_mobile=True, has_touch=True, viewport={"width": 260, "height": 700}
 )
 def test_the_headers_touch_targets_are_44_px_and_never_overlap(page: Page, server, console):
     # why: 44 px targets that overhang their chips, on rows 12 px apart, overlapped, so a slightly
     # low tap removed the tag on the row below (Task 10 council). Whether two targets line up
     # depends on the tags' lengths, so this checks what makes it impossible for any tags: the
-    # targets of one row end before the next row's begin.
+    # targets of one row end before the next row's begin. 260 px wide, because at 300 Linux's
+    # fonts fit JFK's two chips on one row (262 px) where macOS's wrap them.
     open_library(page, server.url)
     open_row(page, "JFK")
     assert page.evaluate("() => matchMedia('(hover: none)').matches")
@@ -148,8 +149,8 @@ def test_the_headers_touch_targets_are_44_px_and_never_overlap(page: Page, serve
     chips = header.get_by_test_id("chip")
     xs = header.locator(".chip-x")
     assert xs.count() == chips.count()
-    rows: dict[int, list[dict]] = {}
-    seen = []  # what each chip and its target measured, for the failure message
+    placed = []
+    seen = []  # what each chip and its target measured, for the failure messages
     for i in range(chips.count()):
         target = xs.nth(i).bounding_box()
         assert target["width"] >= 44 and target["height"] >= 44
@@ -159,9 +160,21 @@ def test_the_headers_touch_targets_are_44_px_and_never_overlap(page: Page, serve
             f"{tag}: chip y={chip['y']:.1f} h={chip['height']:.1f} x={chip['x']:.1f}"
             f" w={chip['width']:.1f}; target y={target['y']:.1f}"
         )
-        rows.setdefault(round(chip["y"]), []).append(target)
-    assert len(rows) >= 2, "the chips must wrap for this test to mean anything"
-    bands = [rows[y] for y in sorted(rows)]
+        placed.append((chip, target))
+    # A row is the chips whose boxes overlap vertically, not a rounded y: a row centres its chips,
+    # and on Linux a chip with an icon is 2 px taller, so one row's tops differ by 1 px.
+    bands: list[list[dict]] = []
+    bottom = 0.0
+    for chip, target in sorted(placed, key=lambda p: (p[0]["y"], p[0]["x"])):
+        if not bands or chip["y"] >= bottom:
+            bands.append([])
+        bands[-1].append(target)
+        bottom = max(bottom, chip["y"] + chip["height"])
+    for band in bands:
+        band.sort(key=lambda t: t["x"])
+    assert len(bands) >= 2, "the chips must wrap for this test to mean anything; " + " | ".join(
+        seen
+    )
     for above, below in itertools.pairwise(bands):
         lowest = max(b["y"] + b["height"] for b in above)
         highest = min(b["y"] for b in below)
