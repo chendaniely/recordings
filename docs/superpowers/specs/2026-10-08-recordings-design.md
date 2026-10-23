@@ -1651,7 +1651,7 @@ later" until its build stage (§20):
   | Shift+Up / Down | extends the selection from the anchor | Library list, Tags grid |
   | Cmd/Ctrl+Up / Down, Cmd/Ctrl+Home / End | moves focus without changing the selection | Library list, Tags grid |
   | Cmd/Ctrl+Space, `X` | toggles the focused row (`X` because Cmd+Space and Ctrl+Space often never reach the page) | Library list, Tags grid |
-  | Page Up / Down | a screenful | Library list, Tags grid |
+  | Page Up / Down | a screenful; Shift extends the selection | Library list, Tags grid |
   | Home / End | the first or last row; Shift extends | Library list |
   | Home / End, Ctrl/Cmd+Home / End | the row's first or last cell; focus to the first or last row, selection unchanged | Tags grid |
   | Enter | opens the focused row (the grid's pinned cell: Open) | Library list, Tags grid |

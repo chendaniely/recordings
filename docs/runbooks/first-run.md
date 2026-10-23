@@ -861,8 +861,10 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
 Tagging (part A of stage 3a) is on when the Library shows **+** after a row's chips. When it is off,
 the list header and the Tags page header say "Tagging is off: <reason>" once, and `T` or a drop
 shows the reason in a toast that stays until dismissed. The reasons are fixed phrases (they name
-paths and IDs, never a title). **Refresh** tries a failed open again, whatever the reason; only
-"the writer thread stopped" needs a restart.
+paths and IDs, never a title). **Refresh** queues another try at an open that failed, whatever the
+reason (one that is a bug fails again). It does nothing once the archive is open, so after a batch
+that stopped part-way, fix the cause and run the rest again. Only "the writer thread stopped" needs
+a restart.
 
 | You see | It means | Do |
 |---|---|---|
@@ -877,7 +879,7 @@ paths and IDs, never a title). **Refresh** tries a failed open again, whatever t
 | "Stopped: the disk is full" / "Stopped: the disk is read-only" / "Stopped: a disk error" | A batch stopped part-way. The reply lists what was applied and offers Undo for it. | Free space (see "When the data disk fills"), or fix the mount, then run the rest again. |
 | "Stopped: busy: other jobs hold these recordings; try again" | Five recordings in a row were busy. | Wait for the other job, then run it again. |
 | "Stopped: state.db can't be used" | `state.db` raised a sqlite error that isn't busy or locked (a lock is "busy" instead): corrupt, full, an I/O error or read-only. | Check it (`recordings doctor`) and the disk; see "Restoring for real" if it is lost. |
-| "Stopped: this app can't write the archive now" | The Writer re-checked `archive.json` before a write and refused. The reply names no path. Either `archive.json` is gone or unreadable (the archive is not mounted), the archive's UUID changed, or `MIRROR.md` appeared in the folder. | Check the mount and `archive.json`; then press **Refresh**, and again a moment later. |
+| "Stopped: this app can't write the archive now" | The Writer re-checked `archive.json` before a write and refused. The reply names no path. Either `archive.json` is gone or unreadable (the archive is not mounted), the archive's UUID changed, or `MIRROR.md` appeared in the folder. | Check the mount and `archive.json`; once they are right, run the rest again. Refresh doesn't help here: the Writer is already open, and the next write checks `archive.json` again. |
 | "Stopped: the app is shutting down" / "Stopped: the request was cancelled" | The app or the browser window went away mid-batch. | Reload; check what was applied, then run the rest. |
 | "Stopped: an unexpected error (the server log has its class)" | A bug. The batch stopped at the first one. | `rc logs web`: the line names the exception's class, never a tag or a title. Report it to Dan. |
 
