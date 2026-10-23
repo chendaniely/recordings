@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -247,19 +248,35 @@ def test_a_write_queued_at_shutdown_does_not_run_and_the_thread_is_gone(tmp_path
     blocked = executor.submit(gate.wait, 10)
     late = tmp_path / "late"
     queued = executor.submit(late.mkdir)
-    threading.Timer(0.3, gate.set).start()
+
+    def release_once_closed() -> None:
+        # The condition the test means: shutdown has closed the writer thread, with the late
+        # write still queued behind the blocked job. No guess at how long start-up takes.
+        deadline = time.monotonic() + 30
+        while not executor._closed and time.monotonic() < deadline:
+            time.sleep(0.005)
+        gate.set()
+
+    releaser = threading.Thread(target=release_once_closed, daemon=True)
+    releaser.start()
     with TestClient(app, base_url="http://localhost") as c:
         assert c.get("/healthz").status_code == 200
+    releaser.join(5)
+    assert executor._closed  # it was shutdown that let the blocked job go
     assert blocked.result(1) is True
     assert isinstance(queued.exception(1), ThreadStopped) and not late.exists()
     assert not executor._thread.is_alive()  # the lifespan waited for it
     runtime.configure(None)
 
 
-def test_demo_mode_without_its_own_folder_or_on_the_committed_demo_cannot_tag(demo_archive):
-    from recordings_ui.settings import find_demo_archive
-
-    committed = find_demo_archive({})
+def test_demo_mode_without_its_own_folder_or_on_the_committed_demo_cannot_tag(
+    tmp_path, demo_archive, monkeypatch
+):
+    # The "committed demo" here is a temporary copy that `find_demo_archive` is made to name, so
+    # a regression of the guard can write only into tmp_path, never into the repo's demo/.
+    committed = tmp_path / "demo" / "archive"
+    shutil.copytree(demo_archive, committed)
+    monkeypatch.setattr("recordings_ui.app.find_demo_archive", lambda env: committed)
     for settings in (
         Settings(archive=demo_archive, demo=True),  # not from_env's folder
         Settings(archive=committed, demo=True, demo_folder=committed.parent),
