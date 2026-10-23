@@ -149,16 +149,25 @@ def test_the_headers_touch_targets_are_44_px_and_never_overlap(page: Page, serve
     xs = header.locator(".chip-x")
     assert xs.count() == chips.count()
     rows: dict[int, list[dict]] = {}
+    seen = []  # what each chip and its target measured, for the failure message
     for i in range(chips.count()):
         target = xs.nth(i).bounding_box()
         assert target["width"] >= 44 and target["height"] >= 44
-        rows.setdefault(round(chips.nth(i).bounding_box()["y"]), []).append(target)
+        chip = chips.nth(i).bounding_box()
+        tag = chips.nth(i).get_attribute("data-tag")
+        seen.append(
+            f"{tag}: chip y={chip['y']:.1f} h={chip['height']:.1f} x={chip['x']:.1f}"
+            f" w={chip['width']:.1f}; target y={target['y']:.1f}"
+        )
+        rows.setdefault(round(chip["y"]), []).append(target)
     assert len(rows) >= 2, "the chips must wrap for this test to mean anything"
     bands = [rows[y] for y in sorted(rows)]
     for above, below in itertools.pairwise(bands):
         lowest = max(b["y"] + b["height"] for b in above)
         highest = min(b["y"] for b in below)
-        assert lowest <= highest + 0.5, f"targets overlap by {lowest - highest:.1f} px"
+        assert lowest <= highest + 0.5, (
+            f"targets overlap by {lowest - highest:.1f} px; " + " | ".join(seen)
+        )
     for row in bands:  # and side by side, never
         for a, b in itertools.pairwise(row):
             assert a["x"] + a["width"] <= b["x"] + 0.5
