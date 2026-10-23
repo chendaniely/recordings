@@ -1154,7 +1154,10 @@ The thresholds are constants, not settings.
 
 - **The gate (controller's call).** Until `plaud_state.catch_up_done_at` is set, scheduled syncs
   don't run, whatever `schedule_minutes` says, and the worker refuses the requests §9.3 names. Only
-  Compare runs. Before the very first catch-up, Status says "Scheduled sync waits for the first
+  Compare runs. Every request or command that would write a snapshot (import, Re-sync, Sync
+  everything) is refused while the gate is closed, so no stray mark can flip a rebuilt gate to "an
+  interrupted catch-up". The privacy actions, which only add `private` or a flag and write no
+  snapshot, still run. Before the very first catch-up, Status says "Scheduled sync waits for the first
   catch-up (runbook)"; this isn't a failure, and raises no alert. The template ships
   `schedule_minutes = 0` as well, and an unset value means 0.
 - **The snapshot mark.** Before every 2b snapshot is published, by every path (a scheduled run, a
@@ -1182,15 +1185,17 @@ The thresholds are constants, not settings.
        longer carries a word the worker knows, shows up here as missing, for Dan to decide: add it to
        the consent list, or let it in.
     2. Dan presses **Accept this listing** (§11.4), which is allowed only after that dry run. It sets
-       `catch_up_done_at` and the last good listing. The schedule then goes on, under the usual cap
-       and holds.
+       `catch_up_done_at` and the last good listing, and commits a mark row in the same transaction,
+       so a restart before the next snapshot isn't read as "rebuilt" again. The schedule then goes
+       on, under the usual cap and holds.
   - **Not detected:** a `state.db` restored from an older backup still has mark rows, so it passes.
     A keep-out recorded after that backup is then forgotten. That is inherent to detecting with no
     new storage (§23 risk 12); the runbook's restore section has Dan run the dry run himself.
 - **Which runs advance which timestamps:**
   - `last_started` and `last_ended`: scheduled turns that run (§9.7 item 5), and the light turns
     inside long runs. Only scheduling reads them.
-  - the snapshot mark: before every 2b snapshot, by every path.
+  - the snapshot mark: before every 2b snapshot, by every path, and when Accept reopens a rebuilt
+    gate.
   - `catch_up_done_at`: only `--catch-up` ending without a run-level failure, or Accept reopening a
     rebuilt gate.
   - the last good listing: a good listing in a scheduled run, Sync now, the CLI's `sync`, or
@@ -2491,8 +2496,9 @@ server (§10.6); "real" is a runbook step. Each criterion says which half it bel
    - The gate: before the first catch-up, a scheduled sync and an import request are refused; an
      interrupted catch-up says so and can be run again; a rebuilt `state.db` (2b snapshots, no
      marks) closes it, pushes at once and daily, keeps privacy tagging going, and Accept reopens it
-     only after a dry run. A SIGTERM mid-run, a Re-sync then a restart, and a catch-up then a
-     restart never read as "rebuilt".
+     only after a dry run. A SIGTERM mid-run, a Re-sync then a restart, a catch-up then a restart,
+     and an Accept then a restart never read as "rebuilt". While the gate is closed, every request
+     that would write a snapshot is refused.
 6. **Nothing stops silently** (first half; the breaker's part, second half):
    - A run whose listing works and whose every fetch fails is not good, and pushes after 2 hours. Once
      every recording is on the failing list, runs that retry only them stay not good, and no "works
@@ -2564,6 +2570,8 @@ and S8: field names only, with invented values.
   - the gate's three states: the snapshot mark written before every 2b snapshot, on every path; an
     interrupted catch-up (marks, no `catch_up_done_at`) re-run idempotently; a rebuilt `state.db`
     (2b snapshots, no marks) closing the gate and pushing daily; Accept refused before its dry run;
+    Accept committing a mark, so a restart straight after it stays reopened; import, Re-sync and Sync
+    everything refused while the gate is closed;
     `--catch-up` refused once done and in the rebuilt state; the catch-up's listing becoming the
     last good one; a catch-up held by the ID-form hold against the archive's 2a IDs
   - Accept on consent: refused when consent-listed IDs vanish with the ID-form signals; allowed when
