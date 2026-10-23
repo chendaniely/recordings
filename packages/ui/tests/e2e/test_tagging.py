@@ -3077,7 +3077,7 @@ def test_the_mirrors_copy_cannot_tag_and_says_why(page: Page, mirror_server, con
     grid_cell.click(force=True)  # Playwright refuses to click an aria-disabled control
     expect(grid_cell).to_have_attribute("aria-checked", before)
     expect(page.get_by_test_id("action-toast")).to_have_count(0)
-    expect(page.get_by_test_id("pending")).to_have_count(0)
+    expect(page.locator(".tg-box.pending")).to_have_count(0)
 
 
 def test_the_built_bundle_portals_toasts_dialogs_and_scrolls(page: Page, big_server, console):

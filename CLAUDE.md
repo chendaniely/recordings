@@ -10,12 +10,12 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
 - **`make test`** runs pytest and Vitest. **`make e2e`** runs the Playwright tests against
   demo mode.
 - **`make e2e`'s writing tests** (`packages/ui/tests/e2e/test_tagging.py`) get a server each,
-  started with `TMPDIR=<tmp_path>`, and read what the app wrote through `Archive`. axe-core runs
+  started with `TMPDIR=<tmp_path>/server`, and read what the app wrote through `Archive`. axe-core runs
   from `packages/ui/frontend/node_modules`, so run `npm ci` first.
-  To debug one: run it alone with `uv run pytest -m e2e -k <name>`. Its server's log is
+  To debug one: after `make build`, run it alone with `uv run pytest -m e2e -k <name>`. Its server's log is
   `<tmp_path>/server/server.log` (pytest prints the folder; CI keeps them with
   `--basetemp=e2e-tmp`), and the demo's temporary copy of the archive is
-  `$TMPDIR/recordings-demo-*/archive` (`Server.copy` finds it).
+  `<tmp_path>/server/recordings-demo-*/archive` (`Server.copy` finds it).
 - **`make lint`** runs ruff (check and format --check). CI runs it too. The rule set is pinned in
   pyproject.toml.
 - **`make pages`** builds the static GitHub Pages demo into `_site/` (spec §17.1). Only the demo
@@ -43,9 +43,10 @@ The rules the code depends on:
   `react`. Never bundle `react` itself. `src/build.test.ts` pins this: the config, and the built
   `www/ui.js` (the IIFE's argument, no `react`, `react-dom/client` or `scheduler` copy). CI's
   `frontend` job builds first, so those run there; the `e2e` job also runs the check that the
-  bundled `react-dom` has `shinyreact.js`'s React major.minor, because only it has the `.venv`
-  (`RECORDINGS_REQUIRE_SHINYREACT=1`). Locally the built-bundle tests skip until `make build` (and
-  `uv sync`); with `CI` set, a missing `ui.js` fails.
+  bundled `react-dom` has `shinyreact.js`'s React major.minor, because it is the only Vitest job with a `.venv`
+  (`RECORDINGS_REQUIRE_SHINYREACT=1`, which only a missing `shinyreact.js` needs). Locally the
+  built-bundle tests skip until `make build` (and `uv sync`); with `CI` set, a missing `ui.js`
+  fails.
 - **`www/ui.js` is build output.** Never edit it. Rebuild with `make build`.
 - **`ReactApp(server)` in `shiny_app.py`** finds `www/` next to that file.
 - **Every output is subscribed in `App`.** shinyreact 0.1.0 leaves an output bound to a removed
@@ -62,12 +63,15 @@ The rules the code depends on:
 - **The sheet rules in `app.css` are unlayered on purpose,** so that they beat Tailwind's layered
   utilities without `!important`. Don't move them into a layer. The reduced-motion block's
   `animation: none !important` and `transition: none !important` are also deliberate: they must
-  beat Sonner's own injected, unlayered stylesheet, whose `[data-sonner-toast][data-styled=true]`
-  rules are more specific. Keep that `!important`, and add no other.
-- **Never `stopPropagation` a click.** Radix's dismissable layer reads a click that never reaches
-  the document as an interaction something else consumed, and leaves its popover open
+  beat Sonner's own injected, unlayered stylesheet, whose rules come later in
+  the document (its `[data-sonner-toast][data-styled=true] [data-button]` ones are also more
+  specific). Keep that `!important`, and add no other.
+- **Never `stopPropagation` a click** (one exception below). Radix's dismissable layer reads a
+  click that never reaches the document as an interaction something else consumed, and leaves its popover open
   (`docs/upstream-issues.md`). Guard a row's or a cell's handler with `closest("[data-control]")`
-  or `contains` instead, as `onRowClick` does.
+  or `contains` instead, as `onRowClick` does. The one exception is the picker item's ×
+  (`TagPicker.tsx`): a click inside the open layer that must not reach its own cmdk item, which
+  selects on click and would add the tag.
 
 ## Upgrading shinyreact
 

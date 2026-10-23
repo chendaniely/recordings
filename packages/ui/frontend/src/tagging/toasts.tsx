@@ -80,15 +80,18 @@ export function showNote(id: string, text: Text): void {
   showAction(id, text, null);
 }
 
-/** Why tagging is off, said again on each `T`, drop or Undo. The same text reuses the same toast,
- * so asking twice never stacks two identical alerts. The archive still being opened is a moment,
- * so an ordinary toast that goes by itself; anything else is an alert that stays until dismissed. */
+/** Why tagging is off, said on each `T`, drop or Undo. One fixed toast id: a new reason replaces
+ * the old alert, and is announced again because its content changed. An identical repeat while the
+ * alert is still showing only updates it, which is fine: it is on screen, and two identical alerts
+ * never stack. The archive still being opened is a moment, so an ordinary toast that goes by
+ * itself; anything else is an alert that stays until dismissed. */
 export function showCannotTag(status: TagStatus): void {
   const text = cannotTagText(status);
-  const id = `cannot-tag-${text}`;
-  if (status.opening) showNote(id, [text]);
-  else showAlert(id, [text]);
+  if (status.opening) showNote(CANNOT_TAG, [text]);
+  else showAlert(CANNOT_TAG, [text]);
 }
+
+const CANNOT_TAG = "cannot-tag";
 
 let selectFirstShown = 0;
 

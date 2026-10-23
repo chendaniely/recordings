@@ -391,8 +391,10 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
    toasts, but not the toaster's lift; tw-animate-css stills nothing. With no animation, Radix
    unmounts a closing overlay at once. The `!important` here is deliberate and the only one:
    Sonner injects its own unlayered stylesheet, whose `[data-sonner-toast][data-styled=true]` and
-   `[data-sonner-toaster]` rules are more specific than these selectors and set the transitions
-   and the lift (checked: sonner 2.0.8 dist/index.mjs). Being unlayered is what beats Tailwind's
+   `[data-sonner-toaster]` rules set the transitions and the lift. The toaster's and the toast's
+   have our selectors' specificity (0,1,0) and win by coming later in the document; its
+   `[data-sonner-toast][data-styled=true] [data-button]` rules are (0,3,0). Either way, keep the
+   `!important` (checked: sonner 2.0.8 dist/index.mjs). Being unlayered is what beats Tailwind's
    utilities; only Sonner's rules need `!important`. */
 @media (prefers-reduced-motion: reduce) {
   [data-sonner-toaster], [data-sonner-toast], [data-sonner-toast] *, .chip, .chip *,

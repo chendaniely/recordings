@@ -394,6 +394,15 @@ describe("useTagging: Task 10 council fixes", () => {
     expect(second[0].props.lines).toEqual(["this is the NAS mirror's copy"]);
     expect(tagging.sessionTags).toEqual([]);
   });
+  it("replaces an outdated reason with a new one, in the same alert", () => {
+    draw(library({ can_tag: false, cannot_tag_reason: "the first reason" }));
+    act(() => tagging.tag("add", ["a"], ["w"], picker));
+    draw(library({ can_tag: false, cannot_tag_reason: "a different reason" }));
+    act(() => tagging.tag("add", ["a"], ["w"], picker));
+    const [first, second] = cannotTag();
+    expect(second[1].id).toBe(first[1].id); // one fixed id, so the old reason doesn't stay stacked
+    expect(second[0].props.lines).toEqual(["a different reason"]);
+  });
   it("words a big removal's progress as a removal, and never re-announces after Still working", () => {
     vi.useFakeTimers();
     draw(library());

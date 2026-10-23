@@ -247,7 +247,10 @@ export function PickerBody({ ids, heading }: { ids: string[]; heading: ReactNode
             title={`Remove ${t.tag}`}
             onMouseDown={keepFocus}
             onClick={(e) => {
-              e.stopPropagation(); // never the item's own click, which adds
+              // The one stop kept: this click is inside the open layer and must not reach the cmdk item
+              // around it, which selects on click and would add the tag (cmdk 1.1.1). Nothing outside
+              // the layer needs it, so Radix still sees clicks elsewhere.
+              e.stopPropagation();
               remove(t.tag);
             }}
           >

@@ -82,8 +82,8 @@ console.
 console on a running app: `typeof window.shinyreact.ReactDOM.createPortal === 'function'` (a grep
 of the minified `shinyreact.js` for identifiers is unreliable). If it is `true`, map `react-dom`
 back to it, delete the line in `vite.config.js` and `build.test.ts`'s expectation, and run
-`make e2e`. Re-check on every shinyreact bump. Also remove the built-bundle block in
-`build.test.ts` that expects `react-dom.production` in `ui.js` and compares the bundled
+`make e2e`. Re-check on every shinyreact bump. Also remove, from the built-bundle block in
+`build.test.ts`, only the `react-dom.production` expectation and the test that compares the bundled
 `react-dom`'s major.minor with `shinyreact.js`'s React (the e2e CI job runs that comparison).
 
 **The skill doesn't say this either.** Its Vite config maps `react-dom` to the global without
@@ -257,7 +257,10 @@ counts as intercepted (`isOutsideInteractionIntercepted`, line 212) and the dism
 (line 246). React's `e.stopPropagation()` stops the native event at the root container, so a
 control that stops its click leaves any other open popover open.
 
-**What we do.** Nothing calls `stopPropagation` on a click. The + (`TagPicker.tsx`), the chip ×
+**What we do.** No click that can reach another layer calls `stopPropagation`. The one exception
+is the picker item's × (`TagPicker.tsx`): a click inside the open layer that must not reach its own
+cmdk item (cmdk 1.1.1's Item selects on click, so without the stop a × click would also add the
+tag). The + (`TagPicker.tsx`), the chip ×
 (`TagChips.tsx`) and the grid's Open (`TagsPage.tsx`) used to; the row's and the pinned cell's
 handlers now ignore a click inside `[data-control]` instead. The e2e tests
 `test_the_built_bundle_portals_toasts_dialogs_and_scrolls` (a second + closes the first picker) and

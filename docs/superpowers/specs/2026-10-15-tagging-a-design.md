@@ -144,10 +144,11 @@ later.
   - Tags are compared exactly. The picker matches case-insensitively and never offers a
     case-variant of an existing tag (§6).
 - **`is_private_tag` hardens** (main spec §7.4 change, §10). It applies NFKC, and drops format
-  characters and the code points in `HIDDEN_CODEPOINTS` (`models.py`: the Hangul fillers, the
-  Braille blank, the Mongolian and ordinary variation selectors, and the supplementary variation
-  selectors; not the solidus overlays, which only new tags refuse), before `casefold()`. A fullwidth solidus is a
-  folder separator after NFKC. It still errs towards private, and it is still the one function.
+  characters and the code points in `HIDDEN_CODEPOINTS` (`models.py`: the combining grapheme joiner,
+  the Hangul fillers, the Khmer inherent vowels, the Braille blank, the Mongolian and ordinary
+  variation selectors, and the supplementary variation selectors; not the solidus overlays, which
+  only new tags refuse), before `casefold()`. A fullwidth solidus is a folder separator after
+  NFKC. It still errs towards private, and it is still the one function.
 - **`removes_last_private(before, after)`** is true when `before` has a private tag and `after`
   has none. The dialog splits those recordings in two:
   - **visible:** they keep other, non-private tags
@@ -363,8 +364,9 @@ later.
     the IIFE is called with `window.shinyreact.React`, it carries no `react`, `react-dom/client`
     or `scheduler` production banner, and its `react-dom` has the same major.minor as the React
     in `shinyreact.js`. CI runs the config check and the IIFE and banner checks in the `frontend` job (which builds first), and
-    the React-version check in the `e2e` job, the only one with a `.venv`; where a piece is
-    missing the tests skip locally and fail under `CI`.
+    the React-version check in the `e2e` job, the only Vitest job with a `.venv`. Locally a missing
+    piece skips its tests. Under `CI` a missing `ui.js` fails; a missing `shinyreact.js` fails only
+    with `RECORDINGS_REQUIRE_SHINYREACT=1`, which the `e2e` job sets.
   - The e2e test `test_the_built_bundle_portals_toasts_dialogs_and_scrolls` runs with a clean
     console (any console error or uncaught exception fails it):
     - the picker opens on screen, closes on an outside click, and closes on Esc with focus back
@@ -398,7 +400,8 @@ later.
     Cmd/Ctrl+Home and Cmd/Ctrl+End, in the list and the grid. Cmd/Ctrl+Space toggles the focused
     row, and so does **`X`**: on a Mac, Spotlight and the input-source switcher usually take
     Cmd+Space and Ctrl+Space before the page sees them.
-  - Page Up and Page Down move a screenful. In the list, Home and End go to the first and last
+  - Page Up and Page Down move a screenful, and with Shift extend the selection, in the list and
+    the grid. In the list, Home and End go to the first and last
     row, and Shift extends the selection with each of them. In the grid, Home and End stay in the
     row (first and last cell), and Ctrl/Cmd+Home and Ctrl/Cmd+End (with or without Shift) only
     move focus to the first and last row, never the selection.
@@ -565,10 +568,10 @@ later.
 
 - **When `can_tag` is false,** the + and × controls aren't drawn, rows aren't draggable, and the
   reason shows once in the list header and the grid header ("Tagging is off: …"). `T` or a drop
-  shows it in a toast; asking twice reuses the one toast, so identical alerts never stack. On the
-  mirror's copy the reason ends "Open the archive's own app to tag.". While the archive is still
-  being opened, the headers say "Opening the
-  archive…" instead, which is a moment, not a fault.
+  shows it in a toast; that is one fixed toast, so a new reason replaces the old one and identical
+  alerts never stack. On the mirror's copy the reason ends "Open the archive's own app to tag.".
+  While the archive is still being opened, the headers say "Opening the archive…" instead, which
+  is a moment, not a fault.
 - **Shortcuts** fire only when focus is in the list or the grid, and never:
   - with Cmd, Ctrl or Alt, except where the key map lists them
   - while `event.isComposing` is true
@@ -728,7 +731,7 @@ All test archives are synthetic (`init_archive`, the `writer` fixture). No real 
     - merging deltas
   - Any React test is a `.test.ts` that uses `createElement`, as `StatusPage.test.ts` does.
 - **e2e writing tests** run in their own module. Each test gets its own server, started with
-  `TMPDIR=<tmp_path>` so it can find `recordings-demo-*/archive`.
+  `TMPDIR=<tmp_path>/server` so it can find `<tmp_path>/server/recordings-demo-*/archive`.
   - several tags from a row's +, with the picker staying open
   - × removes a tag
   - dragging a selection onto a sidebar tag, and a foreign drop ignored
