@@ -681,17 +681,22 @@ school/course-101:
   or any tag under `private/` (for example `private/journal` or `private/personal`), in any
   capitalisation: `Private` and `PRIVATE/journal` count too. The rule errs towards private.
   One function decides it (`recordings.models.is_private_tag`). It applies Unicode NFKC and
-  drops format characters before `casefold()`, so a fullwidth or zero-width-split `private`
-  is private too (Dan, 2026-10-15).
+  drops format characters, and the other invisible code points (Hangul fillers, the Braille
+  blank, variation selectors and the like), before `casefold()`, so a fullwidth or
+  zero-width-split `private`, or `private／x` with a fullwidth solidus, is private too
+  (Dan, 2026-10-15).
   - **The privacy gate lives in the tag operation itself** (Dan, 2026-10-15), so every path
     that removes tags, whether the UI, the CLI, the API or part B's Rename, Move and Delete, is
     gated by it. The UI's dialog is how the UI confirms; the CLI's is `dry_run`.
   - **New tag names follow tagging part A's rules** (Dan, 2026-10-15;
     `docs/superpowers/specs/2026-10-15-tagging-a-design.md` §4): NFC, no control, format,
-    line or paragraph separator (Zl, Zp), private-use or surrogate characters, folder parts of at most 64 characters and
-    a whole tag of at most 200, no `.` or `..` part and no `\`, `notes/<type>` only for a type
-    the archive has, and nothing that *looks like* `private` without being spelled so. A
-    removal accepts any existing spelling.
+    line or paragraph separator (Zl, Zp), private-use or surrogate characters, no other
+    invisible code point or solidus overlay, no run of more than 3 combining marks, folder
+    parts of at most 64 characters and a whole tag of at most 200, no `.` or `..` part and no
+    `\`, `notes/<type>` only for a type the archive has, and nothing that *looks like*
+    `private` without being spelled so: a Cyrillic or Greek lookalike, a slash lookalike, or
+    any spelling on which `is_private_tag` and the plain rule disagree. A removal accepts any
+    existing spelling.
   - **`recording.json` is the single source of truth.** Privacy needs no other file, no
     marker files and no lists to keep up to date (Dan, 2026-10-08).
   - **The UI's Private section is the `private/` folder.**
@@ -1641,11 +1646,11 @@ later" until its build stage (§20):
 
   | Key | Does | Where it works |
   |---|---|---|
-  | `T` | opens the tag picker for the selection; in the Tags grid with nothing selected, for the focused row | Library list, Tags grid |
+  | `T` | opens the tag picker for the selection; with nothing selected, for the focused row | Library list, Tags grid |
   | Up / Down | moves focus and selects only the focused row (Dan, 2026-10-15) | Library list, Tags grid |
   | Shift+Up / Down | extends the selection from the anchor | Library list, Tags grid |
-  | Cmd/Ctrl+Up / Down | moves focus without changing the selection | Library list, Tags grid |
-  | Cmd/Ctrl+Space | toggles the focused row | Library list, Tags grid |
+  | Cmd/Ctrl+Up / Down, Cmd/Ctrl+Home / End | moves focus without changing the selection | Library list, Tags grid |
+  | Cmd/Ctrl+Space, `X` | toggles the focused row (`X` because Cmd+Space and Ctrl+Space often never reach the page) | Library list, Tags grid |
   | Page Up / Down, Home / End | a screenful, the first or last row (the grid uses Ctrl+Home / End); Shift extends | Library list, Tags grid |
   | Enter | opens the focused row (the grid's pinned cell: Open) | Library list, Tags grid |
   | Cmd-A, Esc | select every row in the filter; clear the selection | Library list, Tags grid |

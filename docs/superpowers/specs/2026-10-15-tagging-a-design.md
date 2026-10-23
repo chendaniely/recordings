@@ -119,23 +119,33 @@ later.
 
   `mutate` itself is unchanged. A tag that another writer added between the browser's view and
   the write is therefore never in the effect, and Undo leaves it alone.
-- **Names.** Removal accepts any existing spelling. A *new* tag must also meet these rules, which guard against the owner's accidental input (a paste, an autocorrect), not an adversary:
+- **Names.** Removal accepts any existing spelling. A *new* tag must also meet these rules, which
+  guard against the owner's accidental input (a paste, an autocorrect), not an adversary:
   - It is in Unicode normal form NFC, with no control, format, separator, private-use or
     surrogate or unassigned characters (categories Cc, Cf, Zl, Zp, Co, Cs, Cn), no other
-    invisible code point, and no space other than U+0020.
+    invisible code point (`HIDDEN_CODEPOINTS` in `models.py`: Hangul fillers, the Braille blank,
+    variation selectors and the like; and the combining solidus overlays U+0337 and U+0338), no
+    run of more than 3 combining marks, and no space other than U+0020.
   - Each folder part is at most 64 characters, and the whole tag at most 200.
   - No part is `.` or `..`, and there's no `\`.
   - `notes/<type>` names a type the archive already has, with `<type>` matching `[a-z0-9-]+`.
     The picker can't invent note types; they come from prompt files (main spec §7.3).
-  - It doesn't **look like** "private" without being private. A first part that, after NFKC,
-    `casefold()`, removing format characters and mapping a small table of confusable letters
-    (Cyrillic and Greek lookalikes of p, r, i, v, a, t, e), reads `private` while
-    `is_private_tag` is false is refused with "Did you mean `private`?".
+  - It doesn't **look like** "private" without being private. Two checks, both refused with "Did
+    you mean `private`?":
+    - A first part that reads `private` but isn't spelled `private` in plain letters, in any case.
+      It is read after mapping the lookalikes of `/` to `/`, NFKC, dropping format characters and
+      the hidden code points, `casefold()`, dropping accents, and mapping a small table of
+      confusable letters (Cyrillic and Greek lookalikes of p, r, i, v, a, t, e, and the dotless
+      i). So the fullwidth `ｐｒｉｖａｔｅ` is refused, although `is_private_tag` calls it private.
+    - Any tag on which `is_private_tag` and the plain rule (the first folder, casefolded, is
+      `private`) disagree. The app and the archive's own docs, which agents follow, therefore
+      share one rule (main spec §7.4: "one function"). The tag service asks the same of a tag the
+      archive already has, so a lookalike that got in by hand is never added again.
   - Tags are compared exactly. The picker matches case-insensitively and never offers a
     case-variant of an existing tag (§6).
-- **`is_private_tag` hardens** (main spec §7.4 change, §10). It applies NFKC and drops format
-  characters before `casefold()`. It still errs towards private, and it is still the one
-  function.
+- **`is_private_tag` hardens** (main spec §7.4 change, §10). It applies NFKC, and drops format
+  characters and the hidden code points above, before `casefold()`. A fullwidth solidus is a
+  folder separator after NFKC. It still errs towards private, and it is still the one function.
 - **`removes_last_private(before, after)`** is true when `before` has a private tag and `after`
   has none. The dialog splits those recordings in two:
   - **visible:** they keep other, non-private tags
@@ -229,7 +239,8 @@ later.
   - A `confirm` reply records nothing. The confirmed resend carries a new `request_id`, with the
     same `undo` token if it is an Undo.
 - **Checks, before anything is applied:**
-  - Every ID must match the recording ID pattern. Duplicates are removed.
+  - Every ID must parse as a recording ID (`recordings.ids.parse_id`, so an impossible date is
+    refused too). Duplicates are removed. `confirm_ids` share the 20,000 cap.
   - An ID that matches but no longer exists, because it was moved or trashed, is a per-recording
     failure, "the recording is gone".
   - New tags must pass §4's rules. At most 20 tags per request.
@@ -279,8 +290,17 @@ later.
     privacy rule.
 - **Undo tokens:**
   - The session keeps the last 20 actions, each with its per-recording effects.
-  - A token is used up when its Undo is applied. A second use replies `failed`, "already undone".
-    A gated attempt doesn't use it up.
+  - A token is used up when its Undo is applied and nothing is left to settle. A second use
+    replies `failed`, "already undone". A gated attempt doesn't use it up.
+  - **A partly applied Undo keeps its token for what it didn't settle.** A recording where it
+    failed (busy, say), or that the batch stopped before reaching, stays under the same token,
+    so "try again" can reach it. A recording that is gone counts as settled, because nothing more
+    can be undone there.
+  - **The browser's side of the rule:** the Undo's token leaves the Cmd/Ctrl+Z stack when the
+    reply is `done` with no failure but "gone", or `failed` with "already undone" or "Undo is no
+    longer available"; any other failure, "busy" included, keeps it. The Undo's reply carries a
+    token of its own, offered as **Redo**; Redo tokens are never on the Cmd/Ctrl+Z stack, so
+    pressing it twice undoes two actions, never an undo and then its redo.
   - An unknown token, for example after a reload, replies `failed`: "Undo is no longer available
     (the page was reloaded)".
   - An Undo is a request like any other, through the same gate.
@@ -331,11 +351,19 @@ later.
     these libraries; TanStack Virtual is set to `useFlushSync: false`.
 - **This goes in `docs/upstream-issues.md`,** with how to tell when the workaround can go: when
   shinyreact's global gains `createPortal`.
-- **An e2e test checks the built bundle, with a clean console:**
-  - the picker opens, and closes on an outside click
-  - a toast appears
-  - the dialog opens
-  - a list longer than the viewport scrolls
+- **Two tests check the built bundle.**
+  - `src/build.test.ts` checks the config, and, once `make build` has run, the built `www/ui.js`:
+    the IIFE is called with `window.shinyreact.React`, it carries no `react`, `react-dom/client`
+    or `scheduler` production banner, and its `react-dom` has the same major.minor as the React
+    in `shinyreact.js`.
+  - The e2e test `test_the_built_bundle_portals_toasts_dialogs_and_scrolls` runs with a clean
+    console (any console error or uncaught exception fails it):
+    - the picker opens on screen, closes on an outside click, and closes on Esc with focus back
+      on its +
+    - opening a second row's + closes the first picker
+    - a toast appears
+    - the confirmation dialog opens, and its Cancel gives the page its pointer events back
+    - a list longer than the viewport scrolls to its last row with End
 - **shadcn's Sonner template imports `next-themes`.** That is dropped, and the app's own resolved
   theme (`lib/theme.ts`) is passed in instead.
 - **The `tag_result` and `snippets` handlers, the request queue and the toasts live in `App`,**
@@ -357,8 +385,10 @@ later.
   - Up and Down move focus **and** select only the focused row. In the Library, the pane follows
     after a short pause, as Mail's does.
   - Shift+Up and Shift+Down extend the selection from the anchor.
-  - Cmd/Ctrl+Up and Cmd/Ctrl+Down move focus without changing the selection, and Cmd/Ctrl+Space
-    toggles the focused row.
+  - Cmd/Ctrl+Up and Cmd/Ctrl+Down move focus without changing the selection, and so do
+    Cmd/Ctrl+Home and Cmd/Ctrl+End, in the list and the grid. Cmd/Ctrl+Space toggles the focused
+    row, and so does **`X`**: on a Mac, Spotlight and the input-source switcher usually take
+    Cmd+Space and Ctrl+Space before the page sees them.
   - Page Up and Page Down move a screenful. Home and End go to the first and last row (in the
     grid, Ctrl+Home and Ctrl+End, because Home and End stay in the row). Shift extends the
     selection with each of them.
@@ -429,12 +459,15 @@ later.
     header, with 44px targets, or from the picker.
 - **The +** after a row's chips opens the picker for that row only. In the header, it targets the
   open recording. A row's own controls always act on that row.
-- **`T`** opens the picker for the selection, which always holds the focused row. In the Tags
-  grid with nothing selected, it targets the focused row. The selection bar's **Tag…** does the
-  same as `T`.
+- **`T`** opens the picker for the selection you can see; with nothing selected, for the focused
+  row. Moving focus with Cmd/Ctrl adds no row to the selection, so `T` then targets only the
+  selection. (An explicit selection beats an unselected focus ring, as in Explorer and Gmail; the
+  bar already says "N selected · Tag… (T)". To tag the focused row too, select it first with
+  Space or `X`.) The dialog's title names the count. The selection bar's **Tag…** does the same
+  as `T`.
 - **The picker is one of two forms:**
-  - opened by `T`, the selection bar or a drop: a centred Command dialog, shadcn's
-    `CommandDialog`
+  - opened by `T`, the selection bar or a drop: a centred dialog, built from shadcn's `Dialog`
+    parts around one `Command`, not from `CommandDialog` (so the page has one cmdk root)
   - opened by a +: a Popover on that +, whose row stays rendered
 
   Its title names the target, for example "Tag 12 recordings". On close, focus returns to where
@@ -445,15 +478,18 @@ later.
   3. any other substring match
   4. **Create "…"**, last
 
-  Create is hidden when any tag matches the typed text case-insensitively, and it never offers a
-  `notes/…` tag. So Enter on a partial name picks the existing tag.
+  Create is hidden when any tag equals the typed text (trimmed, in NFC) ignoring case, and it
+  never offers a `notes/…` tag. So Enter on a partial name picks the existing tag. When Create
+  isn't offered, Shift+Enter says why, in words that never repeat the tag.
 - **Keys in the picker:**
   - **Enter only ever adds.** It adds the highlighted tag, clears the box and stays open for the
     next tag. On a ✓ item, it says "Already on all 12".
+  - **Enter on a highlighted Create item** creates it.
   - **Shift+Enter** creates exactly the typed text, as long as §4's rules and the case-variant
     rule allow it.
-  - **Shift+Delete** (or Cmd/Ctrl+Backspace) removes the highlighted ✓ or – item from the
-    targets. The × on the item does the same with the mouse.
+  - **Shift+Delete** removes the highlighted ✓ or – item from the targets. So does
+    Cmd/Ctrl+Backspace, but only while the box is empty, because with text in it the key edits
+    the text. The × on the item does the same with the mouse.
   - **Esc** closes it.
 - **Items show their state in words as well as glyphs.** A ✓ item is "on all 12", and a – item
   "on 5 of 12". Private tags are grouped under a lock, using the server's `private` flags.
@@ -466,6 +502,9 @@ later.
   add it. The drag image reads "12 recordings".
   - Dragging a row outside the selection drags only that row, and leaves the selection alone.
   - A drag that starts on a checkbox, ×, + or the picker is cancelled.
+- **The sidebar** lists a note type only while it has recordings or is the active filter (the
+  picker still lists every note type). An active filter item that has gone from the library stays
+  in the group it was last listed in.
 - **+ New tag…** sits at the end of the sidebar's Tags group. A drop on it opens the picker for
   those recordings, and clicking it opens the picker for the selection.
 - **A drop target** shows a 2px orange outline, and its text keeps its colour. A drop that
@@ -489,7 +528,8 @@ later.
   - Each action from the picker, a drop, a header or the selection bar shows one: "Added
     `school/course-101` to 12 recordings · Undo".
   - Single-cell toggles in the grid update one running toast ("4 changes · Undo last") instead of
-    stacking new ones.
+    stacking new ones. A clean single-cell add that makes a recording visible joins it, and the
+    toast totals "· M now visible to external agents".
   - A toast stays about 8 seconds, and pauses while hovered **or focused**.
   - When untagged recordings become visible, the toast says so: "· 12 now visible to external
     agents".
@@ -512,7 +552,9 @@ later.
 ### Disabled tagging, shortcuts and hints
 
 - **When `can_tag` is false,** the + and × controls aren't drawn, rows aren't draggable, and the
-  reason shows once in the list header and the grid header. `T` or a drop shows it in a toast.
+  reason shows once in the list header and the grid header ("Tagging is off: …"). `T` or a drop
+  shows it in a toast. While the archive is still being opened, the headers say "Opening the
+  archive…" instead, which is a moment, not a fault.
 - **Shortcuts** fire only when focus is in the list or the grid, and never:
   - with Cmd, Ctrl or Alt, except where the key map lists them
   - while `event.isComposing` is true
@@ -524,9 +566,14 @@ later.
 
 ### Phones
 
-- The selection bar sits above the bottom tab bar, where there is one.
-- The picker is a full-width bottom sheet.
-- On phones, the Tags page shows the Untagged list with the picker, not the grid.
+- The selection bar sits above the bottom tab bar, where there is one, and is sticky.
+- The picker is a full-width bottom sheet. A row's + opens this dialog form, not a popover. The
+  sheet sits above an on-screen keyboard (it follows `visualViewport`), and has a Close button
+  with a 44px target.
+- Toasts come in at the top centre on phones, clear of the sheet and the keyboard.
+- Rows aren't draggable on touch: the picker is the touch path (§6, drag and drop).
+- On phones, the Tags page shows the Untagged list with the picker, not the grid. A tap there
+  selects, and nothing opens. There are no key hints on touch.
 
 ### Components
 
@@ -572,14 +619,17 @@ skill or its docs before it is added (CLAUDE.md). A gap goes in `docs/upstream-i
 - **Columns:**
   - The default set is the 15 most-used tags, counted across all tags. The set and its order are
     worked out when the page loads and on Refresh, never live, so columns don't move under the
-    cursor.
+    cursor. Until Refresh the set is frozen per load and only grows.
   - A tag used or created in this session is added at the end of its group, and gets its column
     straight away.
   - A column picker, by folder, shows or hides the rest. Only the choices for non-private columns
     are kept in this browser (`localStorage`, in try/catch). Private columns are shown by
     default, so no private tag name is stored on disk.
 - **Keyboard:**
-  - Arrows move between cells.
+  - Arrows move between cells, and cross the column headers: Up from the first row reaches the
+    header row. With no rows to show, the header row is the grid's tab stop.
+  - Cmd/Ctrl+Home and Cmd/Ctrl+End move focus to the first and last row without changing the
+    selection, as in the list.
   - Space or Enter toggles the focused tag cell. On the pinned cell, Enter is **Open**.
   - `1`–`9` and `0` toggle the first ten visible tag columns on the focused row, or add the tag
     to the selection when two or more rows are selected. Each header shows its number. Main spec
@@ -598,6 +648,9 @@ skill or its docs before it is added (CLAUDE.md). A gap goes in `docs/upstream-i
   - "not confirmed: would become visible"
 - **A batch stops** with "Stopped: <fixed phrase>" on an archive-level error (§5). Every reply
   still carries the rows and the Undo token for what was applied.
+  - **"Stopped: the request was cancelled"** is the phrase when the session's window goes or the
+    app stops mid-batch. The write in flight is awaited for up to 5 seconds and recorded, and the
+    reply is sent if the connection allows. A write still running after that isn't recorded.
 - **A bad request** (an invalid tag, an empty removal, over a cap) is refused whole, with a plain
   message, before anything is applied.
 - **Undo:** "already undone", or "Undo is no longer available (the page was reloaded)".
@@ -676,8 +729,10 @@ All test archives are synthetic (`init_archive`, the `writer` fixture). No real 
   - keyboard paging
   - progress toasts
   - the default columns and the live "left" count
-- **`can_tag` false:** the same archive with the mirror marker, which the writer refuses. The
-  controls aren't drawn, and the reason shows.
+- **`can_tag` false:** the 300-recording archive copied, with `MIRROR.md` added through the
+  sentinel's own constant (`recordings.sentinel.MIRROR`), which the writer refuses. Demo mode
+  serves it, because it checks only the sentinel's UUID. The controls aren't drawn, rows aren't
+  draggable, `T` shows the reason in a toast, and the reason shows once in each header.
 - **Accessibility:**
   - an axe-core scan (a dev dependency) of the list and the grid, in light and dark
   - keyboard-only runs through the list and the grid
@@ -685,7 +740,11 @@ All test archives are synthetic (`init_archive`, the `writer` fixture). No real 
   - the roles and attributes in §6 and §7
 - **Phones:** a 375px layout, with checkboxes visible, × targets of at least 24px, and the Tags
   page showing the list.
-- **Motion:** `prefers-reduced-motion` turns off the toast and chip animations.
+- **Motion:** `prefers-reduced-motion` turns off the toast and chip animations, and those of the
+  overlays too (the picker's popover and dialog, the confirmation, the menus) and the toaster.
+- **Forced colours:** under `forced-colors: active`, the open row keeps its bar as a border, the
+  highlighted picker and sort-menu item is the only one with a ring, and a focused grid cell keeps
+  its ring and its pending marker.
 - **Pages (`make pages-test`):**
   - tagging works in the browser, and a reload brings the demo back unchanged
   - `recordings_ui.tagging` imports on Pyodide

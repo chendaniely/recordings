@@ -9,6 +9,13 @@ locked write path, `recordings import-audio-router`, restic backups to an append
 rest-server on the NAS with a monthly restore test, the NAS mirror, alerts, and Status.
 `docs/runbooks/first-run.md` is the first real run.
 
+Tagging, part A (`docs/superpowers/specs/2026-10-15-tagging-a-design.md`) adds the triage tools:
+Finder-style selection, the tag picker (`T`, or the **+** on a row), × on chips, drag and drop
+onto sidebar tags, the Tags page grid at `#/tags`, Undo for everything (Cmd/Ctrl+Z), and a
+confirmation before any recording loses its last private tag. `make demo` saves tags to its
+temporary copy; the Live demo keeps them in memory until you reload. On a phone, the Tags page is
+the Untagged list and the **+** opens a bottom sheet; there are no key hints on touch.
+
 ## Live demo
 
 <https://chendaniely.github.io/recordings/> runs the bundled public-domain demo entirely in

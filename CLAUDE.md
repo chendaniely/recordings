@@ -9,6 +9,9 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
   installs.
 - **`make test`** runs pytest and Vitest. **`make e2e`** runs the Playwright tests against
   demo mode.
+- **`make e2e`'s writing tests** (`packages/ui/tests/e2e/test_tagging.py`) get a server each,
+  started with `TMPDIR=<tmp_path>`, and read what the app wrote through `Archive`. axe-core runs
+  from `packages/ui/frontend/node_modules`, so run `npm ci` first.
 - **`make lint`** runs ruff (check and format --check). CI runs it too. The rule set is pinned in
   pyproject.toml.
 - **`make pages`** builds the static GitHub Pages demo into `_site/` (spec §17.1). Only the demo
@@ -33,12 +36,23 @@ The rules the code depends on:
   `window.shinyreact.ReactDOM`. Two React copies make every hook silently return nothing. The one
   exception is the `react-dom` index, which is bundled because shinyreact's `ReactDOM` global
   lacks `createPortal` and `flushSync` (`docs/upstream-issues.md`); it requires the external
-  `react`. Never bundle `react` itself.
+  `react`. Never bundle `react` itself. `src/build.test.ts` pins this, in the config and in the
+  built `www/ui.js` (skipped until `make build` has run).
 - **`www/ui.js` is build output.** Never edit it. Rebuild with `make build`.
 - **`ReactApp(server)` in `shiny_app.py`** finds `www/` next to that file.
 - **Every output is subscribed in `App`.** shinyreact 0.1.0 leaves an output bound to a removed
   element once its last component unmounts (`docs/upstream-issues.md`). A new output gets a
   `useShinyOutputStatus` line in `App.tsx`, even if only one page uses it.
+- **Every message handler and input lives in `App`** (through `useTagging`), mounted once:
+  shinyreact drops a message that has no handler. Tag requests are only ever sent by a person's
+  action: never on load, from a URL or its hash, or from storage. List state (`useListState` for
+  the Library and the phone's Untagged list, `useGridState` for the Tags grid) is held in `App`
+  too, so it survives route switches and the switch from tablet to phone width.
+- **`PHONE` is `(max-width: 760px)`** (`useMediaQuery.ts`), and the two `@media (max-width: 760px)`
+  blocks in `app.css` must stay equal to it.
+- **The sheet and reduced-motion rules in `app.css` are unlayered on purpose,** so that they beat
+  Tailwind's layered utilities. Don't move them into a layer, and don't add `!important` to make
+  a utility lose.
 
 ## Upgrading shinyreact
 
@@ -94,6 +108,17 @@ smoke test on purpose until someone does the steps below:
   counting as `/` (`recordings.models.is_private_tag`). The private tag lands before any source or
   output does. Don't read a private recording's transcript or notes. No report, alert or log
   carries a title.
+- **Tags change only through `recordings.tagops`** (`AddTags`, `RemoveTags`, `RestoreTags`),
+  applied by `Writer.mutate` on the tag service's one writer thread
+  (`recordings_ui/tagging.py`, `writing.py`). The privacy gate is inside the operations: a
+  recording never loses its last private tag unless its ID was confirmed. `tagops.py` imports
+  only `recordings.models`, because the Pages demo runs it on Pyodide, and Pages' `MemoryStore`
+  rebuilds a record with `model_dump` and `model_validate`, never `dump_json`, because of
+  Pyodide's pydantic.
+- **Tagging's logs and replies carry fixed phrases,** IDs, counts and exception class names:
+  never a tag name, a title or `str(exc)`. The one exception is `cannot_tag_reason` (and the
+  "Stopped: …" that repeats it): the Writer's own refusal, written for display, which names
+  paths and IDs, never a title. A log never carries even that.
 - **Fixtures are synthetic:** `packages/core/tests/conftest.py` builds Plaud envelopes and an
   `audio-router` archive by hand. Never copy real data in.
 - **The archive's own docs** come from `packages/core/src/recordings/format/`. Edit them there.
