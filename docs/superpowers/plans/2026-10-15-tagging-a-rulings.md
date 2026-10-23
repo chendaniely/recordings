@@ -160,3 +160,8 @@ The questions the rulings left for Dan, asked one at a time after the final revi
    "✓ Tag removed" after a removal, and the header counts both. My reading is that the header says
    "N changed · Refresh", since "N tagged" would be wrong once it counts removals. He gave no further
    reason.
+3. **When the real archive gets its first tag.** The first tag ends §19's disposable window. After it, a
+   re-import loses the tags made in the app, and a rollback has to be a restore. Dan chose "After 2b's
+   dry run" over the recommended "after a backup and `doctor`": the real archive gets no tag until stage
+   2b's import dry run is done, so a re-import stays free until then. He gave no reason beyond the choice.
+   The README and the runbook's import step now say so.

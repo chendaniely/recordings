@@ -18,8 +18,8 @@ the Untagged list and the **+** opens a bottom sheet; there are no key hints on 
 
 The first tag you apply to the real archive ends the disposable window (main spec §19): after it,
 rolling back by re-import loses your tags, and the rollback is a restore
-(`docs/runbooks/first-run.md`, "Rolling back, until the first real tag"). When that happens is
-your call. If tagging is off, that runbook's "Tagging" section says why and what to do.
+(`docs/runbooks/first-run.md`, "Rolling back, until the first real tag"). Decided 2026-10-22: the
+first real tag waits until stage 2b's import dry run is done. If tagging is off, that runbook's "Tagging" section says why and what to do.
 
 ## Live demo
 

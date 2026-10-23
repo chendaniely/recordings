@@ -777,7 +777,8 @@ rm -rf "$RECORDINGS_HOME/import" "$RECORDINGS_HOME/import.sha256"
 ```
 
 Before you tag anything in the real archive, read "Rolling back, until the first real tag" below:
-the first tag you apply ends the disposable window (spec §19).
+the first tag you apply ends the disposable window (spec §19). Dan decided on 2026-10-22 that the
+first real tag waits until stage 2b's import dry run is done, so a re-import stays free until then.
 
 Then open the Library on one of your devices. It lists the imported recordings, with
 `audio-router`'s tags, and its first load takes under 2 seconds (your browser's network panel shows the
