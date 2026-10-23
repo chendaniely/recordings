@@ -165,3 +165,7 @@ The questions the rulings left for Dan, asked one at a time after the final revi
    dry run" over the recommended "after a backup and `doctor`": the real archive gets no tag until stage
    2b's import dry run is done, so a re-import stays free until then. He gave no reason beyond the choice.
    The README and the runbook's import step now say so.
+4. **Integration.** Dan chose "Push + PR", the recommended option: once answers 1 and 2 are built and green
+   locally, push `tagging-a` and open a PR. CI and the Pages workflow then run on GitHub, which proves the
+   new CI steps, and `main` is fast-forwarded to the branch once CI is green. Fast-forwarding keeps the
+   SHAs that the ledger and `.git-blame-ignore-revs` quote.
