@@ -218,7 +218,9 @@ later.
   as a busy index. Its reason is a fixed phrase by class: "the archive's index or state.db was busy
   (<class>)" for a lock timeout or a `sqlite3` error, and "the archive couldn't be opened (<class>):
   check its permissions and the disk, then press Refresh" for an `OSError` (also retried on the next
-  request), neither with the exception's text. A busy moment at start therefore doesn't disable tagging until a restart.
+  request), neither with the exception's text. A busy moment at start therefore doesn't disable tagging until a restart. From the browser the
+  retry is Refresh, pressed twice (one press queues it, the next shows the result): the client
+  sends no request while `can_tag` is false.
 
 ### Requests
 
@@ -305,12 +307,16 @@ later.
     so "try again" can reach it. A recording that is gone counts as settled, because nothing more
     can be undone there.
   - **The browser's side of the rule:** the Undo's token leaves the Cmd/Ctrl+Z stack when the
-    reply is `done` with no failure but "gone", or `failed` with "already undone" or "Undo is no
-    longer available"; any other failure, "busy" included, keeps it. The Undo's reply carries a
+    reply is `done` with no failure but "gone", or `failed` with "already undone", "Undo is no
+    longer available" or "Undo keeps only the last 20 actions"; any other failure, "busy" included, keeps it. The Undo's reply carries a
     token of its own, offered as **Redo**; Redo tokens are never on the Cmd/Ctrl+Z stack, so
     pressing it twice undoes two actions, never an undo and then its redo.
-  - An unknown token, for example after a reload, replies `failed`: "Undo is no longer available
-    (the page was reloaded)".
+  - A token this process never issued, for example after a reload, replies `failed`: "Undo is no
+    longer available (the page was reloaded)".
+  - **A token the last-20 rule pushed out** replies `failed`: "Undo keeps only the last 20
+    actions". The 20 slots also hold Redo tokens, which the browser's 20 don't count, so the
+    browser can still hold a token the server has dropped. The session remembers the dropped ones
+    (as it does the used ones) to say this instead.
   - An Undo is a request like any other, through the same gate.
 - **The record.** `revisions.origin` in `state.db` becomes `<op>:<request_id>`. A batch stopped
   by a crash or `docker stop` still leaves a record of the recordings it changed, even though the
@@ -493,8 +499,13 @@ later.
   4. **Create "…"**, last
 
   Create is hidden when any tag equals the typed text (trimmed, in NFC) ignoring case, and it
-  never offers a `notes/…` tag. So Enter on a partial name picks the existing tag. When Create
-  isn't offered, Shift+Enter says why, in words that never repeat the tag.
+  never offers a `notes/…` tag. It is also hidden, before anything is sent, for a space character
+  other than a plain space (U+0020, such as an NBSP pasted from a web page) and for a format
+  character (a zero-width space), in the server's words. A name the server still refuses (too many
+  combining marks, a look-alike of `private`, a case-variant `casefold` finds and the browser
+  doesn't) is taken out of the picker and the Tags grid again when its add fails with nothing
+  applied, unless the library lists the tag. So Enter on a partial name picks the existing tag.
+  When Create isn't offered, Shift+Enter says why, in words that never repeat the tag.
 - **Keys in the picker:**
   - **Enter only ever adds.** It adds the highlighted tag, clears the box and stays open for the
     next tag. On a ✓ item, it says "Already on all 12".
@@ -674,7 +685,8 @@ TanStack Virtual for rows. Each is checked against the shadcn skill or its docs 
     reply is sent if the connection allows. A write still running after that isn't recorded.
 - **A bad request** (an invalid tag, an empty removal, over a cap) is refused whole, with a plain
   message, before anything is applied.
-- **Undo:** "already undone", or "Undo is no longer available (the page was reloaded)".
+- **Undo:** "already undone", "Undo keeps only the last 20 actions", or "Undo is no longer
+  available (the page was reloaded)".
 - **A lost connection:**
   - Queued requests are dropped, and the toast says so.
   - A request already sent was either applied once or not at all (§5, `request_id`).

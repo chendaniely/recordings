@@ -127,13 +127,14 @@ smoke test on purpose until someone does the steps below:
   counting as `/` (`recordings.models.is_private_tag`). The private tag lands before any source or
   output does. Don't read a private recording's transcript or notes. No report, alert or log
   carries a title.
-- **Tags change only through `recordings.tagops`** (`AddTags`, `RemoveTags`, `RestoreTags`),
+- **Tag changes from the app go through `recordings.tagops`** (`AddTags`, `RemoveTags`, `RestoreTags`),
   applied by `Writer.mutate` on the tag service's one writer thread
   (`recordings_ui/tagging.py`, `writing.py`). The privacy gate is inside the operations: a
   recording never loses its last private tag unless its ID was confirmed. `tagops.py` imports
   only `recordings.models`, because the Pages demo runs it on Pyodide, and Pages' `MemoryStore`
   rebuilds a record with `model_dump` and `model_validate`, never `dump_json`, because of
-  Pyodide's pydantic.
+  Pyodide's pydantic. The other paths that set tags are the import's: `Writer.add` and
+  `MergeIncoming` (`writer.py`, via `_append_tags`), both inside the Writer.
 - **To add a tag operation or rule:** write the operation in `tagops.py` (its `apply`, and the
   `Effect` it records so `RestoreTags` can undo it), put it behind the privacy gate, then teach the
   service in `recordings_ui/tagging.py` (`classify` for any new refusal, the request checks, the
