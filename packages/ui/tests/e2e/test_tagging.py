@@ -264,7 +264,7 @@ def test_the_confirmation_opens_over_the_plus_picker_and_leaves_it_open(
     assert server.tags(fdr) == [("private", "you")]
     box.fill("private")
     box.press("Shift+Delete")  # the keyboard's way asks too
-    expect(confirm).to_be_visible()
+    expect(confirm.get_by_role("button", name="Cancel")).to_be_focused()  # up, so Esc reaches it
     page.keyboard.press("Escape")  # closes only the confirmation, as Cancel
     expect(confirm).to_have_count(0)
     expect(box).to_be_focused()
@@ -731,6 +731,14 @@ def tag_with_t(page: Page, name: re.Pattern | str, tag: str, done: str) -> None:
     expect(page.get_by_test_id("refresh")).to_contain_text(done)
     page.keyboard.press("Escape")
     expect(box).to_have_count(0)
+    # Radix gives focus back a moment after the dialog goes; until it does, the next key would land
+    # on <body> and never reach the list.
+    wait_until(
+        lambda: page.evaluate(
+            "() => document.activeElement !== document.body"
+            " && !document.activeElement.closest('[role=dialog]')"
+        )
+    )
 
 
 def test_refresh_keeps_the_focused_row_in_view_when_rows_above_it_go(
@@ -1212,11 +1220,13 @@ def test_dragging_a_selection_onto_a_sidebar_tag_and_a_foreign_drop(
     # outside the selection
     drag_by_title(rows.filter(has_text="Apollo 11"), page.get_by_test_id("new-tag"))
     expect(page.get_by_role("dialog", name=re.compile(r"^Tag Apollo 11"))).to_be_visible()
+    expect(page.get_by_test_id("picker-input")).to_be_focused()  # open and listening: then Esc
     page.keyboard.press("Escape")
     expect(bar).to_contain_text("2 selected")  # left alone
     new_tag = page.get_by_test_id("new-tag")
     new_tag.click()  # a click: the picker for the selection, as T
     expect(page.get_by_role("dialog", name="Tag 2 recordings")).to_be_visible()
+    expect(page.get_by_test_id("picker-input")).to_be_focused()  # open and listening: then Esc
     page.keyboard.press("Escape")
     expect(new_tag).to_be_focused()  # back where it came from
 
@@ -1655,6 +1665,7 @@ def test_the_grid_is_one_tab_stop_and_its_keys_reach_cells_headers_and_the_picke
     page.keyboard.press("t")  # nothing selected: the focused row (tagging plan, decision 4)
     dialog = page.get_by_role("dialog", name=re.compile(r"^Tag Apollo 13"))
     expect(dialog).to_be_visible()
+    expect(page.get_by_test_id("picker-input")).to_be_focused()  # open and listening: then Esc
     page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
     expect(apollo).to_be_focused()
@@ -2413,6 +2424,7 @@ def test_a_phone_layout(page: Page, server, console):
     page.evaluate("() => document.activeElement?.blur()")
     plus.dispatch_event("click")
     expect(sheet).to_be_visible()
+    expect(page.get_by_test_id("picker-input")).to_be_focused()  # open and listening: then Esc
     page.keyboard.press("Escape")
     expect(sheet).to_have_count(0)
     expect(plus).to_be_focused()
@@ -3167,6 +3179,7 @@ def test_the_phone_sheet_has_a_close_button(page: Page, server, console):
     # Esc still closes it.
     plus.click()
     expect(sheet).to_be_visible()
+    expect(page.get_by_test_id("picker-input")).to_be_focused()  # open and listening: then Esc
     page.keyboard.press("Escape")
     expect(sheet).to_have_count(0)
     # Wider than a phone it is the centred dialog, with Esc and no close button of its own.
