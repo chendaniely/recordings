@@ -13,6 +13,7 @@ export const UNDO_STACK = 20; // the session keeps the last 20 actions (spec §5
 export const GONE = "the recording is gone";
 export const ALREADY_UNDONE = "already undone";
 export const UNDO_GONE = "Undo is no longer available (the page was reloaded)";
+export const UNDO_LIMIT = "Undo keeps only the last 20 actions"; // the server's 20 slots also hold Redo tokens
 
 /** The running toast: its changes, the undoable ones' tokens, and how many recordings its changes
  * made visible to external agents (`visibleBy`, per token, so an Undo takes its share off). */
@@ -49,11 +50,11 @@ export function isRedo(u: Undos, request: TagRequest): boolean {
 
 /** Whether an Undo used its token up, as the server decides (`_settle_undo`): applied everywhere
  * it could be, a recording gone since counting as settled. A token the server no longer has
- * ("already undone", or lost to a reload) is gone too. An Undo that stopped, or met a busy or
+ * ("already undone", lost to a reload, or pushed out by the last-20 rule) is gone too. An Undo that stopped, or met a busy or
  * edited recording, keeps its token for what it didn't reach. */
 export function usedUp(reply: TagResult): boolean {
   if (reply.status === "done" && !reply.message) return reply.failures.every((f) => f.reason === GONE);
-  return reply.status === "failed" && (reply.message === ALREADY_UNDONE || reply.message === UNDO_GONE);
+  return reply.status === "failed" && (reply.message === ALREADY_UNDONE || reply.message === UNDO_GONE || reply.message === UNDO_LIMIT);
 }
 
 function drop(u: Undos, token: string): Undos {

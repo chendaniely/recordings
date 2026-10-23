@@ -45,6 +45,7 @@ from recordings_ui.tagging import (
     TOO_MANY_IDS,
     TOO_MANY_TAGS,
     UNDO_GONE,
+    UNDO_LIMIT,
     UNREADABLE,
     ArchiveStore,
     Classified,
@@ -944,7 +945,7 @@ def test_a_part_way_undo_of_the_oldest_action_never_evicts_another(
     assert ask(session, req("undo", undo=oldest)).final["message"] == STOP_IO
     monkeypatch.setattr(service.store, "apply", real)
     assert ask(session, req("undo", undo=later[0])).final["status"] == "done"
-    assert ask(session, req("undo", undo=oldest)).final["message"] == UNDO_GONE
+    assert ask(session, req("undo", undo=oldest)).final["message"] == UNDO_LIMIT
 
 
 def test_a_recording_gone_since_never_keeps_an_undo_alive(service, tag_archive, monkeypatch):
@@ -990,8 +991,27 @@ def test_the_session_keeps_only_the_last_twenty_actions(service, tag_archive):
     session = session_of(service)
     rid = tag_archive.ids["untagged"]
     tokens = [ask(session, req("add", [rid], [f"t{i}"])).final["undo"] for i in range(21)]
-    assert ask(session, req("undo", undo=tokens[0])).final["message"] == UNDO_GONE
+    assert ask(session, req("undo", undo=tokens[0])).final["message"] == UNDO_LIMIT
     assert ask(session, req("undo", undo=tokens[1])).final["status"] == "done"
+
+
+def test_a_redo_token_takes_a_slot_so_the_oldest_add_says_the_limit_not_a_reload(
+    service, tag_archive
+):
+    # why: final review, item 3. The server's 20 slots also hold Redo tokens; the client counts
+    # only its own 20 adds, so it still holds a token the server dropped. That says what happened.
+    session = session_of(service)
+    rid = tag_archive.ids["untagged"]
+    tokens = [ask(session, req("add", [rid], [f"t{i}"])).final["undo"] for i in range(20)]
+    # Undoing the newest action gives a Redo token, which takes a slot too.
+    assert ask(session, req("undo", undo=tokens[19])).final["status"] == "done"
+    ask(session, req("add", [rid], ["one-more"]))
+    reply = ask(session, req("undo", undo=tokens[0])).final
+    assert reply["status"] == "failed" and reply["message"] == UNDO_LIMIT == (
+        "Undo keeps only the last 20 actions"
+    )
+    # A token this process never issued still says the page was reloaded.
+    assert ask(session, req("undo", undo="never-issued")).final["message"] == UNDO_GONE
 
 
 def test_removing_a_note_type_records_the_exclusion_and_undo_reverses_it(service, tag_archive):

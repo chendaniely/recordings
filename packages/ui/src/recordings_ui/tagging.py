@@ -308,6 +308,7 @@ UNDO_KEEP = 20  # actions each session keeps for Undo
 MAX_BUSY = 5  # consecutive busy recordings before a batch stops
 REQUEST_IDS_KEPT = 1_000  # recent request IDs, per process
 USED_UNDO_KEPT = 1_000  # used Undo tokens, per session, so a second use says "already undone"
+DROPPED_UNDO_KEPT = 1_000  # tokens pushed out of the last UNDO_KEEP, so Undo can say why
 PREPASS_CHUNK = 200  # recordings per pre-pass job, so other windows' writes interleave
 ACTIONS = ("add", "remove", "undo")
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
@@ -322,6 +323,8 @@ TOO_MANY_IDS = f"At most {MAX_IDS:,} recordings at a time."
 TOO_MANY_TAGS = f"At most {MAX_TAGS} tags at a time."
 ALREADY_UNDONE = "already undone"
 UNDO_GONE = "Undo is no longer available (the page was reloaded)"
+# A token the session dropped to make room for newer ones (Redo tokens take slots too).
+UNDO_LIMIT = f"Undo keeps only the last {UNDO_KEEP} actions"
 
 Send = Callable[[dict], Awaitable[None]]
 
@@ -407,7 +410,11 @@ def _snippet(store: Store, rid: str) -> str | None:
     try:
         if is_private(store.read(rid)):
             return None  # least privilege: its transcript isn't read at all
-        return views.snippet(store.archive, rid)
+        # The store's record again where its tags aren't in the files (Pages), so the snippet
+        # and this check agree; the real app reads the files, as it always did.
+        if store.saves:
+            return views.snippet(store.archive, rid)
+        return views.snippet(store.archive, rid, read=store.read)
     except KeyError:
         return None  # gone since the page's view: nothing to show, and nothing unexpected
     except Exception as exc:  # noqa: BLE001  logged by class and ID only (Global Constraints)
@@ -520,6 +527,7 @@ class TagSession:
         self._types: set[str] = set()  # note types the view lists, exclusion-only ones included
         self._undo: OrderedDict[str, dict[str, Effect]] = OrderedDict()
         self._used: OrderedDict[str, None] = OrderedDict()
+        self._dropped: OrderedDict[str, None] = OrderedDict()  # pushed out by the last-20 rule
         # The IDs the last `confirm` reply named: the only ones a resend can confirm.
         self._named: frozenset[str] = frozenset()
 
@@ -683,7 +691,12 @@ class TagSession:
         if job.action == "undo":
             undoing = self._undo.get(job.undo or "")
             if undoing is None:
-                message = ALREADY_UNDONE if job.undo in self._used else UNDO_GONE
+                if job.undo in self._used:
+                    message = ALREADY_UNDONE
+                elif job.undo in self._dropped:
+                    message = UNDO_LIMIT
+                else:
+                    message = UNDO_GONE
                 return self._reply(job.request_id, "failed", message=message)
             effects = undoing
             targets = tuple(effects)
@@ -743,7 +756,10 @@ class TagSession:
         """Keep an action for Undo; the session keeps the last UNDO_KEEP (spec §5)."""
         self._undo[token] = effects
         while len(self._undo) > UNDO_KEEP:
-            self._undo.popitem(last=False)
+            gone, _ = self._undo.popitem(last=False)
+            self._dropped[gone] = None
+        while len(self._dropped) > DROPPED_UNDO_KEPT:
+            self._dropped.popitem(last=False)
 
     async def _prepass(
         self, targets: tuple[str, ...], make: Callable[[str, frozenset[str]], Op]

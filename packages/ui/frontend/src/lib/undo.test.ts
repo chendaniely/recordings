@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { TagRequest, TagResult } from "../types";
 import type { Origin } from "./queue";
 import {
-  ALREADY_UNDONE, GONE, NO_UNDOS, UNDO_GONE, UNDO_STACK, busyTokens, cellsClosed, heardUndo, isRedo, mergesIntoCells,
+  ALREADY_UNDONE, GONE, NO_UNDOS, UNDO_GONE, UNDO_LIMIT, UNDO_STACK, busyTokens, cellsClosed, heardUndo, isRedo, mergesIntoCells,
   nextCellUndo, nextUndo, usedUp, type Undos,
 } from "./undo";
 
@@ -58,7 +58,7 @@ describe("Cmd/Ctrl+Z's stack (spec §6; plan decision 7)", () => {
   });
   it("drops a token the server no longer has, so Cmd-Z never sticks on it", () => {
     const u = did(did(NO_UNDOS, "t1"), "t2");
-    for (const message of [ALREADY_UNDONE, UNDO_GONE]) {
+    for (const message of [ALREADY_UNDONE, UNDO_GONE, UNDO_LIMIT]) {
       const r = reply({ status: "failed", changed: 0, message });
       expect(heardUndo(u, undoOf("t2"), { kind: "undo" }, r).stack).toEqual(["t1"]);
     }
@@ -83,6 +83,7 @@ describe("Cmd/Ctrl+Z's stack (spec §6; plan decision 7)", () => {
     expect(usedUp(reply({}))).toBe(true);
     expect(usedUp(reply({ failures: [{ id: "x", reason: "the file doesn't validate" }] }))).toBe(false);
     expect(usedUp(reply({ status: "failed", message: ALREADY_UNDONE }))).toBe(true);
+    expect(usedUp(reply({ status: "failed", message: UNDO_LIMIT }))).toBe(true);
     expect(usedUp(reply({ status: "failed", message: "Stopped: a disk error" }))).toBe(false);
   });
 });
