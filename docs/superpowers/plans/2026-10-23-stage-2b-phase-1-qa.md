@@ -41,7 +41,10 @@ and from Phase 2 that recording would be downloaded.
   only comes from a hand edit.
 - C. Join the pieces and read it as the ID.
 
-Waiting for Dan's answer.
+Dan first asked "i'm confused what is happening here? do we have a format or someting?"; after the
+consent list's format and the broken line were shown, he chose **"Stop and tell me"**, option A,
+the recommended one, with no further reason given. It is the spec's decision 12 (§12.1 rule 4
+widened); Task 3 builds it.
 
 ## Calls made for Dan
 

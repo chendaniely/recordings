@@ -150,6 +150,12 @@ He gave no further reasons, so the reasons below come from the options as they w
 _Decisions 10 and 11 change how decisions 4, 5, 8 and 9 are carried out. Where they differ, 10 and
 11 hold._
 
+12. **A consent-list ID split by a space or a line wrap: "Stop and tell me"** (recommended; asked
+    2026-10-24, after the plan council found the gap). A line whose text before the dash is only hex
+    digits (spaces, backticks and `of_` aside), 8 or more of them, and isn't one whole ID is a typo
+    (§12.1, rule 4): downloads stop and Status names the line, as for any typo. An odd line such as
+    `- 20261023 — asked` stops too, until it's reworded.
+
 ## 2. Your days with 2b
 
 Each journey says what Dan does, what he sees, and what happens when it goes wrong. The Add page's
@@ -1404,7 +1410,10 @@ is a separate piece of work, and the thresholds are constants, not settings.
   3. **A comment:** a line starting `#`. Ignored.
   4. **A typo:** a line whose first word (after the bullet and backtick) holds 24 or more hex digits,
      with or without `of_`, but isn't a valid ID (31 or 33 hex digits, or a non-hex character among
-     them). It fails closed (P8): the list is unreadable.
+     them); or (decision 12) a line whose text before the dash, or the whole line when it has no
+     dash, is only hex digits once spaces, backticks and `of_` are set aside, 8 or more of them, and
+     isn't one whole ID (an ID split by a space, or wrapped over two lines). It fails closed (P8):
+     the list is unreadable.
 
   Every line that holds an ID but isn't an exclusion (a kept line, an ID in a sentence, or an ID
   after a `+` or `1.` bullet, which today's parser doesn't read either) is listed by line number by
@@ -3075,3 +3084,5 @@ None: every bullet of §20 is planned in a phase.
 - 2026-10-23: Dan's decision 11, the edit breaker: "Accept on Status" (`8016ed3`).
 - 2026-10-23: spec approved; 2b split into three phases by the spikes (committed with Phase 1's
   plan).
+- 2026-10-24: Dan's decision 12, a consent-list ID split by a space or a line wrap: "Stop and tell
+  me" (§12.1 rule 4 widened; Phase 1, Task 3).
