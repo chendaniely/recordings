@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 1: Project tooling, open.
+**Now:** Task 2: Decision 7's wording, and what approving the spec changes, open.
 
 ***
 
@@ -203,9 +203,9 @@ Dan's standing preferences ask for `make help`; the template's mechanical checks
   - `make check` = `lint test test-utc leaks`. `make test-utc` = `TZ=UTC uv run pytest`. `make leaks` = `gitleaks git --redact --no-banner .`
   - `uv run --script scripts/commitmsg.py <message file>`: exit 0, 1 (problems, each printed), 2 (usage). Its header docstring says "copied from Dan's plan-driven-development skill", unchanged otherwise but for ruff's formatting. `problems(message: str) -> list[str]` as in the skill.
 
-- [ ] **Step 0: Record the base:** `mkdir -p .superpowers/sdd/2026-10-23-stage-2b-phase-1 && git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-1-base`
+- [x] **Step 0: Record the base:** `mkdir -p .superpowers/sdd/2026-10-23-stage-2b-phase-1 && git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-1-base`
 
-- [ ] **Step 1: Copy the commit-message check.** Copy `scripts/commitmsg.py` from Dan's plan-driven-development skill (the controller gives its location at dispatch; write that path nowhere) to `scripts/commitmsg.py`, then make three changes, none of which touches its logic: the origin paragraph at the end of its docstring; `# noqa: PERF401` on the `found.append` in the headings loop; `# noqa: E501` on the long "refused" string. This repo's ruff rule set (`pyproject.toml`) flags those two lines, and the copy keeps the skill's code as it is. Its refusal line points to "AGENTS.md, Commits", which this repo doesn't have: that text stays verbatim too, and here the commit format is this plan's *The commit format* and CLAUDE.md's Toolchain line (Step 5). Then run `uv run ruff format scripts/commitmsg.py` and `uv run ruff check scripts/commitmsg.py` (expected: `All checks passed!`). The result is exactly this file:
+- [x] **Step 1: Copy the commit-message check.** Copy `scripts/commitmsg.py` from Dan's plan-driven-development skill (the controller gives its location at dispatch; write that path nowhere) to `scripts/commitmsg.py`, then make three changes, none of which touches its logic: the origin paragraph at the end of its docstring; `# noqa: PERF401` on the `found.append` in the headings loop; `# noqa: E501` on the long "refused" string. This repo's ruff rule set (`pyproject.toml`) flags those two lines, and the copy keeps the skill's code as it is. Its refusal line points to "AGENTS.md, Commits", which this repo doesn't have: that text stays verbatim too, and here the commit format is this plan's *The commit format* and CLAUDE.md's Toolchain line (Step 5). Then run `uv run ruff format scripts/commitmsg.py` and `uv run ruff check scripts/commitmsg.py` (expected: `All checks passed!`). The result is exactly this file:
 
 ```python
 #!/usr/bin/env -S uv run --script
@@ -317,7 +317,7 @@ if __name__ == "__main__":
 
 Check it on a message: write `chore(repo): 🤖 x` to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt` and run `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt; echo $?`. Expected: `0`.
 
-- [ ] **Step 2: Commit the copy,** checked by itself. Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 2: Commit the copy,** checked by itself. Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 chore(repo): 🤖 copy the commit-message check from the plan-driven-development skill
@@ -334,7 +334,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add scripts/commitmsg.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 3: Write the failing tests,** `packages/core/tests/test_repo_tools.py` (the script is loaded by path with `importlib.util.spec_from_file_location`, as `test_rangeserver.py` loads its script):
+- [x] **Step 3: Write the failing tests,** `packages/core/tests/test_repo_tools.py` (the script is loaded by path with `importlib.util.spec_from_file_location`, as `test_rangeserver.py` loads its script):
 
 ```python
 """The repo's own tools: the commit-message check (`scripts/commitmsg.py`, copied from Dan's
@@ -426,9 +426,9 @@ def test_make_check_runs_lint_the_suites_utc_and_leaks():
     assert "gitleaks git --redact --no-banner ." in out
 ```
 
-- [ ] **Step 4: Run them; watch the Makefile ones fail.** `uv run pytest packages/core/tests/test_repo_tools.py -q`. Expected: `2 failed, 4 passed`. The two `make` tests fail with `AssertionError: make: *** No rule to make target `help'.  Stop.` and the same for `check` (GNU make 4 quotes the target as `'help'`); the four commit-message tests pass, because Step 1 copied the script.
+- [x] **Step 4: Run them; watch the Makefile ones fail.** `uv run pytest packages/core/tests/test_repo_tools.py -q`. Expected: `2 failed, 4 passed`. The two `make` tests fail with `AssertionError: make: *** No rule to make target `help'.  Stop.` and the same for `check` (GNU make 4 quotes the target as `'help'`); the four commit-message tests pass, because Step 1 copied the script.
 
-- [ ] **Step 5: Write the code.** Replace the whole `Makefile` with this one: `help` first (so a bare `make` lists the targets), `check`, `test-utc` and `leaks`, a `## ` line on every target, and every target in `.PHONY`. GNU make 3.81 only: `help` is a `grep` and an `awk` over `$(MAKEFILE_LIST)`. Recipe lines start with a tab.
+- [x] **Step 5: Write the code.** Replace the whole `Makefile` with this one: `help` first (so a bare `make` lists the targets), `check`, `test-utc` and `leaks`, a `## ` line on every target, and every target in `.PHONY`. GNU make 3.81 only: `help` is a `grep` and an `awk` over `$(MAKEFILE_LIST)`. Recipe lines start with a tab.
 
 ```make
 # Each recipe line runs in its own shell, so nvm is loaded per line when it exists.
@@ -563,11 +563,11 @@ with
   plan-driven-development skill), then `git commit -F <file>`.
 ```
 
-- [ ] **Step 6: Run it; it passes.** `uv run pytest packages/core/tests/test_repo_tools.py -q`. Expected: `6 passed`. `make help` prints one line per target, `help` first and `restic` last.
+- [x] **Step 6: Run it; it passes.** `uv run pytest packages/core/tests/test_repo_tools.py -q`. Expected: `6 passed`. `make help` prints one line per target, `help` first and `restic` last.
 
-- [ ] **Step 7: Run the checks.** `uv run ruff format .`, then `make check`. Expected: lint clean, pytest and Vitest pass, the Python suite passes again under `TZ=UTC`, and gitleaks ends with `no leaks found`.
+- [x] **Step 7: Run the checks.** `uv run ruff format .`, then `make check`. Expected: lint clean, pytest and Vitest pass, the Python suite passes again under `TZ=UTC`, and gitleaks ends with `no leaks found`.
 
-- [ ] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 build(make): 🤖 make help, make check, test-utc and leaks
@@ -585,7 +585,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add Makefile CLAUDE.md packages/core/tests/test_repo_tools.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 9: Review, look forward, close.** The controller runs the Tier 3 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 9: Review, look forward, close.** The controller runs the Tier 3 review (the template's *Reviews*), the forward review and the close commit.
 
 ### Task 2: Decision 7's wording, and what approving the spec changes
 
