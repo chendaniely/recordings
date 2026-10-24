@@ -744,3 +744,275 @@ HTTP fallback".
 - The canned view JSON has exactly the keys of `_empty_sync` (21) and `_empty_panel` (11), and its IDs
   fit `of_0{24}[0-9a-f]{8}`.
 - `test_a_release_preview_reply_carries_its_title...` is the one that cannot pass (BD1).
+
+
+# The re-review (2026-10-24)
+
+After the controller ruled every finding, Dan answered S2 (his decision 12) and four writers applied
+the rulings, three read-only re-reviewers read the plan at `8a67aae`: X checked that the G, P, M and
+BD findings landed, and looked at what changed for Dan; Y did the same for R, S, BA, BB and BC, with
+the security checklist over the change; Z applied the whole plan to a fresh copy of the repo, task by
+task, and checked every seam between tasks. Their reports follow verbatim, apart from scratch-folder
+names; the last fix round's commit says what became of each finding.
+
+## Re-review X: did G, P, M and BD land? (plan at `8a67aae`)
+
+All 46 findings checked against their rulings. **37 landed fine.**
+
+### Important
+
+**X1. G3 landed wrong in runbook 1c** (Task 5 Step 5, Session A step 3).
+- The text: "let the CLI refresh there … If the Mac's refresh works, stop: that is S2's 'refused from the server's address'. If the Mac is refused too, the request isn't the CLI's."
+- Why it's wrong: the CLI's refresh differs from the script's in both request and address, so a malformed script request still reaches §18's "the design fails", G3's own failure (`_refused`'s docstring: "An OAuth error code usually means the request isn't the one Plaud expects"). The second branch doesn't follow either.
+- **Fix:** first compare the CLI's grant, `client_id`, content type and headers (step 1 read them) with `_refresh_fields` and `_post_form`.
+  - They differ: the script needs a new commit, which is not a design failure.
+  - They match and the Mac refreshes: that is "refused from the server's address".
+  - The Mac is refused too: stop and ask Dan.
+
+**X2. P4 landed partly** (Tasks 8, 13 and 19).
+- What works: the blocker opens with `{"error": <class>}`.
+- What doesn't: no view reads that detail.
+  - The summary is `BLOCKER_PHRASES`' "should be private: run `recordings reindex`" (plan line ~11709).
+  - Needs attention has no line: `_panel_from`'s `late` covers flags only.
+  - On a full or read-only disk that sends Dan to reindex, which fails the same way. The class never shows.
+- The new per-recording `OSError`, `sqlite3.Error` and `ValueError` cases read "its file was edited outside the app" (lines 8145, 19566).
+- No view test covers either.
+- **Fix:** Task 19 reads `error` and shows "Late consent listings couldn't be written (`OSError`): check the disk and state.db (runbook)" in the summary and Needs attention. Flags carry their cause, and the sentence follows it. Add a test.
+
+**X3. Section 6 never moves `$REPO_DIR` to Phase 1's commit** (Task 17 Step 6).
+- Step 5 is `cd "$REPO_DIR"; make deploy`, and step 3 relies on "the template has both lines", which exists only at the new commit.
+- Followed literally, it redeploys 2a. **Fix:** a first step, `git -C "$REPO_DIR" fetch && git -C "$REPO_DIR" checkout <Phase 1's merge commit>`, plus a `test_runbook.py` assertion.
+
+**X4. Task 25 Step 10 isn't true to Phase 1.**
+- "From the Mac" is wrong: section 6 runs on the server.
+- "Late consent listings, the auto-private marker and Keep it here run … within seconds of the deploy": only late consent listings do. The marker runs only inside reconcile, the first pattern version runs no pass (`patterns_pass`: "The first version needs none"), and Keep it here has nothing to answer until a reconcile raises a flag.
+- **Fix:** reword to "on the homelab server", and list those real gains.
+
+**X5. The Phase 1 screens state numbers nothing has measured** (Tasks 21 and 22).
+- The disabled buttons ("Comes with the next part of stage 2b.", once per section) are plain and honest. But the Sync screen reads:
+  - "No listing yet: Compare reads one.", with Compare off;
+  - "Nothing is waiting." and "Import all 0";
+  - "Nothing is kept out.", beside a consent count of N IDs;
+  - "Gone from Plaud: 0 · 0 in the last 7 days" and "Parked: 0".
+- Status lists Held, Gone, Failing and Parked as 0, and "Malformed listing rows 0".
+- This lasts until Phase 2's first Compare.
+- **Fix:**
+  - While `equation` is null, one line, "Nothing has been read from Plaud yet.", replaces those four sections.
+  - Show "Compare reads one" only when Compare is live.
+  - Those counts stay null and hidden until their readers exist.
+
+### Minor
+
+**X6. Dead buttons in Details** (Task 23).
+- Every Plaud recording's Details opens with "Plaud: not checked yet" (until Phase 3) and a disabled Re-sync with "Comes with the next part…". Both selection bars spend BD8's phone width on a disabled Re-sync too.
+- Suggest: outside the Sync screen, hide buttons for unhandled kinds, and put the Plaud lines after the existing ones.
+
+**X7. Dan's decision 12: the side effect is acceptable; record it and pin it** (Task 3).
+- Acceptable, so no need to raise it: every line it changes used to read as kept (a download from Phase 2) and now stops the list with its line number. Exclusions and comments are classified first. It is the literal rule Dan chose ("isn't one whole ID"), erring closed (P8).
+- But only writer A's report records it.
+  - It also catches a likelier line: `` - `of_…` 2026-10-23 asked ``.
+  - The typo phrase ("can't be read") will puzzle Dan on a line whose ID is valid.
+- **Fix:**
+  - One sentence in Task 3's precedence text.
+  - Pin tests: two IDs on a line, `… added` and `… 2026-10-23`.
+  - A runbook hint: "put a dash after the ID".
+
+**X8. G9 partly:** the words landed, but not the count. The patterns pass runs under `idle`, so Status says "(idle)" throughout. §15.2 asks for "(checking, 412 of 1,234)".
+
+**X9. Leftovers.**
+- The phase-end list lacks P6 and P8; the outline has them.
+- Its Task 12 row puts `Writer.add_snapshot` in Phase 2, but decision 29 and Phase 3's outline say Phase 3.
+- Decision 56 says "views carry no Plaud title", but `_updated` sends titles, and decision 57 exists because one leaked.
+- `consent-add.sh`'s header still reads `ID=<id>`, unquoted (line 17733).
+- In 1c, the temporary `HOME`s of steps 3 and 5 keep live sign-ins on the Mac, and nothing deletes them.
+- The ruling's "or `audio-router`" as a source for the token URL is missing.
+
+**The dispatch's questions:** the screens are honest about their buttons but not their empty data (X5, X6). Runbook 1c can be followed without guessing except step 3's branch (X1). Deploying Phase 1: X3 and X4. Decision 12: X7.
+
+**Counts:** Critical 0 · Important 5 · Minor 4. Landed fine: 37 of 46.
+
+## Re-review Y: did R, S, BA, BB and BC land? (plan at `8a67aae`)
+
+I checked all 50 findings against their rulings, the task bodies and the real code. The Critical's core holds:
+- `Writer._load_fresh` raises `PermissionError` for a folder it can't enter (writer.py:520–523), so Task 8's locked-out case lands in `unwritten`.
+- `private-unwritten` has its own unique index (plan 6641), so an open `consent-late` flag doesn't block it.
+- `_owed_private` is its own step (13399).
+- A failed pass opens the blocker with its class, logged once (13471–13475, 13521).
+- The tests at 8433–8464 and 12906–12934 would fail if any of this broke.
+
+**47 of 50 landed fine.** R1 landed partly (Y1, Y2, Y4), R2 has a new window (Y3), and S11 only partly (Y5).
+
+### Important
+
+**Y1. Late consent's new failure causes show the wrong remedy, and a failed pass's class is never shown** (R1/P4; Task 8 Step 3, Task 13 Step 3, Task 19).
+- `UNWRITTEN` now covers a folder it can't enter, a full disk, a busy state.db and a file that doesn't decode (8645). `_owed_private` flags each one with only `{"owed": "consent"}` (13511–13517).
+- Every one of those flags shows "…its file was edited outside the app: run `recordings reindex`" (19566–19567, 8636).
+- A failure of the whole pass writes `{"error": <class>}` (13522). Task 19 never reads a blocker's detail, so Status shows only "should be private: run `recordings reindex`" (11709), with no recording ID. No view test covers it (18478 seeds a flag only).
+- Effect: for a full disk, the wrong owner or an invalid file (writer.py:530: "Fix it by hand"), Dan is told to run a command that can't help. The cause is only in the worker's log.
+- **Fix:**
+  - Carry each recording's class into its flag's detail.
+  - Keep §13.2's sentence for `StaleFile`; word the others "couldn't be written (`PermissionError`): see `rc logs worker` (runbook)".
+  - Word a blocker with `{"error"}` and no flag as "Late consent listings failed (`OSError`): see `rc logs worker`", as a failed start already is (19505–19508).
+  - Add a view test for each, and say in the commit what wording §16's table gains.
+
+### Minor
+
+**Y2. `_still_owed` reads a folder it can't enter as "gone"** (R1/R3, 13535–13537).
+- On Python 3.14.3 (probed), `Path.is_file()` is False for a file in a mode-000 folder that exists. So `Archive.load` raises `KeyError` (archive.py:105), and the flag resolves as "nothing owed".
+- This runs on any tick where the recording isn't in `unwritten`: a failed pass, or an index that can't answer. The blocker clears if it was the only flag, and the next good pass opens a new flag with a new `since`.
+- Writer B flagged this trap to Writer C (FIX-B report); it wasn't applied.
+- **Fix:** `except KeyError: return self.writer.archive.path_for(rid).exists()`, and a test through a failed pass.
+
+**Y3. After a crash loop, the start that works reads STUCK** (R2, Task 13 Step 3).
+- After more than 30 minutes of failures, the next start inherits the first failure's `starting_since` (13203–13211), so its first heartbeat says STUCK.
+- `start()` turns `idle` without writing a heartbeat (13294), so STUCK lasts the whole start plus up to 30 s.
+- Redeploying a fix whose `Writer.open` rebuilds the index can then fail `make deploy --wait` (`start_period: 60s`), and Status calls a healthy worker stuck.
+- The test writes its own heartbeat (12686), so it can't see this.
+- **Fix:** `self._beat()` right after the idle bump, and a test that checks `alive` straight after `start()`.
+
+**Y4. An index that can't answer silently stops every late consent listing** (R1/P4).
+- `_listed_here` returns `([], True)` (8686–8687, 8694–8696) and the pass returns normally, so `_late_failed` stays None: no blocker and no Status line.
+- "Shown" (8595) means only the worker's log (13483) and `plaud consent` (9065).
+- **Fix:** treat an unavailable index that lasts more than a minute like a failed pass (blocker detail `{"index": "unavailable"}`), with a test.
+
+**Y5. S11 is missing from the Phase 2 outline.** The phase-end row (24316) says "open: Phase 2's outline", but no outline bullet (24282–24296) carries the mtime-a-tick-old rule. Phase end step 5 rewrites the outlines from their bullets, so it could drop. **Fix:** add it to the import bullet.
+
+Also sound:
+- **R6, BA1, BA5:** both WAL tests fail before the code.
+- **R10:** flock between threads, so its test can fail.
+- **S2:** decision 12 is implemented literally; it also stops "`ID` added", by the rule's own words.
+
+### Security checklist (0b3cefe..8a67aae)
+
+1. **Secrets:** fine.
+   - `K_CONSENT` holds a count, not IDs.
+   - The spike's `client_id` goes only into the https refresh POST, and only key names are printed.
+   - `s9-last.json`'s whole ID stays in the 0700 folder, never printed.
+2. **Permissions:** fine.
+   - `/consent` is read-only in `worker` and `backup`; the spike folder is 0700.
+   - The spike clone holds code only and is deleted after each session.
+   - `consent-add.sh` keeps the list's mode.
+3. **Network exposure:** fine.
+   - No new port. S7 adds one `files/{id}` GET per recording, in Dan's sessions only.
+   - Tests can't reach Plaud: the getaddrinfo guard, plus proxies dropped, with a test.
+4. **Failing closed:** see Y1, Y2 and Y4. Otherwise fine:
+   - Split IDs stop the list.
+   - The guard refuses before any call, and `web` refuses unhandled kinds before writing a row.
+   - `submit` answers NOT_SAVED within 1 s.
+   - Minor: `_enforced_words` gives none when `[state] path` names no state.db, though the deployment's word still applies.
+5. **Injection:** fine.
+   - make takes `ID` literally (`$(value ID)`, read as `"$$ID"`), and only validated hex reaches the ssh line.
+   - SQL is parameterised.
+6. **Logging:** new lines carry IDs, counts and class names.
+   - Residual, from before this diff: `run()` re-raises after `_start_failed`, so an exception class outside `main`'s three exits with a traceback that carries its text.
+   - Fix: catch `Exception` last in `main`, print the class, return 1.
+
+**Counts:** Critical 0, Important 1, Minor 4 (47 of 50 landed fine).
+
+## Re-review Z: the builder's cross-task check (plan at `8a67aae`)
+
+### How I checked
+
+I applied the whole plan, in task order, to one fresh copy (a scratch copy, from
+`git archive HEAD`). No task used a stand-in.
+
+- **Tasks 1–6:** Writer A's applier, 117 edits, 0 failed.
+- **Tasks 7–12:** Writer B's builder. I changed it to read each edited file from the tree as the
+  earlier tasks leave it, not from the worktree.
+- **Tasks 13–18:** my own appliers, run on the plan's blocks.
+- **Tasks 19–24:** Writer D's appliers, pointed at my tree. `verify_blocks.py` confirms their 26
+  block files equal the plan's.
+
+Every before-text matched the file the earlier tasks leave, in Makefile, CLAUDE.md, README, the
+runbook, `worker.py`, `cli.py`, `doctor.py`, `writer.py`, `recordings_ui/plaud.py` and
+`app.css`. The only edits that didn't apply by machine are Task 18 Step 9's section 4 block,
+which elides lines with "…" on purpose; its visible lines match. Task 17 Step 1 has prose-only
+edits (`import json` and the unit's `Description=` line), which I made by hand.
+
+After one fix (Z1), the results:
+
+- ruff check and format are clean.
+- The whole Python suite: `1761 passed, 3 skipped` (e2e and pages deselected).
+- The seam files pass again under `TZ=America/Vancouver` and `TZ=UTC`.
+- `tsc --noEmit` is clean on my own frontend copy with Tasks 19–24.
+- Each step's expected test count holds: 25, 10, 9, 3, 17 and 5.
+
+Further checks:
+
+- I dumped `sync_view`, `sync_panel`, `arrivals`, `recording_plaud`, Status's `sync` and the
+  canned `demo_view` from a real scene. Their keys equal `types.ts`'s interfaces, nested ones too.
+- Every name a head's Produces block declares exists in its module.
+- Every `module.name` in a Consumes line exists.
+- For Tasks 15–24, the files each task changes equal its `git add` paths. I diffed per-task
+  snapshots, and the frontend per task. For Tasks 1–14, the Files lists match the `git add`
+  lines.
+
+I didn't run `make e2e`, `make pages-test`, Vitest (it would write a cache into the worktree's
+`node_modules`), gitleaks or the Docker smoke.
+
+### Important
+
+**Z1. Task 19 Step 4's import block drops `HANDLED` and `NOT_YET`, so Task 14's checks raise
+`NameError`.**
+- **Where:** plan lines 18905–18913 (Task 19 Step 4).
+- **Evidence:** Step 4 says "Replace Task 14's import block with this one", and Task 14's
+  imports "stay". But its `from recordings.plaud.requests import (…)` lists only `KINDS`,
+  `MAX_PLAUD_ID_LEN`, `MAX_PLAUD_IDS`, `MAX_RESYNC_IDS`, `REQUEST_ID_RE`, `PlaudRequest` and
+  `Reply`. Task 14's block (lines 14876–14886) also has `HANDLED` and `NOT_YET`, and its
+  `check_request` and `submit` use them bare: `if kind not in HANDLED:` and
+  `checked.message == NOT_YET`.
+- **Result, as built:**
+  - ruff F821 ×3, so `make check` fails.
+  - `NameError: name 'HANDLED' is not defined` fails 8 of the 9 tests in
+    `test_plaud_requests_ui.py`, and Task 19's
+    `test_calling_the_views_and_submitting_a_request_loads_no_plaud_client`.
+  - Every browser request would raise inside `check_request`.
+- **Why the writers missed it:** Writer D's `base.py` stood Task 14 in, with its own import list.
+  Task 20 doesn't touch this import, so the gap carries to the end of the phase.
+- **Fix:** add `HANDLED,` before `KINDS,` and `NOT_YET,` after `MAX_RESYNC_IDS,` in Task 19's
+  block. With that one change, everything above passes.
+
+### Minor
+
+**Z2. Task 13's `private-unwritten` blocker detail `{"error": <class>}` (P4) reaches no screen,
+and the advice it gets can be wrong.**
+- **Where:** Task 13 Step 3 `_owed_private`; Task 19 Step 4 `_panel_from` and `summary_view`.
+- **Evidence:**
+  - Task 19 builds Needs attention from open flags only.
+  - `sync_health` keeps only each blocker's `since`, and no view reads `blocker:private-unwritten`.
+  - So a late consent pass that fails as a whole shows only the summary "Should be private: run
+    `recordings reindex`", with nothing in Needs attention. The class is only in the log.
+  - Since R1, `unwritten` also covers `OSError` and `sqlite3.Error` (full disk, a folder it can't
+    enter, a busy `state.db`). Each such recording gets the flag line "its file was edited outside
+    the app: run `recordings reindex`", which reindex won't fix.
+- **Fix:** in Task 19, when the blocker's detail has `error`, add one fixed Needs attention line,
+  for example "Late consent listings failed (`<Class>`): see `rc logs worker`". Or name the gap
+  in the phase-end list. Dan is "told plainly why".
+
+**Z3. The heads disagree on when the worker reads the gate.**
+- Decision 42 and Task 12's Interfaces (plan line 12098) say Task 13 calls `gate_now` "at every
+  tick while the last turn's outcome was 'gate'".
+- Task 13's head and code (`_turn_if_due`) read it at every tick, unconditionally.
+- The behaviour is fine; the text should be fixed.
+- **Fix:** Task 12's line and decision 42 say "at every tick", as Task 13 does.
+
+**Z4. The file map lists `demo/plaud-sync.json (19, 24)`, but only Task 19 writes it.** Task 24
+copies and reads it, and stages it nowhere, which is correct. **Fix:** `(19)`.
+
+### Checked clean (no finding)
+
+- **The gate:** `gate_now`, `Gate(open, reason)`, `GATE_FIRST`, `GATE_REFUSAL` and
+  `GATE_ALLOWED` in Tasks 13, 14 and 19. Task 11's `cause()` reads the gate turn's
+  `{"reason"}`.
+- **Requests:** `requests.HANDLED`, `NOT_YET`, `refuse` and `FINAL_STATES`, which includes
+  `refused` on both sides.
+- **Time:** `when.parse_stamp` and `local_hhmm` in Tasks 8, 11, 13, 14 and 19.
+- **`K_CONSENT`:** Task 13 writes `count`, and Tasks 8 and 19 read `count` and `read_at`.
+- **The heartbeat:** `starting_since` and `failed`, with `error`, as Task 19 reads them.
+- **The rest:** `models.fold` and `keepout`; `set_listing`; `apply_late_consent` and
+  `LateReport`; `patterns_pass(progress=)`; the one-argument `why_phrase(why)`; the deploy
+  guard's job names against `runlock.JOBS`; the smoke's doctor phrases.
+- **Names removed by decision 44:** outside the decisions, the Phase 2 outline and Task 2, they
+  appear only in sentences that say they moved.
+
+**Counts: 0 Critical, 1 Important, 3 Minor.**
