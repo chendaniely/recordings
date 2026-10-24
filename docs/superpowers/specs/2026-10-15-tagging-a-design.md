@@ -22,6 +22,10 @@ spec.
 - So the code can ship before 2b. When to start tagging the real archive is Dan's call: after
   2b's spikes and `sync --dry-run`, or earlier, knowing that a rollback by re-import loses the
   tags. The runbook says so (§10).
+- **Decided 2026-10-23, refining 2026-10-22** (stage 2b's decision 7,
+  `docs/superpowers/specs/2026-10-23-stage-2b-design.md`): the first real tag waits until
+  stage 2b's first real Plaud import and the backup after it, not just its dry run, which only
+  reads. A rollback of that import then loses no tags.
 
 **Done means:**
 - In the Tags grid, with Untagged only, hundreds of recordings can be tagged in minutes, by

@@ -132,8 +132,12 @@ smoke test on purpose until someone does the steps below:
 - **Privacy:** a recording is private if a tag is `private` or under `private/`, in any
   capitalisation, read after NFKC and without invisible characters, a fullwidth `／`
   counting as `/` (`recordings.models.is_private_tag`). The private tag lands before any source or
-  output does. Don't read a private recording's transcript or notes. No report, alert or log
-  carries a title.
+  output does, judged on every title the app has seen at that moment. One deliberate exception
+  (stage 2b, Dan, 2026-10-23): a Plaud recording renamed to a private title, or to the keep-out
+  word, after it came in is tagged `private` at the next sync, so its source and outputs landed
+  first. Until then it carries whatever tags Dan gave it; with none, external agents already
+  treat it as private. Don't read a private recording's transcript or notes. No report, alert or
+  log carries a title.
 - **Tag changes from the app go through `recordings.tagops`** (`AddTags`, `RemoveTags`, `RestoreTags`),
   applied by `Writer.mutate` on the tag service's one writer thread
   (`recordings_ui/tagging.py`, `writing.py`). The privacy gate is inside the operations: a

@@ -68,8 +68,11 @@ The repo holds two Python packages:
 - Early in brainstorming the app was going to write to Obsidian vaults and push to course
   repos. **It now writes only to its own archive.** Other tools read from it (§10).
 - `audio-router`'s held status and protected-word import check are **replaced by private
-  tags** (§7.4). Its consent list ("never mirror") and its grace period for placeholder
-  titles carry over unchanged (§9.1; Dan, 2026-10-08).
+  tags** (§7.4). Its consent list ("never mirror") carries over (§9.1; Dan, 2026-10-08). Its
+  grace period for placeholder titles no longer does: a new recording comes in at the next
+  sync, placeholder title and all, and a later private title is tagged at the sync after the
+  rename (Dan, 2026-10-23: stage 2b's decision 1,
+  `docs/superpowers/specs/2026-10-23-stage-2b-design.md`).
 
 ## 3. Architecture
 
@@ -83,6 +86,8 @@ The repo holds two Python packages:
             │                              │                │                                    │
             │                    state.db + index.db    archive (local disk) ◀── source of truth │
             │                    (local disk)           recordings/ catalog/ tags.yaml …         │
+            │                                                 │ (the archive, mounted read-only) │
+            │                   backup: `recordings ops --loop` (restic, the mirror, checks)     │
             │                                                 │ hourly restic (one-way, versioned)│
             └──────────────────────────────┬──────────────────┼───────────────────────────────────┘
                                            │                  ▼
@@ -92,8 +97,10 @@ The repo holds two Python packages:
                                 DGX Spark: whisper · llama-swap · pyannote      Claude (Max plan)
 ```
 
-- **One image, two containers.** `web` runs `recordings-ui` and `worker` runs
-  `recordings worker`. Long jobs never slow down the UI.
+- **One image, three containers** (stage 2b design, 2026-10-23; the diagram gains `backup`).
+  `web` runs `recordings-ui`, `backup` runs the backup loop (`recordings ops --loop`: backups,
+  the mirror and the checks, §15.1), and `worker` runs `recordings worker`: the Plaud sync from
+  stage 2b, the processing queue from stage 4. Long jobs never slow down the UI.
 - **The archive is the source of truth.** It lives on the **homelab server's own disk** (decided
   2026-10-08), at `/srv/recordings/archive`, and is written first.
   - **Why not the NAS:** writing over an NFS or SMB mount works for one writer, but a
@@ -117,6 +124,10 @@ The repo holds two Python packages:
     write on any machine other than the one named in config. The writer's identity comes
     from config or `state/`, never from the host name, because container host names don't
     match the server's.
+  - **One writer means one machine** (stage 2b design, 2026-10-23). Several of its processes
+    (`web`, `worker`, the CLI) may each hold one `Writer`: they share the per-file locks,
+    `state.db` and the index, so their writes never race (stage 2b §9.1). This settles "all
+    writes in the worker" against tagging part A, whose tags `web`'s own `Writer` writes.
   - **The Mac is a client.** Dan uses the UI in a browser over Tailscale. Anything the Mac
     or an agent on it wants done goes to the app, through the JSON API or
     `recordings --remote <url> …`, and **runs on the homelab server**.
@@ -217,8 +228,8 @@ recordings/                      (repo root, uv workspace, MIT)
   reading `.env` files. The Docker template was `docker/deploy.example.env`, which broke
   that rule; stage 2a renamed it (§20). An environment variable beats `config.toml`. Demo
   mode reads none of the three.
-- **Machine config** (`config.toml`) is mounted read-only into both containers at
-  `/config/config.toml`. It holds:
+- **Machine config** (`config.toml`) is mounted read-only into every container at
+  `/config/config.toml` (stage 2b design, 2026-10-23). It holds:
   - the archive path
   - `[state] path`, the state folder (`/srv/recordings/state`; §6.8)
   - the writer ID, `[archive] writer_id` (the homelab server; §3, §6.7)
@@ -228,9 +239,12 @@ recordings/                      (repo root, uv workspace, MIT)
     `local` flag (§8.4)
   - `[privacy] local_hosts`, the only hosts a `local = true` entry may point at (§8.4)
   - extra prompt folders beyond `prompts/`
-  - auto-private title patterns
-  - the Plaud schedule and `full_sweep_days` (§9.1.1)
-  - `[plaud] consent_list`, the path to Dan's consent list (§9.1)
+  - `[plaud]` (stage 2b design, 2026-10-23; stage 2b §17.4): `schedule_minutes` (20; 0 is
+    off), `auto_import` (true), `full_sweep_days` (1 in the template while relabelling, 7 when
+    unset; §9.1.1), `keep_out_word` (`noarchive`), `auto_private_patterns` (§7.4),
+    `consent_list` (inside the consent folder, `/consent/consent-list.md`; unset is a consent
+    stop, §9.1), `token_store` (`/plaud/tokens.json`) and `api_base` (the copied client's
+    host; tests set a fake). `recheck_days` is gone: the rolling sweep replaced its hot window.
   - `[disk] warn_free_percent` (20) and `stop_free_percent` (5), the disk guard's thresholds
     (§12.5); stop must be below warn
   - `[nas] ssh` and `port`: the NAS account over SSH (§15.1)
@@ -244,9 +258,10 @@ recordings/                      (repo root, uv workspace, MIT)
   - the app base URL (used for links back into the app)
 - **Secrets are passed by reference only**, as environment variables or Docker secrets.
   In Docker they are secret files, so they never show in `docker inspect`:
-  - **the Plaud token store,** `state/plaud/tokens.json` (stage 2b). It isn't a static
-    secret: the worker refreshes it, so it is a writable file (mode 0600), not a Docker
-    secret, and it is never backed up (§9.1).
+  - **the Plaud token store** (stage 2b design, 2026-10-23): `tokens.json` in its own host
+    folder (`RECORDINGS_PLAUD_HOST`, `/srv/recordings/plaud`, 0700), mounted read-write in
+    `worker` only, at `/plaud`; never backed up or mirrored. It isn't a static secret: the
+    worker refreshes it, so it is a writable file (mode 0600), not a Docker secret (§9.1).
   - `RECORDINGS_SPARK_API_KEY`, this app's llama-swap key (stage 4)
   - `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, lasting a year (stage 4)
   - `RESTIC_PASSWORD`, the backup repository key (stage 2a). Keep a copy in your password
@@ -265,6 +280,8 @@ recordings/                      (repo root, uv workspace, MIT)
   - an ntfy access token, `RECORDINGS_NTFY_TOKEN`, only for a self-hosted server that needs
     login (stage 2a; §14)
   - the dead-man's switch ping URL, which carries its own token (stage 2a; §14)
+  - the Plaud sync's own dead-man's ping URL, `RECORDINGS_DEADMAN_SYNC_URL`, mounted in
+    `worker` only and never shared with the backup's (stage 2b; stage 2b design, 2026-10-23)
   - the rest-server password, `RESTIC_REST_PASSWORD`, with its user in `[backup]
     rest_username` (stage 2a; §15.1). A repository URL with a password in it is refused.
   - the local-scope API token for the full view, held only on local machines (stage 3a;
@@ -282,7 +299,9 @@ recordings/                      (repo root, uv workspace, MIT)
   a server that needs one) and `RECORDINGS_FORWARDED_ALLOW_IPS` (§15). `make deploy` adds
   `RECORDINGS_IMAGE_TAG` itself. Rest-server's certificate is a file in the secrets folder
   (`nas_cacert`, empty over the tailnet), not a setting. The backup target is
-  `[backup] repository` in `config.toml`. Stage 5 adds the watched folder path.
+  `[backup] repository` in `config.toml`. Stage 2b adds `RECORDINGS_PLAUD_HOST` (the token's
+  folder) and `RECORDINGS_CONSENT_HOST` (the consent list's folder: a folder, never a file;
+  stage 2b design, 2026-10-23). Stage 5 adds the watched folder path.
 
   No secret appears in the image, the repo, the archive, logs or `--json` output. CI runs
   gitleaks. That holds when a secret is put in the wrong place: a secret's value in its
@@ -301,12 +320,15 @@ recordings/                      (repo root, uv workspace, MIT)
     now). It exits 78 when there is a problem, and 0 otherwise. `--json` prints the report as
     one object. A check that crashes on a setting of the wrong type ends in one line naming
     the check and the exception's type, never its text, and exit 70.
-  - **Roles:** `--role web|backup|all` (else `RECORDINGS_ROLE`, else `all`) says which service
-    it checks. `web` must hold no backup, mirror or alert secret (a problem if it does) and
+  - **Roles:** `--role web|backup|worker|all` (else `RECORDINGS_ROLE`, else `all`) says which
+    service it checks. `web` must hold no backup, mirror or alert secret (a problem if it does) and
     skips the backup, mirror, alert and ssh checks. `backup` has a read-only archive mount, so
     it skips the hard-link probe and the index, and it treats a missing `state.db`, repository
     or mirror as a problem, because without them its loop exits 78. `all`, the default
     outside Docker, checks everything; there a missing `state.db`, repository or mirror is a
+    warning. `worker` (stage 2b design, 2026-10-23; stage 2b §17.2) skips the backup, mirror
+    and ssh checks and restic's secrets. A missing or bad `RECORDINGS_DEADMAN_SYNC_URL` is a
+    problem there, because the sync's check is its only alert, and there is no alerts-off
     warning.
   - **What it checks beyond settings:**
     - the archive's sentinel, and that the archive isn't the NAS mirror's copy (`MIRROR.md`),
@@ -357,7 +379,10 @@ recordings/                      (repo root, uv workspace, MIT)
       20261006T140003-0700_3fa91c2e.mp3          original media, never modified
       20261006T140003-0700_3fa91c2e.audio.m4a    extracted audio (video only)
       my-notes.md                                 Dan's own notes (optional)
-      source/plaud-20261008T143000Z.json          raw source payload, exactly as received
+      source/plaud-20261008T143000Z.json          raw source payload, exactly as received, plus
+                                                  the fetcher's `_meta` stamp and its own
+                                                  `_`-prefixed fields, which are dropped before
+                                                  hashing (stage 2b design, 2026-10-23)
       renditions/                                 outputs, write-once (§6.5)
   trash/                       deleted recording folders, moved here whole
 ```
@@ -446,8 +471,10 @@ compares them in one canonical form (§9.1.1).
     people files, then `tags.yaml`, then content-hash keys (`sha-<hash>`, so two writers can't
     add the same bytes at once), then recordings in sorted-ID order, then anything else (the
     index). Taking an earlier lock while holding a later one is an error, not a wait. Bulk jobs
-    (the import, backups) hold a separate `ops` lock outside this order. A lock is held only
-    by plain, synchronous code: never across an `await`.
+    (the import, backups) hold a separate `ops` lock outside this order. Beside it, the `plaud`
+    lock allows one Plaud sync at a time, taken through its own `Locks` instance and held for
+    one run (stage 2b design, 2026-10-23; stage 2b §9.4). A lock is held only by plain,
+    synchronous code: never across an `await`.
   - **Undo** is the inverse operation, applied through `mutate`.
   - This is what lets the web process, the worker, the CLI and Claude's edits write safely
     side by side. A plain changed-since-read check can be passed by two writers at once.
@@ -456,11 +483,17 @@ compares them in one canonical form (§9.1.1).
   new hashes.
 - **Recordings appear complete or not at all.** A new recording is assembled in a temporary
   folder and moved in only when complete.
+- **A new Plaud snapshot** goes through `Writer.add_snapshot` (stage 2b design, 2026-10-23;
+  stage 2b §9.6): it publishes the snapshot write-once in `source/`, then records it through
+  `mutate`. An orphan left by a crash between the two is adopted by the next `add_snapshot` of
+  the same content, and `validate` reports it as a warning, never an error.
 - **Duplicates merge.** If identical bytes arrive again (same SHA-256), the new source
   reference is added to the existing recording, through `mutate`. The merge also keeps the
   second copy's outputs, decisions and notes. Stage 1's `_merge_source` moves onto `mutate`
   in stage 2a.
-- **Delete** moves the folder to `trash/`. The core never deletes permanently.
+- **Delete** moves the folder to `trash/`. The core never deletes permanently. That is the
+  app's Delete. Taking a recording out by hand deletes its folder for good, a by-hand exception
+  like Forget (stage 2b design, 2026-10-23; stage 2b §12.4).
 
 ### 6.5 Outputs (renditions)
 
@@ -573,7 +606,8 @@ State has three homes:
   - the "acknowledged up to" snapshot marker in `recording.json`, for removals held for
     review (§9.1.1)
 - **`state.db` holds operational state that can't be derived.** It lives in `[state] path`
-  (`/srv/recordings/state`), mounted read-write in both containers. It holds:
+  (`/srv/recordings/state`), mounted read-write in every container (stage 2b design,
+  2026-10-23). It holds:
   - check state: last checked, last changed, failures and `next_check_at` (§9.1.1)
   - the queue, held batches (§11), and the before-and-after records for batches and Undo
   - recent revisions, as merge bases (§6.4)
@@ -584,13 +618,23 @@ State has three homes:
     run
   - the alert state: for each job, whether it is failing and when an alert was last sent
     (§14), so a restart does not repeat an alert and a recovery is announced once
+  - stage 2b's tables (stage 2b §9.5): the UI's requests, the listing, check state, the check
+    log, the auto-private marker, the sync's events and flags, and the sync's state. They are
+    tables only, with no version bump, so a rollback by tag keeps working (stage 2b design,
+    2026-10-23)
 
-  The same folder holds the Plaud token store (`plaud/tokens.json`; §9.1), the voice store
-  (`voice.db`; §7.6) and the lock files (§6.4).
-  - **Backups:** `state.db` is backed up; `voice.db` and the token are not (§15.1).
+  The same folder holds the voice store (`voice.db`; §7.6), the lock files (§6.4), the Plaud
+  cache `plaud-cache.db` (derived, rebuilt by the next listing, never backed up) and
+  `manifests/` (Sync everything's manifests). The Plaud token store has its own folder (§5)
+  (stage 2b design, 2026-10-23).
+  - **Backups:** `state.db` is backed up; `voice.db`, `plaud-cache.db` and the token are not
+    (§15.1).
   - **After losing `state.db`,** a rebuild sets each recording's "last checked" from its
-    newest snapshot.
-- **`index.db` is derived** and can be dropped. `recordings reindex` rebuilds it.
+    newest snapshot. It also seeds the auto-private marker and the baseline (stage 2b §13.2,
+    §14.5); after it, what wasn't here at the first listing waits for Dan's review, and new
+    recordings flow (stage 2b §11.6; stage 2b design, 2026-10-23).
+- **`index.db` is derived** and can be dropped. `recordings reindex` rebuilds it. It is in WAL
+  mode, so one process's `Writer` writes while another's reads (stage 2b design, 2026-10-23).
 
 Also:
 - **Locks** use `flock`, which is released if the process crashes.
@@ -675,8 +719,10 @@ school/course-101:
 
 ### 7.4 Privacy (tag-based)
 
-- **Everything comes in,** with one exception: Plaud recordings on Dan's consent list are
-  never downloaded (§9.1). There is no import refusal and no held status.
+- **Everything comes in,** with two exceptions: Plaud recordings on Dan's consent list, and
+  Plaud recordings whose title starts with the keep-out word, are never downloaded (§9.1;
+  Dan, 2026-10-23: stage 2b's decision 2, its §12.1 and §12.2). There is no import refusal
+  and no held status.
 - **The rule:** a recording is **private** if its `recording.json` has the tag `private`
   or any tag under `private/` (for example `private/journal` or `private/personal`), in any
   capitalisation: `Private` and `PRIVATE/journal` count too. The rule errs towards private.
@@ -698,7 +744,9 @@ school/course-101:
     any spelling on which `is_private_tag` and the plain rule disagree. A removal accepts any
     existing spelling.
   - **`recording.json` is the single source of truth.** Privacy needs no other file, no
-    marker files and no lists to keep up to date (Dan, 2026-10-08).
+    marker files and no lists to keep up to date (Dan, 2026-10-08). This stays true with
+    stage 2b's marker in `state.db`: it is the sync's bookkeeping about which titles it has
+    judged, never the privacy state itself (stage 2b design, 2026-10-23).
   - **The UI's Private section is the `private/` folder.**
 - **Local and external, decided by an allow-list:**
   - **Local** means every model that receives any content (file text, tool results, prompts,
@@ -724,10 +772,31 @@ school/course-101:
   private tag drops any waiting external job.
 - **It can't be recalled.** Adding a private tag cannot undo what an external model already
   processed. The Details tab shows which outputs came from external models.
-- **Automatic private tags:**
-  - Plaud recordings matching the title patterns in config are tagged `private`. The check
-    runs after the grace period for placeholder titles, and again whenever Plaud's title
-    changes, which may add `private` and never removes it (§9.1, §9.1.1).
+- **Automatic private tags** (Dan, 2026-10-23: stage 2b's decisions 1, 2 and 3, its §13.1):
+  - The patterns are `[plaud] auto_private_patterns`. Each title is tried as given and folded
+    (NFKC, without format or invisible characters, casefolded); more forms can only add
+    `private`. The sync adds `private` (`by: auto`), and never removes it:
+    1. at import, when any title the listing or the envelope gives matches;
+    2. when a title changes in Plaud: every run compares each listed title's hash with the
+       marker, and a new title that matches adds `private` from the listing alone, with the
+       note "re-tagged private: title changed";
+    3. for a late keep-out word: `private` at once, and a flag;
+    4. at the first check of a recording the marker has never seen (2a's imports, a hash
+       merge under a new Plaud ID, a recording the rebuild couldn't seed): the patterns and
+       the keep-out words run on every title of every snapshot, under every Plaud ID;
+    5. for a new pattern: each recording's titles are checked against the patterns its
+       marker's version didn't have, and those only.
+  - A late consent listing adds `private` too. The sync never runs a pattern again on a title
+    it has already checked against it, so a `private` Dan removed stays removed until the
+    Plaud title changes to one that matches. The 30-minute grace is gone: a placeholder title
+    doesn't match, so the recording arrives untagged, and Dan's rename is checked at the next
+    sync.
+  - **The deliberate exception** (Dan, 2026-10-23: stage 2b's decision 1, its §13.3): the
+    private tag lands before any source or output does, judged on every title the app has
+    seen at that moment. A Plaud recording renamed to a private title, or to the keep-out
+    word, after it came in is tagged `private` at the next sync, so its source and outputs
+    landed first. Until then it carries whatever tags Dan gave it; with none, external agents
+    already treat it as private.
   - **Held titles come in, tagged `private`** (Dan, 2026-10-08). The default patterns are
     `audio-router`'s hold patterns: a title starting `private`, or containing `interview:`.
     `audio-router` never fetched the recordings it held, so they arrive through the sync
@@ -1258,6 +1327,9 @@ class Source(Protocol):
     def fetch(self, ref: str, workdir: Path) -> Fetched:
         """Media + raw payload + recorded_at/time_source + title + any outputs the source
         already has (e.g. Plaud's transcript and notes)."""
+    def check(self, ref: str) -> Checked:
+        """Stage 2b (stage 2b design, 2026-10-23): the source's current payload for a
+        recording already here, to compare and reconcile. It downloads no media."""
 ```
 
 - **Shared compare:** the compare in §9.1 (Missing, Updated, Only in archive) works for any
@@ -1278,25 +1350,34 @@ Plaud is how Dan records today, so getting every Plaud recording into the archiv
 before any other source. It reuses `audio-router`'s Plaud client, copied in (§19).
 
 - **Sync compares the account with the archive.** The **Sync** button lists every recording
-  on the Plaud account and matches each one to the archive by its Plaud ID (either form)
-  and by content hash, so recordings that arrived through the `audio-router` import are not
-  shown as missing. It reports:
-  - **Missing:** on Plaud, not in the archive. **Import all missing** or **Import
-    selected**.
+  on the Plaud account and matches each one to the archive by its Plaud ID (either form), so
+  recordings that arrived through the `audio-router` import are not shown as missing. The
+  hash match happens at import, where identical bytes join the existing recording (stage 2b
+  design, 2026-10-23; stage 2b §11.3). It reports:
+  - **The buckets** (stage 2b §11.3): every listed ID is **here**, **excluded** (consent-listed
+    or kept out by title), **waiting** (the next scheduled run brings it in) or **missing**
+    (it won't come without Dan), and listed = here + waiting + excluded + missing. **Import
+    selected** and **Import all** bring in the waiting and missing.
   - **Updated on Plaud:** the title changed, or Plaud's transcript or AI notes arrived
     after the recording first came in, or Dan added in-app notes later. A new
-    `source/plaud-<stamp>.json` snapshot is saved, and nothing is overwritten. Recent
-    recordings are checked again for a while, the way `audio-router`'s hot window does.
-  - **Only in the archive:** gone from Plaud. Shown, never deleted.
+    `source/plaud-<stamp>.json` snapshot is saved, and nothing is overwritten. Every
+    recording is checked again on the rolling sweep (§9.1.1).
+  - **Gone from Plaud:** every Plaud ID of a recording here absent from two good listings at
+    least an hour apart. Shown, never deleted (stage 2b §12.3).
 - **The compare is a dry run**, and importing is a separate click. The CLI has the same
-  split: `recordings plaud sync --dry-run` and `recordings plaud sync`.
+  split: `recordings plaud sync --dry-run` and `recordings plaud sync`. Beside them and
+  `--full`, stage 2b's commands (stage 2b design, 2026-10-23; stage 2b §9.6): `sync
+  --catch-up`, `resync`, `baseline [--all]`, `accept-listing`, `breaker reset`, `park`,
+  `release`, `keep-out-words`, `consent`, `held`, `check [--volatility]` and `token-import`,
+  and `recordings worker [--alive]`.
 - **The scheduled sync** runs the same comparison and imports missing recordings
   automatically, so Plaud recordings arrive without a click. It can be switched off in
   config. Auto-import is safe because nothing is processed until a recording is tagged
   (§7.5).
-- **The worker does the Plaud work.** All Plaud calls and writes happen in the `worker`
-  container, which runs the scheduler. UI buttons ask it to act, and a lock allows one sync
-  at a time (§20, stage 2b).
+- **The worker does the Plaud work** (stage 2b design, 2026-10-23). Every Plaud call, and
+  every write that comes from Plaud, happens in the `worker` container, through its own
+  `Writer`. UI buttons ask it to act through request rows in `state.db` (stage 2b §9.3), and
+  the `plaud` lock allows one sync at a time.
 - **What's kept:** the full payload, including Dan's own in-app notes, goes into
   `source/`. Plaud IDs are opaque strings, and the `of_` form is accepted.
 - **The consent list ("never mirror") carries over as a hard rule** (Dan, 2026-10-08):
@@ -1322,31 +1403,46 @@ before any other source. It reuses `audio-router`'s Plaud client, copied in (§1
     cannot tell that two Plaud IDs hold the same audio before it downloads one. It never
     downloads a listed ID. A Plaud ID whose audio matches a listed recording is not stopped
     by the sync. Only the import's catalog can do that.
-  - The list is configured as a path (`[plaud] consent_list`) and mounted read-only.
-  - It is read fail-closed: if it is unset, missing, unreadable, empty or holds no IDs, the sync
-    and the `audio-router` import (dry run included) stop, with exit 78.
+  - The list is configured as a path (`[plaud] consent_list`), one list in a folder mount,
+    read-only: a single-file mount would go on reading a replaced file's old copy (stage 2b
+    design, 2026-10-23; stage 2b §12.1).
+  - It is read fail-closed: if it is unset, missing, unreadable, empty, holds no IDs, or has a
+    line that looks like an ID but isn't one (a typo), the sync's imports and the
+    `audio-router` import (dry run included) stop, with exit 78.
   - **An ID listed after its recording was imported** stops the next import until Dan takes
     the recording out by hand (then `recordings reindex --allow-missing`). 2a can't remove a
     recording, so the dry run adds one problem, as a count with no ID, and a real run stops,
     even with `--allow-unplaced`.
-  - Entries follow `audio-router`'s parser: an ID counts only when it opens a bullet or
-    stands alone on a line.
+  - Entries follow `audio-router`'s parser: an exclusion is an ID alone on its line, or an ID
+    then a dash, after an optional bullet. Since stage 2b the ID is read in the `of_` form and
+    in any case. Lines read as kept (an ID followed by other words, or in a sentence) are
+    listed for Dan, by line number. No title of a consent-listed recording is ever stored or
+    shown. A listing made after its recording came in is tagged `private` at the worker's next
+    tick, without a Plaud listing, and flagged once per recording (stage 2b design, 2026-10-23;
+    stage 2b §12.1).
   - The Sync screen shows those IDs as "excluded by consent list". Removing an ID from the
     list is how Dan deliberately brings one in.
+- **The keep-out word** (Dan, 2026-10-23: stage 2b's decision 2, its §12.2). A Plaud title
+  that starts with `[plaud] keep_out_word` (default `noarchive`) is never downloaded, by a
+  forgiving match. Kept out stays kept out, even when the title later loses the word, until
+  Dan presses **Release**.
 - **Held titles come in, tagged `private`** (§7.4).
-- **The grace period carries over** (Dan, 2026-10-08). A recording whose Plaud title is
-  still a timestamp placeholder waits about 30 minutes for its real title before the
-  privacy check runs.
+- **No grace period** (Dan, 2026-10-23: stage 2b's decision 1, replacing Dan's 2026-10-08
+  decision). A new recording comes in at the next sync, even with a placeholder title. If Dan
+  renames it to a title that matches a private pattern, `private` lands at the next sync. Each
+  sync checks every listed title against the marker, so the rename lands within one sync.
 - **The Plaud token** (added 2026-10-08) isn't a static secret:
   - Refresh is a POST with the refresh token, and the reply may hand back a new one.
   - Logging in needs the vendor CLI's client secret and a callback on `localhost`.
-  - **The plan:** Dan logs in once on the Mac with a separate `HOME`, so the CLI writes its
-    own token file. That file is copied into `state/plaud/tokens.json` (mode 0600,
-    writable, not backed up). The worker refreshes it under a file lock. A 401 raises an
-    alert (§14), and logging in again by hand is the fallback.
-  - **A spike settles the unknowns,** printing only expiry times and hashes, never token
-    values: `expires_in`, whether the refresh token rotates, and whether a second sign-in
-    cancels the Mac's.
+  - **The plan** (stage 2b design, 2026-10-23; stage 2b §10.3 to §10.5): Dan signs in on the
+    Mac with `make plaud-sign-in`, under a temporary `HOME`, and the token file goes over ssh
+    into its own folder, `tokens.json` in `RECORDINGS_PLAUD_HOST` (`/plaud` in `worker`
+    only; mode 0600, writable, never backed up or mirrored). The worker refreshes it before
+    it expires, under a file lock. **A refused refresh raises an alert:** it stops the sync's
+    ping (§14), and signing in again with `make plaud-sign-in` is the way back.
+  - **The spikes settle the unknowns** (stage 2b design, 2026-10-23): stage 2b's §18 lists
+    them, S1 to S12, with what each prints: counts, yes or no, expiry times, status codes,
+    field names and hash prefixes, never a token, a title or a whole Plaud ID.
 
 #### 9.1.1 Keeping up with edits made in Plaud (added 2026-10-08, revised after the design council)
 
@@ -1354,6 +1450,16 @@ Dan keeps editing in Plaud: renaming speakers, fixing titles, regenerating notes
 edits must flow down, for old recordings too. Plaud's API has no change signal: no
 `updated_at` and no etag (`audio-router`'s Plaud client documents this). So a change can only
 be found by fetching again and comparing.
+
+**Stage 2b's design refines this section** (stage 2b design, 2026-10-23;
+`docs/superpowers/specs/2026-10-23-stage-2b-design.md`), and its sections hold where they
+differ: the breaker's window, volatility found by fetching twice, suppression, **Accept these
+changes** (Dan, 2026-10-23, decision 11) and closing on a normaliser release (stage 2b §14.4);
+the hold and **Accept this listing**, and a small shrink settling by itself (§11.4); the
+good-run rule (§11.7); the listing's rules (§11.2); the sweep's intervals and cap (§14.2);
+every check ending with reconcile (§14.1); the baseline (§14.5); Re-sync of a selection (Dan,
+2026-10-23, decision 6), parking and Sync everything's outcomes (§14.6); removals counted until
+3a (§14.7).
 
 - **Two steps, so a crash can't hide an update:**
   - **Fetch** writes a new `source/plaud-<stamp>.json` snapshot, but only if the normalised
@@ -1441,12 +1547,14 @@ be found by fetching again and comparing.
   - **Each run** takes the most overdue recordings first, up to a cap of
     N / (`full_sweep_days` × runs per day), rounded up, with a minimum of 1. Runs per day
     come from the configured schedule (72 at 20 minutes). So the whole account is covered
-    every `full_sweep_days` (default 1 while relabelling; 7 later).
+    every `full_sweep_days`: 1 in the template while relabelling, 7 when unset. `recheck_days`
+    is gone (stage 2b §17.4; stage 2b design, 2026-10-23).
   - **Titles** come from the list endpoint on every run, which is cheap. A changed title
     triggers a fetch (above).
   - **Errors:**
     - 429 and Retry-After are respected, with exponential backoff.
-    - A 401 stops the run and raises an alert (§14). The token and its refresh are in §9.1.
+    - A refused refresh stops the run, and the sync's check stops being pinged (stage 2b
+      §10.3, §16; stage 2b design, 2026-10-23). The token and its refresh are in §9.1.
   - **Limits:**
     - Only one sync runs at a time, under the worker's lock, and sweeps run in chunks so
       the worker isn't blocked.
@@ -1482,11 +1590,14 @@ be found by fetching again and comparing.
     - the last good listing, and how far the sweep has got (the oldest check)
     - counts for each part, and failures
     - the circuit breaker's state and the normaliser version
-    - a diff of the payload's field names between runs (it would have caught the `of_` ID
-      change)
+    - a diff of the payload's field names between runs, and a census of the listing's ID
+      forms (`of_` hex, bare hex, other). The field-name diff alone wouldn't have caught the
+      `of_` change, because the field was still `id`; the census does (stage 2b §11.2, §15.2;
+      stage 2b design, 2026-10-23)
     - the share of named segments, as a canary
 - **Tests:**
-  - **A fake Plaud server on a real socket,** injecting:
+  - **A fake Plaud server on a real socket** (stage 2b §10.6), with every injection in stage
+    2b §21's list (stage 2b design, 2026-10-23), among them:
     - 401, 429 and 5xx responses, and timeouts
     - short bodies and expired links
     - a clamped page size, and an empty listing
@@ -1553,7 +1664,7 @@ later" until its build stage (§20):
   | rows with no audio | reported by the dry run and not imported. A Plaud one arrives later through the sync. |
   | the `media/private/` tier | imported, tagged `private`. Its files are matched by SHA-256 (a 64-hex ID is the audio's hash), and a Recorder export's `.txt` comes too |
   | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels become private tags, one per meaning (`therapy` and both spellings of counselling → `private/therapy`; `journal`, `medical` and `students` → `private/journal`, `private/medical` and `private/students`; `personal`, `private` and `voiceprints` → `private`; a catalog label is a lowercase slug, and a row with any other label is unplaced). A privacy label or a non-empty `access` makes the recording private. |
-  | Plaud rows with audio but no snapshot and no time | deferred to 2b's sync, which matches them by Plaud ID; if Plaud no longer has them, 2b imports them timed by the file's mtime |
+  | Plaud rows with audio but no snapshot and no time | deferred to 2b's sync, which matches them by Plaud ID and imports them from Plaud; one Plaud no longer lists stays in `audio-router`'s frozen archive, because the 2a runbook deleted the import copy (stage 2b design, 2026-10-23; stage 2b §11.3) |
   | an ID on the consent list (§9.1), and every row that is the same recording: a `dup_of` link either way, the same catalog audio SHA-256, a private-tier file with that SHA-256 or named by the ID | not imported, and reported only as a count. If either ID of the byte-identical Plaud pair is listed, both go. Removing the ID from the list brings the whole group in on the next run. |
   | turns or segments with no time, and speaker names Dan typed | kept: untimed segments as reconcile keeps them, typed names verbatim in `source/` |
   | several raw snapshots for one recording | all kept, in `source/` |
@@ -1636,7 +1747,8 @@ later" until its build stage (§20):
   - **Full dates read `2026-10-06`.** Where space is tight, a compact label may use the
     month name ("Oct 6", "Oct 1 – 15"). Stored values are ISO 8601 throughout (§6.2).
 - **Navigation** (added 2026-10-08): the top bar holds Library, Tags, People, Insights,
-  Add and Status.
+  Add and Status. The Add page exists from stage 2b, so until stage 3b it holds Library,
+  Tags, Add and Status (stage 2b design, 2026-10-23).
   - **Badges:** at most two. People counts naming work (To link, Suggestions, Fix in
     Plaud). Review counts everything else waiting for Dan: the review queue and the
     approvals batches.
@@ -1707,7 +1819,14 @@ later" until its build stage (§20):
       - A footer shows the note type, the model that answered, the prompt version and the
         time.
     - **Details:** sources, every output and its backend (including what went to external
-      models), and jobs.
+      models), and jobs. From stage 2b it also shows when the recording was last checked
+      against Plaud, with **Re-sync from Plaud**, its Plaud IDs with Copy ID, "Gone from Plaud
+      since …", why the sync tagged it private, and its flags (stage 2b §15.3; stage 2b
+      design, 2026-10-23).
+- **Arrivals from Plaud** (stage 2b design, 2026-10-23; stage 2b §15.3): the list header's
+  Refresh reads "2 new · 1 private · 2 updated from Plaud · Refresh", counted since the page
+  loaded; rows don't move until Refresh. The selection bar gains **Re-sync from Plaud** (Dan,
+  2026-10-23, decision 6).
 
 ### 12.2 Tagging (applies immediately, with Undo)
 
@@ -1730,8 +1849,11 @@ later" until its build stage (§20):
   a case-variant of an existing tag.
 - **Tagging an untagged recording never asks;** the toast says how many became visible to
   external agents (Dan, 2026-10-15).
-- **No confirmation dialogs** in the UI. Every action shows an Undo toast. There are three
+- **No confirmation dialogs** in the UI. Every action shows an Undo toast. There are four
   exceptions, all about privacy:
+  - **Release** of a recording kept out by its title, which shows the recording's title in
+    its question, because it turns "never download" into a copy kept for good (stage 2b
+    design, 2026-10-23; stage 2b §12.2).
   - Removing a recording's last private tag, including by an Undo, asks first, naming how many
     recordings (Dan, 2026-10-15; tagging part A §3, decision 2).
   - *Forget*, which can't be undone: you type the person's name to confirm (§7.6).
@@ -1757,6 +1879,8 @@ later" until its build stage (§20):
   - rows stay where they are until you refresh, in the Library list as in the grid, and in
     every filter (Dan, 2026-10-15)
   - a column picker by folder
+  - the arrivals cue from Plaud, as in the Library's header (stage 2b §15.3; stage 2b
+    design, 2026-10-23)
 - **Tree:**
   - tag folders with counts
   - the Private group, kept separate
@@ -1766,11 +1890,13 @@ later" until its build stage (§20):
 
 ### 12.4 Add
 
-- **Plaud panel (first):**
-  - the time of the last sync and the next scheduled sync
-  - **Sync**, which shows counts for Missing, Updated on Plaud, Only in archive and Up to
-    date (§9.1), and lists the IDs "excluded by consent list"
-  - the Missing list with checkboxes, plus **Import all missing** and **Import selected**
+- **The Plaud panel, the Sync screen** (`#/add`), is stage 2b's §15.1 (stage 2b design,
+  2026-10-23), top to bottom: the summary line, shared with Status; the flags, each by
+  recording ID with its next step; a hold or a breaker trip, with **Accept this listing** or
+  **Accept these changes**; **Sync now** and **Compare**, with **Sync everything** under
+  **More**; the equations; **Not here yet** (waiting and missing), with **Import selected**
+  and **Import all**; **Kept out**, never with a title except inside Release's question;
+  **Updated on Plaud** (7 days); **Gone from Plaud**, and **Parked**.
 - **Import your own audio:** upload, paste a URL and the watched folder (§9.2). Shown as a
   "coming later" placeholder until its stage.
 
@@ -1802,6 +1928,10 @@ later" until its build stage (§20):
   - **A server with a `[backup]` and no `state.db`** needs attention (`recordings init` was never
     run, or the state folder is not mounted); so does a `state.db` that can't be read, with the
     way back only if it is damaged.
+- **The Plaud sync** (stage 2b design, 2026-10-23; stage 2b §15.2): plain sentences first
+  ("All here · checked 14:20 · next sync 14:40", or why not), the numbers, Details, and the
+  sync's entries in "Needs attention". The backup service's "last reported" line stays the
+  backup's, and the worker has its own. The Sync screen acts; Status reports.
 - **Disk space** on the homelab server: a warning below 20% free. Below 5% free, new imports stop,
   with the reason shown.
 - **Status is the pull view.** Alerts push the urgent problems to Dan's phone (§14).
@@ -2168,19 +2298,22 @@ come from that frame.
 - **Visibility:** every failure appears in **Needs attention** with Retry.
 - **Alerts** (Dan, 2026-10-08; services chosen 2026-10-09) are push notifications through
   ntfy.sh with a private topic (20 or more random characters, or a token on a server with access
-  control), so they arrive even when the homelab server is down. The
-  topic and the dead-man's ping URL are secrets (§5). Bodies are fixed templates (the job,
+  control), so they arrive even when the homelab server is down. They are for the backup: in
+  stage 2b the Plaud sync sends no push, its alert is its own Healthchecks check, and Status
+  says why (Dan, 2026-10-23: stage 2b's decisions 9 and 10). The topic and the dead-man's ping
+  URLs are secrets (§5). Bodies are fixed templates (the job,
   the kind of failure as an error class name, its exit code and counts, then "see Status"),
   never error text, titles or paths. Status carries the same text; the full error is
   printed only by re-running the job from the CLI with `--debug`.
-  - **They fire on:** a Plaud 401, a circuit-breaker trip, a disk warning (a low disk, or an
-    archive disk that is missing or is not this archive, which has its own title), a failed
-    backup, retention, check, restore test or mirror, and a failed `--full`. A job that fails
-    for any reason, including an error nobody expected, is a failure and alerts.
+  - **They fire on:** a disk warning (a low disk, or an archive disk that is missing or is not
+    this archive, which has its own title), and a failed backup, retention, check, restore
+    test or mirror. A job that fails for any reason, including an error nobody expected, is a
+    failure and alerts. The Plaud sync's alert is its own Healthchecks check (stage 2b §16;
+    Dan, 2026-10-23, decisions 4 and 10).
   - **How often:** one push when a job starts failing, a reminder every 24 hours while it keeps
     failing, and one "works again" push when it recovers. A turn skipped because another job
-    holds the `ops` lock, or because the NAS's retention task holds the repository (§15.1), is
-    neither a failure nor an alert. A failure that was not delivered is sent again at the next
+    holds the `ops` lock or the `plaud` lock (stage 2b design, 2026-10-23), or because the
+    NAS's retention task holds the repository (§15.1), is neither a failure nor an alert. A failure that was not delivered is sent again at the next
     failure. The state is in `state.db` (the `alerts` table). When `state.db` can't be written,
     for example on a full disk, the loop remembers its last attempts and sends in memory, so a
     failing job is retried at its normal retry time and alerted once, not at every tick.
@@ -2191,7 +2324,8 @@ come from that frame.
     stops every alert and ping until it is fixed; `alert-test` and the doctor say so (the
     doctor reports it as a problem, "alerts and dead-man pings are off"), and Healthchecks
     alerts after its grace. The doctor warns, without failing, when no alerts or no dead-man's
-    switch are set up, and when a topic is set with no `ntfy_server`. A redirect is never followed, because it would carry the
+    switch are set up (except the worker's, which is a problem: stage 2b §17.2; stage 2b design,
+    2026-10-23), and when a topic is set with no `ntfy_server`. A redirect is never followed, because it would carry the
     token and the title to another host, and it counts as not delivered. Only an https proxy from
     the environment is used (it sees a CONNECT to the host name); plain http to the loopback never
     goes through one. Each request times out
@@ -2201,13 +2335,18 @@ come from that frame.
     state alone. Each part is tested only if it is set up (`null` is "not configured"); it
     exits 1 when a part that is set up fails, and 78 when neither is set up, or when a topic is set
     with no `ntfy_server`.
-  - **A dead-man's switch** on Healthchecks.io: each good sync and each good backup pings
-    it, and a missed window raises an alert, so a stopped worker or backup is noticed too.
-    A backup pings `/start` when it begins, then the plain URL when it worked or `/fail` when
-    it failed. A backup that meets the NAS's retention lock sends neither, and the check
-    decides after its grace.
-    The grace is at least 3 hours, because long jobs (the restore test, the first mirror)
-    run in the same loop.
+  - **Two dead-man's checks** on Healthchecks.io (Dan, 2026-10-23: stage 2b's decisions 4
+    and 10, its §16). Neither shares the other's URL, so neither job can hide the other's
+    death:
+    - **The backup's,** unchanged: a backup pings `/start` when it begins, then the plain URL
+      when it worked or `/fail` when it failed. A backup that meets the NAS's retention lock
+      sends neither, and the check decides after its grace. Its grace is at least 3 hours,
+      because long jobs (the restore test, the first mirror) run in the same loop.
+    - **The Plaud sync's,** pinged only after a scheduled sync that is good and that nothing
+      holds up for Dan (a sign-in, the consent list, a hold, the breaker, or a `private` it
+      couldn't write). Its period is 20 minutes and its grace 2 hours, which is decision 5's 2
+      hours, so any lasting stop, a dead worker included, gives one email, and "up" when it
+      works again.
   - **Status keeps the pull view** (§12.5).
 
 ## 15. Security and backups
@@ -2271,7 +2410,10 @@ come from that frame.
 - **Slugs never reach logs** (added 2026-10-08). `/people/<slug>` paths would land in
   access logs, so the routes the app logs use person IDs, or the people pages keep their
   routes in the URL's hash part, which servers don't log.
-- **Containers:** both run as non-root users. Secrets follow §5.
+- **Containers:** all three run as non-root users. Secrets follow §5. The worker publishes no
+  port and adds no route, and only `worker` holds the Plaud token. Egress from `web` and
+  `backup` to Plaud isn't blocked at the network layer; they hold no token, which is the
+  control (stage 2b design, 2026-10-23; stage 2b §17.1).
 
 ### 15.1 Backups to the NAS (from stage 2a, the first stage that writes)
 
@@ -2327,8 +2469,11 @@ come from that frame.
   - the archive
   - `config.toml`
   - `docker/deploy.env`
+  - the consent folder and `/state/manifests`, through `[backup] extra_paths` (stage 2b design,
+    2026-10-23; stage 2b §12.1, §17.4)
   - a consistent copy of `state.db`, taken with SQLite's own backup command first (§6.8)
-  - **not** `index.db`, which is derived, nor `voice.db` or the Plaud token store
+  - **not** `index.db`, which is derived, nor `voice.db`, `plaud-cache.db` or the Plaud token
+    store, which has its own folder (stage 2b §10.3)
   - **not** the secrets folder: those live in your password manager
 - **When, and for how long:** hourly. Keep 24 hourly, 14 daily, 8 weekly and 12 monthly
   snapshots.
@@ -2408,6 +2553,9 @@ come from that frame.
   - light and dark mode
 
   Test setup follows shinyreact's testing docs.
+- **Stage 2b's tests** are its own spec's §21 (stage 2b design, 2026-10-23): against the fake
+  Plaud server (stage 2b §10.6), an injected clock and a fake Healthchecks, with its guard
+  tests, its property test and its leak tests.
 - **CI (GitHub Actions):**
   - the tests
   - gitleaks
@@ -2433,7 +2581,9 @@ come from that frame.
     `state.db`, index and locks, so tagging in `make demo` saves to the copy (Dan, 2026-10-15).
   - demo mode serves only the demo: it refuses an archive whose `archive.json` UUID isn't the
     demo's, or a folder with none, whatever `RECORDINGS_DEMO_ARCHIVE` names
-  - it makes no network calls
+  - it makes no network calls, and runs no worker: the Sync screen and Status's sync panel
+    draw a canned view from a hand-written fixture in `demo/`, with the buttons disabled
+    (stage 2b design, 2026-10-23; stage 2b §15.5)
 
   A test enforces this.
 - **Purpose:** a bug report reads "from `make demo`, do X". It also doubles as the format's
@@ -2462,6 +2612,9 @@ come from that frame.
   server keeps `/media/{id}`.
 - **Tagging in memory** (Dan, 2026-10-15): the Pages demo tags in the browser, through the
   same operations, kept in memory and lost on reload. The UI says "Demo: changes aren't saved".
+- **No worker** (stage 2b design, 2026-10-23; stage 2b §15.5): the Plaud panels are the same
+  canned view as `make demo`'s, and Pyodide never imports the Plaud client, the token store
+  or the sync.
 - **Older runtime:** the browser runs Python 3.12, with Pyodide's pydantic 2.10 and
   markdown-it-py 3.0. The Pages smoke test in CI guards against code that only works on the
   server's newer versions.
@@ -2517,15 +2670,16 @@ come from that frame.
      accounted for.
   4. **Import:** take a `pre-import` snapshot, import, validate, then take a `post-import`
      snapshot.
-  5. **Spikes for 2b, then deploy it** with `schedule_minutes = 0`:
-     - **the token** (§9.1)
-     - **the ID form:** does the hex in `of_<hex>` equal `audio-router`'s bare ID, and are
-       the audio bytes identical? The spike prints counts only.
-
-     Both call Plaud, and 2b is the first stage allowed to.
-  6. **`sync --dry-run`:** "matched" should equal the Plaud rows `audio-router` holds, and
-     "missing" should be about the newer recordings plus the held titles. Stop if not.
-  7. **Finish:** rebaseline, import the missing recordings, then turn the schedule on.
+  5. **Spikes for 2b, then deploy it** (stage 2b design, 2026-10-23): stage 2b's spikes
+     (its §18, S1 to S12, in sessions A, B and C), then the token's and the consent list's
+     folders, and the sync's Healthchecks check (required; ntfy optional, for later). The
+     schedule stays at 20 minutes: the gate holds every sync until the catch-up. The spikes
+     call Plaud, and 2b is the first stage allowed to.
+  6. **`sync --dry-run`** (stage 2b design, 2026-10-23): both equations add up ("listed =
+     here + waiting + excluded + missing", and the archive's Plaud recordings), and the
+     consent list matches ("N IDs, M on Plaud now"). Stop if not.
+  7. **Finish** (stage 2b design, 2026-10-23): the first catch-up, in stage 2b §11.6's
+     order. The schedule then starts by itself.
 
   Then Dan tags the imported recordings in the grid (stage 3), and local processing runs as
   tags land (stage 4).
@@ -2534,7 +2688,10 @@ come from that frame.
   the archive aside and importing again. A parallel run with `audio-router` is pointless,
   because its sync is broken; its frozen archive is the yardstick. Tagging part A may ship
   before step 5's spikes and step 6's dry run; when the real archive gets its first tag is
-  Dan's call, and a rollback by re-import after it loses the tags (Dan, 2026-10-15).
+  Dan's call, and a rollback by re-import after it loses the tags (Dan, 2026-10-15). He has
+  made it: the disposable window ends at the first tag after step 7 and its backup, so a
+  rollback of step 7 loses no tags (Dan, 2026-10-23, refining 2026-10-22: stage 2b's decision
+  7).
 - **Obsidian waits.** Nothing new reaches the vaults until `recordings` and the separate
   vault listener exist. That is deliberate: deciding which recordings reach which vault is
   part of why this app exists. Once the listener runs, `audio-router`'s launchd jobs are
@@ -2604,23 +2761,41 @@ Each stage leaves a working, demonstrable app.
    - the Plaud client, with the `of_` fix
    - the token store and its refresh (§9.1)
    - a fake Plaud server for tests
-   - **a `worker` container that runs only the scheduler.** All Plaud calls and writes
-     happen there; UI buttons ask it to act, and a lock allows one sync at a time. The
-     queue and worker of stage 4 build on it.
+   - **a `worker` container for Plaud's calls and writes** (stage 2b design, 2026-10-23).
+     Every Plaud call, and every write that comes from Plaud, happens there, through its own
+     `Writer`; UI buttons ask it to act through request rows in `state.db`, and the `plaud`
+     lock allows one sync at a time. The queue and worker of stage 4 build on it.
+   - **Compose:** a third service, `worker`, from the same image and tag, hardened like the
+     others, with its own health check (`recordings worker --alive`) and no ports; the
+     consent folder read-only at `/consent` in `worker` and `backup`, and the token's folder
+     read-write at `/plaud` in `worker` only (stage 2b design, 2026-10-23; stage 2b §17.1)
    - the compare, and importing missing recordings
-   - auto-private, with the consent, hold and grace rules (§7.4, §9.1)
+   - auto-private, with the consent and hold rules (§7.4, §9.1; the grace is gone: Dan,
+     2026-10-23)
    - edit-sync (§9.1.1): the rolling sweep, the circuit breaker, the baseline after the
      import, Re-sync from Plaud, and `sync --full`
    - the Add page's Plaud panel and the Status sync panel
 
-   **2b is done when:**
-   - the dry run accounts for every listed ID
-   - a speaker rename in Plaud shows up within the sweep window
-   - `--full` exits 0
-   - a 401 raises an alert
+   **2b is done when** (stage 2b design, 2026-10-23; each criterion is made testable in stage
+   2b §20, with what Dan's decisions add):
+   1. the dry run accounts for every listed ID
+   2. a speaker rename shows within the sweep window, and the breaker stays out of the way
+   3. Sync everything exits 0
+   4. a refused sign-in raises an alert, replacing "a 401 raises an alert"
+   5. Dan's decisions hold
+   6. nothing stops silently
+   7. nothing leaks
+   8. rollback stays a tag
+   9. the interface works at 1,280 and 320 pixels, and in demo and Pages with no network
+   10. operations: `make deploy` waits for the worker, which stays healthy with no sign-in
+   11. decision 7's wording is checked by a doc test
 
-   **If 2b runs long,** edit-sync can ship after the compare and import. The snapshots are
-   raw and reconcile can be re-run, so no migration is needed.
+   **If 2b runs long,** it ships in two halves (stage 2b design, 2026-10-23; stage 2b §4):
+   first the client, the sign-in, the worker, the compare and the import, the consent list,
+   the keep-out word, auto-private with the baseline's privacy part, the sync's check and the
+   Sync screen; then the sweep, the breaker, Re-sync and Sync everything. Both deploy and roll
+   back by their tag, because `state.db` only gains tables. It is built in three phases: the
+   groundwork, then those two halves.
 3. **Tagging, then people,** in two parts (split 2026-10-08):
 
    **3a. Tagging** (Dan, 2026-10-15): part A (applying tags,
@@ -2796,10 +2971,12 @@ answers to its questions, 2026-10-08.
     or containing `interview:`. This matches "everything comes in".
 18. **The consent list ("never mirror") carries over as a hard rule** (§9.1). Its IDs are
     never downloaded, and the list is read fail-closed.
-19. **The grace period carries over** (§9.1): a placeholder title waits about 30 minutes
-    for its real title before the privacy check runs.
-20. **Alerts are push notifications through ntfy** (§14), with a dead-man's switch. Status
-    keeps the pull view.
+19. **No grace period** (Dan, 2026-10-23: stage 2b's decision 1, replacing this one): a new
+    recording comes in at the next sync, even with a placeholder title, and a later private
+    title is tagged at the next sync after the rename (§7.4, §9.1).
+20. **Alerts are push notifications through ntfy** (§14), with two dead-man's checks. Status
+    keeps the pull view. The Plaud sync's alert is its own check; its pushes come with a later
+    change (Dan, 2026-10-23, stage 2b decisions 9 and 10).
 21. **Speakers nobody has named keep their per-turn voice fingerprints** (§7.6), because
     retroactive matching needs them. The forget, `recognise: false` and `voice: off` rules
     still apply.
@@ -2821,7 +2998,9 @@ answers to its questions, 2026-10-08.
     written in it (§6.6). The full view needs a local-scope token.
 30. **Forget is complete** (§7.6): future fetches are scrubbed, the databases are vacuumed,
     the tombstone keeps only salted hashes, and you type the name to confirm.
-31. **The Plaud token is a refreshed store, not a static secret** (§9.1).
+31. **The Plaud token is a refreshed store, not a static secret** (§9.1). It lives in its own
+    folder, `tokens.json` in `RECORDINGS_PLAUD_HOST` (`/srv/recordings/plaud`, 0700), mounted
+    at `/plaud` in `worker` only (stage 2b design, 2026-10-23).
 32. **Times and dates follow ISO 8601** (§12): 24-hour times, weeks starting on Monday,
     and full dates as `2026-10-06`.
 33. **Plaud-named speech is prime voice data**, treated as confirmed when profiles are
@@ -2844,5 +3023,8 @@ answers to its questions, 2026-10-08.
       text (§14).
     - The import carries `audio-router`'s tags, puts privacy labels under `private/`, defers
       the snapshot-less Plaud rows to 2b, and skips consent-listed IDs (§9.3).
-    - A private tag is always applied before any content is written (§7.4).
+    - A private tag is always applied before any content is written (§7.4), with one
+      deliberate exception: a Plaud recording renamed to a private title, or to the keep-out
+      word, after it came in is tagged at the next sync (Dan, 2026-10-23: stage 2b's decision
+      1, its §13.3).
     - The token and ID-form spikes belong to 2b, the first stage that calls Plaud (§19).

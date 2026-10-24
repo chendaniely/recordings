@@ -18,8 +18,10 @@ the Library filtered to Untagged and the **+** opens a bottom sheet; there are n
 
 The first tag you apply to the real archive ends the disposable window (main spec §19): after it,
 rolling back by re-import loses your tags, and the rollback is a restore
-(`docs/runbooks/first-run.md`, "Rolling back, until the first real tag"). Decided 2026-10-22: the
-first real tag waits until stage 2b's import dry run is done. If tagging is off, that runbook's "Tagging" section says why and what to do.
+(`docs/runbooks/first-run.md`, "Rolling back, until the first real tag"). Decided 2026-10-23,
+refining 2026-10-22: the first real tag waits until stage 2b's first real Plaud import and the
+backup after it (the runbook's import section, added in stage 2b's second phase). If tagging is
+off, that runbook's "Tagging" section says why and what to do.
 
 ## Live demo
 

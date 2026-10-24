@@ -493,7 +493,9 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    `rc up -d`. A file an editor replaced is not seen by a running container until it restarts.
 
 2. **Alerts, and the last secret files.**
-   - **ntfy.sh:** generate a topic in your password manager: 20 or more random letters and
+   - **ntfy.sh, optional, for later** (stage 2b, decision 9: until it is set up, Status and the
+     Healthchecks checks carry every alert; "Setting up ntfy, later" below): generate a topic in
+     your password manager: 20 or more random letters and
      digits (only `A–Z`, `a–z`, `0–9`, `-` and `_`, at most 64; the app refuses a shorter one).
      Subscribe to it in the ntfy app on your phone, and copy the server the app shows into
      `[alerts] ntfy_server`. The topic is the only lock on your alerts: whoever has it can read
@@ -508,24 +510,24 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
      `?…`: the app adds `/start` and `/fail` to its end, and refuses a URL with a query.
      Healthchecks sees when each backup starts and ends, so how long it took, which grows with
      what was recorded since the one before; it never sees more than the fixed failure line.
-   - **A token, only if your ntfy server needs one** (a self-hosted server with access control;
-     ntfy.sh needs none): put it in a file `ntfy_token` beside the others, and name that file in
+   - **A token, optional, for later, and only if your ntfy server needs one** (a self-hosted
+     server with access control; ntfy.sh needs none): put it in a file `ntfy_token` beside the others, and name that file in
      `docker/deploy.env` as `RECORDINGS_NTFY_AUTH_HOST=$RECORDINGS_HOME/secrets/ntfy_token` (an
      absolute path). Left empty there, no token is mounted, which is right for ntfy.sh.
-   - **Keep both in your password manager,** the topic and the ping URL. Whoever holds them can
-     read your alerts or keep an outage quiet.
+   - **Keep the ping URL in your password manager,** and the topic too once ntfy is set up.
+     Whoever holds them can read your alerts or keep an outage quiet.
    ```bash
    cd "$RECORDINGS_HOME/secrets"
-   install -m 600 /dev/null ntfy_topic && ${EDITOR:-vi} ntfy_topic
    install -m 600 /dev/null deadman_url && ${EDITOR:-vi} deadman_url
-   # only if your ntfy server needs a token:
+   # optional, for later (ntfy): the topic, and a token only if your ntfy server needs one
+   # install -m 600 /dev/null ntfy_topic && ${EDITOR:-vi} ntfy_topic
    # install -m 600 /dev/null ntfy_token && ${EDITOR:-vi} ntfy_token
    ls -l
    cd -
    ```
    Expected: `deadman_url`, `nas_cacert` (empty over the tailnet), `nas_known_hosts`,
-   `nas_ssh_key`, `nas_ssh_key.pub`, `ntfy_topic`, `rest_password` and `restic_password`. Each is
-   `-rw-------`, except the `.pub`.
+   `nas_ssh_key`, `nas_ssh_key.pub`, `rest_password` and `restic_password`, and the ntfy topic, if
+   set up. Each is `-rw-------`, except the `.pub`.
 
 3. **The tailnet ACL, before anything listens** (spec §15: the app's port is for your devices
    only). First save the policy in Tailscale's admin console, under Access controls: Tailscale
@@ -590,6 +592,9 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
      recordings and the NAS's free space.
    - Both warn that retention is off here (`[backup] prune = false`). That is right for
      rest-server: retention runs on the NAS (1b.7).
+   - Until ntfy is set up (optional, for later: "Setting up ntfy, later"), both also warn
+     "alerts are off: set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE". That is
+     expected.
    - From your own device, `nc -vz -w 5 "$SERVER_TS" 8000` now connects. From the refused
      device it still times out.
    - If `backup init` or any later `backup` command sits silent for over a minute, the NAS or its
@@ -641,7 +646,8 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    ```
    Expected:
    - `backup run`, `restore-test` and `mirror` each print `ok: True`.
-   - The phone gets the test push. Healthchecks shows the check up, with a log entry from
+   - The phone gets the test push, if ntfy is set up. Healthchecks shows the check up, with a log
+     entry from
      `alert-test`. No push although it printed `ntfy: True` means the alert went to another
      topic or server. If `ntfy_server` was mistyped, that server now has your topic (and any
      token): make new ones as well as fixing it.
@@ -777,15 +783,21 @@ rm -rf "$RECORDINGS_HOME/import" "$RECORDINGS_HOME/import.sha256"
 ```
 
 Before you tag anything in the real archive, read "Rolling back, until the first real tag" below:
-the first tag you apply ends the disposable window (spec §19). Dan decided on 2026-10-22 that the
-first real tag waits until stage 2b's import dry run is done, so a re-import stays free until then.
+the first tag you apply ends the disposable window (spec §19). Dan decided on 2026-10-23,
+refining 2026-10-22, that the first real tag waits until stage 2b's first real Plaud import
+(the import section, added in stage 2b's second phase) and the backup after it, so a re-import
+stays free until then.
 
 Then open the Library on one of your devices. It lists the imported recordings, with
 `audio-router`'s tags, and its first load takes under 2 seconds (your browser's network panel shows the
 time). If it takes longer, stop: the Library moves onto `index.db` before stage 2b (stage-2a
 plan, decision 6).
 
-**Rolling back, until the first real tag** (§19): the deployment is disposable.
+**Rolling back, until the first real tag** (§19): the deployment is disposable. Dan decided on
+2026-10-23, refining 2026-10-22, that the first real tag waits until stage 2b's first real Plaud
+import (the import section, added in stage 2b's second phase) and the backup after it. A
+rollback of that catch-up is then a restore from its `pre-import` backup, which loses no tags,
+because none exist yet.
 
 Tagging (part A of stage 3a) can ship before stage 2b's spikes and `sync --dry-run`. When to give
 the real archive its first tag is Dan's call. "The first real tag" means the first tag applied in
@@ -856,6 +868,24 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
      N for that run; the config keeps its limit.
    - `MirrorError` alone: the rsync dry run printed a line the mirror can't read, perhaps from a
      new rsync on the NAS or in the image. Nothing was deleted.
+
+## Setting up ntfy, later
+
+ntfy is optional (stage 2b, decision 9). Until it is set up, Status and the Healthchecks checks
+carry every alert: the backup's check, and from stage 2b the Plaud sync's.
+
+- **The backup's pushes** work as soon as section 2 step 2's ntfy parts are done: the server in
+  `[alerts] ntfy_server`, the topic in the `ntfy_topic` secret (and a token, only if your server
+  needs one). Then `rc restart backup` and `rc exec backup recordings alert-test`: the phone gets
+  the test push.
+- **Until then, doctor warns** "alerts are off: set [alerts] ntfy_server and
+  RECORDINGS_NTFY_TOPIC_FILE" for `web` and `backup`. That warning is expected, and it doesn't
+  fail doctor.
+- **The Plaud sync sends no push** in stage 2b: its alert is its own Healthchecks check, and its
+  pushes need a later change (stage 2b spec §16).
+- Until ntfy is set up, 2a's low-disk warning reaches no one. A full disk still reaches you,
+  through the sync's check: a run whose import the disk guard refuses isn't a good run (stage 2b
+  spec §11.7).
 
 ## Tagging
 
@@ -1051,7 +1081,7 @@ through 1a, then:
 | NAS transport (1b) | rest-server / SFTP fallback, risk accepted |
 | The tailnet ACL refuses another device (2.3) | yes / no |
 | Dead-man's switch: Healthchecks.io, period 1 h, grace 3 h (2.2) | |
-| ntfy topic and ping URL in the password manager (2.2) | yes / no |
+| The ping URL, and the ntfy topic if set up, in the password manager (2.2) | yes / no |
 | `recordings.service` brings the app up after a reboot (2.5) | yes / no |
 | The killed backup raised the alert (2.7) | yes / no |
 | The restore test passed on the imported data; `import/` deleted (4) | yes / no |
