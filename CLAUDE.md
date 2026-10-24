@@ -7,8 +7,14 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
 - **Python only through uv.** `uv sync`, `uv run …`. Never pip, never the system Python.
 - **Node 22 from `packages/ui/frontend/.nvmrc`.** Use `nvm use`, then `npm ci`. No global
   installs.
+- **`make help`** lists every target. **`make check`** is what every commit runs first: `make
+  lint`, `make test`, `make test-utc` (pytest again under `TZ=UTC`) and `make leaks` (gitleaks
+  over the whole history, as CI's `leaks` job runs it).
 - **`make test`** runs pytest and Vitest. **`make e2e`** runs the Playwright tests against
   demo mode.
+- **Commit messages are checked by hand,** because the repo has no commit hooks: write the message
+  to a file, run `uv run --script scripts/commitmsg.py <file>` (copied from Dan's
+  plan-driven-development skill), then `git commit -F <file>`.
 - **`make e2e`'s writing tests** (`packages/ui/tests/e2e/test_tagging.py`) get a server each,
   started with `TMPDIR=<tmp_path>/server`, and read what the app wrote through `Archive`. axe-core runs
   from `packages/ui/frontend/node_modules`, so run `npm ci` first.
