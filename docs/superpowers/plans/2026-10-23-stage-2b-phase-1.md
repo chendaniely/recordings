@@ -67,7 +67,7 @@ The controller's rulings once all 24 tasks were written, and the writers' calls 
 39. **`recordings alert-test` in `worker` pings the sync's own check** (Task 17; runbook section 6 step 7, spec §16).
 40. _(Removed by the plan council: `scripts/consent_id.py` prints the canonical ID; decision 49.)_
 41. _(Moved to Phase 2 by the plan council, with the snapshot marks; decision 44.)_
-42. **A scheduled turn that doesn't run waits one interval in memory** (Task 13), rather than rewriting `last_turn` at every 2-second tick; while the last outcome was "gate", the worker checks `gate_now` at every tick, so the first sync after the catch-up isn't held back.
+42. **A scheduled turn that doesn't run waits one interval in memory** (Task 13), rather than rewriting `last_turn` at every 2-second tick; the worker reads `gate_now` at every tick, so the first sync after the catch-up isn't held back by that wait.
 43. _(Moved to Phase 2 by the plan council: the snapshot mark before every 2b snapshot; phase-end list.)_
 
 ### Rulings after the plan council
@@ -86,8 +86,16 @@ The plan council (nine reviewers, `…-plan-council.md`) found 1 Critical, 39 Im
 53. **`ntfy_topic` is optional in compose,** as `ntfy_token` already is (G1), through `RECORDINGS_ALERTS_TOPIC_HOST`, and the backup's dead-man ping works without it.
 54. **`make consent-add ID='<paste>'` is documented single-quoted everywhere,** and the Makefile takes the value unexpanded (`override ID := $(value ID)`; P5, P12), so a pasted Copy ID reaches the script whole.
 55. **Copy ID works over plain HTTP** (BD2): `navigator.clipboard`, then `document.execCommand("copy")` on a selected textarea, then the ID shown selectable.
-56. **Tasks 19, 20 and 24 stay Tier 2** (P7 ruled): after decision 44 Phase 1's views carry no Plaud title and Task 20 no preview; their reviews add the security checklist's secrets, failing-closed and logging lines.
+56. **Tasks 19, 20 and 24 stay Tier 2** (P7 ruled): after decision 44 Phase 1's views carry no title of a recording that isn't in the archive (Updated rows show an archived recording's own title, never one with an open privacy flag: decision 57), and Task 20 no preview; their reviews add the security checklist's secrets, failing-closed and logging lines.
 57. **Updated rows show no title for a recording with an open privacy flag** (writer D's call, P13): a late keep-out writes a `retagged-private` note, which must not bring its title back.
+
+### Rulings after the re-review
+
+Three re-reviewers read the plan at `8a67aae` (their reports are appended to `…-plan-council.md`): 0 Critical, 7 Important, 11 Minor, all fixed in one last round.
+
+58. **A `private` that can't land says why** (X2, Y1, Z2): the `private-unwritten` flag carries its exception's class as `cause`, and only `StaleFile` and `InvalidFile` say "run `recordings reindex`"; any other cause says to check the archive disk and its permissions (`PRIVATE_UNWRITTEN_IO`). A failed pass's blocker shows its class in Needs attention, and Status's remedy follows it. An index that can't answer for 60 seconds counts as a failed pass (Y4).
+59. **Before any listing exists, the screens show no counts** (X5): the views carry `listed: false` until Phase 2 writes a listing, and the Sync screen and Status say "No sync has run yet." with the consent count and the flags, never "Nothing is waiting" or a row of zeros. The canned view sets `listed: true`.
+60. **The Library hides request buttons a phase can't handle** (X6): Details' and both selection bars' Re-sync aren't drawn while `resync` isn't handled, so the screen Dan tags on every day carries no dead button; the Sync screen and Status keep theirs disabled with "Comes with the next part of stage 2b."
 
 ## Global Constraints
 
@@ -147,7 +155,7 @@ config.example.toml (7, 16), .gitignore, .dockerignore (7), conftest.py (root: n
 scripts/commitmsg.py (1), scripts/plaud_spike.py (5), scripts/consent_id.py (18), scripts/compose_smoke.py (17),
   scripts/build_pages.py (24)
 docker/compose.yml, deploy.example.conf, recordings.service (17); ops-busy.py, deploy-guard.sh, consent-add.sh (18)
-demo/plaud-sync.json (19, 24); demo/archive/FORMAT.md (9); pages/app.py, .github/workflows/pages.yml (24)
+demo/plaud-sync.json (19); demo/archive/FORMAT.md (9); pages/app.py, .github/workflows/pages.yml (24)
 docs/runbooks/first-run.md (2, 5, 8, 11, 17, 18); main spec and tagging-a spec (2)
 packages/core/src/recordings/
   models.py (3)  plaud/keepout.py, plaud/consent.py (3)  plaud/client.py, plaud/endpoint.py (4)
@@ -2083,7 +2091,7 @@ Spec §12.1's grammar (2a's meanings, plus the `of_` and upper-case forms, kept 
   def signature(path: Path | None) -> FileSignature | None   # None when it can't be stat'ed
   ```
   - **Each line is classified as `models.visible(line)`:** NFKC (a fullwidth ID, bullet or dash reads as the plain one) without format characters (a zero-width space, a word joiner, a byte order mark anywhere) or `HIDDEN_CODEPOINTS`. What 2a's parser missed is still found on the raw text (Task 8's `missed_by_2a`, with `LEGACY_ENTRY_RE`).
-  - **Line precedence:** comment (`#` after optional spaces), then exclusion, then typo, then kept, then text. A line's "first word" is what follows the optional bullet (`-` or `*`, then spaces) and backtick. An exclusion is an ID (`(of_)?` and 32 hex, any case) then an optional backtick and spaces, then a dash (`—`, `–` or `-`) or the end. A typo's first word holds 24 or more hex digits, with or without `of_`, but no valid ID (31 or 33 hex digits, or a non-hex character among them); it is a typo whatever follows it, a valid ID later on the line included. A line is a typo too (Dan's decision 12, spec §12.1 rule 4) when its text before the dash (after the optional bullet), or the whole line when it has no dash, is only hex digits once spaces, backticks and `of_` are set aside, 8 or more of them, and isn't one whole ID: an ID split by a space, or wrapped over two lines (each half a typo), or `- 20261023 — asked`. A kept line holds an ID that isn't an exclusion: one followed by other words, by a non-hex, non-dash character in the same word (`3fa9…:`), mid-sentence, or after a `+` or `1.` bullet.
+  - **Line precedence:** comment (`#` after optional spaces), then exclusion, then typo, then kept, then text. A line's "first word" is what follows the optional bullet (`-` or `*`, then spaces) and backtick. An exclusion is an ID (`(of_)?` and 32 hex, any case) then an optional backtick and spaces, then a dash (`—`, `–` or `-`) or the end. A typo's first word holds 24 or more hex digits, with or without `of_`, but no valid ID (31 or 33 hex digits, or a non-hex character among them); it is a typo whatever follows it, a valid ID later on the line included. A line is a typo too (Dan's decision 12, spec §12.1 rule 4) when its text before the dash (after the optional bullet), or the whole line when it has no dash, is only hex digits once spaces, backticks and `of_` are set aside, 8 or more of them, and isn't one whole ID: an ID split by a space, or wrapped over two lines (each half a typo), or `- 20261023 — asked`. Exclusions and comments are classified first, so decision 12 never touches them; by its own words ("isn't one whole ID") it does catch a line of two IDs, and an ID followed only by hex letters or digits before any dash (`` - `ID` added ``, `` - `of_…` 2026-10-23 asked ``, whose date's first dash comes after hex digits). Those read as kept lines before it and now stop the list by line number; a dash after the ID (`` - `of_…` — note ``) makes such a line an exclusion. A kept line holds an ID that isn't an exclusion: one followed by other words, by a non-hex, non-dash character in the same word (`3fa9…:`), mid-sentence, or after a `+` or `1.` bullet.
   - `consent.load_consent_list(path) -> frozenset[str]` raises `ConsentListError(list.stop)` on a stop, else returns `ids`. `consent.LEGACY_ENTRY_RE` is 2a's `ENTRY_RE`, unchanged.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-3-base`
@@ -2215,6 +2223,20 @@ def test_hex_split_by_a_space_or_a_wrap_is_a_typo_that_stops_the_list(lines):
     assert consent.stop == typo_phrase(numbers) and not consent.readable
     assert consent.ids == {B}  # late consent listings still run for the lines that read
     assert A[:16] not in consent.stop and "20261023" not in consent.stop
+
+
+@pytest.mark.parametrize(
+    "line", [f"- `{A}` `{B}`", f"- `{A}` added", f"- `of_{A}` 2026-10-23 asked"]
+)
+def test_an_id_followed_only_by_hex_before_any_dash_stops_the_list(line):
+    # why: Dan's decision 12, by its own words ("isn't one whole ID"; the re-review's X7). Each of
+    # these read as a kept line before it and now stops the list, by line number. A dash after the
+    # ID makes it an exclusion, as the runbook says.
+    consent = parse_consent(f"# Never mirror\n{line}\n- `{C}` —\n")
+    assert consent.typo_lines == (2,) and consent.stop == typo_phrase([2])
+    assert consent.ids == {C}
+    fixed = parse_consent(line.replace("` ", "` — ", 1) + "\n")
+    assert fixed.readable and fixed.ids == {A}
 
 
 def test_an_exclusion_a_kept_line_a_comment_and_a_note_read_as_before():
@@ -2486,7 +2508,7 @@ def is_private_tag(tag: str) -> bool:
     return fold(tag).split("/", 1)[0] == "private"
 ```
 
-The new module `packages/core/src/recordings/plaud/keepout.py`:
+The new module `packages/core/src/recordings/plaud/keepout.py`. Its classifier tries, in order: a blank line, a comment, an exclusion, a typo (the first-word rule, then Dan's decision 12's broken-ID rule), a kept line, text. So decision 12 reaches only lines that are neither exclusions nor comments, and among them stops a line of two IDs, or an ID followed only by hex before any dash; its comment and the module docstring say so:
 
 ```python
 """Keeping recordings out (stage 2b spec §12.1, §12.2): the consent list's grammar and the
@@ -2508,8 +2530,12 @@ tried in this order:
   whatever follows it: a valid ID later on the line doesn't make it a kept line. Or (Dan's
   decision 12) a line whose text before the dash, or the whole line when it has no dash, is only
   hex digits once spaces, backticks and `of_` are set aside, 8 or more of them, and isn't one
-  whole ID: an ID split by a space, or wrapped over two lines (each half is a typo). It fails
-  closed (P8): the list stops;
+  whole ID: an ID split by a space, or wrapped over two lines (each half is a typo). Exclusions
+  and comments are classified first, so it never touches them; it does catch a line of two IDs,
+  and an ID followed only by hex letters or digits before any dash (`` - `3fa9…` added ``,
+  `` - `of_3fa9…` 2026-10-23 asked ``), which read as kept lines before it. Such a line reads as
+  an exclusion once a dash follows the ID (`` - `of_3fa9…` — added ``). It fails closed (P8): the
+  list stops;
 - **a kept line:** any other line that holds an ID: one followed by other words, by a character
   that is neither hex nor a dash in the same word (`3fa9…:`), an ID in a sentence, or after a `+`
   or `1.` bullet. It names a recording Dan kept, so it is never an exclusion, and it is listed by
@@ -2628,7 +2654,9 @@ def _is_typo(line: str) -> bool:
     # Dan's decision 12 ("Stop and tell me"): an ID split by a space, or wrapped over two lines,
     # would otherwise read as text and exclude nothing. The text before the dash (the whole line
     # when there is none), with spaces, backticks and `of_` set aside, is 8 or more hex digits and
-    # nothing else, and isn't one whole ID.
+    # nothing else, and isn't one whole ID. Exclusions and comments never reach here. By the same
+    # words a line of two IDs, or an ID followed only by hex before any dash (`added`, a date like
+    # 2026-10-23), stops the list too: it read as kept before, and a dash after the ID fixes it.
     before = _DASH.split(line[_BULLET.match(line).end() :], maxsplit=1)[0]
     digits = _SET_ASIDE.sub("", before)
     return len(digits) >= _SPLIT_HEX and set(digits) <= _HEX and not _WHOLE_ID.fullmatch(before)
@@ -2792,7 +2820,7 @@ def load_consent_list(path: Path) -> frozenset[str]:
     return consent.ids
 ```
 
-- [ ] **Step 4: Run it; it passes.** `uv run pytest packages/core/tests/test_keepout.py packages/core/tests/test_import_run.py packages/core/tests/test_doctor.py packages/core/tests/test_cli.py packages/core/tests/test_models.py packages/core/tests/test_tagops.py -q`. Expected: all pass (`test_models.py` and `test_tagops.py` are pins: `is_private_tag` answers as it did; so is `test_an_exclusion_a_kept_line_a_comment_and_a_note_read_as_before`, which holds those lines to their old reading under decision 12).
+- [ ] **Step 4: Run it; it passes.** `uv run pytest packages/core/tests/test_keepout.py packages/core/tests/test_import_run.py packages/core/tests/test_doctor.py packages/core/tests/test_cli.py packages/core/tests/test_models.py packages/core/tests/test_tagops.py -q`. Expected: all pass (`test_models.py` and `test_tagops.py` are pins: `is_private_tag` answers as it did; so is `test_an_exclusion_a_kept_line_a_comment_and_a_note_read_as_before`, which holds those lines to their old reading under decision 12. `test_an_id_followed_only_by_hex_before_any_dash_stops_the_list` pins decision 12's reach: its three lines read as kept on a classifier without decision 12, and each reads as an exclusion once a dash follows the ID).
 
 - [ ] **Step 5: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
 
@@ -4789,7 +4817,8 @@ def test_s2_sends_the_client_id_and_reads_a_refusal_by_its_error_code(
     assert sent == [
         {"grant_type": "refresh_token", "refresh_token": REFRESH, "client_id": "synthetic-app"}
     ]
-    assert "error invalid_client" in first and "compare with the vendor CLI's own refresh" in first
+    assert "error invalid_client" in first
+    assert "compare this request with the vendor CLI's own refresh" in first
     assert spike.main(args) == 0
     assert "refused from this machine: stop and ask Dan" in capsys.readouterr().out
     assert TOKEN not in first and REFRESH not in first and env.fake.requests == []
@@ -5364,12 +5393,14 @@ def _refresh_fields(data: dict, refresh_token: str) -> dict[str, str]:
 
 def _refused(reply: dict) -> str:
     """What a refused refresh means for the session. An OAuth error code usually means the request
-    isn't the one Plaud expects: compare it with the vendor CLI's own refresh first. Only a refusal
-    the Mac doesn't get is spec §18's "refused from the server's address"."""
+    isn't the one Plaud expects: compare it with the vendor CLI's own refresh first (runbook 1c,
+    session A step 3). Only when the two match, and the Mac refreshes while this server is refused,
+    is it spec §18's "refused from the server's address"."""
     if _code(reply):
         return (
-            "the refresh was refused with an OAuth error code: compare with the vendor CLI's own "
-            "refresh on the Mac (runbook 1c); stop and ask Dan if the Mac's refresh works"
+            "the refresh was refused with an OAuth error code: compare this request with the "
+            "vendor CLI's own refresh (runbook 1c, session A step 3) before reading it as the "
+            "design failing"
         )
     return "the refresh was refused from this machine: stop and ask Dan"
 
@@ -5946,23 +5977,33 @@ scripts/plaud_spike.py s1`, and so on. Exit 78 means the guard refused before an
 why.
 
 **Session A** (s1, s2, s4, s3):
-1. Before the session, find the token URL: the vendor CLI's own refresh request names it (read
-   its installed code on the Mac, never its token file). S1 doesn't print it.
+1. Before the session, find the token URL and how the vendor CLI refreshes: its own refresh
+   request names the URL, its grant type, whether it sends a `client_id`, its content type and its
+   headers. Read them in the CLI's installed code on the Mac, or in `audio-router`'s client (its
+   `src/` only), never in a token file. S1 doesn't print the URL.
 2. Make the session's sign-in (above), then `s1`. If it finds no refresh token, stop (spec §18).
    If the key names include `client_id`, S2 and S4 send it with each refresh.
 3. `s2 --token-url <the token URL>`, then `s4 --token-url <the token URL>`. If S2 says "compare
-   with the vendor CLI's own refresh", sign in again under a new temporary `HOME` on the Mac and
-   let the CLI refresh there (its own refresh, or any call once its access token has expired). If
-   the Mac's refresh works, stop: that is S2's "refused from the server's address". If the Mac is
-   refused too, the request isn't the CLI's: see how the CLI builds its refresh, then make a fresh
-   session sign-in and run S2 again.
+   this request with the vendor CLI's own refresh", don't read the refusal as the design failing
+   yet. Compare the script's request (`_refresh_fields` and `_post_form`: a form POST with
+   `grant_type=refresh_token`, the refresh token and any `client_id`,
+   `application/x-www-form-urlencoded`, `Accept: application/json` and urllib's own `User-Agent`)
+   with what step 1 found:
+   - **They differ:** the script needs a new commit, which Dan reviews; then a fresh session
+     sign-in and S2 again. That is not a design failure.
+   - **They match:** sign in under a new temporary `HOME` on the Mac
+     (`cmphome="$(mktemp -d)" && chmod 700 "$cmphome" && HOME="$cmphome" plaud login`) and let the
+     CLI refresh there (its own refresh, or any call once its access token has expired). If the
+     Mac refreshes while the server is still refused, that is S2's "refused from the server's
+     address": stop and ask Dan. If the Mac is refused too, stop and ask Dan.
 4. S3, the baseline first: `s3`, which must say "signed in: yes". S2 replays the old refresh
    token, and a server that detects reuse may sign the session out for that; then make a fresh
    session sign-in and run `s3` again until it says yes, so a sign-out below is the new sign-in's
    doing.
 5. Then three sign-ins, each followed by `s3`: Plaud's web app; the Plaud MCP's `login` on the
-   Mac; the vendor CLI under another temporary `HOME` (`HOME="$(mktemp -d)" plaud login`). Record
-   which one, if any, makes `s3` say "signed in: no".
+   Mac; the vendor CLI under another temporary `HOME`
+   (`otherhome="$(mktemp -d)" && chmod 700 "$otherhome" && HOME="$otherhome" plaud login`).
+   Record which one, if any, makes `s3` say "signed in: no".
 
 **Session B** (s5, s7, s8, s10, s12, s11): a fresh session sign-in, then each spike in that
 order. S7, S8, S11 and S12 take one `--id` per recording you name for it (a Plaud ID or an
@@ -5992,6 +6033,11 @@ clone:
 ```bash
 rm -rf "$RECORDINGS_HOME/spike"
 rm -rf "$SPIKE_SRC"
+```
+After session A, on the Mac, also delete the temporary `HOME`s of steps 3 and 5, with the live
+sign-ins in them (the session's own was deleted once it was copied):
+```bash
+rm -rf "$cmphome" "$otherhome"
 ```
 
 **Results.** After each session, fill in its date, the commit it ran and each outcome. Never a
@@ -8144,6 +8190,15 @@ Spec §12.1's late consent listing (applied from the list and the index alone, n
       KEPT_OUT_LATE: "Kept out by title, but already in the archive: take it out by hand (runbook)",
       PRIVATE_UNWRITTEN: "Should be private, but its file was edited outside the app: run `recordings reindex`",
   }
+  # A private-unwritten flag whose cause isn't an outside edit or an invalid file (spec §13.2's sentence is
+  # for those): the cause is the exception's class name, kept in the flag event's detail as "cause".
+  PRIVATE_UNWRITTEN_IO = ("Recording {id} should be private, but its file couldn't be written ({cause}): "
+                          "check the archive disk and its permissions.")
+  EDITED_CAUSES: frozenset[str] = frozenset({"StaleFile", "InvalidFile"})   # causes that keep SENTENCES[PRIVATE_UNWRITTEN]
+  def flag_sentence(kind: str, recording_id: str, cause: str | None = None) -> str: ...
+      # SENTENCES[kind], except a private-unwritten flag whose cause is set and not in EDITED_CAUSES, which gets
+      # PRIVATE_UNWRITTEN_IO with its ID and cause ("unknown" for a cause that isn't a class name); Task 19 calls it
+      # with the event's detail.get("cause")
   KEPT_HERE = "Kept here: it stays private, and nothing more is fetched from Plaud for it"
   NOTHING_TO_KEEP = "Nothing to keep: there is no open late keep-out for it"
   @dataclass(frozen=True)
@@ -8154,9 +8209,11 @@ Spec §12.1's late consent listing (applied from the list and the index alone, n
       unwritten: tuple[str, ...]     # a `private` owed but not written: the private-unwritten blocker opens
       busy: tuple[str, ...]          # LockTimeout: retried at the next tick
       index_unavailable: bool        # the strict lookup couldn't answer: retried at the next tick, and shown
+      causes: Mapping[str, str] = {} # each `unwritten` ID's exception class name (a field default_factory=dict):
+                                     # Task 13 writes it into that recording's private-unwritten flag as detail "cause"
   UNWRITTEN: tuple[type[BaseException], ...]   # what writing one recording's `private` can raise that lands it in `unwritten`
   def flag(db: PlaudDB, kind: str, recording_id: str, *, plaud_id: str | None, now: datetime) -> bool: ...   # one open privacy flag per recording: an open kept-out-late, or a recording gone from Plaud, becomes consent-late; True when added or changed
-  def apply_late_consent(writer: Writer, db: PlaudDB, consent: ConsentList, *, now: datetime) -> LateReport: ...   # no Plaud call (§12.1): the exclusions that do read still tag `private` and flag during a consent stop; a flag clears only while the list reads cleanly; run at every tick, so a run where nothing changed writes nothing and adds no event; one recording that can't be written (UNWRITTEN: an outside edit, a folder it can't enter, a full disk, a busy state.db, a file that doesn't decode) is reported in `unwritten`, and one whose flag state.db refuses is flagged at the next tick: neither stops the recordings after it
+  def apply_late_consent(writer: Writer, db: PlaudDB, consent: ConsentList, *, now: datetime) -> LateReport: ...   # no Plaud call (§12.1): the exclusions that do read still tag `private` and flag during a consent stop; a flag clears only while the list reads cleanly; run at every tick, so a run where nothing changed writes nothing and adds no event; one recording that can't be written (UNWRITTEN: an outside edit, a folder it can't enter, a full disk, a busy state.db, a file that doesn't decode) is reported in `unwritten`, with its exception's class name in `causes`, and one whose flag state.db refuses is flagged at the next tick: neither stops the recordings after it
   def record_late_keep_out(db: PlaudDB, recording_id: str, plaud_ids: Iterable[str], word: str, *, now: datetime) -> bool: ...   # kept_out_at/word on each canonical ID and one flag, unless plaud_checks.kept_here_at is set; a row no listing has made yet comes from set_listing, dated by the keep-out (decision 36); the caller has written `private`
   def keep_here(db: PlaudDB, recording_id: str, *, now: datetime) -> str: ...   # resolves the open kept-out-late flag, a kept-here event, kept_here_at; KEPT_HERE or NOTHING_TO_KEEP; changes no archive file
   def missed_by_2a(text: str, consent: ConsentList) -> frozenset[str]: ...   # exclusion IDs 2a's LEGACY_ENTRY_RE didn't read
@@ -8195,8 +8252,12 @@ from recordings.plaud.flags import (
     KEPT_HERE,
     KEPT_OUT_LATE,
     NOTHING_TO_KEEP,
+    PRIVATE_UNWRITTEN,
+    PRIVATE_UNWRITTEN_IO,
+    SENTENCES,
     apply_late_consent,
     flag,
+    flag_sentence,
     keep_here,
     missed_by_2a,
     record_late_keep_out,
@@ -8388,6 +8449,7 @@ def test_a_file_edited_outside_the_app_is_reported_unwritten(writer, make_incomi
     db = PlaudDB(writer.state)
     report = apply_late_consent(writer, db, parse_consent(listed(pid(14))), now=NOW)
     assert report.unwritten == (rec.id,) and report.tagged == ()
+    assert report.causes == {rec.id: "StaleFile"}  # its flag keeps §13.2's sentence
     assert [e.recording_id for e in open_flags(db)] == [rec.id]  # flagged all the same
 
 
@@ -8431,23 +8493,25 @@ ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
 
 @pytest.mark.parametrize(
-    "fault",
+    ("fault", "cause"),
     [
         pytest.param(
             locked_out,
+            "PermissionError",
             id="a folder it can't enter",
             marks=pytest.mark.skipif(ROOT, reason="root enters any folder"),
         ),
-        pytest.param(undecodable, id="a file that doesn't decode"),
-        pytest.param(busy_state_db, id="a busy state.db"),
+        pytest.param(undecodable, "InvalidFile", id="a file that doesn't decode"),
+        pytest.param(busy_state_db, "OperationalError", id="a busy state.db"),
     ],
 )
 def test_one_recording_that_cant_be_written_stops_none_after_it(
-    writer, make_incoming, monkeypatch, fault
+    writer, make_incoming, monkeypatch, fault, cause
 ):
     # why: §12.1 "Every other recording keeps flowing", §16. A folder with the wrong owner, a full
     # disk, a busy state.db or a file that doesn't decode is that recording's alone: it is reported
-    # unwritten, so the worker opens its blocker, and every recording sorted after it is tagged.
+    # unwritten, with its class for its flag's sentence, so the worker opens its blocker, and every
+    # recording sorted after it is tagged.
     first = plaud_rec(writer, make_incoming, 40, recorded_at=EARLIER)
     second = plaud_rec(writer, make_incoming, 41)
     assert first.id < second.id  # the bad one is met first
@@ -8459,9 +8523,29 @@ def test_one_recording_that_cant_be_written_stops_none_after_it(
         report = apply_late_consent(writer, db, parse_consent(listed(pid(40), pid(41))), now=NOW)
     finally:
         folder.chmod(mode)
-    assert report.unwritten == (first.id,)
+    assert report.unwritten == (first.id,) and report.causes == {first.id: cause}
     assert report.tagged == (second.id,) and is_private(writer.archive.load(second.id))
     assert {e.recording_id for e in open_flags(db)} == {first.id, second.id}  # flagged all the same
+
+
+def test_an_unwritten_flags_sentence_follows_its_cause():
+    # why: §13.2, §16. `recordings reindex` mends an outside edit; it can't mend a full disk or a
+    # folder's owner. So any other cause names its class and points at the disk, never at reindex.
+    rid = "20261006T140003-0700_aaaaaaaa"
+    edited = SENTENCES[PRIVATE_UNWRITTEN]
+    assert flag_sentence(PRIVATE_UNWRITTEN, rid, "StaleFile") == edited
+    assert flag_sentence(PRIVATE_UNWRITTEN, rid, "InvalidFile") == edited
+    assert flag_sentence(PRIVATE_UNWRITTEN, rid) == edited  # a flag with no cause recorded
+    assert flag_sentence(PRIVATE_UNWRITTEN, rid, "PermissionError") == (
+        f"Recording {rid} should be private, but its file couldn't be written (PermissionError): "
+        "check the archive disk and its permissions."
+    )
+    io = flag_sentence(PRIVATE_UNWRITTEN, rid, "OSError")
+    assert io == PRIVATE_UNWRITTEN_IO.format(id=rid, cause="OSError") and "reindex" not in io
+    assert flag_sentence(CONSENT_LATE, rid, "OSError") == SENTENCES[CONSENT_LATE]
+    # Only a class name is ever shown: anything else in the detail reads as "unknown".
+    odd = flag_sentence(PRIVATE_UNWRITTEN, rid, "Synthetic 042: a title")
+    assert "Synthetic" not in odd and "(unknown)" in odd
 
 
 def test_a_flag_state_db_refuses_is_added_at_the_next_tick(writer, make_incoming, monkeypatch):
@@ -8482,7 +8566,7 @@ def test_a_flag_state_db_refuses_is_added_at_the_next_tick(writer, make_incoming
     consent = parse_consent(listed(pid(42), pid(43)))
     report = apply_late_consent(writer, db, consent, now=NOW)
     assert report.tagged == (first.id, second.id) and report.flagged == (second.id,)
-    assert report.unwritten == ()
+    assert report.unwritten == () and report.causes == {}
     monkeypatch.undo()
     assert apply_late_consent(writer, db, consent, now=NOW).flagged == (first.id,)
 
@@ -8600,6 +8684,11 @@ Expected: collection fails with `ModuleNotFoundError: No module named 'recording
   opens its blocker (§16), and the loop goes on; a flag `state.db` refuses is added at the next
   tick. Python reads a folder it can't enter as "no file there", so only `mutate`, which reads
   the file itself, decides that a recording is gone.
+- **An unwritten `private` says what stopped it.** `LateReport.causes` holds each one's exception
+  class, which the worker keeps in its `private-unwritten` flag's detail as `"cause"`, and
+  `flag_sentence` words the flag by it: an outside edit or an invalid file keeps §13.2's sentence
+  (`recordings reindex`, or a fix by hand); any other class (a full disk, a folder's owner, a busy
+  `state.db`) gets `PRIVATE_UNWRITTEN_IO`, which points at the disk, since reindex can't help.
 - **One flag per recording (P15).** A recording with an open late keep-out flag that becomes
   consent-listed has that flag changed, never a second one. A recording gone from Plaud has no
   privacy flag of its own (it is listed under Gone from Plaud), so it gets this one, and only it.
@@ -8615,8 +8704,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from recordings.locks import LockTimeout
@@ -8637,6 +8726,13 @@ SENTENCES: dict[str, str] = {
         "Should be private, but its file was edited outside the app: run `recordings reindex`"
     ),
 }
+# A private-unwritten flag whose cause (its detail's "cause": the exception's class name) is
+# neither an outside edit nor an invalid file: reindex can't mend a full disk or a folder's owner.
+PRIVATE_UNWRITTEN_IO = (
+    "Recording {id} should be private, but its file couldn't be written ({cause}): check the "
+    "archive disk and its permissions."
+)
+EDITED_CAUSES: frozenset[str] = frozenset({"StaleFile", "InvalidFile"})
 KEPT_HERE = "Kept here: it stays private, and nothing more is fetched from Plaud for it"
 NOTHING_TO_KEEP = "Nothing to keep: there is no open late keep-out for it"
 # What writing one recording's `private` can raise that leaves it owed: the Writer's refusals, the
@@ -8654,6 +8750,20 @@ class LateReport:
     unwritten: tuple[str, ...]  # a `private` owed but not written: the blocker opens (§13.2)
     busy: tuple[str, ...]  # LockTimeout: retried at the next tick
     index_unavailable: bool  # the strict lookup couldn't answer: retried at the next tick, shown
+    # Each `unwritten` ID's exception class name: the worker keeps it in that recording's
+    # private-unwritten flag as detail "cause", and flag_sentence words the flag by it.
+    causes: Mapping[str, str] = field(default_factory=dict)
+
+
+def flag_sentence(kind: str, recording_id: str, cause: str | None = None) -> str:
+    """A flag's fixed sentence, as Status and the views show it. A private-unwritten flag whose
+    cause is set and isn't an outside edit or an invalid file says its file couldn't be written,
+    naming the class; anything but a class name in the detail reads as "unknown", so no other text
+    is ever shown. A flag with no cause recorded keeps §13.2's sentence."""
+    if kind == PRIVATE_UNWRITTEN and cause is not None and cause not in EDITED_CAUSES:
+        shown = cause if cause.isidentifier() and len(cause) <= 64 else "unknown"
+        return PRIVATE_UNWRITTEN_IO.format(id=recording_id, cause=shown)
+    return SENTENCES[kind]
 
 
 def flag(db: PlaudDB, kind: str, recording_id: str, *, plaud_id: str | None, now: datetime) -> bool:
@@ -8731,8 +8841,10 @@ def apply_late_consent(
 ) -> LateReport:
     """Tag and flag every recording here that an exclusion names; clear the flags whose line went.
     No Plaud call. Safe to run at every tick: a recording already `private` is only flagged. One
-    recording that can't be written is reported in `unwritten`, and stops none after it."""
+    recording that can't be written is reported in `unwritten`, its class in `causes`, and stops
+    none after it."""
     tagged, flagged, unwritten, busy, cleared = [], [], [], [], []
+    causes: dict[str, str] = {}
     found, unavailable = _listed_here(writer, consent.ids)
     for rid, pid in found:
         try:
@@ -8752,6 +8864,7 @@ def apply_late_consent(
             except UNWRITTEN as exc:
                 log.warning("late consent listing: %s not tagged (%s)", rid, type(exc).__name__)
                 unwritten.append(rid)
+                causes[rid] = type(exc).__name__  # a class name only: never the exception's text
             else:
                 tagged.append(rid)
         try:
@@ -8777,6 +8890,7 @@ def apply_late_consent(
         unwritten=tuple(unwritten),
         busy=tuple(busy),
         index_unavailable=unavailable,
+        causes=causes,
     )
 
 
@@ -8852,11 +8966,15 @@ late keep-out changes kind, never a second flag. The index is asked strictly, an
 updates are read from their files, so "can't answer" is retried and shown, never "nothing here".
 During a consent stop the exclusions that read are still applied; a flag clears only while the
 list reads cleanly. One recording that can't be written (an outside edit, a folder it can't
-enter, a full disk, a busy state.db, a file that doesn't decode) is reported unwritten and stops
-none after it; a flag state.db refuses is added at the next tick. Keep it here resolves a late
-keep-out's flag, changes no archive file, and records kept_here_at so a later title never flags
-again. No flag or event carries a title. Docs: the standard library only, nothing in CLAUDE.md's
-table.
+enter, a full disk, a busy state.db, a file that doesn't decode) is reported unwritten, with its
+exception's class in LateReport.causes, and stops none after it; a flag state.db refuses is added
+at the next tick. flag_sentence words a private-unwritten flag by its cause: StaleFile and
+InvalidFile keep §13.2's sentence; any other class gets PRIVATE_UNWRITTEN_IO, "Recording {id}
+should be private, but its file couldn't be written ({cause}): check the archive disk and its
+permissions.", the wording spec §16's private-unwritten row gains beside `recordings reindex`.
+Keep it here resolves a late keep-out's flag, changes no archive file, and records kept_here_at
+so a later title never flags again. No flag or event carries a title. Docs: the standard library
+only, nothing in CLAUDE.md's table.
 
 The new tests failed first with: ModuleNotFoundError: No module named 'recordings.plaud.flags'
 
@@ -11254,7 +11372,7 @@ Spec §16 and §11.7, with Dan's decision 10: one Healthchecks check, pinged onl
 - Create: `packages/core/src/recordings/plaud/health.py`
 - Create: `packages/core/src/recordings/worker.py` (`TurnContext` and `conclude_turn` only; Task 13 adds the loop)
 - Test: `packages/core/tests/test_plaud_health.py`, `packages/core/tests/test_runbook.py`
-- Modify: `docs/runbooks/first-run.md` ("When the Plaud alert comes", spec §17.5 word for word, with its optional Healthchecks Email Reports line)
+- Modify: `docs/runbooks/first-run.md` ("When the Plaud alert comes", spec §17.5 word for word, with its optional Healthchecks Email Reports line; the private-unwritten row's remedy also names the disk check for a cause reindex can't mend, round 3's X2/Y1)
 
 **Interfaces:**
 - Consumes: `checks.PlaudDB`, `checks.NoSyncYet`, `checks.BLOCKERS`, `checks.BLOCKER_PREFIX`, `checks.K_FAILING`, `checks.K_LAST_PING`, `checks.K_LAST_TURN`, `checks.K_CATCH_UP_DONE`; `alerts.AlertConfig`, `alerts.ping_url`; `settings.BAD_WORD`; `when.parse_stamp`, `when.local_hhmm` (Task 6).
@@ -11644,6 +11762,9 @@ def test_the_runbook_says_what_to_do_when_the_plaud_alert_comes():
     for phrase in (*BLOCKER_PHRASES.values(), DISK, OFF):
         assert phrase in text, phrase
     assert "`make plaud-sign-in`" in text and "recordings reindex" in text
+    # A private the disk or a folder's owner stopped (Task 8's PRIVATE_UNWRITTEN_IO, Task 19's
+    # "Late consent listings stopped") isn't mended by reindex.
+    assert "check the archive disk and its permissions" in text
 ```
 
 - [ ] **Step 2: Run them; watch them fail.**
@@ -12011,7 +12132,7 @@ until it clears:
 | imports stopped: consent list | the consent list is missing, empty, holds no IDs, or has a line that looks like an ID but can't be read | the worker reads the list cleanly | Fix the lines Status names by number, then `rc exec worker recordings plaud consent` |
 | held: see Status | the listing hold | Accept, or a later listing that no longer meets it | Status's check, then **Accept this listing** |
 | paused: unexpected changes | the breaker trips | Accept these changes, a release that closes it, or a breaker reset | **Accept these changes**, or a code fix |
-| should be private: run `recordings reindex` | a `private` the sync owes fails to land | the tag lands | `rc run --rm worker recordings reindex` |
+| should be private: run `recordings reindex` | a `private` the sync owes fails to land | the tag lands | `rc run --rm worker recordings reindex`. If Status says a file couldn't be written, or that late consent listings stopped, reindex can't help: check the archive disk and its permissions, then `rc logs worker` |
 
 And these stop it without a blocker:
 
@@ -12057,7 +12178,9 @@ sync_health reads plaud_state alone, and its cause() names the first reason the 
 after a good run with no blocker and no streak, records the ping's time, result and HTTP status,
 and the first failed ping's time until a good one (failed_since, for Status's "failed for 2
 hours", decision 32), and sends nothing on any error while deciding. The runbook gains "When the
-Plaud alert comes".
+Plaud alert comes", spec §17.5's tables, whose private-unwritten row also says that a file that
+couldn't be written, or late consent listings that stopped, need the archive disk and its
+permissions checked, not reindex.
 Docs: the standard library only; FakeNtfy stands in for Healthchecks (decision 11).
 
 The new tests failed first with: ModuleNotFoundError: No module named 'recordings.plaud.health'
@@ -12095,7 +12218,7 @@ The gate's other states reach nothing Phase 1 can be in, so they move to Phase 2
       reason: str | None   # GATE_FIRST while closed; None when open
   def gate_now(db: PlaudDB) -> Gate: ...   # open exactly when K_CATCH_UP_DONE is set, else Gate(False, GATE_FIRST); plaud_state alone, no archive scan; NoSyncYet without the table
   ```
-  Task 13 calls `gate_now` at start and at every tick while the last turn's outcome was "gate"; Task 14's worker answers a kind not in `GATE_ALLOWED` with `GATE_REFUSAL` while the gate is closed; Task 19 shows `reason`.
+  Task 13 calls `gate_now` at start and at every tick (a read of one `plaud_state` key); Task 14's worker answers a kind not in `GATE_ALLOWED` with `GATE_REFUSAL` while the gate is closed; Task 19 shows `reason`.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-12-base`
 
@@ -12240,7 +12363,7 @@ Spec §9.2 and §9.7: one process, a main thread that owns its `Writer`, a heart
 - Modify: `CLAUDE.md` (the archive's docs are written "whenever the web app's or the CLI's Writer opens (the worker's doesn't)")
 
 **Interfaces:**
-- Consumes: Task 11's `TurnContext`, `conclude_turn`, `health.RunOutcome`, `health.TurnOutcome`, `health.record_turn`, `health.open_blocker`, `health.clear_blocker` (both write nothing when the row is already so, so the tick calls them at every tick); Task 12's `gate_now`, `Gate`; Task 8's `apply_late_consent`, `LateReport`, `PRIVATE_UNWRITTEN` (it reports a recording it can't write in `unwritten` and goes on to the next); Task 10's `enforce_word`, `patterns_pass(writer, db, *, now, progress=)`, `plaud_run`, `plaud_holder`; Task 6's `when.parse_stamp`, `checks.PlaudDB`, `checks.Event` and the keys; `keepout.read_consent`, `keepout.signature`; `settings.plaud_settings`; `alerts.from_config`; `refs.canonical_plaud_id`; `writer.Writer.open(cfg, docs=False, lock_timeout=10)`.
+- Consumes: Task 11's `TurnContext`, `conclude_turn`, `health.RunOutcome`, `health.TurnOutcome`, `health.record_turn`, `health.open_blocker`, `health.clear_blocker` (both write nothing when the row is already so, so the tick calls them at every tick); Task 12's `gate_now`, `Gate`; Task 8's `apply_late_consent`, `LateReport` (with `causes`: each `unwritten` ID's exception class name), `PRIVATE_UNWRITTEN` (it reports a recording it can't write in `unwritten` and goes on to the next); Task 10's `enforce_word`, `patterns_pass(writer, db, *, now, progress=)`, `PatternsPass`, `plaud_run`, `plaud_holder`; Task 6's `when.parse_stamp`, `checks.PlaudDB`, `checks.Event` and the keys; `keepout.read_consent`, `keepout.signature`; `settings.plaud_settings`; `alerts.from_config`; `refs.canonical_plaud_id`; `writer.Writer.open(cfg, docs=False, lock_timeout=10)`.
 - Produces (`recordings/worker.py`):
   ```python
   TICK = 2.0
@@ -12249,7 +12372,8 @@ Spec §9.2 and §9.7: one process, a main thread that owns its `Writer`, a heart
   ALIVE_PROGRESS = timedelta(minutes=15)
   ALIVE_PROGRESS_STARTING = timedelta(minutes=30)
   TURN_LOCK_WAIT = 1.0                # seconds a scheduled turn waits for `plaud`
-  Phase = Literal["starting", "idle", "turn", "request", "consent", "stopping", "failed"]
+  INDEX_PATIENCE = timedelta(seconds=60); INDEX_UNAVAILABLE = "IndexUnavailable"
+  Phase = Literal["starting", "idle", "checking", "turn", "request", "consent", "stopping", "failed"]
   SILENT = "the Plaud worker is silent"; STUCK = "the Plaud worker may be stuck"
   FAILED = "the Plaud worker failed to start"
   @dataclass
@@ -12259,8 +12383,11 @@ Spec §9.2 and §9.7: one process, a main thread that owns its `Writer`, a heart
       at: datetime
       starting_since: datetime | None = None   # None: `at`
       error: str | None = None                 # a failed start's exception class
+      done: int | None = None                  # the patterns pass at start (phase checking): checked so far
+      total: int | None = None                 # and how many it checks
       def bump(self, now: datetime, phase: Phase | None = None) -> None: ...
       def fail(self, error: str) -> None: ...
+      def check(self, now: datetime, done: int, total: int) -> None: ...   # phase checking, done of total, a bump
       def read(self) -> tuple[Phase, int, datetime]: ...
       def beat(self, now: datetime) -> dict[str, Any]: ...   # the heartbeat's value
   class SyncTurn(Protocol):
@@ -12271,20 +12398,21 @@ Spec §9.2 and §9.7: one process, a main thread that owns its `Writer`, a heart
                    turn: SyncTurn = stand_in_turn, heartbeat: float = HEARTBEAT) -> None: ...
       state: State; db: PlaudDB; settings: PlaudSettings; writer: Writer | None; gate: Gate | None
       consent: ConsentList | None; progress: Progress; stopping: threading.Event
-      def start(self) -> None: ...      # §9.2's order: heartbeat thread (phase starting); [Task 14 adds requests.at_start here]; Writer.open; gate_now; then phase idle, enforce_word, patterns_pass (a progress bump per recording)
+      def start(self) -> None: ...      # §9.2's order: heartbeat thread (phase starting); [Task 14 adds requests.at_start here]; Writer.open; gate_now; then phase idle, written to the heartbeat at once; enforce_word; patterns_pass under the phase checking (Progress.check per recording), then idle
       def tick(self) -> None: ...       # its steps, each failure logged once per (step, class): the consent watch; the consent blocker (decision 13); late consent listings; the private-unwritten flags and blocker; [Task 14 adds: claim and serve one request]; the gate, read at every tick, and a due scheduled turn; prune once a day
       def due(self) -> bool: ...        # schedule_minutes > 0 and now ≥ max(last_started, last_ended) + schedule_minutes; a stamp in the future counts as long ago
       def scheduled_turn(self) -> None: ...   # a bad keep_out_word → "idle-config"; the gate closed → "gate" (detail {"reason": the gate's reason}, as Task 11's cause reads it); plaud held past TURN_LOCK_WAIT → "busy"; else plaud_run("plaud-sync"), self.turn, last_started and last_ended, conclude_turn (Phase 2 adds the sign-in pause and the rate-limit wait)
       def run(self) -> int: ...         # start (a start that raises writes phase `failed`, then re-raises), then tick every TICK until SIGTERM (stops between ticks); 0
+  # main(): NotTheWriter, StateError or ConfigError → 78; any other exception → its class on stderr, never its text or a traceback, exit 1
   def heartbeat_once(state: State, progress: Progress, *, now: datetime) -> None: ...   # meta.worker_heartbeat = progress.beat(now)
   def alive(state: State, *, now: datetime) -> tuple[bool, str | None]: ...   # FAILED after a failed start; else a heartbeat under 90 s, and progress within 15 minutes (while starting, within 30 minutes of starting_since); else SILENT or STUCK
   def main(argv: list[str] | None = None) -> int: ...   # `recordings worker [--alive]`; --alive exits 0 or 1
   ```
   Also, beside these: `HEARTBEAT_KEY = "worker_heartbeat"` (the `meta` key), and the value shapes this task writes, which later tasks read:
-  - **The heartbeat** (`meta.worker_heartbeat`): `{"at", "phase", "progress_counter", "progress_at"}`, plus `"starting_since"` (ISO) while the phase is `starting` or `failed`, and `"error"` (the exception's class name) when it is `failed`. A worker whose previous heartbeat said `starting` or `failed` keeps that `starting_since`, so restarts never renew the 30 minutes; a start that raises writes `failed` before the process exits. Task 19 shows `failed` and FAILED in plain words.
+  - **The heartbeat** (`meta.worker_heartbeat`): `{"at", "phase", "progress_counter", "progress_at"}`, plus `"starting_since"` (ISO) while the phase is `starting` or `failed`, `"error"` (the exception's class name) when it is `failed`, and `"done"` and `"total"` (ints) while it is `checking`, the patterns pass at start, which also bumps `progress_counter` and `progress_at` per recording. A worker whose previous heartbeat said `starting` or `failed` keeps that `starting_since`, so restarts never renew the 30 minutes; a start that raises writes `failed` before the process exits, and a start that ends writes `idle` at once. Task 19 shows `failed` and FAILED in plain words, and `checking` as "(checking, `done` of `total`)" (spec §15.2).
   - `K_LAST_STARTED` and `K_LAST_ENDED`: ISO 8601 strings in UTC.
   - `K_CONSENT`: `{"count": int, "file_changed": ISO | None, "read_at": ISO, "stop": phrase | None, "typo_lines": [int], "review_lines": [int]}`, the count and never the IDs (Tasks 8 and 19 read it). It is written when what was read changed, and the worker remembers a read only once it is written, so a failed write is tried again at the next tick. The consent list counts as changed when its inode, size, mtime or change time (`st_ctime_ns`) moved.
-  - **Blockers:** `consent` with `{"stop": phrase}`; `private-unwritten` with `{}` while a flag is open, or `{"error": <class name>}` while the last late consent pass failed as a whole. Both are written afresh at every tick. A `private-unwritten` flag's event detail is `{"owed": "consent"}`; it resolves once the recording is private or gone, or once the list reads cleanly and names none of its Plaud IDs.
+  - **Blockers:** `consent` with `{"stop": phrase}`; `private-unwritten` with `{}` while a flag is open, or `{"error": <class name>}` while the last late consent pass failed as a whole, or `{"error": "IndexUnavailable"}` once the index couldn't answer for 60 seconds (cleared when it answers). Both are written afresh at every tick. A `private-unwritten` flag's event detail is `{"owed": "consent", "cause": <class name>}` (`cause` from `LateReport.causes`, absent when unknown; Task 8's `flag_sentence` words it); it resolves once the recording is private or gone (its folder gone: a folder it can't enter is never "gone"), or once the list reads cleanly and names none of its Plaud IDs.
   - A turn that ran records `K_LAST_TURN`'s detail as `{"result": <the run's §15.6 phrase>}`, one that raised as `{"error": <class name>}` (Task 19 reads `result`). A turn that didn't run (the gate, busy, idle-config) waits one interval in memory, so it isn't recorded at every tick; after a "gate" outcome the gate's opening ends that wait at the next tick.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-13-base`
@@ -12296,6 +12424,7 @@ Spec §9.2 and §9.7: one process, a main thread that owns its `Writer`, a heart
 `--alive`. An injected clock everywhere; real threads only where a test says so. Every archive and
 consent list is synthetic, and nothing here reaches Plaud: Phase 1's worker has no client."""
 
+import dataclasses
 import json
 import logging
 import os
@@ -12679,14 +12808,45 @@ def test_a_failed_start_says_so_and_restarts_dont_renew_the_30_minutes(
     again = make_worker(Clock(T0 + timedelta(minutes=31)))
     again._start_heartbeat()
     assert alive(again.state, now=T0 + timedelta(minutes=31)) == (False, STUCK)
-    # once a start finishes, the next one is a new run of starts
+    # the start that works reads alive as soon as it ends, not at the next beat; and once a start
+    # finishes, the next one is a new run of starts
     monkeypatch.undo()
     fixed = make_worker(Clock(T0 + timedelta(minutes=32)))
     fixed.start()
-    heartbeat_once(fixed.state, fixed.progress, now=T0 + timedelta(minutes=32))
     assert alive(fixed.state, now=T0 + timedelta(minutes=32)) == (True, None)
     later = T0 + timedelta(minutes=40)
     assert make_worker(Clock(later)).progress.starting_since == later
+
+
+def test_a_patterns_pass_at_start_reads_as_checking_n_of_m(setup, make_worker, monkeypatch):
+    # why: spec §15.2's "last reported 14:21 (checking, 412 of 1,234)". A new auto-private
+    # pattern makes the next start check every Plaud recording's titles again (decision 27):
+    # each one bumps the progress under the phase `checking`, with its count.
+    for n, plaud_id in enumerate((PLAUD_A, PLAUD_B), start=1):
+        add_recording(setup, plaud_id, n)
+    make_worker(Clock()).start()  # the patterns as configured: their first version needs no pass
+    setup.cfg_file.write_text(
+        setup.cfg_file.read_text(encoding="utf-8").replace(
+            "[plaud]\n", '[plaud]\nauto_private_patterns = ["^synthetic-pattern"]\n'
+        ),
+        encoding="utf-8",
+    )
+    w = make_worker(Clock(T0 + timedelta(minutes=1)))
+    seen = []
+    real = worker_module.patterns_pass
+
+    def watched(writer, db, *, now, progress):
+        def each():
+            progress()
+            beat = w.progress.beat(now)
+            seen.append((beat["phase"], beat["done"], beat["total"]))
+
+        return real(writer, db, now=now, progress=each)
+
+    monkeypatch.setattr(worker_module, "patterns_pass", watched)
+    w.start()
+    assert seen == [("checking", 1, 2), ("checking", 2, 2)]
+    assert w.progress.read()[0] == "idle"
 
 
 def test_the_heartbeat_keeps_writing_during_a_long_synchronous_step(
@@ -12866,7 +13026,9 @@ def test_a_private_that_cant_be_written_opens_its_blocker_and_flag_until_it_land
     w.start()
     w.tick()
     assert not is_private(Archive(setup.root).load(rid))
-    assert [e.recording_id for e in w.db.open_flags((PRIVATE_UNWRITTEN,))] == [rid]
+    (flag,) = w.db.open_flags((PRIVATE_UNWRITTEN,))
+    assert flag.recording_id == rid
+    assert flag.detail == {"owed": "consent", "cause": "StaleFile"}  # Task 19 words it by cause
     assert "private-unwritten" in sync_health(w.state, schedule_minutes=20).blockers
     clock.advance(seconds=2)
     w.tick()  # still owed: still one flag
@@ -12934,6 +13096,62 @@ def test_a_late_consent_pass_that_fails_opens_the_blocker_logs_once_and_clears(
     assert blocker(w, "private-unwritten") is None
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root enters any folder")
+def test_a_folder_it_cant_enter_is_never_read_as_gone(setup, make_worker, monkeypatch):
+    # why: a file in a folder this user can't enter reads as missing (Path.is_file() is False), so
+    # Archive.load raises KeyError as if the recording were gone. While its folder exists, the
+    # flag stays open: here through a failed pass, which leaves no `unwritten` to keep it.
+    rid = add_recording(setup, PLAUD_A)
+    edited_by_hand(setup, rid)
+    consent_list(setup.consent, PLAUD_C, PLAUD_A)
+    clock = Clock()
+    w = make_worker(clock)
+    w.start()
+    w.tick()
+    assert len(w.db.open_flags((PRIVATE_UNWRITTEN,))) == 1
+
+    def full_disk(*args, **kwargs):
+        raise OSError(28, "synthetic: no space left on device")
+
+    monkeypatch.setattr(worker_module, "apply_late_consent", full_disk)
+    folder = Archive(setup.root).path_for(rid)
+    mode = folder.stat().st_mode
+    folder.chmod(0)
+    try:
+        clock.advance(seconds=2)
+        w.tick()
+        assert len(w.db.open_flags((PRIVATE_UNWRITTEN,))) == 1
+    finally:
+        folder.chmod(mode)
+
+
+def test_an_index_that_cant_answer_for_a_minute_opens_the_blocker(setup, make_worker, monkeypatch):
+    # why: an index that can't answer stops every late consent listing as surely as a pass that
+    # fails. A busy one is retried at each tick; past a minute it is shown the same way, and it
+    # clears once the index answers.
+    clock = Clock()
+    w = make_worker(clock)
+    w.start()
+    w.tick()
+    real = worker_module.apply_late_consent
+
+    def unavailable(*args, **kwargs):
+        return dataclasses.replace(real(*args, **kwargs), index_unavailable=True)
+
+    monkeypatch.setattr(worker_module, "apply_late_consent", unavailable)
+    for _ in range(2):
+        clock.advance(seconds=30)
+        w.tick()
+    assert blocker(w, "private-unwritten") is None  # 30 seconds: still retrying
+    clock.advance(seconds=30)
+    w.tick()
+    assert blocker(w, "private-unwritten")["detail"] == {"error": "IndexUnavailable"}
+    monkeypatch.setattr(worker_module, "apply_late_consent", real)
+    clock.advance(seconds=2)
+    w.tick()
+    assert blocker(w, "private-unwritten") is None
+
+
 def test_a_bad_keep_out_word_leaves_the_worker_idle_and_alive(setup, make_worker):
     # why: spec §9.2. It stays up and healthy; the turn idles, and doctor and Status say why.
     setup.cfg_file.write_text(
@@ -12988,6 +13206,25 @@ def test_recordings_worker_alive_exits_0_or_1(setup, make_worker, monkeypatch, c
     assert capsys.readouterr().out.strip() == SILENT
 
 
+def test_anything_else_that_stops_the_worker_prints_its_class_only(setup, monkeypatch, capsys):
+    # why: spec §15.6, class names only. An exception none of main's three exits names would end
+    # in a traceback that carries its text.
+    for key, value in setup.environ.items():
+        monkeypatch.setenv(key, value)
+
+    class Broken:
+        def __init__(self, cfg, environ):
+            pass
+
+        def run(self):
+            raise RuntimeError("synthetic text that names /srv/a-path")
+
+    monkeypatch.setattr(worker_module, "Worker", Broken)
+    assert worker_module.main([]) == 1
+    err = capsys.readouterr().err
+    assert "RuntimeError" in err and "a-path" not in err
+
+
 def test_the_workers_writer_writes_no_docs(setup, make_worker):
     # why: spec §9.1's table. Only the web app's and the CLI's Writers write the archive's docs.
     readme = setup.root / "README.md"
@@ -13013,7 +13250,7 @@ def test_importing_the_worker_brings_no_client_token_store_or_sync():
     assert done.stdout.strip() == "[]"
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_worker.py -q`. Expected: the module doesn't collect, `ImportError: cannot import name 'FAILED' from 'recordings.worker'` (Task 11's `worker.py` holds only `TurnContext` and `conclude_turn`), so all 25 fail first; none is a pin.
+- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_worker.py -q`. Expected: the module doesn't collect, `ImportError: cannot import name 'FAILED' from 'recordings.worker'` (Task 11's `worker.py` holds only `TurnContext` and `conclude_turn`), so all 29 fail first; none is a pin.
 
 - [ ] **Step 3: Write the worker,** `packages/core/src/recordings/worker.py`. Task 11 made the module with `TurnContext` and `conclude_turn`; keep both, and its docstring's paragraph on `conclude_turn`. Add to the module docstring, after its first paragraph:
 
@@ -13050,7 +13287,7 @@ from recordings.config import Config, ConfigError, load_config
 from recordings.locks import LockTimeout
 from recordings.models import is_private
 from recordings.plaud import keepout
-from recordings.plaud.baseline import enforce_word, patterns_pass
+from recordings.plaud.baseline import PatternsPass, enforce_word, patterns_pass
 from recordings.plaud.checks import K_CONSENT, K_LAST_ENDED, K_LAST_STARTED, Event, PlaudDB
 from recordings.plaud.flags import PRIVATE_UNWRITTEN, LateReport, apply_late_consent
 from recordings.plaud.gate import Gate, gate_now
@@ -13080,7 +13317,7 @@ HEARTBEAT = 30.0  # seconds between the heartbeat thread's writes
 ALIVE_HEARTBEAT = timedelta(seconds=90)
 ALIVE_PROGRESS = timedelta(minutes=15)
 ALIVE_PROGRESS_STARTING = timedelta(minutes=30)
-Phase = Literal["starting", "idle", "turn", "request", "consent", "stopping", "failed"]
+Phase = Literal["starting", "idle", "checking", "turn", "request", "consent", "stopping", "failed"]
 SILENT = "the Plaud worker is silent"
 STUCK = "the Plaud worker may be stuck"
 FAILED = "the Plaud worker failed to start"
@@ -13090,6 +13327,10 @@ WRITER_LOCK_WAIT = 10.0  # spec §9.2: Writer.open(cfg, docs=False, lock_timeout
 # A scheduled turn waits about a second for the `plaud` lock, so a probe at that instant (Status, a
 # request's insert, the deploy guard) never makes it "busy" for a whole interval.
 TURN_LOCK_WAIT = 1.0
+# An index that can't answer is retried at every tick; for this long it stops every late consent
+# listing, and is shown as a pass that failed.
+INDEX_PATIENCE = timedelta(seconds=60)
+INDEX_UNAVAILABLE = "IndexUnavailable"  # the private-unwritten blocker's `error` then
 
 
 def _utc_now() -> datetime:
@@ -13105,13 +13346,16 @@ class Progress:
     `starting_since` is when this run of starts began: a worker whose previous start never finished
     (it said `starting` or `failed` last) keeps that start's time, so a worker that fails and
     restarts over and over is STUCK after 30 minutes, never `starting` for ever. `error` is a failed
-    start's exception class."""
+    start's exception class. `done` and `total` count the patterns pass at start, phase
+    `checking`."""
 
     phase: Phase
     counter: int
     at: datetime
     starting_since: datetime | None = None  # None: `at`
     error: str | None = None
+    done: int | None = None
+    total: int | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -13129,13 +13373,19 @@ class Progress:
         with self._lock:
             self.phase, self.error = "failed", error
 
+    def check(self, now: datetime, done: int, total: int) -> None:
+        """One recording of the patterns pass at start: phase `checking`, `done` of `total`."""
+        with self._lock:
+            self.counter += 1
+            self.at, self.phase, self.done, self.total = now, "checking", done, total
+
     def read(self) -> tuple[Phase, int, datetime]:
         with self._lock:
             return self.phase, self.counter, self.at
 
     def beat(self, now: datetime) -> dict[str, Any]:
-        """The heartbeat's value: `starting_since` while it starts or after a failed start, and a
-        failed start's `error`."""
+        """The heartbeat's value: `starting_since` while it starts or after a failed start, a
+        failed start's `error`, and the patterns pass's `done` and `total` while `checking`."""
         with self._lock:
             value: dict[str, Any] = {
                 "at": now.isoformat(),
@@ -13147,6 +13397,8 @@ class Progress:
                 value["starting_since"] = self.starting_since.isoformat()
             if self.phase == "failed":
                 value["error"] = self.error
+            if self.phase == "checking":
+                value["done"], value["total"] = self.done, self.total
             return value
 
 
@@ -13270,7 +13522,10 @@ class Worker:
         self._signature: tuple[FileSignature, int] | None = None  # the list as last read
         self._late: LateReport | None = None  # the last late consent pass, None if it failed
         self._late_failed: str | None = None  # that failure's class
+        self._index_down: datetime | None = None  # since when the index couldn't answer
         self._logged: LateReport | None = None
+        self._checked = 0  # the patterns pass at start: recordings checked so far
+        self._to_check: int | None = None  # and how many it checks, counted once it begins
         self._not_before: datetime | None = None  # a turn that didn't run waits one interval
         self._held_by_gate = False  # the last turn found the gate closed
         self._pruned_at: datetime | None = None
@@ -13285,13 +13540,15 @@ class Worker:
     def start(self) -> None:
         """1. the heartbeat thread, phase `starting`; 2. (Task 14) the requests left over; 3. the
         Writer; 4. the gate. (§9.2's sweep of `.tmp/plaud-dl/` comes with Phase 2's downloads.)
-        The start is then done, phase `idle`: the configured keep-out word is recorded as enforced
-        (decision 26), and a new pattern's pass runs (decision 27), each recording it checks
-        counted as progress."""
+        The start is then done, phase `idle`, written to the heartbeat at once (a start that
+        follows failed ones must not read STUCK until the next beat). Then the configured keep-out
+        word is recorded as enforced (decision 26), and a new pattern's pass runs (decision 27),
+        under the phase `checking`."""
         self._start_heartbeat()
         self.writer = self._open_writer()
         self.gate = self._open_gate()
         self.progress.bump(self.clock(), "idle")
+        self._beat()
         self._enforce()
 
     def _start_heartbeat(self) -> None:
@@ -13342,14 +13599,27 @@ class Worker:
             )
         else:
             log.warning("%s: scheduled syncs stay idle", BAD_WORD)
-        done = self._step(
-            "patterns", lambda: patterns_pass(self.writer, self.db, now=now, progress=self._bump)
-        )
+        done = self._step("patterns", lambda: self._patterns(now))
         if done is not None:
             log.info("%s", done.sentence())
 
-    def _bump(self) -> None:
-        self.progress.bump(self.clock())
+    def _patterns(self, now: datetime) -> PatternsPass | None:
+        """Decision 27's pass, under the phase `checking`: each recording it checks bumps the
+        progress and the heartbeat's `done` of `total`, so Status reads "(checking, 412 of 1,234)"
+        (spec §15.2), and a long pass is never stuck."""
+        try:
+            return patterns_pass(self.writer, self.db, now=now, progress=self._check_one)
+        finally:
+            self.progress.bump(self.clock(), "idle")
+
+    def _check_one(self) -> None:
+        if self._to_check is None:  # the pass has begun: count what it checks, once
+            self._to_check = sum(
+                any(s.kind == "plaud" for s in rec.sources)
+                for rec in self.writer.archive.iter_recordings()
+            )
+        self._checked += 1
+        self.progress.check(self.clock(), self._checked, self._to_check)
 
     def _start_failed(self, exc: BaseException) -> None:
         """A start that fails says so in the heartbeat (phase `failed`, the error's class), which
@@ -13461,9 +13731,9 @@ class Worker:
 
     def _late_consent(self) -> None:
         """Late consent listings (spec §12.1), from the list in force and the index alone. A pass
-        that fails as a whole is remembered by its class: `_owed_private` then opens the
-        `private-unwritten` blocker with it, since every `private` the pass would have written is
-        still owed."""
+        that fails as a whole is remembered by its class, and an index that can't answer for
+        INDEX_PATIENCE as INDEX_UNAVAILABLE: `_owed_private` then opens the `private-unwritten`
+        blocker with it, since every `private` the pass would have written is still owed."""
         if self.writer is None or self.consent is None:
             return
         now = self.clock()
@@ -13474,6 +13744,12 @@ class Worker:
             self._late, self._late_failed = None, type(exc).__name__
             raise
         self._late, self._late_failed = report, None
+        if not report.index_unavailable:
+            self._index_down = None
+        elif self._index_down is None:
+            self._index_down = now
+        elif now - self._index_down >= INDEX_PATIENCE:
+            self._late_failed = INDEX_UNAVAILABLE
         if report != self._logged:
             self._log_late(report)
         self._logged = report
@@ -13497,23 +13773,22 @@ class Worker:
 
     def _owed_private(self) -> None:
         """Spec §16's `private-unwritten`, its own step, so it runs whatever the late consent pass
-        did. A `private` the pass owed but couldn't write (a file edited outside the app) opens one
-        flag per recording; each flag resolves once the `private` isn't owed any more. The blocker
+        did. A `private` the pass owed but couldn't write (a file edited outside the app, a full
+        disk) opens one flag per recording, its detail naming the exception's class (`cause`, from
+        Task 8's report); each flag resolves once the `private` isn't owed any more. The blocker
         is open while any flag is, or while the last pass failed as a whole (its detail names the
         error's class), and is written afresh at every tick."""
         if self.writer is None:
             return
         now = self.clock()
         unwritten = set(self._late.unwritten) if self._late is not None else set()
+        causes = self._late.causes if self._late is not None else {}
         open_flags = {e.recording_id: e for e in self.db.open_flags((PRIVATE_UNWRITTEN,))}
         for rid in sorted(unwritten - open_flags.keys()):
+            detail = {"owed": "consent", **({"cause": causes[rid]} if rid in causes else {})}
             with contextlib.suppress(sqlite3.IntegrityError):  # another writer just added it
                 self.db.add_event(
-                    PRIVATE_UNWRITTEN,
-                    now=now,
-                    recording_id=rid,
-                    detail={"owed": "consent"},
-                    open_flag=True,
+                    PRIVATE_UNWRITTEN, now=now, recording_id=rid, detail=detail, open_flag=True
                 )
         for rid, event in open_flags.items():
             if rid not in unwritten and not self._still_owed(event):
@@ -13533,8 +13808,9 @@ class Worker:
             return False
         try:
             rec = self.writer.archive.load(event.recording_id)
-        except KeyError:  # gone from the archive: nothing is owed
-            return False
+        except KeyError:  # no file it can read: gone only if its folder is (a folder it can't
+            # enter hides a file that is there)
+            return self.writer.archive.path_for(event.recording_id).exists()
         except (ValueError, OSError):  # unreadable or invalid: still owed
             return True
         if is_private(rec):
@@ -13654,6 +13930,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 78
+    except Exception as exc:  # noqa: BLE001  its class only: a traceback would carry its text
+        print(f"recordings worker: stopped ({type(exc).__name__})", file=sys.stderr)
+        return 1
 ```
 
 - [ ] **Step 4: Register `recordings worker`,** `packages/core/src/recordings/cli.py`. The import line:
@@ -13710,7 +13989,7 @@ and in `main`'s `commands` table:
         "plaud": plaud_commands.run,
 ```
 
-- [ ] **Step 5: Run them; they pass.** `uv run pytest packages/core/tests/test_worker.py -q`. Expected: `25 passed`.
+- [ ] **Step 5: Run them; they pass.** `uv run pytest packages/core/tests/test_worker.py -q`. Expected: `29 passed` (`28 passed, 1 skipped` as root: a folder it can't enter is no barrier to root).
 
 - [ ] **Step 6: Docs,** `CLAUDE.md`, the Archive rules' first bullet:
 
@@ -13739,12 +14018,16 @@ The worker is one process: a main thread that owns its Writer (opened with docs=
 10-second lock wait) and a heartbeat thread on its own state.db connections, so a long
 synchronous step can't silence --alive, while a wedged tick shows as stuck after 15 minutes. A
 start that fails writes phase "failed", which --alive reports, and restarts keep the first
-start's time, so a crash loop is stuck after 30 minutes rather than alive for ever.
+start's time, so a crash loop is stuck after 30 minutes rather than alive for ever; the start that
+works writes "idle" at once. A new pattern's pass at start runs as "checking", N of M. Anything
+else that stops it prints its class, never a traceback.
 Every 2 seconds it re-reads the consent list when its file changed (its change time counted, so
 a same-size edit that keeps its mtime is seen), trusting a read only when the file held still
 across it, and records the count, never the IDs. It applies late consent listings with no Plaud
-call; the private-unwritten flags and blocker are a step of their own, so a pass that fails as a
-whole opens the blocker with its error's class, and a flag closes once its private isn't owed.
+call; the private-unwritten flags (each naming its exception's class) and blocker are a step of
+their own, so a pass that fails as a whole, or an index that can't answer for a minute, opens the
+blocker with the class, and a flag closes once its private isn't owed (a folder it can't enter is
+never read as gone).
 The blockers are written afresh at every tick, and memory changes only after a write lands. Each
 step's failure is logged once per class. Before the first catch-up the gate holds every turn,
 read again at every tick so the first sync follows the catch-up at once; a plaud lock held past a
@@ -14592,7 +14875,7 @@ def _keep_here(worker: Worker, claimed: Claimed) -> requests.Reply:
 HANDLERS: dict[str, Handler] = {"keep-here": _keep_here}
 ```
 
-- [ ] **Step 5: Run them; they pass.** `uv run pytest packages/core/tests/test_plaud_requests.py packages/core/tests/test_worker.py -q`. Expected: all pass (`10 passed` in `test_plaud_requests.py`, `25 passed` in `test_worker.py`).
+- [ ] **Step 5: Run them; they pass.** `uv run pytest packages/core/tests/test_plaud_requests.py packages/core/tests/test_worker.py -q`. Expected: all pass (`10 passed` in `test_plaud_requests.py`, `29 passed` in `test_worker.py`).
 
 - [ ] **Step 6: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
 
@@ -16176,7 +16459,7 @@ Spec §17.1 and §17.3, with decision 10: Phase 1 is deployable, the worker idle
 - Modify: `packages/core/src/recordings/cli.py` (`alert-test` in `worker` pings the sync's check with `/log`, which section 6 step 7 runs; spec §16)
 - Modify: `Makefile` (the comments above `deploy` and `rollback`: the worker's health check, and rolling back across 2b)
 - Test: `packages/core/tests/test_deploy_template.py`, `packages/core/tests/test_runbook.py`, `packages/core/tests/test_ops.py` (alert-test; a backup with no topic still pings its check)
-- Modify: `docs/runbooks/first-run.md` (a section `## 6. Deploy 2b` right after `## 5. The mirror on the Mac`, before Task 2's `## Setting up ntfy, later`: first spec §22's check that the Library's first load is under 2 seconds, then §17.5's steps 1 to 5 and 7, with only the consent folder added to `extra_paths` (decision 9); step 6, the sign-in, says the worker stays idle, doctor reports "sign-in needed" and Status the gate's line until the sign-in exists; step 8, spec §22's "a check never pinged never goes down", seen once; a section `## Rolling back across 2b` before `## Restoring for real`, which section 6's failed deploy points to; "Setting up ntfy, later" names the topic's file in `deploy.env`; the introduction's "Steps 5–7 belong to stage 2b" says where section 6 fits)
+- Modify: `docs/runbooks/first-run.md` (a section `## 6. Deploy 2b` right after `## 5. The mirror on the Mac`, before Task 2's `## Setting up ntfy, later`: first the checkout moved to Phase 1's merge commit (`git fetch`, `git checkout`), as 2.8 does for a tag; then spec §22's check that the Library's first load is under 2 seconds, then §17.5's steps 1 to 5 and 7, with only the consent folder added to `extra_paths` (decision 9); step 6, the sign-in, says the worker stays idle, doctor reports "sign-in needed" and Status the gate's line until the sign-in exists; step 8, spec §22's "a check never pinged never goes down", seen once; a section `## Rolling back across 2b` before `## Restoring for real`, which section 6's failed deploy points to; "Setting up ntfy, later" names the topic's file in `deploy.env`; the introduction's "Steps 5–7 belong to stage 2b" says where section 6 fits)
 - Modify: `README.md` (the Docker section: `make deploy` starts web, backup and worker, and waits for both health checks; rolling back across 2b; the settings table's ntfy rows)
 - The main spec's §3, §5, §6.8 and §15 amendments are Task 2's (decision 8 as the controller changed it).
 
@@ -16405,6 +16688,9 @@ def test_the_runbook_has_a_deploy_2b_section():
     ):
         assert needed in flat, needed
     assert "/state/manifests" not in flat  # decision 9: the consent folder only, for now
+    lines = [line.strip() for line in _code_lines(text)]  # the code first, as 2.8 does for a tag
+    checkout = lines.index("git checkout <Phase 1's merge commit>")
+    assert lines.index("git fetch") < checkout < lines.index("make deploy")
     ntfy = " ".join(_section("## Setting up ntfy, later").split())
     assert "RECORDINGS_ALERTS_TOPIC_HOST" in ntfy and "`make deploy`" in ntfy
 
@@ -16926,7 +17212,19 @@ adds it), it applies late consent listings within seconds of an edit, and it hol
 sync until the first catch-up. Nothing in this section calls Plaud. On the homelab server, in
 `$REPO_DIR`, with the top block pasted.
 
-**First, the Library's first load** (stage 2b spec §22): open the Library on one of your devices
+**First, the code.** Move the checkout to Phase 1's merge commit, as 2.8 does for a tag. The
+running containers keep their image until step 5's `make deploy`; the new `compose.yml` and
+template are what steps 3 and 5 read. Do steps 1 to 5 in one sitting: at boot, the unit reads this
+checkout's `compose.yml`, which needs step 3's settings.
+```bash
+cd "$REPO_DIR"
+git fetch
+git checkout <Phase 1's merge commit>
+git log -1 --oneline
+```
+Expected: the merge commit you mean to deploy.
+
+**Then, the Library's first load** (stage 2b spec §22): open the Library on one of your devices
 with the browser's network panel open. It must load in under 2 seconds. If it takes longer, stop:
 the Library moves onto `index.db` before 2b deploys.
 
@@ -17149,7 +17447,8 @@ the topic's line; the boot unit's description names three containers. The smoke 
 ntfy, backs up the consent folder as an extra path, and runs the worker with no sign-in, no
 consent list and an empty deadman_sync_url, checking it stays healthy and that doctor reports all
 three. alert-test in the worker pings the sync's check with /log. Runbook section 6 deploys Phase
-1, with the sign-in left for Phase 2 (decision 10), a failed deploy pointing to the new "Rolling
+1, starting by checking out its merge commit, with the sign-in left for Phase 2 (decision 10), a
+failed deploy pointing to the new "Rolling
 back across 2b", which takes "/consent" out of extra_paths first and puts it back after deploying
 forward; the Makefile's comments and the README say so too.
 Checked: the Compose file reference (healthcheck, init, stop_grace_period) and
@@ -17575,6 +17874,7 @@ def test_the_runbook_keeps_a_recording_out_for_good():
         "local.mk",
         "Copy ID",
         "recordings plaud consent",
+        "put a dash after the ID",
     ):
         assert needed in keep, needed
     assert "2 hours" in _section("## Planned work and the sync's check")
@@ -17730,7 +18030,7 @@ exit 1
 
 ```sh
 #!/bin/sh
-# `make consent-add ID=<id>` runs this on the homelab server, over ssh (stage 2b spec §12.1): it
+# `make consent-add ID='<id>'` runs this on the homelab server, over ssh (stage 2b spec §12.1): it
 # adds one Plaud ID to the consent list, as the line "- `<id>` — added <date>". It writes the old
 # list and the new line to a new file in the same folder, at the old file's mode, then renames it
 # over the list, so the worker, which watches the folder, reads the old list or the new one, never
@@ -17964,6 +18264,11 @@ Either way, `recordings plaud consent` must show the new count, and no line it c
 edit doesn't show, the worker didn't see it. If the recording is already in the archive, the
 worker tags it `private` within seconds and flags it; take it out by hand if it mustn't stay.
 
+A line that holds a valid ID but is read as a typo: put a dash after the ID (`` - `of_…` — note ``).
+The list reads a line whose text before the dash is only hex digits, 8 or more, and not one whole
+ID as a typo (Dan's decision 12), so `` - `ID1` `ID2` `` or `` - `of_…` 2026-10-23 asked ``, with no
+dash, stops it.
+
 ## Planned work and the sync's check
 
 Planned work doesn't pause the sync's Healthchecks check: re-imports, stopping the worker, or
@@ -18028,8 +18333,9 @@ appends its canonical ID by writing a new file at the old one's mode and renamin
 prints what the worker reads. make takes ID as written, so a $(...) in it never runs, and every
 document writes it single-quoted, ID='<id>', since the Copy ID form's backticks would run in a
 shell otherwise; a test runs the documented line through sh -c. The runbook keeps a recording
-out, says planned work never pauses the sync's check, stops the worker for re-imports and mounts
-the consent folder for them.
+out (and says to put a dash after an ID on a line read as a typo, Dan's decision 12), says
+planned work never pauses the sync's check, stops the worker for re-imports and mounts the
+consent folder for them.
 New tests failed first: FileNotFoundError: docker/consent-add.sh (the make-target fixture).
 
 Plan: docs/superpowers/plans/2026-10-23-stage-2b-phase-1.md Task 18
@@ -18048,7 +18354,7 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 
 Spec §15's build order, step 1, and §22: what each view reads from which table. Every later UI task reads these shapes.
 
-Phase 1's views read Phase 1's own data only (the controller's scope ruling): the summary and what stops the sync (`sync_health`), the blockers, the privacy flags, the consent list's count, the gate, the worker's heartbeat, the ping, Phase 1's Needs attention entries, the marker's `retagged-private` notes and the requests' last result. Everything a later phase writes (the listing and its compare, the cache, holds, the breaker, checks, Sync everything, the sign-in's expiry, parking, re-keyed rows, review counts) is `null` or `[]` here, and the UI draws it empty; its reader comes with its writer. `types.ts` and the canned view (`demo/plaud-sync.json`) keep every field, Phase 2's and 3's included: they are the UI's contract for those readers. Every view also carries `handled` and `not_yet` (the worker's request kinds, and "Comes with the next part of stage 2b."), so the UI disables each button the worker can't answer yet.
+Phase 1's views read Phase 1's own data only (the controller's scope ruling): the summary and what stops the sync (`sync_health`), the blockers, the privacy flags, the consent list's count, the gate, the worker's heartbeat, the ping, Phase 1's Needs attention entries, the marker's `retagged-private` notes and the requests' last result. Everything a later phase writes (the listing and its compare, the cache, holds, the breaker, checks, Sync everything, the sign-in's expiry, parking, re-keyed rows, review counts) is `null` or `[]` here, and the UI draws it empty; its reader comes with its writer. `types.ts` and the canned view (`demo/plaud-sync.json`) keep every field, Phase 2's and 3's included: they are the UI's contract for those readers. Every view also carries `handled` and `not_yet` (the worker's request kinds, and "Comes with the next part of stage 2b."), so the UI disables each button the worker can't answer yet. The Sync view and the panel carry `listed: false` until Phase 2 writes a listing, so the screens show no counts nothing has measured (the canned view sets it true). A `private` that couldn't be written says what its cause needs (Task 8's `flag_sentence`, from the flag's `cause`), and a late consent pass that failed as a whole (Task 13's `private-unwritten` blocker with `{"error": <class>}`) names its class in the summary and Needs attention, with a remedy that helps instead of `recordings reindex`. The worker line reads the patterns pass at start as "(checking, 412 of 1,234)".
 
 **Files:**
 - Modify: `packages/ui/src/recordings_ui/plaud.py` (the views)
@@ -18061,7 +18367,7 @@ Phase 1's views read Phase 1's own data only (the controller's scope ruling): th
 - Also (found while writing the steps): `packages/ui/tests/conftest.py` (the `plaud_scene` fixture both test files use), `packages/ui/tests/test_demo_guard.py` (its allowed paths gain the canned view `from_env` now reads), `docker/Dockerfile` (the Docker demo copies the canned view beside `demo/archive`)
 
 **Interfaces:**
-- Consumes: `checks.PlaudDB` (`get`, `listing`, `open_flags`, `events_since`), `checks.K_CONSENT` (`{"read_at", "count", "file_changed", "stop", …}`: the count, never the IDs), `K_KEEP_OUT_WORDS`, `K_LAST_PING` (with `failed_since`, decision 32), `K_LAST_STARTED`, `K_LAST_ENDED`, `FLAG_KINDS`, `checks.NoSyncYet`, `checks.NO_SYNC_YET`, `no_such_table`; `health.sync_health`, `SyncHealth.cause(tz=…)` (given the default zone); `gate.gate_now` and `Gate(open, reason)`; `requests.HANDLED`, `requests.NOT_YET`; `when.parse_stamp`, `when.local_hhmm`; `flags.SENTENCES` and the flag kinds; `worker.alive`, `worker.HEARTBEAT_KEY` (a failed start's heartbeat is `{"phase": "failed", "error": <class name>, …}`); `runlock.plaud_holder`; `privacy.why_phrase(why)` (one argument) and its four Phase 1 phrases, "title changed", "first check", "patterns changed", "kept out by title"; `settings.plaud_settings`, `BAD_WORD`, `DEFAULT_SCHEDULE_MINUTES`, `DEFAULT_FULL_SWEEP_DAYS`; `normalise.NORMALISER_VERSION`. The tests also use `flags.record_late_keep_out`, `health.record_run`, `record_turn`, `open_blocker`, `runlock.plaud_run`, `worker.heartbeat_once` and `Progress`, and Task 14's `submit`.
+- Consumes: `checks.PlaudDB` (`get`, `listing`, `open_flags`, `events_since`), `checks.K_CONSENT` (`{"read_at", "count", "file_changed", "stop", …}`: the count, never the IDs), `K_KEEP_OUT_WORDS`, `K_LAST_PING` (with `failed_since`, decision 32), `K_LAST_STARTED`, `K_LAST_ENDED`, `FLAG_KINDS`, `BLOCKER_PREFIX` (the `private-unwritten` blocker's row, `{"since", "detail"}`, whose detail is `{"error": <class name>}` while the last late consent pass failed as a whole, e.g. `"IndexUnavailable"`, and `{}` while a flag is open), `checks.NoSyncYet`, `checks.NO_SYNC_YET`, `no_such_table`; `health.sync_health`, `SyncHealth.cause(tz=…)` (given the default zone), `health.BLOCKER_PHRASES`; `gate.gate_now` and `Gate(open, reason)`; `requests.HANDLED`, `requests.NOT_YET` (Task 14's `check_request` and `submit` use them by bare name, so Step 4's merged import keeps them); `when.parse_stamp`, `when.local_hhmm`; `flags.SENTENCES`, `flags.flag_sentence(kind, recording_id, cause)` (Round 3: `PRIVATE_UNWRITTEN_IO`, "Recording {id} should be private, but its file couldn't be written ({cause}): check the archive disk and its permissions.", for a `private-unwritten` flag whose `cause` isn't in `EDITED_CAUSES`, `StaleFile` and `InvalidFile`) and the flag kinds, a `private-unwritten` flag's detail being `{"owed": "consent", "cause": <class name>}`; `worker.alive`, `worker.HEARTBEAT_KEY` (a failed start's heartbeat is `{"phase": "failed", "error": <class name>, …}`; the patterns pass at start's is `{"phase": "checking", "done": int, "total": int, …}`); `runlock.plaud_holder`; `privacy.why_phrase(why)` (one argument) and its four Phase 1 phrases, "title changed", "first check", "patterns changed", "kept out by title"; `settings.plaud_settings`, `BAD_WORD`, `DEFAULT_SCHEDULE_MINUTES`, `DEFAULT_FULL_SWEEP_DAYS`; `normalise.NORMALISER_VERSION`. The tests also use `flags.record_late_keep_out`, `health.record_run`, `record_turn`, `open_blocker`, `runlock.plaud_run`, `worker.heartbeat_once` and `Progress`, and Task 14's `submit`.
 - Produces (Python, `recordings_ui/plaud.py`):
   ```python
   DEMO_NOTE = "Demo: nothing is synced"
@@ -18123,6 +18429,7 @@ Phase 1's views read Phase 1's own data only (the controller's scope ruling): th
   export interface SyncView extends Handled {
     demo: boolean; available: boolean; reason: string | null;
     gate: string | null; // the gate's reason while it is closed: every kind but Compare and Keep it here waits (§11.6)
+    listed: boolean; // false until Phase 2 writes a listing: the screen then shows no counts from one
     summary: SyncSummaryView; flags: SyncFlag[]; hold: SyncHold | null; breaker: SyncBreaker | null;
     buttons: { sync: string | null; compare: string | null; full: string | null; import: string | null };
     full_estimate: string; // "about 40 minutes" | "unknown until the first run"
@@ -18134,6 +18441,7 @@ Phase 1's views read Phase 1's own data only (the controller's scope ruling): th
   }
   export interface SyncPanel extends Handled {
     demo: boolean; no_sync_yet: boolean;
+    listed: boolean; // false until Phase 2 writes a listing: Status then shows no zero counts
     summary: SyncSummaryView; failing: string | null; not_pinged: string | null; conditions: string[];
     hold: SyncHold | null; breaker: SyncBreaker | null;
     numbers: {
@@ -18157,7 +18465,7 @@ Phase 1's views read Phase 1's own data only (the controller's scope ruling): th
   }
   // StatusView gains sync?: SyncPanel; RecordingView gains plaud: RecordingPlaud | null; Page gains "add" (Task 21).
   ```
-- Also produced here, for the later UI tasks (named, not in the skeleton): `plaud.demo_view_settings(archive: Path) -> PlaudViewSettings` (demo mode's and Pages' settings: no state folder, the canned view beside the archive's copy); `app.plaud_views(settings: Settings) -> PlaudViewSettings | None`; `views.recording_view(…, plaud: PlaudViewSettings | None = None, now: datetime | None = None)` and `views.status_view(archive, settings, plaud: PlaudViewSettings | None = None)`; the constants `NO_SYNC`, `NO_GOOD_LISTING`, `UNREADABLE_SYNC`, `FULL_UNKNOWN`, `PING_FAILING`, `WORKER_FAILED`, `WHY_DETAILS`, `PHASES` (the heartbeat's phase in plain words: "idle", "syncing", "answering a request", "reading the consent list"). The tests' `plaud_scene` fixture (`PlaudScene`: `add`, `open_gate`, `kept_out_late`) is in `packages/ui/tests/conftest.py`.
+- Also produced here, for the later UI tasks (named, not in the skeleton): `plaud.demo_view_settings(archive: Path) -> PlaudViewSettings` (demo mode's and Pages' settings: no state folder, the canned view beside the archive's copy); `app.plaud_views(settings: Settings) -> PlaudViewSettings | None`; `views.recording_view(…, plaud: PlaudViewSettings | None = None, now: datetime | None = None)` and `views.status_view(archive, settings, plaud: PlaudViewSettings | None = None)`; the constants `NO_SYNC`, `NO_GOOD_LISTING`, `UNREADABLE_SYNC`, `FULL_UNKNOWN`, `PING_FAILING`, `WORKER_FAILED`, `UNWRITTEN_STOPPED` ("late consent listings stopped ({}): check the archive disk, then the worker's log", capitalised with a full stop in Needs attention), `WHY_DETAILS`, `PHASES` (the heartbeat's phase in plain words: "idle", "syncing", "answering a request", "reading the consent list", "checking", the last with its count). The tests' `plaud_scene` fixture (`PlaudScene`: `add`, `open_gate`, `kept_out_late`) is in `packages/ui/tests/conftest.py`.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-19-base`
 
@@ -18556,6 +18864,91 @@ def test_the_worker_line_is_in_plain_words_and_a_failed_start_says_so(plaud_scen
     assert "(couldn't start: `Exception`)" in sync_panel(s.settings, now=T0)["numbers"]["worker"]
 
 
+def test_the_patterns_pass_at_start_shows_how_far_it_has_checked(plaud_scene):
+    # why: §15.2's "The Plaud worker last reported 14:21 (checking, 412 of 1,234)". Task 13 runs
+    # the patterns pass as `checking`, its heartbeat carrying `done` and `total`.
+    s = plaud_scene
+    beat = T0 - timedelta(seconds=20)
+    checking = {
+        "at": beat.isoformat(),
+        "phase": "checking",
+        "done": 412,
+        "total": 1234,
+        "progress_counter": 412,
+        "progress_at": beat.isoformat(),
+    }
+    s.writer.state.set_meta(HEARTBEAT_KEY, json.dumps(checking))
+    worker = sync_panel(s.settings, now=T0)["numbers"]["worker"]
+    assert worker == "last reported 14:19 (checking, 412 of 1,234)"
+    s.writer.state.set_meta(HEARTBEAT_KEY, json.dumps({**checking, "total": None}))
+    assert sync_panel(s.settings, now=T0)["numbers"]["worker"] == "last reported 14:19 (checking)"
+
+
+def test_a_late_consent_pass_that_failed_names_its_class_and_a_remedy_that_helps(plaud_scene):
+    # why: a whole late consent pass that failed (a full or read-only disk, a busy state.db) can't
+    # be mended by `recordings reindex`: Task 13's blocker carries the class, and the summary and
+    # Needs attention say it, with the remedy that helps.
+    s = plaud_scene
+    stopped = (
+        "Late consent listings stopped (OSError): check the archive disk, then the worker's log."
+    )
+    open_blocker(s.db, "private-unwritten", now=T0, detail={"error": "OSError"})
+    panel = sync_panel(s.settings, now=T0)
+    assert panel["summary"]["sentence"] == stopped.removesuffix(".")
+    assert stopped in panel["attention"]
+    assert sync_view(s.settings, now=T0, can_request=None)["summary"] == panel["summary"]
+    # With no error (a flag is open), the summary stays the blocker's own line.
+    open_blocker(s.db, "private-unwritten", now=T0, detail={})
+    panel = sync_panel(s.settings, now=T0)
+    assert panel["summary"]["sentence"] == "Should be private: run `recordings reindex`"
+    assert not [a for a in panel["attention"] if a.startswith("Late consent listings stopped")]
+
+
+def test_an_unwritten_flag_says_what_its_cause_needs(plaud_scene):
+    # why: `recordings reindex` mends a file edited outside the app (StaleFile, InvalidFile), not
+    # a disk or permissions fault: Task 8 records each flag's cause, and the sentences follow it.
+    s = plaud_scene
+    io, edited = s.add(31, "Week 31"), s.add(32, "Week 32")
+    s.db.add_event(
+        "private-unwritten",
+        now=T0,
+        recording_id=io,
+        detail={"owed": "consent", "cause": "OSError"},
+        open_flag=True,
+    )
+    s.db.add_event(
+        "private-unwritten",
+        now=T0,
+        recording_id=edited,
+        detail={"owed": "consent", "cause": "StaleFile"},
+        open_flag=True,
+    )
+    rows = {
+        f["recording_id"]: f["sentence"]
+        for f in sync_view(s.settings, now=T0, can_request=None)["flags"]
+    }
+    assert rows[io] == (
+        f"Recording {io} should be private, but its file couldn't be written (OSError): check the "
+        "archive disk and its permissions."
+    )
+    assert rows[edited] == SENTENCES["private-unwritten"]
+    attention = sync_panel(s.settings, now=T0)["attention"]
+    assert rows[io] in attention  # Task 8's sentence names the recording itself
+    assert (
+        f"Recording {edited} should be private, but its file was edited outside the app: run "
+        "`recordings reindex`."
+    ) in attention
+    assert recording_plaud(s.settings, io, now=T0)["flags"][0]["sentence"] == rows[io]
+
+
+def test_before_any_listing_the_views_say_so_and_count_nothing(plaud_scene):
+    # why: until Phase 2 writes a listing, nothing has been measured: the views say listed is
+    # false, and the screens draw no counts from it.
+    s = plaud_scene
+    assert sync_view(s.settings, now=T0, can_request=None)["listed"] is False
+    assert sync_panel(s.settings, now=T0)["listed"] is False
+
+
 def test_what_a_later_phase_writes_stays_empty_in_phase_1(plaud_scene):
     # Phase 1 reads its own data only: each section a later phase fills keeps its empty value
     # until that phase brings its reader, and the screens draw it empty.
@@ -18588,6 +18981,7 @@ def test_the_demo_view_is_the_hand_written_fixture_with_the_demo_notes(tmp_path)
     assert sync["summary"]["kind"] == "demo" and sync["summary"]["sentence"] == DEMO_NOTE
     assert set(sync["buttons"].values()) == {DEMO_NOTE}
     assert (sync["handled"], sync["not_yet"], sync["gate"]) == (["keep-here"], NOT_YET, None)
+    assert sync["listed"] is True and panel["listed"] is True  # the demo shows every part
     assert sync["not_here"] == [{**row, "park": False} for row in raw["sync"]["not_here"]]
     assert not [r for r in sync["kept_out"] if r["release"]]
     assert not [f for f in sync["flags"] if f["keep_here"]]
@@ -18885,7 +19279,7 @@ demo/plaud-sync.json in the demos. They import what reads state.db inside each f
 never at the top, because the Pages demo imports this module on Pyodide, which has no sqlite3.
 ```
 
-Nothing at its top may load `sqlite3`, `fcntl` or threads. Task 14's top-level imports already load none (`recordings.plaud.requests` imports only the standard library and `recordings.ids` at its top, with `sqlite3`, `State` and `PlaudDB` under `TYPE_CHECKING`; `recordings.sentinel` and `recordings.ids` are pure), so they stay, and `recordings.plaud.when` (Task 6) joins them, being standard library only; health, checks, flags, the worker and the gate are imported inside the functions that use them, as `tagging.py` does. `test_the_plaud_views_import_on_pyodide_without_sqlite` (Step 2) holds it so, and `test_calling_the_views_and_submitting_a_request_loads_no_plaud_client` holds that calling them, which runs those imports, loads no Plaud client either. Replace Task 14's import block with this one, its own imports merged with the views':
+Nothing at its top may load `sqlite3`, `fcntl` or threads. Task 14's top-level imports already load none (`recordings.plaud.requests` imports only the standard library and `recordings.ids` at its top, with `sqlite3`, `State` and `PlaudDB` under `TYPE_CHECKING`; `recordings.sentinel` and `recordings.ids` are pure), so they stay, and `recordings.plaud.when` (Task 6) joins them, being standard library only; health, checks, flags, the worker and the gate are imported inside the functions that use them, as `tagging.py` does. `test_the_plaud_views_import_on_pyodide_without_sqlite` (Step 2) holds it so, and `test_calling_the_views_and_submitting_a_request_loads_no_plaud_client` holds that calling them, which runs those imports, loads no Plaud client either. Replace Task 14's import block with this one, its own imports merged with the views' (every name Task 14 imports stays, `HANDLED` and `NOT_YET` among them, which its `check_request` and `submit` use by bare name: dropping one is ruff's F821 and a `NameError` in Task 14's tests):
 
 ```python
 from __future__ import annotations
@@ -18903,10 +19297,12 @@ from zoneinfo import ZoneInfo
 from recordings.ids import parse_id
 from recordings.plaud import requests
 from recordings.plaud.requests import (
+    HANDLED,
     KINDS,
     MAX_PLAUD_ID_LEN,
     MAX_PLAUD_IDS,
     MAX_RESYNC_IDS,
+    NOT_YET,
     REQUEST_ID_RE,
     PlaudRequest,
     Reply,
@@ -18949,6 +19345,11 @@ CONSENT_UNREADABLE = "the consent list can't be read"  # keepout.STOP_UNREADABLE
 NO_WORKER_YET = "The Plaud worker hasn't reported yet: check that the worker container is running."
 WORKER_FAILED = "The Plaud worker couldn't start (`{}`): see `rc logs worker` (runbook)."
 PING_FAILING = "The sync's Healthchecks ping has failed for 2 hours."
+# A late consent pass that failed as a whole (Task 13's private-unwritten blocker, with the class it
+# raised): the remedy that can help, never `recordings reindex`.
+UNWRITTEN_STOPPED = (
+    "late consent listings stopped ({}): check the archive disk, then the worker's log"
+)
 # Spec §22's numbers.
 PING_GRACE = timedelta(minutes=10)  # "one schedule interval plus 10 minutes"
 FAILING_FOR = timedelta(hours=2)
@@ -18982,6 +19383,7 @@ PHASES = {
     "turn": "syncing",
     "request": "answering a request",
     "consent": "reading the consent list",
+    "checking": "checking",  # the patterns pass at start, with its count (Task 13)
     "stopping": "stopping",
 }
 KIND_LABELS = {
@@ -19073,7 +19475,7 @@ def _handled() -> dict:
     """What the worker can do yet, which every view carries (G7): the UI disables every other
     request button with `not_yet` as its reason, as it shows the gate's and the demo's. Phase 1
     handles Keep it here alone; each later phase widens requests.HANDLED with its handlers."""
-    return {"handled": sorted(requests.HANDLED), "not_yet": requests.NOT_YET}
+    return {"handled": sorted(HANDLED), "not_yet": NOT_YET}
 
 
 # ---- Formatting: the server formats every time, in the default zone ----------------------------
@@ -19118,6 +19520,21 @@ def _dict(value: object) -> dict:
 
 def _int(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _class_name(value: object) -> str | None:
+    """An exception's class name as the worker recorded it; anything else is none (§15.6)."""
+    return value if isinstance(value, str) and value.isidentifier() else None
+
+
+def _sentence(ev: Event) -> str:
+    """A flag's fixed sentence (Task 8's flag_sentence): a `private` that couldn't be written for
+    a reason `recordings reindex` can't mend (a full or read-only disk, a folder it can't enter, a
+    busy state.db) names the recording and its cause's class, recorded in the event's detail."""
+    from recordings.plaud.flags import flag_sentence
+
+    cause = ev.detail.get("cause")
+    return flag_sentence(ev.kind, ev.recording_id or "", cause if isinstance(cause, str) else None)
 
 
 # ---- Reading state.db, read-only ----------------------------------------------------------------
@@ -19189,8 +19606,9 @@ def _next_sync(
 
 def _flag(db: Any, ev: Event) -> dict:
     """One privacy flag (P15), by recording ID with its next step; never a title. Its Plaud ID is
-    shown as the listing row holds it (a late keep-out makes one), else in its canonical form."""
-    from recordings.plaud.flags import KEPT_OUT_LATE, SENTENCES
+    shown as the listing row holds it (a late keep-out makes one), else in its canonical form. A
+    `private` that couldn't be written says what its cause needs (_sentence)."""
+    from recordings.plaud.flags import KEPT_OUT_LATE
 
     listed = None
     if ev.canonical_plaud_id:
@@ -19201,7 +19619,7 @@ def _flag(db: Any, ev: Event) -> dict:
         "recording_id": ev.recording_id,
         "plaud_id": listed,
         "copy_id": _copy_form(listed) if listed else None,
-        "sentence": SENTENCES[ev.kind],
+        "sentence": _sentence(ev),
         "keep_here": ev.kind == KEPT_OUT_LATE and ev.recording_id is not None,
         "date": None,  # a possible re-keyed match's date and duration come from Phase 2's compare
         "duration": None,
@@ -19228,6 +19646,8 @@ class _Read:
         stamps = (parse_stamp(get(checks.K_LAST_STARTED)), parse_stamp(get(checks.K_LAST_ENDED)))
         self.last_turn = max((t for t in stamps if t is not None and t <= now), default=None)
         self.flags = self.db.open_flags(FLAG_EVENTS)
+        unwritten = _dict(get(checks.BLOCKER_PREFIX + "private-unwritten"))
+        self.unwritten_error = _class_name(_dict(unwritten.get("detail")).get("error"))
 
     def gate_reason(self) -> str | None:
         return None if self.gate.open else self.gate.reason
@@ -19241,11 +19661,21 @@ class _Read:
     def flag_rows(self) -> list[dict]:
         return [_flag(self.db, ev) for ev in self.flags]
 
+    def cause(self) -> str | None:
+        """What stops the sync (sync_health, §16), else the gate's reason. A late consent pass
+        that failed as a whole names its class and the remedy that can help."""
+        from recordings.plaud.health import BLOCKER_PHRASES
+
+        found = self.health.cause(tz=ZoneInfo(self.tz))
+        if found == BLOCKER_PHRASES["private-unwritten"] and self.unwritten_error:
+            return UNWRITTEN_STOPPED.format(self.unwritten_error)
+        return found or self.gate_reason()
+
     def summary_view(self) -> dict:
         """The one summary line the Sync screen and Status share (§15.1, §15.2): what stops the
         sync, or the gate's reason. "All here" needs the last good listing, which Phase 2 writes
         and reads; until then a sync nothing stops has no good listing yet."""
-        problem = self.health.cause(tz=ZoneInfo(self.tz)) or self.gate_reason()
+        problem = self.cause()
         sentence = _cap(problem) if problem else NO_GOOD_LISTING
         return {"kind": "problem", "sentence": sentence, "explain": None, "see_status": True}
 
@@ -19293,6 +19723,7 @@ def _empty_sync(reason: str | None) -> dict:
         "buttons": {"sync": why, "compare": why, "full": why, "import": why},
         **_handled(),
         "gate": None,
+        "listed": False,  # until Phase 2 writes a listing: the screens then show no counts
         "full_estimate": FULL_UNKNOWN,
         "equation": None,
         "archive": None,
@@ -19435,6 +19866,7 @@ def _empty_panel() -> dict:
         "hold": None,
         "breaker": None,
         **_handled(),
+        "listed": False,  # until Phase 2 writes a listing: Status then shows no zero counts
         "numbers": {
             "equation": None,
             "archive": None,
@@ -19488,7 +19920,8 @@ def sync_panel(settings: PlaudViewSettings | None, *, now: datetime) -> dict:
 def _worker(r: _Read) -> tuple[str | None, str | None, str | None]:
     """The worker's last report for the numbers, in plain words; its "silent", "stuck" or
     "couldn't start" reason; and its Needs attention line (§9.2). A start that failed writes the
-    phase `failed` and its error's class (Task 13), shown as a class, never as text."""
+    phase `failed` and its error's class (Task 13), shown as a class, never as text. The patterns
+    pass at start runs as `checking`, its heartbeat carrying `done` and `total` (Task 13)."""
     from recordings.worker import HEARTBEAT_KEY, alive
 
     beat = r.state.meta(HEARTBEAT_KEY)
@@ -19501,11 +19934,13 @@ def _worker(r: _Read) -> tuple[str | None, str | None, str | None]:
     at = parse_stamp(data.get("at"))
     phase = data.get("phase")
     if phase == "failed":
-        error = data.get("error")
-        error = error if isinstance(error, str) and error.isidentifier() else "Exception"
+        error = _class_name(data.get("error")) or "Exception"
         report = f"last reported {r.when(at)} (couldn't start: `{error}`)" if at else None
         return report, "the Plaud worker couldn't start", WORKER_FAILED.format(error)
     words = PHASES.get(phase, "working") if isinstance(phase, str) else "working"
+    done, total = _int(data.get("done")), _int(data.get("total"))
+    if phase == "checking" and total > 0:
+        words = f"checking, {done:,} of {total:,}"  # §15.2's "(checking, 412 of 1,234)"
     report = f"last reported {r.when(at)} ({words})" if at else None
     ok, why = alive(r.state, now=r.now)
     if ok or why is None:
@@ -19535,7 +19970,7 @@ def _not_pinged(r: _Read, cause: str | None) -> str | None:
 
 
 def _panel_from(r: _Read) -> dict:
-    from recordings.plaud.flags import CONSENT_LATE, KEPT_OUT_LATE, PRIVATE_UNWRITTEN
+    from recordings.plaud.flags import CONSENT_LATE, KEPT_OUT_LATE, PRIVATE_UNWRITTEN, SENTENCES
     from recordings.plaud.normalise import NORMALISER_VERSION
     from recordings.plaud.runlock import plaud_holder
     from recordings.plaud.settings import BAD_WORD
@@ -19544,7 +19979,7 @@ def _panel_from(r: _Read) -> dict:
     report, silent, worker_line = _worker(r)
     summary = r.summary_view()
     gate = r.gate_reason()
-    cause = health.cause(tz=ZoneInfo(tz)) or gate or silent
+    cause = r.cause() or silent
     failing = None
     if health.failing is not None:
         since, why = health.failing
@@ -19566,7 +20001,12 @@ def _panel_from(r: _Read) -> dict:
         PRIVATE_UNWRITTEN: "Recording {} should be private, but its file was edited outside "
         "the app: run `recordings reindex`.",
     }
-    flag_lines = [late[ev.kind].format(ev.recording_id) for ev in r.flags if ev.kind in late]
+
+    def flag_line(ev: Event) -> str:
+        said = _sentence(ev)  # names the recording itself when its cause needs its own remedy
+        return said if said != SENTENCES[ev.kind] else late[ev.kind].format(ev.recording_id)
+
+    flag_lines = [flag_line(ev) for ev in r.flags if ev.kind in late]
     off_since = r.schedule_off_since() if r.settings.schedule_minutes <= 0 else None
 
     conditions: list[str] = []
@@ -19597,6 +20037,8 @@ def _panel_from(r: _Read) -> dict:
         attention.append("Plaud imports stopped: the disk is too full to import.")
     if "consent" in health.blockers:
         attention.append(consent_stop)
+    if r.unwritten_error:
+        attention.append(_cap(UNWRITTEN_STOPPED.format(r.unwritten_error)) + ".")
     attention += flag_lines
     if worker_line:
         attention.append(worker_line)
@@ -20130,6 +20572,7 @@ def create_app(settings: Settings) -> HostGuard:
     "handled": ["keep-here"],
     "not_yet": "Comes with the next part of stage 2b.",
     "gate": null,
+    "listed": true,
     "full_estimate": "about 4 minutes",
     "equation": {"listed": 9, "here": 4, "waiting": 2, "excluded": 2, "missing": 1, "arrive_private": 1, "listing_at": "14:20"},
     "archive": {"from_plaud": 4, "here": 4, "gone": 0, "absent": 0},
@@ -20196,6 +20639,7 @@ def create_app(settings: Settings) -> HostGuard:
     "breaker": null,
     "handled": ["keep-here"],
     "not_yet": "Comes with the next part of stage 2b.",
+    "listed": true,
     "numbers": {
       "equation": {"listed": 9, "here": 4, "waiting": 2, "excluded": 2, "missing": 1, "arrive_private": 1, "listing_at": "14:20"},
       "archive": {"from_plaud": 4, "here": 4, "gone": 0, "absent": 0},
@@ -20322,6 +20766,7 @@ export interface ParkedRow { id: string; kind: "recording" | "plaud" }
 export interface SyncView extends Handled {
   demo: boolean; available: boolean; reason: string | null;
   gate: string | null; // the gate's reason while it is closed: every kind but Compare and Keep it here waits (§11.6)
+  listed: boolean; // false until Phase 2 writes a listing: the screen then shows no counts from one
   summary: SyncSummaryView; flags: SyncFlag[]; hold: SyncHold | null; breaker: SyncBreaker | null;
   buttons: { sync: string | null; compare: string | null; full: string | null; import: string | null };
   full_estimate: string; // "about 40 minutes" | "unknown until the first run"
@@ -20333,6 +20778,7 @@ export interface SyncView extends Handled {
 }
 export interface SyncPanel extends Handled {
   demo: boolean; no_sync_yet: boolean;
+  listed: boolean; // false until Phase 2 writes a listing: Status then shows no zero counts
   summary: SyncSummaryView; failing: string | null; not_pinged: string | null; conditions: string[];
   hold: SyncHold | null; breaker: SyncBreaker | null;
   numbers: {
@@ -20368,13 +20814,16 @@ feat(ui): 🤖 the Plaud view model: the Sync screen, Status's sync panel, arriv
 recordings_ui.plaud gains sync_view, sync_panel, arrivals, recording_plaud and demo_view
 (spec §15, §22). Phase 1's views read Phase 1's data only: the summary and what stops the
 sync, the blockers, the privacy flags, the consent list's count, the gate, the worker's
-heartbeat in plain words (a failed start by its class), the ping, Phase 1's Needs
-attention entries and the requests' last result. What a later phase writes (the listing,
-holds, the breaker, checks, parking) stays empty until its reader comes; types.ts and the
-canned view keep every field as the UI's contract. Every view carries handled and
-not_yet, so the UI can disable what the worker can't answer yet. A condition the summary
-already says isn't repeated, and Updated never names a recording with an open privacy
-flag. status_view gains "sync" and its Needs attention lines; a missing 2b table says "No
+heartbeat in plain words (a failed start by its class, the patterns pass as "checking,
+412 of 1,234"), the ping, Phase 1's Needs attention entries and the requests' last
+result. What a later phase writes (the listing, holds, the breaker, checks, parking) stays
+empty until its reader comes, and listed is false so the screens show no counts; types.ts
+and the canned view keep every field as the UI's contract. Every view carries handled and
+not_yet, so the UI can disable what the worker can't answer yet. A private-unwritten flag
+says what its cause needs (Task 8's flag_sentence), and a late consent pass that failed as
+a whole names its class with a remedy that helps, never `recordings reindex`. A condition
+the summary already says isn't repeated, and Updated never names a recording with an open
+privacy flag. status_view gains "sync" and its Needs attention lines; a missing 2b table says "No
 sync has run yet", never the restore text. Demo mode and the Docker demo carry
 demo/plaud-sync.json, hand-written and synthetic, with every action off (decision 23).
 The views import what reads state.db inside each function, so Pages' Pyodide never loads
@@ -20421,6 +20870,7 @@ Spec §15's build order, step 2: `plaud_request`, the insert, polling a pending 
     lastLine: string | null;                // the server's newest result line (SyncView.last_result)
     available: boolean; reason: string | null;
     why(kind: PlaudKind): string | null;    // kindReason against the Sync view; NO_PLAUD before it comes
+    handles(kind: PlaudKind): boolean;      // the kind is in SyncView.handled (false before the view): the Library draws no button for one it isn't
     gate: string | null;                    // the gate's reason while it is closed (SyncView.gate)
   }
   export const NO_PLAUD = "Plaud sync isn't available here";
@@ -20591,7 +21041,7 @@ describe("usePlaud (2b spec §9.3)", () => {
   });
   it("is unavailable until the view says otherwise", () => {
     act(() => root.render(createElement(Probe, { view: undefined })));
-    expect([plaud.available, plaud.why("keep-here")]).toEqual([false, NO_PLAUD]);
+    expect([plaud.available, plaud.why("keep-here"), plaud.handles("keep-here")]).toEqual([false, NO_PLAUD, false]);
     draw({ ...VIEW, available: false, reason: "Demo: nothing is synced" } as SyncView);
     expect([plaud.available, plaud.reason]).toEqual([false, "Demo: nothing is synced"]);
     expect(plaud.why("keep-here")).toBe("Demo: nothing is synced");
@@ -20603,6 +21053,7 @@ describe("usePlaud (2b spec §9.3)", () => {
     expect(plaud.why("keep-here")).toBeNull();
     expect(["compare", "sync", "resync", "import", "release"].map((k) => plaud.why(k as never))).toEqual(Array(5).fill(NOT_YET));
     expect(plaud.gate).toBe(GATE);
+    expect([plaud.handles("keep-here"), plaud.handles("resync")]).toEqual([true, false]);
     expect(kindReason("resync", null, { handled: ["resync"], not_yet: NOT_YET })).toBeNull();
     expect(kindReason("resync", "Demo: nothing is synced", { handled: ["resync"], not_yet: NOT_YET })).toBe("Demo: nothing is synced");
   });
@@ -21204,6 +21655,9 @@ export interface Plaud {
   /** kindReason against the Sync view, for what has no Plaud view of its own (the selection
    * bars); NO_PLAUD before the view comes. */
   why(kind: PlaudKind): string | null;
+  /** Whether the worker handles this kind yet: outside the Sync screen and Status, a button for a
+   * kind it doesn't is not drawn at all (the Library's Re-sync). False before the view comes. */
+  handles(kind: PlaudKind): boolean;
   gate: string | null; // the gate's reason while it is closed (SyncView.gate)
 }
 
@@ -21265,10 +21719,12 @@ export function usePlaud(view: SyncView | undefined, onView?: () => void): Plaud
     return kindReason(kind, view.available ? null : (view.reason ?? NO_PLAUD), view);
   }, [view]);
 
+  const handles = useCallback((kind: PlaudKind) => view?.handled.includes(kind) ?? false, [view]);
+
   return useMemo(() => ({
     send, results, last, lastLine: view?.last_result ?? null,
-    available: view?.available ?? false, reason: view?.reason ?? null, why, gate: view?.gate ?? null,
-  }), [send, results, last, view, why]);
+    available: view?.available ?? false, reason: view?.reason ?? null, why, handles, gate: view?.gate ?? null,
+  }), [send, results, last, view, why, handles]);
 }
 ```
 
@@ -21363,8 +21819,8 @@ inserted; every reply's preview is null until Phase 2 builds Release's. plaud_sy
 status redraw every 60 s and when one of the session's requests ends; plaud_arrivals
 counts from the later of the session's start and its last Refresh (decision 22). usePlaud
 holds the replies and the toasts (an import's offers View, which opens Untagged), says
-why a kind can't be sent (this app can't ask, or the worker can't handle it yet), and
-shows the server's own result line. App subscribes both new outputs, and CLAUDE.md's UI
+why a kind can't be sent (this app can't ask, or the worker can't handle it yet) and
+whether the worker handles it at all, and shows the server's own result line. App subscribes both new outputs, and CLAUDE.md's UI
 rules name them, usePlaud and plaud_request.
 Checked: the shinyreact-build-app skill (send_message, useShinyMessageHandler,
 useSetShinyInput with priority "event"), and shiny 1.8.0's reactive._core (invalidate_later,
@@ -21393,7 +21849,7 @@ Spec §15.1, J6: a new page, `#/add`, "Library · Tags · Add · Status".
 - Main spec §12, §12.2 and §12.4 are amended in Task 2 (decision 8, as the controller changed it); this task changes no doc, since no other doc names the tabs.
 
 **Interfaces:**
-- Consumes: Task 19's `SyncView` (with `handled`, `not_yet` and `gate`), `SyncFlag`, `NotHereRow`, `KeptOutRow`, `ReleasePreview`; Task 20's `usePlaudContext`, `kindReason`, `NO_PLAUD`, `FINAL`, `PlaudResult`; the tagging's `useReturnFocus`.
+- Consumes: Task 19's `SyncView` (with `handled`, `not_yet`, `gate` and `listed`), `SyncFlag`, `NotHereRow`, `KeptOutRow`, `ReleasePreview`; Task 20's `usePlaudContext`, `kindReason`, `NO_PLAUD`, `FINAL`, `PlaudResult`; the tagging's `useReturnFocus`.
 - Produces:
   ```ts
   export function SyncPage(): JSX.Element;   // reads useShinyOutputValue<SyncView>("plaud_sync") and the PlaudContext
@@ -21403,6 +21859,7 @@ Spec §15.1, J6: a new page, `#/add`, "Library · Tags · Add · Status".
   ```
   Sections, top to bottom, as §15.1 lists them; Copy ID copies `copy_id`; importing never asks "are you sure?"; a toast says what came in; the newest result line stays.
 - Every request button is off, its reason said once in its section and named by its `aria-describedby`, when this app can't ask (the demo, no config.toml), when the worker can't handle its kind yet (`not_yet`: in Phase 1 every kind but Keep it here, so Compare, Sync now, Sync everything, Import, Park, Unpark, Release, Undo and Show title are all off), when the gate holds it (`SyncView.gate`: every kind but Compare and Keep it here, §11.6), or for its own reason (`buttons`: a hold, the keep-out word). A review row keeps its checkbox (Import selected brings it in, Import all leaves it out, §11.6). Ticks the next redraw no longer lists drop out of Import selected's count, and an Import selected clears them. Release's dialog, fed in Phase 1 from fixtures only (the worker's `release-preview` comes in Phase 2), gives focus back to its Release button when it closes.
+- Before any listing (`SyncView.listed` false, all of Phase 1) the screen shows no counts: "No sync has run yet." (unless the summary already says it), the consent list's line and the flags; the equation, "Nothing is waiting", Import all, Kept out, Gone from Plaud and Parked aren't drawn. Once listed, "No listing yet: Compare reads one." shows only while Compare is live. A flag whose sentence names its recording (Task 8's sentence for a `private` that couldn't be written) isn't prefixed with the ID again.
 - Also produced here, for Tasks 22 and 23 (named, not in the skeleton), in `SyncSummary.tsx`: `SyncHoldLine({ hold, why, onAccept })`, `SyncBreakerLine({ breaker, why, onAccept })`, `FlagRow({ flag, why, onKeepHere })` (a Keep it here that is off says why beside it), `CopyId({ text, label })` and `copyText(text)` (the Clipboard API, else `execCommand("copy")` on a selected hidden textarea, as a page served over plain HTTP needs; when neither copies, the ID shows to select by hand), `equationText(eq)`, `archiveText(a)`, `consentText(c)`, `reasonsFor(prefix, reasons)` and `Reasons({ prefix, list })`; in `ReleaseDialog.tsx`, `releaseQuestion(preview)` and `releaseButton(plaudId)` (the Release button marked `data-release-for`). Every button that sends a request carries `data-request="<kind>"` (Task 24's e2e tests find them by it). The toast of "what came in" is Task 20's (`usePlaud` shows every final reply's message, and an import's offers View).
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-21-base`
@@ -21442,7 +21899,7 @@ const copy = (k: number) => `- \`${id(k)}\` —`;
 /** A Sync screen with something in every section (§15.1), and every button on: as the canned view
  * draws it, with a worker that handles every kind, as Phase 3's will. */
 const VIEW: SyncView = {
-  demo: false, available: true, reason: null, handled: EVERY, not_yet: NOT_YET, gate: null,
+  demo: false, available: true, reason: null, handled: EVERY, not_yet: NOT_YET, gate: null, listed: true,
   summary: { kind: "problem", sentence: "Sign-in needed", explain: null, see_status: true },
   flags: [{
     kind: "kept-out-late", recording_id: "20261023T140512-0700_0000beef", plaud_id: id(9), copy_id: copy(9),
@@ -21488,7 +21945,8 @@ const fake = (over: Partial<Plaud> = {}): Plaud => {
       sends.push([kind, opts]);
       return `rid-${sends.length}`;
     },
-    results: {}, last: null, lastLine: null, available: true, reason: null, why: () => null, gate: null, ...over,
+    results: {}, last: null, lastLine: null, available: true, reason: null, why: () => null, handles: () => true,
+    gate: null, ...over,
   };
 };
 const page = (p: Plaud) => createElement(PlaudContext.Provider, { value: p }, createElement(SyncPage));
@@ -21691,6 +22149,34 @@ describe("the Sync screen (2b spec §15.1)", () => {
       fake({ available: false, reason: off }));
     expect($$("[data-request]").filter((b) => !b.hasAttribute("disabled"))).toEqual([]);
     expect($$("[data-testid=copy-id]").every((b) => !b.hasAttribute("disabled"))).toBe(true);
+  });
+
+  it("before any listing it shows no counts: one line, the consent list and the flags", () => {
+    // Phase 1 lists nothing: no equation, no "Nothing is waiting", no "Import all 0", no "Gone
+    // from Plaud: 0", no "Nothing is kept out" (the council's X5).
+    const html = markup({ ...VIEW, listed: false, equation: null, archive: null, not_here: [], kept_out: [],
+      gone: { rows: [], last_7_days: 0 }, parked: [], import_all: { count: 0, review_more: 0 } });
+    expect(html).toContain('data-testid="sync-no-listing">No sync has run yet.</p>');
+    expect(html).toContain("Consent list: 3 IDs");
+    expect(html).toContain('data-testid="sync-flags"');
+    for (const gone of ["sync-not-here", "sync-kept-out", "sync-gone", "sync-parked"]) {
+      expect(html).not.toContain(`data-testid="${gone}"`);
+    }
+    for (const said of ["Listed ", "Nothing is waiting", "Import all", "Gone from Plaud:", "Nothing is kept out", "Compare reads one"]) {
+      expect(html).not.toContain(said);
+    }
+    // Once listed, an empty listing says so, and "Compare reads one" only while Compare is live.
+    const listed = markup({ ...VIEW, equation: null, not_here: [], kept_out: [] });
+    expect(listed).toContain("Nothing is waiting.");
+    expect(listed).toContain("No listing yet: Compare reads one.");
+    expect(markup({ ...VIEW, equation: null, handled: ["keep-here"] })).not.toContain("Compare reads one");
+  });
+
+  it("a flag whose sentence names its recording isn't prefixed with the ID again", () => {
+    const rid = "20261023T140512-0700_0000beef";
+    const io = `Recording ${rid} should be private, but its file couldn't be written (OSError): check the archive disk and its permissions.`;
+    draw({ ...VIEW, flags: [{ ...VIEW.flags[0], kind: "private-unwritten", sentence: io, keep_here: false }] }, fake());
+    expect($("[data-testid=flag-row]")!.textContent!.split(rid)).toHaveLength(2); // the ID once
   });
 
   it("Gone from Plaud points to the steps for taking a recording out", () => {
@@ -22052,14 +22538,16 @@ export function SyncBreakerLine({ breaker, why, onAccept }: { breaker: SyncBreak
   );
 }
 
-/** One privacy flag (P15), by recording ID with its own next step; never a title (§15.1).
- * Keep it here, when it is off, says why beside it. */
+/** One privacy flag (P15), by recording ID with its own next step; never a title (§15.1). A
+ * sentence that names its recording itself (a `private` that couldn't be written, with its cause)
+ * isn't prefixed with the ID again. Keep it here, when it is off, says why beside it. */
 export function FlagRow({ flag, why, onKeepHere }: { flag: SyncFlag; why: string | null; onKeepHere: () => void }) {
   const whyId = useId();
+  const prefix = flag.recording_id && !flag.sentence.includes(flag.recording_id);
   return (
     <li className="sync-row" data-testid="flag-row">
       <span className="sync-flag">
-        {flag.recording_id && <><span className="mono">{flag.recording_id}</span>: </>}
+        {prefix && <><span className="mono">{flag.recording_id}</span>: </>}
         {flag.sentence}
       </span>
       {flag.plaud_id && <span className="mono">{flag.plaud_id}</span>}
@@ -22196,6 +22684,9 @@ function pendingText(r: PlaudResult): string {
  * sure?" (§11.5), and only Release asks first (§12.2). Titles show only in Not here yet and
  * Updated, and in Release's own question; never in Kept out or the flags (P13).
  *
+ * Before any listing (`listed` false, all of Phase 1) it shows no counts: "No sync has run yet.",
+ * the consent list's line and the flags, and none of Not here yet, Kept out, Gone or Parked.
+ *
  * A button is off, with its reason said once in its section, when this app can't ask, when the
  * worker can't handle its kind yet (`not_yet`: in Phase 1 every kind but Keep it here), when the
  * gate holds it (every kind but Compare and Keep it here, §11.6), or for its own reason (a hold,
@@ -22304,7 +22795,9 @@ export function SyncPage() {
       </Section>
 
       <Section id="sync-equations" title="From the listing">
-        {view.equation ? (
+        {!view.listed ? (
+          view.summary.kind !== "no-sync" && <p data-testid="sync-no-listing">No sync has run yet.</p>
+        ) : view.equation ? (
           <>
             <p>
               Listed {n(view.equation.listed)} = {n(view.equation.here)} here +{" "}
@@ -22317,85 +22810,89 @@ export function SyncPage() {
               <p>Of the waiting and missing, {n(view.equation.arrive_private)} arrive{view.equation.arrive_private === 1 ? "s" : ""} private.</p>
             )}
           </>
-        ) : <p className="muted">No listing yet: Compare reads one.</p>}
-        {view.archive && <p>{archiveText(view.archive)}</p>}
+        ) : compare === null && <p className="muted">No listing yet: Compare reads one.</p>}
+        {view.listed && view.archive && <p>{archiveText(view.archive)}</p>}
         {view.consent && <p>{consentText(view.consent)}</p>}
       </Section>
 
-      <Section id="sync-not-here" title="Not here yet">
-        {view.titles_hidden && <p className="muted" data-testid="titles-hidden">{view.titles_hidden[0].toUpperCase() + view.titles_hidden.slice(1)}.</p>}
-        {view.not_here.length === 0 ? <p className="muted">Nothing is waiting.</p> : (
-          <ul className="sync-rows">
-            {view.not_here.map((r) => {
-              const shown = titles[r.plaud_id] ? plaud.results[titles[r.plaud_id]]?.preview?.title : undefined;
-              return (
-                <li key={r.plaud_id} className="sync-row" data-testid="not-here-row">
-                  {/* A review row has its box too (§11.6): Import selected brings it in, Import all
-                      leaves it out. */}
-                  <label className="sync-check">
-                    <input type="checkbox" checked={picked.has(r.plaud_id)} onChange={(e) => choose(r.plaud_id, e.target.checked)}
-                      aria-label={`Choose the recording of ${when(r)}`} />
-                  </label>
-                  <span className="sync-when">{when(r)}</span>
-                  <span className="sync-title">
-                    {r.title ?? shown ?? <span className="muted">{r.review ? "title on demand" : "title hidden"}</span>}
-                    {r.arrives_private && <> <Lock size={13} className="lock" aria-hidden="true" /> arrives private</>}
-                  </span>
-                  <span className="sync-state">{r.state}</span>
-                  {r.park && (
-                    <Button variant="outline" data-request="park" disabled={parking !== null} aria-describedby={imports.idOf(parking)}
-                      onClick={() => plaud.send("park", { plaud_ids: [r.plaud_id] })}>Park</Button>
-                  )}
-                  {r.review && !shown && (
-                    <Button variant="outline" data-request="release-preview" disabled={previewing !== null} aria-describedby={imports.idOf(previewing)}
-                      onClick={() => showTitle(r)}>Show title</Button>
-                  )}
-                  <CopyId text={r.copy_id} label={r.plaud_id} />
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        <div className="sync-buttons">
-          <Button data-request="import" data-testid="import-selected" disabled={importing !== null || chosen.length === 0}
-            aria-describedby={imports.idOf(importing)} onClick={importChosen}>
-            Import selected{chosen.length > 0 ? ` (${n(chosen.length)})` : ""}
-          </Button>
-          <Button variant="outline" data-request="import" data-testid="import-all" disabled={importing !== null || ready.length === 0}
-            aria-describedby={imports.idOf(importing)} onClick={() => plaud.send("import", { all: true })}>
-            Import all {n(view.import_all.count)}
-          </Button>
-          {view.import_all.review_more > 0 && <span className="muted">{"·"} {n(view.import_all.review_more)} more need your review</span>}
-        </div>
-        <Reasons prefix="sync-not-here" list={imports.list} />
-      </Section>
+      {view.listed && (
+        <Section id="sync-not-here" title="Not here yet">
+          {view.titles_hidden && <p className="muted" data-testid="titles-hidden">{view.titles_hidden[0].toUpperCase() + view.titles_hidden.slice(1)}.</p>}
+          {view.not_here.length === 0 ? <p className="muted">Nothing is waiting.</p> : (
+            <ul className="sync-rows">
+              {view.not_here.map((r) => {
+                const shown = titles[r.plaud_id] ? plaud.results[titles[r.plaud_id]]?.preview?.title : undefined;
+                return (
+                  <li key={r.plaud_id} className="sync-row" data-testid="not-here-row">
+                    {/* A review row has its box too (§11.6): Import selected brings it in, Import all
+                        leaves it out. */}
+                    <label className="sync-check">
+                      <input type="checkbox" checked={picked.has(r.plaud_id)} onChange={(e) => choose(r.plaud_id, e.target.checked)}
+                        aria-label={`Choose the recording of ${when(r)}`} />
+                    </label>
+                    <span className="sync-when">{when(r)}</span>
+                    <span className="sync-title">
+                      {r.title ?? shown ?? <span className="muted">{r.review ? "title on demand" : "title hidden"}</span>}
+                      {r.arrives_private && <> <Lock size={13} className="lock" aria-hidden="true" /> arrives private</>}
+                    </span>
+                    <span className="sync-state">{r.state}</span>
+                    {r.park && (
+                      <Button variant="outline" data-request="park" disabled={parking !== null} aria-describedby={imports.idOf(parking)}
+                        onClick={() => plaud.send("park", { plaud_ids: [r.plaud_id] })}>Park</Button>
+                    )}
+                    {r.review && !shown && (
+                      <Button variant="outline" data-request="release-preview" disabled={previewing !== null} aria-describedby={imports.idOf(previewing)}
+                        onClick={() => showTitle(r)}>Show title</Button>
+                    )}
+                    <CopyId text={r.copy_id} label={r.plaud_id} />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="sync-buttons">
+            <Button data-request="import" data-testid="import-selected" disabled={importing !== null || chosen.length === 0}
+              aria-describedby={imports.idOf(importing)} onClick={importChosen}>
+              Import selected{chosen.length > 0 ? ` (${n(chosen.length)})` : ""}
+            </Button>
+            <Button variant="outline" data-request="import" data-testid="import-all" disabled={importing !== null || ready.length === 0}
+              aria-describedby={imports.idOf(importing)} onClick={() => plaud.send("import", { all: true })}>
+              Import all {n(view.import_all.count)}
+            </Button>
+            {view.import_all.review_more > 0 && <span className="muted">{"·"} {n(view.import_all.review_more)} more need your review</span>}
+          </div>
+          <Reasons prefix="sync-not-here" list={imports.list} />
+        </Section>
+      )}
 
-      <Section id="sync-kept-out" title="Kept out">
-        {view.kept_out.length === 0 ? <p className="muted">Nothing is kept out.</p> : (
-          <ul className="sync-rows">
-            {view.kept_out.map((r) => (
-              <li key={r.plaud_id} className="sync-row" data-testid="kept-out-row">
-                <span className="sync-by">{BY[r.by]}</span>
-                <span className="mono">{r.plaud_id}</span>
-                {when(r) && <span className="sync-when">{when(r)}</span>}
-                <CopyId text={r.copy_id} label={r.plaud_id} />
-                {r.released ? (
-                  <span className="sync-released">
-                    {r.released} {"·"}{" "}
-                    <Button variant="outline" data-request="unrelease" disabled={unreleasing !== null} aria-describedby={keptOut.idOf(unreleasing)}
-                      onClick={() => plaud.send("unrelease", { plaud_ids: [r.plaud_id] })}>Undo</Button>
-                  </span>
-                ) : r.release && (
-                  <Button variant="outline" data-request="release-preview" data-release-for={r.plaud_id} disabled={previewing !== null}
-                    aria-describedby={keptOut.idOf(previewing)} onClick={() => release(r)}>Release</Button>
-                )}
-                {asking?.plaud_id === r.plaud_id && ended && answer && <span className="sync-why" role="status">{answer.message}</span>}
-              </li>
-            ))}
-          </ul>
-        )}
-        <Reasons prefix="sync-kept-out" list={keptOut.list} />
-      </Section>
+      {view.listed && (
+        <Section id="sync-kept-out" title="Kept out">
+          {view.kept_out.length === 0 ? <p className="muted">Nothing is kept out.</p> : (
+            <ul className="sync-rows">
+              {view.kept_out.map((r) => (
+                <li key={r.plaud_id} className="sync-row" data-testid="kept-out-row">
+                  <span className="sync-by">{BY[r.by]}</span>
+                  <span className="mono">{r.plaud_id}</span>
+                  {when(r) && <span className="sync-when">{when(r)}</span>}
+                  <CopyId text={r.copy_id} label={r.plaud_id} />
+                  {r.released ? (
+                    <span className="sync-released">
+                      {r.released} {"·"}{" "}
+                      <Button variant="outline" data-request="unrelease" disabled={unreleasing !== null} aria-describedby={keptOut.idOf(unreleasing)}
+                        onClick={() => plaud.send("unrelease", { plaud_ids: [r.plaud_id] })}>Undo</Button>
+                    </span>
+                  ) : r.release && (
+                    <Button variant="outline" data-request="release-preview" data-release-for={r.plaud_id} disabled={previewing !== null}
+                      aria-describedby={keptOut.idOf(previewing)} onClick={() => release(r)}>Release</Button>
+                  )}
+                  {asking?.plaud_id === r.plaud_id && ended && answer && <span className="sync-why" role="status">{answer.message}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          <Reasons prefix="sync-kept-out" list={keptOut.list} />
+        </Section>
+      )}
 
       <Section id="sync-updated" title="Updated on Plaud (7 days)">
         {view.updated.length === 0 ? <p className="muted">Nothing changed on Plaud this week.</p> : (
@@ -22412,37 +22909,41 @@ export function SyncPage() {
         )}
       </Section>
 
-      <Section id="sync-gone" title="Gone from Plaud">
-        <p>Gone from Plaud: {n(view.gone.rows.length)} {"·"} {n(view.gone.last_7_days)} in the last 7 days</p>
-        {view.gone.rows.length > 0 && (
-          <ul className="sync-rows">
-            {view.gone.rows.map((g) => (
-              <li key={g.recording_id} className="sync-row" data-testid="gone-row">
-                <span className="mono">{g.recording_id}</span> <span className="muted">gone since {g.since}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="muted">To take one out of the archive: "Taking a recording out by hand" in the runbook.</p>
-      </Section>
+      {view.listed && (
+        <Section id="sync-gone" title="Gone from Plaud">
+          <p>Gone from Plaud: {n(view.gone.rows.length)} {"·"} {n(view.gone.last_7_days)} in the last 7 days</p>
+          {view.gone.rows.length > 0 && (
+            <ul className="sync-rows">
+              {view.gone.rows.map((g) => (
+                <li key={g.recording_id} className="sync-row" data-testid="gone-row">
+                  <span className="mono">{g.recording_id}</span> <span className="muted">gone since {g.since}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="muted">To take one out of the archive: "Taking a recording out by hand" in the runbook.</p>
+        </Section>
+      )}
 
-      <Section id="sync-parked" title="Parked">
-        <p>Parked: {n(view.parked.length)}</p>
-        {view.parked.length > 0 && (
-          <ul className="sync-rows">
-            {view.parked.map((p) => (
-              <li key={p.id} className="sync-row" data-testid="parked-row">
-                <span className="mono">{p.id}</span>
-                <Button variant="outline" data-request="unpark" disabled={unparking !== null} aria-describedby={parked.idOf(unparking)}
-                  onClick={() => plaud.send("unpark", p.kind === "recording" ? { recording_ids: [p.id] } : { plaud_ids: [p.id] })}>
-                  Unpark
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <Reasons prefix="sync-parked" list={parked.list} />
-      </Section>
+      {view.listed && (
+        <Section id="sync-parked" title="Parked">
+          <p>Parked: {n(view.parked.length)}</p>
+          {view.parked.length > 0 && (
+            <ul className="sync-rows">
+              {view.parked.map((p) => (
+                <li key={p.id} className="sync-row" data-testid="parked-row">
+                  <span className="mono">{p.id}</span>
+                  <Button variant="outline" data-request="unpark" disabled={unparking !== null} aria-describedby={parked.idOf(unparking)}
+                    onClick={() => plaud.send("unpark", p.kind === "recording" ? { recording_ids: [p.id] } : { plaud_ids: [p.id] })}>
+                    Unpark
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Reasons prefix="sync-parked" list={parked.list} />
+        </Section>
+      )}
 
       <Section id="sync-own-audio" title="Import your own audio">
         <p className="muted">Coming later.</p>
@@ -22534,7 +23035,9 @@ from fixtures until Phase 2's worker builds one), only Let it in sends release, 
 goes back to Release when it closes. Every button that asks carries data-request, and is
 off with its reason said once in its section: this app can't ask, the worker can't handle
 the kind yet (in Phase 1 everything but Keep it here), the gate, or its own. Ticks a
-redraw drops leave Import selected's count. Copy ID falls back to execCommand("copy") on
+redraw drops leave Import selected's count. Before any listing (all of Phase 1) the screen
+shows no counts: "No sync has run yet.", the consent list's line and the flags, and none
+of Not here yet, Kept out, Gone or Parked. Copy ID falls back to execCommand("copy") on
 plain HTTP, and shows the ID to select when nothing can copy. At 320 px the top bar keeps
 four tabs on one row: the logo's mark alone and the theme switch as one icon.
 Checked: the shadcn skill (AlertDialog for a confirmation; no new component added; the
@@ -22555,7 +23058,7 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 
 **Tier:** 2 · **Scenarios:** C6.06, C6.09
 
-Spec §15.2, J5: plain sentences first, then the numbers, Details folded away; no titles. Status reports only: a line here offers no Re-sync or Park (spec §15.2's "2 recordings fail every check · Re-sync · Park" is acted on from the Sync screen and Details; Phase 1's view writes no such line, since the checks that fail come in Phase 3). The one exception is the two Accept buttons a hold and a breaker trip offer on both, off with `not_yet` while the worker can't handle them (all of Phase 1). In Phase 1 the panel shows the gate's sentence, the worker and the ping; the canned view and the fixtures draw the rest.
+Spec §15.2, J5: plain sentences first, then the numbers, Details folded away; no titles. Status reports only: a line here offers no Re-sync or Park (spec §15.2's "2 recordings fail every check · Re-sync · Park" is acted on from the Sync screen and Details; Phase 1's view writes no such line, since the checks that fail come in Phase 3). The one exception is the two Accept buttons a hold and a breaker trip offer on both, off with `not_yet` while the worker can't handle them (all of Phase 1). In Phase 1 the panel shows the gate's sentence, the worker and the ping; the canned view and the fixtures draw the rest. Before any listing (`SyncPanel.listed` false, all of Phase 1) it shows no zero counts: Held for review, Gone from Plaud, Failing, Parked and Malformed listing rows aren't drawn.
 
 **Files:**
 - Create: `packages/ui/frontend/src/components/SyncPanel.tsx`, `SyncPanel.test.ts`
@@ -22564,7 +23067,7 @@ Spec §15.2, J5: plain sentences first, then the numbers, Details folded away; n
 - Main spec §12.5 is amended in Task 2 (decision 8, as the controller changed it); this task changes no doc.
 
 **Interfaces:**
-- Consumes: Task 19's `SyncPanel` (with `handled` and `not_yet`), `StatusView.sync`; Task 21's `SyncSummary`; Task 20's `usePlaudContext`, `kindReason` and `NO_PLAUD` (Accept this listing, Accept these changes).
+- Consumes: Task 19's `SyncPanel` (with `handled`, `not_yet` and `listed`), `StatusView.sync`; Task 21's `SyncSummary`; Task 20's `usePlaudContext`, `kindReason` and `NO_PLAUD` (Accept this listing, Accept these changes).
 - Produces: `export function SyncPanel({ panel }: { panel: SyncPanel }): JSX.Element`.
 - Also consumes Task 21's `SyncHoldLine`, `SyncBreakerLine`, `equationText`, `archiveText` and `consentText`, so the panel and the Sync screen word a hold, a breaker and the equations alike.
 
@@ -22594,7 +23097,7 @@ const EVERY: PlaudKind[] = ["compare", "sync", "import", "resync", "full", "acce
   "release-preview", "release", "unrelease", "park", "unpark", "keep-here"];
 /** A panel drawn from a fixture, with a worker that handles every kind, as Phase 3's will. */
 const PANEL: Panel = {
-  demo: false, no_sync_yet: false, handled: EVERY, not_yet: NOT_YET,
+  demo: false, no_sync_yet: false, handled: EVERY, not_yet: NOT_YET, listed: true,
   summary: { kind: "problem", sentence: "Sign-in needed", explain: null, see_status: true },
   failing: "Plaud sync failing since 14:40 (sign-in needed). Last good listing 14:20.",
   not_pinged: NOT_PINGED,
@@ -22620,7 +23123,7 @@ const fake = (over: Partial<Plaud> = {}): Plaud => {
   sends = [];
   return {
     send: (kind) => (sends.push(kind), "rid"), results: {}, last: null, lastLine: null, available: true, reason: null,
-    why: () => null, gate: null, ...over,
+    why: () => null, handles: () => true, gate: null, ...over,
   };
 };
 /** The panel as HTML, its apostrophes as typed (React writes them as &#x27;). */
@@ -22694,6 +23197,16 @@ describe("Status's sync panel (2b spec §15.2)", () => {
     expect([...host.querySelectorAll("button")].every((b) => b.hasAttribute("disabled"))).toBe(true);
     expect([...host.querySelectorAll(".sync-why")].map((p) => p.textContent)).toEqual([NOT_YET, NOT_YET]);
   });
+  it("before any listing it shows no zero counts", () => {
+    // Held, gone, failing, parked and malformed rows wait for the phase that measures them (X5).
+    const html = markup({ ...PANEL, listed: false, numbers: { ...PANEL.numbers, equation: null, archive: null,
+      last_good_listing: null } });
+    for (const label of ["Held for review", "Gone from Plaud", "Failing", "Parked", "Malformed listing rows"]) {
+      expect(html).not.toContain(`<dt>${label}</dt>`);
+    }
+    expect(html).toContain("<dt>Plaud worker</dt>");
+    expect(markup(PANEL)).toContain("<dt>Held for review</dt><dd>0</dd>");
+  });
   it("the demo says Plaud sync isn't part of the demo", () => {
     const html = markup({ ...PANEL, demo: true, failing: null, not_pinged: null, conditions: [],
       summary: { kind: "demo", sentence: "Demo: Plaud sync isn't part of the demo.", explain: null, see_status: false } });
@@ -22732,7 +23245,7 @@ and replace the closing `});` of its `describe("StatusPage", …)` with:
       demo: false, no_sync_yet: false,
       summary: { kind: "problem", sentence: "Imports stopped: consent list", explain: null, see_status: true },
       failing: null, not_pinged: null, conditions: [line], hold: null, breaker: null,
-      handled: ["keep-here"], not_yet: "Comes with the next part of stage 2b.",
+      handled: ["keep-here"], not_yet: "Comes with the next part of stage 2b.", listed: false,
       numbers: {
         equation: null, archive: null, consent: null, last_good_listing: null, next_sync: null, sweep: null,
         sign_in: null, full: null, held: 0, gone: 0, failing: 0, parked: 0, worker: null, healthchecks: null,
@@ -22746,7 +23259,8 @@ and replace the closing `});` of its `describe("StatusPage", …)` with:
     shown.view = { configured: true, jobs: [backup], attention: [line], flags: 0, disk: null, sync };
     shown.error = null;
     const plaud: Plaud = {
-      send: () => "rid", results: {}, last: null, lastLine: null, available: true, reason: null, why: () => null, gate: null,
+      send: () => "rid", results: {}, last: null, lastLine: null, available: true, reason: null, why: () => null,
+      handles: () => false, gate: null,
     };
     const html = renderToStaticMarkup(createElement(PlaudContext.Provider, { value: plaud }, createElement(StatusPage)));
     const attention = html.indexOf('data-testid="status-attention"');
@@ -22786,7 +23300,9 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  * re-synced or parked there). The one exception is Accept this listing and Accept these changes,
  * which a hold and a breaker trip offer on both, off with the reason while the worker can't
  * handle them yet. No title anywhere: recordings are named by ID (P13). Needs attention already
- * holds the panel's lines (StatusView.attention). */
+ * holds the panel's lines (StatusView.attention). Before any listing (`listed` false, all of
+ * Phase 1) it shows no zero counts: held, gone, failing, parked and malformed rows wait for the
+ * phase that measures them. */
 export function SyncPanel({ panel }: { panel: Panel }) {
   const plaud = usePlaudContext();
   const why = plaud.available ? null : (plaud.reason ?? NO_PLAUD);
@@ -22817,10 +23333,14 @@ export function SyncPanel({ panel }: { panel: Panel }) {
             {x.sweep && <Row label="Sweep">{x.sweep}</Row>}
             {x.sign_in && <Row label="Sign-in">{x.sign_in}</Row>}
             {x.full && <Row label="Sync everything">{x.full}</Row>}
-            <Row label="Held for review">{n(x.held)}</Row>
-            <Row label="Gone from Plaud">{n(x.gone)}</Row>
-            <Row label="Failing">{n(x.failing)}</Row>
-            <Row label="Parked">{n(x.parked)}</Row>
+            {panel.listed && (
+              <>
+                <Row label="Held for review">{n(x.held)}</Row>
+                <Row label="Gone from Plaud">{n(x.gone)}</Row>
+                <Row label="Failing">{n(x.failing)}</Row>
+                <Row label="Parked">{n(x.parked)}</Row>
+              </>
+            )}
             {x.worker && <Row label="Plaud worker">{x.worker}</Row>}
             {x.healthchecks && <Row label="Healthchecks">{x.healthchecks}</Row>}
           </dl>
@@ -22838,7 +23358,7 @@ export function SyncPanel({ panel }: { panel: Panel }) {
               )}
               {d.named_share && <Row label="Named segments">{d.named_share}</Row>}
               <Row label="Keep-out words">{d.keep_out_words.length > 0 ? d.keep_out_words.map((w, i) => <span key={w}>{i > 0 && ", "}<code>{w}</code></span>) : "none"}</Row>
-              <Row label="Malformed listing rows">{n(d.malformed)}</Row>
+              {panel.listed && <Row label="Malformed listing rows">{n(d.malformed)}</Row>}
             </dl>
             {d.runs.length > 0 && (
               <>
@@ -22917,8 +23437,9 @@ its lines: the summary it shares with the Sync screen (linking there), the faili
 and a breaker's Accept these changes (off, with why, while the worker can't handle them,
 as in all of Phase 1), then the numbers, the Healthchecks line with a failed ping's time
 and HTTP status among them, and Details folded in a <details>. Status reports only: no
-Re-sync or Park here. No sync yet says so and shows no numbers; the demo says Plaud sync
-isn't part of the demo. No title is drawn. Checked: the shinyreact skill (an output keeps
+Re-sync or Park here. No sync yet says so and shows no numbers; before any listing it
+shows no zero counts (held, gone, failing, parked, malformed rows); the demo says Plaud
+sync isn't part of the demo. No title is drawn. Checked: the shinyreact skill (an output keeps
 its last value while it redraws) and the shadcn skill (no component needed for a list or a
 disclosure). The new tests failed first with: Cannot find module './SyncPanel'.
 
@@ -22936,7 +23457,7 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 
 Spec §15.3: the arrivals cue, the selection bar's **Re-sync from Plaud**, and the Details lines.
 
-A reading to record (Dan can see it): §15.3 says "the Library's Needs attention lists them by archive ID", but no stage has built a Needs attention list in the Library. The header's flags line therefore links to Status ("See Status"), whose Needs attention lists each flagged recording by ID (Task 19). In Phase 1 Re-sync is off everywhere with `not_yet` (the worker handles Keep it here alone); once a later phase handles it, the gate's reason holds it until the first catch-up, in Details (the view's `resync`) and in both selection bars (`Plaud.gate`).
+A reading to record (Dan can see it): §15.3 says "the Library's Needs attention lists them by archive ID", but no stage has built a Needs attention list in the Library. The header's flags line therefore links to Status ("See Status"), whose Needs attention lists each flagged recording by ID (Task 19). Outside the Sync screen and Status, a button for a kind the worker can't handle yet isn't drawn (the council's X6): in Phase 1 (the worker handles Keep it here alone) neither Details nor either selection bar shows Re-sync, and Details shows no "Plaud: not checked yet" line until checks can run (Phase 3; a checked time already recorded still shows). Keep it here, in Details' flags, is live. Once a later phase handles Re-sync, the gate's reason holds it until the first catch-up, in Details (the view's `resync`) and in both selection bars (`Plaud.gate`).
 
 **Files:**
 - Modify: `packages/ui/frontend/src/components/HeadNotes.tsx` (the Refresh button: "2 new · 1 private · 2 updated from Plaud · Refresh", beside "5 changed"; at 320 pixels "5 from Plaud · Refresh"; the flags line "1 kept out too late · 1 consent-listed in the archive · See Status", by count only), `TagsPage.tsx` (the same cue in the grid's header), `SelectionBar.tsx` (+ test), `RecordingPane.tsx` or `DetailsTab.tsx` (the Plaud section)
@@ -22945,7 +23466,7 @@ A reading to record (Dan can see it): §15.3 says "the Library's Needs attention
 - Main spec §12.1 and §12.3 are amended in Task 2 (decision 8, as the controller changed it); this task changes no doc.
 
 **Interfaces:**
-- Consumes: Task 19's `Arrivals`, `RecordingPlaud` (with `handled` and `not_yet`), `RecordingView.plaud`; Task 20's `PlaudContext`, `Plaud.why`, `Plaud.gate`, `kindReason`, `NO_PLAUD` and `FINAL`; Task 21's `CopyId` and `FlagRow`; `useShinyOutputValue<Arrivals>("plaud_arrivals")`.
+- Consumes: Task 19's `Arrivals`, `RecordingPlaud` (with `handled` and `not_yet`), `RecordingView.plaud`; Task 20's `PlaudContext`, `Plaud.why`, `Plaud.handles`, `Plaud.gate`, `kindReason`, `NO_PLAUD` and `FINAL`; Task 21's `CopyId` and `FlagRow`; `useShinyOutputValue<Arrivals>("plaud_arrivals")`.
 - Produces:
   ```ts
   export function PlaudDetails({ plaud }: { plaud: RecordingPlaud }): JSX.Element;
@@ -22953,7 +23474,7 @@ A reading to record (Dan can see it): §15.3 says "the Library's Needs attention
     onResync: () => void; resync: string | null /* null: enabled; else why not */ }): JSX.Element | null;
   ```
   The selection bar reads "12 selected · Tag… · Re-sync from Plaud · Clear"; Re-sync sends one `resync` with the selection's recording IDs (a cap of 1,000: "For more, use Sync everything").
-- Also produced here (named, not in the skeleton): in `HeadNotes.tsx`, `arrivalsCue(a, short)` and `flagsLine(a)`; in `SelectionBar.tsx`, `MAX_RESYNC`, `TOO_MANY_RESYNC` and `resyncReason(plaud, count)` (too many; else `plaud.why("resync")`: this app can't ask, or not handled yet; else `plaud.gate`). The Library, the grid and Details read the Plaud context with `useContext(PlaudContext)`, not `usePlaudContext()`, so a component drawn without App (the existing tests) has Re-sync off instead of throwing. `RecordingPlaud` carries no recording ID, so `PlaudDetails` takes it from the `recording` output, the recording Details shows (which App already holds), rather than widening its fixed props.
+- Also produced here (named, not in the skeleton): in `HeadNotes.tsx`, `arrivalsCue(a, short)` and `flagsLine(a)`; in `SelectionBar.tsx`, `MAX_RESYNC`, `TOO_MANY_RESYNC` and `resyncReason(plaud, count)` (too many; else `plaud.why("resync")`: this app can't ask, or not handled yet; else `plaud.gate`); the bar draws Re-sync only when `plaud.handles("resync")` (Task 20), and Details only when its own view's `handled` has `resync`. The Library, the grid and Details read the Plaud context with `useContext(PlaudContext)`, not `usePlaudContext()`, so a component drawn without App (the existing tests) has no Re-sync instead of throwing. `RecordingPlaud` carries no recording ID, so `PlaudDetails` takes it from the `recording` output, the recording Details shows (which App already holds), rather than widening its fixed props.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-23-base`
 
@@ -23066,7 +23587,7 @@ const fake = (over: Partial<Plaud> = {}): Plaud => {
   sends = [];
   return {
     send: (kind, opts) => (sends.push([kind, opts]), "rid-1"), results: {}, last: null, lastLine: null,
-    available: true, reason: null, why: () => null, gate: null, ...over,
+    available: true, reason: null, why: () => null, handles: () => true, gate: null, ...over,
   };
 };
 const markup = (plaud: RecordingPlaud, p: Plaud = fake()) =>
@@ -23129,16 +23650,18 @@ describe("Details' Plaud lines (2b spec §15.3)", () => {
     draw(LINES, { ...p, results: { "rid-1": reply } });
     expect(host.querySelector("[data-testid=resync-reply]")!.textContent).toBe(" Updated: speakers");
   });
-  it("in Phase 1 Re-sync says it comes next, and Keep it here is live", () => {
-    // Phase 1's worker handles Keep it here alone (G7).
+  it("in Phase 1 there is no Re-sync and no check line, and Keep it here is live", () => {
+    // Phase 1's worker handles Keep it here alone, and checks come with Phase 3: Details draws
+    // no dead button and no "not checked yet" (the council's X6).
     const flag = {
       kind: "kept-out-late" as const, recording_id: RID, plaud_id: PID, copy_id: `- \`${PID}\` —`,
       sentence: "Kept out by title, but already in the archive: take it out by hand (runbook)", keep_here: true,
       date: null, duration: null,
     };
-    draw({ ...LINES, flags: [flag], handled: ["keep-here"] }, fake());
-    expect(button("Re-sync from Plaud").hasAttribute("disabled")).toBe(true);
-    expect(host.textContent).toContain(NOT_YET);
+    draw({ ...LINES, checked: null, next_by: null, flags: [flag], handled: ["keep-here"] }, fake());
+    expect(button("Re-sync from Plaud")).toBeUndefined();
+    expect(host.querySelector("[data-testid=plaud-checked]")).toBeNull();
+    expect(host.textContent).not.toContain(NOT_YET);
     flushSync(() => button("Keep it here").click());
     expect(sends).toEqual([["keep-here", { recording_ids: [RID] }]]);
   });
@@ -23213,7 +23736,7 @@ describe("the selection bar, fix round 1 (Task 12)", () => {
 describe("Re-sync from Plaud on a selection (2b spec §14.6)", () => {
   const plaud = (over: Partial<Plaud> = {}): Plaud => ({
     send: vi.fn(() => "rid-1"), results: {}, last: null, lastLine: null, available: true, reason: null,
-    why: () => null, gate: null, ...over,
+    why: () => null, handles: () => true, gate: null, ...over,
   });
   const drawn = (p: Plaud, props: Partial<Parameters<typeof SelectionBar>[0]> = {}) => {
     const host = document.body.appendChild(document.createElement("div"));
@@ -23242,6 +23765,14 @@ describe("Re-sync from Plaud on a selection (2b spec §14.6)", () => {
     expect(resync.hasAttribute("disabled")).toBe(true);
     expect(host.textContent).toContain("For more, use Sync everything");
     done();
+  });
+  it("draws no Re-sync while the worker can't handle one", () => {
+    // Phase 1's bar has no dead button (the council's X6); the Sync screen keeps its own, off.
+    const { host, done } = drawn(plaud({ handles: () => false, why: () => NOT_YET }), { resync: NOT_YET });
+    expect(host.querySelector("[data-request=resync]")).toBeNull();
+    expect(host.textContent).not.toContain(NOT_YET);
+    done();
+    expect(render(12)).not.toContain("Re-sync"); // nor without App's Plaud context
   });
   it("says it comes with the next part, and the gate's reason, as Details does", () => {
     // Phase 1's worker can't handle a re-sync yet; once it can, the gate holds it until the first
@@ -23402,14 +23933,16 @@ export function resyncReason(plaud: Plaud | null, count: number): string | null 
  * action, so a second tag can follow, and the bar adds "just tagged `work`" (spec §6): the tags
  * last added to this very selection, a tag's name as code, several as a count ("just tagged 3
  * tags"). Re-sync sends one request for the selection, and its newest reply shows here:
- * "Re-syncing 12 of 25…", then the end line (2b spec §14.6). Esc inside the bar clears, as it
- * says. On phones it sits above the bottom tab bar (app.css). */
+ * "Re-syncing 12 of 25…", then the end line (2b spec §14.6). Re-sync is drawn only once the
+ * worker handles it (`Plaud.handles`): until then (all of Phase 1) the bar has no dead button. Esc
+ * inside the bar clears, as it says. On phones it sits above the bottom tab bar (app.css). */
 export function SelectionBar({ count, lastTagged, onTag, onClear, onResync, resync }: {
   count: number; lastTagged: string[] | null; onTag: () => void; onClear: () => void;
   onResync: () => void; resync: string | null; // null: enabled; else why not
 }) {
   const plaud = useContext(PlaudContext);
   const reply = plaud?.last?.kind === "resync" ? plaud.last : null;
+  const offered = plaud?.handles("resync") ?? false;
   if (count < 2) return null;
   return (
     <div
@@ -23426,13 +23959,15 @@ export function SelectionBar({ count, lastTagged, onTag, onClear, onResync, resy
       <span>{count.toLocaleString("en")} selected</span>
       <button type="button" onClick={onTag}>Tag{"…"} <kbd>T</kbd></button>
       {/* On a phone "from Plaud" is dropped (app.css), so the bar stays one line. */}
-      <button type="button" data-request="resync" disabled={resync !== null} aria-describedby={resync ? "resync-why" : undefined}
-        onClick={onResync}>Re-sync<span className="resync-long"> from Plaud</span></button>
+      {offered && (
+        <button type="button" data-request="resync" disabled={resync !== null} aria-describedby={resync ? "resync-why" : undefined}
+          onClick={onResync}>Re-sync<span className="resync-long"> from Plaud</span></button>
+      )}
       <button type="button" onClick={onClear}>Clear <kbd>Esc</kbd></button>
       {/* Too many is said aloud; any other reason (the demo, no config.toml, not handled yet, the
           gate) only to a screen reader and as the button's description, so the bar stays one line
           where nothing can be synced. */}
-      {resync && <span className={resync === TOO_MANY_RESYNC ? "muted" : "sr-only"} id="resync-why">{resync}</span>}
+      {offered && resync && <span className={resync === TOO_MANY_RESYNC ? "muted" : "sr-only"} id="resync-why">{resync}</span>}
       {reply && (
         <span className="muted" role="status" data-testid="resync-reply">
           {!FINAL.has(reply.state) && reply.progress ? `Re-syncing ${reply.progress.done.toLocaleString("en")} of ${reply.progress.total.toLocaleString("en")}…` : reply.message}
@@ -23497,33 +24032,40 @@ function replyText(r: PlaudResult): string {
 /** Details' Plaud lines (2b spec §15.3): when it was checked and when next, Re-sync from Plaud
  * with its result inline, each Plaud ID with Copy ID, gone from Plaud, why the sync tagged it
  * private (or decision 3, once Dan removed that), and its flags, each with its next step. The
- * recording is the one Details shows: the `recording` output's, which App holds. Re-sync says
- * why it is off: this app can't ask, the worker can't handle a re-sync yet (`not_yet`), or the
- * server's reason (the gate, a consent listing, a keep-out). */
+ * recording is the one Details shows: the `recording` output's, which App holds. Re-sync is
+ * drawn only once the worker handles it, and the checked line only once checks can run (both
+ * Phase 3's; a checked time already recorded still shows): Phase 1's Details has no dead button.
+ * When drawn, Re-sync says why it is off: this app can't ask, or the server's reason (the gate, a
+ * consent listing, a keep-out). */
 export function PlaudDetails({ plaud }: { plaud: RecordingPlaud }) {
   const ctx = useContext(PlaudContext);
   const recordingId = useShinyOutputValue<RecordingView | null>("recording")?.id ?? null;
   const [resyncId, setResyncId] = useState<string | null>(null);
   const why = !ctx ? NO_PLAUD : ctx.available ? null : (ctx.reason ?? NO_PLAUD);
+  const offered = plaud.handled.includes("resync");
   const resyncWhy = kindReason("resync", why, plaud) ?? plaud.resync;
   const reply = resyncId && ctx ? ctx.results[resyncId] : undefined;
   return (
     <section className="plaud-details" data-testid="plaud-details" aria-labelledby="plaud-details-h">
       <h3 id="plaud-details-h">Plaud</h3>
-      <p data-testid="plaud-checked">
-        Plaud: {plaud.checked ? `checked ${plaud.checked}` : "not checked yet"}
-        {plaud.next_by && ` · next by ${plaud.next_by}`}
-      </p>
-      <p className="plaud-resync">
-        <Button variant="outline" size="sm" data-request="resync" disabled={resyncWhy !== null || !recordingId}
-          onClick={() => {
-            if (ctx && recordingId) setResyncId(ctx.send("resync", { recording_ids: [recordingId] }));
-          }}>
-          Re-sync from Plaud
-        </Button>
-        {resyncWhy && <span className="muted"> {resyncWhy}</span>}
-        {reply && <span role="status" data-testid="resync-reply"> {replyText(reply)}</span>}
-      </p>
+      {(offered || plaud.checked) && (
+        <p data-testid="plaud-checked">
+          Plaud: {plaud.checked ? `checked ${plaud.checked}` : "not checked yet"}
+          {plaud.next_by && ` · next by ${plaud.next_by}`}
+        </p>
+      )}
+      {offered && (
+        <p className="plaud-resync">
+          <Button variant="outline" size="sm" data-request="resync" disabled={resyncWhy !== null || !recordingId}
+            onClick={() => {
+              if (ctx && recordingId) setResyncId(ctx.send("resync", { recording_ids: [recordingId] }));
+            }}>
+            Re-sync from Plaud
+          </Button>
+          {resyncWhy && <span className="muted"> {resyncWhy}</span>}
+          {reply && <span role="status" data-testid="resync-reply"> {replyText(reply)}</span>}
+        </p>
+      )}
       <ul className="plaud-ids">
         {plaud.plaud_ids.map((p) => (
           <li key={p.id}><span className="mono">{p.id}</span> <CopyId text={p.copy_id} label={p.id} /></li>
@@ -23578,7 +24120,7 @@ and inside the second `@media (max-width: 760px)` block, after Task 22's `.sync-
 
 - [ ] **Step 7: Run them; they pass:** `make test-js`. Expected: all pass.
 
-- [ ] **Step 8: Run the checks:** `uv run ruff format .`, `make check`, `make build`, `make e2e`. Expected: all pass (the demo's arrivals are all 0, so its Refresh still reads "Refresh"; its selection bar gains a disabled Re-sync with the demo's reason). The first thing to check in `make e2e` is the phone selection bar: at 320 px it already holds "N selected · Tag… T · Clear Esc · just tagged …", and the short-screen tests measure its height; "Re-sync" (its "from Plaud" hidden there) adds about 60 px. If the bar wraps, give the "just tagged" span the class `just-tagged` as well as `muted`, and hide it on a phone inside the second `@media (max-width: 760px)` block (`.just-tagged { display: none; }`, after `.resync-long`), never with a third block; say so in the commit.
+- [ ] **Step 8: Run the checks:** `uv run ruff format .`, `make check`, `make build`, `make e2e`. Expected: all pass (the demo's arrivals are all 0, so its Refresh still reads "Refresh"; its selection bar draws no Re-sync, since the demo's view handles Keep it here alone, so the short-screen tests' bar is unchanged in Phase 1). For the phase that first handles Re-sync, the first thing to check in `make e2e` is the phone selection bar: at 320 px it already holds "N selected · Tag… T · Clear Esc · just tagged …", and the short-screen tests measure its height; "Re-sync" (its "from Plaud" hidden there) adds about 60 px. If the bar wraps, give the "just tagged" span the class `just-tagged` as well as `muted`, and hide it on a phone inside the second `@media (max-width: 760px)` block (`.just-tagged { display: none; }`, after `.resync-long`), never with a third block; say so in the commit.
 
 - [ ] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
@@ -23590,12 +24132,13 @@ the page loaded or its last Refresh, "2 new · 1 private · 2 updated from Plaud
 phone "5 from Plaud" (spec §15.3); the header notes count the open privacy flags with the
 way to Status, by count only: the Library has no Needs attention list of its own, so
 Status's is the one (a reading). The selection bar gains Re-sync from Plaud: one resync
-request for the selection, off over 1,000 ("For more, use Sync everything"), off while the
-worker can't handle a re-sync (all of Phase 1) and, once it can, while the gate is closed,
-its newest reply in place. Details gains the Plaud lines: checked and next by, Re-sync with
-its reply and its reason when off, each Plaud ID with Copy ID, gone from Plaud, tagged
-private by the sync and why, or decision 3's line once Dan removed it, and the flags with
-Keep it here, the one live button. Checked: the shinyreact skill (useShinyOutputValue
+request for the selection, drawn only once the worker handles a re-sync (not in Phase 1),
+then off over 1,000 ("For more, use Sync everything") and while the gate is closed, its
+newest reply in place. Details gains the Plaud lines: checked and next by, and Re-sync with
+its reply and its reason when off, each drawn only once checks and re-syncs can run (not in
+Phase 1); each Plaud ID with Copy ID, gone from Plaud, tagged private by the sync and why,
+or decision 3's line once Dan removed it, and the flags with Keep it here, the one live
+button. Checked: the shinyreact skill (useShinyOutputValue
 reads an output App keeps subscribed) and the shadcn Button's sizes. The new tests failed
 first with: Cannot find module './PlaudDetails'.
 
@@ -24269,7 +24812,7 @@ From `phase-end.md`, the large-project version. Each step ends with its commit (
 - [ ] **7. A dated `CHANGELOG.md` entry** (the file is created here), and the spec's status line set to `PR open (#N)` once step 8 opens it.
 - [ ] **8. The PR:** title `chore(repo): 🤖 merge Phase 1: stage 2b's groundwork`; the body summarises each task, the council's findings and what became of them, the retro's link, and every file a scan can't read (`git log --format= --numstat origin/main..HEAD | awk '$1 == "-" { print "not scanned, check by eye: " $3 }'`), ending `Plan: docs/superpowers/plans/2026-10-23-stage-2b-phase-1.md Phase end`. This repo has no `leakcheck.py`, `.githooks/` or denylist, so the PR text is scanned by `gitleaks stdin --redact --no-banner` alone: with the title and body in `.superpowers/sdd/2026-10-23-stage-2b-phase-1/PR_TITLE` and `PR_BODY.md`, `cat` both into `gitleaks stdin --redact --no-banner`, and only if it passes `gh pr create --base main --head stage-2b --title "$(cat …/PR_TITLE)" --body-file …/PR_BODY.md`; a finding stops everything, and Dan is told its kind and where, never the matched text. Never `--admin`, `--delete-branch`, squash or rebase.
 - [ ] **9. [Dan] The merge** (attended: Dan merges the PR on GitHub). Then the Pages site serves the new demo (`pages.yml`); the status line's `merged` entry comes with Phase 2's start.
-- [ ] **10. [Dan, optional] Deploy Phase 1** (runbook section 6, from the Mac). What it gains: late consent listings, the auto-private marker and Keep it here run on the real archive within seconds of the deploy, before the dry run; the worker stays idle otherwise, the sync's check stays unpinged (it never goes down until its first ping), and doctor says "sign-in needed" until Phase 2. Not deploying changes nothing for Phase 2.
+- [ ] **10. [Dan, optional] Deploy Phase 1** (runbook section 6, on the server). What it gains: late consent listings act on the real archive within seconds of the deploy, before the dry run (a consent-listed recording already here is tagged `private` and flagged); the auto-private marker runs whenever a recording is reconciled (a `recordings reindex`, or the next import), and Keep it here answers the flags those raise. Otherwise the worker stays idle, the sync's check stays unpinged (it never goes down until its first ping), and doctor says "sign-in needed" until Phase 2. Not deploying changes nothing for Phase 2.
 
 ## Phase 2 and Phase 3 outlines
 
@@ -24285,7 +24828,7 @@ Their full plans are written at their phase start, against the code as built and
 - `sources/base.py` and `sources/plaud.py` (decision 4); the listing: pages until empty, repeats, malformed rows, the census, bad, partial or complete (S5, S7).
 - The buckets and both equations, the compare and the cache's writes (titles hidden in a consent stop or an ID-change hold), the property test (S7).
 - The listing hold, **Accept this listing** (request and `accept-listing`), a small shrink settling, the re-key match (S7).
-- Importing one recording: the consent and keep-out re-checks, the envelope's title checked before any block (§11.5: Task 4's `PlaudClient.envelope(listed_id)` always fetches the linked blocks, so Phase 2's import fetches the envelope without its blocks, checks the title, then fetches the blocks, through `envelope(…, enrich=False)` or a split into two calls; decision 37), the `_meta` stamp, auto-private at import, the disk guard, `.tmp/plaud-dl/`, ffprobe, `Writer.add`, reconcile, the snapshot mark before every 2b snapshot, by every path, `Writer.add` at import included (`Writer.add_snapshot` leaves it to its caller) (S8, S11, S12); CLAUDE.md's scratch-download sentence; main spec §6.1.
+- Importing one recording: the consent and keep-out re-checks, the envelope's title checked before any block (§11.5: Task 4's `PlaudClient.envelope(listed_id)` always fetches the linked blocks, so Phase 2's import fetches the envelope without its blocks, checks the title, then fetches the blocks, through `envelope(…, enrich=False)` or a split into two calls; decision 37), the `_meta` stamp, auto-private at import, the disk guard, `.tmp/plaud-dl/` (and its sweep at the worker's start), ffprobe, `Writer.add`, reconcile, the consent list re-read before each download trusting only a file whose mtime is at least one tick old (S11), the snapshot mark before every 2b snapshot, by every path, `Writer.add` at import included (`Writer.add_snapshot` leaves it to its caller) (S8, S11, S12); CLAUDE.md's scratch-download sentence; main spec §6.1.
 - Keep-out at listing time, **Release** (preview, release, unrelease, `plaud release`), a late keep-out from the listing, a title change re-tagged from the listing (§13.1 case 2).
 - The sync run (§11.1) as the worker's turn and light turn, the good-run rule's attempts, the compare, sync and import handlers and their re-checks (S10's budget).
 - Gone from Plaud (§12.3); the rebuild's review marks at listing time (§11.6).
@@ -24311,7 +24854,8 @@ Their full plans are written at their phase start, against the code as built and
 | Source task | Severity | File | Item | Status |
 |---|---|---|---|---|
 | 4 | Important | `packages/core/src/recordings/plaud/client.py` | Spec §11.5: an envelope's title is checked before any block, but `PlaudClient.envelope(listed_id)` always fetches the linked blocks. Phase 2's import fetches the envelope without its blocks, checks the title, then fetches the blocks (`envelope(…, enrich=False)` or a split into two calls). Phase 1 calls it only from the spike script, which reads `files/{id}` through `get_json(FILE_PATH…)` (decision 37). | open: Phase 2's outline |
-| 12 | Important | `packages/core/src/recordings/writer.py` | The snapshot mark before every 2b snapshot, by every path, `Writer.add` at import included, moved to Phase 2 with `Writer.add_snapshot` (decisions 43, 44). | open: Phase 2's outline |
+| 12 | Important | `packages/core/src/recordings/writer.py` | The snapshot mark before every 2b snapshot, by every path, `Writer.add` at import included, moved to Phase 2 with the marks; `Writer.add_snapshot` and `validate`'s orphan warning to Phase 3 with the check (decisions 29, 43, 44). | open: Phase 2's and 3's outlines |
+| 20 | Important | `packages/ui/src/recordings_ui/plaud.py` | Release's preview: read and delete it in one writable transaction (a read-only cache can't delete: BD1, P6), keyed by the request's own `request_id` with the Plaud ID taken from the row, never from the browser (P8). | open: Phase 2's outline |
 | 13 | Minor | `packages/core/src/recordings/worker.py` | The consent read trusts a file only when its signature held still during the read; a list written in place in two flushes can still be read in the pause. Phase 2's read before each download trusts only a file whose mtime is at least one tick old (S11). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | Needs attention's "a sign-in expiring within 7 days" (§15.2) reads `sign_in.expires_at`, which Phase 2 writes (BD3). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | The cache's titles of an ID consent-listed, or matching an enforced word, since the compare must never reach the browser (P1, P13). | open: Phase 2's outline |
