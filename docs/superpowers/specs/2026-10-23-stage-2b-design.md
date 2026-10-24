@@ -1,14 +1,14 @@
 # Stage 2b: Plaud flows in and keeps up (design)
 
-- **Date:** 2026-10-23 (revision 3, after the council's review, its re-review, a final check and a
-  builder check)
-- **Status:** draft for Dan's approval. Dan's nine decisions are binding and kept as he gave them.
+- **Date:** 2026-10-23 (revision 4, after the council's review, its re-review, a final check, a
+  builder check and a simplification pass)
+- **Status:** draft for Dan's approval. Dan's eleven decisions are binding and kept as he gave them.
   The rest is the controller's design, built from a five-member research council's work. Calls made
   without asking Dan are listed in §5, by what he will notice.
 - **Parent:** `docs/superpowers/specs/2026-10-08-recordings-design.md` (the main spec), §20 stage 2b.
   §19 lists the changes this spec makes to it and to other docs.
 
-**How to read this.** Part I is everything Dan will see, do or accept, in about 520 lines. Part II
+**How to read this.** Part I is everything Dan will see, do or accept, in about 540 lines. Part II
 is how it is built, for the builder. Part I is binding: Part II says the same thing in more detail,
 and each part of Part I points into Part II.
 
@@ -36,8 +36,8 @@ And tagging part A has shipped, waiting for 2b's first import (decision 7).
   `private` tag he removed stays removed.
 - A speaker he renames in Plaud shows up within a day and one sync (about 20 minutes more) while he
   relabels, and within a week and one sync after that. **Re-sync from Plaud** shows it at once.
-- When something breaks, he hears once, and Status says what to do. Today that is an email from
-  Healthchecks; once ntfy is set up, a push to his phone (decision 9). Otherwise it is quiet.
+- When the sync stops for about 2 hours, he gets one email from Healthchecks, and Status says why
+  and what to do (decision 10). Phone pushes can come later. Otherwise it is quiet.
 - Keeping it running is almost no work. If Plaud signs the server out, signing in again is one
   command on the Mac.
 
@@ -47,7 +47,7 @@ And tagging part A has shipped, waiting for 2b's first import (decision 7).
 2. **It stops again, and nobody notices:** an expired sign-in, a dead worker, a tripped breaker or a
    schedule left off, silent for weeks.
 3. **Dan still checks Plaud by hand.**
-4. **Alert fatigue:** pushes for routine blips teach him to mute the topic.
+4. **Alert fatigue:** emails for routine blips teach him to ignore them.
 5. **His decisions don't hold:** a tag he removed comes back, or a recording he kept out arrives.
 6. **Upkeep becomes a chore,** or the server's Plaud sign-in fights with his Mac's Plaud tools.
 7. **Plaud's copy changes.** The client only ever reads.
@@ -136,9 +136,8 @@ He gave no further reasons, so the reasons below come from the options as they w
 ## 2. Your days with 2b
 
 Each journey says what Dan does, what he sees, and what happens when it goes wrong. The Add page's
-Plaud panel is the main spec's **Sync screen**, and this spec calls it that. A **push** is the
-design as built, for once ntfy is set up; until then, every push reaches Dan as Healthchecks' email
-instead, with the reason on Status (decision 9, J4).
+Plaud panel is the main spec's **Sync screen**, and this spec calls it that. 2b sends no phone push:
+a stop reaches Dan as one email from the sync's Healthchecks check, with the reason on Status (J4).
 
 ### J1. A meeting, then triage
 
@@ -190,10 +189,10 @@ recording sits under Kept out until Dan releases it, which errs safe.
   then stays in the backups." Until that sync, the row offers **Undo**. If the title still starts with
   the word, Release is refused, with the reason.
 - **Too late.** If the sync already downloaded it (the rename came after the next sync), the sync tags
-  it `private` at once, never fetches anything of it again, and **pushes once**: "a kept-out
-  recording was already archived". Status names it by its archive ID. He takes it out by hand
-  (below). Release doesn't apply to it, because it is already here: its flag clears only when it
-  leaves the archive.
+  it `private` at once, never fetches anything of it again, and flags it on Status, the Sync screen
+  and Needs attention: "a kept-out recording was already archived", by its archive ID. He takes it
+  out by hand (below). If he decides to keep it after all, **Keep it here** clears the flag and
+  changes nothing else: `private` stays. Release doesn't apply to it, because it is already here.
 
 **Never keep it, for good: the consent list.** Someone asks not to be recorded or kept. Dan adds the
 recording's Plaud ID to the consent list, on the server: from the Mac, `make consent-add ID=…`
@@ -204,10 +203,11 @@ a copy button. The list's IDs are never downloaded, and no title of theirs is ev
   sentence names a recording Dan kept. `recordings plaud consent` lists those lines by number, so he
   can check each one.
 - **A typo stops imports.** A line that looks like an ID but can't be read stops every import, and
-  pushes at once. Status gives the line number, never the line. Nothing is imported until the list
+  stops the sync's ping, so it emails if it isn't fixed within about 2 hours. Status gives the line
+  number, never the line. Nothing is imported until the list
   reads cleanly, so a typo can't let a recording in.
 - **Too late.** An ID listed after its recording arrived works like a late keep-out: `private` at
-  once, never fetched again, one push, and Status names the recording. It happens within seconds of
+  once, never fetched again, and a flag naming the recording. It happens within seconds of
   the worker seeing the edited list, even if Plaud is down or the sign-in has lapsed, because it needs
   only the list and the archive. Every other recording keeps flowing.
 - Status shows what the worker read: "Consent list: 14 IDs, 4 on Plaud now · file changed
@@ -219,9 +219,8 @@ archive keeps it, never deleting anything on its own. Status and the Sync screen
 steps for taking a recording out (controller's call).
 
 **Taking a recording out by hand** (one runbook section, used for every case above):
-1. Put its Plaud ID on the consent list first, so no sync can bring it back. If the recording is
-   already flagged, or gone from Plaud, this sends no new push. Otherwise the next sync pushes once
-   about it, which is expected.
+1. Put its Plaud ID on the consent list first, so no sync can bring it back. If it isn't flagged
+   already, the next sync flags it, which is expected.
 2. Stop the app, delete its folder for good (never into `trash/`, which is backed up and mirrored),
    rebuild the index, and start the app again.
 3. Know what still holds it: the hourly to monthly backups until they age out (up to 12 months), the
@@ -253,38 +252,31 @@ Part II: §14.
 
 ### J4. Something breaks
 
-**Today, with no ntfy set up** (decision 9), each push below reaches him instead as one email from
-the sync's Healthchecks check, "recordings-sync is down", within about 1h20 of the push being due
-(about 3h20 into an outage). The email has no reason in it; Status has the reason and the next step.
-A second email says "up" once the cause is resolved. For a one-time event (a privacy flag, a failed
-full check) the "up" comes about half an hour later, and the flag stays on Status. **Once ntfy is
-set up,** the same events push to his phone at once, with a fixed title and "See Status", and
-Healthchecks goes quiet again. Either way, Status is complete on its own.
+The sync's Healthchecks check is pinged only after a scheduled sync that is good and that nothing
+holds up for Dan (decision 10). When the pings stop, Healthchecks waits out its 2-hour grace, then
+emails him once: "recordings-sync is down". If the stop is fixed or heals within those 2 hours,
+nothing emails. The email carries no reason. Status does: "The sync's Healthchecks check isn't being
+pinged since 23:00: sign-in needed", with the next step below. "Up" follows once every cause has
+cleared. One email, however many causes. Phone pushes can come later, with a small change (§16).
 
-| What broke | Push | What Dan sees and does |
+| What broke | Email | What Dan sees and does |
 |---|---|---|
-| Plaud refused to refresh the sign-in | at once: "Plaud sign-in needed" | Status: "sign-in needed since 23:00 · new recordings wait on Plaud: nothing is lost". At the Mac: `make plaud-sign-in`. One "works again" push follows. |
-| Plaud is down, or the server is offline | only if no good sync for 2 hours (decision 5) | Status shows the error from the first failed run, with its reason: offline (check the network), Plaud unavailable or rate limited (it heals itself), Plaud refused access (check the subscription), or an error (a Claude session). |
-| Every recording fails to fetch, though the listing works | as above, after 2 hours | The same: a run with fetches and not one success is not a good sync. |
-| The edit breaker trips (Plaud's data starts changing everywhere) | at once | Status names the changed field names and prints the exact command to run once the cause is fixed. New recordings still arrive. |
-| Plaud's IDs change form again, everything looks new, or many recordings vanish from Plaud at once | at once | Status says which, and what to check. Imports stop until he presses **Accept this listing** on Status or the Sync screen (or runs it on the server), or until Plaud's next listing is back to normal. Accept is refused if Plaud's IDs changed in a way that could bring a consent-listed recording back under a new ID. This is the 2026-09-25 failure, caught. A few recordings vanishing settle by themselves, with no push, once the next listing an hour later is missing the same ones. Privacy tagging never waits. |
-| The consent list can't be read | at once, then daily | Status names the line numbers. He fixes the file; the next sync goes on. |
-| A privacy intent didn't hold: a late keep-out, a late consent listing, or a `private` the sync couldn't write | once, at once (P15) | Status names the recording. For the first two, he takes it out by hand; for the third, he runs `recordings reindex`. |
-| The sync's records were lost or rebuilt (a replaced `state.db`) | at once, then daily until resolved | Status: "Plaud sync waits for you: its records were rebuilt." Imports stop; privacy tagging goes on. He runs a dry run, decides about anything it lists as missing (a recording kept out before may be among them), then presses **Accept this listing**. |
-| The worker dies or hangs, or can't deliver a push (today, every push) | the sync's Healthchecks check, within about 1h20 | Status first: if it names a cause above, that is why. If not, `rc logs worker`. |
-| One recording fails every check | never | Status: "1 recording fails every check · Re-sync · Park". It never hides "All here". A recording that fails to import holds "All here" back until he parks it. |
-| The schedule was left off | never (Needs attention after 24 hours) | Turn it back on. |
+| Plaud refused to refresh the sign-in | about 2 hours after the sync stopped, unless fixed sooner | Status: "sign-in needed since 23:00 · new recordings wait on Plaud: nothing is lost". At the Mac: `make plaud-sign-in`. |
+| Plaud is down, or the server is offline | the same (decision 5) | Status shows the error from the first failed run, with its reason: offline (check the network), Plaud unavailable or rate limited (it heals itself), Plaud refused access (check the subscription), or an error (a Claude session). |
+| Every recording fails to fetch, though the listing works | the same | The same: a run with fetches and not one success is not a good sync. |
+| The edit breaker trips (Plaud starts sending something new on many recordings) | the same | Status names the fields and offers **Accept these changes** (decision 11): each recording then gets one new snapshot. A field that differs between two fetches, or trips the breaker again after an Accept, gets no button: Status says it needs a code fix (a Claude session). New recordings, renames and `private` keep flowing. |
+| Plaud's IDs look changed and recordings vanished, or many recordings vanish at once | the same | Status says which, and what to check. Imports stop until he presses **Accept this listing** on Status or the Sync screen, or until Plaud's next listing is back to normal. Accept is refused only when consent-listed or kept-out recordings vanished while Plaud's IDs look changed, because they could come back under new IDs. A change of form in which nothing vanished (the 2026-09-25 kind) holds nothing: Status's details note it. A few recordings vanishing settle by themselves once the next listing agrees. Privacy tagging never waits. |
+| The consent list can't be read | the same | Status names the line numbers. He fixes the file; the next sync goes on. |
+| A `private` the sync couldn't write | the same | Status names the recording. He runs `recordings reindex`. |
+| The worker dies or hangs | about 2 hours after its last good sync | Status: "the Plaud worker is silent" or "may be stuck". `rc logs worker`. |
+| A late keep-out, or a late consent listing | never: a flag (P15) | Already `private`. Status, the Sync screen and Needs attention name the recording. He takes it out by hand, or presses **Keep it here** on a late keep-out. |
+| The sync's records were lost or rebuilt (a replaced `state.db`) | never: a flag | New recordings keep arriving. What was on Plaud but not here at the first good listing after the rebuild waits under **Not here yet**, "needs your review", for him to import or keep out. A recording he kept out before may be among them. |
+| One recording fails every check, or the monthly Sync everything fails | never | Status: "1 recording fails every check · Re-sync · Park". It never hides "All here". A recording that fails to import holds "All here" back until he parks it. |
+| The schedule was left off | about 2 hours later, unless he paused the check; Needs attention after 24 hours | Turn it back on. |
 
-**Nothing pushes twice for the same cause.** Pushes about one recording count once per recording and
-cause: putting an already-flagged recording on the consent list sends nothing new. The Healthchecks
-check means "the worker is alive and deciding". The worker pings it at every scheduled turn it
-handles, even one that stops at a lapsed sign-in, a stopped consent list, a hold, a rate limit or the
-first catch-up. So Healthchecks speaks only when the worker itself is dead or stuck, or when the
-worker owes Dan a push it can't deliver, because ntfy won't take it or, today, isn't set up: then
-the worker holds back its ping, and Healthchecks becomes the backstop for push delivery. Once ntfy
-is set up, lasting failures push through the app's own alert, with the reason. This refines
-decision 4's "pinged after every good run", and Dan approved it as decision 8 (§5). Decision 9
-keeps it, with ntfy for later.
+This is decision 4 as written, "pinged after every good run", with "good" meaning the sync is doing
+its job (decision 10). Decision 8's one push with its reason waits for the later change that adds
+ntfy.
 
 Part II: §16.
 
@@ -297,8 +289,8 @@ Status's sync panel answers it in order:
    its checks is a separate line beside it, and never hides it.
 2. **Counts that add up:** "On Plaud 1,234 = here 1,227 + waiting 2 + excluded 4 + missing 1".
    **Waiting** will come in by itself. **Missing** won't without Dan (the schedule is off, imports
-   are paused, the disk is nearly full, or it failed 3 times). **Excluded** is the consent list and
-   the keep-out word.
+   are paused, the disk is nearly full, it failed 3 times, or it waits for review after a rebuild).
+   **Excluded** is the consent list and the keep-out word.
 3. **The archive's side:** "In the archive from Plaud 1,240 = here 1,227 + gone from Plaud 13".
 4. **Freshness:** the last good listing, the next sync, and "every recording checked within the last
    21 hours".
@@ -312,12 +304,15 @@ Dan rarely needs it while the schedule runs. He opens it:
 - for the first real sync (J8), when only **Compare** is offered;
 - when he wants something now: **Sync now**;
 - to see what is kept out, copy an ID, or **Release** a recording he kept out;
-- to press **Accept this listing** after a hold, once he has checked what Status says;
-- to confirm a fix after a push;
+- to press **Accept this listing** after a hold, once he has checked what Status says, or
+  **Accept these changes** after the breaker trips;
+- to import or keep out what waits for review after a rebuild;
+- to confirm a fix after an email;
 - for **Sync everything** while relabelling.
 
-From top to bottom: the summary line; any flags (late keep-outs, late consent listings, a `private`
-the sync couldn't write), and any hold with its **Accept this listing**; **Sync now** and
+From top to bottom: the summary line; any flags (late keep-outs with **Keep it here**, late consent
+listings, a `private` the sync couldn't write), any hold with its **Accept this listing**, and a
+breaker trip with **Accept these changes**; **Sync now** and
 **Compare**, with **Sync everything** under More; the equation; **Not here yet**, with checkboxes,
 **Import selected** and **Import all 31**; **Kept out**; **Updated on Plaud**; **Gone from Plaud**,
 newest first; and "Import your own audio: coming later". Importing never asks "are you sure?". A
@@ -328,14 +323,14 @@ running (last reported 14:21)".
 
 ### J7. On the phone
 
-- Today an alert is Healthchecks' email (decision 9). Once ntfy is set up, a push says "See
-  Status", with no link (a link would send the app's address to ntfy.sh).
+- An alert is Healthchecks' email. Phone pushes for the sync come with a later change (§16).
 - Status and the Sync screen work at 320 pixels: the summary first, full-width buttons, 44-pixel
   targets.
 - **From the phone, Dan can:** rename in Plaud (the keep-out word, a private title), Sync now,
-  import, Re-sync, Release (after its question), Park, Accept this listing, and read Status.
-- **He needs the Mac or the server to:** sign in again, edit the consent list, take a recording out
-  by hand, or reset the breaker.
+  import, Re-sync, Release (after its question), Park, Accept this listing, Accept these changes,
+  Keep it here, and read Status.
+- **He needs the Mac or the server to:** sign in again, edit the consent list, or take a recording
+  out by hand.
 
 ### J8. The first real sync, and when tagging starts
 
@@ -345,36 +340,38 @@ running (last reported 14:21)".
    the session, never a consent-listed or private one. One question may follow: if signing in
    elsewhere signs the server out, who owns the sign-in (§18, S3).
 2. **Deploy 2b.** The worker refuses scheduled syncs and imports until the first catch-up has run,
-   whatever the config says (controller's call). Dan sets up the sync's Healthchecks check once,
-   emailing him through Healthchecks itself, not ntfy. It is required: until ntfy is set up, it is
-   how alerts reach him (decision 9). ntfy is optional, for later. Then `make plaud-sign-in`, and
-   checks.
+   whatever the config says (controller's call). Dan creates the sync's Healthchecks check once,
+   emailing him. It is required (decision 9), and stays silent until its first ping. ntfy is
+   optional, for later. Then `make plaud-sign-in`, and checks.
 3. **The dry run** (Compare, or the CLI). Dan checks that both equations add up, that "here" equals
    the archive's Plaud recordings, that what's waiting is about the ~30 newer recordings plus the held
    titles, and that the consent list's IDs are found on Plaud in their new form. The new parser reads
    `of_` and upper-case IDs that 2a's skipped, so any recording 2a imported despite such a line is
    listed, by archive ID only. The worker tagged each `private` within seconds of deploy and flagged
-   it on Status (with ntfy, one push per recording; today, with the check still paused, nothing
-   more). Dan reviews each, and takes out by hand any that mustn't stay, before the next
+   it on Status. Dan reviews each, and takes out by hand any that mustn't stay, before the next
    step's backup. If anything doesn't fit, he stops.
 4. **The catch-up,** supervised on the server: a `pre-import` backup, the baseline, `recordings plaud
    sync --catch-up`, a validation, then a `post-import` backup. If it is interrupted, Status says so,
    and running it again picks up where it stopped.
-5. **"You may start tagging now"** (decision 7). The runbook says it here, before the schedule is
-   turned on. A recording that keeps failing doesn't hold it back.
-6. Turn the schedule on, unpause the sync's Healthchecks check, and watch Status. If "All here"
-   doesn't show, Status says why.
+5. **"You may start tagging now"** (decision 7). The runbook says it here, after the `post-import`
+   backup. A recording that keeps failing doesn't hold it back.
+6. **The schedule starts by itself** when the catch-up ends (controller's call): no config edit, no
+   restart. Within 20 minutes Healthchecks shows the sync's check up. If it doesn't, the ping isn't
+   arriving, and he stops. If "All here" doesn't show, Status says why.
 
 Part II: §17.5, §18.
+
+**Your year with 2b.** In a normal year: a re-sign-in on the Mac now and then, plus a removal by
+hand only when he keeps something out too late. Everything else is a press on Status, or nothing.
 
 ## 3. How it should feel
 
 | # | Principle | Where |
 |---|---|---|
-| P1 | **No silent failure.** Every way the flow can stop pushes once or shows on Status. | §16 |
+| P1 | **No silent failure.** Every way the flow can stop reaches Dan as the sync's Healthchecks email, or shows on Status. | §16 |
 | P2 | **Honest status.** Each sentence is true now or absent. Counts add up. Figures carry their time. | §11.3, §15.2 |
-| P3 | **One place to look.** Pushes say "See Status", and Status is complete. The Sync screen acts. | §15 |
-| P4 | **Calm alerts.** One push at onset, a daily reminder, one recovery. Routine errors only after 2 hours. A single recording's failure never pushes. | §16 |
+| P3 | **One place to look.** The email gives no reason; Status is complete, and says why the check isn't being pinged. The Sync screen acts. | §15 |
+| P4 | **Calm alerts.** One email when the sync has been stopped for about 2 hours, whatever the cause; one "up" when it works again. A blip, a one-time flag or a single recording never emails. | §16 |
 | P5 | **Every alert has a next step,** in the runbook. | §16, §17.5 |
 | P6 | **Every press gets an answer** within a second. | §9.3, §15.1 |
 | P7 | **Dan's choice wins, and stays.** A removed `private` stays removed; a kept-out recording stays out. | §12, §13 |
@@ -385,7 +382,7 @@ Part II: §17.5, §18.
 | P12 | **Plain sentences first, diagnostics folded away.** | §15.2 |
 | P13 | **No titles outside the app's own views.** None ever for a consent-listed recording; for one kept out by title, only inside Release's own question. | §10.1, §12, §15 |
 | P14 | **The app removes chores.** | §10.5, §12.1 |
-| P15 | **A privacy intent that didn't hold is pushed once,** at once, once per recording and cause: a late keep-out, a late consent listing, a `private` the sync couldn't write. | §12, §13.2, §16 |
+| P15 | **A privacy intent that didn't hold is flagged at once,** once per recording, on Status, the Sync screen and Needs attention: a late keep-out, a late consent listing. A `private` the sync couldn't write also stops the sync's ping until it lands. | §12, §13.2, §16 |
 
 ## 4. What 2b covers, and what waits
 
@@ -393,7 +390,7 @@ Part II: §17.5, §18.
 a fake Plaud server for tests; the `worker` container; the compare and the import; the consent list,
 the keep-out word and auto-private; edit-sync (the sweep, the breaker, the baseline, Re-sync of one
 recording or a selection, Sync everything); the Add page and its Sync screen, Status's sync panel and
-the arrivals cue; alerts and the sync's own Healthchecks check; operations; and the spikes.
+the arrivals cue; the sync's own Healthchecks check, its one alert; operations; and the spikes.
 
 **Later:**
 - **Stage 3a:** the review queue for held removals, and the Library on `index.db` (sooner, if the
@@ -407,33 +404,22 @@ the arrivals cue; alerts and the sync's own Healthchecks check; operations; and 
 
 **If 2b runs long,** it ships in two halves (main spec §20 allows it). The first half is the client,
 the sign-in, the worker, the compare and the import, the consent list, the keep-out word,
-auto-private with the baseline's privacy part, the alerts and the Sync screen. The second half is
-the sweep, the breaker, Re-sync and Sync everything. Both deploy and roll back by their tag. §20
-says which criteria belong to which half.
+auto-private with the baseline's privacy part, the sync's check and the Sync screen. The second
+half is the sweep, the breaker, Re-sync and Sync everything. Both deploy and roll back by their tag.
+§20 says which criteria belong to which half.
 
 ## 5. Calls made for you
 
 Each call was made without asking Dan. It is listed by what he will notice. "(controller's call)"
-means the controller made it. The first, which refined decision 4, Dan then approved as decision 8.
+means the controller made it. Calls 1 and 22 Dan then decided himself, as decisions 10 and 11.
 
-**Approved by Dan (decision 8):**
-1. **The sync's Healthchecks check speaks only when the worker can't.** This refines decision 4's
-   "pinged after every good run". The worker pings the check at every scheduled turn it handles,
-   good or bad, even a turn that stops because the sign-in lapsed, the consent list is stopped, a
-   hold is on, Plaud asked it to wait, or the first catch-up hasn't run. A ping means "alive and
-   deciding". So:
-   - **What Dan gains, once ntfy is set up:** a Plaud outage or a refused sign-in reaches him once,
-     through the app's own push, with the reason. Healthchecks doesn't add a second, reasonless
-     alert.
-   - **What still reaches him through Healthchecks:** a worker that is dead or stuck; and a push the
-     worker owes him but can't deliver, because then the worker holds back its ping. Today, with no
-     ntfy (decision 9), that is every push: each reaches him as Healthchecks' email, with the reason
-     on Status.
-   - **With decision 4 read literally** (pings only after good runs), every lasting failure would
-     also bring Healthchecks' alert after about 1h20.
-
-   (The controller's call, approved by Dan on 2026-10-23: decision 8. Decision 9 keeps it, with
-   ntfy for later.)
+**Decided by Dan (decisions 10 and 11):**
+1. **One alert rule.** The sync's Healthchecks check is pinged only after a scheduled sync that is
+   good and that nothing holds up for Dan: a sign-in, the consent list, a hold, the breaker, or a
+   `private` it couldn't write. Any other turn, and a dead or stuck worker, sends no ping. After the
+   check's 2-hour grace, Healthchecks emails him once, and "up" when the pings return. Status always
+   says why the check isn't being pinged. 2b sends no phone push: decision 8's push with its reason
+   comes with the later change that adds ntfy (decision 10).
 
 **Privacy and keeping out:**
 2. **A recording kept out by its title stays out,** even if Plaud or autocorrect later removes the
@@ -443,10 +429,12 @@ means the controller made it. The first, which refined decision 4, Dan then appr
    newest first, with a link to the removal steps. Nothing is deleted automatically. (Controller's
    call.)
 4. **A late keep-out or a late consent listing** gets `private` at once, is never fetched again,
-   and pushes once per recording. A late consent listing is tagged within seconds of the worker
+   and is flagged once per recording, with no email. **Keep it here** clears a late keep-out's flag
+   and changes nothing else. A late consent listing is tagged within seconds of the worker
    seeing the edited list, even while Plaud is down. The sync goes on for everything else.
-5. **A consent-list typo stops every import** until the line reads, and pushes; Status names the
-   line number. The list's meanings are unchanged; only `of_` and upper-case IDs are newly read.
+5. **A consent-list typo stops every import** until the line reads, and stops the sync's ping;
+   Status names the line number. The list's meanings are unchanged; only `of_` and upper-case IDs
+   are newly read.
 6. **Taking a recording out by hand** deletes it for good, never into `trash/`, after its ID goes on
    the consent list, and the runbook lists what still holds a copy.
 7. **A private title is tagged as soon as the listing shows it,** even if Plaud's transcript won't
@@ -457,27 +445,29 @@ means the controller made it. The first, which refined decision 4, Dan then appr
    working until Dan drops it on the server.
 10. **A new auto-private pattern reaches the archive.** Adding one checks every title against the
     new pattern only, so a `private` Dan removed stays removed for the patterns it already passed.
-11. **After the sync's records are lost or rebuilt,** imports wait for Dan, with a push at once and
-    one a day until he acts; privacy tagging goes on meanwhile. A dry run lists everything on Plaud
-    that isn't here (a recording he kept out before may be among them; consent-listed ones by ID
-    only), and **Accept this listing** lets the schedule go on. A `state.db` restored from an older
-    backup isn't detected, so the runbook has Dan run the dry run himself after a restore. A
-    `private` tag he removed can come back once, with the note "re-tagged private: the sync's record
-    was rebuilt". This errs private. (Controller's call.)
+11. **After the sync's records are lost or rebuilt,** new recordings keep arriving. What was on
+    Plaud but not here at the first good listing after the rebuild waits on the Sync screen, "needs
+    your review", for Dan to import or keep out: a recording he kept out before may be among them
+    (consent-listed ones are never shown). It is a flag on Status, with no email. A `state.db`
+    restored from an older backup isn't detected, so the runbook has Dan run the dry run himself
+    after a restore. A `private` tag he removed can come back once, with the note "re-tagged
+    private: the sync's record was rebuilt". This errs private. (Controller's call.)
 
 **The first run and imports:**
 12. **Nothing imports before the supervised catch-up** on the server, whatever the config says. Until
-    then the Sync screen offers Compare only. (Controller's call.)
+    then the Sync screen offers Compare only. When it ends, the schedule starts by itself.
+    (Controller's call.)
 13. **The catch-up holds the backups back** while it runs, between a `pre-import` and a `post-import`
     backup. After it, syncs never hold up a backup. (Controller's call.)
 14. **Importing never asks "are you sure?".** A toast says what came in. (Controller's call.)
 15. **A scheduled sync imports at most 20 recordings,** and the rest follow at the next one. A big
-    backlog after a week away arrives in a few syncs, with no push.
-16. **If Plaud's IDs change form, most of the account looks new, or many recordings vanish at once,**
-    imports stop with one push until Dan checks what Status says and presses **Accept this listing**
-    (on Status or the Sync screen, or on the server), or until Plaud's next listing is back to normal.
-    Accept is refused if Plaud's IDs changed in a way that could bring a consent-listed recording back
-    under a new ID. (Controller's call.)
+    backlog after a week away arrives in a few syncs, with no email.
+16. **If Plaud's IDs look changed and recordings vanished with them, or many recordings vanish at
+    once,** imports stop until Dan checks what Status says and presses **Accept this listing** (on
+    Status or the Sync screen, or on the server), or until Plaud's next listing is back to normal.
+    Accept is refused only when consent-listed or kept-out recordings vanished while Plaud's IDs
+    look changed. A change of form with nothing vanished, the 2026-09-25 kind, holds nothing:
+    Status's details note it. (Controller's call.)
 17. **A few recordings vanishing from Plaud** (up to 5, or up to 5% of the archive if that is more)
     are marked gone by themselves once the next listing, at least an hour later, is missing the same
     ones. More than that is a hold (call 16).
@@ -492,10 +482,11 @@ means the controller made it. The first, which refined decision 4, Dan then appr
     call.)
 21. **A recording that always fails can be parked.** Then it stops counting against "All here" and
     Sync everything, and stays listed as parked.
-22. **The edit breaker is reset from the server, never from a button,** because a reset without a fix
-    trips it again. Status prints the exact command. It trips on data that changes between two
-    fetches a moment apart, or on fields Plaud doesn't usually change, never on Dan's renames, however
-    many. (Controller's call.)
+22. **The edit breaker is accepted on Status** (decision 11). For fields that are the same on two
+    fetches, **Accept these changes**; if the same field trips it again, the button goes and Status
+    says it needs a code fix. A release that changes the normaliser closes it by itself. It trips on
+    data that changes between two fetches a moment apart, or on fields Plaud doesn't usually change,
+    never on Dan's renames, however many.
 23. **Held removals are counted,** with no Accept button until stage 3a. (Controller's call.)
 
 **Signing in:**
@@ -514,16 +505,16 @@ Calls Dan won't notice (where the token lives, how the auto-private record is ke
 2. **A speaker rename shows up:** at once with Re-sync, and within a day and one sync without it.
 3. **Sync everything finishes clean,** apart from recordings Dan has parked (each one checked in
    Plaud's app and noted in the runbook) and recordings flagged to be taken out, which it names.
-4. **A refused sign-in raises one push,** and signing in again brings one "works again". Proven
-   with the fake server; on the real account, `alert-test` proves delivery. Today, with no ntfy, the
-   same refusal reaches him as one Healthchecks email, proven with the fake server too (decision 9).
+4. **A refused sign-in stops the sync's ping,** so Healthchecks emails once if he doesn't sign in
+   within about 2 hours, and signing in again brings the pings back. Proven with the fake server; on
+   the real server, the check going green proves the ping.
 5. **His decisions hold:** a placeholder-titled recording arrives at once and a later private title
-   tags it; a keep-out title is never downloaded; a late one is tagged, flagged and pushed once;
-   Release asks first; a removed `private` stays removed.
-6. **Nothing stops silently:** an outage pushes after 2 hours and not before; a dead worker, or a
-   push that can't be delivered (today, with no ntfy, every push), reaches him through
-   Healthchecks; a rebuilt sync state pushes once and waits; a schedule left off shows in Needs
-   attention.
+   tags it; a keep-out title is never downloaded; a late one is tagged and flagged, and Keep it here
+   clears the flag; Release asks first; a removed `private` stays removed.
+6. **Nothing stops silently:** an outage, each blocker and a dead worker stop the ping, so
+   Healthchecks emails after its 2-hour grace, and a shorter blip sends nothing; Status says why; a
+   rebuilt sync state keeps importing new recordings and holds the rest for review; a schedule left
+   off shows in Needs attention.
 7. **The README, the runbook and the tagging spec** say tagging starts after step 7's import and its
    backup (decision 7).
 
@@ -543,14 +534,16 @@ Calls Dan won't notice (where the token lives, how the auto-private record is ke
    to the Mac, or lets the Mac's Plaud tools sign the server out, "rare and one command" may not
    hold, and the spec stops to ask.
 4. **A rotating sign-in can be lost** in a crash between Plaud's reply and the write. The cost is one
-   push and one `make plaud-sign-in`.
+   email and one `make plaud-sign-in`.
 5. **Copies outlive a removal by hand,** as J2 lists. Only a NAS-side `restic rewrite` removes the
    `pre-import` and `post-import` copies.
-6. **Until ntfy is set up, alerts are late, and say only "down"** (decision 9): one Healthchecks
-   email within about 1h20 of a push being due (about 3h20 into an outage), with the reason on
-   Status. After a one-time event, its "up" comes about half an hour later, though the flag stays on
-   Status. And Healthchecks' email is the single channel: if it doesn't reach him, only Status
-   shows the problem.
+6. **Alerts are late, and say only "down"** (decision 10): one Healthchecks email about 2 hours
+   after the sync stops, with the reason on Status. While one cause keeps the check down, a later
+   one, a dead worker included, sends nothing new; Status shows each. A late keep-out sends no
+   email: it waits on Status, already `private`. And Healthchecks' email is the single channel: if
+   it doesn't reach him, only Status shows the problem.
+7. **After a rebuilt `state.db`,** a recording he kept out that sat in Plaud's trash at the moment
+   of the first listing, and was restored later, would come in.
 
 The full list is §23.
 
@@ -566,11 +559,11 @@ II is wrong.
 - The worker opens its own `Writer`. "One writer" means one machine (main spec §3, §6.4) (§9.1).
 - The UI asks the worker through request rows in `state.db`, over the guarded websocket (§9.3).
 - `state.db` gains tables only, with no `SCHEMA_VERSION` bump (§9.5).
-- The breaker counts over a rolling window, and the listing's holds back it up (§14.4, §11.4).
-- Only a refused refresh raises the sign-in alert (§10.3).
+- The breaker counts over a rolling window, and the listing's hold backs it up (§14.4, §11.4).
+- Only a refused refresh opens the sign-in blocker (§10.3).
 - The static `RECORDINGS_PLAUD_TOKEN` and `recheck_days` go (§17.4).
 - The consent parser accepts the `of_` form and any case (§12.1).
-- The worker has its own alert secrets, doctor role, `/index` mount and consent mount (§17).
+- The worker has its own dead-man secret, doctor role, `/index` mount and consent mount (§17).
 
 **Calls Dan won't notice** (controller's calls):
 - **The token's home** is its own host folder, `/srv/recordings/plaud`, mounted only in `worker`
@@ -608,7 +601,7 @@ Every contradiction the council found is settled in the text, and listed with it
 | Process | Writes | Never |
 |---|---|---|
 | `web` | tags, the archive's docs at start, request rows | calls Plaud, or holds the token |
-| `worker` | new recordings from Plaud, snapshots, Plaud's outputs, Plaud's title, the automatic `private` tag, the Plaud tables, its alerts and pings | writes any tag but `private`, writes the docs, or opens a port |
+| `worker` | new recordings from Plaud, snapshots, Plaud's outputs, Plaud's title, the automatic `private` tag, the Plaud tables, the sync's ping | writes any tag but `private`, writes the docs, or opens a port |
 | `backup` | backups, the mirror, checks (archive read-only) | calls Plaud |
 | the CLI in the `worker` container | as the worker | |
 
@@ -636,8 +629,8 @@ Every contradiction the council found is settled in the text, and listed with it
   3. Mark requests left `running` as failed ("interrupted"), and requests queued more than an hour
      ago as expired. An unfinished Sync everything is resumed (§14.6).
   4. Open the `Writer`.
-  5. Work out the gate's state: first time, an interrupted catch-up, or a rebuilt `state.db`
-     (§11.6).
+  5. Work out the gate's state: first time, or an interrupted catch-up. A rebuilt `state.db` is
+     recorded and passed at once (§11.6).
 - **Every 2 seconds** the main thread:
   - bumps its progress;
   - checks the consent list's file (inode, size, time), reads it again if it changed, and applies
@@ -671,8 +664,8 @@ Every contradiction the council found is settled in the text, and listed with it
   hash or storage (main spec §15).
   ```json
   {"request_id": "<random>",
-   "kind": "compare" | "sync" | "import" | "resync" | "full" | "accept" | "release-preview"
-           | "release" | "unrelease" | "park" | "unpark",
+   "kind": "compare" | "sync" | "import" | "resync" | "full" | "accept" | "accept-changes"
+           | "release-preview" | "release" | "unrelease" | "park" | "unpark" | "keep-here",
    "plaud_ids": ["…"], "recording_ids": ["…"], "all": false}
   ```
 - **The web inserts a row** in `plaud_requests` with `State.db()`'s own short connection, on
@@ -694,19 +687,18 @@ Every contradiction the council found is settled in the text, and listed with it
   - A `full` is refused while one is queued or running, or within an hour of the last **finished**
     one. While an interrupted one is unfinished, a press answers "Resuming (started 14:20)".
   - A repeated `request_id` is ignored. An `import` of a recording already here skips it.
-- **While the gate is closed** (§11.6), the worker refuses `sync`, `import`, `resync`, `full`,
-  `release-preview`, `release` and `park` with the gate's reason. `compare` runs. `accept` depends on
-  why the gate is closed:
-  - **before the first catch-up, or with it interrupted:** refused, with "The first import is a
-    supervised run on the server (runbook)";
-  - **after a rebuild:** refused until a dry run (Compare, or `sync --dry-run`) has run since the
-    rebuild was found, then allowed, and it reopens the gate (§11.6).
+- **While the gate is closed** (before the first catch-up, or with it interrupted, §11.6), the
+  worker refuses every kind but `compare` and `keep-here`, with "The first import is a supervised
+  run on the server (runbook)".
 - **The worker claims a row** (`UPDATE … WHERE state = 'queued'`) and checks it again against fresh
   facts: the newest listing, the consent list as it is now, the keep-out words and the patterns. An
   `import` row causes downloads and archive writes, and is safe only because of this re-check. A
   `release` is refused if its ID is consent-listed, or if any enforced word matches its current
-  title, and the reply says which (§12.2). An `accept` is refused while the consent list matches
-  fewer Plaud IDs than in the last good listing (§11.4).
+  title, and the reply says which (§12.2). An `accept` is refused only on §11.4's terms:
+  consent-listed or kept-out IDs that the last good listing held are missing from this one, and the
+  listing shows a census change or under 80% overlap. An `accept-changes` is refused unless the
+  breaker is open and every field it covers is still eligible (§14.4). A `keep-here` needs an open
+  late keep-out flag.
 - **Replies:** while a session has a request pending, the server reads its row every 2 seconds and
   sends progress and the final reply (`send_message`). The Sync screen keeps the newest result line.
 - **When the worker is down,** rows stay queued, and the screen says "The Plaud worker isn't running
@@ -754,17 +746,17 @@ Every contradiction the council found is settled in the text, and listed with it
 | Table | Holds | Written by | Read by |
 |---|---|---|---|
 | `plaud_requests` | the UI's requests (§9.3), kept 7 days after they finish | web inserts; worker claims | both |
-| `plaud_listing` | one row per Plaud ID: the ID as listed, its canonical form, first and last seen, kept-out state and release (§12.2), and, **only while its recording is here**, a SHA-256 of its title, its duration and any change marker S5 finds. A kept-out or consent-listed ID has no title hash, ever | worker | both |
+| `plaud_listing` | one row per Plaud ID: the ID as listed, its canonical form, first and last seen, kept-out state and release (§12.2), "needs your review" after a rebuild (§11.6), and, **only while its recording is here**, a SHA-256 of its title, its duration and any change marker S5 finds. A kept-out or consent-listed ID has no title hash, ever | worker | both |
 | `plaud_checks` | per recording: last checked, last changed, next check, interval, consecutive failures, settled, baseline pending, held removals, parked, degraded, flagged | worker | both |
 | `plaud_check_log` | one row per check: time, recording, result, parts changed, parts found volatile. Kept 7 days | worker | both |
 | `plaud_private_checked` | the marker (§13.2): per recording and Plaud ID, a SHA-256 of the title last checked, and the version of the pattern list it passed | every `Writer` that reconciles | the same |
-| `plaud_events` | what Dan sees: imported, arrived private, updated (with parts), re-tagged private (with why), kept out late, consent-listed late, couldn't tag private, gone from Plaud, released. Kept 90 days; open flags until resolved | worker | web |
-| `plaud_state` | one row per key: the last good listing (its ID-set hash, census and time), holds (with the held listing's absent set), the breaker and its `window_start`, the sign-in state, `failing_since` and its cause, each undelivered push's key and when it became owed (§16), `last_started` and `last_ended`, `catch_up_done_at`, the snapshot mark rows (§11.6), when a rebuild was found and whether a dry run has run since, the keep-out words enforced, the auto-private pattern list by version, Sync everything's progress and pace | worker | both |
+| `plaud_events` | what Dan sees: imported, arrived private, updated (with parts), re-tagged private (with why), kept out late, consent-listed late, couldn't tag private, kept here, gone from Plaud, released. Kept 90 days; open flags until resolved | worker | web |
+| `plaud_state` | one row per key: the last good listing (its ID-set hash, census and time), holds (with the held listing's absent set), the breaker (its `window_start`, the normaliser version it tripped under, and the fields accepted), the sign-in state, `failing_since` and its cause, `last_ping_at` and `last_ping_ok` (§16), `last_started` and `last_ended`, `catch_up_done_at`, the snapshot mark rows and `rebuilt_at` (§11.6), the keep-out words enforced, the auto-private pattern list by version, Sync everything's progress and pace | worker | both |
 
 - **No `SCHEMA_VERSION` bump.** An older release's `State.open` ignores unknown tables, so `make
   rollback` keeps working. A test asserts `SCHEMA_VERSION == 1` and `MIGRATIONS == {}`, saying why.
-- **Reused:** `ops_runs` (jobs `plaud-sync`, `plaud-full`, `plaud-catch-up`), `alerts` (with new
-  keys, §16), and `meta` (`worker_heartbeat`).
+- **Reused:** `ops_runs` (jobs `plaud-sync`, `plaud-full`, `plaud-catch-up`) and `meta`
+  (`worker_heartbeat`). The `alerts` table stays 2a's, untouched (§16).
 - **A recording that leaves the archive** (`reindex --allow-missing`) takes its rows in
   `plaud_checks`, `plaud_private_checked`, `plaud_events` and its `plaud_listing` title hash with it.
   `State.forget` already deletes its revisions (`state.py:342-346`). Forget (stage 3b) deletes them
@@ -779,8 +771,10 @@ Every contradiction the council found is settled in the text, and listed with it
   calls it a problem if `extra_paths` would include it, §17.2). It holds:
   - the newest compare's rows: titles for recordings not yet here and not kept out, and the date,
     time and duration for the rest (so no kept-out title, apart from Release's preview below);
-  - **never a title of a consent-listed recording,** and, during a consent stop, no title at all for
-    any recording not here (the Sync screen says "titles hidden until the consent list reads");
+  - **never a title of a consent-listed recording,** and no title at all for any recording not here
+    during a consent stop ("titles hidden until the consent list reads"), or while a listing is held
+    with a census change or under 80% overlap ("titles hidden while Plaud's IDs look changed"),
+    since a consent-listed or kept-out recording could then sit among them under a new ID (§11.4);
   - a Release preview (§12.2): the one title Release's question shows, deleted once the question is
     answered, or after 10 minutes.
 
@@ -801,7 +795,8 @@ Every contradiction the council found is settled in the text, and listed with it
     (the tables), `plaud/keepout.py` (the word match and the consent parser's entry rule).
   - `sources/base.py` and `sources/plaud.py`: main spec §9.0's `Source`, plus a `check()` that
     downloads no media.
-  - `worker.py`: the loop and the heartbeat thread.
+  - `worker.py`: the loop, the heartbeat thread and `conclude_turn`; `plaud/health.py`:
+    `sync_health` (§16).
   - `Writer.add_snapshot(recording_id, raw)`: new. It publishes a write-once snapshot, then records it
     through `mutate`. An orphan from a crash between the two is adopted by the next `add_snapshot` of
     the same content, and `validate` reports it as a warning, never an error.
@@ -819,7 +814,7 @@ Every contradiction the council found is settled in the text, and listed with it
   | `recordings plaud resync <id>…` | checks these now | `plaud` |
   | `recordings plaud baseline [--all]` | §14.5 | `plaud` |
   | `recordings plaud accept-listing` | the CLI's **Accept this listing** (§11.4), refused on the same terms | `plaud` |
-  | `recordings plaud breaker reset` | §14.4 | `plaud` |
+  | `recordings plaud breaker reset` | §14.4; a tool only, which no runbook step needs | `plaud` |
   | `recordings plaud park <id>… [--undo]` | §14.6 | none |
   | `recordings plaud release <plaud-id> [--undo]` | §12.2's Release, without its on-screen question: the CLI shows ID, date and duration, and asks y/N | none |
   | `recordings plaud keep-out-words [--drop <word>]` | lists or drops enforced words (§12.2) | none |
@@ -836,23 +831,22 @@ Every contradiction the council found is settled in the text, and listed with it
 
 ### 9.7 Scheduled turns
 
-A **scheduled turn** comes due every `schedule_minutes` (§9.2). The worker **handles** every turn
-that comes due, in one of these ways, and each handled turn ends with the sync's ping (§16):
-1. **The gate is closed** (§11.6): the turn lists, if it can, and runs privacy from the listing
-   (§13.1 cases 2 and 3) with their flags. Nothing else runs: no import, check or snapshot. Privacy
-   never waits on Accept, and only ever adds `private` or a flag. Status says why the gate is closed.
-2. **The sign-in is paused** (§10.3): no Plaud call. Late consent listings have already been applied
-   at the tick (§12.1).
-3. **A rate limit's wait is still running** (§10.2): no Plaud call.
-4. **`plaud` is held** by another run: skipped as busy. A long run serves the turn's light part
-   itself (§9.2). Once the holder is older than §15.2's "may be stuck" age, the ping is withheld, so
-   a wedged holder reaches Healthchecks.
-5. **Otherwise it runs** (§11.1), whatever it then meets: a consent stop, a hold, the breaker, a
-   failure.
+A **scheduled turn** comes due every `schedule_minutes` (§9.2). Every turn, and every light turn
+inside a long run, ends in `conclude_turn` (§16), which pings only after a good sync that nothing
+holds up. A turn ends in one of these ways:
+1. **The gate is closed** (before the first catch-up, §11.6): no Plaud call, nothing written, and no
+   ping; the check has never been pinged, so it stays silent. Late consent listings still apply at
+   every tick (§12.1).
+2. **The sign-in is paused** (§10.3), or **a rate limit's wait is still running** (§10.2): no Plaud
+   call, no ping. Late consent listings have already been applied at the tick (§12.1).
+3. **`plaud` is held** by another run: skipped as busy, with no ping. A long run serves the turn's
+   light part itself (§9.2), and that light turn can ping. A wedged holder serves none, so the pings
+   stop.
+4. **Otherwise it runs** (§11.1), whatever it then meets: a consent stop, a hold, the breaker, a
+   failure. It pings only if the run was good and no blocker is open (§16).
 
-With `schedule_minutes = 0` no turn comes due, and nothing pings; the runbook pauses the check
-(§17.5). Otherwise the ping is withheld only when a push is owed and wasn't delivered (§16; with
-no ntfy configured, every owed push, decision 9), or a `plaud` holder looks stuck (item 4).
+With `schedule_minutes = 0` no turn comes due, and nothing pings; the runbook pauses the check for
+planned work (§17.5).
 
 ## 10. The Plaud client and the token store
 
@@ -936,9 +930,10 @@ no ntfy configured, every owed push, decision 9), or a `plaud` holder looks stuc
     keeps the old one.
 - **What a failure means:**
   - **Refused** (S4 gives the exact codes, typically 400 or 401 with `invalid_grant`; with no clearer
-    answer, any 4xx except 408 and 429): `PlaudAuthError`. The run stops and pushes at once (decision
-    5). Scheduled runs make no Plaud call until the token file changes (by inode, size and time). A
-    **Sync now**, or `recordings plaud check`, tries once anyway, and a success clears the pause.
+    answer, any 4xx except 408 and 429): `PlaudAuthError`. The run stops and opens the `sign-in`
+    blocker (§16). Scheduled runs make no Plaud call until the token file changes (by inode, size
+    and time). A **Sync now**, or `recordings plaud check`, tries once anyway, and a success clears
+    the pause.
   - **Unreachable, 5xx, 408 or 429:** an outage (§10.2), never a sign-in problem.
   - **A 401 again after a successful refresh:** the worker makes the cheap current-user read. If that
     is also 401, `PlaudAuthError`. If it succeeds, the one call fails as that recording's failure.
@@ -979,8 +974,8 @@ It:
    exits 77.
 
 It exits non-zero on any failure, naming the step. The new file clears the worker's sign-in pause,
-and the next run sends one "works again". No phone sign-in: the vendor's login needs its client
-secret and a callback on `localhost` (main spec §9.1).
+and the next good run pings the sync's check again. No phone sign-in: the vendor's login needs its
+client secret and a callback on `localhost` (main spec §9.1).
 
 ### 10.6 The fake Plaud server
 
@@ -1011,18 +1006,18 @@ The same steps serve a scheduled run, **Sync now**, and the CLI:
 take the plaud lock                      → held: busy, skip
 read the consent list, fail closed       → unreadable: consent stop, no fetch or download (§12.1)
 apply late consent listings              (§12.1; also at every tick, with no Plaud call)
-check the sign-in, refresh if due        → refused: stop, push (§10.3)
+check the sign-in, refresh if due        → refused: stop, sign-in blocker (§10.3)
 list every page                          → bad, partial or complete (§11.2)
 census of ID forms; field names
 classify every listed ID                 (§11.3)
 privacy from the listing alone           (§13.1, cases 2 and 3)
 mark listing changes for a check now     (§14.2)
-holds                                    → a hold stops imports and the sweep (§11.4)
+the hold                                 → a hold stops imports and the sweep (§11.4)
 import waiting recordings, up to the cap (§11.5)
 a chunk of the sweep                     (§14.2)
 the breaker                              (§14.4)
 record the run; judge it good or not     (§11.7)
-release the lock; the turn pings         (§9.7, §16)
+release the lock; conclude_turn          (§9.7, §16)
 ```
 
 - **Privacy from the listing runs whenever there is a listing**, whatever else is paused: auto-import
@@ -1057,7 +1052,8 @@ Every listed ID lands in exactly one bucket, in this order of precedence:
    duration, never by title.
 3. **waiting:** not here, and the next scheduled run will bring it in.
 4. **missing:** not here, and it won't come without Dan: the gate closed (§11.6), the schedule or
-   auto-import off, a hold (§11.4), the disk guard, or it failed 3 times (or is parked).
+   auto-import off, a hold (§11.4), the disk guard, review after a rebuild (§11.6), or it failed 3
+   times (or is parked).
 
 **listed = here + waiting + excluded + missing,** with repeats counted once. Beside it:
 - **In the archive from Plaud = here + gone from Plaud + absent from this listing** (the last term
@@ -1080,69 +1076,66 @@ Listed, they are waiting and are imported from Plaud. Not listed, their audio ex
 `audio-router`'s frozen archive, because the 2a runbook deleted the import copy. 2b doesn't import
 them (controller's call). The runbook's dry-run step counts them from the 2a import's report.
 
-### 11.4 Holds: changed IDs, a flood, many gone
+### 11.4 The listing hold
 
-Three conditions stop imports, and one action clears them. A fourth, smaller one settles by itself.
-Each step below is a separate piece of work.
+One hold stops imports, and one action clears it. A small shrink settles by itself. Each step below
+is a separate piece of work, and the thresholds are constants, not settings.
 
 1. **Measure each complete listing against the last good one:**
    - **newly absent:** recordings here that the last good listing had, and this one doesn't (by any of
-     their Plaud IDs);
-   - **a census change:** a form appears that the last good listing didn't have; an ID present in
-     both listings (by canonical form) is now in a different form; or a listed ID is in a form the
-     consent parser can't read (§12.1). Shares of each form are not compared, so a backlog of new
-     recordings in a form the last listing already had never trips it;
-   - **overlap:** the share of the last good listing's IDs present now;
-   - **waiting:** as in §11.3.
+     their Plaud IDs); and, counted apart, consent-listed and kept-out IDs that it had;
+   - **a census change:** a form appears that the last good listing didn't have, or an ID present in
+     both listings (by canonical form) is now in a different form. Shares of each form are not
+     compared, so a backlog of new recordings in a form the last listing already had never trips it;
+   - **an unreadable form:** a listed ID in a form the consent parser can't read (§12.1);
+   - **overlap:** the share of the last good listing's IDs present now.
 
    **A listing with no last good one** (2b's first, which is the catch-up's, or the first after a
    rebuild) is measured against the archive instead: its IDs, through `canonical_plaud_id`, against
-   the Plaud IDs the archive already holds (from 2a). Only the ID-form hold can trip then: a listed
-   ID in a form the consent parser can't read, or under 80% of the archive's Plaud IDs present. The
-   flood guard and the shrinks need a previous listing, so they hold nothing; the runbook's dry-run
-   checks (§17.5) stand in for them.
-2. **Classify it:**
-   - **the ID-form hold:** a census change, or under 80% overlap (the `of_` lesson, aimed at the
-     consent list as well as the archive);
-   - **the flood guard:** more than 25 waiting, or 10% of those here (whichever is larger), **and**
-     at least half that many newly absent. A backlog alone (40 new recordings after a week away)
-     doesn't trip it: it arrives at 20 per run;
+   the Plaud IDs the archive already holds (from 2a). Only an unreadable form or under 80% overlap
+   can hold it then; the shrinks need a previous listing, and the runbook's dry-run checks (§17.5)
+   stand in for them.
+2. **It is held** when any of these is true:
+   - under 80% overlap (the `of_` lesson, aimed at the consent list as well as the archive);
+   - an unreadable form;
    - **a large shrink:** more than 5, or 5% of those here (whichever is larger), newly absent;
-   - **a small shrink:** from 1 up to that many newly absent;
-   - otherwise the listing is **good**.
-3. **Effects:**
-   - **The first three are holds.** Nothing is imported (scheduled, Sync screen or CLI), nothing is
-     marked gone, and the sweep pauses. Privacy from the listing still runs, and late consent
-     listings still apply at every tick. The hold pushes once, at once (§16, `plaud:listing`).
-     **Sync now** lists and reports, imports nothing, and answers "Held: see Status". The Sync
-     screen's import buttons are disabled, with the hold's line.
-   - **A small shrink** holds back only the marking of those recordings as gone (§12.3). Imports and
-     the sweep go on, and the listing counts as good.
+   - **a census change with something newly absent** in the same listing: a recording here, a
+     consent-listed ID or a kept-out ID.
+
+   Otherwise it is **good**:
+   - **A census change with nothing newly absent** is a line in Status's details ("Plaud's IDs
+     changed form on 2026-11-02; every ID still matches"), and its census becomes the baseline. So
+     the 2026-09-25 change, replayed against 2b with the same hex, holds nothing.
+   - **A small shrink,** from 1 up to the large shrink's limit newly absent, holds back only the
+     marking of those recordings as gone (§12.3). Imports and the sweep go on.
+3. **Effects of a hold:** nothing is imported (scheduled, Sync screen or CLI), nothing is marked
+   gone, and the sweep pauses; privacy from the listing and late consent listings still run. It
+   opens the `hold` blocker (§16). **Sync now** answers "Held: see Status", and the import buttons
+   are disabled, with the hold's line. **While the listing shows a census change or under 80%
+   overlap, no title of a recording not here is stored or shown** (§9.5): a consent-listed or
+   kept-out recording may be among them under a new ID.
 4. **Clearing a hold takes one action: Accept this listing.** It is a button on Status and on the
    Sync screen (request `accept`), and `recordings plaud accept-listing` on the server. It records
    this listing as the last good one, marks the newly absent recordings gone, and lets imports
    resume.
-   - **It is refused only if a consent-listed recording would be imported.** That is the case when
-     consent-listed IDs that the last good listing held are missing from this one **and** the listing
-     shows the ID-form signals (a census change, or under 80% overlap): those recordings may be
-     listed again under new IDs the list can't name. Status then says "Fix the consent list first: 4
-     of its IDs vanished while Plaud's IDs changed (runbook)". A consent-listed recording that Plaud
-     simply no longer lists can't be imported, so it never blocks Accept.
+   - **It is refused only if a consent-listed or kept-out recording could be imported.** That is the
+     case when consent-listed or kept-out IDs that the last good listing held are missing from this
+     one **and** the listing shows a census change or under 80% overlap: those recordings may be
+     listed again under new IDs that neither the list nor the kept-out records can name. Status then
+     says "Fix this first: 4 consent-listed or kept-out IDs vanished while Plaud's IDs changed
+     (runbook)". One that Plaud simply no longer lists, with neither signal, can't come back, so it
+     never blocks Accept. §9.3, §20 and §23 use these terms, and no other.
    - A hold also clears by itself when a later listing no longer meets its condition (a fix release,
      or Plaud putting things back).
-   - **Status says which hold, what to check, and offers Accept:**
-     - the ID-form hold: "Plaud sync paused: Plaud's IDs changed form since the last good run.
-       Check the runbook's steps, then Accept this listing."
-     - the flood guard: "Plaud sync paused: 1,227 recordings look new, and 1,180 here are missing
-       from the listing. If they are recordings you made, Accept this listing; if not, don't, and see
-       the runbook."
-     - a large shrink: "Plaud now lists 40 fewer of the recordings here. If you deleted them in
-       Plaud, Accept this listing: they show as gone from Plaud."
+   - **Status says what to check, and offers Accept:**
+     - IDs changed: "Plaud sync paused: Plaud's IDs changed form, and 12 recordings here vanished
+       with them. Check the runbook's steps, then Accept this listing."
+     - a large shrink: "Plaud now lists 40 fewer of the recordings here (and 38 look new). If you
+       deleted them in Plaud, Accept this listing: they show as gone from Plaud."
 5. **A small shrink settles by itself** when the next good listing, at least an hour later, is
    missing the same recordings (the same absent set), whatever else changed. If the absent set
-   changes, the wait starts again. One still unsettled after 24 hours joins Needs attention.
-
-The thresholds are constants, not settings.
+   changes, the wait starts again. It is a line among Status's numbers, never in Needs attention:
+   there is nothing for Dan to do.
 
 ### 11.5 Importing one recording
 
@@ -1210,65 +1203,61 @@ The thresholds are constants, not settings.
 - **The gate (controller's call).** Until `plaud_state.catch_up_done_at` is set, scheduled syncs
   don't run, whatever `schedule_minutes` says, and the worker refuses the requests §9.3 names. Only
   Compare runs. Every request or command that would write a snapshot (import, Re-sync, Sync
-  everything) is refused while the gate is closed, so no stray mark can flip a rebuilt gate to "an
-  interrupted catch-up". The privacy actions, which only add `private` or a flag and write no
-  snapshot, still run. Before the very first catch-up, Status says "Scheduled sync waits for the first
-  catch-up (runbook)"; this isn't a failure, and raises no alert. The template ships
-  `schedule_minutes = 0` as well, and an unset value means 0.
+  everything) is refused while the gate is closed. Late consent listings, which only add `private`
+  or a flag, still apply. Status says "Scheduled sync waits for the first catch-up (runbook)"; this
+  isn't a failure, and the check, never pinged, stays silent.
+- **The schedule starts by itself (controller's call).** `schedule_minutes` is 20 in the template
+  and when unset, so the turn after `--catch-up` ends runs as a sync, with no config edit or
+  restart. 0 still turns the schedule off, for maintenance and DAN-15. The gate is the only thing
+  between a fresh deploy and an import, and §20 criterion 5's tests guard it.
 - **The snapshot mark.** Before every 2b snapshot is published, by every path (a scheduled run, a
   request, the CLI, the catch-up), the worker commits a mark row in `plaud_state`, in its own
   transaction. A crash after the mark and before the snapshot leaves a mark with no snapshot, which
   is harmless.
-- **Three states of the gate,** checked at start (§9.2):
+- **The gate's states,** checked at start (§9.2):
   - **First time:** no 2b snapshot in the archive (none has `_meta.tool` = `recordings`), and no
     `catch_up_done_at`. The gate is closed until `--catch-up` finishes.
   - **Interrupted first catch-up:** mark rows exist, but `catch_up_done_at` is unset. The gate stays
-    closed, and Status says "The first catch-up didn't finish: run `--catch-up` again". No push: Dan
-    is at the server for it.
+    closed, and Status says "The first catch-up didn't finish: run `--catch-up` again". Dan is at
+    the server for it.
   - **Rebuilt `state.db`** (controller's call): the archive holds 2b-stamped snapshots, but
-    `plaud_state` has **no mark rows** at all. Then the worker:
-    - closes the gate, clearing a stale `catch_up_done_at` if one is there;
-    - pushes at once, and again once a day until the gate is resolved ("recordings: Plaud sync waits
-      for you: its records were rebuilt"; `plaud:rebuilt`, deduplicated by day), and Status says so,
-      in Needs attention;
-    - goes on with privacy from the listing at every turn (§9.7 item 1), and late consent listings at
-      every tick: they never wait on Accept, and only ever add `private` or a flag.
-
-    **Reopening is the supervised path:**
-    1. A dry run (Compare, or `sync --dry-run --list`) lists every recording on Plaud that isn't here,
-       with no title for a consent-listed one. A recording kept out before the loss, whose title no
-       longer carries a word the worker knows, shows up here as missing, for Dan to decide: add it to
-       the consent list, or let it in.
-    2. Dan presses **Accept this listing** (§11.4), which is allowed only after that dry run. It sets
-       `catch_up_done_at` and the last good listing, and commits a mark row in the same transaction,
-       so a restart before the next snapshot isn't read as "rebuilt" again. The schedule then goes
-       on, under the usual cap and holds.
+    `plaud_state` has **no mark rows** at all. The worker records `rebuilt_at`, sets
+    `catch_up_done_at` and commits a mark row, in one transaction, so a restart doesn't find the
+    rebuild again. Nothing stops. Imports wait only for the first good listing after it, the
+    **review listing**: every ID in it that isn't here and isn't excluded is marked "needs your
+    review" in `plaud_listing`. Such an ID is never imported by a scheduled run or **Sync now**; it
+    sits in **Not here yet**, with its title, until **Import selected** or **Import all** brings it
+    in or the consent list keeps it out; it counts as missing, so "All here" waits and says why. IDs
+    listed later flow as usual. A flag on Status and in Needs attention ("The sync's records were
+    rebuilt: 6 recordings wait for your review") lasts until the list is empty; no email, because
+    the sync isn't stopped. **Why the protection holds:** every recording kept out by a title that
+    has since lost the word was on Plaud before the loss, so it is in the review listing; one in
+    Plaud's trash at that moment, restored later, would come in (§23 risk 12).
   - **Not detected:** a `state.db` restored from an older backup still has mark rows, so it passes.
     A keep-out recorded after that backup is then forgotten. That is inherent to detecting with no
     new storage (§23 risk 12); the runbook's restore section has Dan run the dry run himself.
 - **Which runs advance which timestamps:**
-  - `last_started` and `last_ended`: scheduled turns that run (§9.7 item 5), and the light turns
+  - `last_started` and `last_ended`: scheduled turns that run (§9.7 item 4), and the light turns
     inside long runs. Only scheduling reads them.
-  - the snapshot mark: before every 2b snapshot, by every path, and when Accept reopens a rebuilt
-    gate.
-  - `catch_up_done_at`: only `--catch-up` ending without a run-level failure, or Accept reopening a
-    rebuilt gate.
+  - the snapshot mark: before every 2b snapshot, by every path, and when a rebuild is recorded.
+  - `catch_up_done_at`: only `--catch-up` ending without a run-level failure, or a rebuild being
+    recorded.
   - the last good listing: a good listing in a scheduled run, Sync now, the CLI's `sync`, or
     `--catch-up`; and Accept. Compare never moves it.
   - `failing_since`: scheduled turns and light turns only (§11.7).
 - **`recordings plaud sync --catch-up`** is a supervised CLI run. It holds `ops` and `plaud` (§9.4),
-  and has no import cap and no flood guard, because Dan has just read the dry run.
-  - **Its holds:** the ID-form hold and the consent list still apply. Its listing has no last good
+  and has no import cap, because Dan has just read the dry run.
+  - **Its holds:** the listing hold and the consent list still apply. Its listing has no last good
     one, so it is measured against the Plaud IDs already in the archive (§11.4 step 1). If it is held,
     it stops and says so; after the runbook's check, `recordings plaud accept-listing` (the CLI only:
     the UI's Accept stays refused before the first catch-up) records that listing as the baseline,
     and `--catch-up` is run again.
   - **Its listing becomes the last good listing,** so the first scheduled sync has a baseline for
-    the flood and shrink guards.
+    the hold.
   - **It is idempotent:** it imports only what isn't here, so an interrupted one is simply run again.
     It sets `catch_up_done_at` when it ends without a run-level failure.
   - **It is refused** once `catch_up_done_at` is set ("already done on 2026-10-25; use `recordings
-    plaud sync`"), and in the rebuilt state, where Accept is the way back.
+    plaud sync`").
 - **The order** (main spec §19 step 7; runbook section "The catch-up"):
   1. The dry run is checked (step 6).
   2. **Compare again** if Dan edited the consent list since, and check the new IDs are excluded.
@@ -1280,8 +1269,10 @@ The thresholds are constants, not settings.
   7. `recordings validate`.
   8. A backup tagged `post-import`.
   9. **"You may start tagging now"** (decision 7).
-  10. Turn the schedule on (`schedule_minutes = 20`, then `rc restart worker`), and unpause the
-      sync's Healthchecks check. Watch Status. If "All here" doesn't show, Status says why.
+  10. The schedule has started by itself since step 6. Within 20 minutes Healthchecks shows the
+      sync's check up; if it doesn't, stop: the ping isn't arriving. If "All here" doesn't show,
+      Status says why. A turn may run during steps 7 and 8: it adds no tag, and what it imports is
+      in the next hourly backup.
 - The NAS keeps `pre-import` and `post-import` for good (main spec §15.1), so retention needs no
   change.
 
@@ -1295,29 +1286,28 @@ The thresholds are constants, not settings.
   is not good. A systemic failure (a new envelope shape, every link refused) can't turn into a false
   recovery once every recording has reached the failing list.
 - **Not a success:** a check that ends degraded (§14.1), and an import whose audio can't be fetched.
-  Each is an attempt without success, so "every link refused" makes runs not good, and the 2-hour
-  rule pushes.
+  Each is an attempt without success, so "every link refused" makes runs not good, and the pings
+  stop.
 - **Not attempts:** parked recordings, which aren't tried at all; a busy recording (§9.2); and a
   recording absent from the newest listing but not yet gone, which has no listed ID to fetch with
   (§14.1), so it is skipped.
-- **The 2-hour rule** (decision 5): `plaud_state.failing_since` is set at the first run that isn't
-  good. The push goes at `failing_since + 2 hours`.
+- **`failing_since`** is set at the first run that isn't good, and cleared by recovery. It is a
+  Status figure and the streak marker. Decision 5's 2 hours are the check's grace (§16), not app
+  code.
 - **Recovery, by cause.** `plaud_state` keeps why the streak began.
   - A streak that began with no good listing (Plaud down, offline) clears at the next good run.
   - A streak in which attempts failed with no success clears only at a good run **with at least one
-    successful import, check or fetch**. Only then is "works again" sent.
+    successful import, check or fetch**. Only then does the ping resume.
   - A good run with no attempts leaves a work streak as it is: it neither sets nor clears it.
-  So a systemic failure can't flap between "failing" and "works again" as its recordings back off.
-- **One push per cause.** While a condition that has already pushed explains the failure (the
-  sign-in, a consent stop, a hold), the 2-hour push is suppressed.
-- **A lone recording that always fails never pushes** (P4). A run that retries a recording on the
-  failing list also checks at least one recording that isn't on it: the most overdue recording the
-  sweep covers (§14.2), so never a kept-out, consent-listed, gone or parked one. Its outcome tells
-  the recording's failure from the sync's. Parking stops even the retries.
+  So a systemic failure can't flip the check up and down as its recordings back off.
+- **A lone recording that always fails never stops the ping** (P4). A run that retries a recording
+  on the failing list also checks at least one recording that isn't on it: the most overdue
+  recording the sweep covers (§14.2), so never a kept-out, consent-listed, gone or parked one. Its
+  outcome tells the recording's failure from the sync's. Parking stops even the retries.
 - **Accepted limits of that companion check:** it covers only recordings already on the failing
   list. A recording's first three failures, in a run with no other attempt, can still start a
-  streak; in a small, quiet archive that may push. And if 2b ships in halves, the first half has no
-  sweep, so no companion: a lone failing import then pushes after 2 hours.
+  streak; in a small, quiet archive that may stop the ping. And if 2b ships in halves, the first
+  half has no sweep, so no companion: a lone failing import then stops the ping until it is parked.
 
 ## 12. Keeping out
 
@@ -1367,7 +1357,7 @@ The thresholds are constants, not settings.
     consent-listed: the cache keeps none, and **Not here yet** shows ID, date, time and duration only,
     with "titles hidden until the consent list reads";
   - the CLI exits 78;
-  - it pushes at once, then daily (`plaud:consent`);
+  - it opens the `consent` blocker (§16);
   - Status, doctor and `recordings plaud consent` name the line numbers, never the text: "the consent
     list has 2 lines that look like IDs but can't be read (lines 14 and 22)".
 - **Read** at every tick when the file has changed (by inode, size and time, §9.2), at the start of
@@ -1380,9 +1370,9 @@ The thresholds are constants, not settings.
     index that can't answer is retried at the next tick, and shown, never skipped).
   - It is flagged: "On the consent list, but in the archive: take it out by hand (runbook)".
   - Nothing of it is fetched again (§12.2's rule).
-  - **It pushes once, at once (P15), unless the recording already has an open privacy flag or is
-    gone from Plaud.** Then its flag changes to "On the consent list, but in the archive", with no new
-    push. So step 1 of "Taking a recording out by hand" never pushes twice for the same recording.
+  - **One flag per recording** (P15): one that already has an open privacy flag, or is gone from
+    Plaud, has its flag changed to "On the consent list, but in the archive", never a second. No
+    email: the recording is already `private`.
   - Status, Compare and the dry run name it by archive ID.
   - Every other recording keeps flowing.
 - **Recordings 2a imported despite an exclusion:** 2a's parser read only bare lower-case IDs, so an
@@ -1394,12 +1384,12 @@ The thresholds are constants, not settings.
 - **Status shows what the worker read:** "Consent list: 14 IDs, 4 on Plaud now · file changed
   2026-10-23 09:12 · read 14:20". If Dan's edit doesn't show, the worker didn't see it.
 - **No title of a consent-listed recording not in the archive is ever stored or shown:** not in the
-  cache, the Sync screen, `state.db`, logs, alerts or pushes, at any time. It appears by ID, date and
+  cache, the Sync screen, `state.db`, logs or alerts, at any time. It appears by ID, date and
   duration only. (One already in the archive, a late listing, keeps its title in `recording.json`
   and its merge-base revisions until it is taken out by hand; it is never shown outside the app.)
   The worker drops its title from the listing before anything else reads the row.
 - **ID forms:** the parser reads every hex form `canonical_plaud_id` folds. A listed ID in another
-  form trips the ID-form hold (§11.4), because the list couldn't name it.
+  form holds the listing (§11.4), because the list couldn't name it.
 
 ### 12.2 The keep-out word
 
@@ -1446,12 +1436,13 @@ The thresholds are constants, not settings.
 - **Too late** (the recording was already here):
   - `private` at once (§13.1, case 3);
   - never fetched again, as above;
-  - a flag: "Kept out by title, but already in the archive: take it out by hand (runbook)";
-  - one push, at once (P15), unless the recording already has an open privacy flag.
+  - a flag: "Kept out by title, but already in the archive: take it out by hand (runbook)", one per
+    recording (P15), with no email.
 
-  Release doesn't apply to it: it is already here, and its title still carries the word. The flag
-  clears only when the recording leaves the archive. `private` stays, because the sync never
-  removes it.
+  Release doesn't apply to it: it is already here. The flag clears when the recording leaves the
+  archive, or when Dan presses **Keep it here** (request `keep-here`, on the Sync screen and in
+  Details). That clears the flag and its Needs attention line and changes no data: `private` stays,
+  because the sync never removes it, and nothing of it is fetched again.
 - **The baseline** (§14.5) checks the keep-out words on every title of 2a's recordings too.
 - **What Dan should expect,** written in the README: type the word first (a phone text replacement
   helps); the rename must reach Plaud before the next sync. S9 measures whether a title can be set
@@ -1459,8 +1450,8 @@ The thresholds are constants, not settings.
   and what late means. The README also says the match is forgiving, so an ordinary title such as "No
   archive access: IT ticket" can be kept out too; it waits under Kept out until Dan releases it.
 - **After a lost `state.db`,** the record of what was kept out, and of older words, is gone (§11.6).
-  The rebuild's dry run shows such a recording as missing, for Dan to decide. The consent list is the
-  durable way to keep a recording out.
+  Such a recording waits in the rebuild's review list (§11.6), for Dan to decide. The consent list
+  is the durable way to keep a recording out.
 
 ### 12.3 Gone from Plaud (controller's call)
 
@@ -1482,9 +1473,8 @@ The thresholds are constants, not settings.
 One runbook section, "Taking a recording out by hand", serves a late consent listing, a late
 keep-out, a recording gone from Plaud, and anything Dan must not keep:
 1. **Put its Plaud ID on the consent list** (`make consent-add`). From the worker's next tick, the
-   sync tags it `private`, never fetches it again, and can never bring it back. If the recording is
-   already flagged, or gone from Plaud, no new push is sent. Otherwise one push follows, which is
-   expected.
+   sync tags it `private`, never fetches it again, and can never bring it back. If it isn't flagged
+   already, it gets a flag, which is expected.
 2. `rc stop worker web`.
 3. **Delete its folder for good:** `rm -rf` on its folder under `$RECORDINGS_HOME/archive/recordings/`.
    Never move it to `trash/`: `trash/` is inside the archive, so it is backed up every hour and
@@ -1522,7 +1512,7 @@ these cases, and never removes it:
      3), shown in Details and the Sync screen's Updated list.
    - The same rule runs inside reconcile, on new snapshots' titles, so a title first seen in a fetch
      is checked too.
-3. **A late keep-out word** (decision 2): `private` at once, and §12.2's flag and push.
+3. **A late keep-out word** (decision 2): `private` at once, and §12.2's flag.
 4. **The first check of a recording the marker has never seen:** 2a's imports, a hash merge under a
    new Plaud ID, and, after `state.db` is lost, any recording the rebuild couldn't seed (§13.2).
    - The patterns, and the keep-out words, run on every title of every snapshot, under every Plaud
@@ -1553,8 +1543,9 @@ recording arrives untagged, and Dan's rename is checked at the next sync.
 - **It moves only once the result is written:** no match, or `private` committed. If the `mutate`
   fails (a file edited outside the app, a lock timeout, the sentinel), the marker stays, the next run
   tries again, and Needs attention shows it at once, by ID: "Should be private, but its file was
-  edited outside the app: run `recordings reindex`". It pushes once (P15, §16). A lock timeout alone
-  is retried quietly at the next run, and pushes only if the next run fails too.
+  edited outside the app: run `recordings reindex`". It opens the `private-unwritten` blocker (§16)
+  until the tag lands. A lock timeout alone is retried at the next run, well within the check's
+  grace.
 - **A→B→A** re-checks A, because the marker holds only the newest title. That errs private.
 - **Who judges:** every `Writer` that reconciles, in any container. `Writer.reconcile_plaud` passes
   reconcile the recording's markers from `state.db` and records the new ones, so a `reindex` in `web`
@@ -1562,7 +1553,7 @@ recording arrives untagged, and Dan's rename is checked at the next sync.
   re-add a tag Dan removed. This retires `title_seen` for privacy.
 - **After `state.db` is lost,** the worker seeds each recording's marker for its primary Plaud ID
   from `plaud.title_seen`, when that equals the ID's newest title. Every other recording gets case 4,
-  with its note. The gate closes and pushes (§11.6).
+  with its note. Nothing stops (§11.6).
 - **This closes the 2a residual** (2a rulings, Task 7, carried to 2b and 3a), in which a removed tag
   came back on every reconcile when `title_seen` couldn't advance. A re-run of `import-audio-router`
   still puts privacy tags back by design (main spec §9.3).
@@ -1682,21 +1673,21 @@ first. Then, in steps:
   goes on: listings, imports, title checks, `private` tags, and snapshots with any other change. Noise
   never stops new recordings from arriving, and nothing is fetched again and again.
 - **It is stored** in `plaud_state`, so a restart doesn't clear it.
-- **What Dan sees:**
-  - a push at once (decision 5), whose body says "Status has the steps";
-  - Status: "Edit-sync paused since 14:20: 12 recordings changed only in fields Plaud doesn't usually
-    change (`folder_id`, `share_state`). New recordings still arrive." Or, for a volatile part:
-    "…: 12 recordings' transcripts change between two fetches a moment apart." Field and part names
-    only, never values.
-  - Status prints the exact commands, in the form the runbook uses.
-- **The reset is from the CLI only** (controller's call), because a reset without a fix trips it
-  again. Dan and a Claude session look at the field names, then either:
-  1. ship a release that drops the field (a normaliser version bump, which writes zero snapshots, main
-     spec §9.1.1), then `recordings plaud breaker reset`; or
-  2. accept the field as content: `recordings plaud baseline --all`, then `breaker reset`.
-
-  A reset sets `window_start` to now, so rows from before it never count again. It sends the "works
-  again" push, and is recorded in `ops_runs`. A second trip alerts again.
+- **What Dan sees:** the `breaker` blocker (§16), so the check emails if the breaker is still open
+  after its grace; and on Status: "Edit-sync paused since 14:20: Plaud started sending something new
+  on 12 recordings (`folder_id`, `share_state`). New recordings still arrive." Or, for a volatile
+  part: "…: 12 recordings' transcripts change between two fetches a moment apart." Field and part
+  names only, never values.
+- **Accept these changes** (decision 11), on Status and the Sync screen (request `accept-changes`),
+  for fields that counted only in "other" and were the same on both fetches. It does what `baseline
+  --all` then `breaker reset` do: each recording's next check is excused, `window_start` moves to
+  now, and each recording gets one new snapshot over the next pass. The fields accepted go in
+  `plaud_state`, the press in `ops_runs`. Its sentence: "If Plaud added a feature, accept it: each
+  recording gets one new snapshot. If a name looks like a link or a key, don't: it needs a code fix
+  (a Claude session)." **No button** for a part that differs between two fetches, or a field that
+  trips the breaker again after an Accept: "This keeps changing by itself: it needs a code fix".
+- **A release that bumps `NORMALISER_VERSION` closes the breaker by itself** at start (the trip
+  records the version it saw). `breaker reset` stays as a tool no runbook step needs.
 - **The volatility check,** `recordings plaud check --volatility`: it fetches 3 recordings here (not
   private, not kept out, not consent-listed) twice, a minute apart, and prints for each part whether
   the normalised hash matched. It writes nothing. The runbook runs it before the baseline, so a
@@ -1719,8 +1710,8 @@ Main spec §9.1.1 and §19 name the baseline without defining it.
   - **Automatically,** for any recording here with no `plaud_checks` row, after `state.db` is
     restored or rebuilt (the 2a carry, "seed last_checked on a freshly adopted state.db", 2a rulings
     item 39). A lost `state.db` can't trip the breaker.
-  - `baseline --all` (a rebaseline): after a breaker trip accepted as content, or a normaliser change
-    Dan accepts.
+  - `baseline --all` (a rebaseline): after a normaliser change Dan accepts. **Accept these changes**
+    does the same for a breaker trip (§14.4).
 - **It prints counts:** seeded, already seeded, titles checked, `private` added, kept out late.
 - **If 2b ships in halves,** the baseline's privacy part (the markers and case 4) is in the first half,
   because step 7 needs it. Seeding check state can wait for the sweep.
@@ -1755,8 +1746,8 @@ Main spec §9.1.1 and §19 name the baseline without defining it.
     counts as checked). **Exit 2** otherwise, with counts. A flagged recording is never a failing one:
     `--full` counts the flagged and names them by archive ID, so DAN-15's final run can finish while a
     removal by hand is still to do.
-  - **It pushes** only for a run-level failure, or for a recording that wasn't already on the failing
-    list when it started. Known failures are counted, not pushed.
+  - **A failure** (a run-level one, or a recording not already on the failing list) shows on
+    Status's Sync everything line. It never stops the ping (§16).
   - **It resumes** after a restart: `plaud_state` keeps its start, and it continues with what isn't
     checked since. It runs by itself every 30 days while the schedule is on. A failed one runs again
     next month, or when Dan presses it, never sooner: it doesn't inherit the ops loop's 15-minute
@@ -1804,19 +1795,21 @@ component, and link to each other.
   1. **The summary line,** shared with Status: "All here · checked 14:20 · next sync 14:40", or the
      problem in one sentence and "See Status".
   2. **Flags,** right under it, each by recording ID with its own next step: a late keep-out or a
-     late consent listing, "take it out by hand (runbook)"; a `private` the sync couldn't write,
-     "run `recordings reindex`".
+     late consent listing, "take it out by hand (runbook)", and a late keep-out also **Keep it
+     here**; a `private` the sync couldn't write, "run `recordings reindex`".
   3. **A hold,** if one is on: its sentence (§11.4) and **Accept this listing**, or the reason Accept
-     is refused.
+     is refused. **A breaker trip:** its sentence and **Accept these changes**, or why it needs a
+     code fix (§14.4).
   4. **Sync now** and **Compare**, with **Sync everything** (and its estimate) under **More**.
   5. **The equations** (§11.3), each number a link to its list, "from the listing at 14:20", and the
      consent-list line.
   6. **Not here yet** (waiting and missing): a checkbox, the date, time and duration, the title (a
      lock and "arrives private" when it will), and the state: "imports at the next sync", "schedule
      off", "auto-import off", "held: see Status", "the disk is nearly full", "failed 3 times · Park",
-     "waits for the first catch-up". **Copy ID** copies the whole ID in the list's own form
-     (`` - `of_…` — ``). **Import selected**, and **Import all 31** with its count. During a consent
-     stop, no titles: "titles hidden until the consent list reads".
+     "waits for the first catch-up", "needs your review: the sync's records were rebuilt". **Copy
+     ID** copies the whole ID in the list's own form (`` - `of_…` — ``). **Import selected**, and
+     **Import all 31** with its count. During a consent stop, or a hold while Plaud's IDs look
+     changed, no titles (§9.5).
   7. **Kept out:** by the consent list, by title, and "was kept out by title" with **Release**. Each
      with the ID (and Copy ID), the date, time and duration. Never a title, except inside Release's
      own question (§12.2). A released row reads "Released · comes in at the next sync (14:40) · Undo".
@@ -1825,8 +1818,8 @@ component, and link to each other.
   9. **Gone from Plaud,** newest first, with "gone since" and "N in the last 7 days", and the link to
      "Taking a recording out by hand"; **Parked**, with Unpark.
   10. **Import your own audio:** coming later (main spec §9.2).
-- **While the gate is closed,** only **Compare** is enabled (and Accept, after a rebuild). The
-  others say the gate's reason (§11.6).
+- **While the gate is closed,** only **Compare** is enabled. The others say the gate's reason
+  (§11.6).
 - **Under any hold,** the import buttons are disabled, with the hold's line.
 - **Every press gets an answer within a second** (P6). While a request is pending, the screen updates
   every 2 seconds. It keeps the newest result line ("Import all, 14:20: 31 imported · 4 arrived
@@ -1844,20 +1837,22 @@ component, and link to each other.
     intervals old and nothing is waiting or missing (parked recordings aside). Recordings that keep
     failing get their own line beside it, never hiding it: "2 recordings fail every check (since
     2026-10-23) · Re-sync · Park".
-  - An error shows from the first failed run, though its push waits 2 hours (decision 5).
+  - An error shows from the first failed run, though Healthchecks emails only after about 2 hours.
+  - From `sync_health()` (§16): "The sync's Healthchecks check isn't being pinged since 14:20:
+    sign-in needed. It emails you about 2 hours after that." Each blocker, or "failing", fills it.
   - Or the condition, by name:
     - "Plaud sign-in needed since 23:00. New recordings wait on Plaud: nothing is lost. At the Mac:
       `make plaud-sign-in`."
     - "Plaud sync failing since 12:00 (Plaud unavailable). Last good listing 11:40."
-    - the breaker (§14.4), with its commands
+    - the breaker (§14.4), with **Accept these changes**, or why it needs a code fix
     - "Plaud imports stopped: the consent list has 2 lines that look like IDs but can't be read
       (lines 14 and 22)."
     - "Recording 20261023T140512-0700_3fa91c2e is on the consent list, but in the archive. Take it
       out by hand (runbook)."
     - a hold: §11.4's sentence for it, with **Accept this listing**, or the reason Accept is refused
     - "Scheduled sync waits for the first catch-up (runbook)."
-    - "Plaud sync waits for you: its records were rebuilt. Run a dry run, decide about anything it
-      lists as missing, then Accept this listing." (§11.6)
+    - "The sync's records were rebuilt: 6 recordings wait for your review on the Sync screen."
+      (§11.6)
     - "Scheduled sync is off since 2026-10-23 14:20." Plain before the catch-up. After it, once off
       for 24 hours, it joins Needs attention.
     - "Auto-import is off: new recordings wait for you on the Sync screen."
@@ -1871,24 +1866,23 @@ component, and link to each other.
   - the last Sync everything: "2026-10-01: all 1,234 checked (2 parked, 1 degraded)", or its failure
   - held for review; gone from Plaud; failing; parked
   - "The Plaud worker last reported 14:21 (checking, 412 of 1,234)"
+  - "Healthchecks: last pinged 14:40", or "last ping failed 14:40 (HTTP 404)"
 - **Details, folded away:** the normaliser's version; the field names added or gone since the last
-  good run; the census of ID forms; changes per part in 24 hours; the share of named segments; the
-  last 20 runs with their results; the keep-out words enforced; malformed listing rows.
+  good run; the census of ID forms, and a change of form that held nothing ("Plaud's IDs changed
+  form on 2026-11-02; every ID still matches"); changes per part in 24 hours; the share of named
+  segments; the last 20 runs with their results; the keep-out words enforced; malformed listing
+  rows.
 - **Needs attention gains:**
   - the sync failing for more than 2 hours
   - a sign-in needed, or one expiring within 7 days
   - the breaker, or any hold
   - a consent stop, a late consent listing, a late keep-out
   - a recording that should be private but couldn't be tagged
-  - the sync's records rebuilt (§11.6)
+  - recordings waiting for review after a rebuild (§11.6)
   - the worker silent, or without progress (§9.2)
   - a `plaud` holder older than 2 hours (12 for Sync everything and the catch-up): "may be stuck"
-  - a small shrink unsettled after 24 hours
   - the schedule off for 24 hours after the catch-up
-  - an undelivered push (§16): "a push couldn't be sent: check ntfy", only when ntfy is set up. With
-    alerts off (no ntfy configured, decision 9), the cause is already on Status, and the numbers
-    gain the plain line "No phone pushes (ntfy isn't set up): Healthchecks emails you instead",
-    never in Needs attention.
+  - "The sync's Healthchecks ping has failed for 2 hours" (§16)
 - **"No sync has run yet"** when a table isn't there (§9.5).
 - **It redraws** every 60 seconds (main spec §12.5), and when a request finishes.
 - **No titles anywhere on Status.** Recordings are named by ID (P13).
@@ -1919,7 +1913,7 @@ component, and link to each other.
 ### 15.4 On a phone
 
 Add and Status work at 320 pixels: the summary first, full-width buttons, targets of at least 44
-pixels, rows stacked (date and duration on one line, title below). A push carries no click link.
+pixels, rows stacked (date and duration on one line, title below).
 
 ### 15.5 Demo and Pages
 
@@ -1936,9 +1930,11 @@ Logs, Status, alerts, `ops_runs` and request results use fixed phrases, with cou
 exception class names. Never a title, a token, a URL from Plaud, or exception text.
 - **A run:** "ok", "skipped: busy (`plaud-full`)", "offline", "Plaud unavailable", "rate limited until
   14:40", "Plaud refused access (403)", "sign-in needed", "every fetch failed", "error:
-  `<ExceptionClass>`", "paused: unexpected changes", "held: Plaud's IDs changed", "held: everything
-  looks new", "held: many gone from Plaud", "waiting: Plaud lists 3 fewer", "imports stopped: consent
-  list", "gate closed", "partial: 3 recordings failed".
+  `<ExceptionClass>`", "paused: unexpected changes", "held: Plaud's IDs changed", "held: many gone
+  from Plaud", "waiting: Plaud lists 3 fewer", "imports stopped: consent list", "gate closed",
+  "partial: 3 recordings failed".
+- **A blocker** (§16; a later push's title): "sign-in needed", "imports stopped: consent list",
+  "held: see Status", "paused: unexpected changes", "should be private: run `recordings reindex`".
 - **A recording:** "up to date", "updated: speakers, title", "degraded", "suppressed", "busy",
   "failed: Plaud unavailable", "not checked: kept out", "not checked: on the consent list", "gone from
   Plaud", "parked", "re-tagged private: title changed", "re-tagged private: the sync's record was
@@ -1946,93 +1942,70 @@ exception class names. Never a title, a token, a URL from Plaud, or exception te
 - **A reply:** "Queued", "Queued after the current sync (started 14:20)", "Already queued", "Resuming
   (started 14:20)", "waiting for Sync everything (412 of 1,234)", "Sync everything ran less than an
   hour ago", "The first import is a supervised run on the server (runbook)", "Held: see Status",
-  "Accept refused: fix the consent list first", "Release refused: its title still starts with
+  "Accept refused: fix this first (runbook)", "Accepted: each recording gets one new snapshot",
+  "Kept here: flag cleared", "Release refused: its title still starts with
   `noarchive`", "Release refused: it is on the consent list", "Released · comes in at the next sync
   (14:40) · Undo", "The Plaud worker isn't running (last reported 14:21): your request runs when it's
   back, if that's within the hour."
 
 ## 16. Alerts
 
-**Each condition has its own alert key,** so a run that goes well can't announce "works again" while
-the breaker is still open (`ops._alert`'s ok path today clears every key of a job, `ops.py:477-486`).
+**One rule** (decision 10): the sync's Healthchecks check is pinged only after a scheduled sync that
+is good and that nothing holds up for Dan. Its 2-hour grace does the rest: any lasting stop, a dead
+or wedged worker included, brings one email about 2 hours in, and "up" at the next ping. This is
+main spec §14's "each good sync … pings it", with "good" meaning the sync is doing its job. 2b's
+worker sends no push.
 
-| Key | Pushes | Title ("recordings: …") | Cleared by | Next step (runbook) |
-|---|---|---|---|---|
-| `plaud:sign-in` | at once | "Plaud sign-in needed" | a new token and a good run | `make plaud-sign-in` |
-| `plaud:consent` | at once | "Plaud imports stopped (consent list)" | a run that reads the list cleanly | fix the lines Status names |
-| `plaud:listing` | at once | "Plaud sync paused (IDs changed)", "(everything looks new)" or "(many gone from Plaud)" | **Accept this listing** (Status, the Sync screen, or `accept-listing`), or a later listing that no longer meets the hold's condition | Status's check, then Accept (§11.4) |
-| `plaud:rebuilt` | at once, then once a day until the gate is resolved (deduplicated by day) | "Plaud sync waits for you: its records were rebuilt" | Accept this listing, after the dry run | §11.6's supervised path |
-| `plaud:breaker` | at once | "Plaud edits paused (unexpected changes)" | `breaker reset` | Status's two commands |
-| `plaud:privacy` | once per recording and cause, at once, no reminder (P15) | "a kept-out recording was already archived"; "a consent-listed recording is in the archive"; "a recording couldn't be tagged private" | (one-shot; the flag stays on Status) | "Taking a recording out by hand"; for the third, `recordings reindex` |
-| `plaud:sync` | after 2 hours without a good sync, unless a key above explains it | "Plaud sync failing" | §11.7's recovery | by Status's reason: offline, check the network; Plaud unavailable or rate limited, nothing (it heals); Plaud refused access, check the subscription; every fetch failed, or an error class, `recordings plaud sync --dry-run --debug`, then a Claude session |
-| `plaud:full` | when the monthly run fails at run level, or finds a new failing recording | "Plaud full check failed" | the next good Sync everything | Status's count; Re-sync, then Park |
+**`worker.conclude_turn(ctx, ran_good)`** ends every scheduled turn and every light turn inside a
+long run (§9.7). It pings `deadman_sync_url` (the plain URL, an empty body, never `/start` or
+`/fail`) only when the turn ran a sync and it was good (§11.7), no failing streak is open (so a
+quiet run can't flip the check up during a systemic failure), and no blocker is open. A turn stopped
+by the gate, a sign-in pause, a rate-limit wait or a busy lock sends nothing; so does any error
+while deciding. The answer is worked out afresh each turn from `sync_health()`, with no alert state
+of its own, so a restart or a rebuilt `state.db` can't drop an alert or send one twice. It records
+`last_ping_at` and `last_ping_ok` in `plaud_state`.
 
-- **The machinery** (`ops._alert`, `_conclude`) is generalised, and the changes are named:
-  - Sticky keys are cleared only by their own resolution. A run's ok path clears only `plaud:sync`.
-  - The 2-hour rule needs an onset: `plaud_state.failing_since` (§11.7). The `alerts` row is marked
-    failing only when the push is sent, or `_known` would suppress it.
-  - `TITLES`, `DETAIL_TITLES` and `RUNNING_LABELS` gain the jobs and titles above, and labels for
-    `plaud-sync`, `plaud-full`, `plaud-catch-up` and `plaud-baseline`.
-  - The reminder every 24 hours applies to every key but `plaud:privacy`.
-  - **`plaud:privacy` is deduplicated by recording and cause.** A recording with an open privacy
-    flag, or gone from Plaud, gets no new push when a second cause appears (for example, Dan putting
-    an already-flagged recording on the consent list as step 1 of the removal): its flag changes
-    instead.
-- **Bodies are fixed templates** (main spec §14): the job, the error class, the exit code, counts,
-  then "See Status". Never a title, an ID, a path or error text.
-- **The sync's Healthchecks check** (decision 4, as refined by decision 8):
-  - `AlertConfig` gains `deadman_sync_url`, from the secret `RECORDINGS_DEADMAN_SYNC_URL`, mounted in
-    `worker` only, checked by `_check_url` with its own message. A bad URL makes `from_config` raise,
-    which turns every one of the worker's alerts off, so doctor reports it as a problem for `worker`.
-    `ping_deadman` takes the URL to ping.
-  - **The worker pings it, with an empty body, at the end of every scheduled turn it handles**
-    (§9.7): a turn that runs, good or bad, and a turn that stops at the gate, a sign-in pause, a
-    consent stop, a hold, a rate-limit wait, or a busy `plaud` lock. The light turns inside long runs
-    ping too. Never `/start` or `/fail`. A ping means "the worker is alive and deciding".
-  - **The one exception: a push owed and not delivered.** A push that is due (any immediate one,
-    or the 2-hour one) is **undelivered** when `alerts.send` returns false, as `ops._alert` already
-    tracks: ntfy refused it or couldn't be reached, or **alerts are off because no ntfy is
-    configured** (`AlertConfig.enabled` is false, and `send` returns false without trying,
-    `alerts.py:176-177`). So until Dan sets up ntfy, every push the worker owes is undelivered
-    (decision 9). While one is owed, the worker withholds its ping, and Healthchecks emails Dan
-    after its grace: the backstop for broken push delivery, and today the alert itself. Status says
-    why (§15.2). How long the ping is withheld, by key:
-    - **Lasting keys** (`plaud:sign-in`, `plaud:consent`, `plaud:listing`, `plaud:rebuilt`,
-      `plaud:breaker`, `plaud:sync`): from the turn the push comes due until it is delivered or its
-      key clears (the table's "Cleared by"). Every one of those clears by Dan's action or by itself,
-      never by the push, so the withholding ends when the cause does. Healthchecks emails "down"
-      within about 1h20 of the push coming due (the 1-hour grace, plus up to one period since the
-      last ping): about 1h20 after an immediate key's cause, about 3h20 after a `plaud:sync` failure
-      began. It emails "up" when the cause clears.
-    - **One-shot keys** (`plaud:privacy`, and `plaud:full`, whose key clears only at the next good
-      Sync everything): for one **alert window**, `schedule_minutes` plus the 1-hour grace plus 10
-      minutes from when the push became owed, unless it is delivered sooner. Healthchecks has said
-      "down" by then. The push is then given up, its flag stays on Status, and the ping resumes, so
-      "up" follows about half an hour later. A flag that never clears (a late keep-out Dan decides
-      to keep) can't withhold the ping for ever.
-    - **Never withheld for:** "works again" pushes, the daily reminders and `alert-test`. A failed
-      one is retried at the next run, as today, without touching the ping.
-    - `plaud_state` keeps each owed push's key and when it became owed (§9.5), so a restart neither
-      drops a withholding nor starts its window again.
-    - **No loop:** withholding a ping raises no key, and Healthchecks' state is never read back, so
-      nothing feeds on itself. Each withholding ends when its key clears or its window passes.
-      Setting ntfy up later ends a lasting one at the next run, when the retried push goes through.
-  - So the check speaks only when the worker is dead or stuck, or can't reach Dan (today, whenever a
-    push is owed). Once ntfy is set up, lasting failures push through the app's own keys, with the
-    reason. Nothing pushes twice for one cause.
-  - **Period:** `schedule_minutes`. **Grace:** 1 hour, because the check is pinged at every turn.
-    That is shorter than main spec §14's "at least 3 hours", which stays the rule for the backup's
-    check (its long jobs share one loop) and is amended to say so (§19). The runbook changes the
-    period whenever `schedule_minutes` changes. Dan routes its notifications to email through
-    Healthchecks itself, not ntfy: until ntfy is set up, they are his alerts (decision 9).
-  - It is paused while the schedule is off (runbook). Before the first catch-up, with the schedule
-    off, no turn comes due, so nothing pings.
-  - **Build this behaviour.** Dan approved it on 2026-10-23 as decision 8. Decision 4's own text,
-    "pinged after every good run", stays as he gave it, with decision 8 refining it.
-- **`alert-test`** in each container pings the check that container holds (the backup's
-  `deadman_url`, the worker's `deadman_sync_url`) with `/log`, and sends one push if ntfy is set up
-  (main spec §14 tests only the parts set up). The runbook runs it in both.
-- **Delivery rules are unchanged:** https only, no redirects, a 10-second timeout.
+**The blockers, a closed list.** "Good" alone doesn't see them (a consent-stopped run with no
+attempts, or working imports with the breaker open, can be good), so each stops the ping:
+
+| Blocker | Opens when | Clears when | Status gives the step |
+|---|---|---|---|
+| `sign-in` | Plaud refuses a refresh (§10.3) | a good run after the token file changes | `make plaud-sign-in` |
+| `consent` | a consent stop (§12.1) | a run that reads the list cleanly | fix the lines named |
+| `hold` | the listing hold (§11.4) | Accept, or a later listing that no longer meets it | Status's check, then Accept |
+| `breaker` | the breaker trips (§14.4) | Accept these changes, a release that closes it, or `breaker reset` | Accept these changes, or a code fix |
+| `private-unwritten` | a `private` the sync owes fails to land (§13.2) | the tag lands | `recordings reindex` |
+
+**Never a blocker:** late keep-outs and late consent listings (already `private`, and flagged once
+per recording); a rebuild's review list (§11.6); failing or parked recordings (P4); a failed Sync
+everything; a small shrink; auto-import off. Before the first catch-up no turn pings, and a check
+never pinged stays silent.
+
+**`plaud/health.py`: `sync_health(state)`** reads `plaud_state` only: the open blockers (key and
+since), and `failing_since` with its cause. Status and `conclude_turn` both call it, so what Status
+says is what stopped the ping (§15.2).
+
+**The check:** period 20 minutes, grace 2 hours (any `schedule_minutes` up to an hour fits), email
+to Dan, "manual resume" off. "Down" comes about 2h20 after the last good sync. The backup's check
+keeps main spec §14's 3 hours (§19).
+
+**Code.** `alerts.py` gains only `deadman_sync_url` (from `RECORDINGS_DEADMAN_SYNC_URL`, `worker`
+only, checked by `_check_url` under its own name; a bad one makes `from_config` raise, a problem in
+doctor) and a `ping_deadman` that takes the URL. 2a's alert code is untouched: `ops.py`'s `_alert`,
+`_known`, `_remember`, `_conclude`, `TITLES` and the backup's pings, and `alerts.send`, which the
+worker never calls. The backup's ntfy alerts work as in 2a whenever Dan sets them up. `alert-test`
+pings its container's check with `/log`, and in `backup` sends a push if ntfy is set up.
+
+**ntfy later: the one hook.** `conclude_turn`'s docstring says it is the one place the sync tells
+the outside how it is, and that pushes go there. 2b builds no stub, setting or ntfy secret for it.
+The later change, about one task, mounts the ntfy secrets in `worker` (with doctor's check and
+`alert-test`'s push), and adds inside `conclude_turn`: a push per blocker at onset, titled with its
+§15.6 phrase and "See Status"; one when `failing_since` turns 2 hours old; one "works again"; one
+per new flag in `plaud_events` past a stored rowid; reminders only if Dan wants them. Sent state
+reuses 2a's `alerts` table under `plaud:<key>` names. It then chooses between Healthchecks as a
+second, reasonless channel and decision 8's rule (ping also while every open blocker's push was
+delivered), one condition, spelt out in §16 of this spec at commit fab3d9d. Its tests use
+`FakeNtfy`.
 
 ## 17. Operations
 
@@ -2052,8 +2025,8 @@ the breaker is still open (`ops._alert`'s ok path today clears every key of a jo
   - **the consent folder,** read-only, at `/consent` (§12.1)
   - `/plaud`, read-write
 - **`backup` gains** the consent folder, read-only, for `extra_paths`.
-- **Secrets:** `deadman_sync_url` (required), and the ntfy topic and token once ntfy is set up
-  (optional, for later: decision 9). No restic, NAS, `known_hosts` or `deadman_url` secret.
+- **Secrets:** `deadman_sync_url` only. The ntfy secrets arrive with the later change (§16). No
+  restic, NAS, `known_hosts` or `deadman_url` secret.
 - **Its own health check:** `recordings worker --alive` (§9.2), interval 30 seconds, start period 60.
   Never the image's `:8000/healthz` probe (`Dockerfile:80`), which would mark it unhealthy forever and
   fail `make deploy`'s `--wait`.
@@ -2067,13 +2040,10 @@ the breaker is still open (`ops._alert`'s ok path today clears every key of a jo
 every role but `web` (lines 605-609), and forbids job secrets only in `web`. So a `worker` role needs
 these changes:
 - `ROLES` gains `worker`.
-- **For `worker`:** skip `_backup`, `_mirror`, `_ssh` and the restic part of `_secrets`; keep
-  `_alerts`, checking the ntfy secrets and `deadman_sync_url`, and reporting `deadman_set` from the
-  right one. For the worker, a missing `deadman_sync_url` is a problem, naming
-  `RECORDINGS_DEADMAN_SYNC_URL_FILE`, not the "no dead-man's switch" warning (`doctor.py:530-534`),
-  which stays as it is for the others: with no ntfy, the sync's check is how every alert reaches
-  Dan (decision 9). Alerts being off (`doctor.py:528-529`) stays a warning in every role; for the
-  worker it adds "Healthchecks emails instead".
+- **For `worker`:** skip `_backup`, `_mirror`, `_ssh` and the restic part of `_secrets`; check
+  `deadman_sync_url`, and report `deadman_set` from it. A missing or bad one is a problem, naming
+  `RECORDINGS_DEADMAN_SYNC_URL_FILE`: the sync's check is its only alert. There is no "alerts are
+  off" warning for `worker`, which sends no push by design. The other roles' `_alerts` is unchanged.
 - **`JOB_SECRETS` splits** into a backup set (restic, rest-server, the NAS key, `known_hosts`,
   `deadman_url`) and an alert set (the ntfy topic and token).
   - `web` forbids both sets, plus `deadman_sync_url`.
@@ -2087,7 +2057,7 @@ these changes:
   - no token store ("sign-in needed: run `make plaud-sign-in`");
   - `/plaud` wider than 0700, or the token wider than 0600, or not the app's own;
   - an invalid `keep_out_word`;
-  - a bad `deadman_sync_url`, which turns all the worker's alerts off, or a missing one.
+  - a missing or bad `deadman_sync_url`.
 
   It also reports the token's expiry, whether a refresh token is present, the keep-out words enforced,
   and the consent list's ID count. Never a value, never a hash.
@@ -2125,7 +2095,7 @@ these changes:
 - **`config.example.toml`'s `[plaud]` block:**
   ```toml
   [plaud]                            # stage 2b (spec §9.1)
-  schedule_minutes = 0               # minutes between syncs; 0 is off. 20 after the first catch-up
+  schedule_minutes = 20              # minutes between syncs, from the first catch-up on; 0 is off
   auto_import = true                 # import new recordings at each sync (nothing runs until tagged)
   full_sweep_days = 1                # check every recording against Plaud within this many days:
                                      # 1 while relabelling speakers in Plaud, then 7 (the default)
@@ -2135,19 +2105,21 @@ these changes:
   token_store = "/plaud/tokens.json" # the Plaud sign-in (worker only; `make plaud-sign-in`)
   # api_base = "https://…"           # Plaud's API: the copied client's by default; tests set a fake
   ```
-- **Unset means:** `schedule_minutes` 0, `auto_import` true, `full_sweep_days` 7, `keep_out_word`
+- **Unset means:** `schedule_minutes` 20, `auto_import` true, `full_sweep_days` 7, `keep_out_word`
   `noarchive`, `consent_list` none (a consent stop), `token_store` `/plaud/tokens.json`, `api_base`
   the copied client's host.
 - `recheck_days` goes: the rolling sweep replaced its hot window (main spec §9.1.1).
 - **Secrets:** `RECORDINGS_PLAUD_TOKEN` leaves `config.py`'s `SECRETS`, the template and the README.
-  `RECORDINGS_DEADMAN_SYNC_URL` (stage 2b) joins them, with the backup URL's rules.
+  `RECORDINGS_DEADMAN_SYNC_URL` (stage 2b) joins them, with the backup URL's rules. The template's
+  `schedule_minutes` stays 20, as 2a shipped it.
 - **`docker/deploy.example.conf`** gains `RECORDINGS_PLAUD_HOST` and `RECORDINGS_CONSENT_HOST` (both
   folders), and the test that every compose variable is documented covers them.
 - **`[backup] extra_paths`'s template comment** names the consent folder and `/state/manifests`.
 - **The settings test** (CLAUDE.md, "Settings"): every new key gets its row in
   `test_template_settings.py`, with its reader. `api_base` is commented out in the template, so its
-  row sets it explicitly. `schedule_minutes` and `auto_import` leave `LATER`; `recheck_days` leaves
-  with its key; `plaud_token` leaves `LATER_SECRETS`; `deadman_sync_url` gets a `SECRET_VALUES` row.
+  row sets it explicitly. `schedule_minutes` and `auto_import` leave `LATER`, the first with its
+  unset value of 20 tested; `recheck_days` leaves with its key; `plaud_token` leaves
+  `LATER_SECRETS`; `deadman_sync_url` gets a `SECRET_VALUES` row.
 - **`.gitignore` and `.dockerignore`** gain `tokens*.json`, `**/.plaud/` and `local.mk`.
 
 ### 17.5 The runbook
@@ -2164,25 +2136,24 @@ The main spec's first-run steps 5, 6 and 7 (§19) become new runbook sections, `
   2. `install -d -m 700 $RECORDINGS_HOME/plaud`.
   3. Set `RECORDINGS_PLAUD_HOST` and `RECORDINGS_CONSENT_HOST` in `deploy.env`, and add the consent
      folder and `/state/manifests` to `[backup] extra_paths`.
-  4. **Required** (decision 9): create the sync's Healthchecks check: period 20 minutes (the
-     `schedule_minutes` to come), grace 1 hour, emailing Dan through Healthchecks itself. Until ntfy
-     is set up, its email is how every sync alert reaches him. Put its URL in the secrets folder as
-     `deadman_sync_url`, and pause it. **ntfy is optional, for later:** the worker's ntfy topic and
-     token can wait, and so can section 2 step 2's ntfy parts (below).
-  5. Keep `schedule_minutes = 0` (the worker refuses scheduled syncs before the catch-up anyway), then
-     `make deploy`.
+  4. **Required** (decision 9): create the sync's Healthchecks check: period 20 minutes, grace 2
+     hours, emailing Dan, "manual resume" off (the default). Its email is the sync's only alert. Put
+     its URL in the secrets folder as `deadman_sync_url`. No pause is needed: a check never pinged
+     stays silent, and nothing pings before the catch-up. **ntfy is optional, for later** (below).
+  5. Leave `schedule_minutes` at 20 (the gate holds every sync until the catch-up), then `make
+     deploy`.
   6. On the Mac: write `local.mk` (`SERVER`, `REPO_DIR`), then `make plaud-sign-in`. On the server:
      `rc exec worker recordings plaud check`.
   7. `rc exec worker recordings doctor --role worker`, `rc exec worker recordings plaud consent`, and
-     `recordings alert-test` in `backup` and in `worker`. With no ntfy, doctor warns that alerts are
-     off, and `alert-test` tests only the ping.
+     `recordings alert-test` in `backup` and in `worker`. In `worker` it pings `/log`, which proves
+     the URL; the email channel is the account and integration the backup's check already proved.
 - **7. The dry run:** `rc exec worker recordings plaud sync --dry-run --list`, or **Compare**. Check:
   - both equations add up;
   - "here" equals the archive's Plaud recordings, and anything absent is explained (recordings Dan
     deleted in Plaud);
   - waiting and missing are about the ~30 newer recordings, and "of which N arrive private" matches the
     held titles;
-  - "Consent list: N IDs, M on Plaud now" is what Dan expects, and no ID-form hold is shown. If the
+  - "Consent list: N IDs, M on Plaud now" is what Dan expects, and no hold is shown. If the
     hex itself changed (S7), stop: every entry must be found again in its new form first;
   - **the consent list's lines:** `rc exec worker recordings plaud consent` lists, by line number,
     the lines read as kept (Dan confirms each meant "keep"), and, by archive ID, any recording 2a
@@ -2194,33 +2165,34 @@ The main spec's first-run steps 5, 6 and 7 (§19) become new runbook sections, `
 
   **Stop if anything doesn't fit.**
 - **8. The catch-up:** §11.6's order. Then, on a line of its own: **"You may start tagging now."**
-  (decision 7). Then turn the schedule on, set the sync's Healthchecks period to `schedule_minutes`,
-  unpause the check, and watch Status.
+  (decision 7). The schedule has started by itself. **Within 20 minutes, Healthchecks shows the
+  sync's check up. If it doesn't, stop: the ping isn't arriving.** Then watch Status.
 - **"Plaud sign-in":** when, `make plaud-sign-in`, what it prints, and `plaud check`.
 - **"Keep a recording out for good":** `make consent-add ID=…` from the Mac, or editing the file on the
   server (write a new file and rename it). Then `recordings plaud consent` shows the new count.
 - **"Taking a recording out by hand":** §12.4, word for word.
-- **"When the Plaud alert comes":** one row per alert title (§16), plus "Healthchecks:
-  recordings-sync is down: the worker is dead or stuck, or can't deliver its pushes (with no ntfy,
-  any push). Status first: it names the cause; if it names none, `rc ps` and `rc logs worker`."
-- **Recovery:** the breaker (§14.4); a hold and Accept this listing, with what to check first for each
-  kind (§11.4); a consent stop; parking.
+- **"When the Plaud alert comes":** one section. "Healthchecks: recordings-sync is down. Open
+  Status: its line 'isn't being pinged since …' names the cause, and §16's blocker table gives the
+  step. If Status says the worker is silent or may be stuck: `rc ps`, `rc logs worker`."
+- **Optional:** Healthchecks › Account Settings › Email Reports, a daily reminder while any check is
+  down. It covers the backup's check too.
+- **Recovery:** the breaker and Accept these changes, and when it needs a code fix instead (§14.4);
+  a hold and Accept this listing, with what to check first, and what to do when Accept is refused
+  (§11.4); a consent stop; parking.
 - **"After a lost or restored `state.db`":** restore `state.db` from the newest backup rather than
   rebuild it, if one exists.
-  - **A rebuilt one** (no backup used) has no snapshot marks, so the gate closes and pushes (§11.6).
-    Then a dry run; decide about every recording it lists as missing (a recording kept out before
-    may be among them: put it on the consent list, or let it in); then Accept this listing.
+  - **A rebuilt one** (no backup used) has no snapshot marks, so the worker records the rebuild and
+    goes on (§11.6). On the Sync screen, decide about every recording marked "needs your review" (a
+    recording kept out before may be among them): put it on the consent list, or import it.
   - **A restored one** still has marks, so it isn't detected, and the schedule goes on. So: `rc stop
     worker` before restoring; after it, run the dry run yourself, put on the consent list any
     recording kept out after that backup was taken, and only then `rc start worker`.
-- **Changing `schedule_minutes`:** also change the sync's Healthchecks period to match.
 - **Section 2 step 2 (2a's alerts):** its ntfy.sh bullet, its token bullet and the `ntfy_topic` line
   are marked optional, for later (decision 9); the Healthchecks bullet stays required, and so does
-  the sync's check (section 6 step 4). The expected
-  file list and the checklist's "ntfy topic and ping URL" row say "the ntfy topic, if set up".
-- **"Setting up ntfy, later":** section 2 step 2's ntfy parts (the topic, and a token if needed, in
-  the secrets folder), `make deploy`, then `alert-test` in `backup` and `worker`. Nothing else
-  changes: the same events push, and Healthchecks goes quiet again.
+  the sync's check (section 6 step 4). The expected file list and the checklist's "ntfy topic and
+  ping URL" row say "the ntfy topic, if set up".
+- **"Setting up ntfy, later":** the backup's pushes work as soon as section 2 step 2's ntfy parts
+  are done. The sync's pushes need the later change of §16.
 - **"Rolling back across 2b"** (§17.3).
 - **Decision 7's lines:**
   - Section 4's "Dan decided on 2026-10-22 that the first real tag waits until stage 2b's import dry
@@ -2232,10 +2204,10 @@ The main spec's first-run steps 5, 6 and 7 (§19) become new runbook sections, `
   state folder aside stays right. Add that `state.db`'s `-wal` and `-shm` files move with it, and that
   `plaud-cache.db` is derived.
 - **Every step that stops the worker or sets the schedule to 0** (re-imports, rolling back) pauses the
-  sync's check first and ends by turning the schedule back on and unpausing it. Re-imports stop
-  `worker` as they stop `backup`, and section 3's `IMPORT_MOUNTS` (`first-run.md:717`) mounts the
-  consent **folder** (`-v "$RECORDINGS_HOME/consent:/consent:ro"`), not the old file path, which no
-  longer exists once the list has moved.
+  sync's check first and ends by turning the schedule back on; the check resumes by itself at the
+  first good sync. Re-imports stop `worker` as they stop `backup`, and section 3's `IMPORT_MOUNTS`
+  (`first-run.md:717`) mounts the consent **folder** (`-v "$RECORDINGS_HOME/consent:/consent:ro"`),
+  not the old file path, which no longer exists once the list has moved.
 - **DAN-15,** before 2027-08-15: a final Sync everything and its manifest, then `schedule_minutes = 0`
   and the check deleted. The builder chooses how "Scheduled sync is off" goes quiet after it (a
   `retired_at` in `plaud_state`, set by that step, is the suggestion), so a lapsed account doesn't
@@ -2290,7 +2262,7 @@ the spikes and the deploy).
 **S2. Refresh and rotation.** One refresh from the server; then the old refresh token again; then one
 listing page with the new access token.
 - Rotation on: write-before-use and the single lock (§10.3) are essential, and designed.
-- The old token rejected: a crash between reply and write costs a sign-in (one push). No `.prev`.
+- The old token rejected: a crash between reply and write costs a sign-in. No `.prev`.
 - The old token still accepted for a while: keep `tokens.prev.json` for one cycle.
 - **Refused from the server's address:** the design fails. Stop and ask Dan.
 
@@ -2308,7 +2280,7 @@ temporary `HOME`. After each, one cheap call with the server's sign-in.
 > **The question (only if S3 finds a sign-out).**
 >
 > Scenario: signing in to Plaud anywhere else signs the server out. You use the class-notes and
-> Plaud skills on the Mac most weeks. Each time one signs in, the server's sync stops, and your phone
+> Plaud skills on the Mac most weeks. Each time one signs in, the server's sync stops, and Status
 > says "Plaud sign-in needed". What do you expect?
 > - **A. The server owns the sign-in (Recommended).** You stop signing in to Plaud's tools on the
 >   Mac. Class notes and Plaud lookups read from the archive and its mirror, which hold every
@@ -2317,7 +2289,7 @@ temporary `HOME`. After each, one cheap call with the server's sign-in.
 >   sign-in. It works only if refresh tokens don't rotate (S2); if they do, whichever side refreshes
 >   first signs the other out.
 > - **C. Take turns.** Each time you use a Mac Plaud tool, the server stops until you run `make
->   plaud-sign-in`, with one push each time.
+>   plaud-sign-in`, and an email whenever you take longer than 2 hours.
 >
 > Checked before recommending A: §1's sixth failure (C makes upkeep a chore); S2's rotation result
 > (B fails if tokens rotate); main spec §7.4's "paths around the allow-list", which says the Plaud MCP
@@ -2411,7 +2383,7 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
     or mirrored". Settles §5 and §6.8 against `config.py:33` and the shared `/state`.
   - Secrets gain the sync's dead-man URL; `deploy.env` gains `RECORDINGS_PLAUD_HOST` and
     `RECORDINGS_CONSENT_HOST` (a folder); doctor's roles gain `worker` (§17.2), for which a missing
-    dead-man URL is a problem and alerts off only a warning (decision 9).
+    dead-man URL is a problem, with no alerts-off warning.
 - **§6.4:**
   - The `plaud` lock sits beside `ops` (§9.4).
   - The Writer's operations gain `add_snapshot` (§9.6).
@@ -2422,8 +2394,8 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
   - "The same folder holds the Plaud token store" goes. The state folder gains `plaud-cache.db`
     (derived, never backed up) and `manifests/`.
   - The rebuild after losing `state.db` also seeds the auto-private marker and the baseline (§13.2,
-    §14.5), and a lost, rebuilt or older `state.db` closes the sync's gate until Dan accepts a
-    listing (§11.6).
+    §14.5); after it, what wasn't here at the first listing waits for Dan's review, and new
+    recordings flow (§11.6).
   - `index.db` is in WAL mode.
 - **§7.4:**
   - "Everything comes in, with one exception" becomes two: the consent list, and the keep-out word.
@@ -2444,8 +2416,8 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
   - The consent list: one list in a folder mount; the file's meanings unchanged (an exclusion is an ID
     alone on its line, or an ID then a dash), now read in the `of_` form and any case; lines read as
     kept are listed for Dan; a typo fails closed; no title of a consent-listed recording is stored or
-    shown; a late listing is tagged at the worker's next tick without a listing, flagged, and pushed
-    once per recording (§12.1). Settles the single-file mount and `consent.py:17`.
+    shown; a late listing is tagged at the worker's next tick without a listing, and flagged once
+    per recording (§12.1). Settles the single-file mount and `consent.py:17`.
   - It gains the keep-out word, and kept out stays kept out until Release (§12.2).
   - **The CLI:** beside `recordings plaud sync [--dry-run]` and `--full`, the commands of (§9.6):
     `sync --catch-up`, `resync`, `baseline [--all]`, `accept-listing`, `breaker reset`, `park`,
@@ -2456,12 +2428,14 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
     alert"** instead of "a 401 raises an alert"; `make plaud-sign-in`.
   - The spike list points to (§18).
 - **§9.1.1:**
-  - the breaker's window, volatility found by fetching twice, suppression and reset (§14.4); the
-    holds and **Accept this listing**, and a small shrink settling by itself (§11.4); the good-run
-    rule (§11.7); the listing's rules (§11.2); the sweep's intervals and cap (§14.2); every check ending
-    with reconcile (§14.1); the baseline (§14.5); Re-sync of a selection, parking and Sync everything's
-    outcomes (§14.6); removals counted until 3a (§14.7)
-  - "A 401 stops the run and raises an alert" becomes a refused refresh (§10.3)
+  - the breaker's window, volatility found by fetching twice, suppression, **Accept these changes**
+    and closing on a normaliser release (§14.4); the hold and **Accept this listing**, and a small
+    shrink settling by itself (§11.4); the good-run rule (§11.7); the listing's rules (§11.2); the
+    sweep's intervals and cap (§14.2); every check ending with reconcile (§14.1); the baseline
+    (§14.5); Re-sync of a selection, parking and Sync everything's outcomes (§14.6); removals counted
+    until 3a (§14.7)
+  - "A 401 stops the run and raises an alert" becomes a refused refresh, which stops the sync's
+    ping (§10.3, §16)
   - Status's contents, with the census of ID forms. Settles "the field-name diff would have caught
     the `of_` change", which it couldn't: the field was still `id`.
   - **`full_sweep_days`:** 1 in the template while relabelling, 7 when unset. Settles `recheck_days`.
@@ -2477,20 +2451,20 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
   reported" line stays the backup's; the worker has its own line. Settles sync state being on Add
   and on Status: the Sync screen acts, Status reports.
 - **§14:**
-  - "They fire on: a Plaud 401" becomes (§16)'s keys.
+  - "They fire on: a Plaud 401, a circuit-breaker trip, … and a failed `--full`" loses its Plaud
+    items, and gains "The Plaud sync's alert is its own Healthchecks check (stage 2b §16)".
   - "A turn skipped because another job holds the `ops` lock … is neither a failure nor an alert"
     adds the `plaud` lock.
-  - **The dead-man's switch** becomes two checks: the backup's, unchanged, and the sync's (decision
-    4, as refined in §16). Neither shares the other's URL. Settles one check for two jobs.
+  - **The dead-man's switch** becomes two checks: the backup's, unchanged, and the sync's, pinged
+    only after a good sync that nothing holds up (decisions 4 and 10, §16). Neither shares the
+    other's URL. Settles one check for two jobs.
   - **The grace:** "The grace is at least 3 hours, because long jobs … run in the same loop" becomes
-    the backup check's rule. The sync's check has a grace of 1 hour and a period of
-    `schedule_minutes`, because the worker pings it at every turn it handles, and withholds the ping
-    only while a push is owed and undelivered (§16). This spec's 1 hour wins for the sync's check.
-  - **ntfy is optional** (decision 9): "Alerts … are push notifications through ntfy.sh" gains
-    "once ntfy is set up. Until then, Status and the dead-man's checks carry them: with no ntfy,
-    every push the worker owes is undelivered, so the sync's check is withheld and Healthchecks
-    emails instead (stage 2b §16)". "The doctor warns, without failing, when … no dead-man's switch
-    [is] set up" gains "except the worker's, which is a problem (stage 2b §17.2)".
+    the backup check's rule. The sync's check has a period of 20 minutes and a grace of 2 hours,
+    which is decision 5's 2 hours (§16).
+  - **Pushes** (decisions 9 and 10): "Alerts … are push notifications through ntfy.sh" gains "for
+    the backup. In stage 2b the Plaud sync sends no push: its alert is its own Healthchecks check,
+    and Status says why". "The doctor warns, without failing, when … no dead-man's switch [is] set
+    up" gains "except the worker's, which is a problem (stage 2b §17.2)".
 - **§15:** the worker publishes no port and adds no route; only `worker` holds the token; egress
   isn't blocked (§17.1); "Containers: both run as non-root" becomes all three.
 - **§15.1:** "not … the Plaud token store" stays, now about its own folder. The consent folder and
@@ -2513,8 +2487,8 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
 - **§22:**
   - Decision 19 is replaced by Dan's decision 1 of 2026-10-23.
   - Decision 20's "with a dead-man's switch" becomes "with two dead-man's checks", and it gains
-    "ntfy is optional: until it is set up, Status and the checks carry the alerts (Dan, 2026-10-23,
-    stage 2b decision 9)".
+    "the Plaud sync's alert is its own check; its pushes come with a later change (Dan, 2026-10-23,
+    stage 2b decisions 9 and 10)".
   - Decision 31 gains the token's location.
   - Decision 35's "A private tag is always applied before any content is written" gains (§13.3)'s
     exception.
@@ -2564,13 +2538,17 @@ server (§10.6); "real" is a runbook step. Each criterion says which half it bel
      keep-out rows, late keep-outs and late consent listings already here, partial listings): every
      ID in exactly one bucket by §11.3's precedence; the equation adds up.
    - **Real:** runbook section 7's checks, signed off by Dan.
-2. **A speaker rename shows within the sweep window** (second half).
+2. **A speaker rename shows within the sweep window, and the breaker stays out of the way** (second
+   half).
    - **Fake, with an injected clock:** at N = 1,000 with 40 renames at once, each shows within
      `full_sweep_days` plus one schedule interval, and at once with Re-sync.
    - **Real:** S9's clip; after the catch-up, one rename at once with Re-sync, and one within a day
      and one sync without it.
    - **Fake:** three speaker renames 20 minutes apart on 12 recordings never trip the breaker; a field
-     that changes on every fetch does.
+     that changes on every fetch does, with no Accept button. A new field that is the same on both
+     fetches trips it with **Accept these changes**: pressed, each recording gets one new snapshot
+     and the breaker closes; the same field tripping it again offers no button. A release with a new
+     normaliser version closes it at start.
 3. **Sync everything exits 0** (second half).
    - **Fake:** a sound account exits 0 and writes the manifest; a degraded recording still exits 0; a
      flagged one (consent-listed or kept out late) still exits 0 and is named; an unparked failing
@@ -2578,50 +2556,50 @@ server (§10.6); "real" is a runbook step. Each criterion says which half it bel
    - **Real:** it exits 0, or exits 2 only for recordings Dan then parks, each checked in Plaud's app
      and recorded in the runbook's table by ID hash.
 4. **A refused sign-in raises an alert** (first half), replacing "a 401 raises an alert".
-   - **Fake:** an expired access token that refreshes sends no push; a 401 then a refused refresh sends
-     exactly one; none again within 24 hours; no Plaud call until the token changes; a new token
-     brings one "works again"; a 429 from the token endpoint is an outage; a 401 after a good refresh
-     goes through the current-user read.
-   - **Fake, with no ntfy configured:** the same refusal sends nothing, withholds the ping, and the
-     fake Healthchecks goes down after the grace; a new token clears it, and the pings resume.
-   - **Real:** `alert-test` proves delivery.
+   - **Fake:** an expired access token that refreshes keeps the pings going; a 401 then a refused
+     refresh stops them from that turn on, with no Plaud call until the token changes; a new token,
+     then a good turn, pings again; a 429 from the token endpoint is an outage, not `sign-in`; a 401
+     after a good refresh goes through the current-user read.
+   - **Real:** the check goes green within 20 minutes of the catch-up (runbook section 8).
 5. **Dan's decisions hold** (first half), on the fake:
    - A placeholder-titled recording arrives at the next run, untagged; renamed private, it is tagged
      at the next run even when its fetch fails (decision 1).
-   - A keep-out title is never requested (the request log). A late one gets `private`, a flag and
-     exactly one push, and nothing of it is fetched again even when its transcript appears. A title
-     that loses the word stays kept out until **Release**; Release shows its question, and is refused
-     while the title still carries the word or the ID is consent-listed (decision 2).
-   - A consent-list typo stops every import and pushes; a bare `ID kept: …` line is not an exclusion,
-     and is listed for review; a late consent listing is tagged at the next tick with the sign-in
-     dead, pushed once, never fetched again, and the run goes on; adding an already-flagged recording
-     sends no second push; a list replaced by rename is read at the next tick; during a consent stop
-     the cache and the Sync screen hold no title of a recording not here.
+   - A keep-out title is never requested (the request log). A late one gets `private` and one flag,
+     and nothing of it is fetched again even when its transcript appears; **Keep it here** clears
+     the flag and changes no file. A title that loses the word stays kept out until **Release**;
+     Release shows its question, and is refused while the title still carries the word or the ID is
+     consent-listed (decision 2).
+   - A consent-list typo stops every import and the ping; a bare `ID kept: …` line is not an
+     exclusion, and is listed for review; a late consent listing is tagged at the next tick with the
+     sign-in dead, flagged, never fetched again, and the run goes on; adding an already-flagged
+     recording makes no second flag; a list replaced by rename is read at the next tick; during a
+     consent stop, and during a hold with an ID change, the cache and the Sync screen hold no title
+     of a recording not here.
    - A removed `private` stays removed through 100 runs and a `reindex` in a `web`-role process, and
      comes back only when the title changes to one that matches, with its note (decision 3).
-   - The gate: before the first catch-up, a scheduled sync and an import request are refused; an
-     interrupted catch-up says so and can be run again; a rebuilt `state.db` (2b snapshots, no
-     marks) closes it, pushes at once and daily, keeps privacy tagging going, and Accept reopens it
-     only after a dry run. A SIGTERM mid-run, a Re-sync then a restart, a catch-up then a restart,
-     and an Accept then a restart never read as "rebuilt". While the gate is closed, every request
-     that would write a snapshot is refused.
+   - The gate: with `schedule_minutes` 20 from deploy, before the first catch-up a scheduled turn
+     makes no Plaud call, and an import request is refused; an interrupted catch-up says so and can
+     be run again; the turn after `--catch-up` ends runs a sync. While the gate is closed, every
+     request that would write a snapshot is refused. A SIGTERM mid-run, a Re-sync then a restart and
+     a catch-up then a restart never read as "rebuilt".
+   - A rebuilt `state.db` (2b snapshots, no marks): new recordings keep importing; what wasn't here
+     at the first good listing is marked "needs your review", never imported by a scheduled run or
+     Sync now, and imported by Import selected; its ID on the consent list keeps it out; a restart
+     after the rebuild doesn't find it again.
 6. **Nothing stops silently** (first half; the breaker's part, second half):
-   - A run whose listing works and whose every fetch fails is not good, and pushes after 2 hours. Once
-     every recording is on the failing list, runs that retry only them stay not good, and no "works
-     again" is sent until a fetch succeeds. With every link refusing (403), checks end degraded and
-     imports fail: the runs are not good, and one push comes after 2 hours.
-   - An outage of 1 hour sends no push; 2 hours sends one; recovery sends one. Status shows it from
-     the first failed run.
-   - The sign-in, consent, listing and breaker keys push at once, and a good run doesn't clear them.
-   - A hold clears with Accept this listing, which is refused while the consent list matches fewer
-     IDs; a small shrink settles when the next listing an hour later is missing the same recordings.
-   - The sync's check is pinged at every turn handled, including turns stopped by a dead sign-in, a
-     hold or the gate; with the worker killed, no ping; with a due push undelivered, no ping.
-   - **With no ntfy configured** (decision 9), on a fake clock: each owed push withholds the ping,
-     and the fake Healthchecks goes down after the period and grace. A lasting key's pings resume
-     only when it clears; a one-shot key's after its alert window, though its flag stays; a "works
-     again" or a reminder never withholds. Configuring ntfy then delivers the retried push and the
-     pings resume. Status shows the no-ntfy line, never "a push couldn't be sent".
+   - **The ping rule, as a table test** against a fake Healthchecks: good or not, a streak or not,
+     each blocker, and busy, the gate, a sign-in pause or a rate-limit wait. Each case pings or
+     doesn't. Every blocker stops the ping even with a good run (a consent stop with no attempts;
+     the breaker with working imports); privacy flags, a rebuild's review list, a failing recording
+     and a failed Sync everything never do.
+   - Every fetch failing while the listing works, or every link refusing (403), means no pings; once
+     every recording is on the failing list, runs that retry only them stay not good, and pings
+     resume only when a fetch succeeds. An outage of 1 hour stops the pings, which then resume.
+     Status shows it from the first failed run, with "isn't being pinged since …: <cause>".
+   - A hold clears with Accept this listing, which is refused only when consent-listed or kept-out
+     IDs vanish while Plaud's IDs look changed; a change of form with nothing absent holds nothing;
+     a small shrink settles when the next listing an hour later is missing the same recordings.
+   - A wedged `plaud` holder: no pings. A ping that fails shows "last ping failed" on Status.
    - An idle worker with no sign-in stays alive (`--alive` 0) for 20 minutes on a fake clock.
    - The schedule off for 24 hours after the catch-up shows in Needs attention.
 7. **Nothing leaks** (first half): a whole sync at DEBUG, with the faults of §21, leaves no token,
@@ -2668,42 +2646,44 @@ and S8: field names only, with invented values.
     note `` an exclusion; `ID kept: …` and `- ID (fine to keep)` kept lines, listed; an ID
     mid-sentence, listed; `+ ID` listed; a 31-hex and a 33-hex line (stop); a list replaced by rename
     (read at the next tick)
-  - the late consent listing: applied with the sign-in dead and the gate closed; no second push for
+  - the late consent listing: applied with the sign-in dead and the gate closed; no second flag for
     an already-flagged recording or one gone from Plaud; the cache and Sync screen hold no title of a
-    recording not here during a consent stop
+    recording not here during a consent stop, or a hold with an ID change
   - the keep-out match: each example in §12.2, a fullwidth `ｐｒｉｖａｔｅ`, an earlier word, and
     `keep-out-words --drop`
   - Release: the preview's title lives only in the cache and is deleted after the answer; refused
     while the title carries a word, or the ID is consent-listed; Undo before the next sync
+  - Keep it here: clears a late keep-out's flag and its Needs attention line; `private` stays, and
+    nothing is fetched again
   - the marker: due and not due; a failed `mutate` retried after `reindex`; a new pattern, checked
     against that pattern only; a rebuilt `state.db`, with its note; a hash merge under a new ID; a
     hash merge into a flagged recording, discarded
-  - the gate's three states: the snapshot mark written before every 2b snapshot, on every path; an
+  - the gate's states: the snapshot mark written before every 2b snapshot, on every path; an
     interrupted catch-up (marks, no `catch_up_done_at`) re-run idempotently; a rebuilt `state.db`
-    (2b snapshots, no marks) closing the gate and pushing daily; Accept refused before its dry run;
-    Accept committing a mark, so a restart straight after it stays reopened; import, Re-sync and Sync
-    everything refused while the gate is closed;
-    `--catch-up` refused once done and in the rebuilt state; the catch-up's listing becoming the
-    last good one; a catch-up held by the ID-form hold against the archive's 2a IDs
-  - Accept on consent: refused when consent-listed IDs vanish with the ID-form signals; allowed when
-    one is simply gone from Plaud
+    (2b snapshots, no marks) recorded with a mark in one transaction, and its review listing;
+    import, Re-sync and Sync everything refused while the gate is closed; `--catch-up` refused once
+    done; the catch-up's listing becoming the last good one; a catch-up held against the archive's
+    2a IDs
+  - Accept's refusal: refused when consent-listed or kept-out IDs vanish with a census change or
+    under 80% overlap; allowed when one is simply gone from Plaud, and for a large shrink without
+    those signals
   - Release's preview refused for a consent-listed ID, during a consent stop, and with the gate closed
-  - the buckets, as a property (§20, criterion 1); each hold's thresholds (§11.4), the census measured
-    over shared IDs, `accept-listing` and Accept's refusal; a small shrink settling on the same absent
-    set; a 40-recording backlog importing over 2 runs with no push
+  - the buckets, as a property (§20, criterion 1); the hold's conditions (§11.4), the census
+    measured over shared IDs, a census change with nothing absent passing as a details line,
+    `accept-listing` and Accept's refusal; a small shrink settling on the same absent set; a
+    40-recording backlog importing over 2 runs with no hold
   - the sweep's intervals and cap, with an injectable clock (`ops.Context.clock`'s pattern), at N =
-    1,000; the breaker's window, the double fetch, suppression (no interval reset) and reset (no
-    re-trip)
+    1,000; the breaker's window, the double fetch, suppression (no interval reset), Accept these
+    changes (offered only for stable fields, gone after a second trip), the normaliser-version
+    close, and reset
   - the good-run rule: failing-list recordings as attempts; recovery by cause; the companion check
     beside a failing recording; `LockTimeout` as busy; `failing_since`
-  - each alert key's onset, 24-hour reminder, recovery, and `plaud:privacy`'s deduplication
-  - the ping: at every handled turn (the gate, a dead sign-in, a hold, busy); withheld while a due
-    push is undelivered, including with alerts off (no ntfy configured): for each key of §16, until
-    it clears (lasting) or for one alert window (one-shot), across a restart; never for a "works
-    again" or a reminder; no withholding left once every key has cleared or every window has passed
+  - `sync_health` and `conclude_turn`: each blocker's opening and clearing; an unreadable `state.db`
+    sends no ping; `last_ping_at` and `last_ping_ok`; Status's line from the same answer. "Down
+    after the grace" is Healthchecks' behaviour, so it isn't simulated: the tests check what is sent
   - the token store: atomic writes and modes; one refresh across two processes; a crash between
     reply and write: with rotation and no grace, the next start finds the old file, its refresh is
-    refused, and one push follows; with a grace, it recovers
+    refused, and the `sign-in` blocker opens; with a grace, it recovers
   - the client: `GET` only plus the refresh `POST`; no redirects on API calls; no `Authorization` on
     links; the listed ID in every URL; the stall rule
   - `token-import`: a bad file installs nothing and exits 77
@@ -2729,10 +2709,9 @@ and S8: field names only, with invented values.
   keep-out title, and counts them.
 - **The flow test,** `test_flow_2b.py` (as `test_flow_2a.py`): an archive with an `audio-router`
   fixture, then against the fake, `baseline`, `sync --dry-run`, `sync --catch-up`, the worker's loop
-  for N ticks on a fake clock, and `--full`. It checks files through `Archive`, the Status view,
-  pushes through `FakeNtfy`, pings through a fake Healthchecks, and scans every log for tokens,
-  `X-Amz-` and titles. It runs twice: with `FakeNtfy`, and with no ntfy configured, where a sign-in
-  refused mid-flow takes the fake Healthchecks down after the grace and up again after the sign-in.
+  for N ticks on a fake clock, and `--full`. It checks files through `Archive`, the Status view and
+  pings through a fake Healthchecks (none while a sign-in refused mid-flow is open, then again after
+  the sign-in), and scans every log for tokens, `X-Amz-` and titles. The worker sends no push.
 - **Guard tests that must fail without their fix:** consent-listed and kept-out IDs never requested,
   and no block or audio of a recording whose envelope title is kept out; `recordings_ui` never imports
   the client, the token store or the sync, and Pyodide never does; the demo never writes a request
@@ -2761,7 +2740,8 @@ and S8: field names only, with invented values.
   - Compare shows the equations; Import selected imports with progress and a toast.
   - Kept out and Flags show no title; Release opens its question with the title, and lets the
     recording in; Undo works until the next sync.
-  - A hold disables the import buttons; Accept this listing clears it.
+  - A hold disables the import buttons; Accept this listing clears it. A breaker trip offers
+    Accept these changes, which clears it.
   - Re-sync on a selection updates rows.
   - The arrivals cue appears after a scheduled tick.
   - Status shows a refused sign-in.
@@ -2786,15 +2766,16 @@ and S8: field names only, with invented values.
 **Numbers this spec suggests** (change one only with a stated reason): the tick (2 seconds), the
 heartbeat (30 seconds) and `--alive`'s limits (90 seconds, 15 minutes); the request and event
 retention (7 and 90 days); the backoff and budget (§10.2, adjusted by S10); the stall rule (§10.1);
-the holds' thresholds (§11.4); the sweep's intervals (§14.2); the breaker's (§14.4); the Healthchecks
-grace (§16).
+the hold's thresholds (§11.4); the sweep's intervals (§14.2); the breaker's (§14.4); the
+Healthchecks period and grace (§16).
 
 **To check during implementation** (checked when first used, as in tagging part A §11):
 - `urllib`'s `add_unredirected_header`, and a refusing opener like `alerts.py`'s.
 - WAL for `index.db` on its named volume, opened by `web` and `worker`.
 - `docker compose up --wait` honours the worker's health check.
-- Healthchecks takes a period of `schedule_minutes` with a 1-hour grace, and `/log` leaves its state
-  alone.
+- Healthchecks, beyond what its docs say (checked 2026-10-23: `/log` leaves the state alone, and a
+  paused check resumes at its next ping unless "manual resume" is on): that a check never pinged
+  (`new`) never goes down, and that the email integration sends "up" as well as "down".
 - Shiny: reading a pending request every 2 seconds for one session, and `send_message` for replies.
 - `asyncio.to_thread` for the request insert, in the Shiny version pinned.
 - ffprobe in the `worker` container.
@@ -2817,27 +2798,30 @@ Most serious first. §7 is Dan's short list.
 
 1. **A recording that must not be kept is downloaded before Dan acts.** The window is until the next
    sync. Mitigations: the keep-out word, from the phone; a consent list that fails closed and is read
-   before each recording; the ID-form hold. What remains: a recording not marked in time is in the
+   before each recording; the listing hold. What remains: a recording not marked in time is in the
    backups and the mirror until taken out by hand, and the `pre-import` and `post-import` snapshots
-   keep whatever the catch-up imported unless a NAS-side `restic rewrite` removes it.
+   keep whatever the catch-up imported unless a NAS-side `restic rewrite` removes it. A late
+   keep-out sends no email: it waits on Status, already `private`, until Dan next looks.
 2. **The keep-out word may not beat the first sync** (S9 measures it). If it usually can't, the late
    path is the main path, and the README must say so.
-3. **The flow stops, and nobody notices.** Mitigations: the good-run rule, the 2-hour rule, the sticky
-   keys, the sync's check (which also speaks when a push can't be delivered), "Scheduled sync is off"
-   in Needs attention, and the push when the sync's records are rebuilt. What remains: ntfy and
-   Healthchecks failing together, or Healthchecks' own notification not reaching Dan. Until ntfy is
-   set up (decision 9), Healthchecks' email is the only channel, up to about 1h20 late and without
-   its reason, which is on Status; and 2b doesn't change the backup container's own alerts, which
-   without ntfy reach Dan only through Status and the backup's check (main spec §14).
+3. **The flow stops, and nobody notices.** Mitigations: the good-run rule and its streak; a check
+   pinged only after a good sync that nothing holds up, so an outage, every blocker and a dead
+   worker stop it; Status's "isn't being pinged since …"; "Scheduled sync is off" in Needs
+   attention. What remains: Healthchecks' email is the only channel, about 2 hours late and without
+   its reason; one open cause masks a later one, a dead worker included, until it clears (Status
+   still shows each); a check never pinged never alerts (doctor, `alert-test`'s `/log`, "last ping
+   failed" and the runbook's "green within 20 minutes" cover it); a bug in the good-run rule is a
+   bug in alerting (the ping's table test). The backup's alerts are 2a's, unchanged.
 4. **A late private title sits untagged in the backups and the mirror** for one sync (decision 1's
    exception).
 5. **The forgiving keep-out match can keep an ordinary title out,** such as "No archive access: IT
    ticket". That errs safe: the recording waits under Kept out, and Release brings it in.
 6. **The sign-in model fails on contact** (S1 to S3). §18 says where to stop and ask Dan.
-7. **The token chain is lost** in a rotating refresh. The cost is one push and one sign-in.
-8. **Duplicates, or a void consent list, after an ID-form change.** The ID-form hold stops imports
-   until Dan accepts, and Accept is refused while the consent list matches fewer of Plaud's IDs; S7
-   checks the hex before the dry run.
+7. **The token chain is lost** in a rotating refresh. The cost is one sign-in.
+8. **Duplicates, or a void consent list, after an ID-form change.** The listing hold stops imports
+   when Plaud's IDs change and recordings vanish with them, and Accept is refused only when
+   consent-listed or kept-out IDs vanished with that change (§11.4); S7 checks the hex first. A
+   change with nothing vanished passes unseen, safely: a new hex always makes the old IDs vanish.
 9. **A volatile field mints snapshots** before the breaker trips: up to about 5% of a day's checks.
    S8, the volatility check and the double fetch catch it early.
 10. **Rate limits, or a flag on the account.** Pacing, no parallel calls, a budget, and
@@ -2845,15 +2829,21 @@ Most serious first. §7 is Dan's short list.
 11. **Tag clicks get "busy"** when the worker's hold passes 2 seconds. Locks only around local work,
     and tests that bound the holds.
 12. **Losing `state.db`** loses the sync's memory: its markers, what was kept out by a word now
-    gone from the title, and the keep-out words used before. The gate closes and pushes (§11.6); the
-    dry run shows any formerly kept-out recording as missing, for Dan to decide; and a removed
-    `private` can come back once, with its note. A `state.db` restored from an older backup still has
-    snapshot marks, so it isn't detected: a keep-out recorded after that backup is forgotten unless
-    Dan runs the runbook's restore steps. The consent list, in its own backed-up folder, is the
-    durable way to keep a recording out.
+    gone from the title, and the keep-out words used before. New recordings keep flowing, and what
+    wasn't here at the first good listing after it waits for Dan's review (§11.6), so a formerly
+    kept-out recording can't come in without him, unless it sat in Plaud's trash at that moment and
+    was restored later. A removed `private` can come back once, with its note. A `state.db` restored
+    from an older backup still has snapshot marks, so it isn't detected: a keep-out recorded after
+    that backup is forgotten unless Dan runs the runbook's restore steps. The consent list, in its
+    own backed-up folder, is the durable way to keep a recording out.
 13. **A wrong time zone is permanent in an ID.** S12 settles it before the catch-up.
 14. **The subscription lapses on 2027-08-29.** DAN-15's runbook step turns the schedule off after the
     final Sync everything.
 15. **The relabelling evening at scale.** With thousands of recordings, the budget may stretch a full
     pass past a day. Status shows the real oldest check; Re-sync of a selection is the way round it.
 16. **The Library's first load** may pass 2 seconds as recordings arrive, pulling a 3a item forward.
+17. **The schedule starts by itself after the catch-up,** so the gate alone stands between a fresh
+    deploy and an import (§20 criterion 5 tests it).
+18. **A careless Accept these changes** costs about one snapshot per recording, with no privacy
+    cost. A field carrying a link would be kept in each, so Status says not to accept one that looks
+    like a link or a key.
