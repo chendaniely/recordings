@@ -2,15 +2,15 @@
 
 - **Date:** 2026-10-23 (revision 3, after the council's review, its re-review, a final check and a
   builder check)
-- **Status:** draft for Dan's approval. Dan's eight decisions are binding and kept as he gave them.
+- **Status:** draft for Dan's approval. Dan's nine decisions are binding and kept as he gave them.
   The rest is the controller's design, built from a five-member research council's work. Calls made
   without asking Dan are listed in §5, by what he will notice.
 - **Parent:** `docs/superpowers/specs/2026-10-08-recordings-design.md` (the main spec), §20 stage 2b.
   §19 lists the changes this spec makes to it and to other docs.
 
-**How to read this.** Part I is everything Dan will see, do or accept, in about 480 lines. Part II is
-how it is built, for the builder. Part I is binding: Part II says the same thing in more detail, and
-each part of Part I points into Part II.
+**How to read this.** Part I is everything Dan will see, do or accept, in about 520 lines. Part II
+is how it is built, for the builder. Part I is binding: Part II says the same thing in more detail,
+and each part of Part I points into Part II.
 
 # Part I: For Dan
 
@@ -36,7 +36,8 @@ And tagging part A has shipped, waiting for 2b's first import (decision 7).
   `private` tag he removed stays removed.
 - A speaker he renames in Plaud shows up within a day and one sync (about 20 minutes more) while he
   relabels, and within a week and one sync after that. **Re-sync from Plaud** shows it at once.
-- When something breaks, his phone tells him once, and says what to do. Otherwise it is quiet.
+- When something breaks, he hears once, and Status says what to do. Today that is an email from
+  Healthchecks; once ntfy is set up, a push to his phone (decision 9). Otherwise it is quiet.
 - Keeping it running is almost no work. If Plaud signs the server out, signing in again is one
   command on the Mac.
 
@@ -114,7 +115,9 @@ He gave no further reasons, so the reasons below come from the options as they w
 ## 2. Your days with 2b
 
 Each journey says what Dan does, what he sees, and what happens when it goes wrong. The Add page's
-Plaud panel is the main spec's **Sync screen**, and this spec calls it that.
+Plaud panel is the main spec's **Sync screen**, and this spec calls it that. A **push** is the
+design as built, for once ntfy is set up; until then, every push reaches Dan as Healthchecks' email
+instead, with the reason on Status (decision 9, J4).
 
 ### J1. A meeting, then triage
 
@@ -229,7 +232,13 @@ Part II: §14.
 
 ### J4. Something breaks
 
-A push arrives on his phone, with a fixed title and "See Status". Status is complete on its own.
+**Today, with no ntfy set up** (decision 9), each push below reaches him instead as one email from
+the sync's Healthchecks check, "recordings-sync is down", within about 1h20 of the push being due
+(about 3h20 into an outage). The email has no reason in it; Status has the reason and the next step.
+A second email says "up" once the cause is resolved. For a one-time event (a privacy flag, a failed
+full check) the "up" comes about half an hour later, and the flag stays on Status. **Once ntfy is
+set up,** the same events push to his phone at once, with a fixed title and "See Status", and
+Healthchecks goes quiet again. Either way, Status is complete on its own.
 
 | What broke | Push | What Dan sees and does |
 |---|---|---|
@@ -241,7 +250,7 @@ A push arrives on his phone, with a fixed title and "See Status". Status is comp
 | The consent list can't be read | at once, then daily | Status names the line numbers. He fixes the file; the next sync goes on. |
 | A privacy intent didn't hold: a late keep-out, a late consent listing, or a `private` the sync couldn't write | once, at once (P15) | Status names the recording. For the first two, he takes it out by hand; for the third, he runs `recordings reindex`. |
 | The sync's records were lost or rebuilt (a replaced `state.db`) | at once, then daily until resolved | Status: "Plaud sync waits for you: its records were rebuilt." Imports stop; privacy tagging goes on. He runs a dry run, decides about anything it lists as missing (a recording kept out before may be among them), then presses **Accept this listing**. |
-| The worker dies or hangs, or can't deliver a push | the sync's Healthchecks check, within about 1h20 | `rc logs worker`. |
+| The worker dies or hangs, or can't deliver a push (today, every push) | the sync's Healthchecks check, within about 1h20 | Status first: if it names a cause above, that is why. If not, `rc logs worker`. |
 | One recording fails every check | never | Status: "1 recording fails every check · Re-sync · Park". It never hides "All here". A recording that fails to import holds "All here" back until he parks it. |
 | The schedule was left off | never (Needs attention after 24 hours) | Turn it back on. |
 
@@ -250,10 +259,11 @@ cause: putting an already-flagged recording on the consent list sends nothing ne
 check means "the worker is alive and deciding". The worker pings it at every scheduled turn it
 handles, even one that stops at a lapsed sign-in, a stopped consent list, a hold, a rate limit or the
 first catch-up. So Healthchecks speaks only when the worker itself is dead or stuck, or when the
-worker owes Dan a push that ntfy won't take: then the worker holds back its ping, and Healthchecks
-becomes the backstop for push delivery. Lasting failures push through the app's own alert, with the
-reason. This refines decision 4's "pinged after every good run", and Dan approved it as decision 8
-(§5).
+worker owes Dan a push it can't deliver, because ntfy won't take it or, today, isn't set up: then
+the worker holds back its ping, and Healthchecks becomes the backstop for push delivery. Once ntfy
+is set up, lasting failures push through the app's own alert, with the reason. This refines
+decision 4's "pinged after every good run", and Dan approved it as decision 8 (§5). Decision 9
+keeps it, with ntfy for later.
 
 Part II: §16.
 
@@ -297,7 +307,8 @@ running (last reported 14:21)".
 
 ### J7. On the phone
 
-- A push says "See Status", with no link (a link would send the app's address to ntfy.sh).
+- Today an alert is Healthchecks' email (decision 9). Once ntfy is set up, a push says "See
+  Status", with no link (a link would send the app's address to ntfy.sh).
 - Status and the Sync screen work at 320 pixels: the summary first, full-width buttons, 44-pixel
   targets.
 - **From the phone, Dan can:** rename in Plaud (the keep-out word, a private title), Sync now,
@@ -313,15 +324,17 @@ running (last reported 14:21)".
    the session, never a consent-listed or private one. One question may follow: if signing in
    elsewhere signs the server out, who owns the sign-in (§18, S3).
 2. **Deploy 2b.** The worker refuses scheduled syncs and imports until the first catch-up has run,
-   whatever the config says (controller's call). Dan sets up the sync's Healthchecks check once, with
-   its notifications going through Healthchecks' own channel (e-mail or its app), not ntfy. Then
-   `make plaud-sign-in`, and checks.
+   whatever the config says (controller's call). Dan sets up the sync's Healthchecks check once,
+   emailing him through Healthchecks itself, not ntfy. It is required: until ntfy is set up, it is
+   how alerts reach him (decision 9). ntfy is optional, for later. Then `make plaud-sign-in`, and
+   checks.
 3. **The dry run** (Compare, or the CLI). Dan checks that both equations add up, that "here" equals
    the archive's Plaud recordings, that what's waiting is about the ~30 newer recordings plus the held
    titles, and that the consent list's IDs are found on Plaud in their new form. The new parser reads
    `of_` and upper-case IDs that 2a's skipped, so any recording 2a imported despite such a line is
-   listed, by archive ID only. The worker tagged each `private` within seconds of deploy, and sent one
-   push per recording. Dan reviews each, and takes out by hand any that mustn't stay, before the next
+   listed, by archive ID only. The worker tagged each `private` within seconds of deploy and flagged
+   it on Status (with ntfy, one push per recording; today, with the check still paused, nothing
+   more). Dan reviews each, and takes out by hand any that mustn't stay, before the next
    step's backup. If anything doesn't fit, he stops.
 4. **The catch-up,** supervised on the server: a `pre-import` backup, the baseline, `recordings plaud
    sync --catch-up`, a validation, then a `post-import` backup. If it is interrupted, Status says so,
@@ -388,14 +401,18 @@ means the controller made it. The first, which refined decision 4, Dan then appr
    good or bad, even a turn that stops because the sign-in lapsed, the consent list is stopped, a
    hold is on, Plaud asked it to wait, or the first catch-up hasn't run. A ping means "alive and
    deciding". So:
-   - **What Dan gains:** a Plaud outage or a refused sign-in reaches him once, through the app's own
-     push, with the reason. Healthchecks doesn't add a second, reasonless alert.
+   - **What Dan gains, once ntfy is set up:** a Plaud outage or a refused sign-in reaches him once,
+     through the app's own push, with the reason. Healthchecks doesn't add a second, reasonless
+     alert.
    - **What still reaches him through Healthchecks:** a worker that is dead or stuck; and a push the
-     worker owes him but ntfy won't take, because then the worker holds back its ping.
+     worker owes him but can't deliver, because then the worker holds back its ping. Today, with no
+     ntfy (decision 9), that is every push: each reaches him as Healthchecks' email, with the reason
+     on Status.
    - **With decision 4 read literally** (pings only after good runs), every lasting failure would
      also bring Healthchecks' alert after about 1h20.
 
-   (The controller's call, approved by Dan on 2026-10-23: decision 8.)
+   (The controller's call, approved by Dan on 2026-10-23: decision 8. Decision 9 keeps it, with
+   ntfy for later.)
 
 **Privacy and keeping out:**
 2. **A recording kept out by its title stays out,** even if Plaud or autocorrect later removes the
@@ -477,13 +494,15 @@ Calls Dan won't notice (where the token lives, how the auto-private record is ke
 3. **Sync everything finishes clean,** apart from recordings Dan has parked (each one checked in
    Plaud's app and noted in the runbook) and recordings flagged to be taken out, which it names.
 4. **A refused sign-in raises one push,** and signing in again brings one "works again". Proven
-   with the fake server; on the real account, `alert-test` proves delivery.
+   with the fake server; on the real account, `alert-test` proves delivery. Today, with no ntfy, the
+   same refusal reaches him as one Healthchecks email, proven with the fake server too (decision 9).
 5. **His decisions hold:** a placeholder-titled recording arrives at once and a later private title
    tags it; a keep-out title is never downloaded; a late one is tagged, flagged and pushed once;
    Release asks first; a removed `private` stays removed.
 6. **Nothing stops silently:** an outage pushes after 2 hours and not before; a dead worker, or a
-   push ntfy wouldn't take, reaches him through Healthchecks; a rebuilt sync state pushes once and
-   waits; a schedule left off shows in Needs attention.
+   push that can't be delivered (today, with no ntfy, every push), reaches him through
+   Healthchecks; a rebuilt sync state pushes once and waits; a schedule left off shows in Needs
+   attention.
 7. **The README, the runbook and the tagging spec** say tagging starts after step 7's import and its
    backup (decision 7).
 
@@ -506,6 +525,11 @@ Calls Dan won't notice (where the token lives, how the auto-private record is ke
    push and one `make plaud-sign-in`.
 5. **Copies outlive a removal by hand,** as J2 lists. Only a NAS-side `restic rewrite` removes the
    `pre-import` and `post-import` copies.
+6. **Until ntfy is set up, alerts are late, and say only "down"** (decision 9): one Healthchecks
+   email within about 1h20 of a push being due (about 3h20 into an outage), with the reason on
+   Status. After a one-time event, its "up" comes about half an hour later, though the flag stays on
+   Status. And Healthchecks' email is the single channel: if it doesn't reach him, only Status
+   shows the problem.
 
 The full list is §23.
 
@@ -714,7 +738,7 @@ Every contradiction the council found is settled in the text, and listed with it
 | `plaud_check_log` | one row per check: time, recording, result, parts changed, parts found volatile. Kept 7 days | worker | both |
 | `plaud_private_checked` | the marker (§13.2): per recording and Plaud ID, a SHA-256 of the title last checked, and the version of the pattern list it passed | every `Writer` that reconciles | the same |
 | `plaud_events` | what Dan sees: imported, arrived private, updated (with parts), re-tagged private (with why), kept out late, consent-listed late, couldn't tag private, gone from Plaud, released. Kept 90 days; open flags until resolved | worker | web |
-| `plaud_state` | one row per key: the last good listing (its ID-set hash, census and time), holds (with the held listing's absent set), the breaker and its `window_start`, the sign-in state, `failing_since` and its cause, `last_started` and `last_ended`, `catch_up_done_at`, the snapshot mark rows (§11.6), when a rebuild was found and whether a dry run has run since, the keep-out words enforced, the auto-private pattern list by version, Sync everything's progress and pace | worker | both |
+| `plaud_state` | one row per key: the last good listing (its ID-set hash, census and time), holds (with the held listing's absent set), the breaker and its `window_start`, the sign-in state, `failing_since` and its cause, each undelivered push's key and when it became owed (§16), `last_started` and `last_ended`, `catch_up_done_at`, the snapshot mark rows (§11.6), when a rebuild was found and whether a dry run has run since, the keep-out words enforced, the auto-private pattern list by version, Sync everything's progress and pace | worker | both |
 
 - **No `SCHEMA_VERSION` bump.** An older release's `State.open` ignores unknown tables, so `make
   rollback` keeps working. A test asserts `SCHEMA_VERSION == 1` and `MIGRATIONS == {}`, saying why.
@@ -806,8 +830,8 @@ that comes due, in one of these ways, and each handled turn ends with the sync's
    failure.
 
 With `schedule_minutes = 0` no turn comes due, and nothing pings; the runbook pauses the check
-(§17.5). Otherwise the ping is withheld only when a push is owed and wasn't delivered (§16), or a
-`plaud` holder looks stuck (item 4).
+(§17.5). Otherwise the ping is withheld only when a push is owed and wasn't delivered (§16; with
+no ntfy configured, every owed push, decision 9), or a `plaud` holder looks stuck (item 4).
 
 ## 10. The Plaud client and the token store
 
@@ -1840,7 +1864,10 @@ component, and link to each other.
   - a `plaud` holder older than 2 hours (12 for Sync everything and the catch-up): "may be stuck"
   - a small shrink unsettled after 24 hours
   - the schedule off for 24 hours after the catch-up
-  - an undelivered push (§16): "a push couldn't be sent: check ntfy"
+  - an undelivered push (§16): "a push couldn't be sent: check ntfy", only when ntfy is set up. With
+    alerts off (no ntfy configured, decision 9), the cause is already on Status, and the numbers
+    gain the plain line "No phone pushes (ntfy isn't set up): Healthchecks emails you instead",
+    never in Needs attention.
 - **"No sync has run yet"** when a table isn't there (§9.5).
 - **It redraws** every 60 seconds (main spec §12.5), and when a request finishes.
 - **No titles anywhere on Status.** Recordings are named by ID (P13).
@@ -1941,25 +1968,49 @@ the breaker is still open (`ops._alert`'s ok path today clears every key of a jo
     (§9.7): a turn that runs, good or bad, and a turn that stops at the gate, a sign-in pause, a
     consent stop, a hold, a rate-limit wait, or a busy `plaud` lock. The light turns inside long runs
     ping too. Never `/start` or `/fail`. A ping means "the worker is alive and deciding".
-  - **The one exception: a push owed and not delivered.** While a push that is due (any immediate
-    one, or the 2-hour one) couldn't be delivered to ntfy (`alerts.send` reports it undelivered, as
-    `ops._alert` already tracks), the worker withholds its ping, and Needs attention says "a push
-    couldn't be sent: check ntfy". Healthchecks then speaks after its grace: the backstop for broken
-    push delivery. Pings resume once the push goes through.
-  - So the check speaks only when the worker is dead or stuck, or can't reach Dan. Lasting failures
-    push through the app's own keys, with the reason. Nothing pushes twice for one cause.
+  - **The one exception: a push owed and not delivered.** A push that is due (any immediate one,
+    or the 2-hour one) is **undelivered** when `alerts.send` returns false, as `ops._alert` already
+    tracks: ntfy refused it or couldn't be reached, or **alerts are off because no ntfy is
+    configured** (`AlertConfig.enabled` is false, and `send` returns false without trying,
+    `alerts.py:176-177`). So until Dan sets up ntfy, every push the worker owes is undelivered
+    (decision 9). While one is owed, the worker withholds its ping, and Healthchecks emails Dan
+    after its grace: the backstop for broken push delivery, and today the alert itself. Status says
+    why (§15.2). How long the ping is withheld, by key:
+    - **Lasting keys** (`plaud:sign-in`, `plaud:consent`, `plaud:listing`, `plaud:rebuilt`,
+      `plaud:breaker`, `plaud:sync`): from the turn the push comes due until it is delivered or its
+      key clears (the table's "Cleared by"). Every one of those clears by Dan's action or by itself,
+      never by the push, so the withholding ends when the cause does. Healthchecks emails "down"
+      within about 1h20 of the push coming due (the 1-hour grace, plus up to one period since the
+      last ping): about 1h20 after an immediate key's cause, about 3h20 after a `plaud:sync` failure
+      began. It emails "up" when the cause clears.
+    - **One-shot keys** (`plaud:privacy`, and `plaud:full`, whose key clears only at the next good
+      Sync everything): for one **alert window**, `schedule_minutes` plus the 1-hour grace plus 10
+      minutes from when the push became owed, unless it is delivered sooner. Healthchecks has said
+      "down" by then. The push is then given up, its flag stays on Status, and the ping resumes, so
+      "up" follows about half an hour later. A flag that never clears (a late keep-out Dan decides
+      to keep) can't withhold the ping for ever.
+    - **Never withheld for:** "works again" pushes, the daily reminders and `alert-test`. A failed
+      one is retried at the next run, as today, without touching the ping.
+    - `plaud_state` keeps each owed push's key and when it became owed (§9.5), so a restart neither
+      drops a withholding nor starts its window again.
+    - **No loop:** withholding a ping raises no key, and Healthchecks' state is never read back, so
+      nothing feeds on itself. Each withholding ends when its key clears or its window passes.
+      Setting ntfy up later ends a lasting one at the next run, when the retried push goes through.
+  - So the check speaks only when the worker is dead or stuck, or can't reach Dan (today, whenever a
+    push is owed). Once ntfy is set up, lasting failures push through the app's own keys, with the
+    reason. Nothing pushes twice for one cause.
   - **Period:** `schedule_minutes`. **Grace:** 1 hour, because the check is pinged at every turn.
     That is shorter than main spec §14's "at least 3 hours", which stays the rule for the backup's
     check (its long jobs share one loop) and is amended to say so (§19). The runbook changes the
-    period whenever `schedule_minutes` changes. Dan routes its notifications through Healthchecks'
-    own channel (e-mail or its app), not ntfy.
+    period whenever `schedule_minutes` changes. Dan routes its notifications to email through
+    Healthchecks itself, not ntfy: until ntfy is set up, they are his alerts (decision 9).
   - It is paused while the schedule is off (runbook). Before the first catch-up, with the schedule
     off, no turn comes due, so nothing pings.
   - **Build this behaviour.** Dan approved it on 2026-10-23 as decision 8. Decision 4's own text,
     "pinged after every good run", stays as he gave it, with decision 8 refining it.
 - **`alert-test`** in each container pings the check that container holds (the backup's
-  `deadman_url`, the worker's `deadman_sync_url`) with `/log`, and sends one push. The runbook runs it
-  in both.
+  `deadman_url`, the worker's `deadman_sync_url`) with `/log`, and sends one push if ntfy is set up
+  (main spec §14 tests only the parts set up). The runbook runs it in both.
 - **Delivery rules are unchanged:** https only, no redirects, a 10-second timeout.
 
 ## 17. Operations
@@ -1980,8 +2031,8 @@ the breaker is still open (`ops._alert`'s ok path today clears every key of a jo
   - **the consent folder,** read-only, at `/consent` (§12.1)
   - `/plaud`, read-write
 - **`backup` gains** the consent folder, read-only, for `extra_paths`.
-- **Secrets:** the ntfy topic, the ntfy token if set, and `deadman_sync_url`. No restic, NAS,
-  `known_hosts` or `deadman_url` secret.
+- **Secrets:** `deadman_sync_url` (required), and the ntfy topic and token once ntfy is set up
+  (optional, for later: decision 9). No restic, NAS, `known_hosts` or `deadman_url` secret.
 - **Its own health check:** `recordings worker --alive` (§9.2), interval 30 seconds, start period 60.
   Never the image's `:8000/healthz` probe (`Dockerfile:80`), which would mark it unhealthy forever and
   fail `make deploy`'s `--wait`.
@@ -1996,9 +2047,12 @@ every role but `web` (lines 605-609), and forbids job secrets only in `web`. So 
 these changes:
 - `ROLES` gains `worker`.
 - **For `worker`:** skip `_backup`, `_mirror`, `_ssh` and the restic part of `_secrets`; keep
-  `_alerts`, checking the ntfy secrets and `deadman_sync_url`. Its "no dead-man's switch" warning
-  (`doctor.py:530-534`) names `RECORDINGS_DEADMAN_SYNC_URL_FILE` for the worker, and
-  `RECORDINGS_DEADMAN_URL_FILE` for the others, and reports `deadman_set` from the right one.
+  `_alerts`, checking the ntfy secrets and `deadman_sync_url`, and reporting `deadman_set` from the
+  right one. For the worker, a missing `deadman_sync_url` is a problem, naming
+  `RECORDINGS_DEADMAN_SYNC_URL_FILE`, not the "no dead-man's switch" warning (`doctor.py:530-534`),
+  which stays as it is for the others: with no ntfy, the sync's check is how every alert reaches
+  Dan (decision 9). Alerts being off (`doctor.py:528-529`) stays a warning in every role; for the
+  worker it adds "Healthchecks emails instead".
 - **`JOB_SECRETS` splits** into a backup set (restic, rest-server, the NAS key, `known_hosts`,
   `deadman_url`) and an alert set (the ntfy topic and token).
   - `web` forbids both sets, plus `deadman_sync_url`.
@@ -2012,7 +2066,7 @@ these changes:
   - no token store ("sign-in needed: run `make plaud-sign-in`");
   - `/plaud` wider than 0700, or the token wider than 0600, or not the app's own;
   - an invalid `keep_out_word`;
-  - a bad `deadman_sync_url`, which turns all the worker's alerts off.
+  - a bad `deadman_sync_url`, which turns all the worker's alerts off, or a missing one.
 
   It also reports the token's expiry, whether a refresh token is present, the keep-out words enforced,
   and the consent list's ID count. Never a value, never a hash.
@@ -2033,7 +2087,7 @@ these changes:
   guard asks through the `backup` container, and a `plaud` hold is visible there through the shared
   `state/locks`. `FORCE=1` still overrides.
 - **`make deploy-smoke`** (CI) runs the worker with no token and no consent list, and checks that it
-  stays healthy and that doctor reports both.
+  stays healthy and that doctor reports both (and the missing `deadman_sync_url`).
 - **Rollback stays a tag:**
   - `state.db` gains tables only (§9.5), and `recording.json` gains no field (§13.2);
   - `index.db` in WAL mode, and the cache file, open fine in an older release, or are ignored;
@@ -2089,15 +2143,18 @@ The main spec's first-run steps 5, 6 and 7 (§19) become new runbook sections, `
   2. `install -d -m 700 $RECORDINGS_HOME/plaud`.
   3. Set `RECORDINGS_PLAUD_HOST` and `RECORDINGS_CONSENT_HOST` in `deploy.env`, and add the consent
      folder and `/state/manifests` to `[backup] extra_paths`.
-  4. Create the sync's Healthchecks check: period 20 minutes (the `schedule_minutes` to come), grace
-     1 hour, notifying through Healthchecks' own channel. Put its URL in the secrets folder as
-     `deadman_sync_url`, and pause it.
+  4. **Required** (decision 9): create the sync's Healthchecks check: period 20 minutes (the
+     `schedule_minutes` to come), grace 1 hour, emailing Dan through Healthchecks itself. Until ntfy
+     is set up, its email is how every sync alert reaches him. Put its URL in the secrets folder as
+     `deadman_sync_url`, and pause it. **ntfy is optional, for later:** the worker's ntfy topic and
+     token can wait, and so can section 2 step 2's ntfy parts (below).
   5. Keep `schedule_minutes = 0` (the worker refuses scheduled syncs before the catch-up anyway), then
      `make deploy`.
   6. On the Mac: write `local.mk` (`SERVER`, `REPO_DIR`), then `make plaud-sign-in`. On the server:
      `rc exec worker recordings plaud check`.
   7. `rc exec worker recordings doctor --role worker`, `rc exec worker recordings plaud consent`, and
-     `recordings alert-test` in `backup` and in `worker`.
+     `recordings alert-test` in `backup` and in `worker`. With no ntfy, doctor warns that alerts are
+     off, and `alert-test` tests only the ping.
 - **7. The dry run:** `rc exec worker recordings plaud sync --dry-run --list`, or **Compare**. Check:
   - both equations add up;
   - "here" equals the archive's Plaud recordings, and anything absent is explained (recordings Dan
@@ -2123,8 +2180,8 @@ The main spec's first-run steps 5, 6 and 7 (§19) become new runbook sections, `
   server (write a new file and rename it). Then `recordings plaud consent` shows the new count.
 - **"Taking a recording out by hand":** §12.4, word for word.
 - **"When the Plaud alert comes":** one row per alert title (§16), plus "Healthchecks:
-  recordings-sync is down: the worker is dead or stuck, or can't deliver its pushes. `rc ps`, `rc logs
-  worker`, and Status's 'a push couldn't be sent'."
+  recordings-sync is down: the worker is dead or stuck, or can't deliver its pushes (with no ntfy,
+  any push). Status first: it names the cause; if it names none, `rc ps` and `rc logs worker`."
 - **Recovery:** the breaker (§14.4); a hold and Accept this listing, with what to check first for each
   kind (§11.4); a consent stop; parking.
 - **"After a lost or restored `state.db`":** restore `state.db` from the newest backup rather than
@@ -2136,6 +2193,13 @@ The main spec's first-run steps 5, 6 and 7 (§19) become new runbook sections, `
     worker` before restoring; after it, run the dry run yourself, put on the consent list any
     recording kept out after that backup was taken, and only then `rc start worker`.
 - **Changing `schedule_minutes`:** also change the sync's Healthchecks period to match.
+- **Section 2 step 2 (2a's alerts):** its ntfy.sh bullet, its token bullet and the `ntfy_topic` line
+  are marked optional, for later (decision 9); the Healthchecks bullet stays required, and so does
+  the sync's check (section 6 step 4). The expected
+  file list and the checklist's "ntfy topic and ping URL" row say "the ntfy topic, if set up".
+- **"Setting up ntfy, later":** section 2 step 2's ntfy parts (the topic, and a token if needed, in
+  the secrets folder), `make deploy`, then `alert-test` in `backup` and `worker`. Nothing else
+  changes: the same events push, and Healthchecks goes quiet again.
 - **"Rolling back across 2b"** (§17.3).
 - **Decision 7's lines:**
   - Section 4's "Dan decided on 2026-10-22 that the first real tag waits until stage 2b's import dry
@@ -2325,7 +2389,8 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
     `/srv/recordings/plaud`, 0700), mounted read-write in `worker` only, at `/plaud`; never backed up
     or mirrored". Settles §5 and §6.8 against `config.py:33` and the shared `/state`.
   - Secrets gain the sync's dead-man URL; `deploy.env` gains `RECORDINGS_PLAUD_HOST` and
-    `RECORDINGS_CONSENT_HOST` (a folder); doctor's roles gain `worker` (§17.2).
+    `RECORDINGS_CONSENT_HOST` (a folder); doctor's roles gain `worker` (§17.2), for which a missing
+    dead-man URL is a problem and alerts off only a warning (decision 9).
 - **§6.4:**
   - The `plaud` lock sits beside `ops` (§9.4).
   - The Writer's operations gain `add_snapshot` (§9.6).
@@ -2400,6 +2465,11 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
     the backup check's rule. The sync's check has a grace of 1 hour and a period of
     `schedule_minutes`, because the worker pings it at every turn it handles, and withholds the ping
     only while a push is owed and undelivered (§16). This spec's 1 hour wins for the sync's check.
+  - **ntfy is optional** (decision 9): "Alerts … are push notifications through ntfy.sh" gains
+    "once ntfy is set up. Until then, Status and the dead-man's checks carry them: with no ntfy,
+    every push the worker owes is undelivered, so the sync's check is withheld and Healthchecks
+    emails instead (stage 2b §16)". "The doctor warns, without failing, when … no dead-man's switch
+    [is] set up" gains "except the worker's, which is a problem (stage 2b §17.2)".
 - **§15:** the worker publishes no port and adds no route; only `worker` holds the token; egress
   isn't blocked (§17.1); "Containers: both run as non-root" becomes all three.
 - **§15.1:** "not … the Plaud token store" stays, now about its own folder. The consent folder and
@@ -2407,7 +2477,8 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
 - **§16:** gains (§21)'s tests.
 - **§17 and §17.1:** no worker in either demo; the panels are canned (§15.5).
 - **§19:**
-  - Step 5: (§18)'s spikes, the token's and the consent list's folders, and the sync's check.
+  - Step 5: (§18)'s spikes, the token's and the consent list's folders, and the sync's check
+    (required; ntfy optional, for later).
   - Step 6: both equations and the consent-list match.
   - Step 7: (§11.6)'s order.
   - The disposable window ends at the first tag after step 7 and its backup (decision 7). Settles
@@ -2420,7 +2491,9 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
   - "If 2b runs long" becomes (§4)'s two halves, noting that `state.db` only gains tables.
 - **§22:**
   - Decision 19 is replaced by Dan's decision 1 of 2026-10-23.
-  - Decision 20's "with a dead-man's switch" becomes "with two dead-man's checks".
+  - Decision 20's "with a dead-man's switch" becomes "with two dead-man's checks", and it gains
+    "ntfy is optional: until it is set up, Status and the checks carry the alerts (Dan, 2026-10-23,
+    stage 2b decision 9)".
   - Decision 31 gains the token's location.
   - Decision 35's "A private tag is always applied before any content is written" gains (§13.3)'s
     exception.
@@ -2488,6 +2561,8 @@ server (§10.6); "real" is a runbook step. Each criterion says which half it bel
      exactly one; none again within 24 hours; no Plaud call until the token changes; a new token
      brings one "works again"; a 429 from the token endpoint is an outage; a 401 after a good refresh
      goes through the current-user read.
+   - **Fake, with no ntfy configured:** the same refusal sends nothing, withholds the ping, and the
+     fake Healthchecks goes down after the grace; a new token clears it, and the pings resume.
    - **Real:** `alert-test` proves delivery.
 5. **Dan's decisions hold** (first half), on the fake:
    - A placeholder-titled recording arrives at the next run, untagged; renamed private, it is tagged
@@ -2521,6 +2596,11 @@ server (§10.6); "real" is a runbook step. Each criterion says which half it bel
      IDs; a small shrink settles when the next listing an hour later is missing the same recordings.
    - The sync's check is pinged at every turn handled, including turns stopped by a dead sign-in, a
      hold or the gate; with the worker killed, no ping; with a due push undelivered, no ping.
+   - **With no ntfy configured** (decision 9), on a fake clock: each owed push withholds the ping,
+     and the fake Healthchecks goes down after the period and grace. A lasting key's pings resume
+     only when it clears; a one-shot key's after its alert window, though its flag stays; a "works
+     again" or a reminder never withholds. Configuring ntfy then delivers the retried push and the
+     pings resume. Status shows the no-ntfy line, never "a push couldn't be sent".
    - An idle worker with no sign-in stays alive (`--alive` 0) for 20 minutes on a fake clock.
    - The schedule off for 24 hours after the catch-up shows in Needs attention.
 7. **Nothing leaks** (first half): a whole sync at DEBUG, with the faults of §21, leaves no token,
@@ -2597,7 +2677,9 @@ and S8: field names only, with invented values.
     beside a failing recording; `LockTimeout` as busy; `failing_since`
   - each alert key's onset, 24-hour reminder, recovery, and `plaud:privacy`'s deduplication
   - the ping: at every handled turn (the gate, a dead sign-in, a hold, busy); withheld while a due
-    push is undelivered
+    push is undelivered, including with alerts off (no ntfy configured): for each key of §16, until
+    it clears (lasting) or for one alert window (one-shot), across a restart; never for a "works
+    again" or a reminder; no withholding left once every key has cleared or every window has passed
   - the token store: atomic writes and modes; one refresh across two processes; a crash between
     reply and write: with rotation and no grace, the next start finds the old file, its refresh is
     refused, and one push follows; with a grace, it recovers
@@ -2628,7 +2710,8 @@ and S8: field names only, with invented values.
   fixture, then against the fake, `baseline`, `sync --dry-run`, `sync --catch-up`, the worker's loop
   for N ticks on a fake clock, and `--full`. It checks files through `Archive`, the Status view,
   pushes through `FakeNtfy`, pings through a fake Healthchecks, and scans every log for tokens,
-  `X-Amz-` and titles.
+  `X-Amz-` and titles. It runs twice: with `FakeNtfy`, and with no ntfy configured, where a sign-in
+  refused mid-flow takes the fake Healthchecks down after the grace and up again after the sign-in.
 - **Guard tests that must fail without their fix:** consent-listed and kept-out IDs never requested,
   and no block or audio of a recording whose envelope title is kept out; `recordings_ui` never imports
   the client, the token store or the sync, and Pyodide never does; the demo never writes a request
@@ -2721,7 +2804,10 @@ Most serious first. §7 is Dan's short list.
 3. **The flow stops, and nobody notices.** Mitigations: the good-run rule, the 2-hour rule, the sticky
    keys, the sync's check (which also speaks when a push can't be delivered), "Scheduled sync is off"
    in Needs attention, and the push when the sync's records are rebuilt. What remains: ntfy and
-   Healthchecks failing together, or Healthchecks' own notification not reaching Dan.
+   Healthchecks failing together, or Healthchecks' own notification not reaching Dan. Until ntfy is
+   set up (decision 9), Healthchecks' email is the only channel, up to about 1h20 late and without
+   its reason, which is on Status; and 2b doesn't change the backup container's own alerts, which
+   without ntfy reach Dan only through Status and the backup's check (main spec §14).
 4. **A late private title sits untagged in the backups and the mirror** for one sync (decision 1's
    exception).
 5. **The forgiving keep-out match can keep an ordinary title out,** such as "No archive access: IT
