@@ -46,6 +46,23 @@ consent list's format and the broken line were shown, he chose **"Stop and tell 
 the recommended one, with no further reason given. It is the spec's decision 12 (§12.1 rule 4
 widened); Task 3 builds it.
 
+## 4. Decision 12 and an ordinary note line (asked 2026-10-24)
+
+Found by Task 3's review. Scenario: the consent list has a note line such as `- Added 2026-10-23`
+or `A bad decade`. Decision 12 as worded counts every character a–f or 0–9 before the dash, spaces
+aside, so "Added 2026" (9 such characters) reads as a split ID: every import stops until the line
+is reworded.
+
+- **A. Count only an unbroken run (Recommended):** a typo needs one run of 8 or more hex characters
+  with no space inside that isn't a whole ID. A split ID always leaves such a run (unless chopped
+  into five or more pieces), and `- 20261023 — asked` still stops; `- Added 2026-10-23` doesn't.
+- B. Keep decision 12 as worded: such a note line stops the sync until it's reworded; Status names
+  the line.
+- C. Only a run of 16 or more counts: fewer false stops, but a wrap that leaves a short piece is
+  missed.
+
+Waiting for Dan's answer.
+
 ## Calls made for Dan
 
 - **Mode: attended.** Phase PRs wait for Dan's merge, and a change to the spec, one of his decisions
