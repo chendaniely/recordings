@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 2: Decision 7's wording, and what approving the spec changes, open.
+**Now:** Task 3: The consent grammar and the keep-out word, open.
 
 ***
 
@@ -604,9 +604,9 @@ Decision 7 refines when tagging may start; approving the spec also changes CLAUD
 - Consumes: nothing.
 - Produces: the documents every later task cites. No code.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-2-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-2-base`
 
-- [ ] **Step 1: Write the failing tests,** `packages/core/tests/test_docs.py`:
+- [x] **Step 1: Write the failing tests,** `packages/core/tests/test_docs.py`:
 
 ```python
 """The documents later work argues from agree with the approved stage 2b spec (its §19, and §20
@@ -648,9 +648,9 @@ def test_claude_md_carries_decision_1s_exception():
     assert "judged on every title the app has seen at that moment" in text
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_docs.py -q`. Expected: `4 failed`. The README and the runbook fail on `assert "until stage 2b's import dry run is done" not in '…'`; the tagging part A spec on `assert 'refining 2026-10-22' in '…'`; CLAUDE.md on `assert 'One deliberate exception (stage 2b, Dan, 2026-10-23)' in '…'`.
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_docs.py -q`. Expected: `4 failed`. The README and the runbook fail on `assert "until stage 2b's import dry run is done" not in '…'`; the tagging part A spec on `assert 'refining 2026-10-22' in '…'`; CLAUDE.md on `assert 'One deliberate exception (stage 2b, Dan, 2026-10-23)' in '…'`.
 
-- [ ] **Step 3: Write decision 7's wording and CLAUDE.md's privacy rule.** Make each replacement exactly. The runbook keeps "Dan's call" and "loses every tag applied in the app", which `test_runbook.py` checks; CLAUDE.md's new sentence is spec §13.3's, word for word.
+- [x] **Step 3: Write decision 7's wording and CLAUDE.md's privacy rule.** Make each replacement exactly. The runbook keeps "Dan's call" and "loses every tag applied in the app", which `test_runbook.py` checks; CLAUDE.md's new sentence is spec §13.3's, word for word.
 
 In `README.md`:
 
@@ -748,9 +748,9 @@ with
   log carries a title.
 ```
 
-- [ ] **Step 4: Run them; they pass.** `uv run pytest packages/core/tests/test_docs.py packages/core/tests/test_runbook.py -q`. Expected: all pass.
+- [x] **Step 4: Run them; they pass.** `uv run pytest packages/core/tests/test_docs.py packages/core/tests/test_runbook.py -q`. Expected: all pass.
 
-- [ ] **Step 5: Mark ntfy optional in the runbook** (spec §17.5 and decision 9): section 2 step 2's ntfy.sh bullet, its token bullet and the `ntfy_topic` line; the expected files and the checklist row ("the ntfy topic, if set up"); step 6's test push; doctor's "alerts are off" warning, expected without ntfy (G1); and a short section "Setting up ntfy, later" before "## Tagging". Its `rc exec backup recordings alert-test` is a command `test_runbook.py` parses, and it does. (Until Task 17 makes the `ntfy_topic` secret optional in `docker/compose.yml`, a deploy without that file still fails; nothing deploys between these tasks.)
+- [x] **Step 5: Mark ntfy optional in the runbook** (spec §17.5 and decision 9): section 2 step 2's ntfy.sh bullet, its token bullet and the `ntfy_topic` line; the expected files and the checklist row ("the ntfy topic, if set up"); step 6's test push; doctor's "alerts are off" warning, expected without ntfy (G1); and a short section "Setting up ntfy, later" before "## Tagging". Its `rc exec backup recordings alert-test` is a command `test_runbook.py` parses, and it does. (Until Task 17 makes the `ntfy_topic` secret optional in `docker/compose.yml`, a deploy without that file still fails; nothing deploys between these tasks.)
 
 In `docs/runbooks/first-run.md`:
 
@@ -904,7 +904,7 @@ carry every alert: the backup's check, and from stage 2b the Plaud sync's.
 ## Tagging
 ```
 
-- [ ] **Step 6: Apply spec §19's "The main spec" list, item by item** (decision 8). Each item's new text is §19's own words, with §19's bracketed references written "stage 2b §N", and marked "(Dan, 2026-10-23)" where it carries one of Dan's decisions, otherwise "(stage 2b design, 2026-10-23)". Make each replacement exactly; the labels follow §19's list in its order, grouped where one passage holds several items.
+- [x] **Step 6: Apply spec §19's "The main spec" list, item by item** (decision 8). Each item's new text is §19's own words, with §19's bracketed references written "stage 2b §N", and marked "(Dan, 2026-10-23)" where it carries one of Dan's decisions, otherwise "(stage 2b design, 2026-10-23)". Make each replacement exactly; the labels follow §19's list in its order, grouped where one passage holds several items.
 
 In `docs/superpowers/specs/2026-10-08-recordings-design.md`:
 
@@ -1990,15 +1990,15 @@ with
       1, its §13.3).
 ```
 
-- [ ] **Step 7: Check the main spec reads as amended.**
+- [x] **Step 7: Check the main spec reads as amended.**
   - `grep -c "stage 2b design, 2026-10-23" docs/superpowers/specs/2026-10-08-recordings-design.md`. Expected: `44`.
   - `grep -c "Dan, 2026-10-23" docs/superpowers/specs/2026-10-08-recordings-design.md`. Expected: `14`.
   - `grep -nE "carry over unchanged|One image, two containers|The grace period carries over|a Plaud 401|A 401 stops the run|mounted read-only into both|in both containers|state/plaud/tokens.json|with a dead-man's switch\." docs/superpowers/specs/2026-10-08-recordings-design.md`. Expected: no output.
   - `uv run pytest packages/core/tests/test_docs.py packages/core/tests/test_runbook.py -q`. Expected: all pass.
 
-- [ ] **Step 8: Run the checks.** `make check`. Expected: all pass.
+- [x] **Step 8: Run the checks.** `make check`. Expected: all pass.
 
-- [ ] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 docs: 🤖 decision 7's refined wording, and the main spec, runbook and CLAUDE.md as the 2b spec's approval changes them
@@ -2031,7 +2031,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/tests/test_docs.py README.md CLAUDE.md docs/runbooks/first-run.md docs/superpowers/specs/2026-10-15-tagging-a-design.md docs/superpowers/specs/2026-10-08-recordings-design.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 10: Review, look forward, close.** The controller runs the Tier 3 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 10: Review, look forward, close.** The controller runs the Tier 3 review (the template's *Reviews*), the forward review and the close commit.
 
 ### Task 3: The consent grammar and the keep-out word
 
@@ -24859,3 +24859,4 @@ Their full plans are written at their phase start, against the code as built and
 | 13 | Minor | `packages/core/src/recordings/worker.py` | The consent read trusts a file only when its signature held still during the read; a list written in place in two flushes can still be read in the pause. Phase 2's read before each download trusts only a file whose mtime is at least one tick old (S11). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | Needs attention's "a sign-in expiring within 7 days" (§15.2) reads `sign_in.expires_at`, which Phase 2 writes (BD3). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | The cache's titles of an ID consent-listed, or matching an enforced word, since the compare must never reach the browser (P1, P13). | open: Phase 2's outline |
+| 1 | Minor | `packages/ui/tests/e2e/test_tagging.py` | `test_the_headers_touch_targets_are_44_px_and_never_overlap` failed once in CI on a docs-only commit (`ec9d5af`, run 40126882917: `assert 0 == 2`, the chips' × buttons not counted under `hover: none`) and passed on the same code before and after. Investigate with superpowers:systematic-debugging before the phase ends; never just re-run it. | open |
