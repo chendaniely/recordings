@@ -111,6 +111,27 @@ He gave no further reasons, so the reasons below come from the options as they w
    - Once ntfy is set up, the same events push to his phone instead, and Healthchecks goes quiet
      again. No other change is needed.
    - In the runbook, ntfy is an optional step for later. The sync's Healthchecks check is required.
+10. **Alerts trimmed to one rule: "2 hours, same as all"** (recommended). Dan asked for this after
+    asking for a simplification pass ("yes run that pass"). It changes how decisions 4, 5, 8 and 9 are
+    carried out, not what they are for.
+    - 2b sends no phone push and has no push code. The worker pings the sync's Healthchecks check
+      only after a scheduled sync that is good and that nothing holds up for Dan: a sign-in, the
+      consent list, a hold, the breaker, or a `private` it couldn't write.
+    - Any lasting stop, whether a dead worker, a Plaud outage, a refused sign-in, a consent problem, a
+      hold or the breaker, gives one Healthchecks email when the check's 2-hour grace runs out, and
+      "up" when it works again. Nothing emails if the stop is fixed or heals within the 2 hours. That
+      replaces decision 5's "at once" for a refused sign-in, the breaker and a consent stop.
+    - Status always says why the check isn't being pinged.
+    - Decision 8, one push with its reason, is deferred to the later change that adds ntfy for the
+      sync. 2b builds one documented hook for that change, at the end of each sync turn. So, unlike
+      decision 9's "no other change is needed", turning on phone pushes for the sync needs that small
+      code change. The backup's 2a ntfy alerts are unchanged.
+11. **The edit breaker: "Accept on Status"** (recommended).
+    - When the breaker trips because Plaud added a field, Status names the field and offers **Accept
+      these changes**, from any browser. Each recording then gets one new snapshot.
+    - The button is offered only for fields that are the same on two fetches made a moment apart. If
+      the same field trips the breaker again, the button goes, and Status says it needs a code fix.
+      The breaker never needs the server.
 
 ## 2. Your days with 2b
 
