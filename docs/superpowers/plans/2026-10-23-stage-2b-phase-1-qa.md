@@ -25,6 +25,24 @@ push.
 
 Dan chose **A**, the recommended option, with no further reason given.
 
+## 3. A consent-list ID split by a space or a line wrap (asked 2026-10-24)
+
+Found by the plan council (S2). Scenario: a line in the consent list ("never mirror") holds an ID
+that a space crept into (`- `0123456789abcdef 0123456789abcdef` — asked`), or an editor wrapped it
+over two lines. The spec's typo rule (§12.1, rule 4) looks only at the first word and needs 24 hex
+digits there, so these lines read as plain text: nothing is excluded, the list counts as readable,
+and from Phase 2 that recording would be downloaded.
+
+- **A. Treat it as a typo (Recommended):** a line whose text before the dash is only hex digits
+  (spaces, backticks and `of_` aside), 8 or more of them, and isn't one whole ID stops the list like
+  today's typos; Status names the line number. An odd line such as `- 20261023 — asked` also stops
+  until it's reworded.
+- B. Keep the spec's rule and record the gap: `make consent-add` checks every ID it adds, so a split ID
+  only comes from a hand edit.
+- C. Join the pieces and read it as the ID.
+
+Waiting for Dan's answer.
+
 ## Calls made for Dan
 
 - **Mode: attended.** Phase PRs wait for Dan's merge, and a change to the spec, one of his decisions
