@@ -29,6 +29,7 @@ B = "b" * 32
 C = "c" * 32
 J = "9" * 32  # a recording whose title is outside ASCII
 X = "7" * 32  # on the consent list
+OF = "e0" * 16  # on the consent list in the of_ form, upper case: 2a's parser missed it
 UUID = "11111111-1111-4111-8111-111111111111"
 NOW = datetime(2026, 10, 9, 8, 0, tzinfo=UTC)
 JA = "会議メモ / Q&A"  # Review Focus 4: a title outside ASCII
@@ -785,6 +786,28 @@ def test_the_consent_list_is_read_as_audio_router_reads_it(tmp_path):
     )
     assert load_consent_list(path) == {X, "6" * 32}
     assert consent_list_path({"plaud": {"consent_list": str(path)}}) == path
+
+
+def test_the_2a_import_now_reads_of_and_upper_case_exclusions(
+    ar_archive, plaud_env, writer, tmp_path
+):
+    # why: 2b spec §12.1. 2a's parser read only bare lower-case IDs, so an `of_` or upper-case
+    # exclusion was skipped and its recording imported. The import now reads the list through
+    # keepout.parse_consent, so both forms keep the recording out.
+    ar_archive.plaud(OF, envelopes=[plaud_env(OF)], recorded_at="2026-08-05T09:00:00-07:00")
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    path = tmp_path / "consent.md"
+    path.write_text(f"# Never mirror\n- `OF_{OF.upper()}` — asked not to keep\n", encoding="utf-8")
+    consent = load_consent_list(path)
+    assert consent == {OF}
+    the_plan = plan(
+        ar_archive.root, writer.index, consent=consent, default_timezone="America/Vancouver"
+    )
+    assert the_plan.counts()["consent-excluded"] == 1
+    run(the_plan, writer, now=NOW)
+    refs = {s.ref for r in writer.archive.iter_recordings() for s in r.sources}
+    assert refs == {A, f"plaud/{A}"}
 
 
 @pytest.mark.parametrize("content", [None, "", "No IDs here.\n"])

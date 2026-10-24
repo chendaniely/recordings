@@ -176,21 +176,34 @@ class Recording(_Model):
         return value
 
 
+def visible(text: str) -> str:
+    """The text as a person reads it: Unicode NFKC (a fullwidth letter, digit, dash or solidus
+    becomes the plain one), without format characters (category Cf: a zero-width space, a word
+    joiner, a byte order mark) or the other invisible code points in `HIDDEN_CODEPOINTS`. Its
+    case is kept."""
+    normal = unicodedata.normalize("NFKC", text)
+    return "".join(
+        c for c in normal if unicodedata.category(c) != "Cf" and ord(c) not in HIDDEN_CODEPOINTS
+    )
+
+
+def fold(text: str) -> str:
+    """The privacy rule's fold (tagging spec §4): `visible(text)`, then `casefold()`. The one place
+    it lives: `is_private_tag` folds a tag with it, and stage 2b a Plaud title and the keep-out
+    word (`plaud.keepout`; its spec §12.2, §13.1)."""
+    return visible(text).casefold()
+
+
 def is_private_tag(tag: str) -> bool:
     """Spec §7.4: the tag's first folder is `private`, in any capitalisation.
 
     The one place the rule lives. `Private/health` is private; `privateer` and
-    `notes/private` are not. It errs towards private: the tag is folded with Unicode NFKC
-    (so a fullwidth spelling of the word, or a fullwidth solidus, counts) and format characters
-    such as a zero-width space, and the other invisible code points in `HIDDEN_CODEPOINTS`, are
-    dropped, before `casefold()` (tagging spec §4).
+    `notes/private` are not. It errs towards private: the tag is folded (`fold`: Unicode NFKC,
+    so a fullwidth spelling of the word, or a fullwidth solidus, counts; format characters such
+    as a zero-width space, and the other invisible code points in `HIDDEN_CODEPOINTS`, dropped;
+    then `casefold()`) before its first folder is read (tagging spec §4).
     """
-    folded = unicodedata.normalize("NFKC", tag)
-    first = folded.split("/", 1)[0]
-    first = "".join(
-        c for c in first if unicodedata.category(c) != "Cf" and ord(c) not in HIDDEN_CODEPOINTS
-    )
-    return first.casefold() == "private"
+    return fold(tag).split("/", 1)[0] == "private"
 
 
 def is_private(rec: Recording) -> bool:
