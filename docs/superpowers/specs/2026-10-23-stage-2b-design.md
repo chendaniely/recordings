@@ -22,7 +22,7 @@ phase deploys and rolls back by its tag.
 
 | Phase | Goal | Done means |
 |---|---|---|
-| 1. The groundwork | Everything that needs no spike result, and the spike script, so Dan can run the spike sessions while the rest is built (`docs/superpowers/plans/2026-10-23-stage-2b-phase-1.md`) | The consent grammar and the keep-out word, the Plaud client copy, the 2b tables, the auto-private marker, late consent listings and their flags, the gate, the worker (idle and healthy, its ping rule tested), the request path, the worker's container, doctor and backups, and the whole interface against its view model are built and tested; the spike script passes its guard tests; Phase 1's scenario rows are built; the pull request is merged |
+| 1. The groundwork | Everything that needs no spike result, and the spike script, so Dan can run the spike sessions while the rest is built (`docs/superpowers/plans/2026-10-23-stage-2b-phase-1.md`) | The consent grammar and the keep-out word, the Plaud client copy, the 2b tables, the auto-private marker, late consent listings and their flags, the gate, the worker (idle and healthy, its ping rule tested), the request path (Keep it here the one kind handled; every other button says it comes with the next part), the worker's container, doctor and backups, and the whole interface against its view model are built and tested; the spike script passes its guard tests; Phase 1's scenario rows are built; the pull request is merged |
 | 2. Plaud flows in | After spike sessions A and B: the sign-in, the fake server's shapes, the listing, the compare, the hold, the import and the first catch-up | The dry run accounts for every listed ID (C1); a refused sign-in stops the ping (C4); Dan's decisions hold through the import (C5); nothing leaks (C7); runbook sections 6 to 8 run on the real server, ending "You may start tagging now" (decision 7) |
 | 3. Keeps up | After spike session C (S9): edit-sync | A speaker rename shows within the sweep window, and the breaker stays out of the way (C2); Sync everything exits 0 (C3); Re-sync of a selection works on the real server |
 
@@ -3015,15 +3015,15 @@ Rows for Phases 2 and 3 name the phase only: their plans assign tasks and tests.
 | C5.16 | A removed `private`, then a `reindex` in a `web`-role process | It stays removed, and comes back only when the title changes to one that matches, with its note | Phase 1, Task 9 | `packages/core/tests/test_plaud_marker.py` | planned |
 | C5.17 | A removed `private` through 100 sync runs | It stays removed | Phase 2 | Phase 2's plan | planned |
 | C5.18 | `schedule_minutes` 20 from deploy, before the first catch-up | A scheduled turn makes no Plaud call, and an import request is refused | Phase 1, Tasks 13 and 14 | `packages/core/tests/test_worker.py`, `packages/core/tests/test_plaud_requests.py` | planned |
-| C5.19 | An interrupted first catch-up (marks, no `catch_up_done_at`) | The gate stays closed, and Status says so | Phase 1, Task 12 | `packages/core/tests/test_plaud_gate.py` | planned |
+| C5.19 | An interrupted first catch-up (marks, no `catch_up_done_at`) | The gate stays closed, and Status says so | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
 | C5.20 | The interrupted catch-up run again, then ending | It picks up where it stopped, and the turn after it runs a sync | Phase 2 | Phase 2's plan | planned |
 | C5.21 | The gate closed | Every request that would write a snapshot is refused | Phase 1, Task 14 | `packages/core/tests/test_plaud_requests.py` | planned |
 | C5.22 | A SIGTERM mid-run; a catch-up, then a restart | Neither reads as "rebuilt" | Phase 2 | Phase 2's plan | planned |
 | C5.23 | A Re-sync, then a restart | Doesn't read as "rebuilt" | Phase 3 | Phase 3's plan | planned |
-| C5.24 | A restart after a rebuild was recorded | The rebuild isn't found again | Phase 1, Task 12 | `packages/core/tests/test_plaud_gate.py` | planned |
+| C5.24 | A restart after a rebuild was recorded | The rebuild isn't found again | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
 | C5.25 | A rebuilt `state.db` (2b snapshots, no marks) | Recordings created after it keep importing; one created before it that isn't here needs review, in the first listing or later; scheduled runs, Sync now, the CLI's `sync` and Import all leave it out; Import selected brings it in; its ID on the consent list keeps it out | Phase 2 | Phase 2's plan | planned |
 | C5.26 | A rebuilt `state.db`, then Sync everything | It leaves out what needs review | Phase 3 | Phase 3's plan | planned |
-| C5.27 | `recordings plaud review` after a restore | `rebuilt_at` is recorded as now, holding `plaud` | Phase 1, Task 12 | `packages/core/tests/test_plaud_cli.py` | planned |
+| C5.27 | `recordings plaud review` after a restore | `rebuilt_at` is recorded as now, holding `plaud` | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
 | C5.28 | Syncs after `plaud review` | Everything made before it that isn't here waits for review | Phase 2 | Phase 2's plan | planned |
 | C5.29 | Fake: one consent-listed ID listed again under new hex, with no hold | Never requested, and no title shown | Phase 2 | Phase 2's plan | planned |
 | C5.30 | Fake: 10% of IDs re-keyed | A large shrink; Accept then imports none of the matched IDs | Phase 2 | Phase 2's plan | planned |
@@ -3032,7 +3032,7 @@ Rows for Phases 2 and 3 name the phase only: their plans assign tasks and tests.
 | C5.33 | A Plaud ID's form flips between `of_` and bare | Its kept-out state, review mark and flag stay, keyed by canonical ID | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | planned |
 | C5.34 | Fake: a form flip with nothing absent, through syncs | Every kept-out ID stays out; every review mark and consent exclusion holds | Phase 2 | Phase 2's plan | planned |
 | C6.01 | The ping rule as a table: good or not, a streak or not, each blocker, busy, the gate, a sign-in pause, a rate-limit wait | Each case pings or doesn't, against a fake Healthchecks | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | planned |
-| C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | planned |
+| C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 (the rebuild's review list in Phase 2: decision 44) | `packages/core/tests/test_plaud_health.py` | planned |
 | C6.03 | Runs with attempts and no success, failing-list recordings counted | Never good; the pings resume only after a run with a success | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | planned |
 | C6.04 | Fake: every fetch failing while the listing works, or every link 403ing | No pings; once every recording is on the failing list, runs that retry only them stay not good | Phase 2 | Phase 2's plan | planned |
 | C6.05 | Fake: an outage of 1 hour | The pings stop, then resume | Phase 2 | Phase 2's plan | planned |
@@ -3086,3 +3086,7 @@ None: every bullet of §20 is planned in a phase.
   plan).
 - 2026-10-24: Dan's decision 12, a consent-list ID split by a space or a line wrap: "Stop and tell
   me" (§12.1 rule 4 widened; Phase 1, Task 3).
+- 2026-10-24: the Phase 1 plan council's scope ruling (Phase 1 plan decision 44): server code for
+  states only Phases 2 and 3 can reach moves to them, so scenarios C5.19, C5.24, C5.27 and C6.02's
+  rebuild clause move to Phase 2; Phase 1's request path handles Keep it here alone. No expected
+  outcome changed.
