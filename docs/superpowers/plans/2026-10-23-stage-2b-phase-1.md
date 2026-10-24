@@ -35,7 +35,7 @@ Each is a reading of the spec where it leaves a choice open. Code comments cite 
 12. **The ping's HTTP status comes from a new `alerts.ping_url(url, kind="success", *, message="") -> int | None`.** Spec §16 asks for "a `ping_deadman` that takes the URL", and Status shows "last ping failed 14:40 (HTTP 404)", which needs the status. `ping_deadman(ac, …)` keeps its signature and calls `ping_url` with `ac.deadman_url`, so 2a's callers are untouched.
 13. **The worker's tick opens and clears the `consent` blocker as it re-reads the list,** as well as each run does (§16's table names "a consent stop" and "a run that reads the list cleanly"). Status then shows a typo within seconds, and the check stops being pinged at once, gate or no gate.
 14. **`Writer.reconcile_plaud` records the marker, the `retagged-private` event and a late keep-out's flag itself** (Task 9). §13.2 has every `Writer` that reconciles judge privacy, so a `web` reindex must leave the same note as the worker; §9.5's "written by: worker" for `plaud_events` describes the usual writer.
-15. **The reasons an automatic `private` records** (`why` in the event's detail, fixed phrases): "title changed" (§13.1 case 2), "the sync's record was rebuilt" (case 4 once `rebuilt_at` is set), "first check" (case 4 before any rebuild, which is the baseline over 2a's imports), "patterns changed" (case 5). Details maps them to "its Plaud title changed", "the sync's record was rebuilt", and "its title matched a private pattern". After the 90 days events are kept, Details says "Tagged private by the sync" without a reason.
+15. **The reasons an automatic `private` records** (`why` in the event's detail, fixed phrases): "title changed" (§13.1 case 2), "the sync's record was rebuilt" (case 4 once `rebuilt_at` is set), "first check" (case 4 before any rebuild, which is the baseline over 2a's imports), "patterns changed" (case 5), and "kept out by title" (a `private` added by a keep-out word alone, Task 9's `why` "kept out late"; decision 33). Details maps them to "its Plaud title changed", "the sync's record was rebuilt", "its title matched a private pattern" (for both "first check" and "patterns changed"), and "kept out by title". Every recorded reason has its wording, so no known reason shows without one; only after the 90 days events are kept does Details say "Tagged private by the sync" without a reason.
 16. **Open privacy flags live in `plaud_events`** (`open = 1`), one per recording through a partial unique index (P15). "Never fetched again" comes from `plaud_listing.kept_out_at` on any of a recording's canonical IDs, or the consent list as it is now. **Keep it here** is kept durably in `plaud_checks.kept_here_at`, so a later title with the word never flags again, even after its event ages out.
 17. **Blockers are `plaud_state` rows named `blocker:<name>`** (`sign-in`, `consent`, `hold`, `breaker`, `private-unwritten`), each `{"since", "detail"}`; a blocker clears by deleting its row. **The snapshot mark is one upserted key, `snapshot_mark`** (`{"count", "last_at"}`): "mark rows exist" means the key exists.
 18. **The rebuild check scans the archive only when no snapshot mark exists,** reading each recording's `source/plaud-*.json` and stopping at the first whose `_meta.tool` is `"recordings"` (§22 leaves the method to the builder).
@@ -51,6 +51,24 @@ Each is a reading of the spec where it leaves a choice open. Code comments cite 
 28. **Doctor reports the token file's presence only in Phase 1;** its expiry and refresh token need S1's format (Phase 2).
 29. **`validate` reports an orphan snapshot as a warning** through a new `warnings` list (`selfdoc.validate(root, *, deep=False, warnings=None)`). `recordings validate` prints warnings and still exits 0, and the restore test ignores them.
 30. **No test can reach Plaud.** A root `conftest.py` autouse fixture makes `socket.getaddrinfo` refuse any host ending in `plaud.ai` (Task 4), so a mistake fails loudly instead of calling Plaud.
+
+### Rulings after the full steps
+
+The controller's rulings once all 24 tasks were written, and the writers' calls it accepted.
+
+31. **The web app never loads the Plaud client, even at runtime** (spec §9.1, §19): `API_BASE` and `check_api_base` live in the network-free `plaud/endpoint.py` (Task 4), which `client.py` imports them from and `settings.py` imports at its top (Task 7); Tasks 7 and 19 check that calling `plaud_settings` and `plaud_view_settings` loads no client.
+32. **`K_LAST_PING` gains `failed_since`** (Task 11): the first failed ping's time, kept across later failures, dropped by a good ping, for Status's "the ping has failed for 2 hours" (Task 19).
+33. **Decision 15's fifth reason:** a `private` added by a keep-out word alone records "kept out by title" (Task 9's `why` "kept out late"), and Details words it "kept out by title" (Task 19's `WHY_DETAILS`).
+34. **Task 4 is one commit:** the verbatim copy fails `make lint`, so it is committed with its edits; the commit body names the `audio-router` commit copied and lists the edits, and the file's header names its origin.
+35. **Main spec edits are Task 2's alone** (decision 8): no later task modifies or grep-checks the main spec. §19's text names all of 2b's commands, Phase 2's and 3's included, so Task 14 leaves §9.1's CLI paragraph alone.
+36. **`set_listing` creates a missing `plaud_listing` row,** dated by the time it sets (Task 6); Task 8's late keep-out uses it rather than `upsert_listed`, so a 2a recording's ID never looks listed when no listing ran. Task 14's park changes only rows the listing already holds.
+37. **Spec §11.5's title before any block is Phase 2's:** `PlaudClient.envelope` always fetches the linked blocks, and Phase 1 calls it only from the spike (which reads `files/{id}` through `get_json`); Phase 2's import fetches the envelope without its blocks, checks the title, then fetches the blocks (phase-end list).
+38. **A request that joins another row is that row's alias,** kept in its `result` under `also` and hidden on read, so every session follows its own request_id (Task 14).
+39. **`recordings alert-test` in `worker` pings the sync's own check** (Task 17; runbook section 6 step 7, spec §16).
+40. **`scripts/consent_id.py` prints a consent ID's hex as typed, with an `of_` prefix lower-cased** (Task 18), since `consent-add.sh` takes `of_` only while the list's grammar reads `OF_` too.
+41. **`gate_at_start` opens when the catch-up is done and no snapshot mark exists** (Task 12): a catch-up that imported nothing publishes no snapshot.
+42. **A scheduled turn that doesn't run waits one interval in memory** (Task 13), rather than rewriting `last_turn` at every 2-second tick.
+43. **`Writer.add_snapshot` leaves the snapshot mark to its caller** (Task 12), since it holds no `PlaudDB`; Phase 2 keeps "mark before every 2b snapshot, by every path", `Writer.add` at import included (phase-end list).
 
 ## Global Constraints
 
@@ -111,7 +129,7 @@ scripts/compose_smoke.py (17)
 demo/plaud-sync.json (19)
 docs/runbooks/first-run.md (2, 5, 8, 11, 12, 17, 18); main spec and tagging-a spec (2 and as named)
 packages/core/src/recordings/
-  plaud/keepout.py (3)  plaud/client.py (4)  plaud/checks.py, plaud/cache.py (6)  plaud/settings.py (7)
+  plaud/keepout.py (3)  plaud/client.py, plaud/endpoint.py (4)  plaud/checks.py, plaud/cache.py (6)  plaud/settings.py (7)
   plaud/flags.py, plaud/commands.py (8)  plaud/privacy.py (9)  plaud/baseline.py, plaud/runlock.py (10)
   plaud/health.py (11)  plaud/gate.py (12)  plaud/requests.py (14)
   plaud/consent.py (3)  plaud/reconcile.py (9)  state.py (6)  index.py (6)  locks.py (10)  config.py, alerts.py (7)
@@ -2616,6 +2634,7 @@ Spec §10.1: a copy of `audio-router`'s client with the `of_` fix and the leak-p
 
 **Files:**
 - Create: `packages/core/src/recordings/plaud/client.py` (copied from `audio-router`'s `src/audio_router/archive/sources/plaud.py`; its header names the `audio-router` commit actually copied, 7254bae or newer, and the MIT relicensing, main spec §19; the controller gives the checkout's location at dispatch)
+- Create: `packages/core/src/recordings/plaud/endpoint.py` (`API_BASE`, `check_api_base` and the URL rules `check_link` shares with them, out of the copy: network-free, so the settings reader never loads the client; decision 31)
 - Create: `packages/core/tests/fake_plaud.py` (decision 6)
 - Modify: `packages/core/tests/conftest.py` (the `plaud_server` fixture)
 - Modify: `conftest.py` at the root (decision 30's `no_plaud_network` autouse fixture)
@@ -2625,9 +2644,16 @@ Spec §10.1: a copy of `audio-router`'s client with the `of_` fix and the leak-p
 
 **Interfaces:**
 - Consumes: `recordings.refs.canonical_plaud_id`; `recordings.__version__`.
-- Produces (`recordings/plaud/client.py`, stdlib `urllib` only):
+- Produces (`recordings/plaud/endpoint.py`, network-free: `ipaddress`, `urllib.parse` and `config.ConfigError` only; decision 31):
   ```python
   API_BASE = "https://platform.plaud.ai/developer/api"   # as copied
+  def check_api_base(url: object) -> str: ...   # https://, or http:// to the loopback; else ConfigError naming "[plaud] api_base", never the URL
+  def is_loopback(host: str | None) -> bool: ...
+  def plain_url(url: object) -> bool: ...        # visible ASCII, no space
+  def split_url(url: object) -> SplitResult | None: ...   # None unless plain, with a host, a numeric port if any, no user name or password
+  ```
+- Produces (`recordings/plaud/client.py`, stdlib `urllib` only; `API_BASE` and `check_api_base` imported from `endpoint`, so `client.API_BASE` and `client.check_api_base` keep working):
+  ```python
   PAGE_SIZE = 100            # as copied; Phase 2 sets it from S5
   CONNECT_TIMEOUT = 10.0
   READ_TIMEOUT = 60.0
@@ -2673,7 +2699,6 @@ Spec §10.1: a copy of `audio-router`'s client with the `of_` fix and the leak-p
       def envelope(self, listed_id: str) -> dict: ...  # files/{listed_id}, the ID exactly as given; blocks behind a data_link inlined without Authorization; a failed block gets "_data_link_error": "<ErrorClass>"
       def fetch_link(self, url: str) -> bytes: ...     # presigned: checked by check_link; no Authorization; may follow a redirect only to another https URL
       def download(self, url: str, dest: Path) -> int: ...   # streams to dest + ".part", byte count must equal Content-Length, the stall rule, then renames
-  def check_api_base(url: object) -> str: ...   # https://, or http:// to the loopback; else ConfigError naming "[plaud] api_base", never the URL
   def check_link(url: object, *, api_base: str) -> str: ...   # PlaudLinkRefused; plain http only to the loopback while api_base is the loopback (decision 7)
   def id_hash(plaud_id: str) -> str: ...        # first 8 hex of the SHA-256 of the canonical form
   def stamp_meta(listed: Listed, tz_name: str) -> dict: ...   # audio-router's keys (recorded_at_utc, recorded_at_local, stamp, timezone, time_source) plus "tool": "recordings"
@@ -2950,6 +2975,8 @@ errors, which carry no URL. Every ID, title, token and body here is synthetic.""
 import json
 import re
 import socket
+import subprocess
+import sys
 import traceback
 import urllib.error
 import urllib.request
@@ -2974,11 +3001,11 @@ from recordings.plaud.client import (
     PlaudRateLimited,
     PlaudRedirectRefused,
     PlaudUnavailable,
-    check_api_base,
     check_link,
     id_hash,
     stamp_meta,
 )
+from recordings.plaud.endpoint import API_BASE, check_api_base
 
 OF_ID = "of_" + f"{1:032x}"  # Plaud's form since about 2026-09-25
 BARE_ID = f"{0xABC:032X}"  # the bare form, upper case
@@ -3369,6 +3396,19 @@ def test_check_api_base_refuses_everything_else_naming_the_setting(url):
         PlaudClient(Tokens(), api_base=url)
 
 
+def test_the_api_base_lives_where_no_network_module_loads():
+    # why: spec §9.1 ("It imports no client, token or sync module"), the plan's decision 31. The
+    # settings reader takes API_BASE and check_api_base from endpoint, and the web app calls it, so
+    # endpoint loads neither the client nor a network module. The client takes both from it.
+    assert (client_module.API_BASE, client_module.check_api_base) == (API_BASE, check_api_base)
+    code = (
+        "import sys, recordings.plaud.endpoint; print(sorted(m for m in ("
+        "'recordings.plaud.client', 'urllib.request', 'http.client', 'ssl') if m in sys.modules))"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]"
+
+
 def test_id_hash_and_stamp_meta():
     assert id_hash(OF_ID) == id_hash(OF_ID.upper()) == id_hash(f"{1:032x}")
     assert re.fullmatch(r"[0-9a-f]{8}", id_hash(OF_ID))
@@ -3454,22 +3494,7 @@ def test_recordings_ui_never_imports_the_client_the_token_store_or_the_sync():
 
 - [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_client.py packages/ui/tests/test_plaud_imports.py -q`. Expected: `test_plaud_client.py` errors at collection with `ImportError: cannot import name 'client' from 'recordings.plaud'`, and `test_recordings_ui_never_imports_the_client_the_token_store_or_the_sync` fails at its last line with `ModuleNotFoundError: No module named 'recordings.plaud.client'` (its probe imports the client on purpose).
 
-- [ ] **Step 3: Copy the client verbatim, then commit the copy alone,** so the edits review as a diff. The controller gives the `audio-router` checkout's location at dispatch, and the commit it is at (`64612df` when this plan was written); read nothing in it but `src/` and `tests/`. Copy its `src/audio_router/archive/sources/plaud.py` to `packages/core/src/recordings/plaud/client.py`, byte for byte. Nothing imports it yet, and this one commit doesn't pass `make lint` (ruff's UP017 and FURB162, and formatting); the next commit does. Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, with the commit the controller gave if it isn't `64612df`:
-
-```text
-feat(plaud): 🤖 copy audio-router's Plaud client at 64612df, relicensed MIT
-
-audio-router's src/audio_router/archive/sources/plaud.py at its commit 64612df, byte for byte,
-as plaud/client.py, so the next commit's edits (spec §10.1) review as a diff. audio-router is
-Dan's own code, with no LICENSE; he relicenses the copied file MIT (main spec §19). Nothing
-imports it yet. It doesn't pass make lint until the next commit (ruff's UP017 and FURB162, and
-formatting).
-
-Plan: docs/superpowers/plans/2026-10-23-stage-2b-phase-1.md Task 4
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-```
-
-Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/client.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
+- [ ] **Step 3: Copy the client verbatim, and keep the copy for the review (no commit of its own).** The controller gives the `audio-router` checkout's location at dispatch, and the commit it is at (`64612df` when this plan was written); read nothing in it but `src/` and `tests/`. Copy its `src/audio_router/archive/sources/plaud.py`, byte for byte, to `packages/core/src/recordings/plaud/client.py` and to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/task-4-client-as-copied.py` (git-ignored). The verbatim text fails `make lint` (ruff's UP017 and FURB162, and formatting), and a red commit breaks bisecting, so it is never committed alone (decision 34): Step 7's one commit carries the copy with its edits, its body naming the `audio-router` commit copied and listing the edits, and the file's header names its origin. The reviewers read the edits as `git diff --no-index .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-4-client-as-copied.py packages/core/src/recordings/plaud/client.py` (with `endpoint.py` beside it, which holds what moved out of the copy).
 
 - [ ] **Step 4: Write the code: the edits.** Replace the whole of `packages/core/src/recordings/plaud/client.py` with this (its header names the commit copied: change `64612df` if the controller gave another). Checked against the standard library's docs, as spec §22 asks: `Request.add_unredirected_header` adds a header that a redirected request doesn't carry; an `HTTPRedirectHandler.redirect_request` that returns None makes the default error handler raise `HTTPError(code)`, as `alerts.py`'s `_NoRedirect` relies on; `build_opener` leaves out a default handler when a subclass of it is passed, so `_HTTPHandler` and `_HTTPSHandler` replace them; `HTTPResponse.read1(n)` returns at most `n` bytes from one read, and an empty result at a premature end.
 
@@ -3490,6 +3515,10 @@ own code, relicensed MIT for this repo (main spec §19). The edits, each from §
   behind a `data_link`) are fetched without it, must be `https`, and may follow a redirect only to
   another `https` URL. Plain `http` is allowed only to the loopback, and only while the API base is
   the loopback too: that is the tests' fake (2b phase 1 plan, decision 7).
+- **Where it may point** (`API_BASE`, `check_api_base`, and the URL rules `check_link` shares) is
+  in `endpoint`, which loads no network module: the settings reader imports it, never this module,
+  so the web app never loads the client (2b phase 1 plan, decision 31). Both names are imported
+  here, so `client.API_BASE` and `client.check_api_base` still work.
 - **Nothing secret or personal leaves it.** Every error is one of this module's classes, with a
   fixed message, raised `from None` outside the handler that caught the cause, so no chained
   exception carries a URL, a token or a body (some `urllib` errors hold the whole URL). A block
@@ -3508,7 +3537,6 @@ from __future__ import annotations
 
 import hashlib
 import http.client
-import ipaddress
 import json
 import os
 import ssl
@@ -3520,14 +3548,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import SplitResult, quote, urlsplit
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from recordings import __version__
-from recordings.config import ConfigError
+from recordings.plaud.endpoint import API_BASE, check_api_base, is_loopback, plain_url, split_url
 from recordings.refs import canonical_plaud_id
 
-API_BASE = "https://platform.plaud.ai/developer/api"  # as copied
 LIST_PATH = "/open/third-party/files/"
 FILE_PATH = "/open/third-party/files/{}"
 PAGE_SIZE = 100  # as copied (the API rejects anything under 10). Phase 2: S5, S10.
@@ -3537,7 +3564,6 @@ STALL_SECONDS = 60.0  # no bytes for this long
 MIN_RATE = 50_000  # bytes per second on average after the first minute
 USER_AGENT = f"recordings/{__version__}"  # bare urllib's default gets a flat 403 from this API
 _CHUNK = 64 * 1024
-_LOOPBACK_NAMES = frozenset({"localhost"})
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _LIST_KEYS = ("data", "data_list", "files", "items", "list")
 
@@ -3646,69 +3672,21 @@ def _duration(value: object) -> int | None:
     return int(value)
 
 
-def _is_loopback(host: str | None) -> bool:
-    if not host:
-        return False
-    if host in _LOOPBACK_NAMES:
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def _plain_url(url: object) -> bool:
-    """Visible ASCII, no space: the URL checked is the URL sent (urlsplit drops a tab or a newline
-    that the request would keep), and a host can't be a look-alike."""
-    return isinstance(url, str) and url.isascii() and url.isprintable() and " " not in url
-
-
-def _split(url: object) -> SplitResult | None:
-    """The URL's parts, or None unless it is plain, with a host, a numeric port if any, and no
-    user name or password."""
-    if not _plain_url(url):
-        return None
-    try:
-        parts = urlsplit(str(url))
-        _ = parts.port  # a port that isn't a number raises ValueError
-    except ValueError:  # a malformed IPv6 address, or port
-        return None
-    return parts if parts.hostname and "@" not in parts.netloc else None
-
-
 def _loopback_http(api_base: str) -> bool:
-    parts = _split(api_base)
-    return parts is not None and parts.scheme == "http" and _is_loopback(parts.hostname)
-
-
-def check_api_base(url: object) -> str:
-    """`[plaud] api_base`: https://, or http:// to the loopback for tests (§10.1), with no query
-    or fragment, since paths are added to its end. The error names the setting, never the URL."""
-    parts = _split(url)
-    if (
-        parts is None
-        or any(c in str(url) for c in "?#")
-        or not (
-            parts.scheme == "https" or (parts.scheme == "http" and _is_loopback(parts.hostname))
-        )
-    ):
-        raise ConfigError(
-            "[plaud] api_base must be an https:// URL in plain ASCII (http:// only to this "
-            "machine's loopback), with no user name, password, query (?) or fragment (#)"
-        )
-    return str(url).rstrip("/")
+    parts = split_url(api_base)
+    return parts is not None and parts.scheme == "http" and is_loopback(parts.hostname)
 
 
 def check_link(url: object, *, api_base: str) -> str:
     """A presigned link from Plaud: https, in visible ASCII; plain http only to the loopback while
     `api_base` is the loopback too (decision 7). Otherwise PlaudLinkRefused, without the URL: a
     link may carry a signature that grants Dan's audio."""
-    parts = _split(url)
+    parts = split_url(url)
     secure = parts is not None and parts.scheme == "https"
     test_http = (
         parts is not None
         and parts.scheme == "http"
-        and _is_loopback(parts.hostname)
+        and is_loopback(parts.hostname)
         and _loopback_http(api_base)
     )
     if not (secure or test_http):
@@ -3756,7 +3734,7 @@ class _HttpsRedirect(urllib.request.HTTPRedirectHandler):
     """A presigned link may be redirected only to another https URL (§10.1)."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        parts = _split(newurl)
+        parts = split_url(newurl)
         if parts is None or parts.scheme != "https":
             fp.close()
             raise PlaudLinkRefused() from None
@@ -3866,7 +3844,7 @@ class PlaudClient:
     def get_json(self, path: str) -> Any:
         """GET `api_base + path` with the access token. A 401 asks the token source for a new
         token once and tries once more; a second 401 is PlaudAuthError."""
-        if not path.startswith("/") or not _plain_url(path):
+        if not path.startswith("/") or not plain_url(path):
             raise ValueError("get_json takes a path on the API host")
         url = self.api_base + path
         token = self.tokens.access_token()
@@ -4018,6 +3996,76 @@ def stamp_meta(listed: Listed, tz_name: str) -> dict:
     }
 ```
 
+The new file `packages/core/src/recordings/plaud/endpoint.py`, which holds what moved out of the copy (decision 31): `API_BASE`, `check_api_base` and the URL rules `check_link` shares, as copied but for their public names:
+
+```python
+"""Where the Plaud client may point (stage 2b spec §10.1): `API_BASE` and `check_api_base`, and the
+URL rules the client's link check shares with them.
+
+Network-free: the standard library's `ipaddress` and `urllib.parse`, and `ConfigError`. The
+settings reader imports this module, never the client, and `web` reads the settings, so the web
+app never loads the Plaud client, even at runtime (spec §9.1: "It imports no client, token or sync
+module"; 2b phase 1 plan, decision 31). `client` imports both names from here, so
+`client.API_BASE` and `client.check_api_base` still work.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+from urllib.parse import SplitResult, urlsplit
+
+from recordings.config import ConfigError
+
+API_BASE = "https://platform.plaud.ai/developer/api"  # as copied from audio-router's client
+_LOOPBACK_NAMES = frozenset({"localhost"})
+
+
+def is_loopback(host: str | None) -> bool:
+    if not host:
+        return False
+    if host in _LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def plain_url(url: object) -> bool:
+    """Visible ASCII, no space: the URL checked is the URL sent (urlsplit drops a tab or a newline
+    that the request would keep), and a host can't be a look-alike."""
+    return isinstance(url, str) and url.isascii() and url.isprintable() and " " not in url
+
+
+def split_url(url: object) -> SplitResult | None:
+    """The URL's parts, or None unless it is plain, with a host, a numeric port if any, and no
+    user name or password."""
+    if not plain_url(url):
+        return None
+    try:
+        parts = urlsplit(str(url))
+        _ = parts.port  # a port that isn't a number raises ValueError
+    except ValueError:  # a malformed IPv6 address, or port
+        return None
+    return parts if parts.hostname and "@" not in parts.netloc else None
+
+
+def check_api_base(url: object) -> str:
+    """`[plaud] api_base`: https://, or http:// to the loopback for tests (§10.1), with no query
+    or fragment, since paths are added to its end. The error names the setting, never the URL."""
+    parts = split_url(url)
+    if (
+        parts is None
+        or any(c in str(url) for c in "?#")
+        or not (parts.scheme == "https" or (parts.scheme == "http" and is_loopback(parts.hostname)))
+    ):
+        raise ConfigError(
+            "[plaud] api_base must be an https:// URL in plain ASCII (http:// only to this "
+            "machine's loopback), with no user name, password, query (?) or fragment (#)"
+        )
+    return str(url).rstrip("/")
+```
+
 In `CLAUDE.md`:
 
 **The Plaud client:** replace
@@ -4030,9 +4078,11 @@ with
 
 ```text
 - **The Plaud client is read-only and runs only in the worker.** `recordings_ui` never imports
-  the client, the token store or the sync (`packages/ui/tests/test_plaud_imports.py`). No test
-  reaches Plaud: the root `conftest.py` refuses every `plaud.ai` host, and the client's tests
-  use the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture).
+  the client, the token store or the sync (`packages/ui/tests/test_plaud_imports.py`), not even
+  at runtime: what reads settings takes `API_BASE` and `check_api_base` from the network-free
+  `plaud/endpoint.py`, never from the client. No test reaches Plaud: the root `conftest.py`
+  refuses every `plaud.ai` host, and the client's tests use the fake server in
+  `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture).
 - **Tag changes from the app go through `recordings.tagops`**
 ```
 
@@ -4066,18 +4116,24 @@ imports (stage 2b spec §10.1). No other module does.
 - [ ] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
-feat(plaud): 🤖 the client reads the of_ form, only reads, keeps tokens off links and raises fixed errors
+feat(plaud): 🤖 copy audio-router's Plaud client, relicensed MIT, so it reads the of_ form, only reads, keeps tokens off links and raises fixed errors
 
-Spec §10.1's edits to the copied client: no ID pattern check (the of_ fix: every request uses
-the ID as listed); one GET request function, the vendor CLI's refresh replaced by a
-TokenSource (a 401 refreshes once and retries once); API calls refuse every redirect and carry
-Authorization unredirected; presigned links go without it, https only (plain http only to the
-loopback while the API base is the loopback, decision 7), redirected only to https; every
-error is a fixed class raised from None, and a failed block records its class name; timeouts
-of 10 and 60 seconds and a download stall rule; PAGE_SIZE and no pacing kept for Phase 2 (S5,
-S10). fake_plaud.py is the fake's transport and request log (decision 6); the root conftest
-refuses any plaud.ai host (decision 30); a test keeps recordings_ui from importing the client.
-Checked the urllib docs for add_unredirected_header, a refusing redirect handler,
+plaud/client.py is audio-router's src/audio_router/archive/sources/plaud.py at its commit
+64612df, copied with its edits in this one commit (the verbatim text alone fails make lint, so
+it isn't committed by itself: decision 34). audio-router is Dan's own code, with no LICENSE; he
+relicenses the copied file MIT (main spec §19), and its header names where it came from.
+Spec §10.1's edits to the copy: no ID pattern check (the of_ fix: every request uses the ID
+as listed); one GET request function, the vendor CLI's refresh replaced by a TokenSource (a
+401 refreshes once and retries once); API calls refuse every redirect and carry Authorization
+unredirected; presigned links go without it, https only (plain http only to the loopback while
+the API base is the loopback, decision 7), redirected only to https; every error is a fixed
+class raised from None, and a failed block records its class name; timeouts of 10 and 60
+seconds and a download stall rule; PAGE_SIZE and no pacing kept for Phase 2 (S5, S10); ruff's
+fixes (UP017, FURB162, formatting). API_BASE and check_api_base move to the network-free
+plaud/endpoint.py, which the client imports them from, so the settings reader never loads the
+client (decision 31). fake_plaud.py is the fake's transport and request log (decision 6); the root
+conftest refuses any plaud.ai host (decision 30); a test keeps recordings_ui from importing the
+client. Checked the urllib docs for add_unredirected_header, a refusing redirect handler,
 build_opener's handler replacement and read1. test_plaud_client.py failed first with
 "ImportError: cannot import name 'client' from 'recordings.plaud'".
 
@@ -4085,7 +4141,7 @@ Plan: docs/superpowers/plans/2026-10-23-stage-2b-phase-1.md Task 4
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ```
 
-Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/client.py packages/core/src/recordings/plaud/__init__.py packages/core/tests/fake_plaud.py packages/core/tests/conftest.py conftest.py packages/core/tests/test_plaud_client.py packages/ui/tests/test_plaud_imports.py CLAUDE.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
+Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/client.py packages/core/src/recordings/plaud/endpoint.py packages/core/src/recordings/plaud/__init__.py packages/core/tests/fake_plaud.py packages/core/tests/conftest.py conftest.py packages/core/tests/test_plaud_client.py packages/ui/tests/test_plaud_imports.py CLAUDE.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
 - [ ] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
 
@@ -4099,7 +4155,7 @@ Spec §18, "Ordering", step 1. Dan can run sessions A, B and C once this task cl
 - Create: `scripts/plaud_spike.py`
 - Create: `packages/core/tests/test_plaud_spike.py`
 - Modify: `docs/runbooks/first-run.md` (section 1c points to the spike sessions and holds their results table: the session's date and each outcome, never a recording's date, time or duration)
-- Modify: main spec §9.1 (the spike list points to the 2b spec's §18, "(stage 2b design, 2026-10-23)")
+- The main spec's §9.1 spike line is Task 2's (decisions 8 and 35).
 
 **Interfaces:**
 - Consumes: `keepout.read_consent`, `keepout.keep_out_match`, `keepout.DEFAULT_WORD`; `reconcile.matches_auto_private`, `reconcile.patterns_from_config`; `client.PlaudClient`, `client.Listed`, `client.id_hash`, `client.TokenSource`; `recordings.archive.Archive`; `recordings.models.is_private`; `recordings.config.load_config`.
@@ -5342,8 +5398,6 @@ time or duration, a token, a title or an ID.
 | S9 what an edit looks like | C, | |
 ````
 
-The main spec's §9.1 spike line already points to the 2b spec's §18: Task 2 wrote it (decision 8). Check, without editing: `grep -n "The spikes settle the unknowns" docs/superpowers/specs/2026-10-08-recordings-design.md`. Expected: one line.
-
 - [ ] **Step 6: Run the checks.** `uv run pytest packages/core/tests/test_runbook.py -q` (expected: all pass), then `uv run ruff format .` and `make check`. Expected: all pass.
 
 - [ ] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
@@ -5380,7 +5434,7 @@ Spec §9.5, with decision 3: every table, every column, `SCHEMA_VERSION` still 1
 - Create: `packages/core/src/recordings/plaud/cache.py`
 - Modify: `packages/core/src/recordings/index.py` (WAL)
 - Test: `packages/core/tests/test_plaud_tables.py`; `packages/core/tests/test_index.py`
-- Modify: main spec §6.8 (`state.db` gains the 2b tables with no version bump; the state folder gains `plaud-cache.db`, derived and never backed up; `index.db` is in WAL mode), "(stage 2b design, 2026-10-23)"
+- The main spec's §6.8 amendments (the 2b tables with no version bump, `plaud-cache.db`, `index.db` in WAL mode) are Task 2's (decisions 8 and 35).
 
 **Interfaces:**
 - Consumes: `recordings.state.State`; `recordings.refs.canonical_plaud_id`.
@@ -5473,7 +5527,7 @@ Spec §9.5, with decision 3: every table, every column, `SCHEMA_VERSION` still 1
       # plaud_listing, by any form of the ID
       def listing(self, plaud_id: str) -> ListingRow | None: ...
       def upsert_listed(self, listed_id: str, *, now: datetime) -> ListingRow: ...   # first sight sets first_seen; listed_id follows the newest form
-      def set_listing(self, plaud_id: str, **fields: Any) -> None: ...   # plaud_listing column names only (ValueError otherwise)
+      def set_listing(self, plaud_id: str, **fields: Any) -> None: ...   # plaud_listing column names only (ValueError otherwise); a missing row is created with the ID as given, dated by the first time being set (kept_out_at, parked_at, released_at, next_import_at, absent_since), else ValueError (decision 36)
       # plaud_checks
       def check_row(self, recording_id: str) -> CheckRow | None: ...
       def set_check(self, recording_id: str, **fields: Any) -> None: ...
@@ -6639,11 +6693,9 @@ with
 
 - [ ] **Step 5: Run it; it passes.** `uv run pytest packages/core/tests/test_plaud_tables.py packages/core/tests/test_index.py packages/core/tests/test_import_plan.py packages/core/tests/test_writer.py -q`. Expected: all pass.
 
-- [ ] **Step 6: Check the docs.** The main spec's §6.8 already says all of this: Task 2 wrote it (decision 8). Check, without editing: `grep -n "tables only, with no version bump\|plaud-cache.db\|It is in WAL" docs/superpowers/specs/2026-10-08-recordings-design.md`. Expected: five lines, four in §6.8 and one in §15.1.
+- [ ] **Step 6: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 7: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
-
-- [ ] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [ ] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(state): 🤖 the 2b tables, keyed by canonical Plaud ID, with no schema version bump; the Plaud cache file; index.db in WAL mode
@@ -6666,7 +6718,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/state.py packages/core/src/recordings/index.py packages/core/src/recordings/plaud/checks.py packages/core/src/recordings/plaud/cache.py packages/core/tests/test_plaud_tables.py packages/core/tests/test_index.py packages/core/tests/test_import_plan.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 9: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [ ] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
 
 ### Task 7: Plaud settings and secrets
 
@@ -6684,7 +6736,7 @@ Spec §17.4. The `[plaud]` keys gain their readers; `RECORDINGS_PLAUD_TOKEN` and
 - Test: `packages/core/tests/test_plaud_settings.py`; `packages/ui/tests/test_template_settings.py`; `packages/core/tests/test_alerts.py`; `packages/core/tests/test_config.py` (its generic secret tests move from `plaud_token` to `spark_api_key`)
 
 **Interfaces:**
-- Consumes: `keepout.valid_word`, `keepout.DEFAULT_WORD`; `client.API_BASE`, `client.check_api_base`; `reconcile.patterns_from_config`; `consent.consent_list_path`.
+- Consumes: `keepout.valid_word`, `keepout.DEFAULT_WORD`; `endpoint.API_BASE`, `endpoint.check_api_base` (never the client: decision 31); `reconcile.patterns_from_config`; `consent.consent_list_path`.
 - Produces (`recordings/plaud/settings.py`):
   ```python
   DEFAULT_SCHEDULE_MINUTES = 20
@@ -6728,7 +6780,7 @@ from pathlib import Path
 
 import pytest
 from recordings.config import SECRETS, Config, ConfigError
-from recordings.plaud.client import API_BASE
+from recordings.plaud.endpoint import API_BASE
 from recordings.plaud.reconcile import DEFAULT_AUTO_PRIVATE
 from recordings.plaud.settings import BAD_WORD, PlaudSettings, plaud_settings
 
@@ -6848,10 +6900,19 @@ def test_the_sign_in_and_local_mk_are_never_committed_or_built_in():
             assert pattern in lines, (name, pattern)
 
 
-def test_reading_the_settings_module_imports_no_client():
-    # why: the web app reads BAD_WORD and the defaults; CLAUDE.md: recordings_ui never imports
-    # the Plaud client.
-    code = "import sys, recordings.plaud.settings; print('recordings.plaud.client' in sys.modules)"
+def test_reading_the_settings_imports_no_client_even_when_called():
+    # why: spec §9.1 ("It imports no client, token or sync module"), the plan's decision 31. The
+    # web app imports BAD_WORD and the defaults, and calls plaud_settings for its views (Task 19),
+    # so neither the import nor the call may load the Plaud client.
+    code = (
+        "import sys\n"
+        "from recordings.config import Config\n"
+        "from recordings.plaud.settings import plaud_settings\n"
+        "plaud = {'api_base': 'https://plaud.example/api'}\n"
+        "plaud_settings(Config(path=None, archive_path=None, writer_id=None,\n"
+        "    default_timezone='UTC', base_url=None, data={'plaud': plaud}))\n"
+        "print('recordings.plaud.client' in sys.modules)\n"
+    )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
 ```
@@ -7051,7 +7112,7 @@ In `packages/core/tests/test_config.py`, the secret tests are about secrets in g
 Run: `uv run pytest packages/core/tests/test_plaud_settings.py packages/ui/tests/test_template_settings.py packages/core/tests/test_alerts.py packages/core/tests/test_config.py -q`
 Expected: the settings and template tests fail at collection with `ModuleNotFoundError: No module named 'recordings.plaud.settings'`; the new alerts tests with `TypeError: AlertConfig.__init__() got an unexpected keyword argument 'deadman_sync_url'` and `AttributeError: module 'recordings.alerts' has no attribute 'ping_url'`; `test_config.py` passes (a rename only).
 
-- [ ] **Step 3: Write `settings.py`.** Create `packages/core/src/recordings/plaud/settings.py`. It imports the client inside `plaud_settings` only, so Status and doctor can import its constants without loading the client (Task 4's guard walks every `recordings_ui` module):
+- [ ] **Step 3: Write `settings.py`.** Create `packages/core/src/recordings/plaud/settings.py`. It takes `API_BASE` and `check_api_base` from Task 4's network-free `endpoint`, never from the client, so Status, doctor and the web app's views can import it and call `plaud_settings` without loading the client (decision 31; Task 4's guard walks every `recordings_ui` module, and Task 19 checks the call):
 
 ```python
 """The `[plaud]` settings (stage 2b spec §17.4): one reader for the worker, doctor, the CLI and
@@ -7063,9 +7124,10 @@ Status.
 - **A wrong type,** a bad `api_base` or a bad pattern raises ConfigError naming the key, never its
   value. An invalid `keep_out_word` is flagged instead (`keep_out_word_ok`): the worker idles, and
   Status and doctor say BAD_WORD (§12.2), while the web app and the backup go on.
-- **The client is imported inside `plaud_settings`,** for its `API_BASE` and `check_api_base`: the
-  web app imports this module (for BAD_WORD and the defaults), and never imports the client at
-  load (CLAUDE.md).
+- **`API_BASE` and `check_api_base` come from `endpoint`,** which loads no network module, never
+  from the client: the web app imports this module (for BAD_WORD and the defaults) and calls
+  `plaud_settings` for its views, and it never loads the client, even at runtime (spec §9.1,
+  CLAUDE.md; 2b phase 1 plan, decision 31).
 """
 
 from __future__ import annotations
@@ -7076,6 +7138,7 @@ from typing import Any
 
 from recordings.config import Config, ConfigError
 from recordings.plaud.consent import consent_list_path
+from recordings.plaud.endpoint import API_BASE, check_api_base
 from recordings.plaud.keepout import DEFAULT_WORD, valid_word
 from recordings.plaud.reconcile import patterns_from_config
 
@@ -7106,9 +7169,6 @@ def _whole(section: dict[str, Any], key: str, default: int, least: int) -> int:
 
 
 def plaud_settings(cfg: Config) -> PlaudSettings:
-    # Here, not at the top: see the module's docstring.
-    from recordings.plaud.client import API_BASE, check_api_base
-
     section = cfg.data.get("plaud", {})
     if not isinstance(section, dict):
         raise ConfigError("[plaud] must be a table")
@@ -7418,8 +7478,9 @@ feat(config): 🤖 the [plaud] settings and their readers; the sync's own dead-m
 plaud/settings.py reads every [plaud] key with spec §17.4's defaults (20 minutes, auto-import on,
 a 7-day sweep, "noarchive", no consent list as a consent stop, /plaud/tokens.json, the client's
 API base). A wrong type, a bad api_base or a bad pattern raises ConfigError naming the key; an
-invalid keep_out_word is flagged so the worker idles and says why. It imports the client only
-inside plaud_settings, so the web app can import its constants. RECORDINGS_DEADMAN_SYNC_URL joins
+invalid keep_out_word is flagged so the worker idles and says why. It takes API_BASE and
+check_api_base from plaud/endpoint.py, never the client, so the web app can import it and call
+plaud_settings without loading the client (decision 31). RECORDINGS_DEADMAN_SYNC_URL joins
 SECRETS and AlertConfig, checked under its own name; alerts.ping_url returns the HTTP status for
 Status, and ping_deadman keeps its signature on top of it (decision 12). RECORDINGS_PLAUD_TOKEN
 and recheck_days go from SECRETS, the template and the README; the template's [plaud] block is
@@ -7470,8 +7531,8 @@ Spec §12.1's late consent listing (applied from the list and the index alone, n
       busy: tuple[str, ...]          # LockTimeout: retried at the next tick
       index_unavailable: bool        # the strict lookup couldn't answer: retried at the next tick, and shown
   def flag(db: PlaudDB, kind: str, recording_id: str, *, plaud_id: str | None, now: datetime) -> bool: ...   # one open privacy flag per recording: an open kept-out-late, or a recording gone from Plaud, becomes consent-late; True when added or changed
-  def apply_late_consent(writer: Writer, db: PlaudDB, consent: ConsentList, *, now: datetime) -> LateReport: ...   # no Plaud call; nothing when consent isn't readable
-  def record_late_keep_out(db: PlaudDB, recording_id: str, plaud_ids: Iterable[str], word: str, *, now: datetime) -> bool: ...   # kept_out_at/word on each canonical ID and one flag, unless plaud_checks.kept_here_at is set; the caller has written `private`
+  def apply_late_consent(writer: Writer, db: PlaudDB, consent: ConsentList, *, now: datetime) -> LateReport: ...   # no Plaud call (§12.1): the exclusions that do read still tag `private` and flag during a consent stop; a flag clears only while the list reads cleanly; run at every tick, so a run where nothing changed writes nothing and adds no event
+  def record_late_keep_out(db: PlaudDB, recording_id: str, plaud_ids: Iterable[str], word: str, *, now: datetime) -> bool: ...   # kept_out_at/word on each canonical ID and one flag, unless plaud_checks.kept_here_at is set; a row no listing has made yet comes from set_listing, dated by the keep-out (decision 36); the caller has written `private`
   def keep_here(db: PlaudDB, recording_id: str, *, now: datetime) -> str: ...   # resolves the open kept-out-late flag, a kept-here event, kept_here_at; KEPT_HERE or NOTHING_TO_KEEP; changes no archive file
   def never_fetch(db: PlaudDB, plaud_ids: Iterable[str], consent: ConsentList) -> bool: ...   # any canonical ID consent-listed now, or with kept_out_at
   def missed_by_2a(text: str, consent: ConsentList) -> frozenset[str]: ...   # exclusion IDs 2a's LEGACY_ENTRY_RE didn't read
@@ -7560,9 +7621,15 @@ def test_a_late_consent_listing_is_tagged_private_and_flagged_without_a_plaud_ca
         pid(1),
     )
     assert plaud_server.requests == []
+    with writer.state.db() as conn:
+        events = conn.execute("SELECT COUNT(*) FROM plaud_events").fetchone()[0]
     again = apply_late_consent(writer, db, parse_consent(listed(pid(1))), now=NOW)
     assert again.tagged == again.flagged == ()  # every tick, nothing twice
     assert len(open_flags(db)) == 1
+    # Task 13 runs it at every tick: a tick where nothing changed writes nothing.
+    assert writer.archive.load(rec.id).rev == after.rev
+    with writer.state.db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM plaud_events").fetchone()[0] == events
 
 
 def test_an_upper_case_or_bare_form_finds_the_same_recording(writer, make_incoming):
@@ -7748,6 +7815,20 @@ def test_a_later_keep_out_title_after_keep_here_never_flags_again(writer, make_i
     keep_here(db, rec.id, now=NOW)
     assert record_late_keep_out(db, rec.id, [pid(18)], "noarchive", now=NOW) is False
     assert open_flags(db) == []
+
+
+def test_a_late_keep_out_dates_a_new_listing_row_by_the_keep_out(writer, make_incoming):
+    # why: decision 36. Phase 1 lists nothing, so a 2a recording's ID has no plaud_listing row: the
+    # keep-out makes it (Task 6's set_listing) with the ID as the archive holds it, dated by the
+    # keep-out, never as if a listing had shown it.
+    upper = f"OF_{pid(24).upper()}"
+    rec = plaud_rec(writer, make_incoming, 24, ref=upper)
+    db = PlaudDB(writer.state)
+    assert db.listing(pid(24)) is None
+    record_late_keep_out(db, rec.id, [upper], "noarchive", now=T0)
+    row = db.listing(pid(24))
+    assert (row.listed_id, row.first_seen, row.last_seen) == (upper, T0, T0)
+    assert (row.kept_out_at, row.kept_out_word, row.absent_since) == (T0, "noarchive", None)
 
 
 def test_a_kept_out_recording_whose_consent_line_goes_is_flagged_kept_out_again(
@@ -7994,16 +8075,16 @@ def record_late_keep_out(
     is kept out from now on (never fetched again), and the recording is flagged once, unless Dan
     pressed Keep it here. The caller has written `private`. True when a flag was added or changed.
 
-    An ID no listing has shown yet gets its `plaud_listing` row here, as the archive holds it."""
+    An ID no listing has shown yet (a 2a recording's, before Phase 2 lists) gets its
+    `plaud_listing` row from `set_listing`, as the archive holds it and dated by the keep-out,
+    never by `upsert_listed`, so it never looks listed when no listing ran (decision 36)."""
     given: dict[str, str] = {}
     for pid in plaud_ids:
         given.setdefault(canonical_plaud_id(pid), pid)
     for canonical, as_given in sorted(given.items()):
         row = db.listing(canonical)
-        if row is None:
-            row = db.upsert_listed(as_given, now=now)
-        if row.kept_out_at is None:
-            db.set_listing(canonical, kept_out_at=now.isoformat(), kept_out_word=word)
+        if row is None or row.kept_out_at is None:
+            db.set_listing(as_given, kept_out_at=now, kept_out_word=word)
     check = db.check_row(recording_id)
     if check is not None and check.kept_here_at is not None:
         return False
@@ -8613,7 +8694,7 @@ Spec §13 and decision 3: the marker replaces 2a's `title_seen` rule for privacy
       markers: Mapping[str, Marker]
       patterns: PatternSet
       words: tuple[str, ...]
-  def why_phrase(why: Why, *, rebuilt: bool) -> str: ...   # decision 15: "title changed", "the sync's record was rebuilt", "first check", "patterns changed"
+  def why_phrase(why: Why, *, rebuilt: bool) -> str: ...   # decision 15: "title changed", "the sync's record was rebuilt", "first check", "patterns changed", "kept out by title" (decision 33)
   ```
   - `judge`'s rules: an ID with no marker is case 4 (every pattern and word over every title of every ID); a marker whose hash differs from the newest title's is case 2 (patterns and words on the new title); a marker of an older pattern version is case 5 (only `added_since(marker.version)`, over every title). Each title is tried as given and folded. A keep-out match also adds `private`. Nothing ever removes `private`.
 - Produces (`reconcile.py`, `writer.py`):
@@ -10416,7 +10497,7 @@ Spec §16 and §11.7, with decision 10: one Healthchecks check, pinged only afte
       catch_up_done: datetime | None
       schedule_minutes: int
       def may_ping(self) -> bool: ...    # no blocker and no failing streak
-      def cause(self) -> str | None: ... # the first that applies, as a fixed phrase: a blocker, failing, the disk too full to import, the schedule off, BAD_WORD, a rate-limit wait (until when), busy (the holder, since when), the gate; None when nothing stops the ping
+      def cause(self, *, tz: tzinfo = UTC) -> str | None: ... # the first that applies, as a fixed phrase, any time in it shown in tz (Task 19 passes the default zone): a blocker, failing, the disk too full to import, the schedule off, BAD_WORD, a rate-limit wait (until when), busy (the holder, since when), the gate; None when nothing stops the ping
   BLOCKER_PHRASES = {"sign-in": "sign-in needed", "consent": "imports stopped: consent list", "hold": "held: see Status",
                      "breaker": "paused: unexpected changes", "private-unwritten": "should be private: run `recordings reindex`"}
   def sync_health(state: State, *, schedule_minutes: int) -> SyncHealth: ...   # plaud_state only; raises NoSyncYet without the table
@@ -10433,7 +10514,9 @@ Spec §16 and §11.7, with decision 10: one Healthchecks check, pinged only afte
   def conclude_turn(ctx: TurnContext, ran: RunOutcome | None) -> bool: ...
       # ran None: the turn didn't run a sync, so no ping. Otherwise record_run, then sync_health; pings
       # alerts.deadman_sync_url (the plain URL, an empty body, never /start or /fail) only when the run was good
-      # and may_ping(); records K_LAST_PING {at, ok, status}; any error while deciding sends nothing. Its
+      # and may_ping(); records K_LAST_PING {at, ok, status, failed_since?}: failed_since is the first failed
+      # ping's time, kept across later failures, dropped by a good ping (decision 32; Task 19's "the ping has
+      # failed for 2 hours"); any error while deciding sends nothing. Its
       # docstring says it is the one place the sync tells the outside how it is, where ntfy's pushes go later.
   ```
 
@@ -10661,11 +10744,39 @@ def test_a_failed_ping_is_recorded_with_its_status(state, ntfy):
     ctx = context(state, ntfy)
     ntfy.status = 404
     assert conclude_turn(ctx, GOOD) is False
-    assert ctx.db.get(K_LAST_PING) == {"at": NOW.isoformat(), "ok": False, "status": 404}
+    assert ctx.db.get(K_LAST_PING) == {
+        "at": NOW.isoformat(),
+        "ok": False,
+        "status": 404,
+        "failed_since": NOW.isoformat(),
+    }
     assert sync_health(state, schedule_minutes=20).last_ping == (NOW, False, 404)
     ntfy.status = 200
     assert conclude_turn(ctx, GOOD) is True
     assert sync_health(state, schedule_minutes=20).last_ping == (NOW, True, 200)
+
+
+def test_failed_since_is_the_first_failed_ping_until_a_good_one(state, ntfy):
+    # why: §15.2's "the ping has failed for 2 hours" (Task 19 reads it; decision 32). The first
+    # failure's time is kept across later failures, and a good ping drops it.
+    later = NOW + timedelta(minutes=20)
+    ntfy.status = 404
+    conclude_turn(context(state, ntfy), GOOD)
+    ntfy.status = 500
+    conclude_turn(context(state, ntfy, clock=lambda: later), GOOD)
+    assert PlaudDB(state).get(K_LAST_PING) == {
+        "at": later.isoformat(),
+        "ok": False,
+        "status": 500,
+        "failed_since": NOW.isoformat(),
+    }
+    ntfy.status = 200
+    assert conclude_turn(context(state, ntfy, clock=lambda: later), GOOD) is True
+    assert PlaudDB(state).get(K_LAST_PING) == {"at": later.isoformat(), "ok": True, "status": 200}
+    again = later + timedelta(minutes=20)
+    ntfy.status = 404
+    conclude_turn(context(state, ntfy, clock=lambda: again), GOOD)
+    assert PlaudDB(state).get(K_LAST_PING)["failed_since"] == again.isoformat()
 
 
 def test_an_unreachable_check_is_recorded_with_no_status(state, ntfy):
@@ -11026,6 +11137,17 @@ class TurnContext:
     clock: Callable[[], datetime]
 
 
+def _ping_record(previous: object, *, now: datetime, ok: bool, status: int | None) -> dict:
+    """K_LAST_PING's value: `failed_since` is the first failed ping's time, kept across later
+    failures and dropped by a good ping, so Status can say "the ping has failed for 2 hours"
+    (§15.2; 2b phase 1 plan, decision 32)."""
+    record: dict = {"at": now.isoformat(), "ok": ok, "status": status}
+    if not ok:
+        before = previous.get("failed_since") if isinstance(previous, dict) else None
+        record["failed_since"] = before if isinstance(before, str) else now.isoformat()
+    return record
+
+
 def conclude_turn(ctx: TurnContext, ran: RunOutcome | None) -> bool:
     """End a scheduled turn, or a light turn inside a long run (§9.7, §16). True when it pinged and
     Healthchecks took it.
@@ -11055,7 +11177,8 @@ def conclude_turn(ctx: TurnContext, ran: RunOutcome | None) -> bool:
     status = ping_url(url)
     ok = status is not None and 200 <= status < 300
     try:
-        ctx.db.put(K_LAST_PING, {"at": now.isoformat(), "ok": ok, "status": status}, now=now)
+        record = _ping_record(ctx.db.get(K_LAST_PING), now=now, ok=ok, status=status)
+        ctx.db.put(K_LAST_PING, record, now=now)
     except Exception as exc:  # noqa: BLE001  the ping went; Status just won't show it
         log.warning("conclude_turn: the ping wasn't recorded (%s)", type(exc).__name__)
     if not ok:
@@ -11134,7 +11257,9 @@ it only by that cause, keeps the blockers as plaud_state rows, and records each 
 sync_health reads plaud_state alone, and its cause() names the first reason the ping stops, in
 §15.6's phrases. worker.conclude_turn pings deadman_sync_url (the plain URL, an empty body) only
 after a good run with no blocker and no streak, records the ping's time, result and HTTP status,
-and sends nothing on any error while deciding. The runbook gains "When the Plaud alert comes".
+and the first failed ping's time until a good one (failed_since, for Status's "failed for 2
+hours", decision 32), and sends nothing on any error while deciding. The runbook gains "When the
+Plaud alert comes".
 Docs: the standard library only; FakeNtfy stands in for Healthchecks (decision 11).
 
 The new tests failed first with: ModuleNotFoundError: No module named 'recordings.plaud.health'
@@ -12097,13 +12222,13 @@ Spec §9.2 and §9.7: one process, a main thread that owns its `Writer`, a heart
       def tick(self) -> None: ...       # bump; the consent watch (read when the signature changed, trusted only if unchanged across the read; K_CONSENT records what was read: ids, file_changed, read_at, stop, typo_lines, review_lines); apply_late_consent, the consent blocker (decision 13), and the private-unwritten blocker and flag while a `private` it owes isn't written; [Task 14 adds: claim and serve one request]; a due scheduled turn; prune once a day
       def due(self) -> bool: ...        # schedule_minutes > 0 and now ≥ max(last_started, last_ended) + schedule_minutes; a stamp in the future counts as long ago
       def blocked_before_call(self) -> tuple[TurnOutcome, Mapping[str, Any]] | None: ...   # Phase 1: None; Phase 2 adds the sign-in pause and the rate-limit wait
-      def scheduled_turn(self) -> None: ...   # off → "off"; a bad keep_out_word → "idle-config"; the gate closed → "gate"; blocked_before_call; plaud held → "busy"; else plaud_run("plaud-sync"), self.turn, last_started and last_ended, conclude_turn
+      def scheduled_turn(self) -> None: ...   # off → "off"; a bad keep_out_word → "idle-config"; the gate closed → "gate" (detail {"reason": the gate's reason}, as Task 11's cause reads it); blocked_before_call; plaud held → "busy"; else plaud_run("plaud-sync"), self.turn, last_started and last_ended, conclude_turn
       def run(self) -> int: ...         # start, then tick every TICK until SIGTERM (stops between ticks); 0
   def heartbeat_once(state: State, progress: Progress, *, now: datetime) -> None: ...   # meta.worker_heartbeat = {"at", "phase", "progress_counter", "progress_at"}
   def alive(state: State, *, now: datetime) -> tuple[bool, str | None]: ...   # a heartbeat under 90 s, and progress within 15 minutes (30 while starting); else SILENT or STUCK
   def main(argv: list[str] | None = None) -> int: ...   # `recordings worker [--alive]`; --alive exits 0 or 1
   ```
-  Also, beside these: `HEARTBEAT_KEY = "worker_heartbeat"` (the `meta` key), `Progress.read() -> (phase, counter, at)`, and the value shapes this task writes, which later tasks read: `K_LAST_STARTED` and `K_LAST_ENDED` are ISO 8601 strings in UTC; `K_CONSENT` is `{"ids": [canonical IDs, sorted], "file_changed": ISO | None, "read_at": ISO, "stop": phrase | None, "typo_lines": [int], "review_lines": [int]}`. A turn that didn't run (the gate, busy, idle-config) waits one interval in memory, so it isn't recorded at every tick.
+  Also, beside these: `HEARTBEAT_KEY = "worker_heartbeat"` (the `meta` key), `Progress.read() -> (phase, counter, at)`, and the value shapes this task writes, which later tasks read: `K_LAST_STARTED` and `K_LAST_ENDED` are ISO 8601 strings in UTC; `K_CONSENT` is `{"ids": [canonical IDs, sorted], "file_changed": ISO | None, "read_at": ISO, "stop": phrase | None, "typo_lines": [int], "review_lines": [int]}` (Task 19 counts `ids` as a list only); a turn that ran records `K_LAST_TURN`'s detail as `{"result": <the run's §15.6 phrase>}`, and one that raised as `{"error": <class name>}` (Task 19 reads `result`). A turn that didn't run (the gate, busy, idle-config) waits one interval in memory, so it isn't recorded at every tick.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-13-base`
 
@@ -12134,7 +12259,7 @@ from recordings.models import is_private
 from recordings.plaud import keepout
 from recordings.plaud.checks import K_CONSENT, K_KEEP_OUT_WORDS, K_LAST_ENDED, K_LAST_STARTED
 from recordings.plaud.flags import CONSENT_LATE, PRIVATE_UNWRITTEN
-from recordings.plaud.gate import record_rebuild
+from recordings.plaud.gate import GATE_FIRST, record_rebuild
 from recordings.plaud.health import RunOutcome, sync_health
 from recordings.plaud.runlock import plaud_run
 from recordings.refs import canonical_plaud_id
@@ -12295,7 +12420,9 @@ def test_the_plaud_dl_sweep_is_skipped_while_a_cli_run_holds_plaud(setup, make_w
     assert not left.parent.exists()
 
 
-def test_a_scheduled_turn_before_the_catch_up_makes_no_plaud_call(setup, make_worker, ntfy):
+def test_a_scheduled_turn_before_the_catch_up_makes_no_plaud_call(
+    setup, make_worker, ntfy, monkeypatch
+):
     # C5.18: schedule_minutes is 20 from the deploy, and the gate holds every turn until the
     # supervised catch-up. No Plaud call, nothing written but the turn's record, and no ping: a
     # check never pinged stays silent.
@@ -12303,16 +12430,26 @@ def test_a_scheduled_turn_before_the_catch_up_makes_no_plaud_call(setup, make_wo
     w = make_worker(clock, turn=spy)
     w.start()
     assert not w.gate.open
+    decided, real = [], worker_module.record_turn
+
+    def recording(db, outcome, *, now, detail=None):
+        decided.append((outcome, now))
+        real(db, outcome, now=now, detail=detail)
+
+    monkeypatch.setattr(worker_module, "record_turn", recording)
     w.tick()
     assert spy.calls == []
-    outcome, at, _ = last_turn(w)
-    assert (outcome, at) == ("gate", T0)
+    # The gate's own reason, which Status's not-pinged line shows (SyncHealth.cause, Task 11).
+    outcome, at, detail = last_turn(w)
+    assert (outcome, at, detail) == ("gate", T0, {"reason": GATE_FIRST})
     clock.advance(minutes=19)
-    w.tick()  # a turn that didn't run waits one interval
-    assert last_turn(w)[1] == T0
+    w.tick()  # a turn that didn't run waits one interval, in memory
     clock.advance(minutes=1)
     w.tick()
-    assert last_turn(w)[1] == T0 + timedelta(minutes=20) and spy.calls == []
+    assert decided == [("gate", T0), ("gate", T0 + timedelta(minutes=20))]
+    assert spy.calls == []
+    # The repeated outcome keeps its first time, which reads as "since" (Task 11's record_turn).
+    assert last_turn(w)[1] == T0
     assert ntfy.requests == []
 
 
@@ -12680,7 +12817,7 @@ from recordings.state import State, StateError
 from recordings.writer import NotTheWriter, Writer
 ```
 
-If Task 11's module has no logger, add `log = logging.getLogger(__name__)` below the imports. Then append, below `conclude_turn`:
+Task 11's module already has `log = logging.getLogger(__name__)` below its imports. Append, below `conclude_turn`:
 
 ```python
 # ---- the process (Task 13): a main thread that owns its Writer, and a heartbeat thread --------
@@ -13089,8 +13226,8 @@ class Worker:
             outcome = "off"
         elif not self.settings.keep_out_word_ok:
             outcome = "idle-config"
-        elif not gate_now(self.db).open:
-            outcome = "gate"
+        elif not (gate := gate_now(self.db)).open:
+            outcome, detail = "gate", {"reason": gate.reason}
         elif (blocked := self.blocked_before_call()) is not None:
             outcome, detail = blocked
         if outcome is None:
@@ -13647,7 +13784,7 @@ def test_park_unpark_and_keep_here_handlers(setup, make_worker):
     assert answer(w.state, 4) == ("failed", NOTHING_TO_KEEP)
 ```
 
-In `packages/core/tests/test_plaud_cli.py` (Task 8's), add at the end, with the imports it needs at the top (`json`, `datetime`/`UTC`, `recordings.cli.main` and `PlaudDB`, beside Task 8's):
+In `packages/core/tests/test_plaud_cli.py` (Task 8's, with Tasks 10 and 12's tests), add at the end. Its top already imports `json`, `UTC`, `datetime` and `recordings.cli.main`; `PlaudDB` is imported inside the test, as the file's other tests do:
 
 ```python
 PARK_T0 = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
@@ -13658,6 +13795,8 @@ PARK_UNKNOWN = "of_" + f"{9:032x}"
 def test_plaud_park_and_undo(tmp_path, writer, make_incoming, monkeypatch, capsys):
     # decision 19: a recording here is parked in plaud_checks, a Plaud ID that failed to import in
     # plaud_listing. It holds no lock, and an unknown ID exits 1.
+    from recordings.plaud.checks import PlaudDB
+
     rid = writer.add(make_incoming()).recording.id
     db = PlaudDB(writer.state)
     db.upsert_listed(PARK_LISTED, now=PARK_T0)
@@ -14295,44 +14434,97 @@ def _unpark(worker: Worker, claimed: Claimed) -> requests.Reply:
 HANDLERS: dict[str, Handler] = {"keep-here": _keep_here, "park": _park, "unpark": _unpark}
 ```
 
-- [ ] **Step 5: Add `recordings plaud park`,** `packages/core/src/recordings/plaud/commands.py`. Add these imports beside Task 8's: `import json`, `import os`, `import sys`, `from datetime import UTC, datetime`, `from recordings.archive import Archive`, `from recordings.config import ConfigError, load_config`, `from recordings.ids import ID_RE`, `from recordings.plaud.checks import PlaudDB`, `from recordings.plaud.requests import set_parked`, `from recordings.state import State, StateError`. Then add the two functions below, and register them the way Task 8's `add_parser` and `run` register `consent`: call `add_park_parser(<the plaud subparsers object>)` inside `add_parser`, and send the `park` command to `cmd_park` in `run`.
+- [ ] **Step 5: Add `recordings plaud park`,** `packages/core/src/recordings/plaud/commands.py`, as Task 8's docstring says each command does: a parser block above the `allow_abbrev` loop, a `cmd_…` function and a `COMMANDS` entry. The edits below are against the file as Tasks 8, 10 and 12 leave it. Its imports: replace
 
 ```python
-def add_park_parser(plaud_sub: argparse._SubParsersAction) -> None:
-    p = plaud_sub.add_parser(
+from recordings import config
+from recordings.index import Index
+```
+
+with
+
+```python
+from recordings import config
+from recordings.archive import Archive
+from recordings.ids import ID_RE
+from recordings.index import Index
+```
+
+and replace
+
+```python
+from recordings.plaud.keepout import read_consent, signature
+from recordings.plaud.settings import plaud_settings
+```
+
+with
+
+```python
+from recordings.plaud.keepout import read_consent, signature
+from recordings.plaud.requests import set_parked
+from recordings.plaud.settings import plaud_settings
+```
+
+In `add_parser`, after Task 12's `review` block, replace
+
+```python
+    c = plaud.add_parser(
+        "review",
+        help="after restoring an older state.db: everything made before now that isn't here "
+        "waits for your review",
+    )
+    c.add_argument("--json", action="store_true")
+
+    # No abbreviated flags, as cli.build_parser: its loop doesn't reach these subparsers.
+```
+
+with
+
+```python
+    c = plaud.add_parser(
+        "review",
+        help="after restoring an older state.db: everything made before now that isn't here "
+        "waits for your review",
+    )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
         "park",
         help="leave recordings out of scheduled syncs (a recording ID), or stop retrying a "
         "Plaud ID that failed to import; --undo unparks",
     )
-    p.add_argument("ids", nargs="+", metavar="id", help="an archive recording ID or a Plaud ID")
-    p.add_argument("--undo", action="store_true", help="unpark them")
-    p.add_argument("--json", action="store_true")
+    c.add_argument("ids", nargs="+", metavar="id", help="an archive recording ID or a Plaud ID")
+    c.add_argument("--undo", action="store_true", help="unpark them")
+    c.add_argument("--json", action="store_true")
 
+    # No abbreviated flags, as cli.build_parser: its loop doesn't reach these subparsers.
+```
 
+Then replace the `COMMANDS` table:
+
+```python
+COMMANDS = {
+    "consent": cmd_consent,
+    "baseline": cmd_baseline,
+    "keep-out-words": cmd_keep_out_words,
+    "review": cmd_review,
+}
+```
+
+with `cmd_park` and the table that names it:
+
+```python
 def cmd_park(args: argparse.Namespace) -> int:
     """`recordings plaud park <id>… [--undo]` (spec §9.6, §14.6, decision 19). Holds no lock:
     each change is one row of state.db. Exit 0, or 1 when an ID is unknown."""
-
-    def out(payload: dict) -> None:
-        if args.json:
-            print(json.dumps(payload, ensure_ascii=False))
-        else:
-            for key, value in payload.items():
-                print(f"{key}: {value}")
-
-    try:
-        cfg = load_config(os.environ)
-    except ConfigError as exc:
-        print(f"recordings: {exc}", file=sys.stderr)
-        return EXIT_CONFIG
-    if cfg.state_path is None or cfg.archive_path is None:
-        print("recordings: set [archive] path and [state] path in config.toml", file=sys.stderr)
-        return EXIT_CONFIG
-    try:
-        state = State.open(cfg.state_path)
-    except StateError as exc:
-        print(f"recordings: {exc}", file=sys.stderr)
-        return EXIT_CONFIG
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    if cfg.archive_path is None:
+        return _fail("set [archive] path in config.toml first", args.json, EXIT_CONFIG)
+    state = _open_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
     changed, unknown = set_parked(
         PlaudDB(state),
         Archive(cfg.archive_path),
@@ -14341,9 +14533,21 @@ def cmd_park(args: argparse.Namespace) -> int:
         undo=args.undo,
         now=datetime.now(UTC),
     )
-    out({"unparked" if args.undo else "parked": list(changed), "unknown": list(unknown)})
+    payload = {"unparked" if args.undo else "parked": list(changed), "unknown": list(unknown)}
+    _emit(payload, [f"{key}: {value}" for key, value in payload.items()], args.json)
     return EXIT_FAILED if unknown else EXIT_OK
+
+
+COMMANDS = {
+    "consent": cmd_consent,
+    "baseline": cmd_baseline,
+    "keep-out-words": cmd_keep_out_words,
+    "review": cmd_review,
+    "park": cmd_park,
+}
 ```
+
+`run` dispatches through `COMMANDS`, so it is unchanged.
 
 - [ ] **Step 6: Run them; they pass.** `uv run pytest packages/core/tests/test_plaud_requests.py packages/core/tests/test_plaud_cli.py packages/core/tests/test_worker.py -q`. Expected: all pass (`12 passed` in `test_plaud_requests.py`).
 
@@ -17203,23 +17407,48 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 ```
 
-- [ ] **Step 7: The target,** `Makefile`. After `COMPOSE = …`:
+- [ ] **Step 7: The target,** `Makefile`, as Task 1 leaves it (its `target: ## text` help form, lower-case descriptions, and every target in a `.PHONY` line). Replace:
 
 ```make
+COMPOSE = RECORDINGS_IMAGE_TAG=$(IMAGE_TAG) docker compose $(COMPOSE_ARGS)
+
+.PHONY: help check setup skills build lint test test-py test-js test-utc leaks e2e demo
+.PHONY: demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke
+.PHONY: rollback prune-images restic
+```
+
+with:
+
+```make
+COMPOSE = RECORDINGS_IMAGE_TAG=$(IMAGE_TAG) docker compose $(COMPOSE_ARGS)
 # The Mac's own settings for the targets that reach the server (git-ignored): SERVER, your ssh
 # name for the homelab server, and REPO_DIR, this repo's checkout there. They are expanded here,
 # on the Mac, so the server's shell never sees a variable it doesn't have.
 -include local.mk
+
+.PHONY: help check setup skills build lint test test-py test-js test-utc leaks e2e demo
+.PHONY: demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke
+.PHONY: rollback prune-images restic consent-add
 ```
 
-Add `consent-add` to `.PHONY`, and after the `deploy-smoke` target the one below. Its `## ` description is in the form Task 1's `help` reads (shown here after the target's colon; follow Task 1's form if it differs):
+Then replace:
 
 ```make
+deploy-smoke: ## run the real compose file once, as CI's compose-smoke does
+	uv run python scripts/compose_smoke.py
+```
+
+with:
+
+```make
+deploy-smoke: ## run the real compose file once, as CI's compose-smoke does
+	uv run python scripts/compose_smoke.py
+
 # Run on the Mac (stage 2b spec §12.1): checks the ID (a bare ID, of_…, or the Sync screen's Copy
 # ID), appends it to the server's consent list by writing a new file and renaming it, then prints
 # what the worker reads. ID comes from the command line, so make passes it in the environment and
 # never pastes it into the shell line.
-consent-add: ## Add one Plaud ID to the server's consent list, from the Mac: make consent-add ID=<id>
+consent-add: ## add a Plaud ID to the server's consent list, from the Mac: make consent-add ID=<id>
 	$(if $(ID),,$(error usage: make consent-add ID=<a Plaud ID, or the Sync screen's Copy ID>))
 	$(if $(SERVER),,$(error make consent-add: set SERVER, your ssh name for the homelab server, in local.mk))
 	$(if $(REPO_DIR),,$(error make consent-add: set REPO_DIR, the repo's checkout on the server, in local.mk))
@@ -17408,7 +17637,7 @@ Spec §15's build order, step 1, and §22: what each view reads from which table
 - Also (found while writing the steps): `packages/ui/tests/conftest.py` (the `plaud_scene` fixture both test files use), `packages/ui/tests/test_demo_guard.py` (its allowed paths gain the canned view `from_env` now reads), `docker/Dockerfile` (the Docker demo copies the canned view beside `demo/archive`)
 
 **Interfaces:**
-- Consumes: `checks.PlaudDB`, its keys, `checks.NoSyncYet`, `checks.NO_SYNC_YET`; `cache.Cache.read_only`, `Cache.compare_rows`, `Cache.summary`; `health.sync_health`, `SyncHealth.cause`; `gate.gate_now`; `flags.SENTENCES`; `worker.alive`; `runlock.plaud_holder`; `privacy.why_phrase`'s phrases; `settings.PlaudSettings`.
+- Consumes: `checks.PlaudDB`, its keys, `checks.NoSyncYet`, `checks.NO_SYNC_YET`; `cache.Cache.read_only`, `Cache.compare_rows`, `Cache.summary`; `health.sync_health`, `SyncHealth.cause(tz=…)` (given the default zone); `gate.gate_now`; `flags.SENTENCES`; `worker.alive`; `runlock.plaud_holder`; `privacy.why_phrase`'s phrases; `settings.PlaudSettings`.
 - Produces (Python, `recordings_ui/plaud.py`):
   ```python
   DEMO_NOTE = "Demo: nothing is synced"
@@ -17423,7 +17652,7 @@ Spec §15's build order, step 1, and §22: what each view reads from which table
       auto_import: bool
       keep_out_word_ok: bool
       demo_view: Path | None        # demo mode and Pages: the canned view's file
-  def plaud_view_settings(cfg: Config) -> PlaudViewSettings: ...
+  def plaud_view_settings(cfg: Config) -> PlaudViewSettings: ...   # through settings.plaud_settings, which loads no client, even when called (decision 31)
   def sync_view(settings: PlaudViewSettings | None, *, now: datetime, can_request: str | None) -> dict: ...   # SyncView
   def sync_panel(settings: PlaudViewSettings | None, *, now: datetime) -> dict: ...   # SyncPanel
   def arrivals(settings: PlaudViewSettings | None, *, since: datetime, now: datetime) -> dict: ...   # Arrivals
@@ -17501,7 +17730,7 @@ Spec §15's build order, step 1, and §22: what each view reads from which table
   // StatusView gains sync?: SyncPanel; RecordingView gains plaud: RecordingPlaud | null; Page gains "add" (Task 21).
   ```
 - Also produced here, for the later UI tasks (named, not in the skeleton): `plaud.demo_view_settings(archive: Path) -> PlaudViewSettings` (demo mode's and Pages' settings: no state folder, the canned view beside the archive's copy); `app.plaud_views(settings: Settings) -> PlaudViewSettings | None`; `views.recording_view(…, plaud: PlaudViewSettings | None = None, now: datetime | None = None)` and `views.status_view(archive, settings, plaud: PlaudViewSettings | None = None)`; the constants `ALL_HERE_EXPLAIN`, `NO_SYNC`, `UNREADABLE_SYNC`, `FULL_UNKNOWN`, `TITLES_HIDDEN_CONSENT`, `PING_FAILING`, `WHY_DETAILS`.
-- **What Phase 2 and 3 must write for these views to read** (the views read these keys and treat each as absent until it is written): the cache's `meta "compare"` is `{"at", "equation": {listed, here, waiting, excluded, missing, arrive_private}, "archive": {from_plaud, here, gone, absent}, "titles_hidden", "consent_on_plaud"}`; `plaud_state` `last_good_listing` is `{"at", "count", "census", "form_change", "malformed", "fields_changed"}`, `hold` is `{"sentence", "accept_refused"}`, `breaker` is `{"sentence", "code_fix", "fields"}`, `full_sync` is `{"estimate_minutes", "line"}`, `sign_in` is `{"expires_at"}`, `last_ping` may carry `"failed_since"` (the first failed ping's time, cleared by a good one); `compare_rows.excluded_by` is one of `consent`, `title`, `rekeyed`, `was-title`.
+- **What Phase 2 and 3 must write for these views to read** (the views read these keys and treat each as absent until it is written): the cache's `meta "compare"` is `{"at", "equation": {listed, here, waiting, excluded, missing, arrive_private}, "archive": {from_plaud, here, gone, absent}, "titles_hidden", "consent_on_plaud"}`; `plaud_state` `last_good_listing` is `{"at", "count", "census", "form_change", "malformed", "fields_changed"}`, `hold` is `{"sentence", "accept_refused"}`, `breaker` is `{"sentence", "code_fix", "fields"}`, `full_sync` is `{"estimate_minutes", "line"}`, `sign_in` is `{"expires_at"}`; `compare_rows.excluded_by` is one of `consent`, `title`, `rekeyed`, `was-title`. (`last_ping`'s `"failed_since"`, the first failed ping's time until a good one, is Task 11's: decision 32.)
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-19-base`
 
@@ -17649,6 +17878,7 @@ import sqlite3
 import subprocess
 import sys
 from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -17662,7 +17892,7 @@ from recordings.plaud.checks import (
 )
 from recordings.plaud.flags import SENTENCES
 from recordings.plaud.gate import GATE_FIRST
-from recordings.plaud.health import RunOutcome, open_blocker, record_run
+from recordings.plaud.health import RunOutcome, open_blocker, record_run, record_turn
 from recordings.plaud.keepout import typo_phrase
 from recordings.plaud.runlock import plaud_run
 from recordings.tagops import RemoveTags
@@ -17817,16 +18047,32 @@ def test_the_not_pinged_line_names_the_cause_from_sync_health(plaud_scene):
         now=failed,
     )
     open_blocker(s.db, "sign-in", now=failed)
+    # The turn's own result, as Task 13 records a turn that ran.
+    record_turn(s.db, "ran", now=failed, detail={"result": "sign-in needed"})
     panel = sync_panel(s.settings, now=T0)
     assert panel["not_pinged"] == (
         "The sync's Healthchecks check isn't being pinged since 13:40: sign-in needed. "
         "It emails you about 2 hours after that."
     )
-    assert panel["failing"].startswith("Plaud sync failing since 14:00 (")
+    assert panel["failing"] == (
+        "Plaud sync failing since 14:00 (sign-in needed). No good listing yet."
+    )
     assert panel["conditions"][0].startswith("Plaud sign-in needed since 14:00. ")
     assert panel["numbers"]["healthchecks"] == "last pinged 13:40"
     # One schedule interval plus 10 minutes after the last ping, and not before.
     assert sync_panel(s.settings, now=T0 - timedelta(minutes=11))["not_pinged"] is None
+
+
+def test_the_cause_shows_its_times_in_the_default_zone(plaud_scene):
+    # why: SyncHealth.cause shows times in the zone it is given (Task 11), and the views give it
+    # the default zone they show every other time in: never UTC by accident.
+    s = plaud_scene
+    until = T0 + timedelta(minutes=40)  # 15:00 UTC, 08:00 in Vancouver
+    record_turn(s.db, "rate-limited", now=T0, detail={"until": until.isoformat()})
+    pacific = replace(s.settings, timezone_name="America/Vancouver")
+    view = sync_view(pacific, now=T0, can_request=None)
+    assert view["summary"]["sentence"] == "Rate limited until 08:00"
+    assert sync_panel(pacific, now=T0)["summary"] == view["summary"]
 
 
 def test_the_schedule_off_for_24_hours_after_the_catch_up_needs_attention(plaud_scene):
@@ -17855,7 +18101,12 @@ def test_each_needs_attention_entry_phase_1_can_show(plaud_scene):
     s.schedule_minutes = 0
     s.open_gate(at=T0 - timedelta(hours=30))
     db = s.db
-    db.put(K_CONSENT, {"ids": 3, "stop": typo_phrase([14, 22]), "read_at": T0.isoformat()}, now=T0)
+    consent_ids = [f"{n:032x}" for n in (1, 2, 3)]  # canonical, sorted: as Task 13 writes them
+    db.put(
+        K_CONSENT,
+        {"ids": consent_ids, "stop": typo_phrase([14, 22]), "read_at": T0.isoformat()},
+        now=T0,
+    )
     open_blocker(db, "consent", now=T0 - timedelta(minutes=5))
     a, b, c = s.add(11, "Week 11"), s.add(12, "Week 12"), s.add(13, "Week 13")
     db.add_event("consent-late", now=T0, recording_id=a, plaud_id=s.plaud_id(11), open_flag=True)
@@ -17902,6 +18153,8 @@ def test_each_needs_attention_entry_phase_1_can_show(plaud_scene):
     ):
         assert line in attention, line
     assert [x for x in attention if x.startswith("Scheduled sync has been off since")]
+    # The consent list's IDs (a list, as Task 13 writes them) show as a count, never the IDs.
+    assert sync_panel(s.settings, now=T0)["numbers"]["consent"]["ids"] == 3
     # Sync everything may hold the lock for 12 hours before it may be stuck.
     with plaud_run(s.writer.state, "plaud-full", timeout=1.0, now=T0 - timedelta(hours=3)):
         attention = sync_panel(s.settings, now=T0)["attention"]
@@ -18050,15 +18303,17 @@ def test_arrivals_count_events_since_and_flags_by_count_only(plaud_scene):
 
 
 def test_details_words_every_reason_the_marker_records():
-    # why: decision 15. A reason Details can't word would show no reason at all.
+    # why: decision 15 (decision 33: its fifth reason). A reason Details can't word would show no
+    # reason at all.
     from recordings.plaud.privacy import why_phrase
 
     recorded = {
         why_phrase(why, rebuilt=rebuilt)
-        for why in ("title changed", "first check", "new pattern")
+        for why in ("title changed", "first check", "new pattern", "kept out late")
         for rebuilt in (False, True)
     }
     assert recorded <= set(WHY_DETAILS)
+    assert WHY_DETAILS[why_phrase("kept out late", rebuilt=False)] == "kept out by title"
     assert NO_SYNC == NO_SYNC_YET  # kept apart only because checks needs sqlite3
 
 
@@ -18077,6 +18332,24 @@ def test_the_plaud_views_import_on_pyodide_without_sqlite(demo_archive):
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
+
+
+def test_the_views_settings_load_no_plaud_client_even_when_read():
+    # why: spec §9.1 ("It imports no client, token or sync module"), the plan's decision 31. The
+    # web app reads plaud_view_settings when it starts, which calls plaud_settings: Task 4's guard
+    # only sees imports, so this checks the call too.
+    code = (
+        "import sys\n"
+        "from recordings.config import Config\n"
+        "from recordings_ui.plaud import plaud_view_settings\n"
+        "data = {'plaud': {'api_base': 'https://plaud.example/api', 'schedule_minutes': 5}}\n"
+        "s = plaud_view_settings(Config(path=None, archive_path=None, writer_id=None,\n"
+        "    default_timezone='UTC', base_url=None, data=data))\n"
+        "assert s.schedule_minutes == 5, s\n"
+        "print('recordings.plaud.client' in sys.modules)\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "False"
 
 
 def test_the_docker_image_carries_the_canned_view():
@@ -18166,12 +18439,14 @@ from demo/plaud-sync.json in the demos. They import what reads state.db inside e
 never at the top, because the Pages demo imports this module on Pyodide, which has no sqlite3.
 ```
 
-Its imports must be these, at the top, with nothing that loads `sqlite3`, `fcntl` or threads: if Task 14 imported `recordings.plaud.requests`, `recordings.state` or `sqlite3` at the top, move each import into the function that uses it (and `State` under `TYPE_CHECKING`), as `tagging.py` does. `test_the_plaud_views_import_on_pyodide_without_sqlite` (Step 2) fails until it is so.
+Nothing at its top may load `sqlite3`, `fcntl` or threads. Task 14's top-level imports already load none (`recordings.plaud.requests` imports only the standard library and `recordings.ids` at its top, with `sqlite3`, `State` and `PlaudDB` under `TYPE_CHECKING`; `recordings.sentinel` and `recordings.ids` are pure), so they stay; health, checks, flags, the worker, the gate and the cache are imported inside the functions that use them, as `tagging.py` does. `test_the_plaud_views_import_on_pyodide_without_sqlite` (Step 2) holds it so. Replace Task 14's import block with this one, its own imports merged with the views':
 
 ```python
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -18180,13 +18455,28 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from recordings.ids import parse_id
+from recordings.plaud import requests
+from recordings.plaud.requests import (
+    KINDS,
+    MAX_PLAUD_ID_LEN,
+    MAX_PLAUD_IDS,
+    MAX_RESYNC_IDS,
+    REQUEST_ID_RE,
+    PlaudRequest,
+    Reply,
+)
+from recordings.sentinel import is_mirror
+
 if TYPE_CHECKING:
     from recordings.config import Config
     from recordings.plaud.checks import Event
     from recordings.state import State
+
+    from recordings_ui.settings import Settings
 ```
 
-(keeping Task 14's own imports beside them, sorted as ruff sorts them), then append after Task 14's `submit`:
+Then append after Task 14's `submit`:
 
 ```python
 # ---- The views (Task 19; 2b spec §15, §22) -------------------------------------------------
@@ -18230,6 +18520,7 @@ WHY_DETAILS = {
     "the sync's record was rebuilt": "the sync's record was rebuilt",
     "first check": "its title matched a private pattern",
     "patterns changed": "its title matched a private pattern",
+    "kept out by title": "kept out by title",  # a keep-out word alone (Task 9's "kept out late")
 }
 ARRIVED_PRIVATE = "its title matched when it arrived"
 CAUSES = {
@@ -18590,7 +18881,9 @@ class _Read:
                 "explain": ALL_HERE_EXPLAIN,
                 "see_status": False,
             }
-        problem = self.health.cause() or (None if self.gate.open else self.gate.reason)
+        problem = self.health.cause(tz=ZoneInfo(self.tz)) or (
+            None if self.gate.open else self.gate.reason
+        )
         if problem:
             sentence = _cap(problem)
         elif good_at is None:
@@ -18652,14 +18945,15 @@ class _Read:
         return {k: _int(eq.get(k)) for k in ("from_plaud", "here", "gone", "absent")}
 
     def consent_view(self) -> dict | None:
-        """What the worker read from the consent list (§12.1): the count, never the IDs."""
+        """What the worker read from the consent list (§12.1): the count, never the IDs. Task 13
+        writes `ids` as the sorted list of canonical IDs."""
         if not self.consent:
             return None
         ids = self.consent.get("ids")
         on = self.summary.get("consent_on_plaud")
         stop = self.consent.get("stop")
         return {
-            "ids": len(ids) if isinstance(ids, list) else _int(ids),
+            "ids": len(ids) if isinstance(ids, list) else 0,
             "on_plaud": on if isinstance(on, int) else None,
             "file_changed": _stamp(_at(self.consent.get("file_changed")), self.tz),
             "read_at": self.when(_at(self.consent.get("read_at"))),
@@ -19024,12 +19318,13 @@ def _panel_from(r: _Read) -> dict:
 
     tz, now, health = r.tz, r.now, r.health
     report, silent, worker_line = _worker(r)
-    cause = health.cause() or (None if r.gate.open else r.gate.reason) or silent
+    cause = health.cause(tz=ZoneInfo(tz)) or (None if r.gate.open else r.gate.reason) or silent
     good_at = _at(r.last_good.get("at"))
     failing = None
     if health.failing is not None:
         since, why = health.failing
-        detail = health.last_turn[2].get("detail") if health.last_turn else None
+        # A turn that ran records its run phrase as `result` (Task 13).
+        detail = health.last_turn[2].get("result") if health.last_turn else None
         detail = detail if isinstance(detail, str) and detail else CAUSES.get(why, why)
         last_good = f"Last good listing {r.when(good_at)}." if good_at else "No good listing yet."
         failing = f"Plaud sync failing since {r.when(since)} ({detail}). {last_good}"
@@ -19926,7 +20221,8 @@ the default zone, titles only in the Sync screen's own rows. status_view gains "
 its Needs attention lines; a missing 2b table says "No sync has run yet", never the
 restore text. Demo mode and the Docker demo carry demo/plaud-sync.json, hand-written and
 synthetic, with every action off (decision 23). The views import what reads state.db
-inside each function, so Pages' Pyodide never loads sqlite3. types.ts gains the shapes.
+inside each function, so Pages' Pyodide never loads sqlite3, and reading the views'
+settings loads no Plaud client (decision 31). types.ts gains the shapes.
 The new tests failed first with: ImportError: cannot import name 'ALL_HERE_EXPLAIN' from
 'recordings_ui.plaud'.
 
@@ -23503,7 +23799,21 @@ becomes
   archive and its hand-written canned Plaud view (`demo/plaud-sync.json`) are ever exported.
 ```
 
-In `README.md`'s Developing block, `make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ is exported)` becomes `make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ and demo/plaud-sync.json)`. In the `Makefile`, the comment `# The static GitHub Pages demo (spec §17.1): only demo/archive/ is ever exported.` becomes `# The static GitHub Pages demo (spec §17.1): only demo/archive/ and demo/plaud-sync.json are ever exported.` (if Task 1 moved this text into `pages`'s `## ` description, change it there, keeping the line under 100 characters). In `.github/workflows/pages.yml`, `(only demo/archive/ is ever exported)` becomes `(only demo/archive/ and demo/plaud-sync.json are ever exported)`.
+In `README.md`'s Developing block, `make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ is exported)` becomes `make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ and demo/plaud-sync.json)`. In the `Makefile`, Task 1 keeps this comment above `pages:` (its `## ` description, "build the static Pages demo into _site/", stays as it is). Replace:
+
+```make
+# The static GitHub Pages demo (spec §17.1): only demo/archive/ is ever exported.
+pages: build ## build the static Pages demo into _site/
+```
+
+with:
+
+```make
+# The static GitHub Pages demo (spec §17.1): only demo/archive/ and demo/plaud-sync.json are
+# ever exported.
+pages: build ## build the static Pages demo into _site/
+```
+ In `.github/workflows/pages.yml`, `(only demo/archive/ is ever exported)` becomes `(only demo/archive/ and demo/plaud-sync.json are ever exported)`.
 
 - [ ] **Step 7: Run them; they pass:** `uv run pytest packages/ui/tests/test_build_pages.py packages/ui/tests/test_demo_guard.py -q`, then `make build`, `uv run pytest -m e2e packages/ui/tests/e2e/test_sync.py -q`, and `make pages pages-test`. Expected: all pass.
 
@@ -23563,7 +23873,7 @@ Their full plans are written at their phase start, against the code as built and
 - `sources/base.py` and `sources/plaud.py` (decision 4); the listing: pages until empty, repeats, malformed rows, the census, bad, partial or complete (S5, S7).
 - The buckets and both equations, the compare and the cache's writes (titles hidden in a consent stop or an ID-change hold), the property test (S7).
 - The listing hold, **Accept this listing** (request and `accept-listing`), a small shrink settling, the re-key match (S7).
-- Importing one recording: the consent and keep-out re-checks, the envelope's title checked before any block, the `_meta` stamp, auto-private at import, the disk guard, `.tmp/plaud-dl/`, ffprobe, `Writer.add`, reconcile, the snapshot mark (S8, S11, S12); CLAUDE.md's scratch-download sentence; main spec §6.1.
+- Importing one recording: the consent and keep-out re-checks, the envelope's title checked before any block (§11.5: Task 4's `PlaudClient.envelope(listed_id)` always fetches the linked blocks, so Phase 2's import fetches the envelope without its blocks, checks the title, then fetches the blocks, through `envelope(…, enrich=False)` or a split into two calls; decision 37), the `_meta` stamp, auto-private at import, the disk guard, `.tmp/plaud-dl/`, ffprobe, `Writer.add`, reconcile, the snapshot mark before every 2b snapshot, by every path, `Writer.add` at import included (`Writer.add_snapshot` leaves it to its caller) (S8, S11, S12); CLAUDE.md's scratch-download sentence; main spec §6.1.
 - Keep-out at listing time, **Release** (preview, release, unrelease, `plaud release`), a late keep-out from the listing, a title change re-tagged from the listing (§13.1 case 2).
 - The sync run (§11.1) as the worker's turn and light turn, the good-run rule's attempts, the compare, sync and import handlers and their re-checks (S10's budget).
 - Gone from Plaud (§12.3); the rebuild's review marks at listing time (§11.6).
@@ -23587,3 +23897,5 @@ Their full plans are written at their phase start, against the code as built and
 
 | Source task | Severity | File | Item | Status |
 |---|---|---|---|---|
+| 4 | Important | `packages/core/src/recordings/plaud/client.py` | Spec §11.5: an envelope's title is checked before any block, but `PlaudClient.envelope(listed_id)` always fetches the linked blocks. Phase 2's import fetches the envelope without its blocks, checks the title, then fetches the blocks (`envelope(…, enrich=False)` or a split into two calls). Phase 1 calls it only from the spike script, which reads `files/{id}` through `get_json(FILE_PATH…)` (decision 37). | open: Phase 2's outline |
+| 12 | Important | `packages/core/src/recordings/writer.py` | `Writer.add_snapshot` leaves the snapshot mark to its caller, since it holds no `PlaudDB`: Phase 2 keeps "mark before every 2b snapshot, by every path", `Writer.add` at import included (decision 43). | open: Phase 2's outline |
