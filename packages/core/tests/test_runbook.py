@@ -236,3 +236,15 @@ def test_the_runbook_says_the_first_real_tag_ends_the_disposable_window():
     # The definition, so "the first real tag" can't be read as the imported ones.
     assert "applied in the app, not the ones imported" in " ".join(text.split())
     assert "loses every tag applied in the app" in " ".join(text.split())
+
+
+def test_the_runbook_says_how_to_take_a_recording_out_by_hand():
+    # why: stage 2b spec §12.4. trash/ is inside the archive, so it is backed up and mirrored: a
+    # recording that must not be kept is deleted for good, after its ID is on the consent list.
+    text = _section("## Taking a recording out by hand")
+    flat = " ".join(text.split())
+    for needed in ("make consent-add", "rm -rf", "reindex --allow-missing", "Plaud's cloud"):
+        assert needed in flat, needed
+    assert "Never move it to `trash/`" in flat
+    assert not re.search(r"\bmv\b[^\n]*trash", text)
+    assert flat.index("make consent-add") < flat.index("rm -rf") < flat.index("--allow-missing")

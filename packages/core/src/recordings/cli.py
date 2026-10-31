@@ -18,6 +18,7 @@ from recordings.doctor import ROLES, doctor
 from recordings.index import Index, IndexRefused
 from recordings.init import InitError, adopt_archive, init_archive
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
+from recordings.plaud import commands as plaud_commands
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.sources.audio_router import CatalogError, ImportStopped, plan, run
@@ -136,6 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("alert-test", help="send a test alert and log a dead-man's switch ping")
     p.add_argument("--json", action="store_true")
+
+    plaud_commands.add_parser(sub)  # `recordings plaud …` (stage 2b): its own subcommands
     # No abbreviated flags: `doctor --rol web` would otherwise work until a second option shares
     # the prefix, and the runbook test could not see a flag renamed to an extension of the old one.
     # (A subparser's allow_abbrev is its own: it doesn't inherit the parent's.)
@@ -544,6 +547,7 @@ def main(argv: list[str] | None = None) -> int:
         "mirror": cmd_mirror,
         "ops": cmd_ops,
         "alert-test": cmd_alert_test,
+        "plaud": plaud_commands.run,
     }
     if args.command in commands:
         return commands[args.command](args)

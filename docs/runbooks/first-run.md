@@ -1066,6 +1066,31 @@ A single recording can also fail in a batch without stopping it: "edited outside
 again" ("1 recording busy…" for one), "the recording is gone", "not confirmed: would become
 visible". The toast groups them by reason, with counts, and stays until dismissed.
 
+## Taking a recording out by hand
+
+One section serves a late consent listing, a late keep-out, a recording gone from Plaud, and
+anything Dan must not keep (stage 2b spec §12.4):
+1. **Put its Plaud ID on the consent list** (`make consent-add`). From the worker's next tick, the
+   sync tags it `private`, never fetches it again, and can never bring it back. If it isn't flagged
+   already, it gets a flag, which is expected.
+2. `rc stop worker web`.
+3. **Delete its folder for good:** `rm -rf` on its folder under
+   `$RECORDINGS_HOME/archive/recordings/`. Never move it to `trash/`: `trash/` is inside the
+   archive, so it is backed up every hour and mirrored (`backup.py:244-247`, `mirror.py:155-160`
+   leave out only `.tmp/`).
+4. `rc run --rm worker recordings reindex --allow-missing`. Then `rc start web worker`.
+5. After the next mirror run, check that the NAS mirror and the Mac no longer have the folder.
+6. **What still holds it,** as Forget reports (main spec §7.6, step 6):
+   - the restic snapshots taken since it arrived, until retention ages them out (up to 12 months);
+     the `pre-import` and `post-import` snapshots never age out, and only a NAS-side
+     `restic rewrite`, with Forget's steps, removes it from them;
+   - the NAS mirror until its next run, and the Mac's copy of it;
+   - Synology Drive's versions and Time Machine on the Mac;
+   - Plaud's cloud, unless it is deleted there too.
+
+This is a by-hand, permanent exception to main spec §6.4's "Delete moves the folder to `trash/`",
+which describes the app's own Delete, like Forget.
+
 ## When the data disk fills
 
 Status warns below 20% free and the import stops below 5% (spec §12.5); the restore test refuses
