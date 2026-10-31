@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 15: Doctor's worker role, open.
+**Now:** Task 16: Backups carry the consent folder, open.
 
 ***
 
@@ -15387,9 +15387,9 @@ Spec §17.2.
   For `worker`: `_backup`, `_mirror`, `_ssh` and the restic part of `_secrets` are skipped; no alerts-off warning. Its problems: a consent stop (by line numbers; kept lines are a note); no token store ("sign-in needed: run `make plaud-sign-in`"); `/plaud` wider than 0700, the token wider than 0600, or either not this user's; `BAD_WORD`; a missing or bad `deadman_sync_url`, naming `RECORDINGS_DEADMAN_SYNC_URL_FILE`. Never a value or a hash. Doctor never calls Plaud. Token expiry waits for Phase 2 (decision 28).
   `JOB_SECRETS` goes: `BACKUP_SECRETS` and `ALERT_SECRETS` replace it. A missing `state.db` is a problem for `worker`, as for `backup` (the worker can't start without it). `report["alerts"]` for `worker` is `{"ntfy_server_set", "topic_set", "deadman_set"}`, with `deadman_set` from `deadman_sync_url`. The folder checked is the token store's (`[plaud] token_store`'s parent, `/plaud` by default); `_owner()` (the effective UID) is what a test patches. The consent stop's problem is `"<the stop phrase>: nothing is imported until it reads (spec §12.1)"`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-15-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-15-base`
 
-- [ ] **Step 1: Write the failing tests,** `packages/core/tests/test_doctor.py`. The imports:
+- [x] **Step 1: Write the failing tests,** `packages/core/tests/test_doctor.py`. The imports:
 
 ```python
 # before
@@ -15673,9 +15673,9 @@ def test_doctor_prints_no_value_or_hash(tmp_path):
     assert hashlib.sha256(token_bytes).hexdigest() not in text
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_doctor.py -q`. Expected: the module doesn't collect, `ImportError: cannot import name 'ALERT_SECRETS' from 'recordings.doctor'`, so every new test fails first; none is a pin.
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_doctor.py -q`. Expected: the module doesn't collect, `ImportError: cannot import name 'ALERT_SECRETS' from 'recordings.doctor'`, so every new test fails first; none is a pin.
 
-- [ ] **Step 3: Write the role,** `packages/core/src/recordings/doctor.py`. The module docstring's list of roles:
+- [x] **Step 3: Write the role,** `packages/core/src/recordings/doctor.py`. The module docstring's list of roles:
 
 ```text
 before:
@@ -15960,11 +15960,11 @@ And in `packages/core/src/recordings/cli.py`, the `doctor` subparser's help:
         "else all)",
 ```
 
-- [ ] **Step 4: Run them; they pass.** `uv run pytest packages/core/tests/test_doctor.py -q`. Expected: all pass.
+- [x] **Step 4: Run them; they pass.** `uv run pytest packages/core/tests/test_doctor.py -q`. Expected: all pass.
 
-- [ ] **Step 5: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 5: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 6: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 6: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(doctor): 🤖 the worker role: the consent list, the sign-in, /plaud's modes, the keep-out word and the sync's dead-man URL
@@ -15988,7 +15988,9 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 `git add packages/core/src/recordings/doctor.py packages/core/src/recordings/cli.py packages/core/tests/test_doctor.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`,
 `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 7: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 7: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `2c9eb46`; the listings above are the plan as written): the worker's sign-in problem names no command that doesn't exist yet ("sign-in needed: the Plaud sign-in comes with stage 2b's next phase; until then the worker stays idle (runbook section 6)"); the consent notes are true for the worker; enforced keep-out words are read through `baseline.enforced_words` (a corrupt row is a problem; an unreadable `state.db` gives `None`); the sync-URL hint only when that is the cause, through one `_alert_config`; `web` and `backup` also check the folder `[plaud] token_store` names; the forbidden secrets come from a role table. Task 17's smoke and runbook section 6 now look for "sign-in needed" (forward review).
 
 ### Task 16: Backups carry the consent folder
 
@@ -17041,7 +17043,7 @@ consent_list = "/consent/consent-list.md"
 # What `doctor --role worker` must report in the smoke's worker: no list, no sign-in, no ping URL.
 WORKER_PROBLEMS = (
     "the consent list is missing",
-    "sign-in needed: run `make plaud-sign-in`",
+    "sign-in needed",
     "RECORDINGS_DEADMAN_SYNC_URL_FILE",
 )
 BACKUP_COMMANDS = (
@@ -17311,8 +17313,8 @@ the Library moves onto `index.db` before 2b deploys.
    ```
    Expected:
    - `rc ps` shows `web`, `backup` and `worker` up, and `worker` `(healthy)`.
-   - `doctor --role worker` reports one problem until the sign-in exists: "sign-in needed: run
-     `make plaud-sign-in`" (the target comes with the next phase). Fix any other first: the
+   - `doctor --role worker` reports one problem until the sign-in exists: "sign-in needed: the
+     Plaud sign-in comes with stage 2b's next phase". Fix any other first: the
      consent list's lines, `/plaud`'s mode, the keep-out word, or the sync's URL.
    - `plaud consent` prints the ID count you expect; the lines it reads as kept, by number (each
      must mean "keep"); and any recording 2a imported despite its exclusion, by archive ID, marked
@@ -24912,6 +24914,7 @@ Their full plans are written at their phase start, against the code as built and
 - [Dan] **Spike sessions A and B** (runbook 1c, with `scripts/plaud_spike.py`): A is S1, S2, S4, S3; B is S5, S7, S8, S10, S12, S11. Results recorded in the runbook's table; S3's question asked only if a sign-out is found; S7's "hex differs" stops and asks Dan.
 - The fake Plaud server's shapes: the account and listing, envelopes and storage, the sign-in, §21's faults, Dan's edits and the request-K hook (S1, S5, S8).
 - `plaud/tokens.py`: the token store, refresh before expiry and after a 401, `tokens.lock`, write-before-use, `PlaudAuthError` on S4's codes, the sign-in pause, the current-user read; the client's refresh `POST` (S1, S2, S4).
+- Doctor's sign-in problem names `make plaud-sign-in` again, as spec §17.2 words it, once the target exists (Task 15's review).
 - `recordings plaud token-import -` and `make plaud-sign-in` (with `SERVER`, `REPO_DIR` and a fake `ssh`); CLAUDE.md's `tokens.json` rule; doctor's token expiry (S1, S3).
 - The client's page size, pacing, budget, 429 and 5xx backoff, the stall rule's numbers and `Range` resume (S5, S10, S11).
 - `sources/base.py` and `sources/plaud.py` (decision 4); the listing: pages until empty, repeats, malformed rows, the census, bad, partial or complete (S5, S7).
