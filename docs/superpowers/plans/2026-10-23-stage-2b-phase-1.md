@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 17: The worker service, and deploying it, open.
+**Now:** Task 18: The deploy guard asks `plaud`, and `make consent-add`, open.
 
 ***
 
@@ -16496,9 +16496,9 @@ Spec §17.1 and §17.3, with decision 10: Phase 1 is deployable, the worker idle
 - Produces, the `worker` service: the same image and tag, `pull_policy: never`, `hostname: recordings-worker`, `command: ["recordings", "worker"]`, `RECORDINGS_ROLE: worker`, `RECORDINGS_DEADMAN_SYNC_URL_FILE: /run/secrets/deadman_sync_url`, `<<: *hardening`, `init: true`, `restart: unless-stopped`, `stop_grace_period: 30s`, `cpu_shares: 512`, `oom_score_adj: 300`, the deployment's user, log rotation; long-syntax binds with `create_host_path: false`: the config read-only, the archive, `/state`, the `index` volume, `${RECORDINGS_CONSENT_HOST}` read-only at `/consent`, `${RECORDINGS_PLAUD_HOST}` at `/plaud`; `secrets: [deadman_sync_url]`; `healthcheck: {test: ["CMD", "recordings", "worker", "--alive"], interval: 30s, start_period: 60s}`; no `ports`. `backup` gains `${RECORDINGS_CONSENT_HOST}` read-only at `/consent`, and its `RECORDINGS_NTFY_TOPIC_FILE` is `${RECORDINGS_ALERTS_TOPIC_HOST:+/run/secrets/ntfy_topic}`, the `ntfy_topic` secret's file `${RECORDINGS_ALERTS_TOPIC_HOST:-/dev/null}` (the variable's name keeps clear of `RECORDINGS_NTFY_TOPIC`, which the template must never name). With it empty, the backup has no topic, sends no push and still pings its dead-man's switch; doctor's "alerts are off" warning is expected.
   Also: `recordings alert-test` adds `"deadman_sync": true | false` to its output when `deadman_sync_url` is set (the worker), from a `/log` ping, and counts it in its exit code; with none of the three set it still exits 78.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-17-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-17-base`
 
-- [ ] **Step 1: Write the failing tests.** In `packages/core/tests/test_deploy_template.py`, add `import json` to the imports; in `test_the_boot_unit_waits_for_docker_the_disk_and_tailscale`, add to the tuple of lines, first: `"Description=recordings: the web, backup and worker containers",`; in `test_a_deploy_waits_while_a_job_runs_unless_forced`:
+- [x] **Step 1: Write the failing tests.** In `packages/core/tests/test_deploy_template.py`, add `import json` to the imports; in `test_the_boot_unit_waits_for_docker_the_disk_and_tailscale`, add to the tuple of lines, first: `"Description=recordings: the web, backup and worker containers",`; in `test_a_deploy_waits_while_a_job_runs_unless_forced`:
 
 ```python
 # before
@@ -16786,9 +16786,9 @@ def test_a_backup_with_no_ntfy_topic_still_pings_its_dead_mans_switch(
     assert pings(ntfy) == ["/ping/start", "/ping"] and pushes(ntfy) == []
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_deploy_template.py packages/core/tests/test_runbook.py packages/core/tests/test_ops.py -q`. Expected: `KeyError: 'worker'` from the new compose tests; `test_the_ntfy_topic_is_an_optional_secret_in_backup_only` on its first assertion (the topic's file is still `/run/secrets/ntfy_topic`); the smoke-secrets, boot-unit and deploy-guard tests on their new lines; from the runbook, `ValueError: '## 6. Deploy 2b' is not in list`, `AssertionError: no heading '## Rolling back across 2b'`, and the commands test on the `worker` role; and alert-test in the worker exiting 78 ("set [alerts] ntfy_server …"). Two new tests are pins, passing before the code: `test_make_deploy_waits_for_every_health_check` (it holds the worker to it once the worker exists) and `test_a_backup_with_no_ntfy_topic_still_pings_its_dead_mans_switch` (it proves the app needs no topic, so that compose may stop requiring one).
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_deploy_template.py packages/core/tests/test_runbook.py packages/core/tests/test_ops.py -q`. Expected: `KeyError: 'worker'` from the new compose tests; `test_the_ntfy_topic_is_an_optional_secret_in_backup_only` on its first assertion (the topic's file is still `/run/secrets/ntfy_topic`); the smoke-secrets, boot-unit and deploy-guard tests on their new lines; from the runbook, `ValueError: '## 6. Deploy 2b' is not in list`, `AssertionError: no heading '## Rolling back across 2b'`, and the commands test on the `worker` role; and alert-test in the worker exiting 78 ("set [alerts] ntfy_server …"). Two new tests are pins, passing before the code: `test_make_deploy_waits_for_every_health_check` (it holds the worker to it once the worker exists) and `test_a_backup_with_no_ntfy_topic_still_pings_its_dead_mans_switch` (it proves the app needs no topic, so that compose may stop requiring one).
 
-- [ ] **Step 3: Write the service,** `docker/compose.yml`. In `backup`'s `environment`, the topic becomes optional, as the token already is:
+- [x] **Step 3: Write the service,** `docker/compose.yml`. In `backup`'s `environment`, the topic becomes optional, as the token already is:
 
 ```yaml
 # before
@@ -16938,7 +16938,7 @@ Description=recordings: the web, backup and worker containers
 
 Before writing the service, check, and say in the commit what you checked: the Compose file reference's `healthcheck` (a service's `test`, `interval` and `start_period` replace the image's `HEALTHCHECK`), `init` and `stop_grace_period`, and `docker compose up`'s `--wait` (it waits for the started services to be running or healthy, which the 2a smoke already relies on for `web`). Step 8's `make deploy-smoke` proves both in a real container (spec §22's "`docker compose up --wait` honours the worker's health check"). If the docs leave a gap, record it in `docs/upstream-issues.md`.
 
-- [ ] **Step 4: alert-test in the worker,** `packages/core/src/recordings/cli.py`, `cmd_alert_test`:
+- [x] **Step 4: alert-test in the worker,** `packages/core/src/recordings/cli.py`, `cmd_alert_test`:
 
 ```python
 # before
@@ -16973,7 +16973,7 @@ Before writing the service, check, and say in the commit what you checked: the C
     return 0 if False not in result.values() else 1
 ```
 
-- [ ] **Step 5: The smoke,** `scripts/compose_smoke.py`, as a whole:
+- [x] **Step 5: The smoke,** `scripts/compose_smoke.py`, as a whole:
 
 ```python
 """Run the real docker/compose.yml once, against temporary folders: init, the backup service's
@@ -17207,7 +17207,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 6: Docs.** `docs/runbooks/first-run.md`, the introduction:
+- [x] **Step 6: Docs.** `docs/runbooks/first-run.md`, the introduction:
 
 ```text
 before:
@@ -17455,11 +17455,11 @@ with:
 # 2b" comes first: this compose.yml would start a worker the older image can't run.
 ```
 
-- [ ] **Step 7: Run them; they pass.** `uv run pytest packages/core/tests/test_deploy_template.py packages/core/tests/test_runbook.py packages/core/tests/test_ops.py -q`. Expected: all pass.
+- [x] **Step 7: Run them; they pass.** `uv run pytest packages/core/tests/test_deploy_template.py packages/core/tests/test_runbook.py packages/core/tests/test_ops.py -q`. Expected: all pass.
 
-- [ ] **Step 8: Run the checks:** `uv run ruff format .`, then `make check`, then `make deploy-smoke` (C8.03, C10.02; CI's compose-smoke job runs it too; it needs the Docker daemon). Expected: all pass, the smoke ending "compose smoke: init, ssh, backup, restore test and mirror ran, web answered /healthz, and the worker stayed healthy with no sign-in and no consent list, as this machine's user".
+- [x] **Step 8: Run the checks:** `uv run ruff format .`, then `make check`, then `make deploy-smoke` (C8.03, C10.02; CI's compose-smoke job runs it too; it needs the Docker daemon). Expected: all pass, the smoke ending "compose smoke: init, ssh, backup, restore test and mirror ran, web answered /healthz, and the worker stayed healthy with no sign-in and no consent list, as this machine's user".
 
-- [ ] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(docker): 🤖 the worker service, hardened, with its own health check, the consent folder and the sync's dead-man URL
@@ -17492,7 +17492,9 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 `git add docker/compose.yml docker/deploy.example.conf docker/recordings.service scripts/compose_smoke.py packages/core/src/recordings/cli.py Makefile packages/core/tests/test_deploy_template.py packages/core/tests/test_runbook.py packages/core/tests/test_ops.py docs/runbooks/first-run.md README.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`,
 `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 10: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 10: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `18ee93c`; the listings above are the plan as written): "Rolling back across 2b" works in a fresh shell (the worker is stopped, removed and the backup restarted through `sh docker/up-deployed.sh`, which reads the running tag back) and notes that a pre-2b `compose.yml` needs a non-empty `secrets/ntfy_topic`; "Restoring for real" lists `/consent` in each snapshot, moves it back into place (mode 700, an existing folder moved aside), and a new server gets section 6's folders and `deadman_sync_url` before `up -d`; section 0 says sections 2-5 deploy 2a's last commit; the worker's health check has its own `timeout: 10s`; `alerts.accepted` is the one 2xx test; the runbook says only `backup` warns "alerts are off"; the README's `deploy.env` row names 2b's settings; `docs/upstream-issues.md` records only the real gap (the `up` page doesn't say `--wait` fails on an unhealthy check).
 
 ### Task 18: The deploy guard asks `plaud`, and `make consent-add`
 
