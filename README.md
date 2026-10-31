@@ -69,6 +69,7 @@ make deploy                                         # builds, tags the image by 
 make rollback TAG=<tag>                             # starts an older image again, never building one
 make prune-images                                   # removes old images, keeping the newest five
 make deploy-smoke                                   # the real compose file, once, against temporary folders
+make consent-add ID='<id>'                          # from the Mac: adds a Plaud ID to the server's consent list
 ```
 
 - **First time: initialise before you deploy.** Do not run `make deploy` on a new archive. `recordings init`
@@ -77,8 +78,10 @@ make deploy-smoke                                   # the real compose file, onc
 - **Images are tagged by commit.** `make deploy` refuses a tree with uncommitted or untracked
   changes, because a `-dirty` image has no commit to go back to.
 - **A deploy waits for a running job.** Recreating `backup` stops the job it runs, and the job
-  starts again from the beginning: hours for a restore test or a check. So `make deploy` refuses
-  while a job holds the ops lock, and says which; `make deploy FORCE=1` deploys anyway. It then
+  starts again from the beginning: hours for a restore test or a check. Recreating `worker` stops
+  a Plaud run: a routine sync is safe to interrupt, but Sync everything, the first catch-up and
+  the baseline are long. So `make deploy` refuses while a job holds the ops lock, or one of those
+  three holds the sync's `plaud` lock, and says which; `make deploy FORCE=1` deploys anyway. It then
   waits up to 3 minutes for `web` and `worker` to pass their health checks (the worker's is
   `recordings worker --alive`), and fails if either doesn't: roll back.
 - **Rolling back** starts an image that is already on the machine: `docker image ls recordings`
@@ -93,6 +96,12 @@ make deploy-smoke                                   # the real compose file, onc
   then starts the containers again on the tag they last ran (`docker/up-deployed.sh`). The
   runbook installs it. It uses the `compose.yml` and `deploy.env` the checkout holds at boot, so
   pull only to deploy.
+- **`make consent-add ID='<id>'`,** run on the Mac, adds a Plaud ID to the server's consent list
+  (stage 2b). It needs `local.mk` at the repo's top (git-ignored), with `SERVER`, your ssh name
+  for the homelab server, and `REPO_DIR`, the checkout there. Keep the single quotes: the Sync
+  screen's Copy ID holds backticks, which a shell would run. It checks the ID first (a bare ID,
+  the `of_` form, or the Copy ID form), adds the line by writing a new file and renaming it, and
+  prints what the worker reads. The runbook's "Keep a recording out for good" has the rest.
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
   always allowed; the app refuses any other name. Give each name alone, with no port or

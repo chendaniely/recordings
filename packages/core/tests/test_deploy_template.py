@@ -251,24 +251,25 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
 
 
 @contextmanager
-def ops_lock_held(folder: Path, announced: str):
-    """Another process holds the ops lock, as the loop's run_job does, with `announced` in the lock
-    file, as Task 15's announce writes it."""
+def ops_lock_held(folder: Path, announced: str, key: str = "ops"):
+    """Another process holds a lock (`ops` by default, as the loop's run_job does; `plaud` as a
+    Plaud run does), with `announced` in the lock file, as Task 15's announce writes it."""
     holder = subprocess.Popen(
         [
             sys.executable,
             "-c",
             (
                 "import pathlib, sys\n"
-                "from recordings.locks import OPS_LOCK, Locks\n"
-                "folder = pathlib.Path(sys.argv[1])\n"
-                "with Locks(folder, timeout=0).hold(OPS_LOCK):\n"
-                "    (folder / f'{OPS_LOCK}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
+                "from recordings.locks import Locks\n"
+                "folder, key = pathlib.Path(sys.argv[1]), sys.argv[3]\n"
+                "with Locks(folder, timeout=0).hold(key):\n"
+                "    (folder / f'{key}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
                 "    print('held', flush=True)\n"
                 "    sys.stdin.read()\n"
             ),
             str(folder),
             announced,
+            key,
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -284,7 +285,7 @@ def ops_lock_held(folder: Path, announced: str):
 def test_the_ops_probe_sees_a_held_lock_and_what_it_announced(tmp_path):
     # why: deploy-guard.sh asks the backup container with this file. flock is per host, so a hold
     # by the loop, or by a one-off `rc run` in another container, shows the same.
-    probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks")]
+    probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks"), "ops"]
     assert subprocess.run(probe, check=False).returncode == 0  # never taken: no lock file yet
     with ops_lock_held(tmp_path / "locks", '{"job": "restore-test"}'):
         busy = subprocess.run(probe, capture_output=True, text=True, check=False)
@@ -302,8 +303,8 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
         '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; '
         "exit 1; fi\n"
         'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
-        'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
-        '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
+        'if [ "$1 $2 $3 $4 $5 $6" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
+        '  shift 6; exec "$FAKE_PYTHON" - "$FAKE_LOCKS" "$@"\nfi\nexit 99\n',
         encoding="utf-8",
     )
     fake.chmod(0o755)
@@ -360,9 +361,9 @@ def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(t
         'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
         'if [ "$1" = ps ]; then exit 0; fi\n'
         'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
-        'if [ "$RECORDINGS_IMAGE_TAG $*" = "0123456789ab compose --env-file docker/deploy.env '
-        '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks" ]; then\n'
-        '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
+        'case "$RECORDINGS_IMAGE_TAG $*" in "0123456789ab compose --env-file docker/deploy.env '
+        '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks "*)\n'
+        '  shift 14; exec "$FAKE_PYTHON" - "$FAKE_LOCKS" "$@" ;;\nesac\nexit 99\n',
         encoding="utf-8",
     )
     fake.chmod(0o755)
@@ -703,3 +704,84 @@ def test_the_ntfy_topic_and_token_are_optional_secrets_in_backup_only(name, host
     for service in other_services:
         assert f"RECORDINGS_NTFY_{name}_FILE" not in doc["services"][service]["environment"]
         assert secret not in doc["services"][service].get("secrets", [])
+
+
+def running_backup_guard(tmp_path):
+    """deploy-guard.sh against a fake docker whose running backup container is this machine: the
+    probe it pipes in runs here, on the test's own lock folder, with the guard's arguments."""
+    fake = tmp_path / "docker"
+    fake.write_text(
+        '#!/bin/sh\nif [ "$1" = ps ]; then echo abc123; exit 0; fi\n'
+        'if [ "$1 $2 $3 $4 $5 $6" = "exec -i abc123 python - /state/locks" ]; then\n'
+        '  shift 6; exec "$FAKE_PYTHON" - "$FAKE_LOCKS" "$@"\nfi\nexit 99\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    env = {
+        "PATH": f"{tmp_path}:/usr/bin:/bin",
+        "FAKE_PYTHON": sys.executable,
+        "FAKE_LOCKS": str(tmp_path / "locks"),
+    }
+
+    def guard() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["sh", str(REPO / "docker" / "deploy-guard.sh")],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return guard
+
+
+def announced(job: str) -> str:
+    return json.dumps({"job": job, "since": "2026-10-23T12:00:00+00:00"})
+
+
+def test_the_probe_takes_a_lock_name_and_jobs(tmp_path):
+    # why: stage 2b spec §17.3. With jobs given, only a holder that announced one of them counts.
+    probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks")]
+
+    def ask(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([*probe, *args], capture_output=True, text=True, check=False)
+
+    assert ask().returncode == 2  # a lock name is needed
+    assert ask("plaud", "plaud-full").returncode == 0  # never taken
+    with ops_lock_held(tmp_path / "locks", announced("plaud-sync"), key="plaud"):
+        assert ask("plaud").returncode == 3  # no jobs: any holder counts
+        assert ask("plaud", "plaud-full", "plaud-catch-up").returncode == 0  # a routine sync
+        assert ask("ops").returncode == 0  # another lock
+    with ops_lock_held(tmp_path / "locks", announced("plaud-full"), key="plaud"):
+        busy = ask("plaud", "plaud-full", "plaud-catch-up")
+        assert busy.returncode == 3 and busy.stdout == announced("plaud-full") + "\n"
+
+
+def test_the_guard_refuses_for_plaud_full_and_catch_up_and_lets_plaud_sync_through(tmp_path):
+    # why: Sync everything, the first catch-up and the baseline run for hours, and a deploy
+    # recreates the worker; a routine sync is safe to interrupt (stage 2b spec §17.3).
+    guard = running_backup_guard(tmp_path)
+    assert guard().returncode == 0
+    for job, refused in (
+        ("plaud-full", True),
+        ("plaud-catch-up", True),
+        ("plaud-baseline", True),
+        ("plaud-sync", False),
+    ):
+        with ops_lock_held(tmp_path / "locks", announced(job), key="plaud"):
+            done = guard()
+            assert (done.returncode != 0) == refused, job
+            assert (job in done.stderr and "FORCE=1" in done.stderr) == refused, job
+    # the catch-up holds ops too, and announces itself there: the ops question finds it first
+    with ops_lock_held(tmp_path / "locks", announced("plaud-catch-up")):
+        assert guard().returncode != 0
+
+
+def test_a_held_plaud_lock_that_cant_be_read_still_refuses(tmp_path):
+    # why: a holder between its hold and its announcement, or one whose text is damaged, might be
+    # any job: the guard refuses rather than guess.
+    guard = running_backup_guard(tmp_path)
+    for text in ("", "not json", '["plaud-full"]'):
+        with ops_lock_held(tmp_path / "locks", text, key="plaud"):
+            done = guard()
+            assert done.returncode != 0 and "FORCE=1" in done.stderr, text

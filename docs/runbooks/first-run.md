@@ -859,7 +859,9 @@ rsync -a "$CONSENT_LIST" "$HOMELAB":"$SRV_HOME"/consent-list.md
 ```
 If the first rsync is interrupted, run the same line again: it carries on. Hidden files
 (`.DS_Store`) are left out of the checksums and the copy alike, so the checksums cover everything
-that is copied. `caffeinate -i` keeps the Mac awake for the copy.
+that is copied. `caffeinate -i` keeps the Mac awake for the copy. Once stage 2b is deployed
+(section 6), the consent list lives on the server, in `$RECORDINGS_HOME/consent/`, and that copy
+is the only one read: leave out the last line, and never copy the Mac's over it.
 
 **On the homelab server:** check the copy, make it read-only, and run the dry run. Work inside
 `tmux` (or `screen`), so a dropped ssh session doesn't kill an hours-long backup or import. Paste
@@ -868,8 +870,10 @@ the top block, `cd "$REPO_DIR"`, and export `RECORDINGS_IMAGE_TAG` as in 2.4.
 cd "$RECORDINGS_HOME/import" && sha256sum --check --quiet ../import.sha256 && echo "copy verified"
 cd -
 chmod -R a-w "$RECORDINGS_HOME/import"
-chmod 400 "$RECORDINGS_HOME/consent-list.md"
-IMPORT_MOUNTS=(-v "$RECORDINGS_HOME/import:/import:ro" -v "$RECORDINGS_HOME/consent-list.md:/consent/consent-list.md:ro")
+install -d -m 700 "$RECORDINGS_HOME/consent"
+[ ! -f "$RECORDINGS_HOME/consent-list.md" ] || mv -n "$RECORDINGS_HOME/consent-list.md" "$RECORDINGS_HOME/consent/consent-list.md"
+chmod 400 "$RECORDINGS_HOME/consent/consent-list.md"
+IMPORT_MOUNTS=(-v "$RECORDINGS_HOME/import:/import:ro" -v "$RECORDINGS_HOME/consent:/consent:ro")
 rc run --rm "${IMPORT_MOUNTS[@]}" web recordings import-audio-router /import --dry-run
 ```
 Expected: `copy verified`, then a report in which every catalog row has one disposition and
@@ -889,9 +893,12 @@ Expected: `copy verified`, then a report in which every catalog row has one disp
 
 In the server's shell from step 3 (the top block, `RECORDINGS_IMAGE_TAG` and `IMPORT_MOUNTS`),
 still inside `tmux` or `screen`. Stop the loop first, so no scheduled
-backup lands in the middle of the import. Pause the Healthchecks check first (its Pause button):
-no backup pings while the loop is stopped, and the import can outlast the grace.
+backup lands in the middle of the import, and from stage 2b on the worker too, so no sync does
+(before section 6 there is no `worker`: skip its two lines). Pause the backup's Healthchecks check
+first (its Pause button): no backup pings while the loop is stopped, and the import can outlast
+the grace. The sync's check stays as it is ("Planned work and the sync's check", below).
 ```bash
+rc stop worker
 rc stop backup
 rc run --rm backup recordings backup run --tag pre-import
 rc run --rm "${IMPORT_MOUNTS[@]}" web recordings import-audio-router /import
@@ -900,6 +907,7 @@ rc run --rm backup recordings backup run --tag post-import
 rc run --rm backup recordings backup restore-test
 rc run --rm backup recordings mirror
 rc start backup
+rc start worker
 ```
 Expected: the import reports no failures, `validate` reports no problems, and both backups, the
 restore test and the mirror print `ok: True`. The restore test now proves the imported data, not
@@ -1255,6 +1263,38 @@ disk recovers and fills again.
    hourly backup waits for them (its turns are skipped, not failed), and Status names the running
    job and since when. Restarting while the disk is still full sends the alert once more.
 3. If you must restart, do it after step 1, and expect that wait.
+
+## Keep a recording out for good
+
+Stage 2b's consent list says which Plaud recordings never enter the archive (spec §12.1). Add one:
+- **From the Mac:** `make consent-add ID='<id>'`, the ID in single quotes, with `SERVER` (your
+  ssh name for the homelab server) and `REPO_DIR` (this repo's checkout there) set in `local.mk`
+  at the repo's top (git-ignored). `ID` may be the bare ID, the `of_` form, or what the Sync
+  screen's Copy ID puts on the clipboard (`` - `of_…` — ``). Its backticks are why the quotes
+  matter: a shell runs backticks in an unquoted or double-quoted word, and make would get a broken
+  ID. It checks the ID on the Mac, appends `` - `<id>` — added <date> `` on the server (the 32 hex
+  digits, which the list matches in any form) by writing a new file and renaming it over the list,
+  and prints what the worker reads (`recordings plaud consent`).
+- **On the server:** edit `$RECORDINGS_HOME/consent/consent-list.md` with any editor, which writes a
+  new file and renames it; the worker watches the folder, so it sees the new file. Then run
+  `rc exec worker recordings plaud consent`.
+
+Either way, `recordings plaud consent` must show the new count, and no line it can't read. If your
+edit doesn't show, the worker didn't see it. If the recording is already in the archive, the
+worker tags it `private` within seconds and flags it; take it out by hand if it mustn't stay.
+
+A line that holds a valid ID but is read as a typo: write it as `` - `of_…` — note ``, the ID first
+(bare or in one pair of backticks, nothing else in them), then a dash. The list stops on a line
+that looks like an ID but can't be read: an ID split by a space or a line wrap (Dan's decision 12),
+one in brackets or quotes (`(ID)`, `'ID'`), `of-` for `of_`, or a space inside the backticks.
+
+## Planned work and the sync's check
+
+Planned work doesn't pause the sync's Healthchecks check: re-imports, stopping the worker, or
+setting `[plaud] schedule_minutes = 0` for a while. If it lasts more than 2 hours, the check's
+email is the reminder to start the worker again or turn the schedule back on, and "up" follows at
+the first good sync. Only rolling back across 2b (below), and the final Sync everything when the
+Plaud account ends, pause or delete the check, because the sync is then meant to stay off.
 
 ## Rolling back across 2b
 

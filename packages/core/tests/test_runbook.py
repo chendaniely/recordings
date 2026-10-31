@@ -348,3 +348,37 @@ def test_the_runbook_rolls_back_across_2b():
     assert "secrets/ntfy_topic" in flat  # a pre-2b compose.yml requires the file
     assert flat.index("`make deploy`") < flat.index(back_in)
     assert flat.index(back_in) < flat.index("sh docker/up-deployed.sh restart backup")
+
+
+def test_the_runbook_keeps_a_recording_out_for_good():
+    # why: stage 2b spec §12.1 and §17.5. The ID goes in single quotes: the Copy ID form's
+    # backticks would run in the shell otherwise. Planned work never pauses the sync's check.
+    keep = " ".join(_section("## Keep a recording out for good").split())
+    for needed in (
+        "make consent-add ID='<id>'",
+        "single quotes",
+        "local.mk",
+        "Copy ID",
+        "recordings plaud consent",
+        "the ID first",
+    ):
+        assert needed in keep, needed
+    assert "2 hours" in _section("## Planned work and the sync's check")
+    headings = [line for line in _text().splitlines() if line.startswith("## ")]
+    keep_at = headings.index("## Keep a recording out for good")
+    assert headings[keep_at + 1 : keep_at + 3] == [
+        "## Planned work and the sync's check",
+        "## Rolling back across 2b",
+    ]
+
+
+def test_re_imports_stop_the_worker_and_mount_the_consent_folder():
+    # why: stage 2b spec §17.5. A re-import stops the worker as it stops the backup service, and
+    # mounts the consent folder: the old file path no longer exists once the list has moved.
+    importing = _code_lines(_section("## 4. Import"))
+    stop, start = importing.index("rc stop worker"), importing.index("rc start worker")
+    run = next(i for i, line in enumerate(importing) if "import-audio-router /import" in line)
+    assert stop < run < start
+    (mounts,) = [line for line in _code_lines() if line.startswith("IMPORT_MOUNTS=(")]
+    assert '-v "$RECORDINGS_HOME/consent:/consent:ro"' in mounts
+    assert "consent-list.md:/consent" not in mounts

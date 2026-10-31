@@ -7,10 +7,20 @@ NVM := if [ -s "$$HOME/.nvm/nvm.sh" ]; then . "$$HOME/.nvm/nvm.sh" && nvm use --
 IMAGE_TAG = $(shell git rev-parse --short=12 HEAD)$(shell test -z "$$(git status --porcelain)" || echo -dirty)
 COMPOSE_ARGS = --env-file docker/deploy.env -f docker/compose.yml
 COMPOSE = RECORDINGS_IMAGE_TAG=$(IMAGE_TAG) docker compose $(COMPOSE_ARGS)
+# The Mac's own settings for the targets that reach the server (git-ignored): SERVER, your ssh
+# name for the homelab server, and REPO_DIR, this repo's checkout there. They are expanded here,
+# on the Mac, so the server's shell never sees a variable it doesn't have.
+-include local.mk
+# make consent-add's ID is pasted text: it is taken as written, never expanding a $(...) in it, and
+# reaches the recipe in the environment, never in the shell line.
+ifneq ($(origin ID),undefined)
+override ID := $(value ID)
+export ID
+endif
 
 .PHONY: help check setup skills build lint test test-py test-js test-utc leaks e2e demo
 .PHONY: demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke
-.PHONY: rollback prune-images restic
+.PHONY: rollback prune-images restic consent-add
 
 # The first target, so a bare `make` lists the targets rather than installing anything. GNU make
 # 3.81 (macOS) is enough: the list is a grep of each target's `## ` comment.
@@ -105,6 +115,18 @@ prune-images: ## keep the newest KEEP (default 5) commit-tagged images
 
 deploy-smoke: ## run the real compose file once, as CI's compose-smoke does
 	uv run python scripts/compose_smoke.py
+
+# Run on the Mac (stage 2b spec §12.1): checks the ID (a bare ID, of_..., or what the Sync screen's
+# Copy ID copied, in single quotes), appends it to the server's consent list by writing a new file
+# and renaming it, then prints what the worker reads.
+consent-add: ## add a Plaud ID to the server's consent list, from the Mac: make consent-add ID='<id>'
+	$(if $(ID),,$(error usage: make consent-add ID='<a Plaud ID, or what Copy ID copied>'))
+	$(if $(SERVER),,$(error make consent-add: set SERVER, your ssh name for the homelab server, in local.mk))
+	$(if $(REPO_DIR),,$(error make consent-add: set REPO_DIR, the repo's checkout on the server, in local.mk))
+	@id=$$(uv run python scripts/consent_id.py "$$ID") \
+	  || { echo "make consent-add: step 1 failed: the ID isn't a Plaud ID" >&2; exit 1; }; \
+	ssh "$(SERVER)" "cd '$(REPO_DIR)' && sh docker/consent-add.sh '$$id' && sh docker/up-deployed.sh exec -T worker recordings plaud consent" \
+	  || { echo "make consent-add: step 2 failed, on the server: adding the ID, or reading the list back (above)" >&2; exit 1; }
 
 restic: ## fetch the pinned restic into .cache/bin
 	uv run python scripts/fetch_restic.py
