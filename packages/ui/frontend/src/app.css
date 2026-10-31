@@ -426,7 +426,7 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
      negative block margin keeps the bar as tall as it was, like the icon's. */
   .topbar { gap: 12px; padding: 6px 12px; }
   .topbar nav { display: flex; gap: 12px; }
-  .topbar button.nav { margin-right: 0; min-height: 44px; margin-block: -6px; }
+  .topbar button.nav { margin-right: 0; min-width: 44px; min-height: 44px; margin-block: -6px; }
   .logo-name, .theme-full { display: none; }
   /* Its 44 px target overhangs the bar's padding, so the bar stays as tall as it was. */
   .theme-icon { display: inline-grid; margin-block: -6px; }

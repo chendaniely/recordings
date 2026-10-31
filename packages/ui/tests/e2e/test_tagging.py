@@ -3334,3 +3334,31 @@ def test_an_undo_after_a_refresh_brings_the_row_back_to_the_library_and_the_grid
     page.get_by_test_id("filter-untagged").click()
     expect(page.get_by_test_id("recording-row")).to_have_count(1)
     expect(page.get_by_test_id("recording-row")).to_contain_text("Apollo 13")
+
+
+@pytest.mark.browser_context_args(
+    is_mobile=True, has_touch=True, viewport={"width": 320, "height": 700}
+)
+def test_the_top_bar_at_320_px_is_one_row_of_44_px_targets(page: Page, server, console):
+    # Task 21 fix round 2 (J7, 2b spec 15.4): the logo's mark, the four tabs and the theme icon on
+    # one row, each tab and the icon at least 44 x 44, and no horizontal scroll.
+    open_library(page, server.url)
+    bar = page.locator(".topbar")
+    tabs = bar.locator("button.nav")
+    assert tabs.count() == 4
+    boxes = [tabs.nth(i).bounding_box() for i in range(4)]
+    icon = bar.get_by_test_id("theme-cycle").bounding_box()
+    mark = bar.locator(".logo i").bounding_box()
+    seen = (
+        f"tabs {[(round(b['x'], 1), round(b['width'], 1), round(b['height'], 1)) for b in boxes]}"
+        f", icon {icon}, bar {bar.bounding_box()}"
+    )
+    for b in [*boxes, icon]:
+        assert b["width"] >= 44 and b["height"] >= 44, seen
+    row = [*boxes, icon, mark]
+    assert (
+        max(b["y"] + b["height"] / 2 for b in row) - min(b["y"] + b["height"] / 2 for b in row) < 1
+    ), seen
+    assert max(b["x"] + b["width"] for b in row) <= 320 + 0.5, seen
+    assert bar.bounding_box()["height"] < 60, seen  # one row
+    assert page.evaluate("() => document.documentElement.scrollWidth") <= 320, seen
