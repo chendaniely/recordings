@@ -236,6 +236,19 @@ def test_ping_url_returns_the_status(ntfy, caplog):
     assert "HTTP 404" in caplog.text and "do-not-print" not in caplog.text
 
 
+def test_ping_url_never_raises_with_an_unchecked_url(caplog):
+    # why: ping_url takes any str; a malformed one must not raise with the URL in its text.
+    with caplog.at_level("WARNING"):
+        assert alerts.ping_url("hc.example/ping/do-not-print") is None
+    assert "do-not-print" not in caplog.text
+
+
+def test_ping_deadman_sends_nothing_when_only_the_sync_url_is_set(ntfy):
+    ac = AlertConfig(None, None, None, deadman_sync_url=f"{ntfy.url}/ping/sync")
+    assert ping_deadman(ac) is False
+    assert ntfy.requests == []
+
+
 def test_ping_deadman_is_unchanged(ntfy):
     # why: 2a's callers (the backup's jobs, alert-test) keep their bool and their signature.
     import inspect

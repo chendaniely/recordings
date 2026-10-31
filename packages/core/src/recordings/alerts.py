@@ -15,8 +15,9 @@
   the worker alone. `worker.conclude_turn` pings it through `ping_url`, which returns the HTTP
   status for Status; nothing else here sends to it.
 
-Both URLs must be https, so the topic, the token and the ping URL never cross a network in clear;
-plain http is allowed only to this machine's loopback (the tests' fake server). Neither may hold a
+The ntfy server and both ping URLs must be https, so the topic, the token and the ping URLs never
+cross a network in clear;
+plain http is allowed only to this machine's loopback (the tests' fake server). None may hold a
 query or a fragment, since /start, /fail and the topic are added to its end. A redirect is never
 followed, because it would carry the token and the title to another host, and only an https proxy
 is used: a CONNECT tunnel shows it the host name alone. Without a token the topic is the alerts'
@@ -207,17 +208,18 @@ def send(
 
 
 def ping_url(url: str, kind: str = "success", *, message: str = "") -> int | None:
-    """One Healthchecks ping to `url` (checked as AlertConfig checks it), `kind` being a key of
-    PINGS, with a fixed body. Returns the HTTP status, so Status can say "last ping failed (HTTP
-    404)", or None when the check couldn't be reached. A redirect is never followed: its 3xx is
-    the answer. Never raises; a failure is logged by status or class, never with the URL."""
-    request = urllib.request.Request(
-        url.rstrip("/") + PINGS[kind],
-        data=message.encode("utf-8"),
-        method="POST",
-        headers={"User-Agent": f"recordings/{__version__}"},
-    )
+    """One Healthchecks ping to `url`, `kind` being a key of PINGS, with a fixed body. `url` must
+    come from an AlertConfig, which checks it: this function doesn't. Returns the HTTP status, so
+    Status can say "last ping failed (HTTP 404)", or None when the check couldn't be reached. A
+    redirect is never followed: its 3xx is the answer. Never raises; a failure is logged by status
+    or class, never with the URL."""
     try:
+        request = urllib.request.Request(
+            url.rstrip("/") + PINGS[kind],
+            data=message.encode("utf-8"),
+            method="POST",
+            headers={"User-Agent": f"recordings/{__version__}"},
+        )
         with _OPENER.open(request, timeout=TIMEOUT) as response:
             return response.status
     except urllib.error.HTTPError as exc:

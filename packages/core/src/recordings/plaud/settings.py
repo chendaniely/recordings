@@ -5,7 +5,8 @@ Status.
   "noarchive", `consent_list` none (a consent stop), `token_store` `/plaud/tokens.json`, and
   `api_base` the copied client's.
 - **A wrong type,** a bad `api_base` or a bad pattern raises ConfigError naming the key, never its
-  value. An invalid `keep_out_word` is flagged instead (`keep_out_word_ok`): the worker idles, and
+  value (a bad pattern is named by its position, never quoted: it may be a name Dan wants private).
+  An invalid `keep_out_word` is flagged instead (`keep_out_word_ok`): the worker idles, and
   Status and doctor say BAD_WORD (§12.2), while the web app and the backup go on.
 - **`API_BASE` and `check_api_base` come from `endpoint`,** which loads no network module, never
   from the client: the web app imports this module (for BAD_WORD and the defaults) and calls
@@ -20,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 from recordings.config import Config, ConfigError
-from recordings.plaud.consent import consent_list_path
 from recordings.plaud.endpoint import API_BASE, check_api_base
 from recordings.plaud.keepout import DEFAULT_WORD, valid_word
 from recordings.plaud.reconcile import patterns_from_config
@@ -36,7 +36,7 @@ class PlaudSettings:
     schedule_minutes: int  # 0 is off
     auto_import: bool
     full_sweep_days: int
-    keep_out_word: str  # as configured
+    keep_out_word: str  # as configured; "" when not a string
     keep_out_word_ok: bool  # False: the worker idles, and Status and doctor say BAD_WORD
     auto_private_patterns: tuple[str, ...]
     consent_list: Path | None  # None: unset, a consent stop
@@ -44,7 +44,7 @@ class PlaudSettings:
     api_base: str
 
 
-def _whole(section: dict[str, Any], key: str, default: int, least: int) -> int:
+def _int_at_least(section: dict[str, Any], key: str, default: int, least: int) -> int:
     value = section.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int) or value < least:
         raise ConfigError(f"[plaud] {key} must be a whole number, {least} or more")
@@ -66,13 +66,13 @@ def plaud_settings(cfg: Config) -> PlaudSettings:
         raise ConfigError("[plaud] token_store must be an absolute path, in quotes")
     word = section.get("keep_out_word", DEFAULT_WORD)
     return PlaudSettings(
-        schedule_minutes=_whole(section, "schedule_minutes", DEFAULT_SCHEDULE_MINUTES, 0),
+        schedule_minutes=_int_at_least(section, "schedule_minutes", DEFAULT_SCHEDULE_MINUTES, 0),
         auto_import=auto_import,
-        full_sweep_days=_whole(section, "full_sweep_days", DEFAULT_FULL_SWEEP_DAYS, 1),
-        keep_out_word=word if isinstance(word, str) else repr(word),
+        full_sweep_days=_int_at_least(section, "full_sweep_days", DEFAULT_FULL_SWEEP_DAYS, 1),
+        keep_out_word=word if isinstance(word, str) else "",
         keep_out_word_ok=valid_word(word),
         auto_private_patterns=patterns_from_config(cfg.data),
-        consent_list=consent_list_path(cfg.data) if consent and consent.strip() else None,
+        consent_list=Path(consent).expanduser() if consent and consent.strip() else None,
         token_store=Path(token_store).expanduser(),
         api_base=check_api_base(section.get("api_base", API_BASE)),
     )

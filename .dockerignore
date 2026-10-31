@@ -26,4 +26,4 @@ test-results
 # from the context's root, so `**/` covers a token file in any folder, the root's included.
 **/tokens*.json
 **/.plaud/
-local.mk
+**/local.mk

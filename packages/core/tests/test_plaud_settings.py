@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from recordings.config import SECRETS, Config, ConfigError
 from recordings.plaud.endpoint import API_BASE
-from recordings.plaud.reconcile import DEFAULT_AUTO_PRIVATE
+from recordings.plaud.reconcile import DEFAULT_AUTO_PRIVATE, patterns_from_config
 from recordings.plaud.settings import BAD_WORD, PlaudSettings, plaud_settings
 
 REPO = Path(__file__).resolve().parents[3]
@@ -68,6 +68,14 @@ def test_an_invalid_keep_out_word_is_flagged_not_raised(word):
     # why: §12.2. The worker idles and says why; the web app and the backup go on.
     got = plaud_settings(cfg({"keep_out_word": word}))
     assert got.keep_out_word_ok is False
+
+
+def test_a_word_that_is_not_a_string_is_never_kept_as_a_word():
+    # why: a later consumer that records "the configured word" must not enforce one Dan never wrote.
+    assert plaud_settings(cfg({"keep_out_word": 42})).keep_out_word == ""
+
+
+def test_the_bad_word_phrase_is_pinned():
     assert BAD_WORD == "configuration: `keep_out_word` is invalid"
 
 
@@ -87,8 +95,23 @@ def test_an_invalid_keep_out_word_is_flagged_not_raised(word):
 def test_a_wrong_value_names_its_key(key, value):
     with pytest.raises(ConfigError, match=rf"\[plaud\] {key}"):
         plaud_settings(cfg({key: value}))
+
+
+def test_plaud_must_be_a_table():
     with pytest.raises(ConfigError, match=r"\[plaud\] must be a table"):
         plaud_settings(cfg("not a table"))
+
+
+def test_a_bad_private_pattern_is_named_by_position_never_quoted():
+    # why: a pattern can be a name Dan wants private, and 2a's ops._alert_config logs a
+    # ConfigError's text. Through the reader both callers use, and through plaud_settings.
+    data = {"plaud": {"auto_private_patterns": ["ok", "(synthetic-name"]}}
+    for read in (patterns_from_config, lambda d: plaud_settings(cfg(d["plaud"]))):
+        with pytest.raises(ConfigError) as caught:
+            read(data)
+        assert "synthetic-name" not in str(caught.value)
+        assert "pattern 2 is not a regular expression" in str(caught.value)
+        assert caught.value.__cause__ is None
 
 
 @pytest.mark.parametrize(
@@ -125,7 +148,7 @@ def test_the_sign_in_and_local_mk_are_never_committed_or_built_in():
     # any depth.
     wanted = {
         ".gitignore": ("tokens*.json", "**/.plaud/", "local.mk"),
-        ".dockerignore": ("**/tokens*.json", "**/.plaud/", "local.mk"),
+        ".dockerignore": ("**/tokens*.json", "**/.plaud/", "**/local.mk"),
     }
     for name, patterns in wanted.items():
         lines = (REPO / name).read_text(encoding="utf-8").splitlines()

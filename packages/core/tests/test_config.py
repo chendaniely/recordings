@@ -348,7 +348,7 @@ def test_the_state_and_index_paths_are_absolute_text(tmp_path, line):
     ],
 )
 def test_the_index_never_lies_inside_the_state_folder(tmp_path, index):
-    # why: §6.8. The state folder holds state.db, its backup copy, voice.db and the Plaud token, and
+    # why: §6.8. The state folder holds state.db, its backup copy and voice.db, and
     # their writers don't take the index lock. A typo that points the index there is refused here,
     # before rebuild opens any of them; the index's header mark is the second guard.
     cfg_file = write(tmp_path, f'[state]\npath = "/srv/r/state"\n[index]\npath = "{index}"\n')

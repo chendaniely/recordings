@@ -108,12 +108,13 @@ def patterns_from_config(data: dict) -> tuple[str, ...]:
     value = section.get("auto_private_patterns", list(DEFAULT_AUTO_PRIVATE))
     if not isinstance(value, list) or not all(isinstance(p, str) for p in value):
         raise ConfigError("[plaud] auto_private_patterns must be a list of regular expressions")
-    for pattern in value:
+    for position, pattern in enumerate(value, start=1):
         try:
             re.compile(pattern)
-        except re.error as exc:
+        except re.error:
+            # A pattern can be a name Dan wants private: never quoted, and no re.error text.
             raise ConfigError(
-                f"[plaud] auto_private_patterns: {pattern!r} is not a regular expression ({exc})"
+                f"[plaud] auto_private_patterns: pattern {position} is not a regular expression"
             ) from None
     return tuple(value)
 

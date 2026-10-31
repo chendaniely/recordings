@@ -2,7 +2,7 @@
 
 What is backed up is an explicit list: the archive, config.toml, docker/deploy.env (as
 [backup] extra_paths), and a consistent copy of state.db taken with SQLite's own backup command.
-Nothing else in the state folder is named, so voice.db and the Plaud token store are left out by
+Nothing else in the state folder is named, so voice.db is left out by
 construction. The archive must carry its sentinel, with the UUID state.db expects, before anything
 is backed up: an empty mount point backed up hourly would age the real snapshots out (§6.7).
 
