@@ -54,7 +54,7 @@ export function replyText(r: PlaudResult): string {
   return `${r.message} (${r.progress.done} of ${r.progress.total})`;
 }
 
-type JQuery =(el: Document) => { on(e: string, f: () => void): void; off(e: string, f: () => void): void };
+type JQuery = (el: Document) => { on(e: string, f: () => void): void; off(e: string, f: () => void): void };
 
 const event = { priority: "event" as const, debounceMs: 0 };
 
