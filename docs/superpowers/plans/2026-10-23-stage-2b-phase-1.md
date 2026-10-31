@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 7: Plaud settings and secrets, open.
+**Now:** Task 8: Late consent listings and the privacy flags, open.
 
 ***
 
@@ -7419,9 +7419,9 @@ Spec §17.4. The `[plaud]` keys gain their readers; `RECORDINGS_PLAUD_TOKEN` and
   def ping_deadman(ac: AlertConfig, kind: str = "success", *, message: str = "") -> bool: ...   # unchanged signature: ping_url(ac.deadman_url, …)
   ```
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-7-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-7-base`
 
-- [ ] **Step 1: Write the failing tests.** Create `packages/core/tests/test_plaud_settings.py`:
+- [x] **Step 1: Write the failing tests.** Create `packages/core/tests/test_plaud_settings.py`:
 
 ```python
 """The `[plaud]` settings and the sync's secrets (stage 2b spec §17.4)."""
@@ -7778,12 +7778,12 @@ with:
             "RECORDINGS_SPARK_API_KEY": "token",
 ```
 
-- [ ] **Step 2: Run them; watch them fail.**
+- [x] **Step 2: Run them; watch them fail.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_settings.py packages/ui/tests/test_template_settings.py packages/core/tests/test_alerts.py packages/core/tests/test_config.py packages/core/tests/test_backup.py -q`
 Expected: the settings and template tests fail at collection with `ModuleNotFoundError: No module named 'recordings.plaud.settings'`; the new alerts tests with `TypeError: AlertConfig.__init__() got an unexpected keyword argument 'deadman_sync_url'` and `AttributeError: module 'recordings.alerts' has no attribute 'ping_url'`. These pass already, as they should: `test_ping_deadman_is_unchanged`, a pin (2a's signature and its bool, which Step 5 must keep); and `test_config.py` and `test_backup.py`, a rename only.
 
-- [ ] **Step 3: Write `settings.py`.** Create `packages/core/src/recordings/plaud/settings.py`. It takes `API_BASE` and `check_api_base` from Task 4's network-free `endpoint`, never from the client, so Status, doctor and the web app's views can import it and call `plaud_settings` without loading the client (decision 31; Task 4's guard walks every `recordings_ui` module, and Task 19 checks the call):
+- [x] **Step 3: Write `settings.py`.** Create `packages/core/src/recordings/plaud/settings.py`. It takes `API_BASE` and `check_api_base` from Task 4's network-free `endpoint`, never from the client, so Status, doctor and the web app's views can import it and call `plaud_settings` without loading the client (decision 31; Task 4's guard walks every `recordings_ui` module, and Task 19 checks the call):
 
 ```python
 """The `[plaud]` settings (stage 2b spec §17.4): one reader for the worker, doctor, the CLI and
@@ -7866,7 +7866,7 @@ def plaud_settings(cfg: Config) -> PlaudSettings:
     )
 ```
 
-- [ ] **Step 4: The secrets.** In `packages/core/src/recordings/config.py`, replace:
+- [x] **Step 4: The secrets.** In `packages/core/src/recordings/config.py`, replace:
 
 ```python
 SECRETS: dict[str, SecretSpec] = {
@@ -7920,7 +7920,7 @@ with:
 
 (The Plaud sign-in is `[plaud] token_store`, in its own folder, never the state folder.)
 
-- [ ] **Step 5: The sync's dead-man URL and `ping_url`.** In `packages/core/src/recordings/alerts.py`, replace the end of the docstring's dead-man paragraph:
+- [x] **Step 5: The sync's dead-man URL and `ping_url`.** In `packages/core/src/recordings/alerts.py`, replace the end of the docstring's dead-man paragraph:
 
 ```python
   long check or restore test holds back the next backup (docs/runbooks/first-run.md).
@@ -8044,7 +8044,7 @@ def ping_deadman(ac: AlertConfig, kind: str = "success", *, message: str = "") -
     return status is not None and 200 <= status < 300
 ```
 
-- [ ] **Step 6: The template.** In `config.example.toml`, replace the `[plaud]` block:
+- [x] **Step 6: The template.** In `config.example.toml`, replace the `[plaud]` block:
 
 ```toml
 [plaud]                                 # stage 2
@@ -8103,7 +8103,7 @@ with:
 #   RECORDINGS_DEADMAN_SYNC_URL the Plaud sync's own Healthchecks ping URL, worker only (stage 2b)
 ```
 
-- [ ] **Step 7: The ignore files.** Append to `.gitignore`:
+- [x] **Step 7: The ignore files.** Append to `.gitignore`:
 
 ```text
 # The Plaud sign-in (stage 2b): a secret the worker owns, never committed.
@@ -8125,12 +8125,12 @@ local.mk
 
 (Spec §17.4 writes `tokens*.json`; in `.dockerignore` that matches only at the build context's root, which the file's other lines already avoid with `**/`. No tracked file matches these: checked against the tree when this plan was written.)
 
-- [ ] **Step 8: Run them; they pass.**
+- [x] **Step 8: Run them; they pass.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_settings.py packages/ui/tests/test_template_settings.py packages/core/tests/test_alerts.py packages/core/tests/test_config.py packages/core/tests/test_backup.py packages/core/tests/test_doctor.py -q`
 Expected: every test passes.
 
-- [ ] **Step 9: The README.** In `README.md`'s "Configuration and secrets" table, replace the row:
+- [x] **Step 9: The README.** In `README.md`'s "Configuration and secrets" table, replace the row:
 
 ```markdown
 | `RECORDINGS_PLAUD_TOKEN` | a secret file, as `RECORDINGS_PLAUD_TOKEN_FILE` | stage 2b |
@@ -8142,9 +8142,9 @@ with:
 | `RECORDINGS_DEADMAN_SYNC_URL`, the Plaud sync's own Healthchecks ping URL, for the `worker` container only | a secret file, as `RECORDINGS_DEADMAN_SYNC_URL_FILE` | stage 2b |
 ```
 
-- [ ] **Step 10: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
+- [x] **Step 10: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
 
-- [ ] **Step 11: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 11: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(config): 🤖 the [plaud] settings and their readers; the sync's own dead-man URL; the static Plaud token and recheck_days go
@@ -8172,7 +8172,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/settings.py packages/core/src/recordings/config.py packages/core/src/recordings/alerts.py config.example.toml README.md .gitignore .dockerignore packages/core/tests/test_plaud_settings.py packages/core/tests/test_alerts.py packages/core/tests/test_config.py packages/core/tests/test_backup.py packages/ui/tests/test_template_settings.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 12: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 12: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `337653a`; the listings above are the plan as written): `reconcile.patterns_from_config` names a bad pattern by its position, never its text or `re.error`'s (a pattern may be a name Dan wants private, and 2a's `ops._alert_config` logs a `ConfigError`'s text); `alerts.ping_url` builds its request inside its `try`; a non-string `keep_out_word` is stored as `""`; `settings._whole` is `_int_at_least`; `.dockerignore` has `**/local.mk`; a pin that `ping_deadman` sends nothing when only `deadman_sync_url` is set.
 
 ### Task 8: Late consent listings and the privacy flags
 
@@ -24843,6 +24845,7 @@ Their full plans are written at their phase start, against the code as built and
 - The first catch-up: `sync --catch-up`, `sync --dry-run [--list]`, `sync`, the exit codes, `ops` and `plaud` in one hold, the `audio-router` import taking `plaud` (S12 settled first).
 - `test_flow_2b.py` and the leak scan at DEBUG (C7.01); the sign-in criterion on the fake (C4).
 - `make e2e-live` and its CI job: `web` and `worker` against the fake; CLAUDE.md's Toolchain line for it.
+- The README's config table gains the Plaud sign-in (`make plaud-sign-in`), as spec §19 says (Task 7's review).
 - The runbook: section 6's sign-in step, sections 7 and 8, "Plaud sign-in", the hold and consent-stop recovery; the README's 2b paragraph; main spec §9.1's buckets and token paragraph, §9.3's deferred rows.
 - From decision 44: `plaud/cache.py` (the compare's rows, titles hidden in a consent stop, no title for an ID consent-listed or matching an enforced word since the compare, and the tick purging those titles: P1); the views' readers of the listing, the hold, the sign-in (with Needs attention's "sign-in expiring within 7 days": BD3), compare, re-keyed and review rows; Release's title path (read and delete the preview in one writable transaction, keyed by the request's own `request_id`, the Plaud ID taken from the row: BD1, P6, P8); the snapshot marks before every 2b snapshot, by every path, `Writer.add` at import included, the interrupted state, the rebuild record and its scan, `plaud review` (its runbook section runs `plaud review` between "Restoring for real" step 4's `reindex` and its `rc up -d`: BB1), and decision 15's "the sync's record was rebuilt"; coalescing (one "Already queued" per kind), and park for a Plaud ID that failed to import; `HANDLED` widened to each kind as its handler lands.
 
@@ -24869,3 +24872,4 @@ Their full plans are written at their phase start, against the code as built and
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | The cache's titles of an ID consent-listed, or matching an enforced word, since the compare must never reach the browser (P1, P13). | open: Phase 2's outline |
 | 1 | Minor | `packages/ui/tests/e2e/test_tagging.py`, `packages/ui/frontend/src/components/TagPicker.test.ts` | Three tagging part A tests failed once each and passed on the same code before and after: `test_the_headers_touch_targets_are_44_px_and_never_overlap` (CI, `ec9d5af`, run 40126882917: `assert 0 == 2`, the chips' × buttons not counted under `hover: none`); `test_t_on_a_selection_esc_keeps_it_and_cmd_z_undoes_after_the_toast` (CI, `ef894b3`, run 41173638427: `Locator.fill` timed out after 30 s); and Vitest's `pointer movement over the list is a choice too` (locally, under `make check`'s load: expected 'notes/lecture', got 'talks'). Investigate with superpowers:systematic-debugging before the phase ends; never just re-run them. | open |
 | 6 | Minor | `packages/core/src/recordings/state.py` | `State.forget` finds a listing row's title hash only through the recording's markers: Phase 2 must write the hash and its marker together, or `forget` reads the Plaud refs from the last revision before deleting it (Task 6's review). | open: Phase 2's outline |
+| 7 | Minor | `config.example.toml` | The template's `[plaud]` block is spec §17.4's, which dropped 2a's comments explaining `auto_private_patterns` (regular expressions, case ignored, only ever adds `private`) and the consent list's fail-closed reading: write them back as comments, missing docs (Task 7's review). | open |
