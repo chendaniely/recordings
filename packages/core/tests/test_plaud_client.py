@@ -2,6 +2,7 @@
 ID exactly as listed, keeps the token off every link and every redirect, and raises its own fixed
 errors, which carry no URL. Every ID, title, token and body here is synthetic."""
 
+import http.client
 import json
 import os
 import re
@@ -477,18 +478,15 @@ def test_no_test_can_reach_plaud():
 
 
 @pytest.fixture(scope="module")
-def lookup_in_a_module_fixture():
+def guard_seen_by_a_module_fixture():
     # A module-scoped fixture runs before any function-scoped one, so a guard that only a
-    # function-scoped fixture installs would not cover it.
-    try:
-        socket.getaddrinfo("platform.plaud.ai", 443)
-    except OSError as exc:
-        return str(exc)
-    return "resolved"
+    # function-scoped fixture installs would not cover it. It looks at the guard, never up a
+    # Plaud host: were the guard missing, a lookup would reach the network.
+    return socket.getaddrinfo.__qualname__
 
 
-def test_the_guard_covers_module_scoped_fixtures_too(lookup_in_a_module_fixture):
-    assert lookup_in_a_module_fixture == "tests never reach Plaud"
+def test_the_guard_covers_module_scoped_fixtures_too(guard_seen_by_a_module_fixture):
+    assert guard_seen_by_a_module_fixture == "_refuse_plaud.<locals>.guarded"
 
 
 def test_no_test_goes_through_a_proxy():
@@ -624,3 +622,81 @@ def test_connections_use_the_connect_and_read_timeouts(plaud_server, monkeypatch
     for opener in (client_module._API_OPENER, client_module._LINK_OPENER):
         kinds = {type(h) for h in opener.handlers}
         assert client_module._HTTPHandler in kinds and client_module._HTTPSHandler in kinds
+
+
+@pytest.mark.parametrize("digits", [400, 5000])
+def test_a_very_long_header_number_is_no_number_at_all(plaud_server, tmp_path, digits):
+    # why: float(int(text)) overflows past 308 digits and int() refuses past 4300; the error's
+    # context was an HTTPError holding the presigned URL.
+    number = "9" * digits
+    plaud_server.route("GET", LIST_PATH, lambda q: Response(429, b"", {"Retry-After": number}))
+    with pytest.raises(PlaudRateLimited) as info:
+        _client(plaud_server).list_page(1)
+    assert info.value.retry_after is None
+    _no_url_in(info.value, plaud_server.api_url)
+    limited = plaud_server.link("limited", b"", status=429, headers={"Retry-After": number})
+    for call in (
+        lambda: _client(plaud_server).fetch_link(limited),
+        lambda: _client(plaud_server).download(limited, tmp_path / "a.mp3"),
+    ):
+        with pytest.raises(PlaudRateLimited) as info:
+            call()
+        _no_url_in(info.value, limited, plaud_server.storage_url)
+    odd = plaud_server.link("odd", AUDIO, headers={"Content-Length": number})
+    with pytest.raises(IncompleteDownload) as info:
+        _client(plaud_server).download(odd, tmp_path / "a.mp3")
+    _no_url_in(info.value, odd, plaud_server.storage_url)
+    assert not list(tmp_path.iterdir())
+
+
+def test_a_body_cut_short_is_never_returned_as_a_whole(plaud_server):
+    # why: read(amt) never raises IncompleteRead; a transcript block cut short would be stored as
+    # complete, and a listing cut to "[]" would read as an empty account.
+    cut = plaud_server.link("cut", b"x" * 20, headers={"Content-Length": "52"})
+    with pytest.raises(IncompleteDownload) as info:
+        _client(plaud_server).fetch_link(cut)
+    _no_url_in(info.value, cut, plaud_server.storage_url)
+    plaud_server.route("GET", LIST_PATH, lambda q: Response(200, b"[]", {"Content-Length": "500"}))
+    with pytest.raises(PlaudBadResponse) as info:
+        _client(plaud_server).list_page(1)
+    _no_url_in(info.value, plaud_server.api_url)
+
+
+def test_a_deeply_nested_body_is_a_bad_response(plaud_server, monkeypatch):
+    # Whether real nesting overflows depends on the recursion limit, which another test in the run
+    # may have raised; so json.loads is made to raise what a deep body makes it raise.
+    def too_deep(_body):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(client_module.json, "loads", too_deep)
+    plaud_server.route("GET", LIST_PATH, lambda q: Response(200, b"[[[[]]]]"))
+    with pytest.raises(PlaudBadResponse) as info:
+        _client(plaud_server).list_page(1)
+    assert info.value.__context__ is None and info.value.__cause__ is None
+
+
+def test_the_https_read_timeout_and_the_download_connect_timeout_are_pinned(
+    plaud_server, tmp_path, monkeypatch
+):
+    # why: §10.1. The https connection sets its read timeout after the handshake, like the http
+    # one, and a download connects within the same 10 seconds; deleting either must fail a test.
+    def plain_connect(self):
+        self.sock = socket.socket()
+
+    monkeypatch.setattr(http.client.HTTPSConnection, "connect", plain_connect)
+    connection = client_module._HTTPSConnection("storage.example")
+    connection.connect()
+    try:
+        assert connection.sock.gettimeout() == 60.0
+    finally:
+        connection.sock.close()
+    seen = []
+    real = client_module._HTTPConnection.connect
+
+    def spy(self):
+        real(self)
+        seen.append(self.timeout)
+
+    monkeypatch.setattr(client_module._HTTPConnection, "connect", spy)
+    _client(plaud_server).download(plaud_server.link("a.mp3", AUDIO), tmp_path / "a.mp3")
+    assert seen == [10.0]

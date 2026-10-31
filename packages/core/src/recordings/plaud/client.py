@@ -270,7 +270,9 @@ def _ascii_number(value: object) -> int | None:
     if not isinstance(value, str):
         return None
     text = value.strip()
-    return int(text) if text.isascii() and text.isdigit() else None
+    # 15 digits is far more than any header here holds, and keeps int() and float() from the
+    # OverflowError (past 308 digits) and ValueError (past 4300) that a longer one would raise.
+    return int(text) if text.isascii() and text.isdigit() and len(text) <= 15 else None
 
 
 def _retry_after(headers: Any) -> float | None:
@@ -374,10 +376,12 @@ class PlaudClient:
             opener = _API_OPENER
         response = _guarded(lambda: opener.open(request, timeout=CONNECT_TIMEOUT), on_short_body)
         with response:
-            # A body shorter than Content-Length raises IncompleteRead; one past the limit is
-            # refused as a short-body error, whatever it declared.
+            # read(amt) never raises IncompleteRead: http.client returns what it got and leaves
+            # `length` above 0. So a body past the limit, or one that ended before its
+            # Content-Length, is refused as a short-body error.
             body = _guarded(lambda: response.read(_MAX_BODY + 1), on_short_body)
-        if len(body) > _MAX_BODY:
+            unfinished = bool(getattr(response, "length", None))
+        if len(body) > _MAX_BODY or unfinished:
             raise on_short_body() from None
         return body
 
@@ -397,7 +401,7 @@ class PlaudClient:
         error = PlaudBadResponse()
         try:
             return json.loads(body)
-        except ValueError:  # broken JSON, an HTML page, bytes that aren't UTF-8
+        except (ValueError, RecursionError):  # broken JSON, HTML, bytes that aren't UTF-8, nesting
             pass  # raised below, outside the handler: no JSONDecodeError (it holds the body)
         raise error from None
 
