@@ -10,10 +10,16 @@ warning: `recordings reindex` rebuilds it.
 
 Each Compose service runs it in its own role (`--role`, else RECORDINGS_ROLE, else `all`):
 - `web` serves the Library and runs the import. It must hold no backup, mirror or alert secret,
-  and doctor checks that none is there.
+  nor the Plaud sync's ping URL, nor `/plaud`, and doctor checks that none is there.
 - `backup` runs the backups, the mirror and the alerts. Its archive mount is read-only, so the
-  hard-link probe is skipped there, and ssh needs this user's passwd entry.
-- `all`, the default outside Docker, checks everything.
+  hard-link probe is skipped there, and ssh needs this user's passwd entry. It holds neither the
+  sync's ping URL nor `/plaud`.
+- `worker` (stage 2b spec §17.2) runs the Plaud sync. Its backup, mirror, ssh and restic checks
+  are skipped, and so is the "alerts are off" warning: it sends no push by design. Its own: the
+  consent list, the sign-in's presence and modes (never its contents), the keep-out word, and the
+  sync's dead-man URL, whose check is its only alert. It must hold no backup secret. Doctor never
+  calls Plaud; `recordings plaud check` does.
+- `all`, the default outside Docker, checks everything but the worker's own.
 Every role warns when retention is off here, and reports where the consent list is, as
 information (or, when it is unset, as a note in `notes`): the import reads it and fails closed
 by itself. Every role also checks that
@@ -29,7 +35,7 @@ import shutil
 import sqlite3
 import stat
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -39,25 +45,29 @@ from recordings.config import SECRETS, Config, ConfigError, load_config, secret,
 from recordings.disk import disk_thresholds
 from recordings.index import Index
 from recordings.locks import running
+from recordings.plaud.checks import K_KEEP_OUT_WORDS, NoSyncYet, PlaudDB
 from recordings.plaud.consent import ConsentListError, consent_list_path
+from recordings.plaud.keepout import read_consent
+from recordings.plaud.settings import BAD_WORD, plaud_settings
 from recordings.sentinel import MIRROR, SentinelError, is_mirror, read_sentinel
 from recordings.ssh import nas_free_bytes
 from recordings.state import State, StateError, unreadable
 
 TOOLS = ("restic", "rsync", "ssh", "ffprobe", "ffmpeg")
-ROLES = ("web", "backup", "all")
-# The backup service's secrets: docker/compose.yml gives them to it alone. The web service faces
-# the browser and never backs up, mirrors or alerts, so it must hold none of them.
-JOB_SECRETS = (
+ROLES = ("web", "backup", "worker", "all")
+# docker/compose.yml gives each set to one service: the backup set to `backup`, the alert set to
+# `backup` too (and to `worker` with the later ntfy change, stage 2b spec §16), and the sync's ping
+# URL, deadman_sync_url, to `worker` alone. `web` faces the browser and holds none of them.
+BACKUP_SECRETS = (
     "restic_password",
     "rest_password",
     "nas_ssh_key",
     "nas_known_hosts",
-    "ntfy_topic",
-    "ntfy_token",
     "deadman_url",
 )
+ALERT_SECRETS = ("ntfy_topic", "ntfy_token")
 SECRETS_DIR = Path("/run/secrets")  # where Docker mounts a service's secrets, by name
+PLAUD_MOUNT = Path("/plaud")  # the Plaud sign-in's folder, mounted in `worker` only
 OPEN_TO_OTHERS = 0o077  # ssh refuses a key with any of these bits set; doctor warns for any secret
 
 
@@ -88,19 +98,37 @@ def _secrets(environ: Mapping[str, str], problems: list[str], warnings: list[str
     return out
 
 
-def _no_job_secrets(environ: Mapping[str, str], problems: list[str]) -> None:
+def _forbid(
+    environ: Mapping[str, str], names: Sequence[str], role: str, problems: list[str]
+) -> None:
+    """A secret this role must not hold, by its variable, its _FILE variable, or a Compose mount."""
     held = [
         name
-        for name in JOB_SECRETS
+        for name in names
         if environ.get(SECRETS[name].env)
         or environ.get(f"{SECRETS[name].env}_FILE")
         or _mounted(SECRETS_DIR / name)
     ]
     if held:
         problems.append(
-            "the web service must hold no backup, mirror or alert secret, but it "
-            "has " + ", ".join(held) + ": docker/compose.yml gives them to `backup` "
-            "only"
+            f"the {role} service must not hold " + ", ".join(held) + ": docker/compose.yml "
+            "gives each secret only to the service that uses it"
+        )
+
+
+def _no_plaud_here(environ: Mapping[str, str], problems: list[str]) -> None:
+    """`web` and `backup` never hold the Plaud sign-in (stage 2b spec §10.4, §17.2). The old static
+    token's variable is read by name: it is no longer one of SECRETS."""
+    if PLAUD_MOUNT.exists():
+        problems.append(
+            f"{PLAUD_MOUNT} is mounted here, and it holds the Plaud sign-in: docker/compose.yml "
+            "mounts it in `worker` only"
+        )
+    held = [n for n in ("RECORDINGS_PLAUD_TOKEN", "RECORDINGS_PLAUD_TOKEN_FILE") if environ.get(n)]
+    if held:
+        problems.append(
+            ", ".join(held) + " is set here, but only the worker holds the Plaud sign-in, in "
+            "/plaud/tokens.json: remove it"
         )
 
 
@@ -212,8 +240,9 @@ def _state(
     problems: list[str],
     warnings: list[str],
 ) -> None:
-    # Without state.db, `ops --loop` exits 78 and the backup service crash-loops.
-    missing = problems if role == "backup" else warnings
+    # Without state.db, `ops --loop` exits 78 and the backup service crash-loops; the worker
+    # can't start either.
+    missing = problems if role in ("backup", "worker") else warnings
     if cfg.writer_id is None:
         warnings.append("no [archive] writer_id: this machine can't write the archive")
     if cfg.state_path is None:
@@ -547,6 +576,113 @@ def _ssh(report: dict, problems: list[str]) -> None:
         )
 
 
+def _lines(numbers: Sequence[int]) -> str:
+    """`line 4`, `lines 4 and 9`, `lines 2, 4 and 9`."""
+    if len(numbers) == 1:
+        return f"line {numbers[0]}"
+    return "lines " + ", ".join(str(n) for n in numbers[:-1]) + f" and {numbers[-1]}"
+
+
+def _owner() -> int:
+    return os.geteuid()
+
+
+def _plaud_modes(token_store: Path, problems: list[str]) -> None:
+    """The sign-in's folder at most 0700 and its token at most 0600, both this user's. Their
+    modes and owners only: the token is never opened."""
+    for path, widest, fix in (
+        (token_store.parent, 0o700, "chmod 700"),
+        (token_store, 0o600, "chmod 600"),
+    ):
+        try:
+            found = path.stat()
+        except OSError:
+            continue  # a missing token is the sign-in problem
+        mode = found.st_mode & 0o777
+        if mode & ~widest:
+            problems.append(f"{path} is open to more than its owner (mode {mode:o}): {fix} it")
+        if found.st_uid != _owner():
+            problems.append(
+                f"{path} belongs to uid {found.st_uid}, not this user ({_owner()}): the worker "
+                "must own the Plaud sign-in"
+            )
+
+
+def _enforced_words(cfg: Config) -> list[str]:
+    """The keep-out words the worker enforces (stage 2b spec §12.2), from plaud_state, read-only."""
+    state = State.read_only(cfg.state_path) if cfg.state_path is not None else None
+    if state is None:
+        return []
+    try:
+        words = PlaudDB(state).get(K_KEEP_OUT_WORDS)
+    except (NoSyncYet, sqlite3.Error):
+        return []
+    return [w for w in words if isinstance(w, str)] if isinstance(words, list) else []
+
+
+def _worker(
+    cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str], warnings: list[str]
+) -> None:
+    """The worker's own checks (stage 2b spec §17.2): the sync's dead-man URL, the keep-out word,
+    the consent list, and the sign-in's presence and modes. Never a value or a hash, never the
+    token's contents (decision 28: its expiry waits for Phase 2), and never a call to Plaud."""
+    info: dict[str, Any] = {
+        "consent_ids": None,
+        "consent_stop": None,
+        "review_lines": [],
+        "token_store": False,
+        "keep_out_words": [],
+        "deadman_sync_set": False,
+    }
+    report["plaud"] = info
+    try:
+        ac = alerts.from_config(cfg, environ)
+    except ConfigError as exc:  # its text names a setting, never a value
+        for found in (problems, warnings):
+            if str(exc) in found:
+                found.remove(str(exc))
+        problems.append(
+            f"the Plaud sync's check is never pinged: {exc} (RECORDINGS_DEADMAN_SYNC_URL_FILE "
+            "names its URL's file)"
+        )
+    else:
+        info["deadman_sync_set"] = bool(ac.deadman_sync_url)
+        report["alerts"] = {
+            "ntfy_server_set": bool(ac.ntfy_server),
+            "topic_set": bool(ac.topic),
+            "deadman_set": bool(ac.deadman_sync_url),
+        }
+        if not ac.deadman_sync_url:
+            problems.append(
+                "the Plaud sync has no dead-man URL, and its Healthchecks check is its only "
+                "alert: set RECORDINGS_DEADMAN_SYNC_URL_FILE"
+            )
+    try:
+        settings = plaud_settings(cfg)
+    except ConfigError as exc:
+        problems.append(str(exc))
+        return
+    if not settings.keep_out_word_ok:
+        problems.append(BAD_WORD)
+    consent = read_consent(settings.consent_list)
+    info["consent_stop"] = consent.stop
+    info["review_lines"] = list(consent.review_lines)
+    if consent.stop is not None:
+        problems.append(f"{consent.stop}: nothing is imported until it reads (spec §12.1)")
+    else:
+        info["consent_ids"] = len(consent.ids)
+    if consent.review_lines:
+        report["notes"].append(
+            f"the consent list reads {_lines(consent.review_lines)} as kept, not as "
+            'exclusions: check that each meant "keep" (`recordings plaud consent`)'
+        )
+    info["token_store"] = settings.token_store.is_file()  # presence only: never opened
+    if not info["token_store"]:
+        problems.append("sign-in needed: run `make plaud-sign-in`")
+    _plaud_modes(settings.token_store, problems)
+    info["keep_out_words"] = _enforced_words(cfg)
+
+
 def _extra_paths(cfg: Config, warnings: list[str]) -> None:
     """In Docker, deploy.env is backed up only if [backup] extra_paths names its mount
     (config.example.toml has the line); the default is no extra path at all."""
@@ -580,6 +716,7 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
         "mirror": None,
         "alerts": None,
         "consent_list": None,
+        "plaud": None,
         "notes": [],
         "tools": {tool: shutil.which(tool) is not None for tool in TOOLS},
         "secrets": _secrets(environ, problems, warnings),
@@ -587,9 +724,15 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
         "warnings": warnings,
     }
     if role == "web":
-        _no_job_secrets(environ, problems)
+        _forbid(environ, (*BACKUP_SECRETS, *ALERT_SECRETS, "deadman_sync_url"), role, problems)
     else:
         report["user"] = _user(problems)
+    if role == "worker":
+        _forbid(environ, BACKUP_SECRETS, role, problems)
+    if role == "backup":
+        _forbid(environ, ("deadman_sync_url",), role, problems)
+    if role in ("web", "backup"):
+        _no_plaud_here(environ, problems)
     try:
         cfg = load_config(environ)
     except ConfigError as exc:
@@ -602,11 +745,13 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
     _state(cfg, archive_uuid, role, report, problems, warnings)
     if role != "backup":  # the backup service has no index
         _index(cfg, archive_uuid, report, warnings)
-    if role != "web":
+    if role in ("backup", "all"):
         _backup(cfg, environ, role, report, problems, warnings)
         _mirror(cfg, environ, role, report, problems, warnings)
         _alerts(cfg, environ, report, problems, warnings)
         _ssh(report, problems)
+    if role == "worker":
+        _worker(cfg, environ, report, problems, warnings)
     if role == "backup":
         _extra_paths(cfg, warnings)
     _retention(cfg, warnings)

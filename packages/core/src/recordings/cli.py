@@ -84,7 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--role",
         choices=ROLES,
-        help="the service it checks: web, backup or all (default: $RECORDINGS_ROLE, else all)",
+        help="the service it checks: web, backup, worker or all (default: $RECORDINGS_ROLE, "
+        "else all)",
     )
     p.add_argument("--json", action="store_true")
 
