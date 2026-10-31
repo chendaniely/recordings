@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 20: The request input and its replies, open.
+**Now:** Task 21: The Sync screen, open.
 
 ***
 
@@ -20941,11 +20941,11 @@ Spec §15's build order, step 2: `plaud_request`, the insert, polling a pending 
   ```
 - Also produced here (named, not in the skeleton): `plaud.POLL_SECONDS = 2.0`, `plaud.FINAL_STATES`, `plaud.clock() -> datetime`; `runtime.configure(…, plaud_state: State | None = None, plaud_reason: str | None = None)`, `runtime.plaud_state()`, `runtime.plaud_reason()`; in `usePlaud.tsx`, `FINAL`. The `recording` and `status` outputs pass `plaud=` to Task 19's views. The result line is the server's alone (`SyncView.last_result`, worded in the server's zone): the hook words none of its own.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-20-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-20-base`
 
-- [ ] **Step 1: Check the docs first** (CLAUDE.md; spec §22's "to check during implementation"). Read `.claude/skills/shinyreact-build-app/SKILL.md` (Step 3: `send_message(session, id, data)` pushes a one-off message to `useShinyMessageHandler(id, fn)`; Step 4: `useSetShinyInput` is the write-only input hook, `priority: "event"` and `debounceMs: 0` for an event; "Inline arrow handlers are safe for `useShinyMessageHandler`, stored in a ref") and, in the pinned shiny 1.8.0 under `.venv/lib/python3.14/site-packages/shiny/`: `reactive/_core.py` (`invalidate_later(delay)`, `lock()`, `flush()`), `session/_session.py` (`on_ended(fn)` takes a sync function; `send_custom_message` sends at once; a message is parsed with `object_hook=_utils.lists_to_tuples`, so an array inside an input value arrives as a tuple, as `tagging._texts` already takes it: Task 14's `check_request` takes `list | tuple`, and `test_a_request_is_inserted_off_the_event_loop` fails if it doesn't), and shinyreact's `_send_message.py` (`resolve_id(id)` from the current session, which an asyncio task created inside an effect inherits through its copied context). Confirm `asyncio.to_thread` exists in the server's Python and in Pyodide's 3.12 (it does from 3.9; Pyodide never reaches it here, since a request there is refused before any insert). The commit names what was checked; a gap goes in `docs/upstream-issues.md`.
+- [x] **Step 1: Check the docs first** (CLAUDE.md; spec §22's "to check during implementation"). Read `.claude/skills/shinyreact-build-app/SKILL.md` (Step 3: `send_message(session, id, data)` pushes a one-off message to `useShinyMessageHandler(id, fn)`; Step 4: `useSetShinyInput` is the write-only input hook, `priority: "event"` and `debounceMs: 0` for an event; "Inline arrow handlers are safe for `useShinyMessageHandler`, stored in a ref") and, in the pinned shiny 1.8.0 under `.venv/lib/python3.14/site-packages/shiny/`: `reactive/_core.py` (`invalidate_later(delay)`, `lock()`, `flush()`), `session/_session.py` (`on_ended(fn)` takes a sync function; `send_custom_message` sends at once; a message is parsed with `object_hook=_utils.lists_to_tuples`, so an array inside an input value arrives as a tuple, as `tagging._texts` already takes it: Task 14's `check_request` takes `list | tuple`, and `test_a_request_is_inserted_off_the_event_loop` fails if it doesn't), and shinyreact's `_send_message.py` (`resolve_id(id)` from the current session, which an asyncio task created inside an effect inherits through its copied context). Confirm `asyncio.to_thread` exists in the server's Python and in Pyodide's 3.12 (it does from 3.9; Pyodide never reaches it here, since a request there is refused before any insert). The commit names what was checked; a gap goes in `docs/upstream-issues.md`.
 
-- [ ] **Step 2: Write the failing tests.** Create `packages/ui/frontend/src/plaud/usePlaud.test.ts`:
+- [x] **Step 2: Write the failing tests.** Create `packages/ui/frontend/src/plaud/usePlaud.test.ts`:
 
 ```ts
 import { createElement, type ReactElement } from "react";
@@ -21352,9 +21352,9 @@ async def test_a_crafted_request_without_a_writable_state_is_refused(
     assert rows(writer.state.path) == 0
 ```
 
-- [ ] **Step 3: Run them; watch them fail:** `make test-js`, then `uv run pytest packages/ui/tests/test_plaud_session.py -q`. Expected: the typecheck (which `make test-js` runs before Vitest) fails with `Cannot find module './usePlaud' or its corresponding type declarations`; pytest fails with `TypeError: configure() got an unexpected keyword argument 'plaud_state'` (and `test_a_pending_row_is_read_every_two_seconds` with `AttributeError: module 'recordings_ui.plaud' has no attribute 'POLL_SECONDS'`).
+- [x] **Step 3: Run them; watch them fail:** `make test-js`, then `uv run pytest packages/ui/tests/test_plaud_session.py -q`. Expected: the typecheck (which `make test-js` runs before Vitest) fails with `Cannot find module './usePlaud' or its corresponding type declarations`; pytest fails with `TypeError: configure() got an unexpected keyword argument 'plaud_state'` (and `test_a_pending_row_is_read_every_two_seconds` with `AttributeError: module 'recordings_ui.plaud' has no attribute 'POLL_SECONDS'`).
 
-- [ ] **Step 4: The request's state and reason in the runtime, and the replies' helpers.** Replace `packages/ui/src/recordings_ui/runtime.py` with (Task 19's version plus `plaud_state` and `plaud_reason`):
+- [x] **Step 4: The request's state and reason in the runtime, and the replies' helpers.** Replace `packages/ui/src/recordings_ui/runtime.py` with (Task 19's version plus `plaud_state` and `plaud_reason`):
 
 ```python
 """The archive the running app serves, and where Status reads. Set once by create_app (or tests)."""
@@ -21490,7 +21490,7 @@ def clock() -> datetime:
     return datetime.now(UTC)
 ```
 
-- [ ] **Step 5: The server's input, outputs and polling.** Replace `packages/ui/src/recordings_ui/shiny_app.py` with:
+- [x] **Step 5: The server's input, outputs and polling.** Replace `packages/ui/src/recordings_ui/shiny_app.py` with:
 
 ```python
 """Shiny server for the React client. Server holds only reactive computation and returns JSON
@@ -21721,7 +21721,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 app = ReactApp(server)
 ```
 
-- [ ] **Step 6: The hook.** Create `packages/ui/frontend/src/plaud/usePlaud.tsx`:
+- [x] **Step 6: The hook.** Create `packages/ui/frontend/src/plaud/usePlaud.tsx`:
 
 ```tsx
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
@@ -21827,7 +21827,7 @@ export function usePlaud(view: SyncView | undefined, onView?: () => void): Plaud
 }
 ```
 
-- [ ] **Step 7: App's lines, and CLAUDE.md's UI rules.** In `packages/ui/frontend/src/App.tsx`, add `import { PlaudContext, usePlaud } from "./plaud/usePlaud";` after the `./lib/useMediaQuery` import, add `SyncView` to the `./types` import, and after `useShinyOutputStatus("status");`:
+- [x] **Step 7: App's lines, and CLAUDE.md's UI rules.** In `packages/ui/frontend/src/App.tsx`, add `import { PlaudContext, usePlaud } from "./plaud/usePlaud";` after the `./lib/useMediaQuery` import, add `SyncView` to the `./types` import, and after `useShinyOutputStatus("status");`:
 
 ```tsx
   useShinyOutputStatus("plaud_sync");
@@ -21900,11 +21900,11 @@ with:
   from a URL or its hash, or from storage. List state (`useListState` for
 ```
 
-- [ ] **Step 8: Run them; they pass:** `make test-js`, then `uv run pytest packages/ui/tests/test_plaud_session.py packages/ui/tests/test_shiny_server.py packages/ui/tests/test_tag_sessions.py packages/ui/tests/test_demo_guard.py -q`. Expected: all pass.
+- [x] **Step 8: Run them; they pass:** `make test-js`, then `uv run pytest packages/ui/tests/test_plaud_session.py packages/ui/tests/test_shiny_server.py packages/ui/tests/test_tag_sessions.py packages/ui/tests/test_demo_guard.py -q`. Expected: all pass.
 
-- [ ] **Step 9: Run the checks:** `uv run ruff format .`, `make check`, then `make build` and `make e2e` (App changed). Expected: all pass.
+- [x] **Step 9: Run the checks:** `uv run ruff format .`, `make check`, then `make build` and `make e2e` (App changed). Expected: all pass.
 
-- [ ] **Step 10: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 10: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(ui): 🤖 the plaud_request input and plaud_result replies, polled every 2 seconds while a request is pending
@@ -21933,7 +21933,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/ui/src/recordings_ui/shiny_app.py packages/ui/src/recordings_ui/plaud.py packages/ui/src/recordings_ui/runtime.py packages/ui/src/recordings_ui/app.py packages/ui/frontend/src/plaud/usePlaud.tsx packages/ui/frontend/src/plaud/usePlaud.test.ts packages/ui/frontend/src/App.tsx packages/ui/tests/test_plaud_session.py CLAUDE.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 11: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), adding the security checklist's secrets, failing-closed and logging lines (a request never carries a title; a refusal writes nothing), the forward review and the close commit.
+- [x] **Step 11: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), adding the security checklist's secrets, failing-closed and logging lines (a request never carries a title; a refusal writes nothing), the forward review and the close commit.
+
+**Built differently** (`ee6cf9e`, and the review's fix round `19006c4`; the listings above are the plan as written): Steps 4 and 5's whole-file listings were merged onto Task 19's `runtime.py`, `app.py` and `shiny_app.py` as built; the test fixture's `ThreadState.db` forwards its arguments (Task 14's `insert` passes `timeout=`). The worker writes `requests.RUNNING` ("Running") on a claim and `requests.EXPIRED` on expiry in the same UPDATE, so no reply repeats the insert's words after the row moves on (spec §15.6 gains both). While a row is queued, each poll reads the heartbeat (`requests.worker_notice`, the insert's rule) and sends the worker-down sentence once per change, and "Queued" again when the worker returns. A failed read (`sqlite3.Error`, `OSError`) no longer ends the poll: it logs the class once when reads fail and once when they recover. A finished task leaves `following` before it takes `reactive.lock()`, sets `plaud_ended` under `reactive.isolate()`, and does nothing once the session has ended. `usePlaud` stops sending after `shiny:disconnected`, with `LOST` (from `library.ts`) as its reason, as `useTagging` does; a NOT_SAVED refusal's toast gives way to the landed row's reply.
 
 ### Task 21: The Sync screen
 
@@ -24985,3 +24987,4 @@ Their full plans are written at their phase start, against the code as built and
 | 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | Divergent Change: one module holds the request protocol and the view model (1,300 lines), and Phases 2 and 3 add readers: split the views into `plaud_views.py` at Phase 2's start; and one name for the views' settings (`runtime.plaud_settings()` returns `PlaudViewSettings`, beside core's `plaud_settings`). | open: Phase 2's outline |
 | 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | One missing 2b table blanks the Sync screen's flags while Status still shows them (Task 19's spec review). | open |
 | 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | The `kept_out_at` title rule must skip rows Release has released, once Phase 2 writes Release (Task 19's spec review). | open: Phase 2's outline |
+| 20 | Minor | `packages/ui/frontend/src/plaud/usePlaud.tsx` | A double press of Keep it here inserts two rows; the second gets the worker's honest refusal, which becomes the result line. Nothing tells a screen that a request is pending before its first reply, so Task 21's buttons can't disable themselves meanwhile: give `usePlaud` a local pending entry at `send` (Task 20's spec review). | open |

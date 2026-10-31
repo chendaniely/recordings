@@ -2055,7 +2055,9 @@ exception class names. Never a title, a token, a URL from Plaud, or exception te
   "failed: Plaud unavailable", "not checked: kept out", "not checked: on the consent list", "gone from
   Plaud", "parked", "re-tagged private: title changed", "re-tagged private: the sync's record was
   rebuilt".
-- **A reply:** "Queued", "Queued after the current sync (started 14:20)", "Already queued", "Resuming
+- **A reply:** "Queued", "Queued after the current sync (started 14:20)", "Already queued", "Running"
+  (the worker has taken it), "Expired: the Plaud worker didn't run it within the hour. Press again
+  once it's back." (written by the worker when the row expires), "Resuming
   (started 14:20)", "waiting for Sync everything (412 of 1,234)", "Sync everything ran less than an
   hour ago", "The first import is a supervised run on the server (runbook)", "Held: see Status",
   "Accept refused: fix this first (runbook)", "Accepted: each recording gets one new snapshot",
@@ -3126,3 +3128,6 @@ None: every bullet of §20 is planned in a phase.
   failed start is never alive (Phase 1 plan, decision 48; Task 13's review).
 - 2026-10-31: §17.3's "Rolling back across 2b" takes `/consent` out of `[backup] extra_paths` first, as
   the runbook does (2a's backup refuses a folder there; Task 16's review).
+- 2026-10-31: §15.6's replies gain "Running" and the expiry phrase, which the worker writes on a
+  claim and on expiry, so no reply repeats the insert's words after the row has moved on (Task 20's
+  review).
