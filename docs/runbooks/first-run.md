@@ -1091,6 +1091,43 @@ anything Dan must not keep (stage 2b spec §12.4):
 This is a by-hand, permanent exception to main spec §6.4's "Delete moves the folder to `trash/`",
 which describes the app's own Delete, like Forget.
 
+## When the Plaud alert comes
+
+Healthchecks: recordings-sync is down. Open Status: its line "The sync's Healthchecks check isn't
+being pinged since …" names the cause, and the tables below give the step. If Status says the
+worker is silent or may be stuck: `rc ps`, `rc logs worker`.
+
+The sync's check is pinged only after a scheduled sync that is good and that nothing holds up
+(stage 2b spec §16). Its 2-hour grace does the rest: any lasting stop, a dead or wedged worker
+included, brings one email about 2 hours in, and "up" at the next ping. Each of these holds it up
+until it clears:
+
+| Status says | It opens when | It clears when | Do |
+|---|---|---|---|
+| sign-in needed | Plaud refuses a refresh | a good run after the token file changes | At the Mac: `make plaud-sign-in` |
+| imports stopped: consent list | the consent list is missing, empty, holds no IDs, or has a line that looks like an ID but can't be read | the worker reads the list cleanly | Fix the lines Status names by number, then `rc exec worker recordings plaud consent` |
+| held: see Status | the listing hold | Accept, or a later listing that no longer meets it | Status's check, then **Accept this listing** |
+| paused: unexpected changes | the breaker trips | Accept these changes, a release that closes it, or a breaker reset | **Accept these changes**, or a code fix |
+| should be private: run `recordings reindex` | a `private` the sync owes fails to land | the tag lands | `rc run --rm worker recordings reindex`. If Status says a file couldn't be written, or that late consent listings stopped, reindex can't help: check the archive disk and its permissions, then `rc logs worker` |
+
+And these stop it without a blocker:
+
+| Status says | Do |
+|---|---|
+| the sync is failing (since 12:00) | Status's numbers say why. Plaud unavailable, or offline: wait; it recovers at the next good run. Every fetch failed: `rc logs worker` names the error's class. |
+| imports stopped: the disk is too full to import | Free space ("When the data disk fills"); the next run the disk guard doesn't refuse ends it. |
+| scheduled sync is off | Set `[plaud] schedule_minutes` back to 20, then `rc restart worker`. |
+| configuration: `keep_out_word` is invalid | Fix `[plaud] keep_out_word` (1 to 32 letters, digits, `-` or `_`), then `rc restart worker`. |
+| rate limited until 14:40 | Wait. |
+| skipped: busy (`plaud-full`) since 14:20 | A long run holds the sync's lock. Past 2 hours (12 for Sync everything and the catch-up) it may be stuck: `rc logs worker`. |
+
+Never a cause: late keep-outs and late consent listings (already `private`, and flagged once each),
+a rebuild's review list, failing or parked recordings, a failed Sync everything, a small shrink, and
+auto-import off. Before the first catch-up no turn pings, and a check never pinged stays silent.
+
+Optional: Healthchecks › Account Settings › Email Reports sends a daily reminder while any check is
+down. It covers the backup's check too.
+
 ## When the data disk fills
 
 Status warns below 20% free and the import stops below 5% (spec §12.5); the restore test refuses
