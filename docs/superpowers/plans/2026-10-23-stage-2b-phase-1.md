@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 23: The Library and Details, open.
+**Now:** Task 24: Demo, Pages, phones and accessibility, open.
 
 ***
 
@@ -23593,11 +23593,11 @@ A reading to record (Dan can see it): §15.3 says "the Library's Needs attention
   The selection bar reads "12 selected · Tag… · Re-sync from Plaud · Clear"; Re-sync sends one `resync` with the selection's recording IDs (a cap of 1,000: "For more, use Sync everything").
 - Also produced here (named, not in the skeleton): in `HeadNotes.tsx`, `arrivalsCue(a, short)` and `flagsLine(a)`; in `SelectionBar.tsx`, `MAX_RESYNC`, `TOO_MANY_RESYNC` and `resyncReason(plaud, count)` (too many; else `plaud.why("resync")`: this app can't ask, or not handled yet; else `plaud.gate`); the bar draws Re-sync only when `plaud.handles("resync")` (Task 20), and Details only when its own view's `handled` has `resync`. The Library, the grid and Details read the Plaud context with `useContext(PlaudContext)`, not `usePlaudContext()`, so a component drawn without App (the existing tests) has no Re-sync instead of throwing. `RecordingPlaud` carries no recording ID, so `PlaudDetails` takes it from the `recording` output, the recording Details shows (which App already holds), rather than widening its fixed props.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-23-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-23-base`
 
-- [ ] **Step 1: Check the docs first** (CLAUDE.md): the shinyreact skill (Step 4: `useShinyOutputValue` is the read-only output hook; every output stays subscribed in App, so the header and Details reading `plaud_arrivals` and `recording` mount and unmount freely) and the shadcn skill's Button (`size="sm"` for Details' Re-sync). The commit names what was checked.
+- [x] **Step 1: Check the docs first** (CLAUDE.md): the shinyreact skill (Step 4: `useShinyOutputValue` is the read-only output hook; every output stays subscribed in App, so the header and Details reading `plaud_arrivals` and `recording` mount and unmount freely) and the shadcn skill's Button (`size="sm"` for Details' Re-sync). The commit names what was checked.
 
-- [ ] **Step 2: Write the failing tests.** Create `packages/ui/frontend/src/components/HeadNotes.test.ts`:
+- [x] **Step 2: Write the failing tests.** Create `packages/ui/frontend/src/components/HeadNotes.test.ts`:
 
 ```ts
 import { createElement } from "react";
@@ -23931,9 +23931,9 @@ vi.mock("../sr", () => ({ useShinyOutputValue: () => undefined }));
 
 (with "the grid" for "the list" in `TagsPage.test.ts`).
 
-- [ ] **Step 3: Run them; watch them fail:** `make test-js`. Expected: the typecheck (which `make test-js` runs before Vitest) fails with `Cannot find module './PlaudDetails' or its corresponding type declarations`, `Module '"./HeadNotes"' has no exported member 'arrivalsCue'` and `Module '"./SelectionBar"' has no exported member 'resyncReason'`.
+- [x] **Step 3: Run them; watch them fail:** `make test-js`. Expected: the typecheck (which `make test-js` runs before Vitest) fails with `Cannot find module './PlaudDetails' or its corresponding type declarations`, `Module '"./HeadNotes"' has no exported member 'arrivalsCue'` and `Module '"./SelectionBar"' has no exported member 'resyncReason'`.
 
-- [ ] **Step 4: The cue and the flags line.** Replace `packages/ui/frontend/src/components/HeadNotes.tsx` with:
+- [x] **Step 4: The cue and the flags line.** Replace `packages/ui/frontend/src/components/HeadNotes.tsx` with:
 
 ```tsx
 import { useEffect, useState } from "react";
@@ -24027,7 +24027,7 @@ export function HeadNotes({ hint, announce }: { hint: string; announce: Announce
 
 The Tags grid's header draws the same `RefreshButton` and `HeadNotes`, so it gains the same cue and line with no change of its own.
 
-- [ ] **Step 5: Re-sync on a selection.** Replace `packages/ui/frontend/src/components/SelectionBar.tsx` with:
+- [x] **Step 5: Re-sync on a selection.** Replace `packages/ui/frontend/src/components/SelectionBar.tsx` with:
 
 ```tsx
 import { useContext } from "react";
@@ -24128,7 +24128,7 @@ and its `SelectionBar` line becomes:
 
 (Recordings in the selection without a Plaud source are skipped and counted by the worker, §14.6.)
 
-- [ ] **Step 6: Details' Plaud lines.** Create `packages/ui/frontend/src/components/PlaudDetails.tsx`:
+- [x] **Step 6: Details' Plaud lines.** Create `packages/ui/frontend/src/components/PlaudDetails.tsx`:
 
 ```tsx
 import { useContext, useState } from "react";
@@ -24235,11 +24235,11 @@ and inside the second `@media (max-width: 760px)` block, after Task 22's `.sync-
   .resync-long { display: none; }
 ```
 
-- [ ] **Step 7: Run them; they pass:** `make test-js`. Expected: all pass.
+- [x] **Step 7: Run them; they pass:** `make test-js`. Expected: all pass.
 
-- [ ] **Step 8: Run the checks:** `uv run ruff format .`, `make check`, `make build`, `make e2e`. Expected: all pass (the demo's arrivals are all 0, so its Refresh still reads "Refresh"; its selection bar draws no Re-sync, since the demo's view handles Keep it here alone, so the short-screen tests' bar is unchanged in Phase 1). For the phase that first handles Re-sync, the first thing to check in `make e2e` is the phone selection bar: at 320 px it already holds "N selected · Tag… T · Clear Esc · just tagged …", and the short-screen tests measure its height; "Re-sync" (its "from Plaud" hidden there) adds about 60 px. If the bar wraps, give the "just tagged" span the class `just-tagged` as well as `muted`, and hide it on a phone inside the second `@media (max-width: 760px)` block (`.just-tagged { display: none; }`, after `.resync-long`), never with a third block; say so in the commit.
+- [x] **Step 8: Run the checks:** `uv run ruff format .`, `make check`, `make build`, `make e2e`. Expected: all pass (the demo's arrivals are all 0, so its Refresh still reads "Refresh"; its selection bar draws no Re-sync, since the demo's view handles Keep it here alone, so the short-screen tests' bar is unchanged in Phase 1). For the phase that first handles Re-sync, the first thing to check in `make e2e` is the phone selection bar: at 320 px it already holds "N selected · Tag… T · Clear Esc · just tagged …", and the short-screen tests measure its height; "Re-sync" (its "from Plaud" hidden there) adds about 60 px. If the bar wraps, give the "just tagged" span the class `just-tagged` as well as `muted`, and hide it on a phone inside the second `@media (max-width: 760px)` block (`.just-tagged { display: none; }`, after `.resync-long`), never with a third block; say so in the commit.
 
-- [ ] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(ui): 🤖 the Library's arrivals cue and privacy flag counts, Re-sync from Plaud on a selection, and Details' Plaud lines
@@ -24265,7 +24265,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/ui/frontend/src/components/HeadNotes.tsx packages/ui/frontend/src/components/HeadNotes.test.ts packages/ui/frontend/src/components/SelectionBar.tsx packages/ui/frontend/src/components/SelectionBar.test.ts packages/ui/frontend/src/components/PlaudDetails.tsx packages/ui/frontend/src/components/PlaudDetails.test.ts packages/ui/frontend/src/components/DetailsTab.tsx packages/ui/frontend/src/components/RecordingList.tsx packages/ui/frontend/src/components/RecordingList.test.ts packages/ui/frontend/src/components/TagsPage.tsx packages/ui/frontend/src/components/TagsPage.test.ts packages/ui/frontend/src/app.css`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 10: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 10: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (`47b400f`, and the review's fix round `bdc62c2`, with `78a3cde`'s whitespace; the listings above are the plan as written): `HeadNotes.tsx` and `SelectionBar.tsx` were merged onto tagging part A's, not replaced. `FlagRow` (Task 21) takes the keep-here request's `reply` and shows it beside its button in a `role="status"` region, in Details and on the Sync screen, so a press answers in its own row ("Queued", the worker-down line, "Kept here"). `plaud_arrivals` reads `plaud_ended()`, so the header's flags line follows a Keep it here at once. Re-sync is wired once (`resyncProps`): the bar takes a `selection`, sends `targetsOf`'s IDs, shows only its own request's reply (`replyText`'s wording) and drops it on Clear or a new selection; its reason's id comes from `useId`. Details' Plaud buttons are 44 px on a phone, and Re-sync's reason is named by `aria-describedby`.
 
 ### Task 24: Demo, Pages, phones and accessibility
 
@@ -24999,6 +25001,7 @@ Their full plans are written at their phase start, against the code as built and
 | 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | The `kept_out_at` title rule must skip rows Release has released, once Phase 2 writes Release (Task 19's spec review). | open: Phase 2's outline |
 | 20 | Minor | `packages/ui/frontend/src/plaud/usePlaud.tsx` | A double press of Keep it here inserts two rows; the second gets the worker's honest refusal, which becomes the result line. Nothing tells a screen that a request is pending before its first reply, so Task 21's buttons can't disable themselves meanwhile: give `usePlaud` a local pending entry at `send` (Task 20's spec review). | open |
 | 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | The Sync screen's structure (Task 21's standards review): one `RequestButton` for the `disabled`/`aria-describedby` pair written about twelve times; SyncPage as one ~270-line function; names (`b`, `off`, `parking`, `previewing`); the page compares the server's display strings (`FULL_UNKNOWN`, "No sync has run yet") where a field would do. | open |
-| 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | Keep it here's reply ("Queued", the worker down) shows in the Sync card's result line, not beside the flag pressed; the error branch shows `error.message`, as StatusPage does (Task 21's spec review). | open |
+| 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | Keep it here's reply ("Queued", the worker down) shows in the Sync card's result line, not beside the flag pressed; the error branch shows `error.message`, as StatusPage does (Task 21's spec review). | fixed `bdc62c2` (the reply, in `FlagRow`); `error.message` open |
 | 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | Updated on Plaud's empty sentence ("Nothing changed on Plaud this week.") comes back once edit-sync measures Plaud's edits. | open: Phase 3's outline |
 | 22 | Minor | `packages/ui/src/recordings_ui/plaud.py`, `packages/ui/frontend/src/components/SyncPanel.tsx` | Signals read from display text or empty values (Task 22's fix round): `_panel_from` finds "failing (since" in the summary's sentence, `held_by_gate` repeats `SyncHealth.cause`'s order, and the panel takes an empty `details.normaliser` for unreadable records; a field each (`summary.says_failing`, `health.cause_kind`, `panel.unreadable`) would say it. A recorded `gate` turn keeps its reason, as no-sync, until the worker's next turn. | open |
+| 23 | Minor | `packages/ui/frontend/src/app.css` | At 320 px the Library's Refresh (tagging part A's) is 26 px tall and the flags line's "See Status" an inline 59 × 16 link: under J7's 44 px (Task 23's spec review). Task 24's scan covers only the Sync screen and the panel. | open |
