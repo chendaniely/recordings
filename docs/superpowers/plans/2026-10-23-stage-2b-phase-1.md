@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 5: The spike script and its guard, open.
+**Now:** Task 6: The 2b tables, the time helpers and `index.db`'s WAL, open.
 
 ***
 
@@ -4449,9 +4449,9 @@ Spec §18, "Ordering", step 1. Dan can run sessions A, B and C once this task cl
   - Each spike prints only its §18 print list: counts, yes or no, expiry times, status codes, field names and `short()` prefixes. Never a token, a title, transcript text or a whole Plaud ID, and any exception only by its class (exit 1). Every spike ends by printing `guard.report()`.
   - Before any block or download (S7, S8, S9, S11), the envelope's own title (`files/{id}`'s `name`) passes the guard again (§11.5). S2 and S4 send the token file's `client_id` when it has one; S2's refusal with an OAuth error code says to compare with the vendor CLI's own refresh, and one without says to stop and ask Dan. S9 keeps its clip's whole listed ID in `s9-last.json` in the 0700 spike folder (never printed), for the runs after it leaves the listing.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-5-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-5-base`
 
-- [ ] **Step 1: Write the failing tests,** `packages/core/tests/test_plaud_spike.py`. The script is loaded by path and registered in `sys.modules` first, because its dataclasses look their module up; a synthetic archive comes from the `writer` fixture (one plain recording, one tagged private), the deployment's `config.toml` is a file in a `repo` folder that `REPO_DIR` names, and every call goes to `plaud_server` (S2's refresh POST is replaced, since a token URL must be https). Its pauses (`sleep`) are replaced, never waited out. `state.db`'s `plaud_state` table, which Task 6 adds, is made by hand where a test needs the enforced words, with Task 6's own `CREATE TABLE IF NOT EXISTS`.
+- [x] **Step 1: Write the failing tests,** `packages/core/tests/test_plaud_spike.py`. The script is loaded by path and registered in `sys.modules` first, because its dataclasses look their module up; a synthetic archive comes from the `writer` fixture (one plain recording, one tagged private), the deployment's `config.toml` is a file in a `repo` folder that `REPO_DIR` names, and every call goes to `plaud_server` (S2's refresh POST is replaced, since a token URL must be https). Its pauses (`sleep`) are replaced, never waited out. `state.db`'s `plaud_state` table, which Task 6 adds, is made by hand where a test needs the enforced words, with Task 6's own `CREATE TABLE IF NOT EXISTS`.
 
 ```python
 """scripts/plaud_spike.py (stage 2b spec §18): its guard refuses consent-listed, private and
@@ -4840,9 +4840,9 @@ def test_an_unexpected_error_prints_its_class_only(env, spike, capsys, monkeypat
     assert "stopped: RuntimeError" in out and WORDS_SAID not in out
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_spike.py -q`. Expected: every test errors in the `spike` fixture with `FileNotFoundError: [Errno 2] No such file or directory: '…/scripts/plaud_spike.py'`.
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_spike.py -q`. Expected: every test errors in the `spike` fixture with `FileNotFoundError: [Errno 2] No such file or directory: '…/scripts/plaud_spike.py'`.
 
-- [ ] **Step 3: Write the code,** `scripts/plaud_spike.py`: the guard, the spike folder, and each spike's steps and print list from spec §18, S1 to S12. S2 and S4 POST to the token URL (the only POSTs, on purpose, at Dan's word); S10 and S11's raw GETs read the header names and the `Range` answer the client keeps to itself. The guard refuses before any call when the archive can't say what is private (the council's S3), adds the deployment's patterns and word and the enforced words, and checks the envelope's own title before any block or download (S7); `--own-clip` is refused for a recording in the archive (S8); any exception prints its class only (S9); a refresh sends the token file's `client_id`, and a refusal's advice depends on its OAuth error code (G3); S9 takes its clip by the 8-hex name it printed (G4).
+- [x] **Step 3: Write the code,** `scripts/plaud_spike.py`: the guard, the spike folder, and each spike's steps and print list from spec §18, S1 to S12. S2 and S4 POST to the token URL (the only POSTs, on purpose, at Dan's word); S10 and S11's raw GETs read the header names and the `Range` answer the client keeps to itself. The guard refuses before any call when the archive can't say what is private (the council's S3), adds the deployment's patterns and word and the enforced words, and checks the envelope's own title before any block or download (S7); `--own-clip` is refused for a recording in the archive (S8); any exception prints its class only (S9); a refresh sends the token file's `client_id`, and a refusal's advice depends on its OAuth error code (G3); S9 takes its clip by the 8-hex name it printed (G4).
 
 ```python
 """The Plaud spikes (stage 2b spec §18): supervised test plans, each run with Dan in a session.
@@ -5907,9 +5907,9 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Run it; it passes.** `uv run pytest packages/core/tests/test_plaud_spike.py -q`. Expected: `24 passed`.
+- [x] **Step 4: Run it; it passes.** `uv run pytest packages/core/tests/test_plaud_spike.py -q`. Expected: `24 passed`.
 
-- [ ] **Step 5: Write the docs.** Runbook section 1c: the spikes run from a clone of their own, at the commit Dan read, with `uv sync --frozen` there, and never touch `$REPO_DIR`, which the boot unit runs the deployment from (until Phase 1 merges, the script exists only on `stage-2b`); then a short procedure per session and the results table. Its commands start with neither `make` nor `rc`, as `test_the_spikes_need_nothing_the_build_makes` requires.
+- [x] **Step 5: Write the docs.** Runbook section 1c: the spikes run from a clone of their own, at the commit Dan read, with `uv sync --frozen` there, and never touch `$REPO_DIR`, which the boot unit runs the deployment from (until Phase 1 merges, the script exists only on `stage-2b`); then a short procedure per session and the results table. Its commands start with neither `make` nor `rc`, as `test_the_spikes_need_nothing_the_build_makes` requires.
 
 In `docs/runbooks/first-run.md`:
 
@@ -6062,9 +6062,9 @@ recording's date, time or duration, a token, a title or an ID.
 | S9 what an edit looks like | C, | |
 ````
 
-- [ ] **Step 6: Run the checks.** `uv run pytest packages/core/tests/test_runbook.py -q` (expected: all pass), then `uv run ruff format .` and `make check`. Expected: all pass.
+- [x] **Step 6: Run the checks.** `uv run pytest packages/core/tests/test_runbook.py -q` (expected: all pass), then `uv run ruff format .` and `make check`. Expected: all pass.
 
-- [ ] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(spike): 🤖 the Plaud spike script, whose guard refuses consent-listed, private and kept-out recordings and counts them
@@ -6090,7 +6090,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add scripts/plaud_spike.py packages/core/tests/test_plaud_spike.py docs/runbooks/first-run.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit. The close tells Dan the spike sessions can be scheduled.
+- [x] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit. The close tells Dan the spike sessions can be scheduled.
+
+**Built differently** (the review's fix rounds, `2aecd27` and `eff76f2`; the listings above are the plan as written): S7's ID-form step fetches only a row the guard passed; S8 and S9 follow the links of the very envelope the guard checked (`_follow`), never a second fetch; `--own-clip` needs a row not in the archive and listed within the last 24 hours; S9 masks note tab names as S8 does; S2, S4 and S10 send the client's `User-Agent`, no status reads "unreachable", and every refusal says to compare with the vendor CLI's own refresh first; the listing and the archive must share a canonical ID before any `files/{id}`; S11 reports `Content-Length` as present, absent or unknown; exit 78 (`SpikeRefused`) only before any call, a stop after calls is `SpikeStopped` (exit 1), and `--id` is checked before any call; an unparsable `keep_out_words` row refuses; runbook 1c copies `[backup]`, gives session C its own setup and sign-in, says what to do on a mid-session `PlaudAuthError`, stops session B when S7 finds no listed ID in the archive, and says only 78 means nothing was sent.
 
 ### Task 6: The 2b tables, the time helpers and `index.db`'s WAL
 
