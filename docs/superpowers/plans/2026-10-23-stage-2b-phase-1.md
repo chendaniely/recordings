@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 3: The consent grammar and the keep-out word, open.
+**Now:** Task 4: The Plaud client, copied, open.
 
 ***
 
@@ -2094,9 +2094,9 @@ Spec §12.1's grammar (2a's meanings, plus the `of_` and upper-case forms, kept 
   - **Line precedence:** comment (`#` after optional spaces), then exclusion, then typo, then kept, then text. A line's "first word" is what follows the optional bullet (`-` or `*`, then spaces) and backtick. An exclusion is an ID (`(of_)?` and 32 hex, any case) then an optional backtick and spaces, then a dash (`—`, `–` or `-`) or the end. A typo's first word holds 24 or more hex digits, with or without `of_`, but no valid ID (31 or 33 hex digits, or a non-hex character among them); it is a typo whatever follows it, a valid ID later on the line included. A line is a typo too (Dan's decision 12, spec §12.1 rule 4) when its text before the dash (after the optional bullet), or the whole line when it has no dash, is only hex digits once spaces, backticks and `of_` are set aside, 8 or more of them, and isn't one whole ID: an ID split by a space, or wrapped over two lines (each half a typo), or `- 20261023 — asked`. Exclusions and comments are classified first, so decision 12 never touches them; by its own words ("isn't one whole ID") it does catch a line of two IDs, and an ID followed only by hex letters or digits before any dash (`` - `ID` added ``, `` - `of_…` 2026-10-23 asked ``, whose date's first dash comes after hex digits). Those read as kept lines before it and now stop the list by line number; a dash after the ID (`` - `of_…` — note ``) makes such a line an exclusion. A kept line holds an ID that isn't an exclusion: one followed by other words, by a non-hex, non-dash character in the same word (`3fa9…:`), mid-sentence, or after a `+` or `1.` bullet.
   - `consent.load_consent_list(path) -> frozenset[str]` raises `ConsentListError(list.stop)` on a stop, else returns `ids`. `consent.LEGACY_ENTRY_RE` is 2a's `ENTRY_RE`, unchanged.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-3-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-3-base`
 
-- [ ] **Step 1: Write the failing tests.** The new file `packages/core/tests/test_keepout.py`:
+- [x] **Step 1: Write the failing tests.** The new file `packages/core/tests/test_keepout.py`:
 
 ```python
 """The consent list's grammar and the keep-out word (stage 2b spec §12.1, §12.2). Every ID here
@@ -2449,9 +2449,9 @@ def test_the_2a_import_now_reads_of_and_upper_case_exclusions(
 def test_the_consent_list_fails_closed(tmp_path, content):
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_keepout.py packages/core/tests/test_import_run.py -q`. Expected: `test_keepout.py` errors at collection with `ModuleNotFoundError: No module named 'recordings.plaud.keepout'`, and `test_the_2a_import_now_reads_of_and_upper_case_exclusions` fails with `ConsentListError: the consent list …/consent.md holds no IDs, so it is the wrong file: refusing` (2a's parser skips the `OF_` line).
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_keepout.py packages/core/tests/test_import_run.py -q`. Expected: `test_keepout.py` errors at collection with `ModuleNotFoundError: No module named 'recordings.plaud.keepout'`, and `test_the_2a_import_now_reads_of_and_upper_case_exclusions` fails with `ConsentListError: the consent list …/consent.md holds no IDs, so it is the wrong file: refusing` (2a's parser skips the `OF_` line).
 
-- [ ] **Step 3: Write the code.** First the privacy rule's one fold, in `models.py`, so `keepout` builds on it instead of keeping a copy (M9). `is_private_tag` gives the same answer as before: dropping invisible characters and casefolding never makes or removes a `/`, so folding the whole tag before reading its first folder changes nothing, and `test_models.py` and `test_tagops.py` pin it.
+- [x] **Step 3: Write the code.** First the privacy rule's one fold, in `models.py`, so `keepout` builds on it instead of keeping a copy (M9). `is_private_tag` gives the same answer as before: dropping invisible characters and casefolding never makes or removes a `/`, so folding the whole tag before reading its first folder changes nothing, and `test_models.py` and `test_tagops.py` pin it.
 
 In `packages/core/src/recordings/models.py`:
 
@@ -2820,11 +2820,11 @@ def load_consent_list(path: Path) -> frozenset[str]:
     return consent.ids
 ```
 
-- [ ] **Step 4: Run it; it passes.** `uv run pytest packages/core/tests/test_keepout.py packages/core/tests/test_import_run.py packages/core/tests/test_doctor.py packages/core/tests/test_cli.py packages/core/tests/test_models.py packages/core/tests/test_tagops.py -q`. Expected: all pass (`test_models.py` and `test_tagops.py` are pins: `is_private_tag` answers as it did; so is `test_an_exclusion_a_kept_line_a_comment_and_a_note_read_as_before`, which holds those lines to their old reading under decision 12. `test_an_id_followed_only_by_hex_before_any_dash_stops_the_list` pins decision 12's reach: its three lines read as kept on a classifier without decision 12, and each reads as an exclusion once a dash follows the ID).
+- [x] **Step 4: Run it; it passes.** `uv run pytest packages/core/tests/test_keepout.py packages/core/tests/test_import_run.py packages/core/tests/test_doctor.py packages/core/tests/test_cli.py packages/core/tests/test_models.py packages/core/tests/test_tagops.py -q`. Expected: all pass (`test_models.py` and `test_tagops.py` are pins: `is_private_tag` answers as it did; so is `test_an_exclusion_a_kept_line_a_comment_and_a_note_read_as_before`, which holds those lines to their old reading under decision 12. `test_an_id_followed_only_by_hex_before_any_dash_stops_the_list` pins decision 12's reach: its three lines read as kept on a classifier without decision 12, and each reads as an exclusion once a dash follows the ID).
 
-- [ ] **Step 5: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 5: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 6: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 6: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(plaud): 🤖 the consent grammar reads of_ and upper-case IDs, lists kept lines and fails closed on typos; the keep-out word match
@@ -2851,7 +2851,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/keepout.py packages/core/src/recordings/models.py packages/core/src/recordings/plaud/consent.py packages/core/tests/test_keepout.py packages/core/tests/test_import_run.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 7: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 7: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix rounds, `81136d1` and `52340fe`; the listings above are the plan as written): the first word's ID must start the word, so `(ID)`, `'ID'`, `of-ID` and `0f_ID` are typos; Dan's decision 12 was refined on 2026-10-30 ("Solid chunks only"), so only an unbroken run of 8 or more hex characters that isn't a whole ID makes a typo, and two whole IDs, an ID then `added`, or `` `of_…` 2026-10-23 asked `` read as kept lines again, while `- Added 2026-10-23` is a plain note; one whole ID alone in a form the exclusion rule doesn't read (`` `ID ` ``, doubled backticks, `of_ ID`) is a typo (spec Part I: "A line that looks like an ID but can't be read stops every import"); lines are numbered on `\r\n`, `\r` and `\n` only, and a line holding any other line or paragraph separator is a typo; `read_consent` and `signature` never raise on a path holding NUL; `tagops._reads_as` uses `models.fold`. Spec §12.1 rule 4 says all of this.
 
 ### Task 4: The Plaud client, copied
 
@@ -17874,7 +17876,7 @@ def test_the_runbook_keeps_a_recording_out_for_good():
         "local.mk",
         "Copy ID",
         "recordings plaud consent",
-        "put a dash after the ID",
+        "the ID first",
     ):
         assert needed in keep, needed
     assert "2 hours" in _section("## Planned work and the sync's check")
@@ -18264,10 +18266,10 @@ Either way, `recordings plaud consent` must show the new count, and no line it c
 edit doesn't show, the worker didn't see it. If the recording is already in the archive, the
 worker tags it `private` within seconds and flags it; take it out by hand if it mustn't stay.
 
-A line that holds a valid ID but is read as a typo: put a dash after the ID (`` - `of_…` — note ``).
-The list reads a line whose text before the dash is only hex digits, 8 or more, and not one whole
-ID as a typo (Dan's decision 12), so `` - `ID1` `ID2` `` or `` - `of_…` 2026-10-23 asked ``, with no
-dash, stops it.
+A line that holds a valid ID but is read as a typo: write it as `` - `of_…` — note ``, the ID first
+(bare or in one pair of backticks, nothing else in them), then a dash. The list stops on a line
+that looks like an ID but can't be read: an ID split by a space or a line wrap (Dan's decision 12),
+one in brackets or quotes (`(ID)`, `'ID'`), `of-` for `of_`, or a space inside the backticks.
 
 ## Planned work and the sync's check
 
