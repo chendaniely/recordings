@@ -2,6 +2,7 @@
 through PlaudDB. Every ID here is synthetic."""
 
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -233,3 +234,52 @@ def test_put_many_is_one_transaction(state):
     }
     db.delete("blocker:hold")
     assert db.get("blocker:hold") is None and db.get("catch_up_done_at") == "x"
+
+
+@pytest.fixture
+def vancouver(monkeypatch):
+    monkeypatch.setenv("TZ", "America/Vancouver")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_a_naive_time_is_stored_as_utc_whatever_the_machines_zone(state, vancouver):
+    # why: decision 47. when.parse_stamp reads a naive time as UTC; storing it as local time
+    # (naive.astimezone) wrote 14:20 as 21:20Z, so a reader and a writer disagreed by the offset.
+    db = PlaudDB(state)
+    naive = datetime(2026, 10, 23, 14, 20)  # noqa: DTZ001
+    db.set_listing(HEX, last_seen=naive)
+    db.put("last_turn", "x", now=naive)
+    assert db.listing(HEX).last_seen == NOW
+    with state.db() as conn:
+        stored = conn.execute("SELECT updated_at FROM plaud_state").fetchone()[0]
+    assert stored == NOW.isoformat()
+
+
+def test_a_time_column_takes_a_datetime_only(state):
+    db = PlaudDB(state)
+    db.set_listing(HEX, last_seen=NOW)
+    for bad in ("2026-10-23T14:20:00", 1761229200, "yesterday"):
+        with pytest.raises(TypeError, match="last_seen"):
+            db.set_listing(HEX, last_seen=bad)
+        with pytest.raises(TypeError, match="next_check_at"):
+            db.set_check(REC, next_check_at=bad)
+    db.set_listing(HEX, absent_since=NOW)
+    db.set_listing(HEX, absent_since=None)  # None clears a time
+    assert db.listing(HEX).absent_since is None
+
+
+def test_a_title_cannot_land_where_a_hash_belongs(state):
+    # why: P1/C7.01. A title column is a hash or nothing; "Week 4 standup" must never be stored.
+    db = PlaudDB(state)
+    for bad in ("Week 4 standup", "B" * 64, "b" * 63, "g" * 64, ""):
+        with pytest.raises(ValueError, match="title_sha256"):
+            db.set_listing(HEX, last_seen=NOW, title_sha256=bad)
+        with pytest.raises(ValueError, match="title_sha256"):
+            db.set_markers(REC, [Marker(HEX, bad, 1)], now=NOW)
+    assert db.listing(HEX) is None and db.markers(REC) == {}
+    db.set_listing(HEX, last_seen=NOW, title_sha256="b" * 64)
+    db.set_listing(HEX, title_sha256=None)
+    assert db.listing(HEX).title_sha256 is None

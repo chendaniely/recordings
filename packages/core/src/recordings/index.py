@@ -161,15 +161,20 @@ class Index:
         Writer found it this archive's), outside a transaction, where SQLite can change it.
 
         The switch needs the file to itself. While another process has it open (web reading as the
-        worker starts), it fails: WAL only speeds things up, so that is logged in a fixed phrase,
-        False is returned, and the next rebuild or Writer tries again."""
+        worker starts), SQLite raises a DatabaseError (usually an OperationalError) or answers with
+        another mode. WAL only speeds things up, so either way it is logged in a fixed phrase (the
+        error's class, or ModeRefused), False is returned, and the next rebuild or Writer tries
+        again."""
         try:
             with closing(sqlite3.connect(self.path, timeout=timeout)) as conn:
                 mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
-        except sqlite3.OperationalError as exc:
+        except sqlite3.DatabaseError as exc:
             log.warning("index.db stays in rollback-journal mode for now (%s)", type(exc).__name__)
             return False
-        return mode == "wal"
+        if mode != "wal":
+            log.warning("index.db stays in rollback-journal mode for now (ModeRefused)")
+            return False
+        return True
 
     def _readable(self) -> bool:
         """False only when SQLite can't read the file at all; a busy file is still an error."""

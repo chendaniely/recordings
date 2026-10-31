@@ -471,3 +471,57 @@ def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
         "find_by_sha256": rec.id,
         "sha256_of": rec.media.sha256,
     }
+
+
+def test_a_switch_to_wal_that_sqlite_refuses_in_any_form_is_logged(
+    new_archive, tmp_path, caplog, monkeypatch
+):
+    # why: the review of Task 6. A DatabaseError (a race with another process) or an answer other
+    # than "wal" is not an OperationalError, and used to escape or pass without a word.
+    root, _ = new_archive
+    put(root)
+    index = Index(tmp_path / "index" / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+    phrase = "index.db stays in rollback-journal mode for now"
+
+    def raises(*args, **kwargs):
+        raise sqlite3.DatabaseError("file is not a database")
+
+    class Answers:
+        def execute(self, sql):
+            return self
+
+        def fetchone(self):
+            return ("delete",)
+
+        def close(self):
+            pass
+
+    with caplog.at_level("WARNING", logger="recordings.index"):
+        monkeypatch.setattr(index_module.sqlite3, "connect", raises)
+        assert index.wal() is False
+        assert f"{phrase} (DatabaseError)" in caplog.text
+        caplog.clear()
+        monkeypatch.setattr(index_module.sqlite3, "connect", lambda *a, **k: Answers())
+        assert index.wal() is False
+        assert phrase in caplog.text and "delete" not in caplog.text
+
+
+def test_a_writer_opens_when_the_switch_to_wal_is_refused(writer, monkeypatch, caplog):
+    # why: WAL only speeds things up; a reader holding the index (web) must not stop a Writer.
+    with closing(sqlite3.connect(writer.index.path)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    original = Index.wal
+    monkeypatch.setattr(Index, "wal", lambda self, *, timeout=5.0: original(self, timeout=0.05))
+    reader = sqlite3.connect(writer.index.path)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM recordings").fetchone()
+        with caplog.at_level("WARNING", logger="recordings.index"):
+            again = Writer(writer.root, writer.state, Index(writer.index.path), writer_id="test")
+    finally:
+        reader.close()
+    assert again.index.path == writer.index.path
+    assert "index.db stays in rollback-journal mode for now (OperationalError)" in caplog.text
+    with closing(sqlite3.connect(writer.index.path)) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"

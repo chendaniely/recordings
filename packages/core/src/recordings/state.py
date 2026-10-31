@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS plaud_listing (
   needs_review INTEGER NOT NULL DEFAULT 0, -- §11.6
   import_failures INTEGER NOT NULL DEFAULT 0, next_import_at TEXT, parked_at TEXT,
   title_sha256 TEXT, duration_ms INTEGER, change_marker TEXT);   -- only while its recording is here
+-- No "flagged" column in plaud_checks: the spec's flag is an open plaud_events row (decision 16).
 CREATE TABLE IF NOT EXISTS plaud_checks (
   recording_id TEXT PRIMARY KEY, last_checked_at TEXT, last_changed_at TEXT, next_check_at TEXT,
   interval_seconds INTEGER, fast_checks_left INTEGER NOT NULL DEFAULT 0,

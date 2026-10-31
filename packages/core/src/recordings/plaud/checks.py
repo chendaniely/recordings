@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
@@ -25,6 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from recordings.plaud.when import parse_stamp
 from recordings.refs import canonical_plaud_id
 from recordings.state import State
 
@@ -170,10 +172,21 @@ _DATING = (
 
 
 def _utc(when: datetime) -> str:
-    return when.astimezone(UTC).isoformat()
+    """UTC ISO 8601; a naive datetime is UTC, as `when.parse_stamp` reads it (decision 47)."""
+    if not isinstance(when, datetime):
+        raise TypeError("a time must be a datetime")
+    return parse_stamp(when).astimezone(UTC).isoformat()
 
 
-def _encode(value: Any) -> Any:
+def _encode(name: str, value: Any) -> Any:
+    if name in _TIMES:
+        if value is None:
+            return None
+        if not isinstance(value, datetime):
+            raise TypeError(f"{name} takes a datetime")
+        return _utc(value)
+    if name.endswith("_sha256") and value is not None and not _is_sha256(value):
+        raise ValueError(f"{name} must be 64 lowercase hex characters (a hash, never a title)")
     if isinstance(value, datetime):
         return _utc(value)
     if isinstance(value, bool):
@@ -187,7 +200,7 @@ def _decode(name: str, value: Any) -> Any:
     if value is None:
         return None
     if name in _TIMES:
-        return datetime.fromisoformat(value)
+        return parse_stamp(value)
     if name in _BOOLS:
         return bool(value)
     if name == "held_removals":
@@ -197,7 +210,19 @@ def _decode(name: str, value: Any) -> Any:
     return value
 
 
-def _columns(given: Mapping[str, Any], allowed: tuple[str, ...], key: str) -> None:
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _row(cls: type, cols: tuple[str, ...], row: tuple) -> Any:
+    return cls(*(_decode(n, v) for n, v in zip(cols, row, strict=True)))
+
+
+def _marks(n: int) -> str:
+    return ", ".join("?" for _ in range(n))
+
+
+def _refuse_unknown_columns(given: Mapping[str, Any], allowed: tuple[str, ...], key: str) -> None:
     unknown = sorted(set(given) - set(allowed) | ({key} & set(given)))
     if unknown:
         raise ValueError(f"not a settable column: {', '.join(unknown)}")
@@ -262,37 +287,34 @@ class PlaudDB:
                 f"SELECT {', '.join(_LISTING)} FROM plaud_listing WHERE canonical_plaud_id = ?",
                 (canonical_plaud_id(plaud_id),),
             ).fetchone()
-        return (
-            ListingRow(*(_decode(n, v) for n, v in zip(_LISTING, row, strict=True)))
-            if row
-            else None
-        )
+        return _row(ListingRow, _LISTING, row) if row else None
 
     def set_listing(self, plaud_id: str, **fields: Any) -> None:
         """Set plaud_listing columns (their names only: ValueError otherwise), on the row of the
         ID's canonical form. A missing row is created, with the ID as given, and dated by the
         first of the times being set (first_seen, last_seen, kept_out_at, parked_at, released_at,
         next_import_at, absent_since); with none of them, ValueError (decision 36)."""
-        _columns(fields, _LISTING, "canonical_plaud_id")
+        _refuse_unknown_columns(fields, _LISTING, "canonical_plaud_id")
+        encoded = {k: _encode(k, v) for k, v in fields.items()}
         canonical = canonical_plaud_id(plaud_id)
         with self._db() as db:
             exists = db.execute(
                 "SELECT 1 FROM plaud_listing WHERE canonical_plaud_id = ?", (canonical,)
             ).fetchone()
             if not exists:
-                dated = next((fields[k] for k in _DATING if fields.get(k) is not None), None)
+                dated = next((encoded[k] for k in _DATING if encoded.get(k) is not None), None)
                 if dated is None:
                     raise ValueError("no listing row for this ID, and no time to date a new one by")
                 db.execute(
                     "INSERT INTO plaud_listing (canonical_plaud_id, listed_id, first_seen, "
                     "last_seen) VALUES (?, ?, ?, ?)",
-                    (canonical, plaud_id, _utc(dated), _utc(dated)),
+                    (canonical, plaud_id, dated, dated),
                 )
             if fields:
                 db.execute(
                     f"UPDATE plaud_listing SET {', '.join(f'{k} = ?' for k in fields)} "
                     "WHERE canonical_plaud_id = ?",
-                    (*(_encode(v) for v in fields.values()), canonical),
+                    (*encoded.values(), canonical),
                 )
 
     # ---- plaud_checks --------------------------------------------------------------------------
@@ -302,21 +324,19 @@ class PlaudDB:
                 f"SELECT {', '.join(_CHECKS)} FROM plaud_checks WHERE recording_id = ?",
                 (recording_id,),
             ).fetchone()
-        return (
-            CheckRow(*(_decode(n, v) for n, v in zip(_CHECKS, row, strict=True))) if row else None
-        )
+        return _row(CheckRow, _CHECKS, row) if row else None
 
     def set_check(self, recording_id: str, **fields: Any) -> None:
         """Set plaud_checks columns (their names only), making the row if it is missing."""
-        _columns(fields, _CHECKS, "recording_id")
+        _refuse_unknown_columns(fields, _CHECKS, "recording_id")
         names = ["recording_id", *fields]
         updates = ", ".join(f"{k} = excluded.{k}" for k in fields) or "recording_id = recording_id"
         with self._db() as db:
             db.execute(
                 f"INSERT INTO plaud_checks ({', '.join(names)}) "
-                f"VALUES ({', '.join('?' for _ in names)}) "
+                f"VALUES ({_marks(len(names))}) "
                 f"ON CONFLICT (recording_id) DO UPDATE SET {updates}",
-                (recording_id, *(_encode(v) for v in fields.values())),
+                (recording_id, *(_encode(k, v) for k, v in fields.items())),
             )
 
     # ---- plaud_events --------------------------------------------------------------------------
@@ -354,12 +374,11 @@ class PlaudDB:
             rows = db.execute(
                 f"SELECT {', '.join(_EVENT)} FROM plaud_events WHERE {where} ORDER BY id", args
             ).fetchall()
-        return [Event(*(_decode(n, v) for n, v in zip(_EVENT, row, strict=True))) for row in rows]
+        return [_row(Event, _EVENT, row) for row in rows]
 
     def open_flags(self, kinds: Iterable[str] = FLAG_KINDS) -> list[Event]:
         kinds = tuple(kinds)
-        marks = ", ".join("?" for _ in kinds)
-        return self._events(f"open = 1 AND kind IN ({marks})", kinds)
+        return self._events(f"open = 1 AND kind IN ({_marks(len(kinds))})", kinds)
 
     def resolve(self, event_id: int, *, now: datetime) -> None:
         with self._db() as db:
@@ -376,8 +395,7 @@ class PlaudDB:
 
     def events_since(self, since: datetime, kinds: Iterable[str]) -> list[Event]:
         kinds = tuple(kinds)
-        marks = ", ".join("?" for _ in kinds)
-        return self._events(f"at >= ? AND kind IN ({marks})", (_utc(since), *kinds))
+        return self._events(f"at >= ? AND kind IN ({_marks(len(kinds))})", (_utc(since), *kinds))
 
     # ---- plaud_private_checked: the auto-private marker (§13.2) -------------------------------
     def markers(self, recording_id: str) -> dict[str, Marker]:
@@ -390,6 +408,10 @@ class PlaudDB:
         return {row[0]: Marker(*row) for row in rows}
 
     def set_markers(self, recording_id: str, markers: Iterable[Marker], *, now: datetime) -> None:
+        markers = list(markers)
+        for m in markers:
+            if not _is_sha256(m.title_sha256):
+                raise ValueError("title_sha256 must be 64 lowercase hex characters")
         with self._db() as db:
             db.executemany(
                 "INSERT INTO plaud_private_checked (recording_id, canonical_plaud_id, "
