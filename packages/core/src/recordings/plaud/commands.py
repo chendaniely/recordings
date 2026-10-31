@@ -18,10 +18,11 @@ from datetime import UTC, datetime, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from recordings import config
+from recordings.archive import Archive
 from recordings.index import Index
 from recordings.plaud.checks import K_CONSENT, K_LAST_GOOD_LISTING, NoSyncYet, PlaudDB
-from recordings.plaud.flags import missed_by_2a
-from recordings.plaud.keepout import read_consent, signature
+from recordings.plaud.flags import listed_here, missed_by_2a
+from recordings.plaud.keepout import read_consent_text, signature
 from recordings.plaud.settings import plaud_settings
 from recordings.plaud.when import local_hhmm, parse_stamp
 from recordings.sentinel import SentinelError, read_sentinel
@@ -97,31 +98,35 @@ def _state(cfg: config.Config) -> State | None:
     if cfg.state_path is None:
         return None
     try:
-        return State.open(cfg.state_path)
+        return State.read_only(cfg.state_path)  # a reader creates and migrates nothing
     except StateError:
         return None
 
 
-def _here(cfg: config.Config, ids: frozenset[str]) -> dict[str, set[str]] | None:
-    """Each recording here that the list names, with the IDs that name it; None when the index
-    can't answer (missing, another archive's, or busy)."""
+def _here(
+    cfg: config.Config, state: State | None, ids: frozenset[str]
+) -> dict[str, set[str]] | None:
+    """Each recording here that the list names, with the IDs that name it, as the worker finds
+     them (`flags.listed_here`); None when the index can't answer (missing, another archive's, busy,
+    )."""
     if cfg.archive_path is None or cfg.index_path is None:
         return None
     try:
         identity = read_sentinel(cfg.archive_path)
     except SentinelError:
         return None
-    index = Index(cfg.index_path)
-    if index.archive_uuid() != identity.uuid:
-        return None
-    found: dict[str, set[str]] = {}
     try:
-        for pid in sorted(ids):
-            for rid in index.find_by_source("plaud", pid, strict=True):
-                found.setdefault(rid, set()).add(pid)
-    except sqlite3.DatabaseError:
+        found, unavailable = listed_here(
+            Index(cfg.index_path), identity.uuid, state, Archive(cfg.archive_path), ids
+        )
+    except sqlite3.Error:
         return None
-    return found
+    if unavailable:
+        return None
+    result: dict[str, set[str]] = {}
+    for rid, pid in found:
+        result.setdefault(rid, set()).add(pid)
+    return result
 
 
 def cmd_consent(args: argparse.Namespace) -> int:
@@ -134,10 +139,10 @@ def cmd_consent(args: argparse.Namespace) -> int:
     except config.ConfigError as exc:
         return _fail(str(exc), args.json, EXIT_CONFIG)
     tz = _zone(cfg)
-    consent = read_consent(settings.consent_list)
+    consent, text = read_consent_text(settings.consent_list)
     sig = signature(settings.consent_list)
     changed = datetime.fromtimestamp(sig.mtime_ns / 1e9, UTC) if sig is not None else None
-    on_plaud: int | str = ON_PLAUD_UNKNOWN
+    on_plaud: int | None = None
     read_at, read_by, read_ids = datetime.now(UTC), "this command", len(consent.ids)
     state = _state(cfg)
     if state is not None:
@@ -157,12 +162,8 @@ def cmd_consent(args: argparse.Namespace) -> int:
                 read_ids = count if isinstance(count, int) and not isinstance(count, bool) else None
         except (NoSyncYet, sqlite3.Error, ValueError):
             pass  # what the file says still prints (a value that doesn't decode included)
-    try:
-        text = settings.consent_list.read_text(encoding="utf-8") if settings.consent_list else ""
-    except (OSError, UnicodeDecodeError):
-        text = ""
     missed = missed_by_2a(text, consent)
-    here = _here(cfg, consent.ids)
+    here = _here(cfg, state, consent.ids)
     in_archive = (
         None
         if here is None
@@ -174,6 +175,7 @@ def cmd_consent(args: argparse.Namespace) -> int:
     payload = {
         "ids": len(consent.ids),
         "on_plaud": on_plaud,
+        "on_plaud_note": None if on_plaud is not None else ON_PLAUD_UNKNOWN,
         "file_changed": _shown(changed, tz),
         "read_at": _shown(read_at, tz),
         "read_by": read_by,
@@ -181,9 +183,10 @@ def cmd_consent(args: argparse.Namespace) -> int:
         "stop": consent.stop,
         "typo_lines": list(consent.typo_lines),
         "review_lines": list(consent.review_lines),
-        "in_archive": in_archive if in_archive is not None else INDEX_UNAVAILABLE,
+        "in_archive": in_archive,
+        "in_archive_note": INDEX_UNAVAILABLE if in_archive is None else None,
     }
-    on = f"{on_plaud:,} on Plaud now" if isinstance(on_plaud, int) else f"on Plaud: {on_plaud}"
+    on = f"{on_plaud:,} on Plaud now" if on_plaud is not None else f"on Plaud: {ON_PLAUD_UNKNOWN}"
     lines = [f"consent list: {len(consent.ids):,} IDs, {on}"]
     lines.append(f"file changed: {payload['file_changed'] or 'no file'}")
     counted = "" if read_ids is None else f": {read_ids:,} {'ID' if read_ids == 1 else 'IDs'}"

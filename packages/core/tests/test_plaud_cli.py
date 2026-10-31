@@ -1,6 +1,7 @@
 """`recordings plaud …` (stage 2b spec §9.6). Every archive and Plaud ID here is synthetic."""
 
 import json
+import shutil
 from datetime import UTC, datetime
 
 from recordings.archive import RawSource
@@ -60,7 +61,8 @@ def test_plaud_consent_lists_kept_lines_by_number_and_2a_misses_by_archive_id(
     out = json.loads(capsys.readouterr().out)
     assert out["ids"] == 2 and out["stop"] is None
     assert out["review_lines"] == [4] and out["typo_lines"] == []
-    assert out["on_plaud"] == "unknown until the first listing"
+    assert out["on_plaud"] is None and out["on_plaud_note"] == "unknown until the first listing"
+    assert out["in_archive_note"] is None
     assert (out["read_by"], out["read_ids"]) == ("this command", 2)
     assert out["in_archive"] == sorted(
         [
@@ -126,3 +128,47 @@ def test_no_printed_line_carries_a_title(writer, make_incoming, tmp_path, monkey
     for argv in (["plaud", "consent"], ["plaud", "consent", "--json"]):
         main(argv)
         assert "Synthetic 042" not in capsys.readouterr().out
+
+
+def test_plaud_consent_sees_pending_index_updates_as_the_worker_does(
+    writer, make_incoming, tmp_path, monkeypatch, capsys
+):
+    # why: §12.1, §17.5. The dry run reads this list: a recording the worker would tag is on it.
+    rec = plaud_rec(writer, make_incoming, pid(0xE1))
+    with writer.locks.hold("index"), writer.index._db() as conn:
+        conn.execute("DELETE FROM source_refs WHERE recording_id = ?", (rec.id,))
+    writer.state.mark_index_pending(rec.id)
+    consent = tmp_path / "consent-list.md"
+    consent.write_text(f"- `{pid(0xE1)}` — asked not to keep\n", encoding="utf-8")
+    configure(tmp_path, monkeypatch, writer, consent=consent)
+    assert main(["plaud", "consent", "--json"]) == 0
+    assert [r["recording_id"] for r in json.loads(capsys.readouterr().out)["in_archive"]] == [
+        rec.id
+    ]
+
+
+def test_plaud_consent_creates_nothing(tmp_path, monkeypatch, capsys):
+    # why: a reader (§9.6, "holds no lock"): State.read_only, never State.open.
+    from recordings.init import init_archive
+
+    root, state = tmp_path / "archive", tmp_path / "state"
+    init_archive(root, state, writer_id="test")
+    shutil.rmtree(state / "locks", ignore_errors=True)  # State.open would make it again
+    consent = tmp_path / "consent-list.md"
+    consent.write_text(f"- `{pid(0xE2)}` — asked not to keep\n", encoding="utf-8")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        f'[archive]\npath = "{root}"\nwriter_id = "test"\n[state]\npath = "{state}"\n'
+        f'[plaud]\nconsent_list = "{consent}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
+
+    def names():  # a reader makes WAL's -wal and -shm (State.read_only says so), nothing else
+        return sorted(p.name for p in state.rglob("*") if not p.name.endswith(("-wal", "-shm")))
+
+    before = names()
+    assert main(["plaud", "consent", "--json"]) == 0
+    capsys.readouterr()
+    assert names() == before
+    assert not (state / "locks").exists()

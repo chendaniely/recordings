@@ -2036,6 +2036,10 @@ exception class names. Never a title, a token, a URL from Plaud, or exception te
   the disk is too full to import", "gate closed", "partial: 3 recordings failed".
 - **A blocker** (§16; a later push's title): "sign-in needed", "imports stopped: consent list",
   "held: see Status", "paused: unexpected changes", "should be private: run `recordings reindex`".
+  A private-unwritten flag whose cause is not an outside edit or an invalid file (a full disk, a
+  folder's owner, a busy `state.db`) says instead "Recording `<id>` should be private, but its file
+  couldn't be written (`<ExceptionClass>`): check the archive disk and its permissions.", because
+  `recordings reindex` can't mend those (2b phase 1 plan, decision 58).
 - **A recording:** "up to date", "updated: speakers, title", "degraded", "suppressed", "busy",
   "failed: Plaud unavailable", "not checked: kept out", "not checked: on the consent list", "gone from
   Plaud", "parked", "re-tagged private: title changed", "re-tagged private: the sync's record was
@@ -3100,3 +3104,5 @@ None: every bullet of §20 is planned in a phase.
   outcome changed.
 - 2026-10-30: Dan's decision 12 refined, "Solid chunks only": only an unbroken run of 8 or more hex
   characters makes a typo, so an ordinary note line isn't one (§12.1 rule 4; Phase 1, Task 3).
+- 2026-10-31: §15.6 gains the private-unwritten sentence for a cause other than an outside edit or
+  an invalid file, beside the `recordings reindex` one (2b phase 1 plan, decision 58; Phase 1, Task 8).

@@ -125,12 +125,12 @@ def test_one_flag_per_recording_holds_against_a_racing_writer(writer, make_incom
     real = PlaudDB.open_flags
     calls = []
 
-    def first_sees_nothing(self, kinds=("kept-out-late", "consent-late")):
+    def first_sees_nothing(self, kinds=("kept-out-late", "consent-late"), recording_id=None):
         calls.append(1)
         if len(calls) == 1:
             self.add_event(KEPT_OUT_LATE, now=NOW, recording_id=rec.id, open_flag=True)
             return []
-        return real(self, kinds)
+        return real(self, kinds, recording_id)
 
     monkeypatch.setattr(PlaudDB, "open_flags", first_sees_nothing)
     assert flag(db, CONSENT_LATE, rec.id, plaud_id=pid(6), now=NOW) is True  # changed its kind
@@ -254,6 +254,11 @@ def busy_state_db(writer, rec, monkeypatch) -> None:
     monkeypatch.setattr(writer, "mutate", mutate)
 
 
+def file_missing(writer, rec, monkeypatch) -> None:
+    """Its folder is still here, but its recording.json is gone."""
+    (writer.archive.path_for(rec.id) / "recording.json").unlink()
+
+
 ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
 
@@ -268,6 +273,7 @@ ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
         ),
         pytest.param(undecodable, "InvalidFile", id="a file that doesn't decode"),
         pytest.param(busy_state_db, "OperationalError", id="a busy state.db"),
+        pytest.param(file_missing, "FileNotFoundError", id="a folder with no recording.json"),
     ],
 )
 def test_one_recording_that_cant_be_written_stops_none_after_it(
@@ -422,3 +428,41 @@ def test_no_flag_or_event_carries_a_title(writer, make_incoming):
         ]
     assert rows and "Synthetic 042" not in json.dumps(rows, default=str)
     assert rec.title == TITLE
+
+
+def test_a_recording_that_stays_unwritten_logs_and_writes_nothing_after_the_first_pass(
+    writer, make_incoming, caplog
+):
+    # why: §9.2 runs the pass every 2 s. A retry each tick is kept (reindex may mend the file at any
+    # moment), but a pass where nothing changed writes nothing to state.db and logs nothing.
+    rec = plaud_rec(writer, make_incoming, 50)
+    path = writer.archive.path_for(rec.id) / "recording.json"
+    path.write_text(path.read_text(encoding="utf-8").replace("Synthetic 042", "Edited"), "utf-8")
+    db = PlaudDB(writer.state)
+    consent = parse_consent(listed(pid(50)))
+
+    def dump() -> list[str]:
+        with writer.state.db() as conn:
+            return list(conn.iterdump())
+
+    with caplog.at_level("DEBUG"):
+        first = apply_late_consent(writer, db, consent, now=NOW)
+        after_first, flag_times = dump(), [f["at"] for f in writer.state.flags()]
+        later = [apply_late_consent(writer, db, consent, now=NOW) for _ in range(2)]
+    assert first.unwritten == (rec.id,) and all(r.unwritten == (rec.id,) for r in later)
+    assert len(flag_times) == 1 and [f["at"] for f in writer.state.flags()] == flag_times
+    assert dump() == after_first
+    assert [r for r in caplog.records if r.levelname in ("WARNING", "ERROR")] == []
+
+
+def test_a_pending_recording_whose_file_cant_be_read_marks_the_pass_unavailable(
+    writer, make_incoming
+):
+    # why: §12.1. The lookup is never skipped: a pending recording that might be the one named.
+    rec = plaud_rec(writer, make_incoming, 51)
+    writer.state.mark_index_pending(rec.id)
+    (writer.archive.path_for(rec.id) / "recording.json").unlink()
+    report = apply_late_consent(
+        writer, PlaudDB(writer.state), parse_consent(listed(pid(99))), now=NOW
+    )
+    assert report.index_unavailable is True

@@ -211,15 +211,21 @@ def _stopped(stop: str) -> ConsentList:
 
 def read_consent(path: Path | None) -> ConsentList:
     """Never raises: unset, missing, unreadable, empty, no exclusions or a typo is a stop."""
+    return read_consent_text(path)[0]
+
+
+def read_consent_text(path: Path | None) -> tuple[ConsentList, str]:
+    """The same, with the text it read ("" when it read none): one read, so what is parsed and
+    what is looked at again (2a's parser, for `plaud consent`) are the same bytes."""
     if path is None:
-        return _stopped(STOP_MISSING)
+        return _stopped(STOP_MISSING), ""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
-        return _stopped(STOP_MISSING)
+        return _stopped(STOP_MISSING), ""
     except (OSError, ValueError):  # ValueError: a path holding NUL; UnicodeDecodeError is one too
-        return _stopped(STOP_UNREADABLE)
-    return parse_consent(text)
+        return _stopped(STOP_UNREADABLE), ""
+    return parse_consent(text), text
 
 
 def signature(path: Path | None) -> FileSignature | None:

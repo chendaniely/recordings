@@ -365,6 +365,11 @@ class State:
     # ---- flags: files that need attention (until stage 3's UI shows them) -----------------
     def flag(self, file: str, kind: str, message: str) -> None:
         with self.db() as db:
+            row = db.execute(
+                "SELECT message FROM flags WHERE file = ? AND kind = ?", (file, kind)
+            ).fetchone()
+            if row is not None and row[0] == message:
+                return  # flagged so already: a retry writes nothing and keeps the first time
             db.execute(
                 "INSERT OR REPLACE INTO flags (file, kind, message, at) VALUES (?, ?, ?, ?)",
                 (file, kind, message, _now()),

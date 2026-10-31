@@ -33,23 +33,29 @@
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from recordings.archive import Archive
+from recordings.index import Index
 from recordings.locks import LockTimeout
 from recordings.models import is_private
-from recordings.plaud.checks import FLAG_KINDS, PlaudDB
+from recordings.plaud.checks import (
+    CONSENT_LATE,
+    FLAG_KINDS,
+    KEPT_HERE_EVENT,
+    KEPT_OUT_LATE,
+    PRIVATE_UNWRITTEN,
+    PlaudDB,
+)
 from recordings.plaud.consent import LEGACY_ENTRY_RE
 from recordings.plaud.keepout import ConsentList
 from recordings.refs import canonical_plaud_id
+from recordings.state import State
 from recordings.writer import InvalidFile, NotTheWriter, SetPlaudFields, StaleFile, Writer
 
-KEPT_OUT_LATE = "kept-out-late"
-CONSENT_LATE = "consent-late"
-PRIVATE_UNWRITTEN = "private-unwritten"
 SENTENCES: dict[str, str] = {
     CONSENT_LATE: "On the consent list, but in the archive: take it out by hand (runbook)",
     KEPT_OUT_LATE: "Kept out by title, but already in the archive: take it out by hand (runbook)",
@@ -70,7 +76,6 @@ NOTHING_TO_KEEP = "Nothing to keep: there is no open late keep-out for it"
 # file system's (a folder's owner, a full or read-only disk), state.db's, and a file that doesn't
 # decode (UnicodeDecodeError is a ValueError).
 UNWRITTEN = (StaleFile, InvalidFile, NotTheWriter, OSError, sqlite3.Error, ValueError)
-log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -105,7 +110,7 @@ def flag(db: PlaudDB, kind: str, recording_id: str, *, plaud_id: str | None, now
         raise ValueError(f"{kind!r} is not a privacy flag")
     pid = canonical_plaud_id(plaud_id) if plaud_id else None
     for _ in range(2):  # a second pass only after another process flagged it in between
-        current = [e for e in db.open_flags() if e.recording_id == recording_id]
+        current = db.open_flags(recording_id=recording_id)
         if current:
             if current[0].kind == kind or kind == KEPT_OUT_LATE:
                 return False
@@ -119,46 +124,54 @@ def flag(db: PlaudDB, kind: str, recording_id: str, *, plaud_id: str | None, now
     return False
 
 
-def _listed_here(writer: Writer, ids: frozenset[str]) -> tuple[list[tuple[str, str]], bool]:
+def listed_here(
+    index: Index, uuid: str, state: State | None, archive: Archive, ids: frozenset[str]
+) -> tuple[list[tuple[str, str]], bool]:
     """Each recording here that one of `ids` names, with that ID: from the index, asked strictly,
-    and from the files of recordings whose index update is pending. (recordings, unavailable)."""
+    and from the files of recordings whose index update is pending. (recordings, unavailable).
+    The worker's pass and `plaud consent` both ask it, so they see the same recordings. A pending
+    recording whose file can't be read (and whose folder is still there) makes the answer
+    unavailable: it might be one of them."""
     if not ids:
         return [], False
-    if writer.index.archive_uuid() != writer.identity.uuid:
+    if index.archive_uuid() != uuid:
         return [], True  # gone, unreadable or another archive's: it would answer "none"
     hits: dict[str, str] = {}
     try:
         for pid in sorted(ids):
-            for rid in writer.index.find_by_source("plaud", pid, strict=True):
+            for rid in index.find_by_source("plaud", pid, strict=True):
                 hits.setdefault(rid, pid)
-        pending = writer.state.index_pending()
-    except sqlite3.DatabaseError as exc:
-        log.warning("late consent listings: the index can't answer (%s)", type(exc).__name__)
+        pending = state.index_pending() if state is not None else []
+    except sqlite3.DatabaseError:
         return [], True
+    unavailable = False
     for rid in pending:
-        try:
-            rec = writer.archive.load(rid)
-        except (KeyError, OSError, ValueError):
-            continue  # gone, or a file that doesn't read: nothing to match it by
-        for source in rec.sources:
-            if source.kind == "plaud" and canonical_plaud_id(source.ref) in ids:
-                hits.setdefault(rid, canonical_plaud_id(source.ref))
-                break
-    return sorted(hits.items()), False
+        found = _plaud_ids(archive, rid)
+        if found is None:
+            unavailable = unavailable or archive.path_for(rid).exists()  # else: removed
+            continue
+        for pid in sorted(found & ids):
+            hits.setdefault(rid, pid)
+            break
+    return sorted(hits.items()), unavailable
 
 
-def _plaud_ids(writer: Writer, recording_id: str) -> frozenset[str] | None:
+def _plaud_ids(archive: Archive, recording_id: str) -> frozenset[str] | None:
     """The recording's canonical Plaud IDs, or None when its file can't be read now."""
     try:
-        rec = writer.archive.load(recording_id)
+        rec = archive.load(recording_id)
     except (KeyError, OSError, ValueError):
         return None
     return frozenset(canonical_plaud_id(s.ref) for s in rec.sources if s.kind == "plaud")
 
 
-def _kept_out_late_owed(db: PlaudDB, recording_id: str, ids: Iterable[str]) -> bool:
+def _kept_here(db: PlaudDB, recording_id: str) -> bool:
     check = db.check_row(recording_id)
-    if check is not None and check.kept_here_at is not None:
+    return check is not None and check.kept_here_at is not None
+
+
+def _kept_out_late_owed(db: PlaudDB, recording_id: str, ids: Iterable[str]) -> bool:
+    if _kept_here(db, recording_id):
         return False
     for pid in ids:
         row = db.listing(pid)
@@ -176,7 +189,9 @@ def apply_late_consent(
     none after it."""
     tagged, flagged, unwritten, busy, cleared = [], [], [], [], []
     causes: dict[str, str] = {}
-    found, unavailable = _listed_here(writer, consent.ids)
+    found, unavailable = listed_here(
+        writer.index, writer.identity.uuid, writer.state, writer.archive, consent.ids
+    )
     for rid, pid in found:
         try:
             private = is_private(writer.archive.load(rid))
@@ -188,12 +203,16 @@ def apply_late_consent(
             try:
                 writer.mutate(rid, SetPlaudFields(add_private=True))
             except KeyError:
-                continue  # removed since the index answered
+                if not writer.archive.path_for(rid).exists():
+                    continue  # removed since the index answered
+                # The folder is still here without its recording.json: owed, never skipped.
+                unwritten.append(rid)
+                causes[rid] = FileNotFoundError.__name__
             except LockTimeout:
                 busy.append(rid)  # retried at the next tick, flag and all
                 continue
             except UNWRITTEN as exc:
-                log.warning("late consent listing: %s not tagged (%s)", rid, type(exc).__name__)
+                # Not logged: the pass runs every tick, and the report carries the ID and class.
                 unwritten.append(rid)
                 causes[rid] = type(exc).__name__  # a class name only: never the exception's text
             else:
@@ -201,12 +220,12 @@ def apply_late_consent(
         try:
             if flag(db, CONSENT_LATE, rid, plaud_id=pid, now=now):
                 flagged.append(rid)
-        except sqlite3.Error as exc:  # flag() reads the open flags afresh: the next tick adds it
-            log.warning("late consent listing: %s not flagged (%s)", rid, type(exc).__name__)
+        except sqlite3.Error:  # flag() reads the open flags afresh: the next tick adds it
+            pass
     if consent.readable and not unavailable:
         for event in db.open_flags((CONSENT_LATE,)):
             rid = event.recording_id
-            ids = _plaud_ids(writer, rid) if rid is not None else None
+            ids = _plaud_ids(writer.archive, rid) if rid is not None else None
             if ids is None or ids & consent.ids:
                 continue  # still listed, or its file can't be read now: the flag stays
             if _kept_out_late_owed(db, rid, ids):
@@ -242,8 +261,7 @@ def record_late_keep_out(
         row = db.listing(canonical)
         if row is None or row.kept_out_at is None:
             db.set_listing(as_given, kept_out_at=now, kept_out_word=word)
-    check = db.check_row(recording_id)
-    if check is not None and check.kept_here_at is not None:
+    if _kept_here(db, recording_id):
         return False
     first = min(given) if given else None
     return flag(db, KEPT_OUT_LATE, recording_id, plaud_id=first, now=now)
@@ -252,14 +270,17 @@ def record_late_keep_out(
 def keep_here(db: PlaudDB, recording_id: str, *, now: datetime) -> str:
     """Keep it here (request `keep-here`): resolve the open late keep-out flag. Changes no archive
     file; `private` stays and nothing more is fetched. KEPT_HERE, or NOTHING_TO_KEEP."""
-    open_flags = [e for e in db.open_flags((KEPT_OUT_LATE,)) if e.recording_id == recording_id]
+    open_flags = db.open_flags((KEPT_OUT_LATE,), recording_id=recording_id)
     if not open_flags:
         return NOTHING_TO_KEEP
     # kept_here_at first: a crash after it leaves a flag Dan can press again, never one that comes
     # back with the next title.
     db.set_check(recording_id, kept_here_at=now)
     db.add_event(
-        "kept-here", now=now, recording_id=recording_id, plaud_id=open_flags[0].canonical_plaud_id
+        KEPT_HERE_EVENT,
+        now=now,
+        recording_id=recording_id,
+        plaud_id=open_flags[0].canonical_plaud_id,
     )
     for event in open_flags:
         db.resolve(event.id, now=now)

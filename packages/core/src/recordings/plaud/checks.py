@@ -31,21 +31,25 @@ from recordings.refs import canonical_plaud_id
 from recordings.state import State
 
 NO_SYNC_YET = "No sync has run yet"
+KEPT_OUT_LATE = "kept-out-late"
+CONSENT_LATE = "consent-late"
+PRIVATE_UNWRITTEN = "private-unwritten"  # an event kind and a blocker
+KEPT_HERE_EVENT = "kept-here"
 EVENT_KINDS = (
     "imported",
     "arrived-private",
     "updated",
     "retagged-private",
-    "kept-out-late",
-    "consent-late",
-    "private-unwritten",
-    "kept-here",
+    KEPT_OUT_LATE,
+    CONSENT_LATE,
+    PRIVATE_UNWRITTEN,
+    KEPT_HERE_EVENT,
     "gone",
     "released",
     "rekeyed",
 )
-FLAG_KINDS = ("kept-out-late", "consent-late")
-BLOCKERS = ("sign-in", "consent", "hold", "breaker", "private-unwritten")
+FLAG_KINDS = (KEPT_OUT_LATE, CONSENT_LATE)
+BLOCKERS = ("sign-in", "consent", "hold", "breaker", PRIVATE_UNWRITTEN)
 BLOCKER_PREFIX = "blocker:"
 CHECK_LOG_KEPT = timedelta(days=7)
 EVENTS_KEPT = timedelta(days=90)  # open flags are kept until resolved
@@ -376,9 +380,14 @@ class PlaudDB:
             ).fetchall()
         return [_row(Event, _EVENT, row) for row in rows]
 
-    def open_flags(self, kinds: Iterable[str] = FLAG_KINDS) -> list[Event]:
+    def open_flags(
+        self, kinds: Iterable[str] = FLAG_KINDS, recording_id: str | None = None
+    ) -> list[Event]:
         kinds = tuple(kinds)
-        return self._events(f"open = 1 AND kind IN ({_marks(len(kinds))})", kinds)
+        where, args = f"open = 1 AND kind IN ({_marks(len(kinds))})", kinds
+        if recording_id is not None:
+            where, args = where + " AND recording_id = ?", (*kinds, recording_id)
+        return self._events(where, args)
 
     def resolve(self, event_id: int, *, now: datetime) -> None:
         with self._db() as db:
