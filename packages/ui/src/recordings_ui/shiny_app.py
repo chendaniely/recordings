@@ -263,6 +263,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     @reactive_output
     def plaud_arrivals():
         reactive.invalidate_later(60)  # read every 60 seconds (§15.3)
+        plaud_ended()  # and when this window's request ends: a Keep it here clears a flag it counts
         since = max(started, refreshed_at())
         return plaud.arrivals(plaud_views, since=since, now=plaud.clock())
 

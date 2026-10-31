@@ -48,7 +48,13 @@ export function usePlaudContext(): Plaud {
  * later reply replaces the final one, and takes down the toast the final one made. */
 export const FINAL: ReadonlySet<PlaudResult["state"]> = new Set(["done", "failed", "expired", "refused"]);
 
-type JQuery = (el: Document) => { on(e: string, f: () => void): void; off(e: string, f: () => void): void };
+/** A reply as one line: its progress while it runs ("Re-syncing (12 of 25)"), then its fixed phrase. */
+export function replyText(r: PlaudResult): string {
+  if (FINAL.has(r.state) || !r.progress) return r.message;
+  return `${r.message} (${r.progress.done} of ${r.progress.total})`;
+}
+
+type JQuery =(el: Document) => { on(e: string, f: () => void): void; off(e: string, f: () => void): void };
 
 const event = { priority: "event" as const, debounceMs: 0 };
 

@@ -17,7 +17,7 @@ import { showCannotTag, showSelectFirst } from "../tagging/toasts";
 import { useTaggingContext, type Tagging } from "../tagging/useTagging";
 import type { LibraryRow } from "../types";
 import { HeadNotes, RefreshButton } from "./HeadNotes";
-import { SelectionBar, resyncReason } from "./SelectionBar";
+import { SelectionBar, resyncProps } from "./SelectionBar";
 import { TagChips } from "./TagChips";
 import { AddTagsButton, pickerTitle } from "./TagPicker";
 
@@ -357,7 +357,7 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
         </div>
       </div>
       <SelectionBar count={sel.selected.size} lastTagged={justTagged} onTag={openPicker} onClear={clear}
-        resync={resyncReason(plaud, sel.selected.size)} onResync={() => plaud?.send("resync", { recording_ids: [...sel.selected] })} />
+        {...resyncProps(plaud, targetsOf(sel, order))} />
     </section>
   );
 }

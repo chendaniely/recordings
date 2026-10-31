@@ -2,16 +2,10 @@ import { useContext, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
-import { FINAL, NO_PLAUD, PlaudContext, kindReason } from "../plaud/usePlaud";
+import { NO_PLAUD, PlaudContext, kindReason, replyText } from "../plaud/usePlaud";
 import { useShinyOutputValue } from "../sr";
-import type { PlaudResult, RecordingPlaud, RecordingView } from "../types";
+import type { RecordingPlaud, RecordingView } from "../types";
 import { CopyId, FlagRow } from "./SyncSummary";
-
-/** A Re-sync's reply in place (§14.6): its progress while it runs, then its fixed phrase. */
-function replyText(r: PlaudResult): string {
-  if (FINAL.has(r.state) || !r.progress) return r.message;
-  return `${r.message} (${r.progress.done} of ${r.progress.total})`;
-}
 
 /** Details' Plaud lines (2b spec §15.3): when it was checked and when next, Re-sync from Plaud
  * with its result inline, each Plaud ID with Copy ID, gone from Plaud, why the sync tagged it
@@ -25,6 +19,7 @@ export function PlaudDetails({ plaud }: { plaud: RecordingPlaud }) {
   const ctx = useContext(PlaudContext);
   const recordingId = useShinyOutputValue<RecordingView | null>("recording")?.id ?? null;
   const [resyncId, setResyncId] = useState<string | null>(null);
+  const [kept, setKept] = useState<Record<string, string>>({}); // flag -> its Keep it here request
   const whyId = useId();
   const why = !ctx ? NO_PLAUD : ctx.available ? null : (ctx.reason ?? NO_PLAUD);
   const offered = plaud.handled.includes("resync");
@@ -62,13 +57,17 @@ export function PlaudDetails({ plaud }: { plaud: RecordingPlaud }) {
       {plaud.removed_private && <p data-testid="plaud-private">{plaud.removed_private}</p>}
       {plaud.flags.length > 0 && (
         <ul className="sync-rows">
-          {plaud.flags.map((f) => (
-            <FlagRow key={`${f.kind}-${f.plaud_id ?? ""}`} flag={f} why={kindReason("keep-here", why, plaud)}
-              onKeepHere={() => {
-                const id = f.recording_id ?? recordingId;
-                if (ctx && id) ctx.send("keep-here", { recording_ids: [id] });
-              }} />
-          ))}
+          {plaud.flags.map((f) => {
+            const key = `${f.kind}-${f.plaud_id ?? ""}`;
+            return (
+              <FlagRow key={key} flag={f} why={kindReason("keep-here", why, plaud)}
+                reply={kept[key] ? ctx?.results[kept[key]]?.message ?? null : null}
+                onKeepHere={() => {
+                  const id = f.recording_id ?? recordingId;
+                  if (ctx && id) setKept((k) => ({ ...k, [key]: ctx.send("keep-here", { recording_ids: [id] }) }));
+                }} />
+            );
+          })}
         </ul>
       )}
     </section>

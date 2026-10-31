@@ -66,6 +66,7 @@ export function SyncPage() {
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [asking, setAsking] = useState<{ request: string; plaud_id: string } | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({}); // review rows' titles, on demand
+  const [kept, setKept] = useState<Record<string, string>>({}); // flag -> its Keep it here request
 
   // Focus must not fall to <body> when what has it goes: a Keep it here whose flag a redraw drops,
   // or Import selected, which turns itself off once it has sent. It goes to the heading of the
@@ -141,10 +142,17 @@ export function SyncPage() {
       {view.flags.length > 0 && (
         <Section id="sync-flags" title="Flags">
           <ul className="sync-rows">
-            {view.flags.map((f) => (
-              <FlagRow key={`${f.kind}-${f.recording_id ?? f.plaud_id}`} flag={f} why={off("keep-here")}
-                onKeepHere={() => f.recording_id && plaud.send("keep-here", { recording_ids: [f.recording_id] })} />
-            ))}
+            {view.flags.map((f) => {
+              const key = `${f.kind}-${f.recording_id ?? f.plaud_id}`;
+              return (
+                <FlagRow key={key} flag={f} why={off("keep-here")}
+                  reply={kept[key] ? plaud.results[kept[key]]?.message ?? null : null}
+                  onKeepHere={() => {
+                    const id = f.recording_id;
+                    if (id) setKept((k) => ({ ...k, [key]: plaud.send("keep-here", { recording_ids: [id] }) }));
+                  }} />
+              );
+            })}
           </ul>
         </Section>
       )}

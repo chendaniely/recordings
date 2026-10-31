@@ -86,6 +86,29 @@ describe("Details' Plaud lines (2b spec §15.3)", () => {
     flushSync(() => button("Keep it here").click());
     expect(sends).toEqual([["keep-here", { recording_ids: [RID] }]]);
   });
+  it("Keep it here answers in its row: queued, the worker-down line, then Kept here (P6)", () => {
+    const flag = {
+      kind: "kept-out-late" as const, recording_id: RID, plaud_id: PID, copy_id: `- \`${PID}\` —`,
+      sentence: "Kept out by title, but already in the archive: take it out by hand (runbook)", keep_here: true,
+      date: null, duration: null,
+    };
+    const reply = (state: PlaudResult["state"], message: string): PlaudResult => ({
+      request_id: "rid-1", kind: "keep-here", state, message, progress: null, result: null, preview: null,
+    });
+    const p = fake();
+    draw({ ...LINES, flags: [flag] }, p);
+    const said = () => host.querySelector("[data-testid=keep-reply]")!.textContent;
+    expect(said()).toBe(""); // a live region exists before anything is said
+    flushSync(() => button("Keep it here").click());
+    draw({ ...LINES, flags: [flag] }, { ...p, results: { "rid-1": reply("queued", "Queued") } });
+    expect(said()).toBe("Queued");
+    const down = "The Plaud worker isn't running: it will be done within the hour";
+    draw({ ...LINES, flags: [flag] }, { ...p, results: { "rid-1": reply("queued", down) } });
+    expect(said()).toBe(down);
+    draw({ ...LINES, flags: [flag] }, { ...p, results: { "rid-1": reply("done", "Kept here") } });
+    expect(said()).toBe("Kept here");
+    expect(host.querySelector("[data-testid=keep-reply]")!.getAttribute("role")).toBe("status");
+  });
   it("Re-sync from Plaud sends this recording, and its reply shows in place", () => {
     const p = fake();
     draw(LINES, p);

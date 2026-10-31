@@ -267,6 +267,25 @@ describe("the Sync screen (2b spec §15.1)", () => {
     expect(sends).toEqual([["keep-here", { recording_ids: ["20261023T140512-0700_0000beef"] }]]);
   });
 
+  it("Keep it here answers in its row: queued, the worker-down line, then Kept here (P6)", () => {
+    const reply = (state: PlaudResult["state"], message: string): PlaudResult => ({
+      request_id: "rid-1", kind: "keep-here", state, message, progress: null, result: null, preview: null,
+    });
+    const p = fake();
+    draw(VIEW, p);
+    const said = () => $("[data-testid=sync-flags] [data-testid=keep-reply]")!.textContent;
+    expect(said()).toBe(""); // a live region exists before anything is said
+    click(button("[data-testid=sync-flags]", "Keep it here"));
+    draw(VIEW, { ...p, results: { "rid-1": reply("queued", "Queued") } });
+    expect(said()).toBe("Queued");
+    const down = "The Plaud worker isn't running: it will be done within the hour";
+    draw(VIEW, { ...p, results: { "rid-1": reply("queued", down) } });
+    expect(said()).toBe(down);
+    draw(VIEW, { ...p, results: { "rid-1": reply("done", "Kept here") } });
+    expect(said()).toBe("Kept here");
+    expect($("[data-testid=keep-reply]")!.getAttribute("role")).toBe("status");
+  });
+
   it("the newest result line stays after the toast", () => {
     draw(VIEW, fake({ lastLine: "Import all, 14:20: 31 imported · 4 arrived private" }));
     expect($("[data-testid=sync-last-result]")!.textContent).toBe("Import all, 14:20: 31 imported · 4 arrived private");

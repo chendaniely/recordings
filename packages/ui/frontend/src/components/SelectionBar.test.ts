@@ -8,12 +8,12 @@ vi.mock("../sr", () => ({ useSetShinyInput: () => () => {}, useShinyMessageHandl
 
 import { NO_PLAUD, PlaudContext, type Plaud } from "../plaud/usePlaud";
 import type { PlaudResult } from "../types";
-import { MAX_RESYNC, SelectionBar, TOO_MANY_RESYNC, resyncReason } from "./SelectionBar";
+import { MAX_RESYNC, SelectionBar, TOO_MANY_RESYNC, resyncProps, resyncReason } from "./SelectionBar";
 
 const NOT_YET = "Comes with the next part of stage 2b.";
 const GATE = "Scheduled sync waits for the first catch-up (runbook)";
 
-const bar = { onTag: () => {}, onClear: () => {}, onResync: () => {}, resync: null };
+const bar = { onTag: () => {}, onClear: () => {}, onResync: () => undefined as string | undefined, resync: null, selection: "a,b" };
 const render = (count: number, lastTagged: string[] | null = null) =>
   renderToStaticMarkup(createElement(SelectionBar, { count, lastTagged, ...bar }));
 
@@ -59,19 +59,37 @@ describe("Re-sync from Plaud on a selection (2b spec §14.6)", () => {
   const drawn = (p: Plaud, props: Partial<Parameters<typeof SelectionBar>[0]> = {}) => {
     const host = document.body.appendChild(document.createElement("div"));
     const root = createRoot(host);
-    flushSync(() => root.render(createElement(PlaudContext.Provider, { value: p },
-      createElement(SelectionBar, { count: 12, lastTagged: null, ...bar, ...props }))));
-    return { host, done: () => { root.unmount(); host.remove(); } };
+    const again = (q: Plaud, more: Partial<Parameters<typeof SelectionBar>[0]> = {}) =>
+      flushSync(() => root.render(createElement(PlaudContext.Provider, { value: q },
+        createElement(SelectionBar, { count: 12, lastTagged: null, ...bar, ...props, ...more }))));
+    again(p);
+    return { host, again, done: () => { root.unmount(); host.remove(); } };
   };
+  const named = (host: HTMLElement, name: string) =>
+    [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith(name))!;
   it("Re-sync from Plaud sends one request with the selection", () => {
     // C9.05. The bar's owner (RecordingList, TagsPage) sends the request with the selection's IDs.
-    const onResync = vi.fn();
+    const onResync = vi.fn(() => "rid-1");
     const { host, done } = drawn(plaud(), { onResync });
     const resync = [...host.querySelectorAll("button")].find((b) => b.textContent === "Re-sync from Plaud")!;
     expect(resync.hasAttribute("disabled")).toBe(false);
     flushSync(() => resync.click());
     expect(onResync).toHaveBeenCalledOnce();
     done();
+  });
+  it("the request carries the bar's targets, in list order, and nothing without a context", () => {
+    // C9.05: the bar acts on targetsOf, which both owners pass to resyncProps.
+    const send = vi.fn(() => "rid-1");
+    const props = resyncProps(plaud({ send }), ["20261023T140512-0700_0000beef", "20261023T150000-0700_0000cafe"]);
+    expect(props.resync).toBeNull();
+    expect(props.selection).toBe("20261023T140512-0700_0000beef,20261023T150000-0700_0000cafe");
+    expect(props.onResync()).toBe("rid-1");
+    expect(send).toHaveBeenCalledExactlyOnceWith("resync", {
+      recording_ids: ["20261023T140512-0700_0000beef", "20261023T150000-0700_0000cafe"],
+    });
+    const none = resyncProps(null, ["a", "b"]);
+    expect(none.resync).toBe(NO_PLAUD);
+    expect(none.onResync()).toBeUndefined();
   });
   it("over 1,000 it says use Sync everything", () => {
     expect(resyncReason(plaud(), MAX_RESYNC)).toBeNull();
@@ -92,32 +110,40 @@ describe("Re-sync from Plaud on a selection (2b spec §14.6)", () => {
     done();
     expect(render(12)).not.toContain("Re-sync"); // nor without App's Plaud context
   });
-  it("says it comes with the next part, and the gate's reason, as Details does", () => {
-    // Phase 1's worker can't handle a re-sync yet; once it can, the gate holds it until the first
-    // catch-up (§11.6). Either reason disables the button and describes it.
-    expect(resyncReason(plaud({ why: () => NOT_YET, gate: GATE }), 12)).toBe(NOT_YET);
+  it("says the gate's reason, as Details does, once, named by the button", () => {
+    // Once a re-sync is handled, the gate holds it until the first catch-up (§11.6).
     expect(resyncReason(plaud({ gate: GATE }), 12)).toBe(GATE);
-    const { host, done } = drawn(plaud(), { resync: NOT_YET });
-    const resync = [...host.querySelectorAll("button")].find((b) => b.textContent === "Re-sync from Plaud")!;
+    const { host, done } = drawn(plaud(), { resync: GATE });
+    const resync = named(host, "Re-sync");
     expect(resync.hasAttribute("disabled")).toBe(true);
-    expect(host.querySelector(`#${resync.getAttribute("aria-describedby")}`)!.textContent).toBe(NOT_YET);
+    expect(host.querySelector(`#${resync.getAttribute("aria-describedby")}`)!.textContent).toBe(GATE);
     done();
   });
-  it("its reply shows Re-syncing 12 of 25 then the end line", () => {
+  it("shows only the reply to the request this bar sent, and drops it on Clear and a new selection", () => {
     const running: PlaudResult = {
       request_id: "rid-1", kind: "resync", state: "running", message: "Re-syncing", progress: { done: 12, total: 25 },
       result: null, preview: null,
     };
-    let view = drawn(plaud({ last: running }));
-    expect(view.host.querySelector("[data-testid=resync-reply]")!.textContent).toBe("Re-syncing 12 of 25…");
-    view.done();
     const end = "25 checked: 7 updated (speakers 6, title 1) · 18 up to date";
-    view = drawn(plaud({ last: { ...running, state: "done", message: end, progress: { done: 25, total: 25 } } }));
-    expect(view.host.querySelector("[data-testid=resync-reply]")!.textContent).toBe(end);
-    view.done();
-    // Another kind's reply isn't this bar's.
-    view = drawn(plaud({ last: { ...running, kind: "sync" } }));
-    expect(view.host.querySelector("[data-testid=resync-reply]")).toBeNull();
+    const reply = (host: HTMLElement) => host.querySelector("[data-testid=resync-reply]")?.textContent;
+    const onClear = vi.fn();
+    // Another request's (or another kind's) newest reply isn't this bar's, before any press.
+    const view = drawn(plaud({ last: running, results: { "rid-1": running } }), { onResync: () => "rid-1", onClear });
+    expect(reply(view.host)).toBeUndefined();
+    flushSync(() => named(view.host, "Re-sync").click());
+    expect(reply(view.host)).toBe("Re-syncing (12 of 25)");
+    view.again(plaud({ results: { "rid-1": { ...running, state: "done", message: end, progress: { done: 25, total: 25 } } } }),
+      { onResync: () => "rid-1", onClear });
+    expect(reply(view.host)).toBe(end);
+    // A new selection: the reply was about the old one.
+    view.again(plaud({ results: { "rid-1": running } }), { onResync: () => "rid-1", onClear, selection: "a,c" });
+    expect(reply(view.host)).toBeUndefined();
+    // Clear drops it too.
+    flushSync(() => named(view.host, "Re-sync").click());
+    expect(reply(view.host)).toBe("Re-syncing (12 of 25)");
+    flushSync(() => named(view.host, "Clear").click());
+    expect(onClear).toHaveBeenCalledOnce();
+    expect(reply(view.host)).toBeUndefined();
     view.done();
   });
 });

@@ -337,3 +337,26 @@ async def test_plaud_sync_is_drawn_again_when_a_request_ends(wired, monkeypatch)
         requests.finish(worker, "syn00001test", ok=True, message=KEPT_HERE, now=T0)
         await until(lambda: replies(wired.sent, "syn00001test")[-1]["state"] == "done", "the end")
         await until(lambda: drawn[0] > 1, "the redraw")
+
+
+@pytest.mark.anyio
+async def test_arrivals_are_drawn_again_when_a_request_ends(wired, monkeypatch):
+    # why: P2. After a Keep it here the header's flags line must not still count the flag it
+    # cleared; the output reads the same signal `recording` and `plaud_sync` do.
+    drawn = [0]
+
+    def spy(settings, *, since, now):
+        drawn[0] += 1
+        return {"new": 0, "private": 0, "updated": 0, "kept_out_late": 0, "consent_late": 0}
+
+    monkeypatch.setattr(plaud, "arrivals", spy)
+    async with test_server_async(SHINY_APP, timeout_secs=10) as s:
+        s.get_output("plaud_arrivals")
+        await s.set_inputs(plaud_request=request("arr00001test", "keep-here", recording_ids=[RID]))
+        await until(lambda: replies(wired.sent, "arr00001test"), "queued")
+        assert drawn[0] == 1  # pending: not drawn again
+        worker = State(wired.path)
+        assert requests.claim_next(worker, now=T0) is not None
+        requests.finish(worker, "arr00001test", ok=True, message=KEPT_HERE, now=T0)
+        await until(lambda: replies(wired.sent, "arr00001test")[-1]["state"] == "done", "the end")
+        await until(lambda: drawn[0] > 1, "the redraw")

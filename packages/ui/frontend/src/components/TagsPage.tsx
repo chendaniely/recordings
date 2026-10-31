@@ -15,17 +15,17 @@ import { plainShortcut } from "../lib/keys";
 import { doneLabel, shownTags } from "../lib/library";
 import { openHref } from "../lib/nav";
 import { targetsOf, type Move } from "../lib/selection";
-import { PlaudContext } from "../plaud/usePlaud";
 import type { GridState } from "../lib/useGridState";
 import { useListShortcuts } from "../lib/useListShortcuts";
 import { tabStopIndex, useRovingFocus } from "../lib/useRovingFocus";
 import type { Announcement } from "../lib/useSelection";
 import { useVirtualRows } from "../lib/useVirtualRows";
+import { PlaudContext } from "../plaud/usePlaud";
 import { useTaggingContext } from "../tagging/useTagging";
 import type { LibraryRow, LibraryView } from "../types";
 import { HeadNotes, RefreshButton } from "./HeadNotes";
 import { KEY_HINT, openPickerFor, useJustTagged } from "./RecordingList";
-import { SelectionBar, resyncReason } from "./SelectionBar";
+import { SelectionBar, resyncProps } from "./SelectionBar";
 
 const ROW_ESTIMATE = 84; // with a two-line snippet; rows are measured as drawn
 const HEAD = 56; // the pinned header row: a column's digit, then its tag on up to two lines
@@ -599,7 +599,7 @@ function TagsGrid({ grid }: { grid: GridState }) {
         </div>
       </div>
       <SelectionBar count={selectedCount} lastTagged={justTagged} onTag={openPicker} onClear={clear}
-        resync={resyncReason(plaud, selectedCount)} onResync={() => plaud?.send("resync", { recording_ids: [...sel.selected] })} />
+        {...resyncProps(plaud, targetsOf(sel, rowIds))} />
     </main>
   );
 }

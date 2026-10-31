@@ -456,7 +456,8 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
      phone bar, whose height the short-screen tests measure). */
   .resync-long { display: none; }
   /* Details' Plaud buttons (Re-sync, Copy ID, Keep it here) are 44 px targets (J7). */
-  .plaud-details button { min-height: 44px; min-width: 44px; }}
+  .plaud-details button { min-height: 44px; min-width: 44px; }
+}
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its
    toasts, but not the toaster's lift; tw-animate-css stills nothing. With no animation, Radix

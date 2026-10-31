@@ -157,8 +157,11 @@ export function SyncBreakerLine({ breaker, why, whyId, onAccept }: { breaker: Sy
 
 /** One privacy flag (P15), by recording ID with its own next step; never a title (§15.1). A
  * sentence that names its recording itself (a `private` that couldn't be written, with its cause)
- * isn't prefixed with the ID again. Keep it here, when it is off, says why beside it. */
-export function FlagRow({ flag, why, onKeepHere }: { flag: SyncFlag; why: string | null; onKeepHere: () => void }) {
+ * isn't prefixed with the ID again. Keep it here, when it is off, says why beside it, and when
+ * pressed, `reply` (the request's newest message) says how it is going. */
+export function FlagRow({ flag, why, reply, onKeepHere }: {
+  flag: SyncFlag; why: string | null; reply?: string | null; onKeepHere: () => void;
+}) {
   const whyId = useId();
   const prefix = flag.recording_id && !flag.sentence.includes(flag.recording_id);
   return (
@@ -177,6 +180,9 @@ export function FlagRow({ flag, why, onKeepHere }: { flag: SyncFlag; why: string
         </Button>
       )}
       {flag.keep_here && why && <span id={whyId} className="sync-why">{why}</span>}
+      {/* The press's answer (P6): "Queued", the worker-down line, then "Kept here". The region is
+          drawn empty first, so a screen reader hears the words when they arrive. */}
+      {flag.keep_here && <span role="status" className="sync-why" data-testid="keep-reply">{reply ?? ""}</span>}
     </li>
   );
 }
