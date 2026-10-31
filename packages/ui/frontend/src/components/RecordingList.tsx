@@ -1,6 +1,6 @@
 import type { VirtualItem } from "@tanstack/react-virtual";
 import { Check, Lock, TriangleAlert } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -11,12 +11,13 @@ import { useMediaQuery } from "../lib/useMediaQuery";
 import { tabStopIndex, useRovingFocus } from "../lib/useRovingFocus";
 import type { Announcement, Fitted } from "../lib/useSelection";
 import { useVirtualRows } from "../lib/useVirtualRows";
+import { PlaudContext } from "../plaud/usePlaud";
 import { newDragMark } from "../tagging/drag";
 import { showCannotTag, showSelectFirst } from "../tagging/toasts";
 import { useTaggingContext, type Tagging } from "../tagging/useTagging";
 import type { LibraryRow } from "../types";
 import { HeadNotes, RefreshButton } from "./HeadNotes";
-import { SelectionBar } from "./SelectionBar";
+import { SelectionBar, resyncReason } from "./SelectionBar";
 import { TagChips } from "./TagChips";
 import { AddTagsButton, pickerTitle } from "./TagPicker";
 
@@ -93,6 +94,7 @@ type Props = {
  * the sidebar's tags, note types and + New tag… (Sidebar). */
 export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted }: Props) {
   const tagging = useTaggingContext();
+  const plaud = useContext(PlaudContext); // Re-sync from Plaud on the selection (2b spec §14.6)
   const ids = useId();
   const scrollRef = useRef<HTMLDivElement>(null);
   const follow = useRef<number | null>(null);
@@ -354,7 +356,8 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
           {virtualizer.getVirtualItems().map(drawRow)}
         </div>
       </div>
-      <SelectionBar count={sel.selected.size} lastTagged={justTagged} onTag={openPicker} onClear={clear} />
+      <SelectionBar count={sel.selected.size} lastTagged={justTagged} onTag={openPicker} onClear={clear}
+        resync={resyncReason(plaud, sel.selected.size)} onResync={() => plaud?.send("resync", { recording_ids: [...sel.selected] })} />
     </section>
   );
 }

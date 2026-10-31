@@ -1,8 +1,10 @@
 import type { RecordingView } from "../types";
+import { PlaudDetails } from "./PlaudDetails";
 
 export function DetailsTab({ rec }: { rec: RecordingView }) {
   return (
     <>
+      {rec.plaud && <PlaudDetails plaud={rec.plaud} />}
       {rec.problems.length > 0 && (
         <div className="problems" role="status" data-testid="recording-problems">
           {rec.problems.length} file{rec.problems.length > 1 ? "s" : ""} couldn't be read:

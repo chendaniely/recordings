@@ -379,6 +379,14 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 .sync-details { margin-top: 12px; }
 .sync-details h3 { font-size: 13px; }
 .sync-panel .warn { margin: 6px 0 0; }
+/* Details' Plaud lines, and the header's privacy flags by count (2b spec §15.3). */
+.plaud-details { margin-bottom: 12px; }
+.plaud-details p { margin: 4px 0; }
+.plaud-ids { list-style: none; margin: 4px 0; padding: 0; }
+.plaud-ids li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; overflow-wrap: anywhere; }
+.plaud-flags { width: 100%; font-size: 12.5px; color: var(--destructive); }
+.plaud-flags a { color: inherit; text-decoration: underline; }
+.selection-bar button:disabled { cursor: not-allowed; color: var(--muted-foreground); }
 /* The picker's dialog on a touch screen or a phone (tagging spec §6). Toasts come in at the top there
    (App.tsx), so the dialog keeps below their band: Sonner's 16 px offset and a two-line toast, or
    less on a screen too short to spare it (Task 15 fix round 1, item 1). It sits on what the screen
@@ -444,7 +452,11 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   /* Its Details summary and Accept buttons are 44 px targets (J7). */
   .sync-panel .sync-details > summary { padding-block: 12px; }  /* display stays list-item: the marker */
   .sync-panel button { min-height: 44px; }
-}
+  /* The selection bar's Re-sync is "Re-sync" on a phone, so the bar stays one line (spec §6's
+     phone bar, whose height the short-screen tests measure). */
+  .resync-long { display: none; }
+  /* Details' Plaud buttons (Re-sync, Copy ID, Keep it here) are 44 px targets (J7). */
+  .plaud-details button { min-height: 44px; min-width: 44px; }}
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its
    toasts, but not the toaster's lift; tw-animate-css stills nothing. With no animation, Radix

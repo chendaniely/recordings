@@ -9,7 +9,8 @@ import type { LibraryRow, LibraryView, TagCount, TagRequest } from "../types";
 
 const toasts = vi.hoisted(() => ({ showCannotTag: vi.fn(), showSelectFirst: vi.fn() }));
 vi.mock("../tagging/toasts", () => toasts);
-vi.mock("../sr", () => ({})); // useTagging's Shiny side: the grid only reads the context
+// useTagging's Shiny side: the grid only reads the context, and the header the arrivals cue.
+vi.mock("../sr", () => ({ useShinyOutputValue: () => undefined }));
 
 import { GRID_HINT, SELECT_ROWS, TagsPage } from "./TagsPage";
 

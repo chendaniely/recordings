@@ -10,7 +10,8 @@ import type { LibraryRow } from "../types";
 
 const toasts = vi.hoisted(() => ({ showCannotTag: vi.fn(), showSelectFirst: vi.fn() }));
 vi.mock("../tagging/toasts", () => toasts);
-vi.mock("../sr", () => ({})); // useTagging's Shiny side: the list only reads the context
+// useTagging's Shiny side: the list only reads the context, and the header the arrivals cue.
+vi.mock("../sr", () => ({ useShinyOutputValue: () => undefined }));
 
 import { Announcer, KEY_HINT, RecordingList, dragImage, openNewTag, openPickerFor } from "./RecordingList";
 
