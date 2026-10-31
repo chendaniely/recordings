@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 19: The view model, open.
+**Now:** Task 20: The request input and its replies, open.
 
 ***
 
@@ -18499,9 +18499,9 @@ Phase 1's views read Phase 1's own data only (the controller's scope ruling): th
   ```
 - Also produced here, for the later UI tasks (named, not in the skeleton): `plaud.demo_view_settings(archive: Path) -> PlaudViewSettings` (demo mode's and Pages' settings: no state folder, the canned view beside the archive's copy); `app.plaud_views(settings: Settings) -> PlaudViewSettings | None`; `views.recording_view(…, plaud: PlaudViewSettings | None = None, now: datetime | None = None)` and `views.status_view(archive, settings, plaud: PlaudViewSettings | None = None)`; the constants `NO_SYNC`, `NO_GOOD_LISTING`, `UNREADABLE_SYNC`, `FULL_UNKNOWN`, `PING_FAILING`, `WORKER_FAILED`, `UNWRITTEN_STOPPED` ("late consent listings stopped ({}): check the archive disk, then the worker's log", capitalised with a full stop in Needs attention), `WHY_DETAILS`, `PHASES` (the heartbeat's phase in plain words: "idle", "syncing", "answering a request", "reading the consent list", "checking", the last with its count). The tests' `plaud_scene` fixture (`PlaudScene`: `add`, `open_gate`, `kept_out_late`) is in `packages/ui/tests/conftest.py`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-19-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-19-base`
 
-- [ ] **Step 1: The test scene.** In `packages/ui/tests/conftest.py`, change `from datetime import datetime, timedelta` to `from datetime import UTC, datetime, timedelta` and `from recordings.archive import Archive` to `from recordings.archive import Archive, RawSource`, then append:
+- [x] **Step 1: The test scene.** In `packages/ui/tests/conftest.py`, change `from datetime import datetime, timedelta` to `from datetime import UTC, datetime, timedelta` and `from recordings.archive import Archive` to `from recordings.archive import Archive, RawSource`, then append:
 
 ```python
 PLAUD_T0 = datetime(2026, 10, 23, 14, 20, tzinfo=UTC)
@@ -18597,7 +18597,7 @@ def plaud_scene(writer, tmp_path) -> PlaudScene:
 
 The Task 6 to 14 modules are imported inside the methods, as `store` imports `recordings_ui.tagging`: the conftest loads for every UI test.
 
-- [ ] **Step 2: Write the failing tests.** Create `packages/ui/tests/test_plaud_views.py`:
+- [x] **Step 2: Write the failing tests.** Create `packages/ui/tests/test_plaud_views.py`:
 
 ```python
 """The Plaud view model (2b spec §15, §22; phase 1 plan, Task 19): what the Sync screen, Status's
@@ -19315,9 +19315,9 @@ def test_without_the_2b_tables_it_says_no_sync_has_run_yet_never_the_restore_tex
     assert lines["checked"] is None
 ```
 
-- [ ] **Step 3: Run them; watch them fail:** `uv run pytest packages/ui/tests/test_plaud_views.py packages/ui/tests/test_status.py -q`. Expected: collection fails with `ImportError: cannot import name 'DEMO_NOTE' from 'recordings_ui.plaud'` (and, for `test_status.py`, `cannot import name 'arrivals'`).
+- [x] **Step 3: Run them; watch them fail:** `uv run pytest packages/ui/tests/test_plaud_views.py packages/ui/tests/test_status.py -q`. Expected: collection fails with `ImportError: cannot import name 'DEMO_NOTE' from 'recordings_ui.plaud'` (and, for `test_status.py`, `cannot import name 'arrivals'`).
 
-- [ ] **Step 4: Write the views.** In `packages/ui/src/recordings_ui/plaud.py` (Task 14's module), add to its docstring the paragraph:
+- [x] **Step 4: Write the views.** In `packages/ui/src/recordings_ui/plaud.py` (Task 14's module), add to its docstring the paragraph:
 
 ```text
 The views (Task 19; 2b spec §15, §22): the Sync screen's SyncView, Status's SyncPanel, the
@@ -20395,7 +20395,7 @@ def demo_view(path: Path) -> dict:
     return {"sync": sync, "panel": panel, "arrivals": {k: _int(counts.get(k)) for k in keys}}
 ```
 
-- [ ] **Step 5: Status, Details, the runtime and the app.** In `packages/ui/src/recordings_ui/status.py`, replace the module docstring with:
+- [x] **Step 5: Status, Details, the runtime and the app.** In `packages/ui/src/recordings_ui/status.py`, replace the module docstring with:
 
 ```python
 """The Status page's view (spec §12.5): backups and disk, and the Plaud sync panel, read-only.
@@ -20609,7 +20609,7 @@ def create_app(settings: Settings) -> HostGuard:
 
 (`shiny_app.py` passes `plaud=` to the `recording` and `status` outputs in Task 20, which owns that file; until then the views are tested directly.)
 
-- [ ] **Step 6: The canned view, and demo mode's copy of it (decision 23).** Create `demo/plaud-sync.json`, by hand, synthetic (its IDs are `of_` and a small counter; its titles are invented, but for the one demo recording it names, whose title is the demo archive's own):
+- [x] **Step 6: The canned view, and demo mode's copy of it (decision 23).** Create `demo/plaud-sync.json`, by hand, synthetic (its IDs are `of_` and a small counter; its titles are invented, but for the one demo recording it names, whose title is the demo archive's own):
 
 ```json
 {
@@ -20767,7 +20767,7 @@ In `docker/Dockerfile`, after `COPY demo/archive demo/archive`, add:
 COPY demo/plaud-sync.json demo/plaud-sync.json
 ```
 
-- [ ] **Step 7: The TypeScript shapes.** In `packages/ui/frontend/src/types.ts`, `RecordingView` gains its last field:
+- [x] **Step 7: The TypeScript shapes.** In `packages/ui/frontend/src/types.ts`, `RecordingView` gains its last field:
 
 ```ts
   plaud: RecordingPlaud | null; // Details' Plaud lines; null for a recording with no Plaud source
@@ -20860,11 +20860,11 @@ export interface RecordingPlaud extends Handled {
 }
 ```
 
-- [ ] **Step 8: Run them; they pass:** `uv run pytest packages/ui/tests/test_plaud_views.py packages/ui/tests/test_status.py packages/ui/tests/test_demo_guard.py packages/ui/tests/test_views.py -q`, then `make test-js` (the types compile; no component reads them yet). Expected: all pass.
+- [x] **Step 8: Run them; they pass:** `uv run pytest packages/ui/tests/test_plaud_views.py packages/ui/tests/test_status.py packages/ui/tests/test_demo_guard.py packages/ui/tests/test_views.py -q`, then `make test-js` (the types compile; no component reads them yet). Expected: all pass.
 
-- [ ] **Step 9: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 9: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 10: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 10: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(ui): 🤖 the Plaud view model: the Sync screen, Status's sync panel, arrivals and Details, from Phase 1's own data in state.db
@@ -20896,7 +20896,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/ui/src/recordings_ui/plaud.py packages/ui/src/recordings_ui/status.py packages/ui/src/recordings_ui/views.py packages/ui/src/recordings_ui/runtime.py packages/ui/src/recordings_ui/app.py packages/ui/src/recordings_ui/settings.py packages/ui/tests/conftest.py packages/ui/tests/test_plaud_views.py packages/ui/tests/test_status.py packages/ui/tests/test_demo_guard.py packages/ui/frontend/src/types.ts demo/plaud-sync.json docker/Dockerfile`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 11: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), adding the security checklist's secrets, failing-closed and logging lines (no title past these views, P13), the forward review and the close commit.
+- [x] **Step 11: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), adding the security checklist's secrets, failing-closed and logging lines (no title past these views, P13), the forward review and the close commit.
+
+**Built differently** (`fdcd848`, and the review's fix round `2400765`; the listings above are the plan as written): Updated on Plaud hides a title not only while a privacy flag is open but for any recording that ever had one, a Keep it here, a keep-out re-tag, or a listing row kept out (`_untitled`, one test per path): Keep it here closes the flag but the recording stays kept out by title (§12.2), so P13 allows its title nowhere here. Every view treats a row it can't read (bad JSON, a bad time: `ValueError`, `TypeError`) as it treats an unreadable state.db: the sync part says `UNREADABLE_SYNC`, Needs attention names the class (`UNREADABLE_LINE`), and Status keeps its backups section; the recent events are read once in `_Read`. A `private-unwritten` flag caused by the disk (`OSError`, `FileNotFoundError`) gives the summary the flag's own sentence, never `recordings reindex`. The summary's kind is `"problem"` only for what `sync_health` says stops the sync; the gate's reason and "No good listing yet" are `"no-sync"` (§11.6, §15.2: not failures), so Task 21 draws them neutrally. `_worker` reads the heartbeat once (`parse_heartbeat`, `beat_alive`). Task 14's `time`, `SAVE_WAIT` and `UNREADABLE_ROW` imports stay.
 
 ### Task 20: The request input and its replies
 
@@ -22254,6 +22256,10 @@ describe("the Sync screen (2b spec §15.1)", () => {
     const html = markup({ ...VIEW, listed: false, equation: null, archive: null, not_here: [], kept_out: [],
       gone: { rows: [], last_7_days: 0 }, parked: [], import_all: { count: 0, review_more: 0 } });
     expect(html).toContain('data-testid="sync-no-listing">No sync has run yet.</p>');
+    // The gate's reason is kind "no-sync" too (Task 19): the line still shows under it.
+    const gated = markup({ ...VIEW, listed: false, equation: null,
+      summary: { kind: "no-sync", sentence: "Scheduled sync waits for the first catch-up (runbook)", explain: null, see_status: true } });
+    expect(gated).toContain('data-testid="sync-no-listing">No sync has run yet.</p>');
     expect(html).toContain("Consent list: 3 IDs");
     expect(html).toContain('data-testid="sync-flags"');
     for (const gone of ["sync-not-here", "sync-kept-out", "sync-gone", "sync-parked"]) {
@@ -22893,7 +22899,9 @@ export function SyncPage() {
 
       <Section id="sync-equations" title="From the listing">
         {!view.listed ? (
-          view.summary.kind !== "no-sync" && <p data-testid="sync-no-listing">No sync has run yet.</p>
+          // Said here unless the summary already says it: the gate's reason is also kind "no-sync"
+          // (Task 19's fix round), and under it the section would be empty.
+          view.summary.sentence !== "No sync has run yet" && <p data-testid="sync-no-listing">No sync has run yet.</p>
         ) : view.equation ? (
           <>
             <p>
@@ -24973,3 +24981,7 @@ Their full plans are written at their phase start, against the code as built and
 | 13 | Minor | `packages/core/src/recordings/worker.py` | `alive` gives `checking` 30 minutes from the first unfinished start, so a pattern pass at start on a very large archive reads STUCK while it still progresses: decision 48's accepted limit (Task 13's fix round). | open |
 | 14 | Minor | `packages/core/src/recordings/plaud/requests.py` | The deadline check before the commit has no test (deleting it leaves every test green): patch `utc_iso` to move the fake clock past the deadline, then assert `NotSaved` and no row; `MAX_PLAUD_ID_LEN = 128` is the first length refused (a comment); `claim_next` reads its row by position (Task 14's re-review). | open |
 | 18 | Minor | `docker/deploy-guard.sh` | Its refusal tells Dan to run an interrupted first catch-up or baseline again "(the runbook)", but the runbook has no section for either yet (`first-run.md` line 4): write them with the first catch-up, or point the message at where they are (Task 18's re-review). | open: Phase 2's outline |
+| 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | The views' structure (Task 19's standards review): each of `sync_view`, `sync_panel`, `arrivals` and `recording_plaud` repeats the demo check, `_open` and the guard (one `_from_state` helper); `_untitled` and `_recording_lines` hand-write SQL on `plaud_events` where `events_since` and `open_flags(recording_id=)` decode; `_panel_from` is ~130 lines; `_Read` re-reads three values `sync_health` read, `listing()` and `_body()` run per row, `demo_view` re-parses its file; `json.loads` decoding written five times. Do it when Phase 2 adds its readers. | open: Phase 2's outline |
+| 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | Divergent Change: one module holds the request protocol and the view model (1,300 lines), and Phases 2 and 3 add readers: split the views into `plaud_views.py` at Phase 2's start; and one name for the views' settings (`runtime.plaud_settings()` returns `PlaudViewSettings`, beside core's `plaud_settings`). | open: Phase 2's outline |
+| 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | One missing 2b table blanks the Sync screen's flags while Status still shows them (Task 19's spec review). | open |
+| 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | The `kept_out_at` title rule must skip rows Release has released, once Phase 2 writes Release (Task 19's spec review). | open: Phase 2's outline |
