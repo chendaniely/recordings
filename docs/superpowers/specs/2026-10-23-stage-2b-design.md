@@ -1397,7 +1397,7 @@ is a separate piece of work, and the thresholds are constants, not settings.
   from the Mac, `make consent-add ID=<id>`: it checks that the ID parses, appends `` - `<id>` — added
   2026-10-23 `` by writing a new file and renaming it, over ssh, then prints what the worker reads
   (`recordings plaud consent`).
-- **The grammar, exactly.** The file's meanings are those of today's parser (`consent.py:17`, its
+- **The grammar, exactly.** The file's meanings are those of today's parser (`consent.LEGACY_ENTRY_RE`, 2a's rule, its
   docstring, and `test_the_consent_list_is_read_as_audio_router_reads_it`). 2b adds only the ID
   forms. Each line is one of four kinds:
   1. **An exclusion:** after optional spaces, an optional bullet (`-` or `*`, then any spaces) and an
@@ -2521,7 +2521,7 @@ spec's own section, and a § in brackets is this spec's. Each also settles the c
     alone on its line, or an ID then a dash), now read in the `of_` form and any case; lines read as
     kept are listed for Dan; a typo fails closed; no title of a consent-listed recording is stored or
     shown; a late listing is tagged at the worker's next tick without a listing, and flagged once
-    per recording (§12.1). Settles the single-file mount and `consent.py:17`.
+    per recording (§12.1). Settles the single-file mount and `consent.LEGACY_ENTRY_RE`.
   - It gains the keep-out word, and kept out stays kept out until Release (§12.2).
   - **The CLI:** beside `recordings plaud sync [--dry-run]` and `--full`, the commands of (§9.6):
     `sync --catch-up`, `resync`, `baseline [--all]`, `accept-listing`, `breaker reset`, `park`,

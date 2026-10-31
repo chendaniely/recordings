@@ -29,7 +29,7 @@ def _kinds(text: str) -> list[str]:
 
 def _wide(text: str) -> str:
     """The fullwidth form a phone keyboard can type: U+FF01 to U+FF5E for ASCII, U+3000 a space."""
-    return "".join("　" if c == " " else chr(ord(c) + 0xFEE0) for c in text)
+    return "".join("\u3000" if c == " " else chr(ord(c) + 0xFEE0) for c in text)
 
 
 @pytest.mark.parametrize(
@@ -127,15 +127,68 @@ def test_hex_split_by_a_space_or_a_wrap_is_a_typo_that_stops_the_list(lines):
 @pytest.mark.parametrize(
     "line", [f"- `{A}` `{B}`", f"- `{A}` added", f"- `of_{A}` 2026-10-23 asked"]
 )
-def test_an_id_followed_only_by_hex_before_any_dash_stops_the_list(line):
-    # why: Dan's decision 12, by its own words ("isn't one whole ID"; the re-review's X7). Each of
-    # these read as a kept line before it and now stops the list, by line number. A dash after the
-    # ID makes it an exclusion, as the runbook says.
+def test_an_id_followed_only_by_hex_before_any_dash_is_a_kept_line(line):
+    # why: Dan's decision 12, refined 2026-10-30 ("Solid chunks only"): only an unbroken run of 8
+    # or more hex characters that isn't one whole ID makes a typo. These have none, so they read
+    # as kept lines, listed for Dan. A dash after the ID makes it an exclusion.
     consent = parse_consent(f"# Never mirror\n{line}\n- `{C}` —\n")
-    assert consent.typo_lines == (2,) and consent.stop == typo_phrase([2])
-    assert consent.ids == {C}
+    assert consent.lines[1].kind == "kept" and consent.review_lines == (2,)
+    assert consent.readable and consent.ids == {C}
     fixed = parse_consent(line.replace("` ", "` — ", 1) + "\n")
     assert fixed.readable and fixed.ids == {A}
+
+
+@pytest.mark.parametrize(
+    "note", ["- Added 2026-10-23", "A bad decade", "Added 2026-10-23: two more", "- bed cafe"]
+)
+def test_a_note_made_of_short_hex_words_is_plain_text(note):
+    # why: Dan's decision 12, refined 2026-10-30. No run of 8 hex characters, so no stop.
+    consent = parse_consent(f"# Never mirror\n{note}\n- `{B}` —\n")
+    assert consent.lines[1].kind == "text" and consent.readable
+
+
+@pytest.mark.parametrize(
+    "word",
+    [
+        f"of-{A}",
+        f"0f_{A}",
+        f"({A})",
+        f"'{A}'",
+        f'"{A}"',
+        f"[{A}]",
+        f"<{A}>",
+        f"<<{A}>>",
+    ],
+)
+def test_an_id_that_does_not_start_the_first_word_is_a_typo(word):
+    # why: spec §12.1 rule 4. The ID must start the first word (after the bullet, backtick and
+    # of_); one that doesn't is a mistyped exclusion, not a kept line.
+    consent = parse_consent(f"- `{B}` —\n- {word} — asked\n")
+    assert consent.typo_lines == (2,) and consent.stop == typo_phrase([2])
+
+
+def test_lines_are_numbered_as_an_editor_does_and_other_separators_are_typos():
+    # why: a stop names the editor's line number, which splits only on \r\n, \r and \n. A line
+    # holding any other separator fails closed (P8): `<id>` U+2028 `kept: …` would read as an
+    # exclusion once split.
+    consent = parse_consent(f"- `{B}` —\n{A}\u2028kept: fine\n")
+    assert consent.typo_lines == (2,) and consent.stop == typo_phrase([2])
+    consent = parse_consent(f"{B}\n# note\x0cmore\n{A[:31]}\n")
+    assert consent.typo_lines == (2, 3)
+    for sep in "\v\f\x1c\x1d\x1e\x85\u2028\u2029":
+        assert parse_consent(f"{B}\nx{sep}y\n").typo_lines == (2,)
+    assert parse_consent(f"{B}\r\n{C}\r{A}\n").ids == {A, B, C}
+
+
+def test_a_path_holding_nul_is_a_stop_not_an_error():
+    from pathlib import Path
+
+    assert read_consent(Path("a\0b")).stop == STOP_UNREADABLE
+    assert signature(Path("a\0b")) is None
+
+
+def test_typo_phrase_of_no_lines_does_not_raise():
+    assert "0 lines" in typo_phrase([])
 
 
 def test_an_exclusion_a_kept_line_a_comment_and_a_note_read_as_before():

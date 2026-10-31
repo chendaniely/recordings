@@ -1,6 +1,6 @@
 """Keeping recordings out (stage 2b spec §12.1, §12.2): the consent list's grammar and the
-keep-out word. Pure functions over text, read by the worker, doctor, the CLI, the spike script and
-the 2a import.
+keep-out word. Read by the worker, doctor, the CLI, the spike script and the 2a import. Pure
+functions over text, except `read_consent` and `signature`, which read the file (and never raise).
 
 **The consent list.** Each line is read as a person sees it (`models.visible`: Unicode NFKC, so a
 fullwidth ID or dash reads as the plain one, without format characters such as a zero-width space,
@@ -15,14 +15,15 @@ tried in this order:
 - **a typo:** a line whose first word (after the bullet and backtick) holds 24 or more hex digits,
   with or without `of_`, but no valid ID (31 or 33 hex digits, or a non-hex character among them),
   whatever follows it: a valid ID later on the line doesn't make it a kept line. Or (Dan's
-  decision 12) a line whose text before the dash, or the whole line when it has no dash, is only
-  hex digits once spaces, backticks and `of_` are set aside, 8 or more of them, and isn't one
-  whole ID: an ID split by a space, or wrapped over two lines (each half is a typo). Exclusions
-  and comments are classified first, so it never touches them; it does catch a line of two IDs,
-  and an ID followed only by hex letters or digits before any dash (`` - `3fa9…` added ``,
-  `` - `of_3fa9…` 2026-10-23 asked ``), which read as kept lines before it. Such a line reads as
-  an exclusion once a dash follows the ID (`` - `of_3fa9…` — added ``). It fails closed (P8): the
-  list stops;
+  decision 12, refined 2026-10-30, "Solid chunks only") a line whose text before the dash, or the
+  whole line when it has no dash, is only hex digits once spaces, backticks and `of_` are set
+  aside, and holds one unbroken run of 8 or more of them (no space inside) that isn't one whole
+  ID: an ID split by a space, or wrapped over two lines (each half is a typo). A note such as
+  `- Added 2026-10-23` has no such run and is plain text; a line of two whole IDs, or an ID then
+  `added`, is a kept line. Exclusions and comments are classified first, so it never touches
+  them. A line that still holds a line or paragraph separator other than `\r` and `\n` (`\v`,
+  `\f`, `\x1c`-`\x1e`, `\x85`, U+2028, U+2029) is a typo too: lines are numbered as an editor
+  does, and such a line would otherwise be read as two. A typo fails closed (P8): the list stops;
 - **a kept line:** any other line that holds an ID: one followed by other words, by a character
   that is neither hex nor a dash in the same word (`3fa9…:`), an ID in a sentence, or after a `+`
   or `1.` bullet. It names a recording Dan kept, so it is never an exclusion, and it is listed by
@@ -64,18 +65,25 @@ STOP_NO_IDS = "the consent list holds no IDs"
 
 LineKind = Literal["exclusion", "kept", "typo", "comment", "blank", "text"]
 
-_LEAD = r"^\s*(?:[-*]\s*)?`?"
-_EXCLUSION = re.compile(_LEAD + r"((?:of_)?[0-9a-f]{32})`?\s*(?:[—–-]|$)", re.IGNORECASE)
-_ANY_ID = re.compile(r"(?<![0-9a-z])((?:of_)?[0-9a-f]{32})(?![0-9a-f])", re.IGNORECASE)
+_ID = r"(?:of_)?[0-9a-f]{32}"
+_BULLET_PATTERN = r"^\s*(?:[-*]\s*)?"
+_LEAD = _BULLET_PATTERN + "`?"
+_EXCLUSION = re.compile(_LEAD + f"({_ID})" + r"`?\s*(?:[—–-]|$)", re.IGNORECASE)
+_ANY_ID = re.compile(f"(?<![0-9a-z])({_ID})(?![0-9a-f])", re.IGNORECASE)
 _FIRST_WORD = re.compile(_LEAD + r"([^\s`]*)")
 _HEX = frozenset("0123456789abcdefABCDEF")
 _TYPO_HEX = 24
-# Dan's decision 12: the text before the dash, set aside spaces, backticks and `of_`.
-_BULLET = re.compile(r"^\s*(?:[-*]\s*)?")
+# Dan's decision 12, refined: the text before the dash, set aside spaces, backticks and `of_`.
+_BULLET = re.compile(_BULLET_PATTERN)
 _DASH = re.compile(r"[—–-]")
 _SET_ASIDE = re.compile(r"\s|`|of_", re.IGNORECASE)
-_WHOLE_ID = re.compile(r"\s*`?(?:of_)?[0-9a-f]{32}`?\s*", re.IGNORECASE)
+_CHUNKS = re.compile(r"[\s`]+")
+_OF = re.compile(r"of_", re.IGNORECASE)
+_ID_LENGTH = 32
 _SPLIT_HEX = 8
+# A line or paragraph separator `str.splitlines` would split on, apart from \r and \n.
+_SEPARATORS_OTHER = frozenset("\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+_LINE_END = re.compile(r"\r\n|\r|\n")
 _SEPARATORS = frozenset(" -_.")
 _DATE_PREFIX = re.compile(r"[0-9]{2}-[0-9]{2}\s")
 
@@ -114,13 +122,15 @@ class FileSignature:
     mtime_ns: int
 
 
-def _and(items: Sequence[str]) -> str:
-    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+def _join_and(items: Sequence[str]) -> str:
+    if len(items) < 2:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
 def typo_phrase(numbers: Sequence[int]) -> str:
     """The consent stop for typo lines, by line number only (§12.1, §15.6)."""
-    lines = _and([str(n) for n in numbers])
+    lines = _join_and([str(n) for n in numbers])
     if len(numbers) == 1:
         return f"the consent list has 1 line that looks like an ID but can't be read (line {lines})"
     return (
@@ -134,23 +144,27 @@ def _is_typo(line: str) -> bool:
     with or without `of_`, and no valid ID; or its text before the dash is a broken ID."""
     match = _FIRST_WORD.match(line)
     word = match.group(1) if match else ""
-    if not _ANY_ID.search(word):
+    if not _ANY_ID.match(word):  # the ID must start the word: `(<id>)` and `of-<id>` are typos
         bare = word[3:] if word[:3].lower() == "of_" else word
         if sum(c in _HEX for c in bare) >= _TYPO_HEX:
             return True
-    # Dan's decision 12 ("Stop and tell me"): an ID split by a space, or wrapped over two lines,
-    # would otherwise read as text and exclude nothing. The text before the dash (the whole line
-    # when there is none), with spaces, backticks and `of_` set aside, is 8 or more hex digits and
-    # nothing else, and isn't one whole ID. Exclusions and comments never reach here. By the same
-    # words a line of two IDs, or an ID followed only by hex before any dash (`added`, a date like
-    # 2026-10-23), stops the list too: it read as kept before, and a dash after the ID fixes it.
+    # Dan's decision 12, refined 2026-10-30 ("Solid chunks only"): an ID split by a space, or
+    # wrapped over two lines, would otherwise read as text and exclude nothing. The text before
+    # the dash (the whole line when there is none), with spaces, backticks and `of_` set aside, is
+    # hex digits and nothing else, and holds one unbroken run (no space inside) of 8 or more that
+    # isn't one whole ID. Exclusions and comments never reach here. A note like `Added 2026-10-23`
+    # has no such run, and a line of two whole IDs, or an ID then `added`, is a kept line.
     before = _DASH.split(line[_BULLET.match(line).end() :], maxsplit=1)[0]
-    digits = _SET_ASIDE.sub("", before)
-    return len(digits) >= _SPLIT_HEX and set(digits) <= _HEX and not _WHOLE_ID.fullmatch(before)
+    if not set(_SET_ASIDE.sub("", before)) <= _HEX:
+        return False
+    runs = (_OF.sub("", chunk) for chunk in _CHUNKS.split(before))
+    return any(len(run) >= _SPLIT_HEX and len(run) != _ID_LENGTH for run in runs)
 
 
 def _classify(number: int, raw: str) -> ConsentLine:
     line = visible(raw)  # a zero-width space, a BOM or a fullwidth ID reads as a plain file does
+    if _SEPARATORS_OTHER.intersection(line):  # an editor shows one line here: fail closed
+        return ConsentLine(number, "typo", None)
     if not line.strip():
         return ConsentLine(number, "blank", None)
     if line.lstrip().startswith("#"):
@@ -165,7 +179,10 @@ def _classify(number: int, raw: str) -> ConsentLine:
 
 
 def parse_consent(text: str) -> ConsentList:
-    lines = tuple(_classify(n, line) for n, line in enumerate(text.splitlines(), start=1))
+    raw = _LINE_END.split(text)
+    if raw[-1] == "":  # the file's final line ending
+        raw.pop()
+    lines = tuple(_classify(n, line) for n, line in enumerate(raw, start=1))
     ids = frozenset(
         line.canonical_id for line in lines if line.kind == "exclusion" and line.canonical_id
     )
@@ -181,16 +198,20 @@ def parse_consent(text: str) -> ConsentList:
     return ConsentList(ids=ids, lines=lines, stop=stop)
 
 
+def _stopped(stop: str) -> ConsentList:
+    return ConsentList(ids=frozenset(), lines=(), stop=stop)
+
+
 def read_consent(path: Path | None) -> ConsentList:
     """Never raises: unset, missing, unreadable, empty, no exclusions or a typo is a stop."""
     if path is None:
-        return ConsentList(ids=frozenset(), lines=(), stop=STOP_MISSING)
+        return _stopped(STOP_MISSING)
     try:
         text = Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
-        return ConsentList(ids=frozenset(), lines=(), stop=STOP_MISSING)
-    except (OSError, UnicodeDecodeError):
-        return ConsentList(ids=frozenset(), lines=(), stop=STOP_UNREADABLE)
+        return _stopped(STOP_MISSING)
+    except (OSError, ValueError):  # ValueError: a path holding NUL; UnicodeDecodeError is one too
+        return _stopped(STOP_UNREADABLE)
     return parse_consent(text)
 
 
@@ -201,7 +222,7 @@ def signature(path: Path | None) -> FileSignature | None:
         return None
     try:
         st = os.stat(path)
-    except OSError:
+    except (OSError, ValueError):
         return None
     return FileSignature(inode=st.st_ino, size=st.st_size, mtime_ns=st.st_mtime_ns)
 
@@ -225,8 +246,8 @@ def _skip_symbols(text: str, i: int) -> int:
 def _spells(text: str, target: str) -> bool:
     """§12.2's steps 2 and 3, on a folded title and a folded word of letters and digits."""
     i = _skip_symbols(text, 0)
-    if _DATE_PREFIX.match(text, i):
-        i = _skip_symbols(text, i + 6)
+    if date := _DATE_PREFIX.match(text, i):
+        i = _skip_symbols(text, date.end())
     matched = 0
     while i < len(text):
         c = text[i]
