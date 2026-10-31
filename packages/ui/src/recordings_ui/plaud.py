@@ -593,6 +593,14 @@ class _Read:
             and h.last_turn.outcome == "gate"
         )
 
+    def off_before_catch_up(self, stopped: str | None) -> bool:
+        """Whether `stopped` is the schedule being off, and the first catch-up isn't done (§15.2,
+        §11.6): that reads plain, not as a failure. After the catch-up it stays a problem, which
+        reaches Needs attention once it has lasted 24 hours (C6.14)."""
+        from recordings.plaud.health import OFF
+
+        return stopped == OFF and self.health.catch_up_done is None
+
     def cause(self) -> str | None:
         """What stops the sync, else the gate's reason."""
         return self.health_cause() or self.gate_reason()
@@ -607,6 +615,8 @@ class _Read:
         # The gate waiting for the first catch-up, and a listing not yet written, aren't failures
         # (§11.6, §15.2): only what sync_health says stops the sync is a problem.
         kind = "problem" if stopped and not self.held_by_gate() else "no-sync"
+        if kind == "problem" and self.off_before_catch_up(stopped):
+            kind = "no-sync"  # §15.2: "Scheduled sync is off since …" is plain before the catch-up
         return {"kind": kind, "sentence": sentence, "explain": None, "see_status": True}
 
     def consent_view(self) -> dict | None:

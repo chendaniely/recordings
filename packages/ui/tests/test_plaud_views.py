@@ -876,3 +876,21 @@ def test_constants_copied_to_keep_sqlite_out_of_pyodide_match_their_sources():
 
     assert KEPT_HERE_EVENT in TITLE_HIDING_EVENTS
     assert CONSENT_UNREADABLE == STOP_UNREADABLE
+
+
+def test_the_schedule_off_before_the_first_catch_up_is_plain_and_after_it_is_a_problem(
+    plaud_scene,
+):
+    # why: §15.2, "Scheduled sync is off since …" is "Plain before the catch-up"; after it, C6.14
+    # keeps it a problem. The summary's kind picks the colour on both screens: "problem" is red.
+    s = plaud_scene
+    s.schedule_minutes = 0
+    for draw in (
+        sync_view(s.settings, now=T0, can_request=None)["summary"],
+        sync_panel(s.settings, now=T0)["summary"],
+    ):
+        assert draw["sentence"] == "Scheduled sync is off" and draw["kind"] == "no-sync"
+    s.open_gate(at=T0 - timedelta(hours=1))  # the catch-up is done
+    assert sync_view(s.settings, now=T0, can_request=None)["summary"]["kind"] == "problem"
+    open_blocker(s.db, "consent", now=T0)  # a blocker comes before the schedule: a problem
+    assert sync_view(s.settings, now=T0, can_request=None)["summary"]["kind"] == "problem"
