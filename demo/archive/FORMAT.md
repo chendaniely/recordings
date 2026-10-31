@@ -58,10 +58,12 @@ files read unchanged.
   newest `source/` snapshot whose removals have been reviewed. Until then, a Plaud note that
   vanished, or names that reverted to "Speaker N", are held, not applied. The review that
   moves the marker is stage 3a, so until then they stay held.
-- `tags`: each is `{"tag": …, "by": …}`. `by` is `you`, or `auto` for a `private` tag added
-  because a Plaud title matched the auto-private patterns. The patterns run on a recording's
-  first Plaud snapshot, and again whenever a Plaud title isn't the one in `plaud.title_seen`.
-  They only ever add the tag: one you remove stays removed until then.
+- `tags`: each is `{"tag": …, "by": …}`. `by` is `you`, or `auto` for a `private` tag the app
+  added: a Plaud title matched the auto-private patterns or starts with the keep-out word, or the
+  recording's Plaud ID is on the consent list. The patterns run once for each new Plaud title, and
+  once more for each pattern added to the list. The app keeps which titles it has judged outside
+  the archive, so `plaud.title_seen` doesn't decide it. They only ever add the tag: one you remove
+  stays removed until a Plaud title changes.
 - `sources`: one entry per raw payload in `source/`, and one per ID the recording is known by (an
   entry with no `raw` is only a reference). `kind` is `plaud`, `recorder`, `pocket` or
   `audio_router`. An `audio_router` entry's `ref` is the row's `audio-router` URI, such as

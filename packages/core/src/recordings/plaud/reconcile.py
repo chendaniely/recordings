@@ -26,11 +26,13 @@ identical Plaud outputs, and running it again writes nothing new.
 - **The title:** Plaud owns it only while `title_by` is `plaud` or absent. Any other value
   (`you`, or another source's kind) keeps the title, and Plaud's shows as a difference until it
   is dismissed.
-- **Auto-private:** on the first reconcile, and again whenever a Plaud ID's newest title isn't
-  the one last seen, every title any snapshot carries, under either Plaud ID and degraded
-  snapshots included, is matched against the patterns, with Plaud's "MM-DD " prefix stripped.
-  A match adds `private` and never removes it, and a tag Dan removed stays removed until a
-  title changes. The Writer applies it before any output.
+- **Auto-private** follows the marker (stage 2b spec §13, `plaud/privacy.py`), never
+  `plaud.title_seen`: a title is judged once per new Plaud title, and once per new pattern. Every
+  title of every snapshot counts, under either Plaud ID and degraded snapshots included, as given
+  and folded, with Plaud's "MM-DD " prefix stripped; the keep-out words run too. A match adds
+  `private` and never removes it, so a tag Dan removed stays removed until a title changes. The
+  Writer passes the markers, applies the result before any output, and records the new markers.
+  With no `privacy` given, nothing has been judged yet: every title is checked.
 - **Skipped snapshots:** one with link errors, or one that isn't a JSON object, is skipped and
   reported. Nothing is ever built from it.
 - **Two Plaud IDs on one recording** are reconciled separately. The title follows the ID whose
@@ -46,7 +48,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from recordings.config import ConfigError
 from recordings.models import Recording, Rendition, is_private
@@ -63,6 +65,9 @@ from recordings.plaud.normalise import (
     transcript_rows,
 )
 from recordings.refs import canonical_plaud_id
+
+if TYPE_CHECKING:
+    from recordings.plaud.privacy import PrivacyInputs, Verdict
 
 PLAUD_VERSION = f"plaud@{NORMALISER_VERSION}"
 TIMING_RULE = "timing@1"
@@ -99,6 +104,7 @@ class Reconciled:
     add_private: bool = False
     held: tuple[Held, ...] = ()
     skipped: tuple[str, ...] = ()
+    verdict: Verdict | None = None  # the privacy judgement; reconcile always sets it
 
 
 def patterns_from_config(data: dict) -> tuple[str, ...]:
@@ -184,8 +190,14 @@ def _names_removed(old: list[dict], new: list[dict]) -> bool:
 
 
 def _title_of(envelope: Any) -> str | None:
+    name = _plaud_title(envelope)
+    return name.strip() if name is not None else None
+
+
+def _plaud_title(envelope: Any) -> str | None:
+    """The title exactly as Plaud gave it, for the marker's hash; None when there is none."""
     name = envelope.get("name") if isinstance(envelope, dict) else None
-    return name.strip() if isinstance(name, str) and name.strip() else None
+    return name if isinstance(name, str) and name.strip() else None
 
 
 def _segments(rows: list[dict]) -> tuple[list[dict], int]:
@@ -290,7 +302,11 @@ def reconcile(
     existing: Sequence[Rendition],
     *,
     auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE,
+    privacy: PrivacyInputs | None = None,
 ) -> Reconciled:
+    # Here, not at the top: privacy imports this module's matches_auto_private.
+    from recordings.plaud.privacy import PatternSet, PrivacyInputs, judge
+
     ordered = [s for _, s in sorted(enumerate(snapshots), key=lambda p: (p[1].fetched_at, p[0]))]
     ack = rec.plaud.acknowledged_up_to if rec.plaud else None
     ack_position = max((i for i, s in enumerate(ordered) if s.path == ack), default=-1)
@@ -362,23 +378,30 @@ def reconcile(
                 title_seen = plaud_title
         elif plaud_title != seen and plaud_title != rec.title:
             difference = plaud_title
-    # §7.4: the patterns run on the first reconcile, and again whenever a Plaud ID's newest title
-    # (a degraded snapshot's included) isn't the one last seen, so a private tag Dan removed
-    # isn't put back on every reindex. When they run, privacy errs towards private: every title
-    # any snapshot carries, under either Plaud ID, titles Plaud has since changed included.
-    titles, newest = [], {}
+    # Stage 2b §13: the marker decides which titles are due, so a private tag Dan removed isn't
+    # put back by a reindex, in any process. Every snapshot's title counts, a degraded one's and
+    # the other Plaud ID's included, as Plaud gave it.
+    titles_by_id: dict[str, list[str]] = {}
     for snapshot in ordered:
-        if (name := _title_of(snapshot.envelope)) is not None:
-            titles.append(name)
-            newest[canonical_plaud_id(snapshot.ref)] = name
-    due = seen is None or any(name != seen for name in newest.values())
-    add_private = due and not is_private(rec) and matches_auto_private(titles, auto_private)
+        if (name := _plaud_title(snapshot.envelope)) is not None:
+            titles_by_id.setdefault(canonical_plaud_id(snapshot.ref), []).append(name)
+    if privacy is None:
+        first = tuple(auto_private)
+        privacy = PrivacyInputs(markers={}, patterns=PatternSet(1, first, {1: first}), words=())
+    verdict = judge(
+        titles_by_id,
+        privacy.markers,
+        privacy.patterns,
+        privacy.words,
+        private_now=is_private(rec),
+    )
     return Reconciled(
         outputs=tuple(outputs),
         title=title,
         title_seen=title_seen,
         title_difference=difference,
-        add_private=add_private,
+        add_private=verdict.add_private,
         held=tuple(held.values()),
         skipped=tuple(skipped),
+        verdict=verdict,
     )

@@ -25,7 +25,7 @@ import sqlite3
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -57,9 +57,13 @@ from recordings.models import (
     is_private,
     is_private_tag,
 )
+from recordings.plaud.checks import K_KEEP_OUT_WORDS, PlaudDB
+from recordings.plaud.keepout import DEFAULT_WORD, fold, valid_word
+from recordings.plaud.privacy import PrivacyInputs, current_patterns, why_phrase
 from recordings.plaud.reconcile import (
     DEFAULT_AUTO_PRIVATE,
     Held,
+    Reconciled,
     Snapshot,
     patterns_from_config,
     reconcile,
@@ -174,6 +178,8 @@ class ReconcileReport:
     skipped: tuple[str, ...]
     title_difference: bool  # whether Plaud's title differs from yours; never the title itself
     problem: str | None = None  # a fixed phrase: never exception text, which can carry a title
+    private_added: str | None = None  # why the sync added `private` now (a fixed phrase), or None
+    kept_out_word: str | None = None  # the keep-out word a newly checked title carries, or None
 
     def to_dict(self) -> dict:
         return {
@@ -185,6 +191,8 @@ class ReconcileReport:
             "skipped": list(self.skipped),
             "title_difference": self.title_difference,
             "problem": self.problem,
+            "private_added": self.private_added,
+            "kept_out_word": self.kept_out_word,
         }
 
 
@@ -265,6 +273,11 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _now() -> datetime:
+    """When a reconcile judged: the time its markers and notes record."""
+    return datetime.now(UTC)
+
+
 def _rev_of(raw: bytes) -> int:
     with contextlib.suppress(ValueError, AttributeError, TypeError):
         value = json.loads(raw).get("rev")
@@ -284,8 +297,12 @@ class Writer:
         rebuild: bool = True,
         auto_private: Sequence[str] = DEFAULT_AUTO_PRIVATE,
         lock_timeout: float = 30.0,
+        keep_out_word: str | None = DEFAULT_WORD,
     ) -> None:
         self.auto_private = tuple(auto_private)
+        # [plaud] keep_out_word when valid, else None (stage 2b §12.2): every Writer that
+        # reconciles checks the words, so a late keep-out is caught in any process (§13.2).
+        self.keep_out_word = keep_out_word if valid_word(keep_out_word) else None
         self.root = Path(root)
         try:
             self.identity = read_sentinel(self.root)
@@ -371,6 +388,12 @@ class Writer:
             patterns = patterns_from_config(cfg.data)
         except ConfigError as exc:  # a bad regex must not crash the CLI or stop the web app
             raise NotTheWriter(str(exc)) from None
+        # The keep-out word on its own, checked as plaud.settings checks it (`keep_out_word_ok`),
+        # never through `plaud_settings`: that raises ConfigError for any other bad [plaud] key (a
+        # mistyped `api_base` or `schedule_minutes`), and a Writer opens in `web` too, which must
+        # still open on such a typo. An invalid word is None: the worker idles on it and says why.
+        plaud = cfg.data.get("plaud", {})
+        word = plaud.get("keep_out_word", DEFAULT_WORD) if isinstance(plaud, dict) else None
         writer = cls(
             cfg.archive_path,
             state,
@@ -379,6 +402,7 @@ class Writer:
             rebuild=rebuild,
             auto_private=patterns,
             lock_timeout=lock_timeout,
+            keep_out_word=word if valid_word(word) else None,
         )
         if docs:
             writer.write_docs()  # §6.7: at startup, and only into an archive with its sentinel
@@ -836,12 +860,23 @@ class Writer:
                 return ReconcileReport(recording_id, 0, (), (), False)
             unreadable: list = []
             existing = [r for _, r in self.archive.renditions(recording_id, problems=unreadable)]
-            result = reconcile(rec, snapshots, existing, auto_private=self.auto_private)
+            db, now = PlaudDB(self.state), _now()
+            privacy = PrivacyInputs(
+                markers=db.markers(recording_id),
+                patterns=current_patterns(db, self.auto_private, now=now),
+                words=self.keep_out_words(),
+            )
+            result = reconcile(
+                rec, snapshots, existing, auto_private=self.auto_private, privacy=privacy
+            )
             if result.title is not None or result.title_seen is not None or result.add_private:
                 self.mutate(
                     recording_id,
                     SetPlaudFields(result.title, result.title_seen, result.add_private),
                 )
+            # Only now, with the result written (a failed mutate raised above): §13.2.
+            private_added = self._record_privacy(db, rec, privacy, result, now=now)
+            kept_out_word = result.verdict.kept_out_word
             if unreadable:
                 # An output that can't be read now (damaged, or an I/O error) isn't a missing
                 # one: writing it again would leave a second, permanent copy beside it.
@@ -852,6 +887,8 @@ class Writer:
                     result.skipped,
                     result.title_difference is not None,
                     problem="an output can't be read: not reconciled",
+                    private_added=private_added,
+                    kept_out_word=kept_out_word,
                 )
             written = sum(
                 self._write_rendition_locked(folder, r) is not None for r in result.outputs
@@ -862,7 +899,48 @@ class Writer:
                 result.held,
                 result.skipped,
                 result.title_difference is not None,
+                private_added=private_added,
+                kept_out_word=kept_out_word,
             )
+
+    def keep_out_words(self) -> tuple[str, ...]:
+        """The keep-out words this Writer checks (§12.2): the configured word, if valid, then every
+        word the worker has enforced (`plaud_state`), so changing the word releases nothing."""
+        enforced = PlaudDB(self.state).get(K_KEEP_OUT_WORDS)
+        words = [self.keep_out_word] if self.keep_out_word else []
+        for word in enforced if isinstance(enforced, list) else []:
+            if valid_word(word) and fold(word) not in {fold(w) for w in words}:
+                words.append(word)
+        return tuple(words)
+
+    def _record_privacy(
+        self,
+        db: PlaudDB,
+        rec: Recording,
+        privacy: PrivacyInputs,
+        result: Reconciled,
+        *,
+        now: datetime,
+    ) -> str | None:
+        """Record what reconcile judged, once its result is written (decision 14): a
+        `retagged-private` note with its reason and a late keep-out's flag, then the markers that
+        moved. The markers go last: a note or keep-out state.db refuses leaves the title due, so
+        the next reconcile records it, never a moved marker with nothing behind it. Returns the
+        reason when `private` was added now."""
+        verdict = result.verdict
+        reason = None
+        if verdict.add_private:
+            reason = why_phrase(verdict.why)
+            db.add_event("retagged-private", now=now, recording_id=rec.id, detail={"why": reason})
+        if verdict.kept_out_word is not None:
+            # Here, not at the top: flags imports this module (apply_late_consent).
+            from recordings.plaud.flags import record_late_keep_out
+
+            ids = [s.ref for s in rec.sources if s.kind == "plaud"]
+            record_late_keep_out(db, rec.id, ids, verdict.kept_out_word, now=now)
+        if any(privacy.markers.get(m.canonical_plaud_id) != m for m in verdict.markers):
+            db.set_markers(rec.id, verdict.markers, now=now)
+        return reason
 
     # ---- housekeeping ------------------------------------------------------------------------
     def _sweep_tmp(self) -> None:
