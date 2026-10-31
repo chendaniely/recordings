@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 14: Requests from the UI, open.
+**Now:** Task 15: Doctor's worker role, open.
 
 ***
 
@@ -40,7 +40,7 @@ Each is a reading of the spec where it leaves a choice open. Code comments cite 
 17. **Blockers are `plaud_state` rows named `blocker:<name>`** (`sign-in`, `consent`, `hold`, `breaker`, `private-unwritten`: Dan's decision 10's list, no other), each `{"since", "detail"}`; a blocker clears by deleting its row.
 18. _(Moved to Phase 2 by the plan council: the rebuild check and its scan; decision 44.)_
 19. _(Moved to Phase 2 and 3 by the plan council: park; decision 44.)_
-20. **`recordings_ui/plaud.py` holds the request checks and inserts and the views** (as §9.6 says); the SQL that both `web` and `worker` run on `plaud_requests` lives in core's `recordings/plaud/requests.py`, which imports no client, token or sync module either, and nothing beyond the standard library and `recordings.ids` at its top, so Pyodide imports it.
+20. **`recordings_ui/plaud.py` holds the request checks and inserts and the views** (as §9.6 says); the SQL that both `web` and `worker` run on `plaud_requests` lives in core's `recordings/plaud/requests.py`, which imports no client, token or sync module either, and nothing beyond the standard library, `recordings.ids` and `recordings.plaud.when` at its top, so Pyodide imports it.
 21. _(Moved to Phase 2 by the plan council: the Release preview's title path; decision 44.)_
 22. **Arrivals count from the page's load or its last Refresh,** whichever is later, so the cue empties when Refresh brings the rows in.
 23. **The canned demo view is `demo/plaud-sync.json`,** hand-written. `recordings_ui.settings.from_env(demo=True)` copies it beside the archive's temporary copy, and `scripts/build_pages.py` copies it beside the vendored `demo/archive`, so both find it as `<archive>/../plaud-sync.json`.
@@ -14156,9 +14156,9 @@ Spec §9.3: request rows in `state.db`, inserted by `web` off the event loop, cl
       # start() gains requests.at_start between the heartbeat thread and Writer.open; tick() claims and serves one request per tick
   ```
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-14-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-14-base`
 
-- [ ] **Step 1: Write the failing core tests,** `packages/core/tests/test_plaud_requests.py` (new):
+- [x] **Step 1: Write the failing core tests,** `packages/core/tests/test_plaud_requests.py` (new):
 
 ```python
 """Requests from the UI (spec §9.3): the rows, and the worker's claims and handlers. Phase 1's
@@ -14456,9 +14456,9 @@ In `packages/core/tests/test_worker.py`, the start-order test now expects the re
     ]
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_requests.py -q`, then `uv run pytest packages/core/tests/test_worker.py::test_start_runs_in_the_spec_order -q`. Expected: the first file doesn't collect, `ImportError: cannot import name 'requests' from 'recordings.plaud'`, so all 10 fail first (none is a pin); the start-order test fails with `AttributeError: 'Worker' object has no attribute '_requests_at_start'`.
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_requests.py -q`, then `uv run pytest packages/core/tests/test_worker.py::test_start_runs_in_the_spec_order -q`. Expected: the first file doesn't collect, `ImportError: cannot import name 'requests' from 'recordings.plaud'`, so all 10 fail first (none is a pin); the start-order test fails with `AttributeError: 'Worker' object has no attribute '_requests_at_start'`.
 
-- [ ] **Step 3: Write the request rows,** `packages/core/src/recordings/plaud/requests.py` (new):
+- [x] **Step 3: Write the request rows,** `packages/core/src/recordings/plaud/requests.py` (new):
 
 ```python
 """Requests from the UI (spec §9.3): rows in state.db's `plaud_requests`, the SQL that both `web`
@@ -14775,7 +14775,7 @@ def prune(state: State, *, now: datetime) -> int:
         ).rowcount
 ```
 
-- [ ] **Step 4: Serve them in the worker,** `packages/core/src/recordings/worker.py`. Add to its imports (then `uv run ruff check --fix packages/core/src/recordings/worker.py` merges them with Task 13's):
+- [x] **Step 4: Serve them in the worker,** `packages/core/src/recordings/worker.py`. Add to its imports (then `uv run ruff check --fix packages/core/src/recordings/worker.py` merges them with Task 13's):
 
 ```python
 from recordings.plaud import requests
@@ -14897,11 +14897,11 @@ def _keep_here(worker: Worker, claimed: Claimed) -> requests.Reply:
 HANDLERS: dict[str, Handler] = {"keep-here": _keep_here}
 ```
 
-- [ ] **Step 5: Run them; they pass.** `uv run pytest packages/core/tests/test_plaud_requests.py packages/core/tests/test_worker.py -q`. Expected: all pass (`10 passed` in `test_plaud_requests.py`, `29 passed` in `test_worker.py`).
+- [x] **Step 5: Run them; they pass.** `uv run pytest packages/core/tests/test_plaud_requests.py packages/core/tests/test_worker.py -q`. Expected: all pass (`10 passed` in `test_plaud_requests.py`, `29 passed` in `test_worker.py`).
 
-- [ ] **Step 6: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 6: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(plaud): 🤖 request rows: inserted, claimed and re-checked by the worker, which handles Keep it here and refuses the rest for now
@@ -14926,7 +14926,7 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 `git add packages/core/src/recordings/plaud/requests.py packages/core/src/recordings/worker.py packages/core/tests/test_plaud_requests.py packages/core/tests/test_worker.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`,
 `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 8: Write the failing UI tests,** `packages/ui/tests/test_plaud_requests_ui.py` (new):
+- [x] **Step 8: Write the failing UI tests,** `packages/ui/tests/test_plaud_requests_ui.py` (new):
 
 ```python
 """The web app's side of Plaud requests (stage 2b spec §9.3): the checks, the reasons it can't
@@ -15147,9 +15147,9 @@ def test_the_request_checks_import_without_sqlite3():
     assert done.stdout.strip() == "[]"
 ```
 
-- [ ] **Step 9: Run them; watch them fail.** `uv run pytest packages/ui/tests/test_plaud_requests_ui.py -q`. Expected: the module doesn't collect, `ModuleNotFoundError: No module named 'recordings_ui.plaud'`, so all 9 fail first; none is a pin.
+- [x] **Step 9: Run them; watch them fail.** `uv run pytest packages/ui/tests/test_plaud_requests_ui.py -q`. Expected: the module doesn't collect, `ModuleNotFoundError: No module named 'recordings_ui.plaud'`, so all 9 fail first; none is a pin.
 
-- [ ] **Step 10: Write the checks and the insert,** `packages/ui/src/recordings_ui/plaud.py` (new). Checked: Python's asyncio docs on `to_thread` (it runs the function in the running loop's default executor, a thread of its own, with the context copied, and awaits it) and on `wait_for` (on its timeout it cancels the awaited task and raises `TimeoutError`, a subclass of `OSError`; a thread can't be cancelled, so the insert itself also gives up, after `SAVE_WAIT_MS`, and no row lands after the answer); Shiny runs a session's handlers on that loop, so it applies unchanged, and the tests prove the thread and the second. The tag service's threads are `writing.OneThread`s named `recordings-writer` and `recordings-reader`, which this never touches.
+- [x] **Step 10: Write the checks and the insert,** `packages/ui/src/recordings_ui/plaud.py` (new). Checked: Python's asyncio docs on `to_thread` (it runs the function in the running loop's default executor, a thread of its own, with the context copied, and awaits it) and on `wait_for` (on its timeout it cancels the awaited task and raises `TimeoutError`, a subclass of `OSError`; a thread can't be cancelled, so the insert itself also gives up, after `SAVE_WAIT_MS`, and no row lands after the answer); Shiny runs a session's handlers on that loop, so it applies unchanged, and the tests prove the thread and the second. The tag service's threads are `writing.OneThread`s named `recordings-writer` and `recordings-reader`, which this never touches.
 
 ```python
 """The Plaud sync's side of the web app (stage 2b spec §9.3, §15): the request checks and inserts;
@@ -15325,11 +15325,11 @@ async def submit(
     return reply.to_dict()
 ```
 
-- [ ] **Step 11: Run them; they pass.** `uv run pytest packages/ui/tests/test_plaud_requests_ui.py packages/ui/tests/test_plaud_imports.py -q`. Expected: all pass (the second is Task 4's import guard, which now walks this module too).
+- [x] **Step 11: Run them; they pass.** `uv run pytest packages/ui/tests/test_plaud_requests_ui.py packages/ui/tests/test_plaud_imports.py -q`. Expected: all pass (the second is Task 4's import guard, which now walks this module too).
 
-- [ ] **Step 12: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 12: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 13: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 13: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(ui): 🤖 recordings_ui.plaud checks a plaud_request and inserts it off the event loop; a request that can't be saved answers within a second
@@ -15354,7 +15354,9 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 `git add packages/ui/src/recordings_ui/plaud.py packages/ui/tests/test_plaud_requests_ui.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`,
 `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 14: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 14: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `b0ac76d`; the listings above are the plan as written): "couldn't be saved" means no row: `requests.insert` takes a deadline (`SAVE_WAIT`, 0.8 s, inside `submit`'s backstop) that every wait it makes uses, on one connection, checked again before the `INSERT` and the commit, rolling back once it has passed (`NotSaved`); `submit`'s `wait_for` stays as a backstop for a hung commit, and Task 20's session now follows a request answered NOT_SAVED for `UNSAVED_WINDOW` (forward review); a Plaud ID must be under 128 characters; Keep it here refuses `plaud_ids` or `all`; row times read through `when.parse_stamp`, and `checks._utc` is `when.utc_iso`; `_notice` reads the heartbeat on the insert's own connection (`worker.parse_heartbeat`, `beat_alive`), and `worker.last_heartbeat` is public for Task 19; `State.db`/`State._connect` take a `timeout` (30 s by default, as before).
 
 ### Task 15: Doctor's worker role
 
@@ -21295,6 +21297,25 @@ async def test_a_kind_the_worker_cant_handle_yet_is_refused_at_once_and_writes_n
 
 
 @pytest.mark.anyio
+async def test_a_request_the_backstop_answered_not_saved_is_still_followed(wired, monkeypatch):
+    # why: Task 14's backstop answers NOT_SAVED for a commit that hangs past the deadline, and
+    # that one row may still land: the session looks for it and shows it if it does.
+    real = plaud.submit
+
+    async def hung(state, raw, **kw):
+        reply = await real(state, raw, **kw)  # the row lands
+        return {**reply, "state": "refused", "message": plaud.NOT_SAVED}  # the press heard this
+
+    monkeypatch.setattr(plaud, "submit", hung)
+    async with test_server_async(SHINY_APP, timeout_secs=10) as s:
+        await s.set_inputs(plaud_request=request("late0001test", "keep-here", recording_ids=[RID]))
+        await until(lambda: len(replies(wired.sent, "late0001test")) >= 2, "the landed row")
+    first, landed, *_ = replies(wired.sent, "late0001test")
+    assert (first["state"], first["message"]) == ("refused", plaud.NOT_SAVED)
+    assert landed["state"] == "queued"
+
+
+@pytest.mark.anyio
 async def test_a_crafted_request_without_a_writable_state_is_refused(
     writer, demo_archive, monkeypatch
 ):
@@ -21449,6 +21470,9 @@ In `packages/ui/src/recordings_ui/plaud.py`, Task 19's `from datetime import dat
 
 POLL_SECONDS = 2.0  # a pending row is read this often (§9.3); a test shortens it, never sleeps
 FINAL_STATES = ("done", "failed", "expired", "refused")
+# How long a session looks for a row after `submit`'s backstop answered NOT_SAVED: a commit that
+# hung past the deadline may still land it (Task 14's review).
+UNSAVED_WINDOW = 60.0
 
 
 def clock() -> datetime:
@@ -21609,6 +21633,21 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                     await reactive.flush()
                 return
 
+    async def follow_unsaved(first: dict) -> None:
+        """`submit`'s backstop answers NOT_SAVED for a commit that hung past its deadline, and
+        that one row may still land (Task 14): look for it for UNSAVED_WINDOW, and follow it."""
+        from recordings.plaud import requests  # here: it needs sqlite3, which Pages lacks
+
+        for _ in range(max(1, int(plaud.UNSAVED_WINDOW / plaud.POLL_SECONDS))):
+            await asyncio.sleep(plaud.POLL_SECONDS)
+            row = await asyncio.to_thread(requests.read, plaud_state, first["request_id"])
+            if row is not None:
+                reply = {**row.to_dict(), "preview": None}
+                await send_plaud_result(reply)
+                if reply["state"] not in plaud.FINAL_STATES:
+                    await follow(reply)
+                return
+
     async def plaud_job(raw: object) -> None:
         try:
             reply = await plaud.submit(
@@ -21618,6 +21657,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             await send_plaud_result(reply)  # within a second of the press (P6)
             if plaud_state is not None and reply["state"] in ("queued", "running"):
                 await follow(reply)
+            elif plaud_state is not None and reply["message"] == plaud.NOT_SAVED:
+                await follow_unsaved(reply)
         except Exception as exc:  # noqa: BLE001  its class only (Global Constraints)
             log.warning("plaud request: the task failed (%s)", type(exc).__name__)
 
@@ -24921,3 +24962,4 @@ Their full plans are written at their phase start, against the code as built and
 | 9 | Minor | `packages/core/src/recordings/writer.py` | `Writer.keep_out_words` reads a `keep_out_words` row that isn't a list as no words, so reconcile and the baseline check only the configured word; fail closed as `enforce_word` now does (Task 10's re-review). | open |
 | 13 | Question for the council | `packages/core/src/recordings/worker.py` | A recording the pattern pass at start couldn't check (`K_PATTERNS_PASS.unwritten`) shows in Needs attention by ID (Task 19) and is re-checked at the next start or any `reindex`, but opens no flag and no `private-unwritten` blocker, since a `private` isn't known to be owed. Should an unchecked recording also stop the sync's ping (§13.2, §16)? (Task 13's review.) | open |
 | 13 | Minor | `packages/core/src/recordings/worker.py` | `alive` gives `checking` 30 minutes from the first unfinished start, so a pattern pass at start on a very large archive reads STUCK while it still progresses: decision 48's accepted limit (Task 13's fix round). | open |
+| 14 | Minor | `packages/core/src/recordings/plaud/requests.py` | The deadline check before the commit has no test (deleting it leaves every test green): patch `utc_iso` to move the fake clock past the deadline, then assert `NotSaved` and no row; `MAX_PLAUD_ID_LEN = 128` is the first length refused (a comment); `claim_next` reads its row by position (Task 14's re-review). | open |
