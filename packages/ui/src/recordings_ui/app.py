@@ -20,7 +20,12 @@ from recordings.writer import NotTheWriter, Writer
 
 from recordings_ui import runtime
 from recordings_ui.hosts import HostGuard, WriteGuard
-from recordings_ui.plaud import PlaudViewSettings, demo_view_settings, plaud_view_settings
+from recordings_ui.plaud import (
+    PlaudViewSettings,
+    cannot_request_reason,
+    demo_view_settings,
+    plaud_view_settings,
+)
 from recordings_ui.settings import Settings, find_demo_archive
 from recordings_ui.status import status_settings
 from recordings_ui.tagging import LOCK_WAIT, ArchiveStore, TagService
@@ -92,11 +97,17 @@ def plaud_views(settings: Settings) -> PlaudViewSettings | None:
 def create_app(settings: Settings) -> HostGuard:
     archive = Archive(settings.archive)
     tagging = TagService(ArchiveStore(archive, writer_opener(settings)))
+    cfg = settings.config
+    # A State names the folder and opens nothing, so startup does no disk work; a request to a
+    # state.db that isn't there is answered "couldn't be saved" at once (Task 14's submit).
+    plaud_state = State(cfg.state_path) if cfg is not None and cfg.state_path else None
     runtime.configure(
         archive,
         status=status_settings(settings.config) if settings.config else None,
         tagging=tagging,
         plaud=plaud_views(settings),
+        plaud_state=plaud_state,
+        plaud_reason=cannot_request_reason(settings, plaud_state),
     )
     from recordings_ui.shiny_app import app as shiny_app  # after configure()
 

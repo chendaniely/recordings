@@ -27,7 +27,7 @@ import logging
 import time
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -1292,3 +1292,17 @@ def demo_view(path: Path) -> dict:
     counts = _dict(raw.get("arrivals"))
     keys = ("new", "private", "updated", "kept_out_late", "consent_late")
     return {"sync": sync, "panel": panel, "arrivals": {k: _int(counts.get(k)) for k in keys}}
+
+
+# ---- The request input's replies (Task 20; 2b spec §9.3) ---------------------------------------
+
+POLL_SECONDS = 2.0  # a pending row is read this often (§9.3); a test shortens it, never sleeps
+FINAL_STATES = ("done", "failed", "expired", "refused")
+# How long a session looks for a row after `submit`'s backstop answered NOT_SAVED: a commit that
+# hung past the deadline may still land it (Task 14's review).
+UNSAVED_WINDOW = 60.0
+
+
+def clock() -> datetime:
+    """Now, for the session's inserts and outputs; a test replaces it."""
+    return datetime.now(UTC)

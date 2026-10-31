@@ -57,10 +57,12 @@ The rules the code depends on:
 - **`ReactApp(server)` in `shiny_app.py`** finds `www/` next to that file.
 - **Every output is subscribed in `App`.** shinyreact 0.1.0 leaves an output bound to a removed
   element once its last component unmounts (`docs/upstream-issues.md`). A new output gets a
-  `useShinyOutputStatus` line in `App.tsx`, even if only one page uses it.
-- **Every message handler and input lives in `App`** (through `useTagging`), mounted once:
-  shinyreact drops a message that has no handler. Tag requests are only ever sent by a person's
-  action: never on load, from a URL or its hash, or from storage. List state (`useListState` for
+  `useShinyOutputStatus` line in `App.tsx`, even if only one page uses it, as the Sync screen's
+  `plaud_sync` and the header's `plaud_arrivals` have.
+- **Every message handler and input lives in `App`** (through `useTagging`, and `usePlaud` for
+  `plaud_request` and its `plaud_result` replies), mounted once: shinyreact drops a message that
+  has no handler. Tag and Plaud requests are only ever sent by a person's action: never on load,
+  from a URL or its hash, or from storage. List state (`useListState` for
   the Library, `useGridState` for the Tags grid) is held in `App` too, so it survives route
   switches and the switch from tablet to phone width. On a phone, `#/tags` is the Library with the
   Untagged filter (`App` replaces the hash and sets the filter); there is no phone Tags page.

@@ -9,6 +9,8 @@ from recordings.archive import Archive
 from recordings_ui.status import StatusSettings
 
 if TYPE_CHECKING:
+    from recordings.state import State
+
     from recordings_ui.plaud import PlaudViewSettings
     from recordings_ui.tagging import TagService
 
@@ -17,6 +19,8 @@ _media_base: str | None = None
 _status: StatusSettings | None = None
 _tagging: TagService | None = None
 _plaud: PlaudViewSettings | None = None
+_plaud_state: State | None = None
+_plaud_reason: str | None = None
 
 
 def configure(
@@ -26,6 +30,8 @@ def configure(
     status: StatusSettings | None = None,
     tagging: TagService | None = None,
     plaud: PlaudViewSettings | None = None,
+    plaud_state: State | None = None,
+    plaud_reason: str | None = None,
 ) -> None:
     """media_base: where the browser finds media files, as `<media_base><media.file>`.
 
@@ -34,14 +40,18 @@ def configure(
     mode, which has no state folder. tagging: the process's tag service (tagging spec §5): the
     archive store from create_app, or the memory store from the Pages entry. plaud: what the
     Plaud views read (2b spec §15): the server's state folder and [plaud] keys, or the demos'
-    canned view (2b phase 1 plan, decision 23); None with no config.toml.
+    canned view (2b phase 1 plan, decision 23); None with no config.toml. plaud_state: the
+    state.db Plaud requests are inserted into (§9.3); plaud_reason: why this app can't make
+    requests (cannot_request_reason), or None. With a reason, no request is ever inserted.
     """
-    global _archive, _media_base, _status, _tagging, _plaud
+    global _archive, _media_base, _status, _tagging, _plaud, _plaud_state, _plaud_reason
     _archive = archive
     _media_base = media_base
     _status = status
     _tagging = tagging
     _plaud = plaud
+    _plaud_state = plaud_state
+    _plaud_reason = plaud_reason
 
 
 def archive() -> Archive:
@@ -66,3 +76,11 @@ def tagging() -> TagService:
 
 def plaud_settings() -> PlaudViewSettings | None:
     return _plaud
+
+
+def plaud_state() -> State | None:
+    return _plaud_state
+
+
+def plaud_reason() -> str | None:
+    return _plaud_reason
