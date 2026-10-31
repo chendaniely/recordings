@@ -309,3 +309,40 @@ I used `wc` and `grep` only. Nothing already listed is repeated here.
 - **Decision:** Later.
 
 **Wording.** Beyond finding 4, drop `PATTERNS_UNCHECKED`'s "which says what stops it" and `not_pinged`'s "It emails you about 2 hours after that."
+
+## Decisions (the session, after checking each claim)
+
+Each Important claim was checked against the code before this table:
+- **S1:** `sources/audio_router.py:1184` calls `plaud/reconcile.py`'s `matches_auto_private`, which doesn't fold, while `privacy._hits` folds before calling it.
+- **G1 and S2:** only `plaud/baseline.py:240-254` writes `K_PATTERNS_PASS`, and only for a pass that ends. `worker._step` (`worker.py:526-538`) logs a whole pass that raised, and nothing else.
+- **R2:** `docker/consent-add.sh` renames the new list into place with no `sync`.
+- **Simplicity 5:** `_panel_from` puts lines into both `conditions` and `attention`, and the P12 filter then drops them from `conditions`.
+
+The Minors were taken as written. "Step 4" means fixed in its own commit during the phase end's step 4. "Phase 2's start" means carried into Phase 2's outline, for when that code is touched again.
+
+| Finding | Severity | Decision |
+|---|---|---|
+| G1, S2 (and Task 13's question for the council) | Important | **Step 4, at Tier 1.** The controller rules on Task 13's question: yes. Both lenses agree, and §13.2 already says a marker that can't move opens the `private-unwritten` blocker "until the tag lands". Under P8, a possibly owed `private` counts as owed. So: a recording the patterns pass couldn't check opens a `private-unwritten` flag, which stops the ping, as a late consent failure does. The pass is retried at each turn, not only at start, so a reindex clears the line at the next tick (G1). A pass that raises as a whole records its attempt and opens the blocker (S2). `busy` recordings are left out. |
+| S1 | Important | **Step 4, at Tier 1.** `matches_auto_private` folds (NFKC, without invisible characters) inside itself, so every caller does: the audio-router import, the judge, and Phase 2's import. |
+| Simplicity 1 | Important | **Step 4 (missing docs are written now).** Two CLAUDE.md recipes: adding a Plaud request kind, and adding a blocker. |
+| Simplicity 2 | Important | **Step 5.** A "Carried forward" page: the decisions the code cites, each one line with its built name; the open rows; the Consumes lines Phase 2 needs. Phase 2's plan cites commits instead of carrying listings. |
+| Simplicity 3 | Important | **Phase 2's start.** Split `worker.py` (liveness, handlers), the follow loop out of `shiny_app.server`, `SyncPage.tsx` by section, and `first-run.md` into three. |
+| G2 | Minor | **Phase 2's start.** Details shows a late consent listing's `private` with no date or reason, and the flag repeats the IDs. |
+| G3 | Minor | **Dan.** Should doctor's "sign-in needed" stay a problem (exit 78) for as long as Phase 1 runs, or be a note until Phase 2's sign-in? |
+| G4 | Minor | **Step 5.** Scenario IDs on each outline line (C5.23, C5.26, C3.06, C5.17). |
+| G5 | Minor | **Later, with the 320 px item.** Details' tab row is 327 px wide at 320 px. It predates 2b (tagging part A). |
+| R1 | Minor | **Phase 2's start.** A `running` row whose `finish` raised stays `running` until a restart. Retry `finish`, and give a running row the worker-down notice. |
+| R2 | Minor | **Step 4, at Tier 1.** `consent-add.sh` syncs before its rename, and the folder after it. |
+| R3 | Minor | **Step 4.** `make deploy` builds first, then runs the guard, then `up -d --no-build --wait`. |
+| R4 | Minor | **Phase 2's start.** One `index.db` query per tick for all consent-listed IDs, or skip the query while nothing has changed. |
+| R5 | Minor | **Later.** Clock jumps: the heartbeat heals within 30 s, and the containers share one clock. |
+| R6 | Minor | **Step 4.** The request tests assert on the deadline given, not on elapsed time, so load can't flake them. |
+| S3 | Minor | **Phase 2's start, with the snapshot marks.** Hash the bytes the judged set reads, not `recording.json`'s `sha256`. |
+| S4 | Minor | **Step 4, at Tier 1.** `run_backup` refuses an extra path doctor reports (`/state`, `/run/secrets` and similar), as it refuses a symbolic link. |
+| Tier note | — | **Step 5.** Phase 2's views of titles not in the archive (the cache's readers, Not here yet, Release's preview) are Tier 1. |
+| Simplicity 4, 6, 7, 8 and the wording | Minor | **Phase 2's start.** |
+| Simplicity 5 | Minor | **Step 4.** Lines go into `attention` only, so the dead branches are gone. |
+| Simplicity 9, 10 | Minor | **Later.** The spike script goes with Phase 3's session C; the duplicated tests and CSS are left alone. |
+| The judged-set reread (phase-end row from Task 9) | — | **Closed.** The security lens found that it holds on every path the app writes, and S3 is the one gap. |
+| Q3(a), the 320 px top bar | — | **Dan.** The goal-fit lens recommends a guard (`overflow-x: auto` on the tab row), not a redesign. |
+| Q3(b), §15.2's failing-checks line | — | **Dan.** The goal-fit lens recommends keeping it on Status with both buttons: the field at Phase 2's start, the buttons in Phase 3. |
