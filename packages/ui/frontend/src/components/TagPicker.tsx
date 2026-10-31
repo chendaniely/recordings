@@ -16,7 +16,7 @@ import { PHONE, TOUCH, useMediaQuery } from "@/lib/useMediaQuery";
 import { useSheetRoom } from "@/lib/viewport";
 import { inToaster } from "@/tagging/toaster";
 import { useReturnFocus } from "@/tagging/useReturnFocus";
-import { useTaggingContext, type PickerFrom, type PickerTarget } from "@/tagging/useTagging";
+import { useTaggingContext, type PickerFrom, type PickerTarget, type Tagging } from "@/tagging/useTagging";
 
 export function pickerTitle(ids: readonly string[], titleOf: (id: string) => string): string {
   return ids.length === 1 ? `Tag ${titleOf(ids[0])}` : `Tag ${ids.length.toLocaleString("en")} recordings`;
@@ -46,6 +46,18 @@ const keepFocus = (e: MouseEvent) => e.preventDefault();
 /** An Esc an IME is composing with is the IME's: it must not close the picker. */
 const imeEscape = (e: globalThis.KeyboardEvent) => {
   if (composing(e)) e.preventDefault();
+};
+
+/** The picker's Esc. While the confirmation is open, an Esc that reaches the picker is the
+ * confirmation's, and means Cancel; the picker stays (spec §6: Esc closes the topmost layer only).
+ * Radix gives Esc to a new top layer only in the effects of a render after it mounts, while focus
+ * moves into it at once, so for a moment the picker under the confirmation still hears Esc
+ * (docs/upstream-issues.md). */
+const pickerEscape = (tagging: Tagging) => (e: globalThis.KeyboardEvent) => {
+  imeEscape(e);
+  if (e.defaultPrevented || tagging.confirm === null) return;
+  e.preventDefault();
+  tagging.answerConfirm(false);
 };
 
 /** cmdk 1.1.1 leaves the box's aria-activedescendant on the item highlighted before, or none,
@@ -362,7 +374,7 @@ export function TagPickerDialog() {
         style={sheet}
         showCloseButton={phone}
         aria-describedby={undefined}
-        onEscapeKeyDown={imeEscape}
+        onEscapeKeyDown={pickerEscape(tagging)}
         onPointerDownOutside={(e) => { if (inToaster(e.target)) e.preventDefault(); }}
         {...returnFocus}
       >
@@ -461,7 +473,7 @@ export function AddTagsButton({ id, title, place, onOpenChange }: {
         {...(place === "row" ? ROW_PLACEMENT : {})}
         collisionPadding={8}
         aria-labelledby={headingId}
-        onEscapeKeyDown={imeEscape}
+        onEscapeKeyDown={pickerEscape(tagging)}
         onFocusOutside={keepOpen}
         onInteractOutside={keepOpen}
       >

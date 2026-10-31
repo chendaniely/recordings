@@ -268,3 +268,30 @@ handlers now ignore a click inside `[data-control]` instead. The e2e tests
 
 **When it can go.** It isn't a workaround, only a rule (CLAUDE.md). Re-check the source lines on a
 Radix bump, because the deferred handling is new.
+
+## Radix Dismissable Layer 1.2.1: a layer opened over another hears Esc a render late
+
+Local note only; nothing is reported upstream. Found 2026-10-31, by the flaky e2e test
+`test_the_confirmation_opens_over_the_plus_picker_and_leaves_it_open`, by reading
+`@radix-ui/react-dismissable-layer` 1.2.1's own `dist/index.mjs` (the lines below). Radix's docs
+weren't checked for it.
+
+**What it does.** A layer listens for Esc only while it is the highest (`dist/index.mjs` lines
+90-108), which it works out in render from the set of layers. It joins that set in an effect after
+it mounts (line 117), then `dispatchUpdate` (line 118) makes every layer render again, and only in
+that render's effects does the new layer add its listener and the one below remove its own. Focus
+moves in sooner, in the same effects as the join (Focus Scope 1.3.1's mount focus; Alert Dialog
+focuses Cancel). Under React 19.2 the forced render and its effects run as two more scheduler
+tasks, so for a few milliseconds (2-10 ms measured locally, more on a busy runner) an Esc closes
+the layer below instead: the picker closes under the confirmation, which stays open. A layer opened
+over nothing has no gap: its index, -1 before it joins, equals `0 - 1`, so it listens from its
+first render.
+
+**What we do.** The picker's Esc (`pickerEscape`, `TagPicker.tsx`, in both forms) takes an Esc
+that reaches it while the confirmation is open as the confirmation's Cancel, and keeps the picker
+open. `TagPicker.test.ts` checks both forms ("takes an Esc that reaches it while the confirmation
+is open…").
+
+**When it can go.** When a layer listens for Esc from the moment it mounts over another. On a
+Radix bump, re-check where the Escape listener is added: while it is still an effect gated on
+`isHighestLayer` worked out in render, keep this.
