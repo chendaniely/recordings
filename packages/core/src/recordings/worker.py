@@ -36,7 +36,7 @@ from recordings import alerts
 from recordings.alerts import AlertConfig, ping_url
 from recordings.config import Config, ConfigError, load_config
 from recordings.locks import LockTimeout
-from recordings.plaud import keepout
+from recordings.plaud import keepout, requests
 from recordings.plaud.baseline import PatternsPass, enforce_word, patterns_pass
 from recordings.plaud.checks import (
     K_CONSENT,
@@ -45,8 +45,15 @@ from recordings.plaud.checks import (
     PRIVATE_UNWRITTEN,
     PlaudDB,
 )
-from recordings.plaud.flags import LateReport, apply_late_consent, still_owed
-from recordings.plaud.gate import Gate, gate_now
+from recordings.plaud.flags import (
+    KEPT_HERE,
+    NOTHING_TO_KEEP,
+    LateReport,
+    apply_late_consent,
+    keep_here,
+    still_owed,
+)
+from recordings.plaud.gate import GATE_ALLOWED, GATE_REFUSAL, Gate, gate_now
 from recordings.plaud.health import (
     RunOutcome,
     TurnOutcome,
@@ -58,6 +65,7 @@ from recordings.plaud.health import (
     sync_health,
 )
 from recordings.plaud.keepout import ConsentList, FileSignature
+from recordings.plaud.requests import Claimed
 from recordings.plaud.runlock import plaud_holder, plaud_run
 from recordings.plaud.settings import BAD_WORD, PlaudSettings, plaud_settings
 from recordings.plaud.when import parse_stamp
@@ -365,6 +373,7 @@ class Worker:
         before it does. The start is then done, phase `idle`, written to the heartbeat at once (a
         start that follows failed ones must not read STUCK until the next beat)."""
         self._start_heartbeat()
+        self._requests_at_start()
         self.writer = self._open_writer()
         self.gate = self._open_gate()
         self._enforce()
@@ -495,6 +504,7 @@ class Worker:
         self._step("consent blocker", self._consent_blocker)
         self._step("late consent", self._late_consent)
         self._step("owed private", self._owed_private)
+        self._step("request", self._serve_one)
         self._step("turn", self._turn_if_due)
         if self._pruned_at is None or not timedelta(0) <= now - self._pruned_at < PRUNE_EVERY:
             self._step("prune", self._prune)
@@ -703,7 +713,54 @@ class Worker:
     def _prune(self) -> None:
         now = self.clock()
         self.db.prune(now=now)
+        requests.prune(self.state, now=now)
         self._pruned_at = now
+
+    # ---- requests from the UI (Task 14, spec §9.3) --------------------------------------------
+    def _requests_at_start(self) -> None:
+        interrupted, expired = requests.at_start(self.state, now=self.clock())
+        if interrupted or expired:
+            log.info("requests at start: %d interrupted, %d expired", interrupted, expired)
+
+    def _serve_one(self) -> None:
+        now = self.clock()
+        requests.expire(self.state, now=now)
+        claimed = requests.claim_next(self.state, now=now)
+        if claimed is not None:
+            self.serve_request(claimed)
+
+    def serve_request(self, claimed: Claimed) -> None:
+        """The row is checked again against fresh facts, never taken on trust (spec §9.3). A kind
+        with no handler yet is refused with NOT_YET (web refuses it before inserting, so this is a
+        defence); then the gate (every kind but compare and keep-here waits for the first
+        catch-up); then the kind's handler."""
+        req = claimed.request
+        self.progress.bump(self.clock(), "request")
+        refused: str | None = None
+        try:
+            if (handler := HANDLERS.get(req.kind)) is None:
+                refused = requests.NOT_YET
+            elif req.kind not in GATE_ALLOWED and not gate_now(self.db).open:
+                refused = GATE_REFUSAL
+            else:
+                reply = handler(self, claimed)
+        except Exception as exc:  # noqa: BLE001  a failed request is answered, never the loop's end
+            log.warning("a %s request failed (%s)", req.kind, type(exc).__name__)
+            reply = requests.Reply(
+                req.request_id, req.kind, "failed", f"error: `{type(exc).__name__}`"
+            )
+        if refused is not None:
+            requests.refuse(self.state, req.request_id, message=refused, now=self.clock())
+        else:
+            requests.finish(
+                self.state,
+                req.request_id,
+                ok=reply.state == "done",
+                message=reply.message,
+                result=reply.result,
+                now=self.clock(),
+            )
+        self.progress.bump(self.clock(), "idle")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -746,3 +803,27 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001  its class only: a traceback would carry its text
         print(f"recordings worker: stopped ({type(exc).__name__})", file=sys.stderr)
         return 1
+
+
+# ---- the worker's request handlers (Task 14): Phase 1 has Keep it here alone ---------------------
+Handler = Callable[[Worker, Claimed], requests.Reply]
+
+
+def _keep_here(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """Keep it here (spec §12.2): each recording's open late keep-out resolves; no file changes."""
+    req, now = claimed.request, worker.clock()
+    kept, nothing = [], []
+    for rid in req.recording_ids:
+        (kept if keep_here(worker.db, rid, now=now) == KEPT_HERE else nothing).append(rid)
+    return requests.Reply(
+        req.request_id,
+        req.kind,
+        "done" if kept else "failed",
+        KEPT_HERE if kept else NOTHING_TO_KEEP,
+        result={"kept": kept, "nothing_to_keep": nothing},
+    )
+
+
+# What the worker serves. requests.HANDLED names the same kinds for web, which refuses the others
+# before inserting; each later phase adds its handlers here and its kinds there.
+HANDLERS: dict[str, Handler] = {"keep-here": _keep_here}

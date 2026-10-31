@@ -197,7 +197,7 @@ def beat_of(setup) -> dict:
 def test_start_runs_in_the_spec_order(setup, make_worker, monkeypatch):
     w = make_worker(Clock())
     calls = []
-    for name in ("_start_heartbeat", "_open_writer", "_open_gate"):
+    for name in ("_start_heartbeat", "_requests_at_start", "_open_writer", "_open_gate"):
         original = getattr(w, name)
 
         def spy(_name=name, _original=original):
@@ -208,7 +208,13 @@ def test_start_runs_in_the_spec_order(setup, make_worker, monkeypatch):
 
         monkeypatch.setattr(w, name, spy)
     w.start()
-    assert calls == ["_start_heartbeat", "_open_writer", "starting", "_open_gate"]
+    assert calls == [
+        "_start_heartbeat",
+        "_requests_at_start",
+        "_open_writer",
+        "starting",
+        "_open_gate",
+    ]
     assert w.writer is not None and w.gate is not None and not w.gate.open
     assert w.progress.read()[0] == "idle"  # the start is done
 
