@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 11: Sync health and the ping rule, open.
+**Now:** Task 12: The gate, open.
 
 ***
 
@@ -11441,9 +11441,9 @@ Spec §16 and §11.7, with Dan's decision 10: one Healthchecks check, pinged onl
       # docstring says it is the one place the sync tells the outside how it is, where ntfy's pushes go later.
   ```
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-11-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-11-base`
 
-- [ ] **Step 1: Write the failing tests.** Create `packages/core/tests/test_plaud_health.py` (the `ntfy` fixture is the fake Healthchecks, decision 11):
+- [x] **Step 1: Write the failing tests.** Create `packages/core/tests/test_plaud_health.py` (the `ntfy` fixture is the fake Healthchecks, decision 11):
 
 ```python
 """Sync health and the ping rule (stage 2b spec §11.7, §16, Dan's decision 10). FakeNtfy stands in
@@ -11783,12 +11783,12 @@ def test_the_runbook_says_what_to_do_when_the_plaud_alert_comes():
     assert "check the archive disk and its permissions" in text
 ```
 
-- [ ] **Step 2: Run them; watch them fail.**
+- [x] **Step 2: Run them; watch them fail.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_health.py packages/core/tests/test_runbook.py -q`
 Expected: `test_plaud_health.py` fails at collection with `ModuleNotFoundError: No module named 'recordings.plaud.health'`, and the runbook test with the same error from its import.
 
-- [ ] **Step 3: Write `health.py`.** Create `packages/core/src/recordings/plaud/health.py`. Its `settings.BAD_WORD` import loads no client (Task 7's `settings.py` takes the API base from the network-free `endpoint`, decision 31), so Status (`recordings_ui`) can read this module; it does bring `sqlite3`, through `checks`. Its stamps are read and its times shown through Task 6's `when.py` (`parse_stamp`, `local_hhmm`), as every other reader of them does.
+- [x] **Step 3: Write `health.py`.** Create `packages/core/src/recordings/plaud/health.py`. Its `settings.BAD_WORD` import loads no client (Task 7's `settings.py` takes the API base from the network-free `endpoint`, decision 31), so Status (`recordings_ui`) can read this module; it does bring `sqlite3`, through `checks`. Its stamps are read and its times shown through Task 6's `when.py` (`parse_stamp`, `local_hhmm`), as every other reader of them does.
 
 ```python
 """Sync health (stage 2b spec §11.7, §16): is a run good, what stops the ping, and why.
@@ -12033,7 +12033,7 @@ def sync_health(state: State, *, schedule_minutes: int) -> SyncHealth:
     )
 ```
 
-- [ ] **Step 4: Write `worker.py`'s `conclude_turn`.** Create `packages/core/src/recordings/worker.py` (Task 13 adds the loop to this module):
+- [x] **Step 4: Write `worker.py`'s `conclude_turn`.** Create `packages/core/src/recordings/worker.py` (Task 13 adds the loop to this module):
 
 ```python
 """The Plaud worker (stage 2b spec §9.2, §16): how each scheduled turn ends.
@@ -12118,7 +12118,7 @@ def conclude_turn(ctx: TurnContext, ran: RunOutcome | None) -> bool:
     return ok
 ```
 
-- [ ] **Step 5: The runbook section.** In `docs/runbooks/first-run.md`, replace the line that ends Task 8's section and the heading after it:
+- [x] **Step 5: The runbook section.** In `docs/runbooks/first-run.md`, replace the line that ends Task 8's section and the heading after it:
 
 ```markdown
 which describes the app's own Delete, like Forget.
@@ -12171,14 +12171,14 @@ down. It covers the backup's check too.
 ## When the data disk fills
 ```
 
-- [ ] **Step 6: Run them; they pass.**
+- [x] **Step 6: Run them; they pass.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_health.py packages/core/tests/test_runbook.py -q`
 Expected: every test passes. (Each `ntfy` fixture's teardown waits about half a second for its server: the file takes about 12 seconds.)
 
-- [ ] **Step 7: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
+- [x] **Step 7: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
 
-- [ ] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(worker): 🤖 sync health and conclude_turn: the sync's check is pinged only after a good sync that nothing holds up
@@ -12207,7 +12207,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/health.py packages/core/src/recordings/worker.py packages/core/tests/test_plaud_health.py packages/core/tests/test_runbook.py docs/runbooks/first-run.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 9: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 9: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `44aafd3`; the listings above are the plan as written): the disk rule is pinned (some imports good, then the guard refused one: no ping; a disk streak then a quiet run: a ping) and so is a small shrink counting as good; a `K_FAILING` value that isn't a dict stops the ping like an unknown cause; `K_LAST_PING` is written by `health.record_ping`; `SyncHealth.failing`/`last_turn`/`last_ping` are NamedTuples (they still unpack and compare as tuples); the runbook's "When the Plaud alert comes" has a row for every phrase Status shows (`error: <Class>`, `blocked: <name>`, BAD_WORD), and its consent, private-unwritten and keep-out-word rows say what the code does.
 
 ### Task 12: The gate
 
@@ -24872,6 +24874,7 @@ Their full plans are written at their phase start, against the code as built and
 - The listing hold, **Accept this listing** (request and `accept-listing`), a small shrink settling, the re-key match (S7).
 - Importing one recording: the consent and keep-out re-checks, the envelope's title checked before any block (§11.5: Task 4's `PlaudClient.envelope(listed_id)` always fetches the linked blocks, so Phase 2's import fetches the envelope without its blocks, checks the title, then fetches the blocks, through `envelope(…, enrich=False)` or a split into two calls; decision 37), the `_meta` stamp, auto-private at import, the disk guard, `.tmp/plaud-dl/` (and its sweep at the worker's start), ffprobe, `Writer.add`, reconcile, the consent list re-read before each download trusting only a file whose mtime is at least one tick old (S11), the snapshot mark before every 2b snapshot, by every path, `Writer.add` at import included (`Writer.add_snapshot` leaves it to its caller) (S8, S11, S12); CLAUDE.md's scratch-download sentence; main spec §6.1.
 - Keep-out at listing time, **Release** (preview, release, unrelease, `plaud release`), a late keep-out from the listing, a title change re-tagged from the listing (§13.1 case 2).
+- A turn that raised mid-sync reaches `conclude_turn` as a run that isn't good, never as `None`, so a failing streak starts and a quiet run after it can't ping "up" (§11.7; Task 11's review).
 - The sync run (§11.1) as the worker's turn and light turn, the good-run rule's attempts, the compare, sync and import handlers and their re-checks (S10's budget).
 - Gone from Plaud (§12.3); the rebuild's review marks at listing time (§11.6).
 - The first catch-up: `sync --catch-up`, `sync --dry-run [--list]`, `sync`, the exit codes, `ops` and `plaud` in one hold, the `audio-router` import taking `plaud` (S12 settled first).
