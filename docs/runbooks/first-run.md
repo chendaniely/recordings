@@ -466,8 +466,139 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
 
 ### 1c. Before stage 2b (not needed for 2a)
 
-The token spike and the ID-form spike (§9.1, §19) both call Plaud. Stage 2a makes no Plaud
-calls, so they run before stage 2b's deploy, not now.
+Stage 2b's spikes (its spec's §18) are the first steps that call Plaud, so none of them runs for
+2a. Each is a supervised session with Dan, run with `scripts/plaud_spike.py`, before the stage 2b
+work that needs its result: **A**, the sign-in (s1, s2, s4, s3; about 45 minutes); **B**, the data
+(s5, s7, s8, s10, s12, s11; about an hour); **C**, an edit on a throwaway clip (s9; about 45
+minutes). Read the script before each session, at the commit the session will run. It prints only
+counts, yes or no, times, status codes, field names and 8-hex names: never a token, a title,
+transcript text or a whole Plaud ID. Before any call it reads the consent list fail-closed, checks
+that `[archive] path` is the archive and holds recordings, and gathers every keep-out word and
+private pattern it can find; it refuses any consent-listed or private recording, and any title
+those match, and checks the envelope's own title again before fetching anything behind it. It ends
+by saying how many it refused.
+
+**On the homelab server,** with uv installed for your user (see uv's own installation page,
+https://docs.astral.sh/uv/getting-started/installation/). The script runs from a clone of its own,
+at the commit you read, never from `$REPO_DIR`: that checkout is the deployment's, and the boot
+unit starts the containers from it. Use branch `stage-2b`'s commit until stage 2b's first phase is
+merged, then `main`'s.
+```bash
+SPIKE_SRC="$HOME/recordings-spike"           # the spikes' own clone
+SPIKE_COMMIT="<commit>"                       # the commit whose script you read
+git clone "$(git -C "$REPO_DIR" remote get-url origin)" "$SPIKE_SRC"
+git -C "$SPIKE_SRC" switch --detach "$SPIKE_COMMIT"
+cd "$SPIKE_SRC" && uv sync --frozen
+install -d -m 700 "$RECORDINGS_HOME/spike"
+${EDITOR:-vi} "$RECORDINGS_HOME/spike/config.toml"
+export RECORDINGS_CONFIG="$RECORDINGS_HOME/spike/config.toml"
+```
+Each session clones afresh, at the commit it runs. The session's own config uses this server's paths, because the containers'
+`/archive`, `/state` and `/consent` don't exist out here: `[archive] path` and `default_timezone`,
+`[state] path`, and `[plaud] consent_list` (the list's path on this server). It holds no secret.
+The script adds the deployment's own `[plaud] auto_private_patterns` and `keep_out_word` (from
+`$REPO_DIR/config.toml`, or `--production-config`) and every word the worker has enforced (from
+`state.db`) to whatever this file sets, so nothing there needs copying.
+
+**The session's sign-in,** on the Mac, under a temporary `HOME`, so the Mac's own Plaud sign-ins
+are untouched. The token file goes into the spike folder without being printed. `HOMELAB` and
+`SRV_HOME` are as section 3 sets them.
+```bash
+tmphome="$(mktemp -d)" && chmod 700 "$tmphome"
+HOME="$tmphome" plaud login
+ls -A "$tmphome" "$tmphome/.plaud"
+ssh "$HOMELAB" "umask 077 && mkdir -p '$SRV_HOME/spike/home/.plaud' && cat > '$SRV_HOME/spike/home/.plaud/tokens.json'" < "$tmphome/.plaud/tokens.json"
+rm -rf "$tmphome"
+```
+`ls -A` shows file names only. If the CLI wrote its sign-in somewhere else under `$tmphome`, copy
+that file instead, to the same place on the server. If it wrote none there at all (it keeps the
+sign-in elsewhere, such as the system keychain), stop: that is S1's result, and the token store's
+plan (stage 2b spec §10.3) needs a new decision before session A can go on.
+
+**Each spike,** on the homelab server, in that shell, in `$SPIKE_SRC`: `uv run python
+scripts/plaud_spike.py s1`, and so on. Exit 78 means the guard refused before any call; it says
+why.
+
+**Session A** (s1, s2, s4, s3):
+1. Before the session, find the token URL and how the vendor CLI refreshes: its own refresh
+   request names the URL, its grant type, whether it sends a `client_id`, its content type and its
+   headers. Read them in the CLI's installed code on the Mac, or in `audio-router`'s client (its
+   `src/` only), never in a token file. S1 doesn't print the URL.
+2. Make the session's sign-in (above), then `s1`. If it finds no refresh token, stop (spec §18).
+   If the key names include `client_id`, S2 and S4 send it with each refresh.
+3. `s2 --token-url <the token URL>`, then `s4 --token-url <the token URL>`. If S2 says "compare
+   this request with the vendor CLI's own refresh", don't read the refusal as the design failing
+   yet. Compare the script's request (`_refresh_fields` and `_post_form`: a form POST with
+   `grant_type=refresh_token`, the refresh token and any `client_id`,
+   `application/x-www-form-urlencoded`, `Accept: application/json` and urllib's own `User-Agent`)
+   with what step 1 found:
+   - **They differ:** the script needs a new commit, which Dan reviews; then a fresh session
+     sign-in and S2 again. That is not a design failure.
+   - **They match:** sign in under a new temporary `HOME` on the Mac
+     (`cmphome="$(mktemp -d)" && chmod 700 "$cmphome" && HOME="$cmphome" plaud login`) and let the
+     CLI refresh there (its own refresh, or any call once its access token has expired). If the
+     Mac refreshes while the server is still refused, that is S2's "refused from the server's
+     address": stop and ask Dan. If the Mac is refused too, stop and ask Dan.
+4. S3, the baseline first: `s3`, which must say "signed in: yes". S2 replays the old refresh
+   token, and a server that detects reuse may sign the session out for that; then make a fresh
+   session sign-in and run `s3` again until it says yes, so a sign-out below is the new sign-in's
+   doing.
+5. Then three sign-ins, each followed by `s3`: Plaud's web app; the Plaud MCP's `login` on the
+   Mac; the vendor CLI under another temporary `HOME`
+   (`otherhome="$(mktemp -d)" && chmod 700 "$otherhome" && HOME="$otherhome" plaud login`).
+   Record which one, if any, makes `s3` say "signed in: no".
+
+**Session B** (s5, s7, s8, s10, s12, s11): a fresh session sign-in, then each spike in that
+order. S7, S8, S11 and S12 take one `--id` per recording you name for it (a Plaud ID or an
+archive recording ID): none private, none consent-listed.
+
+**Session C** (s9), on a short clip you title on the phone, before it uploads, starting with the
+keep-out word, and that isn't private:
+1. From the moment the phone transfers it, run `s9` with no `--id` every minute or so. Each row
+   it prints is the newest listed, by its 8-hex name, with whether its title starts with the
+   keep-out word and how old it is. When the clip shows (the word: yes, a few minutes old), its
+   name is the clip's `--id`. Record (a): the minutes from the transfer, and whether the word was
+   there in its first listing.
+2. `s9 --id <its name> --own-clip`: the baseline. The script keeps what it saw, and the clip's
+   ID, in the spike folder. `--own-clip` is refused for a recording that is in the archive.
+3. (b) Generate a transcript and a summary, then run it again: whether the title kept the word,
+   and how long until the transcript and notes appeared.
+4. (c) One edit at a time, each followed by the same `s9 --id <its name> --own-clip`: rename a
+   speaker; rename the title, keeping the word; regenerate a note (and run it once more while
+   the note is still in progress) and add an in-app note; edit a transcript line; move it to a
+   folder; delete it to the trash (the run then says whether it is listed, and what `files/{id}`
+   answers) and restore it. Each run prints which parts and listing fields changed, and the
+   seconds since the last run.
+5. At the end, delete the clip in Plaud.
+
+**At the end of each session,** delete the spike folder, the session's sign-in with it, and the
+clone:
+```bash
+rm -rf "$RECORDINGS_HOME/spike"
+rm -rf "$SPIKE_SRC"
+```
+After session A, on the Mac, also delete the temporary `HOME`s of steps 3 and 5, with the live
+sign-ins in them (the session's own was deleted once it was copied):
+```bash
+rm -rf "$cmphome" "$otherhome"
+```
+
+**Results.** After each session, fill in its date, the commit it ran and each outcome. Never a
+recording's date, time or duration, a token, a title or an ID.
+
+| Spike | Session, date, commit | Outcome |
+|---|---|---|
+| S1 the token's shape and lifetime | A, | |
+| S2 refresh and rotation | A, | |
+| S4 a refused refresh | A, | |
+| S3 a second sign-in elsewhere | A, | |
+| S5 the listing's shape and paging | B, | |
+| S7 the ID form | B, | |
+| S8 the envelope and volatility | B, | |
+| S10 pacing | B, | |
+| S12 time zones | B, | |
+| S11 a large download | B, | |
+| S9 what an edit looks like | C, | |
 
 ## 2. Deploy 2a against an empty, initialised archive
 
