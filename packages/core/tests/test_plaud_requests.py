@@ -3,9 +3,13 @@ worker handles Keep it here alone; every other kind comes with a later phase. Sy
 nothing here reaches Plaud."""
 
 import json
+import logging
 import os
+import sqlite3
 import subprocess
 import sys
+import threading
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -24,6 +28,8 @@ from recordings.plaud.requests import (
     KINDS,
     NOT_YET,
     QUEUED,
+    UNREADABLE_ROW,
+    NotSaved,
     PlaudRequest,
     queued_after,
     worker_down,
@@ -269,3 +275,88 @@ def test_finished_and_refused_rows_are_pruned_after_7_days(state):
     assert requests.prune(state, now=T0 + timedelta(days=6)) == 0
     assert requests.prune(state, now=T0 + timedelta(days=8)) == 2
     assert rows(state) == []
+
+
+@contextmanager
+def exclusive(state: State, release_after: float):
+    """Another connection holding state.db with locking_mode=EXCLUSIVE (every reader and writer
+    waits), released by a timer after `release_after` seconds, or at the end of the block."""
+    other = sqlite3.connect(state.db_path, isolation_level=None, check_same_thread=False)
+    other.execute("PRAGMA locking_mode=EXCLUSIVE")
+    other.execute("SELECT COUNT(*) FROM meta").fetchone()
+    probe = sqlite3.connect(state.db_path, timeout=0)
+    with closing(probe), pytest.raises(sqlite3.OperationalError):  # the hold works
+        probe.execute("SELECT COUNT(*) FROM meta").fetchone()
+    timer = threading.Timer(release_after, other.close)
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.join()  # it frees the lock after the block, as a slow writer would
+
+
+def test_an_insert_that_runs_out_of_time_saves_no_row_even_when_the_lock_frees_later(state):
+    # why: spec P6 and §15.1. "The request couldn't be saved" must mean no row: a reader stuck
+    # behind a lock (the heartbeat read) used to go on and insert after the answer was given.
+    up(state)
+    with exclusive(state, release_after=0.8):
+        started = requests.monotonic()
+        with pytest.raises((sqlite3.Error, NotSaved)):
+            requests.insert(
+                state,
+                req("keep-here", 1, recording_ids=(R1,)),
+                now=T0,
+                timezone_name=TZ,
+                deadline=started + 0.3,
+            )
+        assert requests.monotonic() - started < 0.7
+    assert rows(state) == []
+
+
+def test_a_deadline_that_passes_before_the_insert_rolls_it_back(state, monkeypatch):
+    # why: the same promise when every wait was short but their sum was not (a 0.8 s read, then a
+    # lock freed at 1.1 s): the deadline is checked again right before the INSERT.
+    up(state)
+    clock = [0.0]
+    monkeypatch.setattr(requests, "monotonic", lambda: clock[0])
+
+    def slow_probe(state):
+        clock[0] = 5.0  # the lock probe and the reads took longer than the time left
+        return None
+
+    monkeypatch.setattr("recordings.plaud.runlock.plaud_holder", slow_probe)
+    with pytest.raises(NotSaved):
+        requests.insert(
+            state, req("keep-here", 1, recording_ids=(R1,)), now=T0, timezone_name=TZ, deadline=1.0
+        )
+    assert rows(state) == []
+
+
+def test_a_handler_that_raises_fails_the_request_and_logs_no_text(
+    setup, make_worker, monkeypatch, caplog
+):
+    def broken(worker, claimed):
+        raise RuntimeError("Week 4 private title")
+
+    monkeypatch.setitem(worker_module.HANDLERS, "keep-here", broken)
+    w = make_worker()
+    insert(w.state, req("keep-here", 1, recording_ids=(R1,)))
+    with caplog.at_level(logging.INFO):
+        w.tick()
+    assert answer(w.state, 1) == ("failed", "error: `RuntimeError`")
+    assert "private title" not in caplog.text and "RuntimeError" in caplog.text
+
+
+def test_a_row_that_cant_be_read_is_failed_not_retried(state):
+    up(state)
+    for n, (ids, queued) in enumerate(
+        [("not json", T0.isoformat()), ("[]", "last Tuesday")], start=1
+    ):
+        insert(state, req("keep-here", n, recording_ids=(R1,)))
+        with state.db() as db:
+            db.execute(
+                "UPDATE plaud_requests SET recording_ids = ?, queued_at = ? WHERE request_id = ?",
+                (ids, queued, f"request-{n:04d}"),
+            )
+        assert requests.claim_next(state, now=T0) is None
+        assert answer(state, n) == ("failed", UNREADABLE_ROW)

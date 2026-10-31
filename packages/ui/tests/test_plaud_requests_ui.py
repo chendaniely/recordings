@@ -14,9 +14,17 @@ import pytest
 from recordings.config import load_config
 from recordings.init import init_archive
 from recordings.plaud import requests
-from recordings.plaud.requests import KINDS, MAX_PLAUD_IDS, MAX_RESYNC_IDS, NOT_YET, PlaudRequest
+from recordings.plaud.requests import (
+    KINDS,
+    MAX_PLAUD_IDS,
+    MAX_RESYNC_IDS,
+    NOT_YET,
+    UNREADABLE_ROW,
+    PlaudRequest,
+)
 from recordings.sentinel import MIRROR
 from recordings.state import State
+from recordings_ui.app import NO_CONFIG
 from recordings_ui.plaud import (
     BAD_ID,
     DEMO_REASON,
@@ -69,8 +77,8 @@ def archive(tmp_path):
 
 
 def test_check_request_refuses_unknown_kinds_bad_ids_caps_and_extra_keys():
-    assert check_request(raw(recording_ids=[RID, RID], plaud_ids=[PLAUD_A, PLAUD_A])) == (
-        PlaudRequest("abcdef12", "keep-here", (PLAUD_A,), (RID,), False)
+    assert check_request(raw(recording_ids=[RID, RID])) == (
+        PlaudRequest("abcdef12", "keep-here", (), (RID,), False)
     )
     assert check_request(raw(kind="delete")) == Refusal("abcdef12", UNKNOWN_KIND)
     assert check_request(raw(kind=["sync"])) == Refusal("abcdef12", UNKNOWN_KIND)
@@ -93,8 +101,8 @@ def test_id_lists_shiny_hands_over_as_tuples_are_read():
     # why: Shiny hands an array inside an input value over as a tuple (its lists_to_tuples), so a
     # real browser's request holds tuples where the tests above send lists. A lone string isn't a
     # list of IDs.
-    sent = raw(recording_ids=(RID, RID), plaud_ids=(PLAUD_A,))
-    assert check_request(sent) == PlaudRequest("abcdef12", "keep-here", (PLAUD_A,), (RID,), False)
+    sent = raw(recording_ids=(RID, RID))
+    assert check_request(sent) == PlaudRequest("abcdef12", "keep-here", (), (RID,), False)
     assert check_request(raw(recording_ids=RID)) == Refusal("abcdef12", UNREADABLE)
     assert check_request(raw(plaud_ids=PLAUD_A)) == Refusal("abcdef12", UNREADABLE)
 
@@ -214,3 +222,54 @@ def test_the_request_checks_import_without_sqlite3():
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert done.stdout.strip() == "[]"
+
+
+def test_a_plaud_id_is_under_128_characters():
+    # why: spec §9.3, "under 128 characters".
+    ok = check_request(raw(kind="import", plaud_ids=["x" * 127]))
+    assert ok == Refusal("abcdef12", NOT_YET)  # it passes the checks; its handler comes later
+    assert check_request(raw(kind="import", plaud_ids=["x" * 128])) == Refusal("abcdef12", BAD_ID)
+
+
+def test_keep_it_here_never_carries_what_it_doesnt_use():
+    # why: spec §9.3, a request never carries a title. A title with no space fits a Plaud ID's
+    # shape, so Keep it here, which uses recording IDs alone, refuses Plaud IDs and `all`.
+    titled = raw(plaud_ids=["Coffee-chat-about-grant-timelines"])
+    assert check_request(titled) == Refusal("abcdef12", UNREADABLE)
+    assert check_request(raw(all=True)) == Refusal("abcdef12", UNREADABLE)
+
+
+def test_names_that_repeat_another_module_are_that_modules():
+    # why: app.py's phrase and the row's are shown beside these; nothing else pins them equal.
+    assert NO_CONFIG_REASON == NO_CONFIG
+    assert UNREADABLE == UNREADABLE_ROW
+
+
+def test_a_read_only_state_db_answers_not_saved_at_once(archive, run):
+    # Review Focus 5: a state.db this process may not write.
+    _, state, _ = archive
+    read_only = State.read_only(state.path)
+    started = time.monotonic()
+    reply = run(submit(read_only, raw(), now=T0, timezone_name="UTC", reason=None))
+    assert (reply["state"], reply["message"]) == ("refused", NOT_SAVED)
+    assert time.monotonic() - started < 1.0
+    assert count(state) == 0
+
+
+def test_a_lock_freed_after_the_answer_saves_no_row(archive, run):
+    # why: spec P6. NOT_SAVED means no row: with every reader and writer held up by another
+    # connection (locking_mode=EXCLUSIVE) for 1.5 s, the press is answered within the second, and
+    # when the lock frees the request is not inserted behind that answer.
+    _, state, _ = archive
+    other = sqlite3.connect(state.db_path, isolation_level=None, check_same_thread=False)
+    other.execute("PRAGMA locking_mode=EXCLUSIVE")
+    other.execute("SELECT COUNT(*) FROM meta").fetchone()
+    timer = threading.Timer(1.5, other.close)
+    timer.start()
+    started = time.monotonic()
+    reply = run(submit(state, raw(), now=T0, timezone_name="UTC", reason=None))
+    took = time.monotonic() - started
+    timer.join()
+    assert (reply["state"], reply["message"]) == ("refused", NOT_SAVED)
+    assert took < 1.3
+    assert count(state) == 0

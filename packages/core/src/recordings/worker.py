@@ -3,10 +3,11 @@ how each scheduled turn ends.
 
 The process (Task 13): `recordings worker` is one process with a main thread that owns its Writer
 and a heartbeat thread (spec §9.2). The main thread ticks every 2 seconds: it re-reads the consent
-list when its file changed, applies late consent listings, keeps the consent and
-private-unwritten blockers as the list and the archive say, and runs a scheduled turn when one is
-due (§9.7). It imports no Plaud client, token store or sync at module level: Phase 2 passes its
-turn in, so `web`, which reads `alive` from here, never pulls them in.
+list when its file changed, applies late consent listings, keeps the consent and private-unwritten
+blockers as the list and the archive say, serves one request from the UI (Task 14, §9.3: Keep it
+here alone in Phase 1), and runs a scheduled turn when one is due (§9.7). It imports no Plaud
+client, token store or sync at module level: Phase 2 passes its turn in, so `web`, which reads
+`alive` from here, never pulls them in.
 
 `conclude_turn` is the one place the sync tells the outside how it is: it pings the sync's own
 Healthchecks check only after a scheduled sync that is good and that nothing holds up. The check's
@@ -233,14 +234,22 @@ def heartbeat_once(state: State, progress: Progress, *, now: datetime) -> None:
     state.set_meta(HEARTBEAT_KEY, json.dumps(progress.beat(now)))
 
 
-def _heartbeat(state: State) -> dict | None:
-    """The last heartbeat, or None when there is none or it can't be read."""
+def parse_heartbeat(raw: str | None) -> dict | None:
+    """A heartbeat row's value as a dict, or None when there is none or it isn't one."""
     try:
-        raw = state.meta(HEARTBEAT_KEY)
         beat = json.loads(raw) if raw else None
-    except (StateError, sqlite3.Error, ValueError):
+    except ValueError:
         return None
     return beat if isinstance(beat, dict) else None
+
+
+def last_heartbeat(state: State) -> dict | None:
+    """The last heartbeat, or None when there is none or it can't be read. Status and the request
+    replies read it through here."""
+    try:
+        return parse_heartbeat(state.meta(HEARTBEAT_KEY))
+    except (StateError, sqlite3.Error):
+        return None
 
 
 def _within(t: datetime | None, now: datetime, limit: timedelta) -> bool:
@@ -250,13 +259,18 @@ def _within(t: datetime | None, now: datetime, limit: timedelta) -> bool:
 
 
 def alive(state: State, *, now: datetime) -> tuple[bool, str | None]:
-    """Spec §9.2: a heartbeat under 90 seconds old, and progress within 15 minutes. While the start
-    is unfinished (`starting`, or its patterns pass, `checking`), within 30 minutes of
-    `starting_since`, the first of the starts that never finished: a pass at start that takes
-    longer reads STUCK, as a start does. While `starting`, that is all (Writer.open may rebuild the
-    index for a long while); while `checking`, its progress counts too. A failed start is FAILED,
-    however old. `recordings worker --alive` and Status read it."""
-    beat = _heartbeat(state)
+    """`beat_alive` on the last heartbeat. Spec §9.2: a heartbeat under 90 seconds old, and
+    progress within 15 minutes. While the start is unfinished (`starting`, or its patterns pass,
+    `checking`), within 30 minutes of `starting_since`, the first of the starts that never
+    finished: a pass at start that takes longer reads STUCK, as a start does. While `starting`,
+    that is all (Writer.open may rebuild the index for a long while); while `checking`, its
+    progress counts too. A failed start is FAILED, however old. `recordings worker --alive` and
+    Status read it."""
+    return beat_alive(last_heartbeat(state), now=now)
+
+
+def beat_alive(beat: dict | None, *, now: datetime) -> tuple[bool, str | None]:
+    """`alive` for a heartbeat already read (the request insert reads it inside its transaction)."""
     if beat is None:
         return False, SILENT
     phase = beat.get("phase")
@@ -278,7 +292,7 @@ def alive(state: State, *, now: datetime) -> tuple[bool, str | None]:
 def _starting_since(state: State, now: datetime) -> datetime:
     """The previous heartbeat's `starting_since` when its phase was UNFINISHED: that start never
     finished, so a restart doesn't renew the 30 minutes. Otherwise now."""
-    beat = _heartbeat(state)
+    beat = last_heartbeat(state)
     if beat is not None and beat.get("phase") in UNFINISHED:
         since = parse_stamp(beat.get("starting_since"))
         if since is not None and since <= now:
@@ -306,10 +320,10 @@ class _Stopped(Exception):
 class Worker:
     """`recordings worker` (spec §9.2, §9.7): one process, a main thread that owns its Writer, and
     a heartbeat thread. The main thread ticks every TICK seconds: it re-reads the consent list
-    when its file changed and applies late consent listings, then runs a scheduled turn when one
-    is due. It never imports the Plaud client, the token store or the sync at module level: Phase
-    2 passes its turn in (`turn`), so `recordings_ui`, which reads `alive` from here, never
-    pulls them in.
+    when its file changed and applies late consent listings, serves one request from the UI (a
+    row in `plaud_requests`, checked again, §9.3), then runs a scheduled turn when one is due. It
+    never imports the Plaud client, the token store or the sync at module level: Phase 2 passes
+    its turn in (`turn`), so `recordings_ui`, which reads `alive` from here, never pulls them in.
 
     No token, no consent list, or a bad keep_out_word leaves it up, healthy and idle (§9.2): the
     ticks go on, and Status and doctor say why. What each tick writes (K_CONSENT, the blockers) is

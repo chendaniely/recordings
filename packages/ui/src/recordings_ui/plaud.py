@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -32,6 +33,8 @@ from recordings.plaud.requests import (
     MAX_RESYNC_IDS,
     NOT_YET,
     REQUEST_ID_RE,
+    SAVE_WAIT,
+    UNREADABLE_ROW,
     PlaudRequest,
     Reply,
 )
@@ -44,7 +47,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-UNREADABLE = "The request couldn't be read."
+UNREADABLE = UNREADABLE_ROW  # the worker's phrase for a row it can't read is the same
 UNKNOWN_KIND = "That isn't a Plaud request."
 BAD_ID = "An ID isn't valid."
 TOO_MANY_PLAUD = f"At most {MAX_PLAUD_IDS:,} Plaud recordings at a time."
@@ -67,7 +70,7 @@ class Refusal:
 
 def _opaque(plaud_id: str) -> bool:
     """A Plaud ID as the listing gives it: visible ASCII, no space, so never room for a title."""
-    return 0 < len(plaud_id) <= MAX_PLAUD_ID_LEN and all("!" <= c <= "~" for c in plaud_id)
+    return 0 < len(plaud_id) < MAX_PLAUD_ID_LEN and all("!" <= c <= "~" for c in plaud_id)
 
 
 def check_request(raw: object) -> PlaudRequest | Refusal:
@@ -106,6 +109,8 @@ def check_request(raw: object) -> PlaudRequest | Refusal:
             parse_id(recording_id)
         except (TypeError, ValueError):
             return Refusal(request_id, BAD_ID)
+    if kind == "keep-here" and (plaud_ids or select_all):
+        return Refusal(request_id, UNREADABLE)  # it uses recording IDs alone, and carries no more
     if kind not in HANDLED:
         return Refusal(request_id, NOT_YET)  # its handler comes with a later phase
     return PlaudRequest(
@@ -132,6 +137,10 @@ def cannot_request_reason(settings: Settings, state: State | None) -> str | None
     return None
 
 
+def _refused(request_id: str, kind: str | None, message: str) -> dict:
+    return Reply(request_id, kind, "refused", message).to_dict()
+
+
 async def submit(
     state: State | None,
     raw: object,
@@ -141,31 +150,38 @@ async def submit(
     reason: str | None,
 ) -> dict:
     """One `plaud_request`, answered within a second (spec P6): a refusal, or the insert's reply.
-    The demo's and the state's reasons come before NOT_YET, as the buttons show them. A state.db
-    that can't be used, or doesn't answer within SUBMIT_WAIT, answers NOT_SAVED: never a spinner
-    or a traceback (Review Focus 5)."""
+    The demo's and the state's reasons come before NOT_YET, as the buttons show them.
+
+    NOT_SAVED means no row. The insert is given a deadline (SAVE_WAIT, inside SUBMIT_WAIT) that
+    every wait it makes uses, and it rolls back once it has passed; a state.db that can't be used
+    answers NOT_SAVED at once: never a spinner or a traceback (Review Focus 5). `wait_for` here is
+    only a backstop for a commit that hangs past that deadline: its reply stays NOT_SAVED, though
+    that one row may still land, so a session follows the `request_id` it sent (Task 20)."""
     checked = check_request(raw)
     blocked = reason if reason is not None else NO_STATE_REASON if state is None else None
     if isinstance(checked, Refusal):
         shown = blocked if checked.message == NOT_YET and blocked is not None else checked.message
-        return Reply(checked.request_id or "", None, "refused", shown).to_dict()
+        return _refused(checked.request_id or "", None, shown)
     if blocked is not None:
-        return Reply(checked.request_id, checked.kind, "refused", blocked).to_dict()
+        return _refused(checked.request_id, checked.kind, blocked)
     import sqlite3  # here: the Pages demo's Pyodide has none, and never gets this far
 
     try:
         reply = await asyncio.wait_for(
             asyncio.to_thread(
-                requests.insert, state, checked, now=now, timezone_name=timezone_name
+                requests.insert,
+                state,
+                checked,
+                now=now,
+                timezone_name=timezone_name,
+                deadline=time.monotonic() + SAVE_WAIT,
             ),
             SUBMIT_WAIT,
         )
-    except (sqlite3.Error, OSError) as exc:  # asyncio's TimeoutError is an OSError
+    except (sqlite3.Error, OSError) as exc:  # NotSaved and asyncio's TimeoutError are OSErrors
         log.warning("a Plaud request couldn't be saved (%s)", type(exc).__name__)
-        return Reply(checked.request_id, checked.kind, "refused", NOT_SAVED).to_dict()
+        return _refused(checked.request_id, checked.kind, NOT_SAVED)
     except Exception as exc:  # noqa: BLE001  a bug still answers, with its class only
         log.warning("a Plaud request failed (%s)", type(exc).__name__)
-        return Reply(
-            checked.request_id, checked.kind, "refused", f"error: `{type(exc).__name__}`"
-        ).to_dict()
+        return _refused(checked.request_id, checked.kind, f"error: `{type(exc).__name__}`")
     return reply.to_dict()

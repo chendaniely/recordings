@@ -254,18 +254,19 @@ class State:
         state._read_only = True
         return state
 
-    def _connect(self, mode: str) -> sqlite3.Connection:
+    def _connect(self, mode: str, timeout: float = 30) -> sqlite3.Connection:
         """A URI with an explicit mode: `rw` never creates a missing file, as a plain path would."""
         uri = f"{self.db_path.absolute().as_uri()}?mode={mode}"
-        return sqlite3.connect(uri, uri=True, timeout=30)
+        return sqlite3.connect(uri, uri=True, timeout=timeout)
 
     @contextmanager
-    def db(self) -> Iterator[sqlite3.Connection]:
+    def db(self, *, timeout: float = 30) -> Iterator[sqlite3.Connection]:
         """One connection per use: committed on success, rolled back on error, always closed.
+        `timeout` is how many seconds it waits for a lock another connection holds.
 
         It opens an existing state.db only: a missing one is an error, never a new, empty file.
         """
-        with closing(self._connect(self._mode)) as conn:
+        with closing(self._connect(self._mode, timeout)) as conn:
             conn.execute("PRAGMA synchronous=FULL")
             with conn:
                 yield conn

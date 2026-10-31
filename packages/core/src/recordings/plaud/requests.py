@@ -23,12 +23,15 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Literal
 
-from recordings.plaud.when import local_hhmm, parse_stamp
+from recordings.plaud.when import local_hhmm, parse_stamp, utc_iso
 
 if TYPE_CHECKING:
+    import sqlite3
+
     from recordings.state import State
 
 KINDS = (
@@ -55,13 +58,17 @@ MAX_RESYNC_IDS = 1_000
 MAX_PLAUD_ID_LEN = 128
 EXPIRE_AFTER = timedelta(hours=1)
 KEEP_FINISHED = timedelta(days=7)
-# How long an insert waits for state.db's write lock: spec P6 answers a press within a second, so a
-# busy state.db is "couldn't be saved" well inside it, never a row that lands after that answer.
-SAVE_WAIT_MS = 500
+# How long an insert has, from the press, to get its row in (spec P6 answers within a second): the
+# deadline covers every wait it makes, and a request that misses it is rolled back, never saved.
+SAVE_WAIT = 0.8
 REQUEST_ID_RE = re.compile(r"[A-Za-z0-9_-]{8,64}")
 QUEUED = "Queued"
 INTERRUPTED = "interrupted"
 UNREADABLE_ROW = "The request couldn't be read."
+
+
+class NotSaved(TimeoutError):
+    """The insert ran out of its time and rolled back: no row was saved."""
 
 
 def queued_after(started: str) -> str:
@@ -114,10 +121,6 @@ class Claimed:
     queued_at: datetime
 
 
-def _iso(t: datetime) -> str:
-    return t.astimezone(UTC).isoformat()
-
-
 def _hhmm(t: datetime, timezone_name: str) -> str:
     from zoneinfo import ZoneInfo  # here: only insert's replies format a time
 
@@ -147,39 +150,58 @@ def _reply(row: tuple) -> Reply:
     )
 
 
-def _notice(state: State, *, now: datetime, timezone_name: str) -> str:
-    """What a queued request's reply says, read before the write lock: the worker down (by its
-    heartbeat), or a run holding `plaud`, or plain "Queued"."""
+def _notice(conn: sqlite3.Connection, state: State, *, now: datetime, timezone_name: str) -> str:
+    """What a queued request's reply says, read inside the insert's transaction (so within its
+    deadline): the worker down (by its heartbeat), or a run holding `plaud`, or plain "Queued"."""
     from recordings.plaud.runlock import plaud_holder  # the lock probe: fcntl, server only
-    from recordings.worker import HEARTBEAT_KEY, alive
+    from recordings.worker import HEARTBEAT_KEY, beat_alive, parse_heartbeat
 
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (HEARTBEAT_KEY,)).fetchone()
+    beat = parse_heartbeat(row[0] if row else None)
     holder = plaud_holder(state)
-    ok, _ = alive(state, now=now)
-    if not ok:
-        try:
-            beat = json.loads(state.meta(HEARTBEAT_KEY) or "null")
-        except ValueError:
-            beat = None
-        last = parse_stamp(beat.get("at")) if isinstance(beat, dict) else None
+    if not beat_alive(beat, now=now)[0]:
+        last = parse_stamp(beat.get("at")) if beat is not None else None
         return worker_down("never" if last is None else _hhmm(last, timezone_name))
     if holder is not None:
         return queued_after(_hhmm(holder[1], timezone_name))
     return QUEUED
 
 
-def insert(state: State, req: PlaudRequest, *, now: datetime, timezone_name: str) -> Reply:
+def insert(
+    state: State,
+    req: PlaudRequest,
+    *,
+    now: datetime,
+    timezone_name: str,
+    deadline: float | None = None,
+) -> Reply:
     """Spec §9.3's insert, in one BEGIN IMMEDIATE transaction, so a request_id sent twice at once
-    is still one row. It waits at most SAVE_WAIT_MS for state.db's write lock; sqlite3.Error
-    propagates (recordings_ui.plaud.submit answers "The request couldn't be saved")."""
-    notice = _notice(state, now=now, timezone_name=timezone_name)
-    with state.db() as conn:
-        conn.execute(f"PRAGMA busy_timeout = {SAVE_WAIT_MS}")
+    is still one row. `deadline` is a `time.monotonic()` reading (default: SAVE_WAIT from now).
+    "The request couldn't be saved" means no row, so every wait here (the connection, the write
+    lock, the heartbeat read) uses the time left, and the deadline is checked again right before
+    the INSERT and before the commit: once it has passed the transaction rolls back and NotSaved
+    is raised. sqlite3.Error propagates too (recordings_ui.plaud.submit answers both with
+    NOT_SAVED). Only a commit that hangs past the deadline can still land a row; submit's own
+    wait is a backstop for that, and a session follows its `request_id` to learn how it ended."""
+    if deadline is None:
+        deadline = monotonic() + SAVE_WAIT
+
+    def left() -> float:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise NotSaved
+        return remaining
+
+    with state.db(timeout=left()) as conn:
+        conn.execute(f"PRAGMA busy_timeout = {int(left() * 1000)}")
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             f"SELECT {_ROW} FROM plaud_requests WHERE request_id = ?", (req.request_id,)
         ).fetchone()
         if row is not None:
             return _reply(row)  # a repeated request_id is that row
+        notice = _notice(conn, state, now=now, timezone_name=timezone_name)
+        left()  # right before the INSERT
         conn.execute(
             "INSERT INTO plaud_requests (request_id, kind, plaud_ids, recording_ids, select_all, "
             "state, queued_at, message) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)",
@@ -189,10 +211,11 @@ def insert(state: State, req: PlaudRequest, *, now: datetime, timezone_name: str
                 json.dumps(list(req.plaud_ids)),
                 json.dumps(list(req.recording_ids)),
                 int(req.select_all),
-                _iso(now),
+                utc_iso(now),
                 notice,
             ),
         )
+        left()  # and before the commit
     return Reply(req.request_id, req.kind, "queued", notice)
 
 
@@ -225,20 +248,27 @@ def claim_next(state: State, *, now: datetime) -> Claimed | None:
                     recording_ids=tuple(str(r) for r in recording_ids),
                     select_all=bool(row[5]),
                 ),
-                queued_at=datetime.fromisoformat(row[6]),
+                queued_at=_stamp(row[6]),
             )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # an unreadable column or time
             conn.execute(
                 "UPDATE plaud_requests SET state = 'failed', finished_at = ?, message = ? "
                 "WHERE id = ?",
-                (_iso(now), UNREADABLE_ROW, row[0]),
+                (utc_iso(now), UNREADABLE_ROW, row[0]),
             )
             return None
         conn.execute(
             "UPDATE plaud_requests SET state = 'running', started_at = ? WHERE id = ?",
-            (_iso(now), row[0]),
+            (utc_iso(now), row[0]),
         )
     return claimed
+
+
+def _stamp(raw: object) -> datetime:
+    when = parse_stamp(raw)
+    if when is None:
+        raise ValueError("not a time")
+    return when
 
 
 def progress(state: State, request_id: str, *, done: int, total: int) -> None:
@@ -261,7 +291,13 @@ def _end(
         conn.execute(
             "UPDATE plaud_requests SET state = ?, finished_at = ?, message = ?, result = ? "
             "WHERE request_id = ?",
-            (ended, _iso(now), message, json.dumps(dict(result)) if result else None, request_id),
+            (
+                ended,
+                utc_iso(now),
+                message,
+                json.dumps(dict(result)) if result else None,
+                request_id,
+            ),
         )
 
 
@@ -289,7 +325,7 @@ def at_start(state: State, *, now: datetime) -> tuple[int, int]:
         interrupted = conn.execute(
             "UPDATE plaud_requests SET state = 'failed', finished_at = ?, message = ? "
             "WHERE state = 'running'",
-            (_iso(now), INTERRUPTED),
+            (utc_iso(now), INTERRUPTED),
         ).rowcount
     return interrupted, expire(state, now=now)
 
@@ -299,7 +335,7 @@ def expire(state: State, *, now: datetime) -> int:
         return conn.execute(
             "UPDATE plaud_requests SET state = 'expired', finished_at = ? WHERE state = 'queued' "
             "AND datetime(queued_at) < datetime(?)",
-            (_iso(now), _iso(now - EXPIRE_AFTER)),
+            (utc_iso(now), utc_iso(now - EXPIRE_AFTER)),
         ).rowcount
 
 
@@ -308,5 +344,5 @@ def prune(state: State, *, now: datetime) -> int:
         return conn.execute(
             "DELETE FROM plaud_requests WHERE state IN ('done', 'failed', 'expired', 'refused') "
             "AND datetime(finished_at) < datetime(?)",
-            (_iso(now - KEEP_FINISHED),),
+            (utc_iso(now - KEEP_FINISHED),),
         ).rowcount

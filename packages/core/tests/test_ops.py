@@ -1080,9 +1080,9 @@ def test_a_read_only_state_makes_every_connection_read_only(writer, tmp_path, mo
     modes = []
     real = State._connect
 
-    def spy(self, mode):
+    def spy(self, mode, *rest):
         modes.append(mode)
-        return real(self, mode)
+        return real(self, mode, *rest)
 
     monkeypatch.setattr(State, "_connect", spy)
     state.backup_to(tmp_path / "copy" / "state.db")

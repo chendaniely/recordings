@@ -23,10 +23,10 @@ import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
-from recordings.plaud.when import parse_stamp
+from recordings.plaud.when import parse_stamp, utc_iso
 from recordings.refs import canonical_plaud_id
 from recordings.state import State
 
@@ -186,24 +186,17 @@ _DATING = (
 )
 
 
-def _utc(when: datetime) -> str:
-    """UTC ISO 8601; a naive datetime is UTC, as `when.parse_stamp` reads it (decision 47)."""
-    if not isinstance(when, datetime):
-        raise TypeError("a time must be a datetime")
-    return parse_stamp(when).astimezone(UTC).isoformat()
-
-
 def _encode(name: str, value: Any) -> Any:
     if name in _TIMES:
         if value is None:
             return None
         if not isinstance(value, datetime):
             raise TypeError(f"{name} takes a datetime")
-        return _utc(value)
+        return utc_iso(value)
     if name.endswith("_sha256") and value is not None and not _is_sha256(value):
         raise ValueError(f"{name} must be 64 lowercase hex characters (a hash, never a title)")
     if isinstance(value, datetime):
-        return _utc(value)
+        return utc_iso(value)
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, list | tuple | dict):
@@ -270,7 +263,7 @@ class PlaudDB:
             "INSERT INTO plaud_state (key, value, updated_at) VALUES (?, ?, ?) "
             "ON CONFLICT (key) DO UPDATE SET value = excluded.value, "
             "updated_at = excluded.updated_at",
-            (key, json.dumps(value, ensure_ascii=False), _utc(now)),
+            (key, json.dumps(value, ensure_ascii=False), utc_iso(now)),
         )
 
     def put(self, key: str, value: Any, *, now: datetime) -> None:
@@ -389,7 +382,7 @@ class PlaudDB:
                 "INSERT INTO plaud_events (at, kind, recording_id, canonical_plaud_id, detail, "
                 "open) VALUES (?, ?, ?, ?, ?, ?)",
                 (
-                    _utc(now),
+                    utc_iso(now),
                     kind,
                     recording_id,
                     canonical_plaud_id(plaud_id) if plaud_id else None,
@@ -419,7 +412,7 @@ class PlaudDB:
         with self._db() as db:
             db.execute(
                 "UPDATE plaud_events SET open = 0, resolved_at = ? WHERE id = ?",
-                (_utc(now), event_id),
+                (utc_iso(now), event_id),
             )
 
     def change_kind(self, event_id: int, kind: str) -> None:
@@ -430,7 +423,7 @@ class PlaudDB:
 
     def events_since(self, since: datetime, kinds: Iterable[str]) -> list[Event]:
         kinds = tuple(kinds)
-        return self._events(f"at >= ? AND kind IN ({_marks(len(kinds))})", (_utc(since), *kinds))
+        return self._events(f"at >= ? AND kind IN ({_marks(len(kinds))})", (utc_iso(since), *kinds))
 
     # ---- plaud_private_checked: the auto-private marker (§13.2) -------------------------------
     def markers(self, recording_id: str) -> dict[str, Marker]:
@@ -472,7 +465,7 @@ class PlaudDB:
                         canonical_plaud_id(m.canonical_plaud_id),
                         m.title_sha256,
                         m.patterns_version,
-                        _utc(now),
+                        utc_iso(now),
                     )
                     for m in markers
                 ],
@@ -489,7 +482,7 @@ class PlaudDB:
     def prune(self, *, now: datetime) -> None:
         """The check log after 7 days; events after 90, except open flags (§22)."""
         with self._db() as db:
-            db.execute("DELETE FROM plaud_check_log WHERE at < ?", (_utc(now - CHECK_LOG_KEPT),))
+            db.execute("DELETE FROM plaud_check_log WHERE at < ?", (utc_iso(now - CHECK_LOG_KEPT),))
             db.execute(
-                "DELETE FROM plaud_events WHERE open = 0 AND at < ?", (_utc(now - EVENTS_KEPT),)
+                "DELETE FROM plaud_events WHERE open = 0 AND at < ?", (utc_iso(now - EVENTS_KEPT),)
             )

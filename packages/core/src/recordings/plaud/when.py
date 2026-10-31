@@ -29,6 +29,13 @@ def parse_stamp(value: object) -> datetime | None:
     return _aware(when)
 
 
+def utc_iso(when: datetime) -> str:
+    """UTC ISO 8601, the form state.db stores times in; a naive datetime is UTC (decision 47)."""
+    if not isinstance(when, datetime):
+        raise TypeError("a time must be a datetime")
+    return _aware(when).astimezone(UTC).isoformat()
+
+
 def local_hhmm(dt: datetime, tz: tzinfo) -> str:
     """`14:20`: the time in `tz`. A naive datetime is UTC, as `parse_stamp` reads one."""
     return _aware(dt).astimezone(tz).strftime("%H:%M")
