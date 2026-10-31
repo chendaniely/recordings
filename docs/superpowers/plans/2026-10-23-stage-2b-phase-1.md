@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 22: Status's sync panel, open.
+**Now:** Task 23: The Library and Details, open.
 
 ***
 
@@ -23180,11 +23180,11 @@ Spec §15.2, J5: plain sentences first, then the numbers, Details folded away; n
 - Produces: `export function SyncPanel({ panel }: { panel: SyncPanel }): JSX.Element`.
 - Also consumes Task 21's `SyncHoldLine` and `SyncBreakerLine` (with `whyId`: they don't say their reason, so the panel says it once with `reasonsFor` and `Reasons`, as the Sync screen does), `equationText`, `archiveText`, `consentText` and `n`, so the panel and the Sync screen word a hold, a breaker and the equations alike.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-22-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-22-base`
 
-- [ ] **Step 1: Check the docs first** (CLAUDE.md): the shinyreact skill's "Loading vs. recalculating" (`status` keeps drawing its last value while it redraws, so the panel never flashes) and the shadcn skill (`rules/composition.md`: no shadcn component is needed for a definition list or a disclosure; native `<details>` keeps Details folded without Radix state, and renders folded on the server). The commit names what was checked.
+- [x] **Step 1: Check the docs first** (CLAUDE.md): the shinyreact skill's "Loading vs. recalculating" (`status` keeps drawing its last value while it redraws, so the panel never flashes) and the shadcn skill (`rules/composition.md`: no shadcn component is needed for a definition list or a disclosure; native `<details>` keeps Details folded without Radix state, and renders folded on the server). The commit names what was checked.
 
-- [ ] **Step 2: Write the failing tests.** Create `packages/ui/frontend/src/components/SyncPanel.test.ts`:
+- [x] **Step 2: Write the failing tests.** Create `packages/ui/frontend/src/components/SyncPanel.test.ts`:
 
 ```ts
 import { createElement } from "react";
@@ -23389,9 +23389,9 @@ and replace the closing `});` of its `describe("StatusPage", …)` with:
 });
 ```
 
-- [ ] **Step 3: Run them; watch them fail:** `make test-js`. Expected: the typecheck (which `make test-js` runs before Vitest) fails with `Cannot find module './SyncPanel' or its corresponding type declarations`. (Once the panel exists, StatusPage's new test still fails, `expected -1 to be greater than …`, until Step 4 places it.)
+- [x] **Step 3: Run them; watch them fail:** `make test-js`. Expected: the typecheck (which `make test-js` runs before Vitest) fails with `Cannot find module './SyncPanel' or its corresponding type declarations`. (Once the panel exists, StatusPage's new test still fails, `expected -1 to be greater than …`, until Step 4 places it.)
 
-- [ ] **Step 4: The panel, and its place on Status.** Create `packages/ui/frontend/src/components/SyncPanel.tsx`:
+- [x] **Step 4: The panel, and its place on Status.** Create `packages/ui/frontend/src/components/SyncPanel.tsx`:
 
 ```tsx
 import type { ReactNode } from "react";
@@ -23537,11 +23537,11 @@ and inside the second `@media (max-width: 760px)` block, after Task 21's top bar
   .sync-numbers { grid-template-columns: minmax(0, 1fr); }
 ```
 
-- [ ] **Step 5: Run them; they pass:** `make test-js`. Expected: all pass.
+- [x] **Step 5: Run them; they pass:** `make test-js`. Expected: all pass.
 
-- [ ] **Step 6: Run the checks:** `uv run ruff format .`, `make check`, `make build`, `make e2e`. Expected: all pass (`test_the_status_page_shows_backups_and_disk` still finds Backups and Disk; the demo's panel sits above them).
+- [x] **Step 6: Run the checks:** `uv run ruff format .`, `make check`, `make build`, `make e2e`. Expected: all pass (`test_the_status_page_shows_backups_and_disk` still finds Backups and Disk; the demo's panel sits above them).
 
-- [ ] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(ui): 🤖 Status's sync panel: true sentences first, numbers that add up, details folded away
@@ -23564,7 +23564,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/ui/frontend/src/components/SyncPanel.tsx packages/ui/frontend/src/components/SyncPanel.test.ts packages/ui/frontend/src/components/StatusPage.tsx packages/ui/frontend/src/components/StatusPage.test.ts packages/ui/frontend/src/app.css`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 8: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 8: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (`d2cf475`, and the review's fix round `db9a546`; the listings above are the plan as written): a cause from the worker's recorded `gate` turn is `"no-sync"`, not `"problem"` (`_Read.held_by_gate`; Task 19's test recorded no turn); Status links to the Sync screen except in the demo and before any sync (`SyncSummary`'s `link="none"`); a line Needs attention holds isn't also a panel condition, and "failing since …" is said once, by the summary; with the records unreadable (no measured normaliser) the panel draws no numbers or Details; Accept waits for the gate, as the Sync screen's does; on a phone Details keeps `display: list-item` (its marker) and reaches 44 px with `padding-block: 12px`, measured 44.3 px at 320 px; the demo's panel draws no Next sync; one `CodeList`, a `consentBody`, and the Archive row only once listed.
 
 ### Task 23: The Library and Details
 
@@ -24849,7 +24851,7 @@ and to `pages/app.py`:
   .sync-page [data-slot=button], .sync-panel [data-slot=button] { width: 100%; min-height: 44px; }
   .sync-copy, .sync-jump { display: inline-flex; align-items: center; min-height: 44px; }
   .sync-check { min-width: 44px; min-height: 44px; }
-  .sync-more > summary, .sync-details > summary { padding-block: 12px; }
+  .sync-more > summary { padding-block: 12px; }  /* Status's Details has its own (Task 22) */
   .sync-row { flex-direction: column; align-items: stretch; }
   .sync-row > .sync-check { align-self: flex-start; }
 ```
@@ -24999,3 +25001,4 @@ Their full plans are written at their phase start, against the code as built and
 | 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | The Sync screen's structure (Task 21's standards review): one `RequestButton` for the `disabled`/`aria-describedby` pair written about twelve times; SyncPage as one ~270-line function; names (`b`, `off`, `parking`, `previewing`); the page compares the server's display strings (`FULL_UNKNOWN`, "No sync has run yet") where a field would do. | open |
 | 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | Keep it here's reply ("Queued", the worker down) shows in the Sync card's result line, not beside the flag pressed; the error branch shows `error.message`, as StatusPage does (Task 21's spec review). | open |
 | 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | Updated on Plaud's empty sentence ("Nothing changed on Plaud this week.") comes back once edit-sync measures Plaud's edits. | open: Phase 3's outline |
+| 22 | Minor | `packages/ui/src/recordings_ui/plaud.py`, `packages/ui/frontend/src/components/SyncPanel.tsx` | Signals read from display text or empty values (Task 22's fix round): `_panel_from` finds "failing (since" in the summary's sentence, `held_by_gate` repeats `SyncHealth.cause`'s order, and the panel takes an empty `details.normaliser` for unreadable records; a field each (`summary.says_failing`, `health.cause_kind`, `panel.unreadable`) would say it. A recorded `gate` turn keeps its reason, as no-sync, until the worker's next turn. | open |
