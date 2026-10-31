@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 18: The deploy guard asks `plaud`, and `make consent-add`, open.
+**Now:** Task 19: The view model, open.
 
 ***
 
@@ -17521,9 +17521,9 @@ Spec §17.3's guard, §12.1's `make consent-add`, and the runbook sections they 
   - `make consent-add ID='<id>'` (documented single-quoted everywhere, the usage error included: the Copy ID form holds backticks, which a shell runs in an unquoted or double-quoted word): `SERVER` and `REPO_DIR` from `local.mk` (git-ignored, `-include`d, expanded on the Mac); runs `scripts/consent_id.py`, then `ssh "$(SERVER)" "cd '$(REPO_DIR)' && sh docker/consent-add.sh '<id>' && sh docker/up-deployed.sh exec -T worker recordings plaud consent"`; non-zero on any failure, naming the step. make takes `ID` as written (`override ID := $(value ID)`, then `export ID`, guarded by `$(origin ID)`), so a `$(…)` in it never runs, and the recipe reads it from the environment, never pasted into the shell line.
   Two precisions. The list gets the canonical ID, which it matches whatever form Plaud lists. `ops-busy.py` with no lock name exits 2 (usage). A new list (none there yet) is made at mode 0600.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-18-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-18-base`
 
-- [ ] **Step 1: Write the failing tests.** `packages/core/tests/test_make_targets.py` (new):
+- [x] **Step 1: Write the failing tests.** `packages/core/tests/test_make_targets.py` (new):
 
 ```python
 """Make targets that reach the server (stage 2b spec §21's shell targets), run for real against a
@@ -17928,9 +17928,9 @@ def test_re_imports_stop_the_worker_and_mount_the_consent_folder():
     assert "consent-list.md:/consent" not in mounts
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_make_targets.py packages/core/tests/test_deploy_template.py packages/core/tests/test_runbook.py -q`. Expected: every test in `test_make_targets.py` errors in its `server` fixture with `FileNotFoundError` (it copies `docker/consent-add.sh`, which doesn't exist yet); the new probe tests fail (the old probe takes no lock name: with none it dies of an `IndexError`, exit 1, and it never looks at `plaud.lock`); the new runbook tests fail with `AssertionError: no heading '## Keep a recording out for good'`, and the re-import test on `rc stop worker`. None of the new tests is a pin.
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_make_targets.py packages/core/tests/test_deploy_template.py packages/core/tests/test_runbook.py -q`. Expected: every test in `test_make_targets.py` errors in its `server` fixture with `FileNotFoundError` (it copies `docker/consent-add.sh`, which doesn't exist yet); the new probe tests fail (the old probe takes no lock name: with none it dies of an `IndexError`, exit 1, and it never looks at `plaud.lock`); the new runbook tests fail with `AssertionError: no heading '## Keep a recording out for good'`, and the re-import test on `rc stop worker`. None of the new tests is a pin.
 
-- [ ] **Step 3: The probe,** `docker/ops-busy.py`, as a whole:
+- [x] **Step 3: The probe,** `docker/ops-busy.py`, as a whole:
 
 ```python
 """Does a job hold a lock now? `ops-busy.py <locks dir> <lock name> [job ...]`: exit 3, printing
@@ -17988,7 +17988,7 @@ def main(argv: list[str]) -> int:
 sys.exit(main(sys.argv[1:]))
 ```
 
-- [ ] **Step 4: The guard,** `docker/deploy-guard.sh`, as a whole:
+- [x] **Step 4: The guard,** `docker/deploy-guard.sh`, as a whole:
 
 ```sh
 #!/bin/sh
@@ -18056,7 +18056,7 @@ esac
 exit 1
 ```
 
-- [ ] **Step 5: The server's half,** `docker/consent-add.sh` (new, no exec bit: it is run as `sh docker/consent-add.sh`):
+- [x] **Step 5: The server's half,** `docker/consent-add.sh` (new, no exec bit: it is run as `sh docker/consent-add.sh`):
 
 ```sh
 #!/bin/sh
@@ -18108,7 +18108,7 @@ mv -f "$tmp" "$list"
 echo "consent-add: added $id to $list"
 ```
 
-- [ ] **Step 6: The Mac's half,** `scripts/consent_id.py` (new; run with `uv run python`, since it imports `recordings`):
+- [x] **Step 6: The Mac's half,** `scripts/consent_id.py` (new; run with `uv run python`, since it imports `recordings`):
 
 ```python
 """The one Plaud ID in `make consent-add ID='<text>'` (stage 2b spec §12.1), run on the Mac.
@@ -18153,7 +18153,7 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 ```
 
-- [ ] **Step 7: The target,** `Makefile`, as Task 1 leaves it (its `target: ## text` help form, lower-case descriptions, and every target in a `.PHONY` line). Replace:
+- [x] **Step 7: The target,** `Makefile`, as Task 1 leaves it (its `target: ## text` help form, lower-case descriptions, and every target in a `.PHONY` line). Replace:
 
 ```make
 COMPOSE = RECORDINGS_IMAGE_TAG=$(IMAGE_TAG) docker compose $(COMPOSE_ARGS)
@@ -18209,9 +18209,9 @@ consent-add: ## add a Plaud ID to the server's consent list, from the Mac: make 
 	  || { echo "make consent-add: step 2 failed, on the server: adding the ID, or reading the list back (above)" >&2; exit 1; }
 ```
 
-- [ ] **Step 8: Run them; they pass.** `uv run pytest packages/core/tests/test_make_targets.py packages/core/tests/test_deploy_template.py packages/core/tests/test_repo_tools.py -q`. Expected: all pass (`test_repo_tools.py` is Task 1's: `make help` lists `consent-add`).
+- [x] **Step 8: Run them; they pass.** `uv run pytest packages/core/tests/test_make_targets.py packages/core/tests/test_deploy_template.py packages/core/tests/test_repo_tools.py -q`. Expected: all pass (`test_repo_tools.py` is Task 1's: `make help` lists `consent-add`).
 
-- [ ] **Step 9: Docs.** `docs/runbooks/first-run.md`, section 3, the paragraph after the Mac's block:
+- [x] **Step 9: Docs.** `docs/runbooks/first-run.md`, section 3, the paragraph after the Mac's block:
 
 ```text
 before:
@@ -18344,11 +18344,11 @@ And after the "At boot" bullet:
 
 (the "At boot" bullet ends with "  pull only to deploy.", and this bullet follows it.)
 
-- [ ] **Step 10: Run them; they pass.** `uv run pytest packages/core/tests/test_runbook.py packages/core/tests/test_make_targets.py packages/core/tests/test_deploy_template.py -q`. Expected: all pass.
+- [x] **Step 10: Run them; they pass.** `uv run pytest packages/core/tests/test_runbook.py packages/core/tests/test_make_targets.py packages/core/tests/test_deploy_template.py -q`. Expected: all pass.
 
-- [ ] **Step 11: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 11: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 12: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 12: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(deploy): 🤖 the deploy guard waits for Sync everything, the catch-up and the baseline; make consent-add
@@ -18376,7 +18376,9 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 `git add docker/ops-busy.py docker/deploy-guard.sh docker/consent-add.sh scripts/consent_id.py Makefile packages/core/tests/test_make_targets.py packages/core/tests/test_deploy_template.py packages/core/tests/test_runbook.py docs/runbooks/first-run.md README.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`,
 `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 13: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 13: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's three fix rounds, `8789f9e`, `8f3ec57`, `407fc25`; the listings above are the plan as written): `docker/consent-add.sh` never makes a list or extends one that stops every import: it refuses a missing, unreadable, blank-only or comments-only list before writing anything (spec §12.1 says it appends, and a missing or empty list is a consent stop, so the plan's "a new list is made at mode 0600" is gone). Its check counts only printable ASCII in the C locale, a line whose first printable character is `#`, or a number sign NFKC folds to `#` (U+FF03, U+FE5F), being a comment, so a BOM, a no-break space or a fullwidth `＃` can't make an empty list look written; it refuses more than the parser only for an all-non-ASCII list. A list with kept or text lines and no exclusion is still extended (a ruling: it is a list Dan wrote). The hex check lists the digits instead of ranges. `scripts/consent_id.py` refuses a second run of 24 or more hex digits, read through `visible()`, so two Copy IDs pasted together never add one and drop the other. `make consent-add` names each failure: checking the ID; the server unreachable or the connection dropped (ssh 255); the add failed, the list unchanged (3); added, but the list still stops imports (`recordings plaud consent` exits 78, mapped to 5); the readback failed (4); it ends by naming the `(by the worker: N IDs)` line as the one that lags. An ID already listed is appended again, which is harmless and documented. `deploy-guard.sh` words what a stop costs for each job from §14.6, §11.6 and §14.5 (Sync everything carries on), with one `cannot_ask`. The runbook says the list is 0400 (`chmod u+w` before editing in place) and that the worker compares inode, size and time, and gives decision 12's `- 20261023 — asked`. No `docs/upstream-issues.md` entry: the docs cover `export`, `trap … EXIT` and `mktemp`.
 
 ### Task 19: The view model
 
@@ -24970,3 +24972,4 @@ Their full plans are written at their phase start, against the code as built and
 | 13 | Question for the council | `packages/core/src/recordings/worker.py` | A recording the pattern pass at start couldn't check (`K_PATTERNS_PASS.unwritten`) shows in Needs attention by ID (Task 19) and is re-checked at the next start or any `reindex`, but opens no flag and no `private-unwritten` blocker, since a `private` isn't known to be owed. Should an unchecked recording also stop the sync's ping (§13.2, §16)? (Task 13's review.) | open |
 | 13 | Minor | `packages/core/src/recordings/worker.py` | `alive` gives `checking` 30 minutes from the first unfinished start, so a pattern pass at start on a very large archive reads STUCK while it still progresses: decision 48's accepted limit (Task 13's fix round). | open |
 | 14 | Minor | `packages/core/src/recordings/plaud/requests.py` | The deadline check before the commit has no test (deleting it leaves every test green): patch `utc_iso` to move the fake clock past the deadline, then assert `NotSaved` and no row; `MAX_PLAUD_ID_LEN = 128` is the first length refused (a comment); `claim_next` reads its row by position (Task 14's re-review). | open |
+| 18 | Minor | `docker/deploy-guard.sh` | Its refusal tells Dan to run an interrupted first catch-up or baseline again "(the runbook)", but the runbook has no section for either yet (`first-run.md` line 4): write them with the first catch-up, or point the message at where they are (Task 18's re-review). | open: Phase 2's outline |
