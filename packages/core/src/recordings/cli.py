@@ -12,7 +12,7 @@ import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
-from recordings import __version__, alerts, backup, config, ops, schemas, selfdoc
+from recordings import __version__, alerts, backup, config, ops, schemas, selfdoc, worker
 from recordings.disk import disk_status, disk_thresholds
 from recordings.doctor import ROLES, doctor
 from recordings.index import Index, IndexRefused
@@ -137,6 +137,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("alert-test", help="send a test alert and log a dead-man's switch ping")
     p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser(
+        "worker", help="the Plaud worker's loop (stage 2b); --alive is its health check"
+    )
+    p.add_argument(
+        "--alive",
+        action="store_true",
+        help="exit 0 if the worker's heartbeat and progress are recent, else 1",
+    )
 
     plaud_commands.add_parser(sub)  # `recordings plaud …` (stage 2b): its own subcommands
     # No abbreviated flags: `doctor --rol web` would otherwise work until a second option shares
@@ -532,6 +541,12 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
     return 0 if sent is not False and logged is not False else 1
 
 
+def cmd_worker(args: argparse.Namespace) -> int:
+    """`recordings worker [--alive]` (spec §9.2): the worker container's command, and its compose
+    health check."""
+    return worker.main(["--alive"] if args.alive else [])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -547,6 +562,7 @@ def main(argv: list[str] | None = None) -> int:
         "mirror": cmd_mirror,
         "ops": cmd_ops,
         "alert-test": cmd_alert_test,
+        "worker": cmd_worker,
         "plaud": plaud_commands.run,
     }
     if args.command in commands:

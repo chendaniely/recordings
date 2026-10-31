@@ -124,9 +124,10 @@ smoke test on purpose until someone does the steps below:
   `my-notes.md`, only appended to, under the recording's lock; and `tags.yaml`, by atomic
   replace. The archive's docs (`README.md`, `AGENTS.md`, `FORMAT.md`, `recordings/README.md`,
   `catalog/README.md` and `schemas/`) are replaced from `packages/core/src/recordings/format/`,
-  by atomic replace, whenever a Writer opens or the web app starts against an archive it may
-  write (`selfdoc.write_docs`). Media, `source/` and `renditions/` are published write-once and
-  never overwritten. Never write archive files any other way, in code or in tests.
+  by atomic replace, whenever the web app's or the CLI's Writer opens (the worker's doesn't), or
+  the web app starts against an archive it may write (`selfdoc.write_docs`). Media, `source/`
+  and `renditions/` are published write-once and never overwritten. Never write archive files
+  any other way, in code or in tests.
 - **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
   make archives with `recordings.init.init_archive` (or the `writer` fixture).
 - **Privacy:** a recording is private if a tag is `private` or under `private/`, in any
