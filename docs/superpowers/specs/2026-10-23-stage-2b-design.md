@@ -1623,11 +1623,13 @@ recording arrives untagged, and Dan's rename is checked at the next sync.
   re-checks), and the version of the pattern list it passed. Only archived recordings have markers,
   and their titles are already in `recording.json` and the merge-base revisions, so the hash reveals
   nothing new. A kept-out or consent-listed ID has no marker, no title and no hash.
-- **Due** when the newest title's hash differs, or any title from a snapshot added at or after the
-  marker's `checked_at` has a hash other than the marker's (so A, "Private: x", A merged between two
-  reconciles judges the middle title, though the newest is A again; the marker is rewritten, so
-  `checked_at` moves forward and a `private` Dan then removes stays removed), or the pattern list
-  has a newer version.
+- **Due** when the newest title's hash differs, a snapshot the marker hasn't judged carries another
+  title, or the pattern list has a newer version. The marker remembers the snapshots it judged by
+  content: `plaud_state` key `judged:<recording_id>` holds each canonical ID's `sources[].sha256`
+  list, written in the same transaction as the markers. So A, "Private: x", A merged between two
+  reconciles judges the middle title though the newest is A again, once: a `private` Dan then
+  removes stays removed. A marker with no such record reads as an empty set (judged once, erring
+  private); forgetting a recording drops it.
 - **It moves only once the result is written:** no match, or `private` committed. If the `mutate`
   fails (a file edited outside the app, a lock timeout, the sentinel), the marker stays, the next run
   tries again, and Needs attention shows it at once, by ID: "Should be private, but its file was
@@ -3115,4 +3117,4 @@ None: every bullet of §20 is planned in a phase.
   an invalid file, beside the `recordings reindex` one (2b phase 1 plan, decision 58; Phase 1, Task 8).
 - 2026-10-31: §15.6 gains the private-unwritten sentence for a missing `recording.json`, and §16's
   row says the step follows the cause (2b phase 1 plan, decision 58; Phase 1, Task 8).
-- 2026-10-31: §13.2's Due aligned with Part I's "every title the app has seen" (Task 9's review; Phase 1, Task 9).
+- 2026-10-31: §13.2's Due aligned with Part I's "every title the app has seen": a snapshot the marker hasn't judged, by content (Task 9's reviews; Phase 1, Task 9).

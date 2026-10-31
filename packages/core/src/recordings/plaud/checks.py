@@ -72,6 +72,11 @@ K_CONSENT = "consent"  # {"read_at": iso, "count": int, ...}: the IDs' count, ne
 K_FULL = "full_sync"
 
 
+def judged_key(recording_id: str) -> str:
+    """The plaud_state key of the snapshots a recording's markers have judged (§13.2)."""
+    return f"judged:{recording_id}"
+
+
 class NoSyncYet(Exception):
     """A 2b table isn't in this state.db yet: no 2b process has opened it as a writer."""
 
@@ -85,7 +90,9 @@ class Marker:
     canonical_plaud_id: str
     title_sha256: str
     patterns_version: int
-    checked_at: datetime | None = None  # when it was last judged; None for a marker not yet saved
+    # The sha256 of every snapshot of this ID the marker has judged (`sources[].sha256`, already in
+    # recording.json), sorted; kept in plaud_state under `judged:<recording_id>` (§13.2).
+    judged: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -411,17 +418,29 @@ class PlaudDB:
     def markers(self, recording_id: str) -> dict[str, Marker]:
         with self._db() as db:
             rows = db.execute(
-                "SELECT canonical_plaud_id, title_sha256, patterns_version, checked_at "
+                "SELECT canonical_plaud_id, title_sha256, patterns_version "
                 "FROM plaud_private_checked WHERE recording_id = ?",
                 (recording_id,),
             ).fetchall()
-        return {row[0]: Marker(*row[:3], parse_stamp(row[3])) for row in rows}
+        held = self.get(judged_key(recording_id))
+        held = held if isinstance(held, dict) else {}  # no record: nothing judged yet
+        return {
+            row[0]: Marker(
+                *row,
+                judged=tuple(
+                    h for h in held.get(row[0], ()) if isinstance(h, str) and _is_sha256(h)
+                ),
+            )
+            for row in rows
+        }
 
     def set_markers(self, recording_id: str, markers: Iterable[Marker], *, now: datetime) -> None:
         markers = list(markers)
         for m in markers:
             if not _is_sha256(m.title_sha256):
                 raise ValueError("title_sha256 must be 64 lowercase hex characters")
+            if not all(_is_sha256(h) for h in m.judged):
+                raise ValueError("a judged snapshot's sha256 must be 64 lowercase hex characters")
         with self._db() as db:
             db.executemany(
                 "INSERT INTO plaud_private_checked (recording_id, canonical_plaud_id, "
@@ -440,6 +459,14 @@ class PlaudDB:
                     for m in markers
                 ],
             )
+            # The judged snapshots move with the markers, in this transaction (§13.2).
+            row = db.execute(
+                "SELECT value FROM plaud_state WHERE key = ?", (judged_key(recording_id),)
+            ).fetchone()
+            held = json.loads(row[0]) if row else {}
+            held = held if isinstance(held, dict) else {}
+            held.update({canonical_plaud_id(m.canonical_plaud_id): list(m.judged) for m in markers})
+            self._put(db, judged_key(recording_id), held, now)
 
     def prune(self, *, now: datetime) -> None:
         """The check log after 7 days; events after 90, except open flags (§22)."""

@@ -10,10 +10,12 @@
   - a marker whose hash isn't the newest title's (case 2): every pattern and word on every title
     after the last one whose hash is the marker's (all of them if none is), since a reconcile
     that stopped part way, or two snapshots between reconciles, leaves more than one new title.
-    Also every title from a snapshot added at or after the marker's `checked_at` whose hash isn't
-    the marker's, whatever the newest is: A, "Private: x", A merged between two reconciles ends
-    on A again, but the app has seen the other title (Part I: "judged on every title the app has
-    seen", which binds over §13.2's older "Due when the newest title's hash differs");
+    Also every title from a snapshot the marker hasn't judged (its `sources[].sha256` isn't in the
+    marker's judged set) whose hash isn't the marker's, whatever the newest is: A, "Private: x", A
+    merged between two reconciles ends on A again, but the app has seen the other title (Part I:
+    "judged on every title the app has seen"). By content, never by time: an import stamps a
+    whole run with one time. A marker with no judged set reads as an empty one: the other titles
+    are judged once, erring private;
   - a marker of an older pattern version (case 5): only the patterns added since that version, over
     every title of that ID. A removed pattern re-checks nothing.
   Each title is tried as given and folded (`keepout.fold`). Nothing ever removes `private`.
@@ -43,7 +45,6 @@ from typing import TYPE_CHECKING, Literal
 
 from recordings.plaud.keepout import fold, keep_out_match
 from recordings.plaud.reconcile import matches_auto_private
-from recordings.plaud.when import parse_stamp
 
 if TYPE_CHECKING:
     from recordings.plaud.checks import Marker, PlaudDB
@@ -117,12 +118,13 @@ def judge(
     words: Sequence[str],
     *,
     private_now: bool,
-    added_at: Mapping[str, Sequence[datetime | None]] | None = None,
+    snapshot_shas: Mapping[str, Sequence[str | None]] | None = None,
 ) -> Verdict:
     """Which of these titles are due, and whether they make the recording private (§13.1).
     `titles_by_id` maps each canonical Plaud ID to its snapshots' titles in fetch order, newest
-    last; `markers` are the recording's; `private_now` whether it is private already; `added_at`
-    the same shape as `titles_by_id`: when the app added each title's snapshot."""
+    last; `markers` are the recording's; `private_now` whether it is private already;
+    `snapshot_shas` the same shape as `titles_by_id`: each title's snapshot's `sources[].sha256`
+    (None: unknown, never judged by this rule)."""
     from recordings.plaud.checks import Marker
 
     checked: set[tuple[str, int]] = set()
@@ -156,28 +158,32 @@ def judge(
             if hashes[-1] != marker.title_sha256:  # case 2
                 named = [i for i, h in enumerate(hashes) if h == marker.title_sha256]
                 due.update(range(named[-1] + 1 if named else 0, len(titles)))
-            # And every other title the app added since the marker was written (A, P, A).
-            when = added_at.get(pid, ()) if added_at else ()
-            if marker.checked_at is not None:
-                due.update(
-                    i
-                    for i, h in enumerate(hashes)
-                    if h != marker.title_sha256
-                    and i < len(when)
-                    and when[i] is not None
-                    and parse_stamp(when[i]) >= parse_stamp(marker.checked_at)
-                )
+            # And every other title of a snapshot the marker hasn't judged (A, P, A).
+            shas = snapshot_shas.get(pid, ()) if snapshot_shas else ()
+            due.update(
+                i
+                for i, h in enumerate(hashes)
+                if h != marker.title_sha256
+                and i < len(shas)
+                and shas[i] is not None
+                and shas[i] not in marker.judged
+            )
             for i in sorted(due):
                 check(pid, i, titles[i], patterns.patterns, words_too=True, case="title changed")
             if due:
-                moved.add(pid)  # rewritten even if the newest is the marked one: checked_at moves
+                moved.add(pid)  # rewritten even if the newest is the marked one: its set grows
             added = patterns.added_since(marker.patterns_version)
             if marker.patterns_version != patterns.version and added:  # case 5
                 for i, title in enumerate(titles):
                     check(pid, i, title, added, words_too=False, case="new pattern")
                 moved.add(pid)
+
+    def judged_now(pid: str) -> tuple[str, ...]:
+        shas = snapshot_shas.get(pid, ()) if snapshot_shas else ()
+        return tuple(sorted({s for s in shas if s is not None}))
+
     new_markers = tuple(
-        Marker(pid, title_sha256(titles_by_id[pid][-1]), patterns.version)
+        Marker(pid, title_sha256(titles_by_id[pid][-1]), patterns.version, judged_now(pid))
         if pid in moved
         else markers[pid]
         for pid in ids

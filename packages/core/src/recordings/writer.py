@@ -855,7 +855,7 @@ class Writer:
                         ref=source.ref,
                         fetched_at=source.fetched_at or source.added_at,
                         envelope=envelope,
-                        added_at=source.added_at,
+                        sha256=source.sha256,
                     )
                 )
             if not snapshots:

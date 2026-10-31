@@ -417,6 +417,8 @@ class State:
             )
             for table in ("plaud_checks", "plaud_private_checked", "plaud_events"):
                 db.execute(f"DELETE FROM {table} WHERE recording_id = ?", (recording_id,))
+            # The snapshots its markers judged (plaud_state, `judged:<recording_id>`, §13.2).
+            db.execute("DELETE FROM plaud_state WHERE key = ?", (f"judged:{recording_id}",))
 
     # ---- index updates not yet made: a crash between a write and its index update ---------
     def mark_index_pending(self, recording_id: str) -> None:

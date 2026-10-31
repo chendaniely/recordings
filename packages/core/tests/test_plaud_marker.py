@@ -312,64 +312,91 @@ def test_privacy_imports_no_sqlite3():
 # ---- Task 9's review round --------------------------------------------------------------------
 
 
-@pytest.fixture
-def clock(monkeypatch):
-    """The Writer's clock, set by `clock[0] = …`: a marker's checked_at is when it was judged."""
-    now = [T1 + timedelta(hours=1)]
-    monkeypatch.setattr("recordings.writer._now", lambda: now[0])
-    return now
-
-
 def merge(writer, make_incoming, plaud_env, *named: tuple[str, int]) -> None:
     """Merge snapshots into the recording without reconciling."""
     for name, day in named:
         writer.add(make_incoming(b"rec-1", sources=(snapshot(plaud_env, name, day),)))
 
 
-def test_a_to_p_to_a_merged_before_a_reconcile_is_judged_on_every_title(
-    writer, make_incoming, plaud_env, clock
+def sha(n: int) -> str:
+    return f"{n:064x}"
+
+
+@pytest.mark.parametrize(
+    ("middle", "private", "kept_out"),
+    [
+        ("Private: x", "title changed", None),
+        ("NoArchive: coffee", "kept out by title", "noarchive"),
+        ("Ｐｒｉｖａｔｅ: x", "title changed", None),
+    ],
+)
+def test_an_unjudged_snapshots_title_is_judged_though_the_newest_is_marked(
+    writer, make_incoming, plaud_env, middle, private, kept_out
 ):
-    # why: Part I, "judged on every title the app has seen", which binds over §13.2's "newest
-    # title's hash differs". A, then P and A merged between two reconciles: the newest is A again.
+    # why: Part I, "judged on every title the app has seen". Row 1 [A] was reconciled; row 2
+    # (audio-router stamps a whole run with its start time, so `added_at` says nothing) merges
+    # [P, A]. The marker remembers which snapshots it judged by content, not by time.
     rid, _ = add(writer, make_incoming, plaud_env, "Week 4")
-    merge(writer, make_incoming, plaud_env, ("Private: x", 1), ("Week 4", 2))
-    clock[0] = T1 + timedelta(days=3)
-    assert writer.reconcile_plaud(rid).private_added == "title changed"
+    merge(writer, make_incoming, plaud_env, (middle, 1), ("Week 4", 2))
+    report = writer.reconcile_plaud(rid)
+    assert (report.private_added, report.kept_out_word) == (private, kept_out)
     assert is_private(writer.archive.load(rid))
-    # Dan's decision 3: removed, it stays removed, for this reconcile and a reindex in `web`.
+    assert (len(PlaudDB(writer.state).open_flags()) == 1) is (kept_out is not None)
+
+
+def test_removed_private_stays_removed_whatever_the_snapshots_added_at_says(
+    writer, make_incoming, plaud_env
+):
+    # why: Dan's decision 3. A snapshot stamped ahead of the clock must not be judged again at
+    # every reconcile once it was judged.
+    rid, _ = add(writer, make_incoming, plaud_env, "Week 4")
+    merge(writer, make_incoming, plaud_env, ("Private: x", 400), ("Week 4", 401))
+    assert writer.reconcile_plaud(rid).private_added == "title changed"
     remove_private(writer, rid)
-    assert writer.reconcile_plaud(rid).private_added is None
-    clock[0] = T1 + timedelta(days=4)
+    for _ in range(4):
+        assert writer.reconcile_plaud(rid).private_added is None
     assert web_writer(writer).reindex().reconciled[0].private_added is None
     assert not is_private(writer.archive.load(rid))
     assert retagged(writer) == ["title changed"]
 
 
-def test_a_keep_out_title_between_two_equal_titles_is_flagged(
-    writer, make_incoming, plaud_env, clock
+def test_a_marker_with_no_judged_record_judges_the_other_titles_once(
+    writer, make_incoming, plaud_env
 ):
+    # why: an older row or a partial restore reads as an empty set, erring private.
     rid, _ = add(writer, make_incoming, plaud_env, "Week 4")
-    merge(writer, make_incoming, plaud_env, ("NoArchive: coffee", 1), ("Week 4", 2))
-    clock[0] = T1 + timedelta(days=3)
-    report = writer.reconcile_plaud(rid)
-    assert report.kept_out_word == "noarchive" and report.private_added == "kept out by title"
-    assert [(e.kind, e.recording_id) for e in PlaudDB(writer.state).open_flags()] == [
-        ("kept-out-late", rid)
-    ]
+    merge(writer, make_incoming, plaud_env, ("Private: x", 1), ("Week 4", 2))
+    assert writer.reconcile_plaud(rid).private_added == "title changed"
+    remove_private(writer, rid)
+    db = PlaudDB(writer.state)
+    db.delete(f"judged:{rid}")
+    assert db.markers(rid)[HEX].judged == ()
+    assert writer.reconcile_plaud(rid).private_added == "title changed"
+    remove_private(writer, rid)
+    assert writer.reconcile_plaud(rid).private_added is None
 
 
-def test_judge_gives_a_later_added_title_that_differs_even_when_the_newest_is_the_marked_one():
+def test_forgetting_a_recording_drops_its_judged_record(writer, make_incoming, plaud_env):
+    rid, _ = add(writer, make_incoming, plaud_env, "Week 4")
+    db = PlaudDB(writer.state)
+    assert len(db.get(f"judged:{rid}")[HEX]) == 1  # the one snapshot's sha256
+    writer.state.forget(
+        (writer.archive.path_for(rid) / "recording.json").relative_to(writer.root).as_posix()
+    )
+    assert db.get(f"judged:{rid}") is None and db.markers(rid) == {}
+
+
+def test_judge_gives_an_unjudged_snapshots_title_though_the_newest_is_marked():
     titles = {HEX: ["Week 4", "Private: x", "Week 4"]}
-    added = {HEX: [T1, T1 + timedelta(days=1), T1 + timedelta(days=2)]}
-    seen = {HEX: Marker(HEX, title_sha256("Week 4"), 1, T1 + timedelta(hours=1))}
-    verdict = judge(titles, seen, V1, (), private_now=False, added_at=added)
+    shas = {HEX: [sha(1), sha(2), sha(3)]}
+    seen = {HEX: Marker(HEX, title_sha256("Week 4"), 1, (sha(1),))}
+    verdict = judge(titles, seen, V1, (), private_now=False, snapshot_shas=shas)
     assert (verdict.add_private, verdict.why, verdict.titles_checked) == (True, "title changed", 1)
-    assert verdict.markers[0].title_sha256 == title_sha256("Week 4")
-    assert verdict.markers[0] != seen[HEX]  # rewritten, so checked_at moves forward
-    after = {HEX: Marker(HEX, title_sha256("Week 4"), 1, T1 + timedelta(days=3))}
-    quiet = judge(titles, after, V1, (), private_now=False, added_at=added)
+    assert verdict.markers[0].judged == (sha(1), sha(2), sha(3))  # the set moves with the marker
+    done = {HEX: Marker(HEX, title_sha256("Week 4"), 1, (sha(1), sha(2), sha(3)))}
+    quiet = judge(titles, done, V1, (), private_now=False, snapshot_shas=shas)
     assert (quiet.add_private, quiet.titles_checked) == (False, 0)
-    assert quiet.markers == tuple(after.values())
+    assert quiet.markers == tuple(done.values())
 
 
 @pytest.mark.parametrize("title", ["Ｐｒｉｖａｔｅ: x", "Pri⁠vate: x", "﻿Private: x"])

@@ -88,7 +88,7 @@ class Snapshot:
     ref: str  # the Plaud ID, as recorded
     fetched_at: datetime
     envelope: Any  # the parsed payload; anything but a dict is skipped
-    added_at: datetime | None = None  # when the app added it: the marker's "seen since" (§13.2)
+    sha256: str | None = None  # the payload's, as `sources[].sha256`: what the marker has judged
 
 
 @dataclass(frozen=True)
@@ -385,12 +385,12 @@ def reconcile(
     # put back by a reindex, in any process. Every snapshot's title counts, a degraded one's and
     # the other Plaud ID's included, as Plaud gave it.
     titles_by_id: dict[str, list[str]] = {}
-    added_by_id: dict[str, list[datetime | None]] = {}
+    shas_by_id: dict[str, list[str | None]] = {}
     for snapshot in ordered:
         if (name := _plaud_title(snapshot.envelope)) is not None:
             pid = canonical_plaud_id(snapshot.ref)
             titles_by_id.setdefault(pid, []).append(name)
-            added_by_id.setdefault(pid, []).append(snapshot.added_at)
+            shas_by_id.setdefault(pid, []).append(snapshot.sha256)
     if privacy is None:
         first = tuple(auto_private)
         privacy = PrivacyInputs(markers={}, patterns=PatternSet(1, first, {1: first}), words=())
@@ -400,7 +400,7 @@ def reconcile(
         privacy.patterns,
         privacy.words,
         private_now=is_private(rec),
-        added_at=added_by_id,
+        snapshot_shas=shas_by_id,
     )
     return Reconciled(
         outputs=tuple(outputs),
