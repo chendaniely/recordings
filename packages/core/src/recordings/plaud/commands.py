@@ -241,8 +241,15 @@ def _writer(cfg: config.Config, as_json: bool) -> Writer | int:
         return Writer.open(cfg, docs=False, lock_timeout=10.0)
     except LockTimeout as exc:
         return _fail(str(exc), as_json, EXIT_BUSY)
-    except (WriterError, OSError, sqlite3.Error) as exc:
+    except WriterError as exc:  # the Writer's own refusal, worded for display
         return _fail(str(exc), as_json, EXIT_CONFIG)
+    except (OSError, sqlite3.Error) as exc:  # never the exception's text: it names paths or rows
+        return _fail(
+            f"can't open the archive's writer now ({type(exc).__name__}): check the archive "
+            "disk and its permissions",
+            as_json,
+            EXIT_CONFIG,
+        )
 
 
 def _busy(state: State) -> str:

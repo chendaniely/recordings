@@ -2,11 +2,13 @@
 
 import json
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
 from datetime import UTC, datetime
 
+import pytest
 from recordings.archive import RawSource
 from recordings.cli import main
 from recordings.plaud.keepout import typo_phrase
@@ -319,3 +321,26 @@ def test_keep_out_words_never_prints_an_invalid_word_and_refuses_a_row_that_is_n
     assert main(["plaud", "keep-out-words", "--drop", "skipme", "--json"]) == 1
     capsys.readouterr()
     assert PlaudDB(writer.state).get(K_KEEP_OUT_WORDS) == "skipme"
+
+
+@pytest.mark.parametrize("fault", [OSError, sqlite3.OperationalError], ids=["OSError", "sqlite3"])
+def test_a_writer_that_cant_open_prints_its_class_and_never_the_exception_text(
+    writer, tmp_path, monkeypatch, capsys, fault
+):
+    # why: CLAUDE.md's logs rule and the exit codes: fixed phrases, IDs, counts and class names
+    # only. An OSError's text carries a path; a sqlite3 error's, a table or a title.
+    from recordings.plaud import commands
+    from recordings.writer import Writer
+
+    secret = f"/Volumes/archive/{TITLE}/recording.json"
+
+    def refuse(*args, **kwargs):
+        raise fault(secret)
+
+    monkeypatch.setattr(Writer, "open", refuse)
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline", "--json"]) == commands.EXIT_CONFIG
+    seen = capsys.readouterr()
+    shown = seen.out + seen.err
+    assert fault.__name__ in shown
+    assert secret not in shown and "Synthetic 042" not in shown and "/Volumes" not in shown
