@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 4: The Plaud client, copied, open.
+**Now:** Task 5: The spike script and its guard, open.
 
 ***
 
@@ -2956,9 +2956,9 @@ Spec §10.1: a copy of `audio-router`'s client with the `of_` fix and the leak-p
   ```
 - Produces (root `conftest.py`): autouse `no_plaud_network`: `socket.getaddrinfo` raises `OSError("tests never reach Plaud")` for any host ending in `plaud.ai`. At import, before any test module, it deletes every environment variable whose name ends in `_proxy` (any case): through an https proxy, the proxy would look up `plaud.ai` itself, past the guard, and the client builds its openers from the environment when it is imported.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-4-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-4-base`
 
-- [ ] **Step 1: Write the fake server and the failing tests.** The test helpers come first, so the tests fail on the client alone. The new file `packages/core/tests/fake_plaud.py` (decision 6: the transport and the request log; its shapes wait for Phase 2):
+- [x] **Step 1: Write the fake server and the failing tests.** The test helpers come first, so the tests fail on the client alone. The new file `packages/core/tests/fake_plaud.py` (decision 6: the transport and the request log; its shapes wait for Phase 2):
 
 ```python
 """A fake Plaud server for tests (stage 2b spec §10.6): its transport and its request log.
@@ -3732,11 +3732,11 @@ def test_recordings_ui_never_imports_the_client_the_token_store_or_the_sync():
     assert "recordings.plaud.client" in _loaded("import recordings.plaud.client")
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_client.py packages/ui/tests/test_plaud_imports.py -q`. Expected: `test_plaud_client.py` errors at collection with `ImportError: cannot import name 'client' from 'recordings.plaud'`, and `test_recordings_ui_never_imports_the_client_the_token_store_or_the_sync` fails at its last line with `AssertionError` from `_loaded`'s `assert result.returncode == 0`, the probe's `ModuleNotFoundError: No module named 'recordings.plaud.client'` in the stderr it prints (its probe imports the client on purpose).
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_client.py packages/ui/tests/test_plaud_imports.py -q`. Expected: `test_plaud_client.py` errors at collection with `ImportError: cannot import name 'client' from 'recordings.plaud'`, and `test_recordings_ui_never_imports_the_client_the_token_store_or_the_sync` fails at its last line with `AssertionError` from `_loaded`'s `assert result.returncode == 0`, the probe's `ModuleNotFoundError: No module named 'recordings.plaud.client'` in the stderr it prints (its probe imports the client on purpose).
 
-- [ ] **Step 3: Copy the client verbatim, and keep the copy for the review (no commit of its own).** The controller gives the `audio-router` checkout's location at dispatch, and the commit it is at (`64612df` when this plan was written); read nothing in it but `src/` and `tests/`. Copy its `src/audio_router/archive/sources/plaud.py`, byte for byte, to `packages/core/src/recordings/plaud/client.py` and to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/task-4-client-as-copied.py` (git-ignored). The verbatim text fails `make lint` (ruff's UP017 and FURB162, and formatting), and a red commit breaks bisecting, so it is never committed alone (decision 34): Step 7's one commit carries the copy with its edits, its body naming the `audio-router` commit copied and listing the edits, and the file's header names its origin. The reviewers read the edits as `git diff --no-index .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-4-client-as-copied.py packages/core/src/recordings/plaud/client.py` (with `endpoint.py` beside it, which holds what moved out of the copy).
+- [x] **Step 3: Copy the client verbatim, and keep the copy for the review (no commit of its own).** The controller gives the `audio-router` checkout's location at dispatch, and the commit it is at (`64612df` when this plan was written); read nothing in it but `src/` and `tests/`. Copy its `src/audio_router/archive/sources/plaud.py`, byte for byte, to `packages/core/src/recordings/plaud/client.py` and to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/task-4-client-as-copied.py` (git-ignored). The verbatim text fails `make lint` (ruff's UP017 and FURB162, and formatting), and a red commit breaks bisecting, so it is never committed alone (decision 34): Step 7's one commit carries the copy with its edits, its body naming the `audio-router` commit copied and listing the edits, and the file's header names its origin. The reviewers read the edits as `git diff --no-index .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-4-client-as-copied.py packages/core/src/recordings/plaud/client.py` (with `endpoint.py` beside it, which holds what moved out of the copy).
 
-- [ ] **Step 4: Write the code: the edits.** Replace the whole of `packages/core/src/recordings/plaud/client.py` with this (its header names the commit copied: change `64612df` if the controller gave another). Checked against the standard library's docs, as spec §22 asks: `Request.add_unredirected_header` adds a header that a redirected request doesn't carry; an `HTTPRedirectHandler.redirect_request` that returns None makes the default error handler raise `HTTPError(code)`, as `alerts.py`'s `_NoRedirect` relies on; `build_opener` leaves out a default handler when a subclass of it is passed, so `_HTTPHandler` and `_HTTPSHandler` replace them; `HTTPResponse.read1(n)` returns at most `n` bytes from one read, and an empty result at a premature end.
+- [x] **Step 4: Write the code: the edits.** Replace the whole of `packages/core/src/recordings/plaud/client.py` with this (its header names the commit copied: change `64612df` if the controller gave another). Checked against the standard library's docs, as spec §22 asks: `Request.add_unredirected_header` adds a header that a redirected request doesn't carry; an `HTTPRedirectHandler.redirect_request` that returns None makes the default error handler raise `HTTPError(code)`, as `alerts.py`'s `_NoRedirect` relies on; `build_opener` leaves out a default handler when a subclass of it is passed, so `_HTTPHandler` and `_HTTPSHandler` replace them; `HTTPResponse.read1(n)` returns at most `n` bytes from one read, and an empty result at a premature end.
 
 ```python
 """The Plaud client: direct, read-only HTTP against Plaud's public third-party API (stage 2b spec
@@ -4372,11 +4372,11 @@ imports (stage 2b spec §10.1). No other module does.
 """
 ```
 
-- [ ] **Step 5: Run it; it passes.** `uv run pytest packages/core/tests/test_plaud_client.py packages/ui/tests/test_plaud_imports.py -q`. Expected: all pass, in a few seconds (the fake's servers poll every 0.05 s, so each closes at once). Then once with proxies set, `https_proxy=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 uv run pytest packages/core/tests/test_plaud_client.py packages/core/tests/test_alerts.py -q`. Expected: all pass (`test_alerts.py`'s proxy test sets its own variables after the root `conftest.py` has run).
+- [x] **Step 5: Run it; it passes.** `uv run pytest packages/core/tests/test_plaud_client.py packages/ui/tests/test_plaud_imports.py -q`. Expected: all pass, in a few seconds (the fake's servers poll every 0.05 s, so each closes at once). Then once with proxies set, `https_proxy=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 uv run pytest packages/core/tests/test_plaud_client.py packages/core/tests/test_alerts.py -q`. Expected: all pass (`test_alerts.py`'s proxy test sets its own variables after the root `conftest.py` has run).
 
-- [ ] **Step 6: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 6: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(plaud): 🤖 copy audio-router's Plaud client, relicensed MIT, so it reads the of_ form, only reads, keeps tokens off links and raises fixed errors
@@ -4407,7 +4407,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/client.py packages/core/src/recordings/plaud/endpoint.py packages/core/src/recordings/plaud/__init__.py packages/core/tests/fake_plaud.py packages/core/tests/conftest.py conftest.py packages/core/tests/test_plaud_client.py packages/ui/tests/test_plaud_imports.py CLAUDE.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix rounds, `b365ddc` and `f8db422`; the listings above are the plan as written): a download is refused before any byte is written when `Content-Length` is missing, not a number, longer than 15 digits or 0, and stops as soon as it passes that length (a chunked body too), so the `.part` file never grows past it; a number in a header is read from ASCII digits only, at most 15; a body cut short of its `Content-Length`, or past a fixed 64 MiB cap, is refused, never returned as a fragment; a stall inside the read loop is `IncompleteDownload`; a local file error (a full disk, a read-only folder) goes up as itself, never as `PlaudOffline`; `get_json` raises outside its handler, so no exception chain holds a body, and a body nested too deep is `PlaudBadResponse`; the guard that no test reaches Plaud is installed when the root `conftest.py` is imported (so module- and session-scoped fixtures are covered too) rather than as an autouse fixture, and drops every proxy variable; `fake_plaud.py` gained `hold` for the stall test; tests pin the 10 s connect and 60 s read timeouts.
 
 ### Task 5: The spike script and its guard
 
@@ -24861,4 +24863,4 @@ Their full plans are written at their phase start, against the code as built and
 | 13 | Minor | `packages/core/src/recordings/worker.py` | The consent read trusts a file only when its signature held still during the read; a list written in place in two flushes can still be read in the pause. Phase 2's read before each download trusts only a file whose mtime is at least one tick old (S11). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | Needs attention's "a sign-in expiring within 7 days" (§15.2) reads `sign_in.expires_at`, which Phase 2 writes (BD3). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | The cache's titles of an ID consent-listed, or matching an enforced word, since the compare must never reach the browser (P1, P13). | open: Phase 2's outline |
-| 1 | Minor | `packages/ui/tests/e2e/test_tagging.py` | `test_the_headers_touch_targets_are_44_px_and_never_overlap` failed once in CI on a docs-only commit (`ec9d5af`, run 40126882917: `assert 0 == 2`, the chips' × buttons not counted under `hover: none`) and passed on the same code before and after. Investigate with superpowers:systematic-debugging before the phase ends; never just re-run it. | open |
+| 1 | Minor | `packages/ui/tests/e2e/test_tagging.py`, `packages/ui/frontend/src/components/TagPicker.test.ts` | Three tagging part A tests failed once each and passed on the same code before and after: `test_the_headers_touch_targets_are_44_px_and_never_overlap` (CI, `ec9d5af`, run 40126882917: `assert 0 == 2`, the chips' × buttons not counted under `hover: none`); `test_t_on_a_selection_esc_keeps_it_and_cmd_z_undoes_after_the_toast` (CI, `ef894b3`, run 41173638427: `Locator.fill` timed out after 30 s); and Vitest's `pointer movement over the list is a choice too` (locally, under `make check`'s load: expected 'notes/lecture', got 'talks'). Investigate with superpowers:systematic-debugging before the phase ends; never just re-run them. | open |
