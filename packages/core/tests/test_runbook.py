@@ -165,6 +165,16 @@ def test_restoring_for_real_puts_every_piece_back():
         "state.db",
     ):
         assert needed in code, needed
+    # stage 2b: the consent list comes back from the snapshot, and a new server gets section 6's
+    # folders and the sync's URL file before `rc up -d` (compose.yml needs them)
+    text = " ".join(_section("## Restoring for real").split())
+    assert '"$R/consent" "$RECORDINGS_HOME/consent"' in code
+    assert "/consent" in text.split("1. **Find the snapshot.**")[0]
+    assert "section 6" in text.split("1. **Find the snapshot.**")[0]
+    assert code.index("$R/consent") < code.index("rc up -d")
+    assert "Sections 2 to 5 deploy 2a's last commit" in " ".join(
+        _section("## 0. Before you start").split()
+    )
 
 
 def test_every_recordings_command_the_runbook_names_parses():
@@ -326,7 +336,7 @@ def test_the_runbook_rolls_back_across_2b():
         return next(i for i, line in enumerate(back) if re.search(pattern, line))
 
     assert (
-        first(r"rc stop worker && rc rm -f worker")
+        first(r"sh docker/up-deployed.sh stop worker && sh docker/up-deployed.sh rm -f worker")
         < first(r"^\s*git checkout ")
         < first(r"make rollback TAG=")
     )
@@ -334,4 +344,7 @@ def test_the_runbook_rolls_back_across_2b():
     assert "Pause the sync's Healthchecks check" in flat
     out, back_in = 'take `"/consent"` out of `[backup] extra_paths`', 'put `"/consent"` back'
     assert flat.index(out) < flat.index("make rollback TAG=")
-    assert flat.index("`make deploy`") < flat.index(back_in) < flat.index("rc restart backup")
+    assert not any(re.match(r"\s*rc ", line) for line in back), "rc needs the image tag exported"
+    assert "secrets/ntfy_topic" in flat  # a pre-2b compose.yml requires the file
+    assert flat.index("`make deploy`") < flat.index(back_in)
+    assert flat.index(back_in) < flat.index("sh docker/up-deployed.sh restart backup")

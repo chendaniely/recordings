@@ -231,10 +231,14 @@ def ping_url(url: str, kind: str = "success", *, message: str = "") -> int | Non
         return None
 
 
+def accepted(status: int | None) -> bool:
+    """True when `ping_url` got a 2xx answer."""
+    return status is not None and 200 <= status < 300
+
+
 def ping_deadman(ac: AlertConfig, kind: str = "success", *, message: str = "") -> bool:
     """One ping of the backup's check (`deadman_url`), `kind` being a key of PINGS. The body is
     a fixed text. True when Healthchecks took it."""
     if not ac.deadman_url:
         return False
-    status = ping_url(ac.deadman_url, kind, message=message)
-    return status is not None and 200 <= status < 300
+    return accepted(ping_url(ac.deadman_url, kind, message=message))

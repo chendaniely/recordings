@@ -126,7 +126,7 @@ file. Docker sets it to `/config/config.toml`.
 |---|---|---|
 | Archive, state and index paths, the writer ID, backups, mirror, alerts | `config.toml` (template: `config.example.toml`) | stage 1 / 2a |
 | The names the app answers to | `[server] allowed_hosts` in `config.toml`, plus `RECORDINGS_ALLOWED_HOSTS` (comma-separated) | stage 1 |
-| Host folders, config path, bind address and port, the trusted proxy (`RECORDINGS_FORWARDED_ALLOW_IPS`), UID/GID | `docker/deploy.env` (template: `docker/deploy.example.conf`) | stage 1 |
+| Host folders, config path, bind address and port, the trusted proxy (`RECORDINGS_FORWARDED_ALLOW_IPS`), UID/GID; and, from stage 2b, the consent folder (`RECORDINGS_CONSENT_HOST`), the Plaud sign-in's folder (`RECORDINGS_PLAUD_HOST`) and the ntfy topic's file (`RECORDINGS_ALERTS_TOPIC_HOST`) | `docker/deploy.env` (template: `docker/deploy.example.conf`) | stage 1 / 2b |
 | `RESTIC_PASSWORD`; `RESTIC_REST_PASSWORD`, rest-server's; the NAS's SSH key and host key, `RECORDINGS_NAS_SSH_KEY` and `RECORDINGS_NAS_KNOWN_HOSTS` (files only); `RECORDINGS_DEADMAN_URL`; and rest-server's certificate, the `nas_cacert` file that `[backup] cacert` names | secret files, as `…_FILE` (Docker secrets) | stage 2a |
 | `RECORDINGS_NTFY_TOPIC`, once ntfy is set up, and `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | secret files, which `RECORDINGS_ALERTS_TOPIC_HOST` and `RECORDINGS_NTFY_AUTH_HOST` in `docker/deploy.env` name (unset: none is mounted) | stage 2a; optional from stage 2b |
 | `RECORDINGS_DEADMAN_SYNC_URL`, the Plaud sync's own Healthchecks ping URL, for the `worker` container only | a secret file, as `RECORDINGS_DEADMAN_SYNC_URL_FILE` | stage 2b |

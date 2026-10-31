@@ -195,6 +195,8 @@ services:
     healthcheck:
       test: ["CMD", "recordings", "worker", "--alive"]
       interval: 30s
+      # `--alive` starts the whole CLI: not the image's 3 s, sized for a urllib probe.
+      timeout: 10s
       start_period: 60s
     logging: *logging
     restart: unless-stopped

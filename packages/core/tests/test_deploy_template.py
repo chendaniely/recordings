@@ -76,7 +76,7 @@ def test_every_bind_is_long_syntax_and_never_creates_its_host_path():
 
 def test_the_state_and_the_index_have_mounts_of_their_own():
     doc = compose()
-    web = {v["target"]: v for v in doc["services"]["web"]["volumes"]}
+    web = mounts("web")
     assert web["/state"]["type"] == "bind" and web["/index"]["type"] == "volume"
     assert "index" in doc["volumes"]
     # why: Status opens state.db mode=ro in `web` while `backup` writes it in WAL mode. A reader
@@ -91,11 +91,7 @@ def test_web_reads_the_state_folder_the_backup_service_writes():
     # why: Status (web) reads the state.db and the ops lock that the loop (backup) writes. Two
     # folders would show, for ever, the last runs Status saw before they split.
     doc = compose()
-    mounts = {
-        name: {v["target"]: v for v in service["volumes"]}
-        for name, service in doc["services"].items()
-    }
-    assert mounts["web"]["/state"]["source"] == mounts["backup"]["/state"]["source"]
+    assert mounts("web")["/state"]["source"] == mounts("backup")["/state"]["source"]
     for name in ("web", "backup"):
         assert doc["services"][name]["environment"]["RECORDINGS_STATE"] == "/state", name
 
@@ -512,7 +508,7 @@ def test_the_runtime_image_has_the_time_zone_database():
 
 def test_the_backup_service_reads_the_archive_and_takes_secrets_only_from_files():
     service = compose()["services"]["backup"]
-    archive = next(v for v in service["volumes"] if v["target"] == "/archive")
+    archive = mounts("backup")["/archive"]
     assert archive["read_only"] is True
     env = service["environment"]
     for key, value in env.items():
@@ -579,29 +575,14 @@ def test_the_readme_names_every_secret_and_environment_setting():
     assert "`RECORDINGS_ALLOWED_HOSTS`" in table
 
 
-def test_the_ntfy_token_is_an_optional_secret_in_backup_only():
-    # why: a token-protected ntfy server needs it (Task 13), but the app reads an EMPTY token file
-    # as an error, which _alert_config logs and treats as "alerts are not configured". So the
-    # secret is mounted and named only when deploy.env sets RECORDINGS_NTFY_AUTH_HOST.
-    doc = compose()
-    env = doc["services"]["backup"]["environment"]
-    assert (
-        env["RECORDINGS_NTFY_TOKEN_FILE"] == "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
-    )
-    assert "ntfy_token" in doc["services"]["backup"]["secrets"]
-    assert doc["secrets"]["ntfy_token"]["file"] == "${RECORDINGS_NTFY_AUTH_HOST:-/dev/null}"
-    template = TEMPLATE.read_text(encoding="utf-8")
-    assert re.search(r"^RECORDINGS_NTFY_AUTH_HOST=$", template, re.MULTILINE), "unset by default"
-
-
 def test_the_example_config_backs_up_the_deploy_file_where_compose_mounts_it():
     # why: [backup] extra_paths defaults to [], so a config.toml written without this line would
     # silently leave deploy.env (the UID, the paths: what a restore needs) out of every backup.
     import tomllib
 
     example = tomllib.loads((REPO / "config.example.toml").read_text(encoding="utf-8"))
-    mounts = {v["source"]: v["target"] for v in compose()["services"]["backup"]["volumes"]}
-    target = mounts[
+    targets = {m["source"]: t for t, m in mounts("backup").items()}
+    target = targets[
         "${RECORDINGS_DEPLOY_ENV_HOST:?set RECORDINGS_DEPLOY_ENV_HOST in docker/deploy.env}"
     ]
     assert target in example["backup"]["extra_paths"]
@@ -627,6 +608,8 @@ def test_the_worker_is_hardened_named_with_a_role_and_its_own_health_check():
     assert worker["healthcheck"] == {
         "test": ["CMD", "recordings", "worker", "--alive"],
         "interval": "30s",
+        # `--alive` starts the whole CLI: the image's inherited 3 s was sized for a urllib probe
+        "timeout": "10s",
         "start_period": "60s",
     }
     assert "8000" not in json.dumps(worker["healthcheck"])
@@ -695,19 +678,28 @@ def test_make_deploy_waits_for_every_health_check():
         assert disabled == (name == "backup"), name
 
 
-def test_the_ntfy_topic_is_an_optional_secret_in_backup_only():
-    # why: stage 2b spec, Dan's decision 9: ntfy is optional. A required topic file made a deploy
-    # without one fail, and an empty one reads as an error that silences the backup's dead-man
-    # pings too. So, like the token, it is mounted and named only when deploy.env names its file.
+@pytest.mark.parametrize(
+    ("name", "host", "other_services"),
+    [
+        ("TOKEN", "NTFY_AUTH", ("web", "worker")),
+        ("TOPIC", "ALERTS_TOPIC", ("web", "worker")),
+    ],
+)
+def test_the_ntfy_topic_and_token_are_optional_secrets_in_backup_only(name, host, other_services):
+    # why: the app reads an EMPTY secret file as an error, which _alert_config logs and treats as
+    # "alerts are not configured", silencing the backup's dead-man pings too. And ntfy is optional
+    # (stage 2b spec, Dan's decision 9). So each is mounted and named only when deploy.env sets its
+    # host variable (RECORDINGS_NTFY_AUTH_HOST, RECORDINGS_ALERTS_TOPIC_HOST), else /dev/null.
     doc = compose()
+    secret = f"ntfy_{name.lower()}"
     env = doc["services"]["backup"]["environment"]
     assert (
-        env["RECORDINGS_NTFY_TOPIC_FILE"]
-        == "${RECORDINGS_ALERTS_TOPIC_HOST:+/run/secrets/ntfy_topic}"
+        env[f"RECORDINGS_NTFY_{name}_FILE"] == f"${{RECORDINGS_{host}_HOST:+/run/secrets/{secret}}}"
     )
-    assert "ntfy_topic" in doc["services"]["backup"]["secrets"]
-    assert doc["secrets"]["ntfy_topic"]["file"] == "${RECORDINGS_ALERTS_TOPIC_HOST:-/dev/null}"
+    assert secret in doc["services"]["backup"]["secrets"]
+    assert doc["secrets"][secret]["file"] == f"${{RECORDINGS_{host}_HOST:-/dev/null}}"
     template = TEMPLATE.read_text(encoding="utf-8")
-    assert re.search(r"^RECORDINGS_ALERTS_TOPIC_HOST=$", template, re.MULTILINE), "unset"
-    for name in ("web", "worker"):
-        assert "RECORDINGS_NTFY_TOPIC_FILE" not in doc["services"][name]["environment"], name
+    assert re.search(rf"^RECORDINGS_{host}_HOST=$", template, re.MULTILINE), "unset by default"
+    for service in other_services:
+        assert f"RECORDINGS_NTFY_{name}_FILE" not in doc["services"][service]["environment"]
+        assert secret not in doc["services"][service].get("secrets", [])

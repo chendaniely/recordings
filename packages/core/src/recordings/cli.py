@@ -545,7 +545,7 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
     result = {"ntfy": sent, "deadman": logged}
     if ac.deadman_sync_url:  # the worker's: the Plaud sync's own check (stage 2b spec §16)
         status = alerts.ping_url(ac.deadman_sync_url, "log", message="recordings alert-test")
-        result["deadman_sync"] = status is not None and 200 <= status < 300
+        result["deadman_sync"] = alerts.accepted(status)
     _emit(result, args.json)
     return 0 if False not in result.values() else 1
 

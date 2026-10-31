@@ -112,7 +112,7 @@ def conclude_turn(ctx: TurnContext, ran: RunOutcome | None) -> bool:
         log.warning("conclude_turn: no ping (%s)", type(exc).__name__)
         return False
     status = ping_url(url)
-    ok = status is not None and 200 <= status < 300
+    ok = alerts.accepted(status)
     try:
         record_ping(ctx.db, now=now, ok=ok, status=status)
     except Exception as exc:  # noqa: BLE001  the ping went; Status just won't show it

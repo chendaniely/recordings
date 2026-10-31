@@ -15,7 +15,9 @@ On the homelab server, as the user who will run everything (not root):
 - `git`, `make`, `rsync`, `curl`, `nc`, `openssl` and `tailscale` (logged in to your tailnet; 1a.6
   checks it).
 - The repo: after 1a.4 has made `$RECORDINGS_HOME`, run `git clone <the repo's URL> "$REPO_DIR"`,
-  then `git checkout <the commit you will deploy>`.
+  then `git checkout <the commit you will deploy>`. Sections 2 to 5 deploy 2a's last commit,
+  before 2b: at a 2b commit, do section 6's setup (its steps 1, 2, 3 and 4) first, or their
+  `backup init` and `up -d` fail on the missing folders and `deadman_sync_url`.
 
 Every file in `$RECORDINGS_HOME`, secrets included, must be owned by the user whose UID goes in
 `docker/deploy.env`: the containers run as that UID and cannot read a root-owned 0600 file.
@@ -739,8 +741,8 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
      recordings and the NAS's free space.
    - Both warn that retention is off here (`[backup] prune = false`). That is right for
      rest-server: retention runs on the NAS (1b.7).
-   - Until ntfy is set up (optional, for later: "Setting up ntfy, later"), both also warn
-     "alerts are off: set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE". That is
+   - Until ntfy is set up (optional, for later: "Setting up ntfy, later"), `doctor --role backup`
+     also warns "alerts are off: set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE". That is
      expected.
    - From your own device, `nc -vz -w 5 "$SERVER_TS" 8000` now connects. From the refused
      device it still times out.
@@ -1129,7 +1131,7 @@ carry every alert: the backup's check, and from stage 2b the Plaud sync's.
   again (a restart doesn't), and `rc exec backup recordings alert-test`: the phone gets the test
   push.
 - **Until then, doctor warns** "alerts are off: set [alerts] ntfy_server and
-  RECORDINGS_NTFY_TOPIC_FILE" for `web` and `backup`. That warning is expected, and it doesn't
+  RECORDINGS_NTFY_TOPIC_FILE" for `backup` (and `all`, not `web`). That warning is expected, and it doesn't
   fail doctor.
 - **The Plaud sync sends no push** in stage 2b: its alert is its own Healthchecks check, and its
   pushes need a later change (stage 2b spec §16).
@@ -1259,29 +1261,35 @@ disk recovers and fills again.
 `make rollback` alone is not enough to go back to a release from before stage 2b: the checkout's
 `compose.yml` would start a `worker` whose command the older image lacks, and the older backup
 refuses every backup while `[backup] extra_paths` names a folder (its compose file mounts no
-`/consent` either). On the homelab server, with the top block pasted:
+`/consent` either). On the homelab server, with the top block pasted. A fresh shell has no
+`RECORDINGS_IMAGE_TAG`, so `rc` can't be used until it is exported: the commands below go through
+`docker/up-deployed.sh`, which reads the running tag back:
 1. Pause the sync's Healthchecks check (its Pause button): no sync runs until you deploy forward
    again.
 2. In `config.toml`, take `"/consent"` out of `[backup] extra_paths`, so that it is
    `["/backup-extra/deploy.env"]` again.
 3. Then:
    ```bash
-   rc stop worker && rc rm -f worker
    cd "$REPO_DIR"
+   sh docker/up-deployed.sh stop worker && sh docker/up-deployed.sh rm -f worker
    git checkout <the tag's commit>
    make rollback TAG=<tag>
    ```
 `state.db` only gained tables in 2b, and `recording.json` no field, so the older release opens
-both. To go forward again: `git checkout` the newer commit and `make deploy`; once it has worked,
-put `"/consent"` back in `[backup] extra_paths` (section 6, step 3), then `rc restart backup` (the
-loop reads `config.toml` when it starts) and `rc exec backup recordings doctor --role backup`,
-which no longer warns about the consent folder. Resume the sync's check last.
+both. A `compose.yml` from before 2b requires a non-empty `secrets/ntfy_topic` file, so if ntfy
+was never set up, this rollback also needs that file (any text); it was there when 2a was deployed.
+To go forward again: `git checkout` the newer commit and `make deploy`; once it has worked,
+put `"/consent"` back in `[backup] extra_paths` (section 6, step 3), then, from `$REPO_DIR`,
+`sh docker/up-deployed.sh restart backup` (the loop reads `config.toml` when it starts) and
+`sh docker/up-deployed.sh exec backup recordings doctor --role backup`, which no longer warns
+about the consent folder. Resume the sync's check last.
 
 ## Restoring for real
 
 When the archive, `state.db`, or the whole server is lost. Each snapshot holds the container
-paths `/archive`, `/config/config.toml`, `/backup-extra/deploy.env` and `/state/backup/state.db`
-(a consistent SQLite copy). `index.db` is derived, so it isn't there; `reindex` rebuilds it.
+paths `/archive`, `/config/config.toml`, `/backup-extra/deploy.env`, `/state/backup/state.db`
+(a consistent SQLite copy) and, from stage 2b, `/consent` (the consent list's folder; the Plaud
+sign-in is never in it). `index.db` is derived, so it isn't there; `reindex` rebuilds it.
 
 On the homelab server, with the top block of this runbook pasted (it defines the variables and
 `rc`), inside `tmux` or `screen` because the restore takes hours. A new server first goes
@@ -1292,6 +1300,10 @@ through 1a, then:
 - make a new mirror key and replace its `authorized_keys` line on the NAS (1b.8), because the
   `from=` address may change
 - set the tailnet ACL for it (2.3)
+- if the commit you deploy is a stage 2b one (section 6), its `compose.yml` also needs section 6's
+  setup before step 4's `rc up -d`: the Plaud sign-in's folder (step 2 there) and the sync's
+  `deadman_sync_url` file (step 4 there). Not the consent folder: step 3 below restores it from the
+  snapshot. After the restore, sign in to Plaud again when a later phase adds the sign-in.
 
 1. **Find the snapshot.**
    ```bash
@@ -1334,6 +1346,9 @@ through 1a, then:
    mv "$R/state/backup/state.db" "$RECORDINGS_HOME/state/state.db"
    cp "$R/config/config.toml" config.toml
    cp "$R/backup-extra/deploy.env" docker/deploy.env
+   [ ! -e "$RECORDINGS_HOME/consent" ] || mv "$RECORDINGS_HOME/consent" "$RECORDINGS_HOME/consent.lost-$STAMP"
+   mv "$R/consent" "$RECORDINGS_HOME/consent"
+   chmod 700 "$RECORDINGS_HOME/consent"
    ```
    Run only the lines for what you lost. If your own `config.toml` or `deploy.env` survived,
    compare it with the restored one (`diff`) rather than overwrite it.
