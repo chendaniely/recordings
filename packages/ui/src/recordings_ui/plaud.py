@@ -218,6 +218,8 @@ NO_SYNC = (
 )
 NO_GOOD_LISTING = "No good listing yet"
 UNREADABLE_SYNC = "The sync's records in state.db can't be read now: see Needs attention"
+# Needs attention's line for it, with the exception's class and never its text (§15.6).
+UNREADABLE_LINE = "The sync's records in state.db can't be read now (`{}`): check the worker's log."
 FULL_UNKNOWN = "unknown until the first run"
 CONSENT_UNREADABLE = "the consent list can't be read"  # keepout.STOP_UNREADABLE
 NO_WORKER_YET = "The Plaud worker hasn't reported yet: check that the worker container is running."
@@ -537,6 +539,9 @@ class _Read:
         stamps = (parse_stamp(get(checks.K_LAST_STARTED)), parse_stamp(get(checks.K_LAST_ENDED)))
         self.last_turn = max((t for t in stamps if t is not None and t <= now), default=None)
         self.flags = self.db.open_flags(FLAG_EVENTS)
+        # Read here, so a row that can't be read stops every view the same way (_guarded).
+        recent = self.db.events_since(now - RECENT, ("updated", "retagged-private"))
+        self.recent = sorted(recent, key=lambda e: e.at, reverse=True)
         unwritten = _dict(get(checks.BLOCKER_PREFIX + "private-unwritten"))
         self.unwritten_error = _class_name(_dict(unwritten.get("detail")).get("error"))
         unchecked = _dict(get(checks.K_PATTERNS_PASS)).get("unwritten")
@@ -556,23 +561,40 @@ class _Read:
     def flag_rows(self) -> list[dict]:
         return [_flag(self.db, ev) for ev in self.flags]
 
-    def cause(self) -> str | None:
-        """What stops the sync (sync_health, §16), else the gate's reason. A late consent pass
-        that failed as a whole names its class and the remedy that can help."""
+    def health_cause(self) -> str | None:
+        """What stops the sync, from sync_health (§16). A `private` that can't be written names
+        the remedy that can help, never `recordings reindex` for a disk fault: a late consent pass
+        that failed as a whole says its class; otherwise the first open flag whose cause needs its
+        own remedy says what its own sentence says (§15.6)."""
+        from recordings.plaud.flags import PRIVATE_UNWRITTEN, SENTENCES
         from recordings.plaud.health import BLOCKER_PHRASES
 
         found = self.health.cause(tz=ZoneInfo(self.tz))
-        if found == BLOCKER_PHRASES["private-unwritten"] and self.unwritten_error:
+        if found != BLOCKER_PHRASES["private-unwritten"]:
+            return found
+        if self.unwritten_error:
             return UNWRITTEN_STOPPED.format(self.unwritten_error)
-        return found or self.gate_reason()
+        for ev in self.flags:
+            said = _sentence(ev)
+            if ev.kind == PRIVATE_UNWRITTEN and said != SENTENCES[PRIVATE_UNWRITTEN]:
+                return said.removesuffix(".")
+        return found
+
+    def cause(self) -> str | None:
+        """What stops the sync, else the gate's reason."""
+        return self.health_cause() or self.gate_reason()
 
     def summary_view(self) -> dict:
         """The one summary line the Sync screen and Status share (§15.1, §15.2): what stops the
         sync, or the gate's reason. "All here" needs the last good listing, which Phase 2 writes
         and reads; until then a sync nothing stops has no good listing yet."""
-        problem = self.cause()
+        stopped = self.health_cause()
+        problem = stopped or self.gate_reason()
         sentence = _cap(problem) if problem else NO_GOOD_LISTING
-        return {"kind": "problem", "sentence": sentence, "explain": None, "see_status": True}
+        # The gate waiting for the first catch-up, and a listing not yet written, aren't failures
+        # (§11.6, §15.2): only what sync_health says stops the sync is a problem.
+        kind = "problem" if stopped else "no-sync"
+        return {"kind": kind, "sentence": sentence, "explain": None, "see_status": True}
 
     def consent_view(self) -> dict | None:
         """What the worker read from the consent list (§12.1): its count, never its IDs (Task 13
@@ -600,6 +622,10 @@ class _Read:
 
 def _summary(kind: str, sentence: str) -> dict:
     return {"kind": kind, "sentence": sentence, "explain": None, "see_status": False}
+
+
+def _unreadable_summary() -> dict:
+    return {"kind": "problem", "sentence": UNREADABLE_SYNC, "explain": None, "see_status": True}
 
 
 def _empty_sync(reason: str | None) -> dict:
@@ -636,8 +662,9 @@ def _empty_sync(reason: str | None) -> dict:
 
 
 def _guarded(build, empty, unreadable):
-    """A view from state.db: NoSyncYet without the 2b tables, and a state.db that can't be read
-    gives its own line, never a traceback (Status has the restore advice, §9.5)."""
+    """A view from state.db: NoSyncYet without the 2b tables, and a state.db that can't be read,
+    or holds a row that can't be (bad JSON, a bad time), gives its own line, never a traceback
+    (Status has the restore advice, §9.5). `unreadable` is given the exception's class name."""
     import sqlite3
 
     from recordings.plaud.checks import NoSyncYet
@@ -646,8 +673,8 @@ def _guarded(build, empty, unreadable):
         return build()
     except NoSyncYet:
         return empty()
-    except sqlite3.DatabaseError:
-        return unreadable()
+    except (sqlite3.DatabaseError, ValueError, TypeError) as exc:
+        return unreadable(type(exc).__name__)
 
 
 def sync_view(
@@ -661,8 +688,8 @@ def sync_view(
     if settings is None or state is None:
         return _empty_sync(can_request)
 
-    def unreadable() -> dict:
-        return {**_empty_sync(UNREADABLE_SYNC), "summary": _summary("problem", UNREADABLE_SYNC)}
+    def unreadable(_name: str) -> dict:
+        return {**_empty_sync(UNREADABLE_SYNC), "summary": _unreadable_summary()}
 
     return _guarded(
         lambda: _sync_from(_Read(settings, state, now), can_request),
@@ -747,8 +774,7 @@ def _updated(r: _Read) -> list[dict]:
     consent-listed after it came in shows by ID alone, as everywhere else (P13)."""
     rows, titles = [], {}
     hidden = _untitled(r)
-    events = r.db.events_since(r.now - RECENT, ("updated", "retagged-private"))
-    for ev in sorted(events, key=lambda e: e.at, reverse=True):
+    for ev in r.recent:
         if ev.recording_id is None:
             continue
         if ev.recording_id not in titles:
@@ -842,11 +868,12 @@ def sync_panel(settings: PlaudViewSettings | None, *, now: datetime) -> dict:
     if settings is None or state is None:
         return _empty_panel()
 
-    def unreadable() -> dict:
+    def unreadable(name: str) -> dict:
         return {
             **_empty_panel(),
             "no_sync_yet": False,
-            "summary": _summary("problem", UNREADABLE_SYNC),
+            "summary": _unreadable_summary(),
+            "attention": [UNREADABLE_LINE.format(name)],
         }
 
     return _guarded(lambda: _panel_from(_Read(settings, state, now)), _empty_panel, unreadable)
@@ -857,15 +884,13 @@ def _worker(r: _Read) -> tuple[str | None, str | None, str | None]:
     "couldn't start" reason; and its Needs attention line (§9.2). A start that failed writes the
     phase `failed` and its error's class (Task 13), shown as a class, never as text. The patterns
     pass at start runs as `checking`, its heartbeat carrying `done` and `total` (Task 13)."""
-    from recordings.worker import HEARTBEAT_KEY, alive
+    from recordings.worker import HEARTBEAT_KEY, beat_alive, parse_heartbeat
 
-    beat = r.state.meta(HEARTBEAT_KEY)
-    if beat is None:
+    raw = r.state.meta(HEARTBEAT_KEY)  # read once: the same value judged alive and reported
+    if raw is None:
         return None, "the Plaud worker hasn't reported yet", NO_WORKER_YET
-    try:
-        data = _dict(json.loads(beat))
-    except ValueError:
-        data = {}
+    beat = parse_heartbeat(raw)
+    data = beat or {}
     at = parse_stamp(data.get("at"))
     phase = data.get("phase")
     if phase == "failed":
@@ -877,7 +902,7 @@ def _worker(r: _Read) -> tuple[str | None, str | None, str | None]:
     if phase == "checking" and total > 0:
         words = f"checking, {done:,} of {total:,}"  # §15.2's "(checking, 412 of 1,234)"
     report = f"last reported {r.when(at)} ({words})" if at else None
-    ok, why = alive(r.state, now=r.now)
+    ok, why = beat_alive(beat, now=r.now)
     if ok or why is None:
         return report, None, None
     since = f" (last reported {r.when(at)})" if at else ""
@@ -1061,7 +1086,7 @@ def arrivals(settings: PlaudViewSettings | None, *, since: datetime, now: dateti
             "consent_late": flags["consent-late"],
         }
 
-    return _guarded(build, lambda: zero, lambda: zero)
+    return _guarded(build, lambda: zero, lambda _name: zero)
 
 
 # ---- Details' Plaud lines ---------------------------------------------------------------------
@@ -1084,7 +1109,7 @@ def recording_plaud(
 
     try:
         body = _body(state, recording_id)
-    except sqlite3.DatabaseError:
+    except (sqlite3.DatabaseError, ValueError, TypeError):
         return None
     refs = _plaud_refs(body)
     if not refs:
@@ -1112,7 +1137,7 @@ def recording_plaud(
         return {**bare, **_recording_lines(settings, state, recording_id, body or {}, unique)}
     except NoSyncYet:
         return bare  # before any sync: the IDs, for `make consent-add`
-    except sqlite3.DatabaseError:
+    except (sqlite3.DatabaseError, ValueError, TypeError):
         return bare
 
 

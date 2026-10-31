@@ -81,7 +81,7 @@ def from_env(environ: Mapping[str, str], *, demo: bool | None = None) -> Setting
         # The Plaud views' canned view, hand-written beside the demo archive, goes beside the
         # copy, where they read it as <archive>/../plaud-sync.json (2b phase 1 plan, decision
         # 23). An archive with none beside it, such as the e2e tests', draws an empty one.
-        from recordings_ui.plaud import DEMO_VIEW_NAME  # here: recordings_ui.plaud imports this
+        from recordings_ui.plaud import DEMO_VIEW_NAME  # here: only demo mode needs it
 
         if (committed.parent / DEMO_VIEW_NAME).is_file():
             shutil.copy2(committed.parent / DEMO_VIEW_NAME, folder / DEMO_VIEW_NAME)

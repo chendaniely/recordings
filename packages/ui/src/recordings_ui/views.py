@@ -254,7 +254,9 @@ def _plaud_lines(
 ) -> dict | None:
     if settings is None or not any(s.kind == "plaud" for s in rec.sources):
         return None
-    from recordings_ui.plaud import recording_plaud  # here: recordings_ui.plaud imports this
+    from recordings_ui.plaud import (
+        recording_plaud,
+    )  # here: only a recording with a Plaud source needs it
 
     return recording_plaud(settings, rec.id, now=now or datetime.now(UTC))
 

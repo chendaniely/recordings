@@ -69,7 +69,7 @@ def test_before_the_catch_up_the_summary_is_the_gate_said_once(plaud_scene):
     s = plaud_scene
     view = sync_view(s.settings, now=T0, can_request=None)
     assert view["summary"] == {
-        "kind": "problem",
+        "kind": "no-sync",  # waiting for the first catch-up isn't a failure (§11.6)
         "sentence": GATE_FIRST,
         "explain": None,
         "see_status": True,
@@ -82,6 +82,10 @@ def test_before_the_catch_up_the_summary_is_the_gate_said_once(plaud_scene):
     s.open_gate()
     view = sync_view(s.settings, now=T0, can_request=None)
     assert view["summary"]["sentence"] == NO_GOOD_LISTING and view["gate"] is None
+    assert view["summary"]["kind"] == "no-sync"
+    # What sync_health says stops the sync is a problem.
+    open_blocker(s.db, "consent", now=T0)
+    assert sync_view(s.settings, now=T0, can_request=None)["summary"]["kind"] == "problem"
 
 
 def test_the_views_carry_what_the_worker_handles_and_each_button_its_own_reason(plaud_scene):
@@ -659,3 +663,160 @@ def test_the_docker_image_carries_the_canned_view():
     # The Docker demo (make docker) finds it beside RECORDINGS_DEMO_ARCHIVE=/app/demo/archive.
     dockerfile = (REPO / "docker" / "Dockerfile").read_text(encoding="utf-8")
     assert "COPY demo/plaud-sync.json demo/plaud-sync.json\n" in dockerfile
+
+
+def _corrupt(scene, sql):
+    with closing(sqlite3.connect(scene.writer.state.db_path)) as conn, conn:
+        conn.execute(sql)
+
+
+def _assert_unreadable(s, name):
+    from recordings_ui.plaud import UNREADABLE_LINE, UNREADABLE_SYNC
+    from recordings_ui.status import StatusSettings
+
+    settings = StatusSettings(
+        state_path=s.writer.state.path, timezone_name="UTC", warn=20.0, stop=5.0, jobs=("disk",)
+    )
+    view = status_view(s.writer.root, settings, now=T0, plaud=s.settings)
+    assert view["configured"] is True and "disk" in view  # the backups section survives
+    assert view["sync"]["summary"]["sentence"] == UNREADABLE_SYNC
+    assert view["sync"]["summary"]["see_status"] is True
+    assert UNREADABLE_LINE.format(name) in view["attention"]
+    assert UNREADABLE_LINE.format(name) in view["sync"]["attention"]
+    screen = sync_view(s.settings, now=T0, can_request=None)
+    assert screen["summary"]["sentence"] == UNREADABLE_SYNC
+    assert set(arrivals(s.settings, since=T0 - timedelta(hours=1), now=T0).values()) == {0}
+    assert "should" not in json.dumps(view["sync"]["attention"])  # fixed phrase and class only
+
+
+def test_bad_json_in_plaud_state_is_unreadable_never_a_broken_status(plaud_scene):
+    # why: P1 and status.py's "rather than breaking the page": the backups stay, the sync part
+    # says its records can't be read, and Needs attention names the class (never str(exc)).
+    s = plaud_scene
+    s.add(41, "Week 41")
+    s.db.put("consent", {"count": 1}, now=T0)
+    _corrupt(s, "UPDATE plaud_state SET value = '{not json' WHERE key = 'consent'")
+    _assert_unreadable(s, "JSONDecodeError")
+    assert recording_plaud(s.settings, s.added[41], now=T0)["plaud_ids"]  # the IDs still show
+
+
+def test_bad_json_in_an_events_detail_is_unreadable(plaud_scene):
+    s = plaud_scene
+    rid = s.add(42, "Week 42")
+    s.db.add_event("consent-late", now=T0, recording_id=rid, open_flag=True)
+    _corrupt(s, "UPDATE plaud_events SET detail = '{not json'")
+    _assert_unreadable(s, "JSONDecodeError")
+
+
+def test_a_bad_time_in_an_event_is_unreadable(plaud_scene):
+    s = plaud_scene
+    rid = s.add(43, "Week 43")
+    for minutes in (0, 1):
+        s.db.add_event("imported", now=T0 - timedelta(minutes=minutes), recording_id=rid)
+        s.db.add_event("updated", now=T0 - timedelta(minutes=minutes), recording_id=rid)
+    _corrupt(s, "UPDATE plaud_events SET at = '2026-10-23Tzzz'")
+    _assert_unreadable(s, "TypeError")
+
+
+def test_an_unwritten_flag_caused_by_the_disk_gives_the_summary_the_disk_remedy(plaud_scene):
+    # why: spec §15.6 (decision 58). The blocker carries no detail while a flag is open, and the
+    # summary must not send a full disk to `recordings reindex` beside a flag that says the disk.
+    from recordings.plaud.flags import PRIVATE_UNWRITTEN_MISSING
+
+    s = plaud_scene
+    io, missing = s.add(51, "Week 51"), s.add(52, "Week 52")
+    open_blocker(s.db, "private-unwritten", now=T0)
+    flag = s.db.add_event(
+        "private-unwritten",
+        now=T0,
+        recording_id=io,
+        detail={"owed": "consent", "cause": "OSError"},
+        open_flag=True,
+    )
+    summary = sync_panel(s.settings, now=T0)["summary"]
+    assert summary["sentence"] == (
+        f"Recording {io} should be private, but its file couldn't be written (OSError): check "
+        "the archive disk and its permissions"
+    )
+    assert sync_view(s.settings, now=T0, can_request=None)["summary"] == summary
+    assert summary["kind"] == "problem"
+    # A file that is missing: restore it, or reindex.
+    s.db.resolve(flag, now=T0)
+    s.db.add_event(
+        "private-unwritten",
+        now=T0,
+        recording_id=missing,
+        detail={"owed": "consent", "cause": "FileNotFoundError"},
+        open_flag=True,
+    )
+    said = PRIVATE_UNWRITTEN_MISSING.format(id=missing).removesuffix(".")
+    assert sync_panel(s.settings, now=T0)["summary"]["sentence"] == said
+
+
+def _updated_by_the_marker(scene, n, why="title changed"):
+    scene.add(n, f"Week {n}")
+    scene.db.add_event(
+        "retagged-private",
+        now=T0,
+        recording_id=scene.added[n],
+        plaud_id=scene.plaud_id(n),
+        detail={"why": why},
+    )
+
+
+def _shown_title(scene, n):
+    """The title shown for recording `n` in Updated on Plaud (None: hidden)."""
+    rows = sync_view(scene.settings, now=T0, can_request=None)["updated"]
+    (row,) = [r for r in rows if r["recording_id"] == scene.added[n]]
+    return row["title"]
+
+
+def test_a_title_is_shown_when_nothing_hides_it(plaud_scene):
+    s = plaud_scene
+    _updated_by_the_marker(s, 61)
+    assert _shown_title(s, 61) == "Week 61"
+
+
+def test_a_resolved_flag_event_alone_hides_the_title(plaud_scene):
+    s = plaud_scene
+    _updated_by_the_marker(s, 62)
+    event = s.db.add_event(
+        "consent-late", now=T0, recording_id=s.added[62], plaud_id=s.plaud_id(62), open_flag=True
+    )
+    s.db.resolve(event, now=T0)
+    assert s.db.open_flags() == []
+    assert _shown_title(s, 62) is None
+
+
+def test_a_kept_here_event_alone_hides_the_title(plaud_scene):
+    from recordings.plaud.checks import KEPT_HERE_EVENT
+
+    s = plaud_scene
+    _updated_by_the_marker(s, 63)
+    s.db.add_event(KEPT_HERE_EVENT, now=T0, recording_id=s.added[63])
+    assert _shown_title(s, 63) is None
+
+
+def test_a_keep_out_retag_alone_hides_the_title(plaud_scene):
+    s = plaud_scene
+    _updated_by_the_marker(s, 64, why="kept out by title")
+    assert _shown_title(s, 64) is None
+    _updated_by_the_marker(s, 65, why="kept out late")
+    assert _shown_title(s, 65) is None
+
+
+def test_a_kept_out_listing_row_alone_hides_the_title(plaud_scene):
+    s = plaud_scene
+    _updated_by_the_marker(s, 66)
+    s.db.set_listing(s.plaud_id(66), kept_out_at=T0, kept_out_word="noarchive")
+    assert _shown_title(s, 66) is None
+
+
+def test_constants_copied_to_keep_sqlite_out_of_pyodide_match_their_sources():
+    # why: plaud.py can't import checks at the top (it needs sqlite3), so these are copies.
+    from recordings.plaud.checks import KEPT_HERE_EVENT
+    from recordings.plaud.keepout import STOP_UNREADABLE
+    from recordings_ui.plaud import CONSENT_UNREADABLE, TITLE_HIDING_EVENTS
+
+    assert KEPT_HERE_EVENT in TITLE_HIDING_EVENTS
+    assert CONSENT_UNREADABLE == STOP_UNREADABLE
