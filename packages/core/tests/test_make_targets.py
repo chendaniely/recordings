@@ -160,6 +160,30 @@ def test_consent_add_writes_by_rename_and_keeps_the_mode(server):
     assert "within a few seconds" in done.stdout  # the readback may precede the worker's next look
 
 
+def test_consent_add_syncs_the_new_list_before_the_rename_and_the_folder_after(server, tmp_path):
+    # why: the council's R2. On a filesystem that doesn't flush a file's data on rename (XFS, say),
+    # a power cut soon after `mv` can leave the list with a zero-filled tail, which parses as fewer
+    # exclusions with no stop. `sync` before the rename writes the new list out first, and `sync`
+    # after it the folder's new entry. Bare `sync`: POSIX has no sync utility, and macOS's takes no
+    # operand. The fake `sync` only records; the fake `mv` records, then renames for real.
+    calls, fakes = tmp_path / "calls.log", tmp_path / "fakes"
+    fakes.mkdir()
+    real_mv = shutil.which("mv")
+    (fakes / "sync").write_text(f'#!/bin/sh\nprintf "sync %s\\n" "$*" >> "{calls}"\n')
+    (fakes / "mv").write_text(
+        f'#!/bin/sh\nprintf "mv %s\\n" "$*" >> "{calls}"\nexec "{real_mv}" "$@"\n'
+    )
+    for fake in fakes.iterdir():
+        fake.chmod(0o755)
+    done = script(server, PLAUD_A, env={"PATH": f"{fakes}{os.pathsep}{os.environ['PATH']}"})
+    assert done.returncode == 0, done.stderr
+    lines = calls.read_text(encoding="utf-8").splitlines()
+    assert [line.split(" ", 1)[0] for line in lines] == ["sync", "mv", "sync"]
+    assert lines[0].rstrip() == lines[2].rstrip() == "sync"  # no operand
+    assert lines[1].endswith(f" {server.list}")
+    assert server.list.read_text(encoding="utf-8").splitlines()[-1].startswith(f"- `{PLAUD_A}` —")
+
+
 def test_consent_add_accepts_the_copy_id_form(server):
     # Review Focus 4: the Sync screen's Copy ID copies the list's own form; pasted into
     # `make consent-add ID='…'`, it adds the ID, never a typo line that stops every import. Every

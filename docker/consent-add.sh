@@ -2,8 +2,8 @@
 # `make consent-add ID='<id>'` runs this on the homelab server, over ssh (stage 2b spec §12.1): it
 # appends one Plaud ID to the consent list, as the line "- `<id>` — added <date>". It writes the old
 # list and the new line to a new file in the same folder, at the old file's mode, then renames it
-# over the list, so the worker, which watches the folder, reads the old list or the new one, never
-# half of one. The ID must be 32 hex digits, bare or after `of_`: anything else is refused before
+# over the list, with a `sync` before the rename and after it, so the worker, which watches the
+# folder, reads the old list or the new one, never half of one, even after a power cut. The ID must be 32 hex digits, bare or after `of_`: anything else is refused before
 # the list is touched. It never makes a list and never extends an empty one: a missing list, an
 # empty one and one of only blank lines and comments (see the check below) are a consent stop
 # that fails closed (§12.1), and one exclusion added to it would
@@ -60,5 +60,11 @@ u=$(printf '%s' "$perms" | cut -c1-3 | tr -d -)
 g=$(printf '%s' "$perms" | cut -c4-6 | tr -d -)
 o=$(printf '%s' "$perms" | cut -c7-9 | tr -d -)
 chmod "u=$u,g=$g,o=$o" "$tmp"  # the old file's mode, set once the new file is written
+# The new list reaches the disk before it replaces the old one, and the folder's new entry after:
+# on a filesystem that doesn't flush a file's data on rename (XFS, say), a power cut soon after
+# could leave a zero-filled tail, which reads as fewer exclusions with no stop. Bare `sync`, no
+# operand: POSIX has no sync utility, macOS's takes none, and with none coreutils' flushes all.
+sync
 mv -f "$tmp" "$list"
+sync
 echo "consent-add: added $id to $list"
