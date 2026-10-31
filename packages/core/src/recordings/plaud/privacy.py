@@ -9,13 +9,19 @@
     every keep-out word run over every title of every snapshot, under every Plaud ID;
   - a marker whose hash isn't the newest title's (case 2): every pattern and word on every title
     after the last one whose hash is the marker's (all of them if none is), since a reconcile
-    that stopped part way, or two snapshots between reconciles, leaves more than one new title;
+    that stopped part way, or two snapshots between reconciles, leaves more than one new title.
+    Also every title from a snapshot added at or after the marker's `checked_at` whose hash isn't
+    the marker's, whatever the newest is: A, "Private: x", A merged between two reconciles ends
+    on A again, but the app has seen the other title (Part I: "judged on every title the app has
+    seen", which binds over §13.2's older "Due when the newest title's hash differs");
   - a marker of an older pattern version (case 5): only the patterns added since that version, over
     every title of that ID. A removed pattern re-checks nothing.
   Each title is tried as given and folded (`keepout.fold`). Nothing ever removes `private`.
 - **A marker moves only once the result is written,** and only when it was due: the Writer records
   `Verdict.markers` after its `mutate` lands, and after the note and any late keep-out, so one
-  `state.db` refuses leaves the title due. A marker that wasn't due keeps its version, so a
+  `state.db` refuses leaves the title due. What the retry does then: the recording is already
+  private, so it records no new `retagged-private` note (the tag stays); a refused keep-out is
+  found and recorded again. A marker that wasn't due keeps its version, so a
   pattern removed and later restored is not run again on a title that passed it. One limit: a
   marker moved by a later check takes that version, so a pattern removed and restored after it is
   run once more, erring private.
@@ -37,6 +43,7 @@ from typing import TYPE_CHECKING, Literal
 
 from recordings.plaud.keepout import fold, keep_out_match
 from recordings.plaud.reconcile import matches_auto_private
+from recordings.plaud.when import parse_stamp
 
 if TYPE_CHECKING:
     from recordings.plaud.checks import Marker, PlaudDB
@@ -110,17 +117,21 @@ def judge(
     words: Sequence[str],
     *,
     private_now: bool,
+    added_at: Mapping[str, Sequence[datetime | None]] | None = None,
 ) -> Verdict:
     """Which of these titles are due, and whether they make the recording private (§13.1).
     `titles_by_id` maps each canonical Plaud ID to its snapshots' titles in fetch order, newest
-    last; `markers` are the recording's; `private_now` whether it is private already."""
+    last; `markers` are the recording's; `private_now` whether it is private already; `added_at`
+    the same shape as `titles_by_id`: when the app added each title's snapshot."""
     from recordings.plaud.checks import Marker
 
     checked: set[tuple[str, int]] = set()
     why: Why | None = None
     word: str | None = None
 
-    def check(pid: str, i: int, title: str, run: Sequence[str], words_too: bool, case: Why) -> None:
+    def check(
+        pid: str, i: int, title: str, run: Sequence[str], *, words_too: bool, case: Why
+    ) -> None:
         nonlocal why, word
         checked.add((pid, i))
         if why is None and _hits(title, run):
@@ -133,23 +144,37 @@ def judge(
     if any(pid not in markers for pid in ids):  # case 4: everything, everywhere
         for pid in ids:
             for i, title in enumerate(titles_by_id[pid]):
-                check(pid, i, title, patterns.patterns, True, "first check")
+                check(pid, i, title, patterns.patterns, words_too=True, case="first check")
         moved = set(ids)
     else:
         for pid in ids:
             titles, marker = titles_by_id[pid], markers[pid]
             hashes = [title_sha256(title) for title in titles]
+            # Every title after the last one the marker names, all of them if none does: a
+            # reconcile that stopped part way leaves the marker behind more than one new title.
+            due: set[int] = set()
             if hashes[-1] != marker.title_sha256:  # case 2
-                # Every title after the last one the marker names, all of them if none does: a
-                # reconcile that stopped part way leaves the marker behind more than one new title.
                 named = [i for i, h in enumerate(hashes) if h == marker.title_sha256]
-                for i in range(named[-1] + 1 if named else 0, len(titles)):
-                    check(pid, i, titles[i], patterns.patterns, True, "title changed")
-                moved.add(pid)
+                due.update(range(named[-1] + 1 if named else 0, len(titles)))
+            # And every other title the app added since the marker was written (A, P, A).
+            when = added_at.get(pid, ()) if added_at else ()
+            if marker.checked_at is not None:
+                due.update(
+                    i
+                    for i, h in enumerate(hashes)
+                    if h != marker.title_sha256
+                    and i < len(when)
+                    and when[i] is not None
+                    and parse_stamp(when[i]) >= parse_stamp(marker.checked_at)
+                )
+            for i in sorted(due):
+                check(pid, i, titles[i], patterns.patterns, words_too=True, case="title changed")
+            if due:
+                moved.add(pid)  # rewritten even if the newest is the marked one: checked_at moves
             added = patterns.added_since(marker.patterns_version)
             if marker.patterns_version != patterns.version and added:  # case 5
                 for i, title in enumerate(titles):
-                    check(pid, i, title, added, False, "new pattern")
+                    check(pid, i, title, added, words_too=False, case="new pattern")
                 moved.add(pid)
     new_markers = tuple(
         Marker(pid, title_sha256(titles_by_id[pid][-1]), patterns.version)
@@ -169,13 +194,15 @@ def judge(
     )
 
 
+_PHRASES: dict[Why, str] = {
+    "title changed": "title changed",
+    "first check": "first check",
+    "new pattern": "patterns changed",
+    "kept out late": "kept out by title",
+}
+
+
 def why_phrase(why: Why) -> str:
     """The fixed reason an automatic `private` records (2b phase 1 plan, decision 15). Phase 2's
     rebuild record adds "the sync's record was rebuilt" for case 4 after a rebuild."""
-    if why == "first check":
-        return "first check"
-    if why == "new pattern":
-        return "patterns changed"
-    if why == "kept out late":
-        return "kept out by title"
-    return "title changed"
+    return _PHRASES[why]

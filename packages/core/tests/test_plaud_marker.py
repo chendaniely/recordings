@@ -2,12 +2,14 @@
 title changes, in every Writer that reconciles. Every archive, title and Plaud ID is synthetic."""
 
 import json
+import logging
 import shutil
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from recordings.archive import RawSource
+from recordings.config import Config
 from recordings.index import Index
 from recordings.models import is_private
 from recordings.plaud.checks import Marker, PlaudDB
@@ -305,3 +307,123 @@ def test_privacy_imports_no_sqlite3():
     code = "import sys, recordings.plaud.privacy; print('sqlite3' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+# ---- Task 9's review round --------------------------------------------------------------------
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """The Writer's clock, set by `clock[0] = …`: a marker's checked_at is when it was judged."""
+    now = [T1 + timedelta(hours=1)]
+    monkeypatch.setattr("recordings.writer._now", lambda: now[0])
+    return now
+
+
+def merge(writer, make_incoming, plaud_env, *named: tuple[str, int]) -> None:
+    """Merge snapshots into the recording without reconciling."""
+    for name, day in named:
+        writer.add(make_incoming(b"rec-1", sources=(snapshot(plaud_env, name, day),)))
+
+
+def test_a_to_p_to_a_merged_before_a_reconcile_is_judged_on_every_title(
+    writer, make_incoming, plaud_env, clock
+):
+    # why: Part I, "judged on every title the app has seen", which binds over §13.2's "newest
+    # title's hash differs". A, then P and A merged between two reconciles: the newest is A again.
+    rid, _ = add(writer, make_incoming, plaud_env, "Week 4")
+    merge(writer, make_incoming, plaud_env, ("Private: x", 1), ("Week 4", 2))
+    clock[0] = T1 + timedelta(days=3)
+    assert writer.reconcile_plaud(rid).private_added == "title changed"
+    assert is_private(writer.archive.load(rid))
+    # Dan's decision 3: removed, it stays removed, for this reconcile and a reindex in `web`.
+    remove_private(writer, rid)
+    assert writer.reconcile_plaud(rid).private_added is None
+    clock[0] = T1 + timedelta(days=4)
+    assert web_writer(writer).reindex().reconciled[0].private_added is None
+    assert not is_private(writer.archive.load(rid))
+    assert retagged(writer) == ["title changed"]
+
+
+def test_a_keep_out_title_between_two_equal_titles_is_flagged(
+    writer, make_incoming, plaud_env, clock
+):
+    rid, _ = add(writer, make_incoming, plaud_env, "Week 4")
+    merge(writer, make_incoming, plaud_env, ("NoArchive: coffee", 1), ("Week 4", 2))
+    clock[0] = T1 + timedelta(days=3)
+    report = writer.reconcile_plaud(rid)
+    assert report.kept_out_word == "noarchive" and report.private_added == "kept out by title"
+    assert [(e.kind, e.recording_id) for e in PlaudDB(writer.state).open_flags()] == [
+        ("kept-out-late", rid)
+    ]
+
+
+def test_judge_gives_a_later_added_title_that_differs_even_when_the_newest_is_the_marked_one():
+    titles = {HEX: ["Week 4", "Private: x", "Week 4"]}
+    added = {HEX: [T1, T1 + timedelta(days=1), T1 + timedelta(days=2)]}
+    seen = {HEX: Marker(HEX, title_sha256("Week 4"), 1, T1 + timedelta(hours=1))}
+    verdict = judge(titles, seen, V1, (), private_now=False, added_at=added)
+    assert (verdict.add_private, verdict.why, verdict.titles_checked) == (True, "title changed", 1)
+    assert verdict.markers[0].title_sha256 == title_sha256("Week 4")
+    assert verdict.markers[0] != seen[HEX]  # rewritten, so checked_at moves forward
+    after = {HEX: Marker(HEX, title_sha256("Week 4"), 1, T1 + timedelta(days=3))}
+    quiet = judge(titles, after, V1, (), private_now=False, added_at=added)
+    assert (quiet.add_private, quiet.titles_checked) == (False, 0)
+    assert quiet.markers == tuple(after.values())
+
+
+@pytest.mark.parametrize("title", ["Ｐｒｉｖａｔｅ: x", "Pri⁠vate: x", "﻿Private: x"])
+def test_a_title_is_tried_folded_for_the_patterns(title):
+    # why: §13.1, "tried as given and folded". Without `fold`, none of these matches.
+    verdict = judge({HEX: [title]}, {}, V1, (), private_now=False)
+    assert (verdict.add_private, verdict.why) == (True, "first check")
+
+
+@pytest.mark.parametrize("title", ["ｎｏａｒｃｈｉｖｅ: x", "no⁠archive: x"])
+def test_a_title_is_tried_folded_for_the_keep_out_word(title):
+    verdict = judge({HEX: [title]}, {}, V1, ("noarchive",), private_now=False)
+    assert verdict.kept_out_word == "noarchive"
+
+
+@pytest.mark.parametrize("failing", ["set_markers", "put"])
+def test_state_db_refusing_a_privacy_record_never_stops_a_reindex(
+    writer, make_incoming, plaud_env, monkeypatch, caplog, failing
+):
+    rid, _ = add(writer, make_incoming, plaud_env, "Week 4")
+    other, _ = add(writer, make_incoming, plaud_env, "Week 5", content=b"rec-2", fid=OTHER)
+
+    def refuse(self, *args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    with writer.state.db() as conn:
+        conn.execute("DELETE FROM plaud_private_checked")  # both are due again
+    monkeypatch.setattr(PlaudDB, failing, refuse)
+    if failing == "put":  # a new pattern version is recorded before judging
+        monkeypatch.setattr(writer, "auto_private", (r"^\s*private", r"other"))
+    with caplog.at_level(logging.INFO):
+        report = writer.reindex()
+    assert {r.recording_id for r in report.reconciled} == {rid, other}
+    assert all(r.problem == "OperationalError: not reconciled" for r in report.reconciled)
+    assert any("OperationalError" in r.getMessage() for r in caplog.records)
+    assert all("Week" not in r.getMessage() for r in caplog.records)
+    monkeypatch.undo()
+    assert all(r.problem is None for r in writer.reindex().reconciled)
+    assert set(PlaudDB(writer.state).markers(other)) == {OTHER}
+
+
+def test_writer_open_uses_the_configured_keep_out_word_and_opens_on_other_bad_plaud_keys(writer):
+    def config(**plaud):
+        return Config(
+            path=None,
+            archive_path=writer.root,
+            writer_id="test",
+            default_timezone="America/Vancouver",
+            base_url=None,
+            data={"plaud": {"api_base": "ftp://nope", "schedule_minutes": "x", **plaud}},
+            state_path=writer.state.path,
+            index_path=writer.index.path,
+        )
+
+    assert Writer.open(config(keep_out_word="skipme")).keep_out_words() == ("skipme",)
+    assert Writer.open(config(keep_out_word="bad word!")).keep_out_words() == ()
+    assert Writer.open(config()).keep_out_words() == ("noarchive",)

@@ -392,8 +392,9 @@ class Writer:
         # never through `plaud_settings`: that raises ConfigError for any other bad [plaud] key (a
         # mistyped `api_base` or `schedule_minutes`), and a Writer opens in `web` too, which must
         # still open on such a typo. An invalid word is None: the worker idles on it and says why.
-        plaud = cfg.data.get("plaud", {})
-        word = plaud.get("keep_out_word", DEFAULT_WORD) if isinstance(plaud, dict) else None
+        # patterns_from_config above has refused a [plaud] that isn't a table; the __init__ checks
+        # the word.
+        word = cfg.data.get("plaud", {}).get("keep_out_word", DEFAULT_WORD)
         writer = cls(
             cfg.archive_path,
             state,
@@ -402,7 +403,7 @@ class Writer:
             rebuild=rebuild,
             auto_private=patterns,
             lock_timeout=lock_timeout,
-            keep_out_word=word if valid_word(word) else None,
+            keep_out_word=word,
         )
         if docs:
             writer.write_docs()  # §6.7: at startup, and only into an archive with its sentinel
@@ -854,6 +855,7 @@ class Writer:
                         ref=source.ref,
                         fetched_at=source.fetched_at or source.added_at,
                         envelope=envelope,
+                        added_at=source.added_at,
                     )
                 )
             if not snapshots:
@@ -925,8 +927,10 @@ class Writer:
         """Record what reconcile judged, once its result is written (decision 14): a
         `retagged-private` note with its reason and a late keep-out's flag, then the markers that
         moved. The markers go last: a note or keep-out state.db refuses leaves the title due, so
-        the next reconcile records it, never a moved marker with nothing behind it. Returns the
-        reason when `private` was added now."""
+        the next reconcile judges it again, never a moved marker with nothing behind it. That
+        retry finds the recording already private, so it records no `retagged-private` note: the
+        tag stays, and the note is the one thing lost; a refused keep-out is recorded again.
+        Returns the reason when `private` was added now."""
         verdict = result.verdict
         reason = None
         if verdict.add_private:
@@ -999,6 +1003,12 @@ class Writer:
                 continue
             try:
                 reconciled.append(self.reconcile_plaud(rec.id))
+            except sqlite3.Error as exc:
+                # state.db refused a privacy record: the title stays due, so the next reconcile
+                # judges it again. A fixed phrase and the class, never the exception's text.
+                log.warning("reconcile of %s: state.db refused (%s)", rec.id, type(exc).__name__)
+                problem = f"{type(exc).__name__}: not reconciled"
+                reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
             except (
                 WriterError,
                 KeyError,

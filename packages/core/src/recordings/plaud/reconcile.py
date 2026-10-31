@@ -29,10 +29,12 @@ identical Plaud outputs, and running it again writes nothing new.
 - **Auto-private** follows the marker (stage 2b spec §13, `plaud/privacy.py`), never
   `plaud.title_seen`: a title is judged once per new Plaud title, and once per new pattern. Every
   title of every snapshot counts, under either Plaud ID and degraded snapshots included, as given
-  and folded, with Plaud's "MM-DD " prefix stripped; the keep-out words run too. A match adds
-  `private` and never removes it, so a tag Dan removed stays removed until a title changes. The
-  Writer passes the markers, applies the result before any output, and records the new markers.
-  With no `privacy` given, nothing has been judged yet: every title is checked.
+  and folded, with Plaud's "MM-DD " prefix stripped; the keep-out words run too, when the Writer
+  passes them in `privacy` (given none, only the patterns run). A match adds `private` and never
+  removes it, so a tag Dan removed stays removed until a title changes, or a pattern added to the
+  list matches it. The Writer passes the markers, applies the result before any output, and
+  records the new markers. With no `privacy` given, nothing has been judged yet: every title is
+  checked.
 - **Skipped snapshots:** one with link errors, or one that isn't a JSON object, is skipped and
   reported. Nothing is ever built from it.
 - **Two Plaud IDs on one recording** are reconciled separately. The title follows the ID whose
@@ -86,6 +88,7 @@ class Snapshot:
     ref: str  # the Plaud ID, as recorded
     fetched_at: datetime
     envelope: Any  # the parsed payload; anything but a dict is skipped
+    added_at: datetime | None = None  # when the app added it: the marker's "seen since" (§13.2)
 
 
 @dataclass(frozen=True)
@@ -135,7 +138,7 @@ def matches_auto_private(
     """Whether any of these Plaud titles matches an auto-private pattern (§7.4). Each pattern is
     searched, ignoring case, in the title as given and with its "MM-DD " prefix stripped; trying
     both errs towards private. The import calls it to tag a recording when it is created, and
-    reconcile on every snapshot's title."""
+    `privacy.judge` for each title the marker says is due."""
     return any(
         re.search(pattern, text, re.IGNORECASE)
         for title in titles
@@ -382,9 +385,12 @@ def reconcile(
     # put back by a reindex, in any process. Every snapshot's title counts, a degraded one's and
     # the other Plaud ID's included, as Plaud gave it.
     titles_by_id: dict[str, list[str]] = {}
+    added_by_id: dict[str, list[datetime | None]] = {}
     for snapshot in ordered:
         if (name := _plaud_title(snapshot.envelope)) is not None:
-            titles_by_id.setdefault(canonical_plaud_id(snapshot.ref), []).append(name)
+            pid = canonical_plaud_id(snapshot.ref)
+            titles_by_id.setdefault(pid, []).append(name)
+            added_by_id.setdefault(pid, []).append(snapshot.added_at)
     if privacy is None:
         first = tuple(auto_private)
         privacy = PrivacyInputs(markers={}, patterns=PatternSet(1, first, {1: first}), words=())
@@ -394,6 +400,7 @@ def reconcile(
         privacy.patterns,
         privacy.words,
         private_now=is_private(rec),
+        added_at=added_by_id,
     )
     return Reconciled(
         outputs=tuple(outputs),

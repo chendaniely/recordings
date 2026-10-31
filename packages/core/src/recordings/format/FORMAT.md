@@ -63,7 +63,7 @@ files read unchanged.
   recording's Plaud ID is on the consent list. The patterns run once for each new Plaud title, and
   once more for each pattern added to the list. The app keeps which titles it has judged outside
   the archive, so `plaud.title_seen` doesn't decide it. They only ever add the tag: one you remove
-  stays removed until a Plaud title changes.
+  stays removed until a Plaud title changes, or a pattern added to the list matches it.
 - `sources`: one entry per raw payload in `source/`, and one per ID the recording is known by (an
   entry with no `raw` is only a reference). `kind` is `plaud`, `recorder`, `pocket` or
   `audio_router`. An `audio_router` entry's `ref` is the row's `audio-router` URI, such as

@@ -85,6 +85,7 @@ class Marker:
     canonical_plaud_id: str
     title_sha256: str
     patterns_version: int
+    checked_at: datetime | None = None  # when it was last judged; None for a marker not yet saved
 
 
 @dataclass(frozen=True)
@@ -410,11 +411,11 @@ class PlaudDB:
     def markers(self, recording_id: str) -> dict[str, Marker]:
         with self._db() as db:
             rows = db.execute(
-                "SELECT canonical_plaud_id, title_sha256, patterns_version "
+                "SELECT canonical_plaud_id, title_sha256, patterns_version, checked_at "
                 "FROM plaud_private_checked WHERE recording_id = ?",
                 (recording_id,),
             ).fetchall()
-        return {row[0]: Marker(*row) for row in rows}
+        return {row[0]: Marker(*row[:3], parse_stamp(row[3])) for row in rows}
 
     def set_markers(self, recording_id: str, markers: Iterable[Marker], *, now: datetime) -> None:
         markers = list(markers)
