@@ -337,6 +337,39 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 .columns-picker legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
 .column-choice { display: flex; align-items: center; gap: 6px; min-height: 24px; overflow-wrap: anywhere; }
 
+/* The Sync screen, #/add (2b spec §15.1): its sections as cards, in §15.1's order, one column.
+   Rows wrap rather than scroll sideways, and a long ID breaks anywhere (Task 24 checks 320 px). */
+.sync-page { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.sync-page h1 { margin: 0; font-size: 19px; font-weight: 700; }
+.sync-section h2 { margin: 0 0 8px; font-size: 15px; }
+.sync-summary p { margin: 0 0 4px; }
+.sync-summary .sync-sentence { font-weight: 700; }
+.sync-summary.problem .sync-sentence { color: var(--destructive); }
+.sync-summary a { color: var(--primary); text-decoration: underline; }
+.sync-rows { list-style: none; margin: 0; padding: 0; }
+.sync-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.sync-row:last-child { border-bottom: 0; }
+.sync-row > * { min-width: 0; }
+.sync-row .mono, .sync-title, .sync-flag { overflow-wrap: anywhere; }
+.sync-title { font-weight: 700; }
+.sync-when { font-variant-numeric: tabular-nums; }
+.sync-state, .sync-by { color: var(--muted-foreground); }
+.sync-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.sync-why { margin: 6px 0 0; color: var(--muted-foreground); font-size: 12.5px; overflow-wrap: anywhere; }
+.sync-more { margin-top: 8px; }
+.sync-more > summary, .sync-details > summary { cursor: pointer; min-height: 24px; }
+.sync-jump { padding: 0; border: 0; background: none; color: var(--primary); font: inherit; text-decoration: underline; cursor: pointer; }
+.sync-copy { min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; font-size: 12px; cursor: pointer; }
+/* Copy ID where nothing could copy: the text, which one tap selects whole, to copy by hand. */
+.sync-copy-failed { font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.sync-copy-text { user-select: all; -webkit-user-select: all; color: var(--foreground); }
+.sync-check { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; cursor: pointer; }
+.sync-hold, .sync-breaker { margin-top: 8px; }
+.sync-hold p, .sync-breaker p { margin: 0 0 6px; }
+.sync-last, .sync-pending { margin: 8px 0 0; }
+/* The theme switch as one icon, which the phone block shows in place of the three choices. */
+.theme-icon { display: none; place-items: center; margin-left: auto; min-width: 44px; min-height: 44px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); cursor: pointer; }
+.theme-icon svg { width: 16px; height: 16px; }
 /* The picker's dialog on a touch screen or a phone (tagging spec §6). Toasts come in at the top there
    (App.tsx), so the dialog keeps below their band: Sonner's 16 px offset and a two-line toast, or
    less on a screen too short to spare it (Task 15 fix round 1, item 1). It sits on what the screen
@@ -383,6 +416,15 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
      sticks to their bottom (Task 15 fix round 1, item 12). */
   .list { overflow: clip; min-height: auto; }
   .selection-bar { position: sticky; bottom: 0; z-index: 3; }
+  /* The top bar at 320 pixels: four short tabs on one row, the logo's mark without its name, and
+     the theme switch as one icon (2b spec §15.1). Here, after `button.nav`'s own rule, which
+     this one must follow to win. */
+  .topbar { gap: 12px; padding: 6px 12px; }
+  .topbar nav { display: flex; gap: 12px; }
+  .topbar button.nav { margin-right: 0; }
+  .logo-name, .theme-full { display: none; }
+  /* Its 44 px target overhangs the bar's padding, so the bar stays as tall as it was. */
+  .theme-icon { display: inline-grid; margin-block: -6px; }
 }
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its

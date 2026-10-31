@@ -2,12 +2,14 @@ import type { Page, Route } from "../types";
 
 const ID = /^[0-9]{8}T[0-9]{6}[+-][0-9]{4}_[0-9a-f]{8}$/;
 
-/** What a URL's hash shows: `#/status`, `#/tags`, `#/library/<id>`, or the Library. The hash only
- * ever chooses what to show; nothing is written from it (spec §15). */
+/** What a URL's hash shows: `#/status`, `#/tags`, `#/add` (the Sync screen, 2b spec §15.1),
+ * `#/library/<id>`, or the Library. The hash only ever chooses what to show; nothing is written or
+ * sent from it (spec §15). */
 export function routeFromHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("?")[0].split("/");
   if (parts[0] === "status") return { page: "status", open: null };
   if (parts[0] === "tags") return { page: "tags", open: null };
+  if (parts[0] === "add") return { page: "add", open: null };
   if (parts[0] === "library" && parts[1]) {
     let id = "";
     try {
@@ -25,7 +27,7 @@ export function pageFromHash(hash: string): Page {
 }
 
 export function hashFor(page: Page): string {
-  return page === "status" ? "#/status" : page === "tags" ? "#/tags" : "#/";
+  return page === "library" ? "#/" : `#/${page}`;
 }
 
 /** On a phone the Tags tab is the Library filtered to Untagged (spec §6): the Tags route shows the

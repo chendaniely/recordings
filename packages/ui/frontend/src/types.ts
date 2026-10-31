@@ -46,7 +46,7 @@ export interface RecordingView {
 
 export type Filter = { kind: "all" } | { kind: "untagged" } | { kind: "tag"; tag: string };
 
-export type Page = "library" | "tags" | "status";
+export type Page = "library" | "tags" | "add" | "status";
 export interface Route { page: Page; open: string | null } // open: #/library/<id>, read-only
 
 export interface StatusJob {

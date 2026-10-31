@@ -2594,10 +2594,14 @@ def test_on_a_short_phone_screen_the_librarys_bar_stays_whole(
     # Task 15 fix round 1, item 12. On a phone the panes' grid squeezes its rows to fit the screen.
     # At 250 px it squeezed the list (min-height: 0) below its header and bar: the bar was cut off
     # or, sticky in a list that hides its overflow, covered the header. A list that clips (not a
-    # scroll container) keeps its content's height as its minimum. At 170 px even that doesn't fit,
-    # the panes scroll, and only the sticky bar stays on screen.
+    # scroll container) keeps its content's height as its minimum. At 110 px even that doesn't fit,
+    # the panes scroll, and only the sticky bar stays on screen. Task 21 made the top bar one row
+    # at 360 px (45 px, not two rows of 90). The lists are capped at 40dvh, so no height is left
+    # at which the panes overflow and the rows are still reachable: the test gives the bar back
+    # its old height, so that 170 px leaves the panes the same 80 px.
     page.set_viewport_size({"width": 360, "height": height})
     page.goto(big_server.url)
+    page.add_style_tag(content=".topbar { min-height: 90px; }")
     rows = page.get_by_test_id("recording-row")
     rows.nth(0).locator(".check").click()
     rows.nth(1).locator(".check").click()

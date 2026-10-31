@@ -6,6 +6,7 @@ import { RecordingList, openNewTag } from "./components/RecordingList";
 import { RecordingPane } from "./components/RecordingPane";
 import { Sidebar, useListedFilter } from "./components/Sidebar";
 import { StatusPage } from "./components/StatusPage";
+import { SyncPage } from "./components/SyncPage";
 import { TagPickerDialog } from "./components/TagPicker";
 import { TagsPage } from "./components/TagsPage";
 import { TopBar } from "./components/TopBar";
@@ -99,7 +100,7 @@ export default function App() {
         <div className="app">
           <TopBar page={route.page} onPage={go} />
           {/* The Tags grid reads the same merged library, with its own order and selection (spec §7). */}
-          {route.page === "status" ? <StatusPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} /> : (
+          {route.page === "status" ? <StatusPage /> : route.page === "add" ? <SyncPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} /> : (
             <main className="panes">
               {/* + New tag…: a drop opens the picker for the dragged recordings, a click for the
                   selection (spec §6). */}
