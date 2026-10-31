@@ -198,6 +198,9 @@ def test_the_status_page_does_not_scroll_sideways_on_a_phone(page: Page, server_
     page.set_viewport_size({"width": 320, "height": 640})
     page.goto(f"{server_url}/#/status")
     expect(page.get_by_test_id("status-page")).to_be_visible()
+    # The webfonts are fetched only once the app draws text, as the status output lands; until
+    # they swap in, the top bar is laid out in the fallback, 19 px too wide in Linux's DejaVu Sans.
+    assert page.evaluate("() => document.fonts.ready.then((f) => f.status)") == "loaded"
     overflow = page.evaluate("""() => {
         const main = document.querySelector("[data-testid=status-page]");
         return [main.scrollWidth - main.clientWidth,

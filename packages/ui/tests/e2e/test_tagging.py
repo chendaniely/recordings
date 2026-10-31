@@ -22,9 +22,18 @@ def wait_until(check, timeout: float = 10.0, seen=None) -> None:
         time.sleep(0.05)
 
 
+def tagging_on(page: Page) -> None:
+    """Waits out the writer's first open. The Library is drawn before it ends, without tagging
+    (spec §5), and tagging comes on with a second library push: until then no × or + is drawn,
+    and T says "Opening the archive…" instead of opening the picker."""
+    expect(page.get_by_test_id("key-hint")).to_be_attached()  # the list's or the grid's head
+    expect(page.locator("[data-testid=cannot-tag].opening")).to_have_count(0)
+
+
 def open_library(page: Page, url: str) -> None:
     page.goto(url)
     expect(page.get_by_test_id("recording-row")).to_have_count(4)
+    tagging_on(page)
 
 
 def open_row(page: Page, text: str) -> None:
@@ -690,6 +699,7 @@ def test_refresh_hands_focus_on_when_the_focused_row_goes(page: Page, big_server
     # why: Refresh drops a row just tagged from the Untagged filter; with focus on it, focus fell
     # to <body>, so the keys stopped working until a click or Tab (spec §6, keyboard triage).
     page.goto(big_server.url)
+    tagging_on(page)
     page.get_by_test_id("filter-untagged").click()
     grid = page.get_by_test_id("recording-list")
     expect(grid).to_have_attribute("aria-rowcount", "201")
@@ -747,6 +757,7 @@ def test_refresh_keeps_the_focused_row_in_view_when_rows_above_it_go(
     # why: rows above the focused row left on Refresh, the row moved up, and the list stayed where
     # it was, with the focused row off-screen.
     page.goto(big_server.url)
+    tagging_on(page)
     page.get_by_test_id("filter-untagged").click()
     grid = page.get_by_test_id("recording-list")
     expect(grid).to_have_attribute("aria-rowcount", "201")
@@ -771,6 +782,7 @@ def test_refresh_moves_focus_to_the_row_that_followed_a_tagged_one(page: Page, b
     # why: when the focused row itself left on Refresh (T, tag, R), focus went back to the first
     # row and the list to the top, losing the user's place (ruled: the row that followed it).
     page.goto(big_server.url)
+    tagging_on(page)
     page.get_by_test_id("filter-untagged").click()
     grid = page.get_by_test_id("recording-list")
     expect(grid).to_have_attribute("aria-rowcount", "201")
@@ -1443,6 +1455,7 @@ def test_a_header_adds_to_the_selection_and_digits_toggle_the_first_columns(
 ):
     apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("untagged-only").uncheck()
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(4)
@@ -1480,6 +1493,7 @@ def test_enter_on_a_column_header_adds_its_tag_to_the_selection(
     # keys leave a header's buttons alone, so its sort menu opens by keyboard too.
     apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("untagged-only").uncheck()
     rows = page.get_by_test_id("grid-row")
     rows.filter(has_text="Apollo 13").locator(".tg-title").click()
@@ -1638,6 +1652,7 @@ def test_the_grid_is_one_tab_stop_and_its_keys_reach_cells_headers_and_the_picke
     # toggles; T opens the picker for the focused row, and Esc gives focus back to the cell.
     apollo13 = demo_ids["apollo13-problem"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(1)
     page.get_by_test_id("grid-refresh").focus()
@@ -1675,6 +1690,7 @@ def test_refresh_hands_the_grids_focus_to_the_row_that_followed(page: Page, big_
     # why: as in the list (Task 12): the row just tagged leaves Untagged only on Refresh; focus
     # goes to the same column of the row that followed it, in view, so the keys go on working.
     page.goto(f"{big_server.url}/#/tags")
+    tagging_on(page)
     grid = page.get_by_test_id("tags-grid")
     expect(grid).to_have_attribute("aria-rowcount", "201")
     page.get_by_test_id("grid-row").first.locator(".tg-title").click()
@@ -1892,6 +1908,7 @@ def test_tagging_rows_one_by_one_keeps_one_running_toast(page: Page, big_server,
     # why: item 2. In Untagged only, every row's first tag makes it visible to external agents,
     # and each such change had a toast of its own: 20 rows left 21 toasts, each read out.
     page.goto(f"{big_server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("grid-row").first.locator(".tg-title").click()
     for i in range(5):
         if i:
@@ -1946,6 +1963,7 @@ def test_cmd_home_keeps_the_selection_so_a_header_adds_to_every_selected_row(
     # reached from the top row, went to one row (spec §6: Cmd/Ctrl moves focus only).
     jfk, fdr = demo_ids["jfk-rice"], demo_ids["fdr-fireside-1"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("untagged-only").uncheck()
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(4)  # Apollo 13, Apollo 11, JFK, Fireside
@@ -1996,6 +2014,7 @@ def test_a_focused_pending_cell_shows_its_ring_and_its_pending_outline(page: Pag
     # user never saw a change in flight (spec §6).
     held = hold_tag_results(page)
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(1)
     rows.first.locator(".tg-title").click()
@@ -2037,6 +2056,7 @@ def test_a_key_on_a_cell_scrolled_away_sideways_brings_it_back(page: Page, big_s
     # pinned columns.
     page.set_viewport_size({"width": 1000, "height": 700})
     page.goto(f"{big_server.url}/#/tags")
+    tagging_on(page)
     grid = page.get_by_test_id("tags-grid")
     first = page.get_by_test_id("grid-row").first
     first.locator(".tg-title").click()
@@ -2063,6 +2083,7 @@ def test_a_held_enter_on_a_header_adds_once(page: Page, server, console, demo_id
     # "Add … to 2 selected" sent the add four times.
     apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("untagged-only").uncheck()
     rows = page.get_by_test_id("grid-row")
     rows.filter(has_text="Apollo 13").locator(".tg-title").click()
@@ -2106,6 +2127,7 @@ def test_a_focused_cell_keeps_its_ring_and_pending_marker_in_forced_colours(
     page.emulate_media(forced_colors="active")
     held = hold_tag_results(page)
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(1)
     rows.first.locator(".tg-title").click()
@@ -2528,6 +2550,7 @@ def on_screen(page: Page, locator) -> bool:
 def test_on_a_phone_the_selection_bar_stays_on_screen(page: Page, big_server, console):
     # The Tags tab on a phone: the Library's Untagged, with its bar at the bottom of the screen.
     page.goto(f"{big_server.url}/#/tags")
+    tagging_on(page)
     rows = page.get_by_test_id("recording-row")
     bar = page.get_by_test_id("selection-bar")
     expect(page.get_by_test_id("tags-grid")).to_have_count(0)
@@ -3268,6 +3291,7 @@ def test_the_built_bundle_portals_toasts_dialogs_and_scrolls(page: Page, big_ser
 
 def test_a_large_batch_shows_progress_then_its_result(page: Page, big_server, console):
     page.goto(big_server.url)
+    tagging_on(page)
     page.get_by_test_id("recording-row").first.click()
     page.keyboard.press("ControlOrMeta+a")
     page.keyboard.press("t")

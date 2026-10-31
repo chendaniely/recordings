@@ -176,8 +176,9 @@ describe("the picker's body (spec §6)", () => {
     type("x");
     type(""); // a new search: hidden again
     $("[data-tag='notes/lecture']")!.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
-    await tick();
-    expect([shown(), highlighted()]).toEqual(["on", "notes/lecture"]);
+    // A pointer move's update is continuous: React renders it in a Scheduler task (a setImmediate
+    // under Node), which a setTimeout(0) can overtake on a busy machine. Wait for the render.
+    await vi.waitFor(() => expect([shown(), highlighted()]).toEqual(["on", "notes/lecture"]));
   });
 
   it("Page Up and Down move a page at a time (cmdk has no paging), and are a choice", () => {
@@ -207,8 +208,8 @@ describe("the picker's body (spec §6)", () => {
     body();
     const item = $("[data-tag='notes/lecture']")!;
     item.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
-    await tick(); // a pointer move's updates are continuous, not discrete: React renders them in a task
-    expect(highlighted()).toBe("notes/lecture");
+    // Continuous, not discrete: React renders it in a Scheduler task, so wait for the render itself.
+    await vi.waitFor(() => expect(highlighted()).toBe("notes/lecture"));
     press("Enter");
     expect(calls).toEqual([["add", ["a", "b"], ["notes/lecture"]]]);
   });
