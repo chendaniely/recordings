@@ -370,6 +370,15 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 /* The theme switch as one icon, which the phone block shows in place of the three choices. */
 .theme-icon { display: none; place-items: center; margin-left: auto; min-width: 44px; min-height: 44px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); cursor: pointer; }
 .theme-icon svg { width: 16px; height: 16px; }
+/* Status's sync panel (2b spec §15.2): across the whole grid, its numbers a two-column list. */
+.status .sync-panel { grid-column: 1 / -1; }
+.sync-conditions, .sync-runs { margin: 8px 0 0; padding-left: 1.2em; list-style: disc; }
+.sync-numbers { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 12px 0 0; font-size: 12.5px; }
+.sync-numbers dt { color: var(--muted-foreground); }
+.sync-numbers dd { margin: 0; overflow-wrap: anywhere; }
+.sync-details { margin-top: 12px; }
+.sync-details h3 { font-size: 13px; }
+.sync-panel .warn { margin: 6px 0 0; }
 /* The picker's dialog on a touch screen or a phone (tagging spec §6). Toasts come in at the top there
    (App.tsx), so the dialog keeps below their band: Sonner's 16 px offset and a two-line toast, or
    less on a screen too short to spare it (Task 15 fix round 1, item 1). It sits on what the screen
@@ -430,6 +439,11 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   .logo-name, .theme-full { display: none; }
   /* Its 44 px target overhangs the bar's padding, so the bar stays as tall as it was. */
   .theme-icon { display: inline-grid; margin-block: -6px; }
+  /* On a phone the panel's numbers stack, each label above its value (2b spec §15.4). */
+  .sync-numbers { grid-template-columns: minmax(0, 1fr); }
+  /* Its Details summary and Accept buttons are 44 px targets (J7). */
+  .sync-panel .sync-details > summary { display: flex; align-items: center; min-height: 44px; }
+  .sync-panel button { min-height: 44px; }
 }
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its
