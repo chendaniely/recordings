@@ -22,11 +22,18 @@ from recordings.archive import Archive
 from recordings.index import Index
 from recordings.locks import LockTimeout
 from recordings.plaud import runlock
-from recordings.plaud.baseline import DROPPED, baseline_privacy, drop_word, enforced_words
+from recordings.plaud.baseline import (
+    DROPPED,
+    INVALID_FILE,
+    KeepOutWordsError,
+    baseline_privacy,
+    drop_word,
+    enforced_words,
+)
 from recordings.plaud.checks import K_CONSENT, K_LAST_GOOD_LISTING, NoSyncYet, PlaudDB
 from recordings.plaud.flags import listed_here, missed_by_2a
 from recordings.plaud.keepout import read_consent_text, signature
-from recordings.plaud.settings import plaud_settings
+from recordings.plaud.settings import BAD_WORD, plaud_settings
 from recordings.plaud.when import local_hhmm, parse_stamp
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.state import State, StateError
@@ -109,7 +116,7 @@ def _shown(when: datetime | None, tz: tzinfo) -> str | None:
     return f"{when.astimezone(tz):%Y-%m-%d} {local_hhmm(when, tz)}"
 
 
-def _state(cfg: config.Config) -> State | None:
+def _read_state(cfg: config.Config) -> State | None:
     if cfg.state_path is None:
         return None
     try:
@@ -159,7 +166,7 @@ def cmd_consent(args: argparse.Namespace) -> int:
     changed = datetime.fromtimestamp(sig.mtime_ns / 1e9, UTC) if sig is not None else None
     on_plaud: int | None = None
     read_at, read_by, read_ids = datetime.now(UTC), "this command", len(consent.ids)
-    state = _state(cfg)
+    state = _read_state(cfg)
     if state is not None:
         db = PlaudDB(state)
         try:
@@ -220,7 +227,7 @@ def cmd_consent(args: argparse.Namespace) -> int:
     return EXIT_CONFIG if consent.stop else EXIT_OK
 
 
-def _open_state(cfg: config.Config, as_json: bool) -> State | int:
+def _write_state(cfg: config.Config, as_json: bool) -> State | int:
     if cfg.state_path is None:
         return _fail("set [state] path in config.toml first", as_json, EXIT_CONFIG)
     try:
@@ -232,7 +239,7 @@ def _open_state(cfg: config.Config, as_json: bool) -> State | int:
 def _writer(cfg: config.Config, as_json: bool) -> Writer | int:
     """The CLI's Writer in the worker container: as the worker's, it writes no docs (§9.1)."""
     try:
-        return Writer.open(cfg, docs=False)
+        return Writer.open(cfg, docs=False, lock_timeout=10.0)
     except LockTimeout as exc:
         return _fail(str(exc), as_json, EXIT_BUSY)
     except (WriterError, OSError, sqlite3.Error) as exc:
@@ -245,12 +252,22 @@ def _busy(state: State) -> str:
     return f"skipped: busy (`{holder[0]}`)" if holder else "skipped: busy"
 
 
+def _fix_for(cause: str) -> str:
+    """What to do about a recording the baseline couldn't write, by its cause (decision 58)."""
+    if cause in ("StaleFile", INVALID_FILE):
+        return "run `recordings reindex`, then the baseline again"
+    if cause == "FileNotFoundError":
+        return "restore the file or run `recordings reindex`, then the baseline again"
+    return "check the archive disk and its permissions, then run the baseline again"
+
+
 def cmd_baseline(args: argparse.Namespace) -> int:
-    """§14.5's privacy part. Holds `plaud`, waiting up to runlock.CLI_WAIT."""
+    """§14.5's privacy part. Holds `plaud`, waiting up to runlock.CLI_WAIT. Exit 1 when a
+    recording couldn't be written; 75 when only locked ones were left."""
     cfg = _config(args.json)
     if isinstance(cfg, int):
         return cfg
-    state = _open_state(cfg, args.json)
+    state = _write_state(cfg, args.json)
     if isinstance(state, int):
         return state
     now = datetime.now(UTC)
@@ -268,17 +285,25 @@ def cmd_baseline(args: argparse.Namespace) -> int:
         f"kept out late: {report.kept_out_late:,}",
         f"already seen: {report.already_seen:,}",
     ]
-    if report.unwritten:
+    by_fix: dict[str, list[str]] = {}
+    for rid in report.unwritten:
+        by_fix.setdefault(_fix_for(report.causes.get(rid, "")), []).append(rid)
+    for fix, ids in by_fix.items():
+        lines.append(f"not written ({len(ids):,}): {', '.join(ids)}; {fix}")
+    if report.busy:
         lines.append(
-            f"not written ({len(report.unwritten):,}): {', '.join(report.unwritten)}; run "
-            "`recordings reindex`, then the baseline again"
+            f"busy ({len(report.busy):,}): {', '.join(report.busy)}; in use now, run the "
+            "baseline again"
         )
     _emit(report.to_dict(), lines, args.json)
-    return EXIT_FAILED if report.unwritten else EXIT_OK
+    if report.unwritten:
+        return EXIT_FAILED
+    return EXIT_BUSY if report.busy else EXIT_OK
 
 
 def cmd_keep_out_words(args: argparse.Namespace) -> int:
-    """§12.2: the words enforced, or `--drop` one. Holds no lock."""
+    """§12.2: the words enforced, or `--drop` one. Holds no lock. Listing reads state.db and
+    creates nothing; only `--drop` opens it to write."""
     cfg = _config(args.json)
     if isinstance(cfg, int):
         return cfg
@@ -286,23 +311,44 @@ def cmd_keep_out_words(args: argparse.Namespace) -> int:
         settings = plaud_settings(cfg)
     except config.ConfigError as exc:
         return _fail(str(exc), args.json, EXIT_CONFIG)
-    state = _open_state(cfg, args.json)
-    if isinstance(state, int):
-        return state
-    db, code, payload = PlaudDB(state), EXIT_OK, {}
     if args.drop is not None:
-        result = drop_word(db, args.drop, configured=settings.keep_out_word, now=datetime.now(UTC))
-        payload["result"] = result
-        code = EXIT_OK if result == DROPPED else EXIT_FAILED
+        state = _write_state(cfg, args.json)
+        if isinstance(state, int):
+            return state
+    else:
+        state = _read_state(cfg)
+    ok = settings.keep_out_word_ok
+    payload: dict = {}
+    code = EXIT_OK
+    try:
+        db = PlaudDB(state) if state is not None else None
+        if args.drop is not None and db is not None:
+            result = drop_word(
+                db,
+                args.drop,
+                configured=settings.keep_out_word if ok else "",
+                now=datetime.now(UTC),
+            )
+            payload["result"] = result
+            code = EXIT_OK if result == DROPPED else EXIT_FAILED
+        try:
+            enforced = list(enforced_words(db)) if db is not None else []
+        except NoSyncYet:
+            enforced = []  # no 2b process has opened this state.db yet: nothing is enforced
+    except (NoSyncYet, KeepOutWordsError) as exc:  # fixed phrases
+        return _fail(str(exc), args.json, EXIT_FAILED)
+    except (sqlite3.Error, ValueError) as exc:  # never the exception's text
+        return _fail(
+            f"can't use state.db now ({type(exc).__name__}): try again", args.json, EXIT_FAILED
+        )
     payload |= {
-        "configured": settings.keep_out_word,
-        "configured_ok": settings.keep_out_word_ok,
-        "enforced": list(enforced_words(db)),
+        "configured": settings.keep_out_word if ok else None,
+        "configured_ok": ok,
+        "enforced": enforced,
     }
     lines = [payload["result"]] if "result" in payload else []
-    state_of = "" if settings.keep_out_word_ok else " (invalid: the worker idles)"
-    lines.append(f"configured: {settings.keep_out_word}{state_of}")
-    lines.append(f"enforced: {', '.join(payload['enforced']) or 'none yet'}")
+    lines.append(f"configured: {settings.keep_out_word}" if ok else f"configured: {BAD_WORD}")
+    lines.append(f"enforced: {', '.join(enforced) or 'none yet'}")
     _emit(payload, lines, args.json)
     return code
 

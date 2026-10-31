@@ -2,6 +2,7 @@
 lock (stage 2b spec §14.5, §13.1, §12.2, §9.4). Every archive, title and Plaud ID is synthetic."""
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 
 import pytest
@@ -13,13 +14,14 @@ from recordings.plaud.baseline import (
     DROPPED,
     KEEP_CONFIGURED,
     NOT_ENFORCED,
+    KeepOutWordsError,
     baseline_privacy,
     drop_word,
     enforce_word,
     enforced_words,
     patterns_pass,
 )
-from recordings.plaud.checks import PlaudDB
+from recordings.plaud.checks import K_KEEP_OUT_WORDS, K_PATTERNS_PASS, PlaudDB
 from recordings.plaud.flags import record_late_keep_out
 from recordings.plaud.runlock import plaud_holder, plaud_run
 from recordings.state import State
@@ -51,6 +53,8 @@ def test_the_baseline_checks_every_title_of_2a_recordings_once(writer, make_inco
         "kept_out_late": 0,
         "already_seen": 0,
         "unwritten": [],
+        "busy": [],
+        "causes": {},
     }
     assert is_private(writer.archive.load(b)) and not is_private(writer.archive.load(a))
     second = baseline_privacy(writer, db, now=NOW)
@@ -153,3 +157,120 @@ def test_a_new_pattern_is_checked_once_over_the_archive(writer, make_incoming, p
     # §9.2: the worker's start counts each recording as progress, so a long pass isn't "stuck".
     assert len(bumps) == 2
     assert patterns_pass(wider, db, now=NOW) is None  # a second start runs no pass
+
+
+def refuse_markers(monkeypatch, rid: str, error: Exception) -> None:
+    """state.db (or the recording's lock) refuses `rid`'s marker write, as a busy disk would."""
+    real = PlaudDB.set_markers
+
+    def refusing(self, recording_id, markers, *, now):
+        if recording_id == rid:
+            raise error
+        return real(self, recording_id, markers, now=now)
+
+    monkeypatch.setattr(PlaudDB, "set_markers", refusing)
+
+
+def test_a_state_db_refusal_lists_the_recording_and_the_pass_goes_on(
+    writer, make_incoming, plaud_env, monkeypatch
+):
+    # why: Task 9's "a state.db refusal never stops a whole pass": one tuple, shared with reindex.
+    first = imported_by_2a(writer, make_incoming, plaud_env, 7, "Week 5")
+    second = imported_by_2a(writer, make_incoming, plaud_env, 8, "Interview: Ada")
+    refuse_markers(monkeypatch, first, sqlite3.OperationalError("database is locked: Week 5"))
+    report = baseline_privacy(writer, PlaudDB(writer.state), now=NOW)
+    assert report.unwritten == (first,) and report.causes == {first: "OperationalError"}
+    assert (report.titles_checked, report.private_added) == (1, 1)
+    assert is_private(writer.archive.load(second))
+
+
+def test_a_locked_recording_is_busy_not_unwritten(writer, make_incoming, plaud_env, monkeypatch):
+    # why: Global Constraints: a LockTimeout is "busy", neither a failure nor an attempt.
+    busy = imported_by_2a(writer, make_incoming, plaud_env, 9, "Week 6")
+    refuse_markers(monkeypatch, busy, LockTimeout("busy"))
+    report = baseline_privacy(writer, PlaudDB(writer.state), now=NOW)
+    assert report.busy == (busy,) and report.unwritten == ()
+
+
+def test_an_invalid_recording_json_is_listed_not_skipped(writer, make_incoming, plaud_env):
+    rid = imported_by_2a(writer, make_incoming, plaud_env, 10, "Interview: Ada")
+    (writer.archive.path_for(rid) / "recording.json").write_text("{not json", "utf-8")
+    db = PlaudDB(writer.state)
+    report = baseline_privacy(writer, db, now=NOW)
+    assert report.unwritten == (rid,) and report.causes == {rid: "InvalidFile"}
+
+
+def wider_writer(writer, patterns=(r"^\s*private", r"therapy")):
+    return Writer(
+        writer.root,
+        State.open(writer.state.path),
+        Index(writer.index.path),
+        writer_id="test",
+        auto_private=patterns,
+    )
+
+
+def first_pass_done(writer, make_incoming, plaud_env):
+    first = wider_writer(writer, (r"^\s*private",))
+    therapy = imported_by_2a(first, make_incoming, plaud_env, 11, "Therapy check-in")
+    other = imported_by_2a(first, make_incoming, plaud_env, 12, "Week 7")
+    baseline_privacy(first, PlaudDB(writer.state), now=NOW)
+    assert patterns_pass(first, PlaudDB(writer.state), now=NOW) is None
+    return therapy, other
+
+
+def test_a_pattern_pass_that_could_not_write_one_is_reported_and_runs_again(
+    writer, make_incoming, plaud_env, monkeypatch
+):
+    # why: §13.2. The pass says what it couldn't check, and isn't recorded as complete.
+    _, other = first_pass_done(writer, make_incoming, plaud_env)
+    db, wider = PlaudDB(writer.state), wider_writer(writer)
+    with monkeypatch.context() as patch:
+        refuse_markers(patch, other, sqlite3.OperationalError("disk full"))
+        done = patterns_pass(wider, db, now=NOW)
+    assert done.unwritten == {other: "OperationalError"} and done.tagged == 1
+    assert done.sentence() == "patterns changed: 1 title checked, 1 tagged private, 1 not written"
+    assert db.get(K_PATTERNS_PASS) == {
+        "version": 1,
+        "attempted": 2,
+        "at": NOW.isoformat(),
+        "checked": 1,
+        "tagged": 1,
+        "unwritten": [other],
+        "busy": [],
+    }
+    again = patterns_pass(wider, db, now=NOW)  # the next start runs it again
+    assert again is not None and again.unwritten == {}
+    assert db.get(K_PATTERNS_PASS)["version"] == 2 and db.get(K_PATTERNS_PASS)["unwritten"] == []
+    assert patterns_pass(wider, db, now=NOW) is None
+
+
+def test_a_pattern_pass_lists_a_busy_recording_and_an_invalid_one(
+    writer, make_incoming, plaud_env, monkeypatch
+):
+    therapy, other = first_pass_done(writer, make_incoming, plaud_env)
+    (writer.archive.path_for(therapy) / "recording.json").write_text("{not json", "utf-8")
+    db, wider = PlaudDB(writer.state), wider_writer(writer)
+    refuse_markers(monkeypatch, other, LockTimeout("busy"))
+    done = patterns_pass(wider, db, now=NOW)
+    assert done.unwritten == {therapy: "InvalidFile"} and done.busy == (other,)
+    assert done.sentence().endswith("1 not written, 1 busy")
+    assert db.get(K_PATTERNS_PASS)["version"] == 1 and not done.complete
+
+
+def test_a_keep_out_words_row_that_is_not_a_list_is_refused_and_left_alone(writer):
+    db = PlaudDB(writer.state)
+    db.put(K_KEEP_OUT_WORDS, {"words": ["skipme"]}, now=NOW)
+    with pytest.raises(KeepOutWordsError, match="keep_out_words"):
+        enforce_word(db, "noarchive", now=NOW)
+    with pytest.raises(KeepOutWordsError):
+        drop_word(db, "skipme", configured="noarchive", now=NOW)
+    with pytest.raises(KeepOutWordsError):
+        enforced_words(db)
+    assert db.get(K_KEEP_OUT_WORDS) == {"words": ["skipme"]}
+
+
+def test_the_cli_waits_a_minute_for_plaud():
+    from recordings.plaud import runlock
+
+    assert runlock.CLI_WAIT == 60.0

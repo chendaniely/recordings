@@ -100,6 +100,22 @@ class InvalidFile(WriterError):
     """The file on disk doesn't validate, so nothing is applied to it (§11)."""
 
 
+# What one recording's reconcile can raise that must never stop a whole pass (reindex, the
+# baseline, the new-pattern pass): the recording is listed and the pass goes on. LockTimeout is
+# "busy", which callers may tell apart. Never print the exception's text, which can carry a title.
+RECONCILE_ERRORS = (
+    sqlite3.Error,
+    WriterError,
+    KeyError,
+    LockTimeout,
+    OSError,
+    ValueError,
+    TypeError,
+    RecursionError,
+    ArithmeticError,
+)
+
+
 class MissingRecordings(IndexRefused):
     """state.db knows recordings the archive no longer lists: it is half mounted or restored."""
 
@@ -1003,24 +1019,11 @@ class Writer:
                 continue
             try:
                 reconciled.append(self.reconcile_plaud(rec.id))
-            except sqlite3.Error as exc:
-                # state.db refused a privacy record: the title stays due, so the next reconcile
-                # judges it again. A fixed phrase and the class, never the exception's text.
-                log.warning("reconcile of %s: state.db refused (%s)", rec.id, type(exc).__name__)
-                problem = f"{type(exc).__name__}: not reconciled"
-                reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))
-            except (
-                WriterError,
-                KeyError,
-                LockTimeout,
-                OSError,
-                ValueError,
-                TypeError,
-                RecursionError,
-                ArithmeticError,
-            ) as exc:  # ValueError: a payload the
-                # renditions can't encode; RecursionError: a payload nested too deep to parse
-                log.debug("reconcile of %s failed", rec.id, exc_info=True)
+            except RECONCILE_ERRORS as exc:
+                # sqlite3.Error: state.db refused a privacy record, so the title stays due and the
+                # next reconcile judges it again. ValueError: a payload the renditions can't
+                # encode; RecursionError: a payload nested too deep to parse.
+                log.warning("reconcile of %s failed (%s)", rec.id, type(exc).__name__)
                 # A fixed phrase, never the exception's text, which can carry a title.
                 problem = f"{type(exc).__name__}: not reconciled"
                 reconciled.append(ReconcileReport(rec.id, 0, (), (), False, problem=problem))

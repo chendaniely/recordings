@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 
 from recordings.archive import RawSource
@@ -218,6 +219,8 @@ def test_the_baseline_prints_counts_and_no_title(
         "kept_out_late": 0,
         "already_seen": 0,
         "unwritten": [],
+        "busy": [],
+        "causes": {},
     }
     assert main(["plaud", "baseline"]) == 0
     raw += capsys.readouterr().out
@@ -233,10 +236,12 @@ def test_the_baseline_waits_for_a_held_plaud_lock_then_exits_75(
     monkeypatch.setattr(runlock, "CLI_WAIT", 0.2)
     configure(tmp_path, monkeypatch, writer)
     holder = plaud_lock_held(writer.state.locks_dir, "plaud-sync")
+    started = time.monotonic()
     try:
         assert main(["plaud", "baseline", "--json"]) == 75
     finally:
         holder.communicate("")
+    assert time.monotonic() - started >= 0.2  # it waited the patched CLI_WAIT, not zero
     assert json.loads(capsys.readouterr().out) == {"error": "skipped: busy (`plaud-sync`)"}
     assert main(["plaud", "baseline", "--json"]) == 0  # free again
 
@@ -261,3 +266,56 @@ def test_plaud_keep_out_words_lists_and_drops(writer, tmp_path, monkeypatch, cap
     assert refused["result"].startswith("that is the configured keep_out_word")
     assert main(["plaud", "keep-out-words", "--drop", "skipme", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["enforced"] == ["noarchive"]
+
+
+def test_the_baseline_names_an_invalid_file_and_the_fix_for_its_cause(
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
+    payload = json.dumps(plaud_env(pid(0xE2), name="Week 9")).encode()
+    source = RawSource(kind="plaud", ref=pid(0xE2), added_at=T0, fetched_at=T0, payload=payload)
+    rid = writer.add(make_incoming(title=TITLE, sources=(source,))).recording.id
+    (writer.archive.path_for(rid) / "recording.json").write_text("{not json", "utf-8")
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline"]) == 1
+    out = capsys.readouterr().out
+    assert f"not written (1): {rid}; run `recordings reindex`" in out and TITLE not in out
+
+
+def test_the_baseline_exits_75_when_only_busy_recordings_were_left(
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
+    from recordings.locks import LockTimeout
+    from recordings.plaud.checks import PlaudDB
+
+    payload = json.dumps(plaud_env(pid(0xE3), name="Week 9")).encode()
+    source = RawSource(kind="plaud", ref=pid(0xE3), added_at=T0, fetched_at=T0, payload=payload)
+    rid = writer.add(make_incoming(title=TITLE, sources=(source,))).recording.id
+
+    def busy(self, recording_id, markers, *, now):
+        raise LockTimeout("busy")
+
+    monkeypatch.setattr(PlaudDB, "set_markers", busy)
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline"]) == 75
+    assert f"busy (1): {rid}" in capsys.readouterr().out
+
+
+def test_keep_out_words_never_prints_an_invalid_word_and_refuses_a_row_that_is_not_a_list(
+    writer, tmp_path, monkeypatch, capsys
+):
+    from recordings.plaud.checks import K_KEEP_OUT_WORDS, PlaudDB
+    from recordings.plaud.settings import BAD_WORD
+
+    configure(tmp_path, monkeypatch, writer, plaud='keep_out_word = "no archive!"\n')
+    assert main(["plaud", "keep-out-words"]) == 0
+    out = capsys.readouterr().out
+    assert BAD_WORD in out and "no archive!" not in out
+    assert main(["plaud", "keep-out-words", "--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["configured"] is None and listed["configured_ok"] is False
+    PlaudDB(writer.state).put(K_KEEP_OUT_WORDS, "skipme", now=datetime.now(UTC))
+    assert main(["plaud", "keep-out-words", "--json"]) == 1
+    assert "keep_out_words" in json.loads(capsys.readouterr().out)["error"]
+    assert main(["plaud", "keep-out-words", "--drop", "skipme", "--json"]) == 1
+    capsys.readouterr()
+    assert PlaudDB(writer.state).get(K_KEEP_OUT_WORDS) == "skipme"

@@ -20,7 +20,7 @@ import dataclasses
 import json
 import re
 import sqlite3
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -75,6 +75,9 @@ K_FULL = "full_sync"
 def judged_key(recording_id: str) -> str:
     """The plaud_state key of the snapshots a recording's markers have judged (§13.2)."""
     return f"judged:{recording_id}"
+
+
+UNCHANGED = object()  # what a PlaudDB.update callback returns to write nothing
 
 
 class NoSyncYet(Exception):
@@ -273,6 +276,21 @@ class PlaudDB:
     def put(self, key: str, value: Any, *, now: datetime) -> None:
         with self._db() as db:
             self._put(db, key, value, now)
+
+    def update(self, key: str, change: Callable[[Any | None], Any], *, now: datetime) -> Any:
+        """Read, change and write one key in one transaction, so two writers can't lose each
+        other's change. `change(old)` returns the new value, or `UNCHANGED` to write nothing, or
+        raises to roll back. Returns what is stored after."""
+        with self._db() as db:
+            if not db.in_transaction:
+                db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT value FROM plaud_state WHERE key = ?", (key,)).fetchone()
+            old = json.loads(row[0]) if row else None
+            new = change(old)
+            if new is UNCHANGED:
+                return old
+            self._put(db, key, new, now)
+            return new
 
     def put_many(self, values: Mapping[str, Any], *, now: datetime) -> None:
         """Every key in one transaction: an error part-way writes none of them."""
