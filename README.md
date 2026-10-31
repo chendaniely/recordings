@@ -126,7 +126,7 @@ file. Docker sets it to `/config/config.toml`.
 | Host folders, config path, bind address and port, the trusted proxy (`RECORDINGS_FORWARDED_ALLOW_IPS`), UID/GID | `docker/deploy.env` (template: `docker/deploy.example.conf`) | stage 1 |
 | `RESTIC_PASSWORD`; `RESTIC_REST_PASSWORD`, rest-server's; the NAS's SSH key and host key, `RECORDINGS_NAS_SSH_KEY` and `RECORDINGS_NAS_KNOWN_HOSTS` (files only); `RECORDINGS_NTFY_TOPIC`; `RECORDINGS_DEADMAN_URL`; and rest-server's certificate, the `nas_cacert` file that `[backup] cacert` names | secret files, as `…_FILE` (Docker secrets) | stage 2a |
 | `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | a secret file, which `RECORDINGS_NTFY_AUTH_HOST` in `docker/deploy.env` names (unset: no token is mounted) | stage 2a |
-| `RECORDINGS_PLAUD_TOKEN` | a secret file, as `RECORDINGS_PLAUD_TOKEN_FILE` | stage 2b |
+| `RECORDINGS_DEADMAN_SYNC_URL`, the Plaud sync's own Healthchecks ping URL, for the `worker` container only | a secret file, as `RECORDINGS_DEADMAN_SYNC_URL_FILE` | stage 2b |
 | `RECORDINGS_SPARK_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | environment, or `…_FILE` | stage 4 |
 
 Secrets never go in `config.toml`, `deploy.env`, the image or the repo. `recordings doctor`

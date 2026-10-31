@@ -99,19 +99,16 @@ ntfy_server = "https://ntfy.sh"         # https only (stage-2a plan, decision 16
 # backup's ping. Each backup pings <url>/start, then <url> or <url>/fail; `recordings alert-test`
 # pings <url>/log, which leaves the check's state alone. So the URL takes no ?query or #fragment.
 
-[plaud]                                 # stage 2
-schedule_minutes = 20                   # scheduled sync interval; 0 turns it off
-auto_import = true                      # import missing recordings (safe: nothing runs until tagged)
-recheck_days = 14                       # keep re-checking recent recordings for Plaud's late notes
-# Plaud titles matching these are tagged `private` (spec §7.4): Python regular expressions,
-# searched ignoring case in every title a snapshot carries, as given and with Plaud's "MM-DD "
-# date prefix stripped (as audio-router's normalize_title does). Read from stage 2a, by
-# reconcile and the import. They only ever add `private`.
+[plaud]                            # stage 2b (spec §9.1)
+schedule_minutes = 20              # minutes between syncs, from the first catch-up on; 0 is off
+auto_import = true                 # import new recordings at each sync (nothing runs until tagged)
+full_sweep_days = 1                # check every recording against Plaud within this many days:
+                                   # 1 while relabelling speakers in Plaud, then 7 (the default)
+keep_out_word = "noarchive"        # a Plaud title starting with this word is never downloaded
 auto_private_patterns = ["^\\s*private", "interview:"]
-# Dan's consent list, "never mirror" (spec §9.1): Plaud IDs that never enter the archive, one per
-# bullet or line, as audio-router reads them. Read fail-closed from stage 2a by the import: an
-# unset, missing, empty or ID-less list stops it. In Docker it is mounted read-only (runbook 3).
-consent_list = "/consent/consent-list.md"
+consent_list = "/consent/consent-list.md"   # inside the consent folder; never a file mount
+token_store = "/plaud/tokens.json" # the Plaud sign-in (worker only; `make plaud-sign-in`)
+# api_base = "https://…"           # Plaud's API: the copied client's by default; tests set a fake
 
 [spark]                                 # stage 4
 base_url = "https://spark.your-tailnet.ts.net"   # llama-swap, reached over Tailscale
@@ -131,7 +128,6 @@ path = "/watch"
 # ---- Secrets: environment only, never in this file --------------------------------------
 # Each may instead be given as NAME_FILE=<path to a file holding it>; Docker secrets arrive
 # that way, under /run/secrets/. `recordings doctor` says which are set, never their values.
-#   RECORDINGS_PLAUD_TOKEN      Plaud API token                              (stage 2)
 #   RECORDINGS_SPARK_API_KEY    this app's llama-swap key (`spark keys create`)   (stage 4)
 #   CLAUDE_CODE_OAUTH_TOKEN     Claude subscription token (`claude setup-token`)  (stage 4)
 #   RESTIC_PASSWORD             the restic repository's password (keep a copy elsewhere)  (stage 2)
@@ -140,4 +136,5 @@ path = "/watch"
 #   RECORDINGS_NAS_KNOWN_HOSTS  the NAS's host key: give RECORDINGS_NAS_KNOWN_HOSTS_FILE    (stage 2)
 #   RECORDINGS_NTFY_TOPIC       the private ntfy topic alerts go to                   (stage 2)
 #   RECORDINGS_DEADMAN_URL      the Healthchecks.io ping URL                          (stage 2)
+#   RECORDINGS_DEADMAN_SYNC_URL the Plaud sync's own Healthchecks ping URL, worker only (stage 2b)
 #   RECORDINGS_NTFY_TOKEN       an ntfy access token, only for a server that needs one (stage 2)

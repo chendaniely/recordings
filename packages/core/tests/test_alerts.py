@@ -196,3 +196,52 @@ def test_an_http_proxy_never_carries_an_alert_and_nothing_secret_is_logged(
         assert send(ac, title="recordings: test alert", message="m") is False
     assert other_ntfy.requests == [] and len(ntfy.requests) == 3
     assert "do-not-print" not in caplog.text
+
+
+def test_deadman_sync_url_is_checked_under_its_own_name(tmp_path):
+    # why: stage 2b §16, Dan's decision 4. The sync's check is apart from the backup's, read from
+    # its own secret, refused under its own name, and never shown.
+    for bad in ("http://hc.example/ping/do-not-print", "https://hc.example/p?do-not-print"):
+        with pytest.raises(ConfigError, match="RECORDINGS_DEADMAN_SYNC_URL") as caught:
+            AlertConfig(None, None, None, deadman_sync_url=bad)
+        assert "do-not-print" not in str(caught.value)
+    (tmp_path / "sync").write_text("https://hc.example/ping/sync-do-not-print\n", "utf-8")
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
+    environ = {
+        "RECORDINGS_CONFIG": str(tmp_path / "config.toml"),
+        "RECORDINGS_DEADMAN_SYNC_URL_FILE": str(tmp_path / "sync"),
+    }
+    ac = alerts.from_config(load_config(environ), environ)
+    assert ac.deadman_sync_url == "https://hc.example/ping/sync-do-not-print"
+    assert ac.deadman_url is None  # the backup's check is another secret
+    assert "do-not-print" not in repr(ac) and "deadman_sync_url=set" in repr(ac)
+
+
+def test_ping_url_returns_the_status(ntfy, caplog):
+    # why: decision 12. Status shows "last ping failed 14:40 (HTTP 404)", so the status comes back.
+    url = f"{ntfy.url}/ping/sync-do-not-print"
+    assert alerts.ping_url(url) == 200
+    assert (ntfy.requests[-1]["method"], ntfy.requests[-1]["path"]) == (
+        "POST",
+        "/ping/sync-do-not-print",
+    )
+    assert ntfy.requests[-1]["body"] == ""
+    ntfy.status = 404
+    with caplog.at_level("WARNING"):
+        assert alerts.ping_url(url, "log", message="m") == 404
+    with socket.socket() as s:  # a port with nothing listening
+        s.bind(("127.0.0.1", 0))
+        closed = f"http://127.0.0.1:{s.getsockname()[1]}/ping/x"
+    assert alerts.ping_url(closed) is None
+    assert "HTTP 404" in caplog.text and "do-not-print" not in caplog.text
+
+
+def test_ping_deadman_is_unchanged(ntfy):
+    # why: 2a's callers (the backup's jobs, alert-test) keep their bool and their signature.
+    import inspect
+
+    assert list(inspect.signature(ping_deadman).parameters) == ["ac", "kind", "message"]
+    ac = AlertConfig(None, None, f"{ntfy.url}/ping/backup")
+    assert ping_deadman(ac) is True
+    ntfy.status = 500
+    assert ping_deadman(ac, "fail", message="m") is False

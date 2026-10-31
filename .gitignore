@@ -31,3 +31,8 @@ secrets/
 .env.*
 # Git bundles (such as the pre-public history backup) can carry private history.
 *.bundle
+# The Plaud sign-in (stage 2b): a secret the worker owns, never committed.
+tokens*.json
+**/.plaud/
+# The Mac's own make settings (SERVER and REPO_DIR, for make consent-add and plaud-sign-in).
+local.mk

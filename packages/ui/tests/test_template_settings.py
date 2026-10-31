@@ -15,18 +15,19 @@ from recordings.config import SECRETS, load_config, secret, secret_path
 from recordings.disk import disk_thresholds
 from recordings.plaud.consent import consent_list_path
 from recordings.plaud.reconcile import patterns_from_config
+from recordings.plaud.settings import plaud_settings
 from recordings_ui.status import status_settings
 
 REPO = Path(__file__).resolve().parents[3]
 TEMPLATE = REPO / "config.example.toml"
 LATER_SECTIONS = {"spark": "4", "models": "4", "prompts": "4", "watched_folder": "5"}
-LATER = {
-    ("plaud", "schedule_minutes"): "2b",
-    ("plaud", "auto_import"): "2b",
-    ("plaud", "recheck_days"): "2b",
+LATER: dict[tuple[str, str], str] = {}
+LATER_SECRETS = {"spark_api_key": "4", "claude_oauth_token": "4"}
+SECRET_VALUES = {
+    "ntfy_topic": "topic-7",
+    "deadman_url": "https://hc-7.example/ping/7",
+    "deadman_sync_url": "https://hc-7.example/ping/sync-7",
 }
-LATER_SECRETS = {"plaud_token": "2b", "spark_api_key": "4", "claude_oauth_token": "4"}
-SECRET_VALUES = {"ntfy_topic": "topic-7", "deadman_url": "https://hc-7.example/ping/7"}
 
 
 def table(tmp: Path) -> dict:
@@ -116,13 +117,32 @@ def table(tmp: Path) -> dict:
         ),
         ("plaud", "auto_private_patterns"): (
             ["^\\s*secret-7"],
-            lambda r: r.patterns,
-            ("^\\s*secret-7",),
+            lambda r: (r.patterns, r.plaud.auto_private_patterns),
+            (("^\\s*secret-7",), ("^\\s*secret-7",)),
         ),
         ("plaud", "consent_list"): (
             str(tmp / "consent-7.md"),
-            lambda r: r.consent,
-            tmp / "consent-7.md",
+            lambda r: (r.consent, r.plaud.consent_list),
+            (tmp / "consent-7.md", tmp / "consent-7.md"),
+        ),
+        ("plaud", "schedule_minutes"): (37, lambda r: r.plaud.schedule_minutes, 37),
+        ("plaud", "auto_import"): (False, lambda r: r.plaud.auto_import, False),
+        ("plaud", "full_sweep_days"): (3, lambda r: r.plaud.full_sweep_days, 3),
+        ("plaud", "keep_out_word"): (
+            "skip-7",
+            lambda r: (r.plaud.keep_out_word, r.plaud.keep_out_word_ok),
+            ("skip-7", True),
+        ),
+        ("plaud", "token_store"): (
+            str(tmp / "tokens-7.json"),
+            lambda r: r.plaud.token_store,
+            tmp / "tokens-7.json",
+        ),
+        # Commented out in the template, so the key check doesn't ask for it: set here.
+        ("plaud", "api_base"): (
+            "https://plaud-7.example/api",
+            lambda r: r.plaud.api_base,
+            "https://plaud-7.example/api",
         ),
     }
 
@@ -151,6 +171,7 @@ def read_all(config: Path, environ: dict[str, str]) -> SimpleNamespace:
         disk=disk_thresholds(cfg),
         patterns=patterns_from_config(cfg.data),
         consent=consent_list_path(cfg.data),
+        plaud=plaud_settings(cfg),
         backup=backup.from_config(cfg, env),
         mirror=mirror.from_config(cfg, env),
         alerts=alerts.from_config(cfg, env),
@@ -203,8 +224,18 @@ def test_every_secret_reaches_its_reader(tmp_path):
         "ntfy_topic": r.alerts.topic == values["ntfy_topic"],
         "ntfy_token": r.alerts.token == values["ntfy_token"],
         "deadman_url": r.alerts.deadman_url == values["deadman_url"],
+        "deadman_sync_url": r.alerts.deadman_sync_url == values["deadman_sync_url"],
     }
     assert set(SECRETS) == reaches.keys() | LATER_SECRETS.keys(), (
         "give each secret a reader check here, or list it in LATER_SECRETS with its stage"
     )
     assert [name for name, ok in reaches.items() if not ok] == []
+
+
+def test_the_schedule_is_20_minutes_in_the_template_and_when_unset(tmp_path):
+    # why: stage 2b §17.4, §11.6. The schedule starts by itself after the first catch-up, with no
+    # config edit or restart: 20 in the template, and 20 when unset.
+    assert tomllib.loads(TEMPLATE.read_text(encoding="utf-8"))["plaud"]["schedule_minutes"] == 20
+    path = tmp_path / "config.toml"
+    path.write_text("[plaud]\n", encoding="utf-8")
+    assert plaud_settings(load_config({"RECORDINGS_CONFIG": str(path)})).schedule_minutes == 20

@@ -11,6 +11,9 @@
   alerts when the pings stop, and that is what notices a stopped container or a dead server. Its
   period is 1 hour and its grace at least 3 hours, because the loop runs one job at a time and a
   long check or restore test holds back the next backup (docs/runbooks/first-run.md).
+- **The Plaud sync's own check** (stage 2b §16) has its own URL, `deadman_sync_url`, mounted in
+  the worker alone. `worker.conclude_turn` pings it through `ping_url`, which returns the HTTP
+  status for Status; nothing else here sends to it.
 
 Both URLs must be https, so the topic, the token and the ping URL never cross a network in clear;
 plain http is allowed only to this machine's loopback (the tests' fake server). Neither may hold a
@@ -105,12 +108,17 @@ class AlertConfig:
     topic: str | None
     deadman_url: str | None
     token: str | None = None  # an ntfy access token, for a server that needs one
+    # The Plaud sync's own Healthchecks check (stage 2b §16), apart from the backup's: `worker`
+    # only. Pinged by worker.conclude_turn after a good sync, never by the backup's jobs.
+    deadman_sync_url: str | None = None
 
     def __post_init__(self) -> None:
         if self.ntfy_server is not None:
             _check_url(self.ntfy_server, "[alerts] ntfy_server")
         if self.deadman_url is not None:
             _check_url(self.deadman_url, "RECORDINGS_DEADMAN_URL")
+        if self.deadman_sync_url is not None:
+            _check_url(self.deadman_sync_url, "RECORDINGS_DEADMAN_SYNC_URL")
         if self.topic is not None and not TOPIC_RE.fullmatch(self.topic):
             raise ConfigError("RECORDINGS_NTFY_TOPIC must be 1 to 64 letters, digits, '-' or '_'")
         if self.token is not None and not TOKEN_RE.fullmatch(self.token):
@@ -136,7 +144,8 @@ class AlertConfig:
             f"AlertConfig(ntfy_server={self.ntfy_server!r}, "
             f"topic={'set' if self.topic else None}, "
             f"deadman_url={'set' if self.deadman_url else None}, "
-            f"token={'set' if self.token else None})"
+            f"token={'set' if self.token else None}, "
+            f"deadman_sync_url={'set' if self.deadman_sync_url else None})"
         )
 
     __str__ = __repr__
@@ -149,6 +158,7 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> AlertConfig:
         topic=secret("ntfy_topic", environ),
         deadman_url=secret("deadman_url", environ),
         token=secret("ntfy_token", environ),
+        deadman_sync_url=secret("deadman_sync_url", environ),
     )
 
 
@@ -196,15 +206,33 @@ def send(
     return delivered
 
 
+def ping_url(url: str, kind: str = "success", *, message: str = "") -> int | None:
+    """One Healthchecks ping to `url` (checked as AlertConfig checks it), `kind` being a key of
+    PINGS, with a fixed body. Returns the HTTP status, so Status can say "last ping failed (HTTP
+    404)", or None when the check couldn't be reached. A redirect is never followed: its 3xx is
+    the answer. Never raises; a failure is logged by status or class, never with the URL."""
+    request = urllib.request.Request(
+        url.rstrip("/") + PINGS[kind],
+        data=message.encode("utf-8"),
+        method="POST",
+        headers={"User-Agent": f"recordings/{__version__}"},
+    )
+    try:
+        with _OPENER.open(request, timeout=TIMEOUT) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        log.warning("ping failed: HTTP %s", exc.code)
+        exc.close()
+        return exc.code
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
+        log.warning("ping failed: %s", type(exc).__name__)
+        return None
+
+
 def ping_deadman(ac: AlertConfig, kind: str = "success", *, message: str = "") -> bool:
-    """One Healthchecks ping, `kind` being a key of PINGS. The body is a fixed text."""
+    """One ping of the backup's check (`deadman_url`), `kind` being a key of PINGS. The body is
+    a fixed text. True when Healthchecks took it."""
     if not ac.deadman_url:
         return False
-    return _deliver(
-        urllib.request.Request(
-            ac.deadman_url.rstrip("/") + PINGS[kind],
-            data=message.encode("utf-8"),
-            method="POST",
-            headers={"User-Agent": f"recordings/{__version__}"},
-        )
-    )
+    status = ping_url(ac.deadman_url, kind, message=message)
+    return status is not None and 200 <= status < 300

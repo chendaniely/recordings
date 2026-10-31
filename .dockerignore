@@ -22,3 +22,8 @@ test-results
 /_site
 /build
 /.cache
+# The Plaud sign-in (stage 2b) and the Mac's make settings: never in the image. Docker matches
+# from the context's root, so `**/` covers a token file in any folder, the root's included.
+**/tokens*.json
+**/.plaud/
+local.mk

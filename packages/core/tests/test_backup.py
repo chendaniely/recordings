@@ -1029,7 +1029,7 @@ def test_a_direct_ssh_key_value_is_refused_and_a_stray_variable_never_reaches_re
             "RESTIC_PASSWORD_COMMAND": "echo hunter2",
             "RESTIC_PROGRESS_FPS": "1",
             "RESTIC_REPOSITORY_FILE": "/elsewhere",
-            "RECORDINGS_PLAUD_TOKEN": "token",
+            "RECORDINGS_SPARK_API_KEY": "token",
             "AWS_SECRET_ACCESS_KEY": "aws",
         },
     )
