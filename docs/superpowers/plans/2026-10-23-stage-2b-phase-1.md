@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 12: The gate, open.
+**Now:** Task 13: The worker process, open.
 
 ***
 
@@ -12238,9 +12238,9 @@ The gate's other states reach nothing Phase 1 can be in, so they move to Phase 2
   ```
   Task 13 calls `gate_now` at start and at every tick (a read of one `plaud_state` key); Task 14's worker answers a kind not in `GATE_ALLOWED` with `GATE_REFUSAL` while the gate is closed; Task 19 shows `reason`.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-12-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-12-base`
 
-- [ ] **Step 1: Write the failing tests.** Create `packages/core/tests/test_plaud_gate.py`:
+- [x] **Step 1: Write the failing tests.** Create `packages/core/tests/test_plaud_gate.py`:
 
 ```python
 """The first catch-up's gate, as Phase 1 needs it (stage 2b spec §11.6). Phase 2's catch-up adds
@@ -12288,12 +12288,12 @@ def test_a_state_db_without_the_2b_tables_says_no_sync_yet(db):
         gate_now(db)
 ```
 
-- [ ] **Step 2: Run them; watch them fail.**
+- [x] **Step 2: Run them; watch them fail.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_gate.py -q`
 Expected: collection fails with `ModuleNotFoundError: No module named 'recordings.plaud.gate'`. No test here is a pin.
 
-- [ ] **Step 3: Write `gate.py`.** Create `packages/core/src/recordings/plaud/gate.py`:
+- [x] **Step 3: Write `gate.py`.** Create `packages/core/src/recordings/plaud/gate.py`:
 
 ```python
 """The first catch-up's gate (stage 2b spec §11.6), as Phase 1 needs it.
@@ -12338,14 +12338,14 @@ def gate_now(db: PlaudDB) -> Gate:
     return Gate(open=False, reason=GATE_FIRST)
 ```
 
-- [ ] **Step 4: Run them; they pass.**
+- [x] **Step 4: Run them; they pass.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_gate.py -q`
 Expected: `3 passed`.
 
-- [ ] **Step 5: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
+- [x] **Step 5: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
 
-- [ ] **Step 6: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 6: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(plaud): 🤖 the gate: no scheduled sync or snapshot-writing request before the first catch-up
@@ -12366,7 +12366,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/gate.py packages/core/tests/test_plaud_gate.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 7: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 7: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `46f7510`; the listings above are the plan as written): `gate_now` opens only when `catch_up_done_at` is a string `when.parse_stamp` reads as a timestamp (a future one counts: the clock may be behind); any other value (`""`, `false`, `0`, `[]`, `{}`, junk, a number) keeps it closed, and a database error raises, so the gate never opens on a read it couldn't make.
 
 ### Task 13: The worker process
 
