@@ -270,6 +270,27 @@ def test_a_keep_out_words_row_that_is_not_a_list_is_refused_and_left_alone(write
     assert db.get(K_KEEP_OUT_WORDS) == {"words": ["skipme"]}
 
 
+def test_a_keep_out_words_row_that_is_not_a_list_never_reads_as_no_words(
+    writer, make_incoming, plaud_env
+):
+    # why: the phase-end list (Task 10's re-review), P8. Read as no words, a title with an older
+    # enforced word would be judged against the configured word alone, its marker moved, and it
+    # would never be kept out. The Writer refuses as enforce_word does: nothing is judged, the
+    # title stays due, and the baseline refuses before its first recording.
+    rid = imported_by_2a(writer, make_incoming, plaud_env, 13, "10-21 skipme coffee")
+    db = PlaudDB(writer.state)
+    db.put(K_KEEP_OUT_WORDS, {"words": ["skipme"]}, now=NOW)
+    with pytest.raises(KeepOutWordsError):
+        writer.keep_out_words()
+    with pytest.raises(KeepOutWordsError):
+        writer.reconcile_plaud(rid)
+    assert db.markers(rid) == {}  # still due
+    with pytest.raises(KeepOutWordsError):
+        baseline_privacy(writer, db, now=NOW)
+    assert db.markers(rid) == {} and db.open_flags() == []
+    assert db.get(K_KEEP_OUT_WORDS) == {"words": ["skipme"]}  # left as it is
+
+
 def test_the_cli_waits_a_minute_for_plaud():
     from recordings.plaud import runlock
 

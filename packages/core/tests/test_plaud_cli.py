@@ -323,6 +323,25 @@ def test_keep_out_words_never_prints_an_invalid_word_and_refuses_a_row_that_is_n
     assert PlaudDB(writer.state).get(K_KEEP_OUT_WORDS) == "skipme"
 
 
+def test_the_baseline_refuses_a_keep_out_words_row_that_is_not_a_list(
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
+    # why: P8. A row that isn't a list never reads as "no keep-out words": the baseline checks
+    # nothing and says why, by its fixed phrase, rather than listing every recording.
+    from recordings.plaud.baseline import NOT_A_LIST
+    from recordings.plaud.checks import K_KEEP_OUT_WORDS, PlaudDB
+
+    payload = json.dumps(plaud_env(pid(0xE4), name="Week 9")).encode()
+    source = RawSource(kind="plaud", ref=pid(0xE4), added_at=T0, fetched_at=T0, payload=payload)
+    writer.add(make_incoming(title=TITLE, sources=(source,)))
+    PlaudDB(writer.state).put(K_KEEP_OUT_WORDS, "skipme", now=datetime.now(UTC))
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": NOT_A_LIST}
+    assert main(["plaud", "baseline"]) == 1
+    assert capsys.readouterr().err == f"recordings: {NOT_A_LIST}\n"
+
+
 @pytest.mark.parametrize("fault", [OSError, sqlite3.OperationalError], ids=["OSError", "sqlite3"])
 def test_a_writer_that_cant_open_prints_its_class_and_never_the_exception_text(
     writer, tmp_path, monkeypatch, capsys, fault

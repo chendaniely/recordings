@@ -18,7 +18,8 @@ spec §14.5, §13.1 case 5, §12.2).
   first). The worker adds the configured word at every start, so changing the word releases
   nothing (2b phase 1 plan, decision 26); only `keep-out-words --drop` removes an old one, never the
   configured one. Dropping a word stops new keep-outs by it; what it kept out stays out until
-  Release. A row that isn't a list is refused and left alone (`KeepOutWordsError`).
+  Release. A row that isn't a list is refused and left alone (`KeepOutWordsError`), here and by
+  `Writer.keep_out_words`, so no reconcile, baseline or pass ever reads it as no words (P8).
 """
 
 from __future__ import annotations
@@ -110,7 +111,10 @@ def _sweep(
     """Reconcile every Plaud recording, however one fails. A recording locked by someone else is
     busy; any other refusal (a busy or full state.db included) lists it with its class name; a
     recording.json that doesn't validate, which `iter_recordings` drops, is listed too, so
-    nothing is skipped silently. Logs the ID and the class, never the exception's text."""
+    nothing is skipped silently. Logs the ID and the class, never the exception's text. A
+    keep-out words row that isn't a list refuses the whole sweep first (KeepOutWordsError), since
+    every reconcile would refuse for it: one reason, never every recording listed."""
+    enforced_words(db)
     ids = _plaud_recordings(writer)
     sweep = _Sweep()
     for problem in writer.archive.problems:

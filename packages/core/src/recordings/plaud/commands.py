@@ -269,7 +269,8 @@ def _fix_for(cause: str) -> str:
 
 def cmd_baseline(args: argparse.Namespace) -> int:
     """§14.5's privacy part. Holds `plaud`, waiting up to runlock.CLI_WAIT. Exit 1 when a
-    recording couldn't be written; 75 when only locked ones were left."""
+    recording couldn't be written, or the enforced keep-out words can't be read (nothing is
+    checked then); 75 when only locked ones were left."""
     cfg = _config(args.json)
     if isinstance(cfg, int):
         return cfg
@@ -285,6 +286,8 @@ def cmd_baseline(args: argparse.Namespace) -> int:
             report = baseline_privacy(writer, PlaudDB(writer.state), now=now)
     except LockTimeout:
         return _fail(_busy(state), args.json, EXIT_BUSY)
+    except KeepOutWordsError as exc:  # a fixed phrase: the row is never read as no words
+        return _fail(str(exc), args.json, EXIT_FAILED)
     lines = [
         f"titles checked: {report.titles_checked:,}",
         f"private added: {report.private_added:,}",

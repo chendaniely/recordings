@@ -57,7 +57,7 @@ from recordings.models import (
     is_private,
     is_private_tag,
 )
-from recordings.plaud.checks import K_KEEP_OUT_WORDS, PlaudDB
+from recordings.plaud.checks import PlaudDB
 from recordings.plaud.keepout import DEFAULT_WORD, fold, valid_word
 from recordings.plaud.privacy import PrivacyInputs, current_patterns, why_phrase
 from recordings.plaud.reconcile import (
@@ -923,11 +923,17 @@ class Writer:
 
     def keep_out_words(self) -> tuple[str, ...]:
         """The keep-out words this Writer checks (§12.2): the configured word, if valid, then every
-        word the worker has enforced (`plaud_state`), so changing the word releases nothing."""
-        enforced = PlaudDB(self.state).get(K_KEEP_OUT_WORDS)
+        word the worker has enforced (`plaud_state`), so changing the word releases nothing.
+
+        Raises KeepOutWordsError when the enforced row isn't a list, as `enforce_word` and
+        `enforced_words` do: it never reads as "no words" (P8). So a reconcile judges nothing and
+        moves no marker, and its titles stay due until the row is mended."""
+        # Here, not at the top: baseline imports this module.
+        from recordings.plaud.baseline import enforced_words
+
         words = [self.keep_out_word] if self.keep_out_word else []
-        for word in enforced if isinstance(enforced, list) else []:
-            if valid_word(word) and fold(word) not in {fold(w) for w in words}:
+        for word in enforced_words(PlaudDB(self.state)):
+            if fold(word) not in {fold(w) for w in words}:
                 words.append(word)
         return tuple(words)
 
