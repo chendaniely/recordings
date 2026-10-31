@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 10: The baseline's privacy part, new patterns, and the `plaud` lock, open.
+**Now:** Task 11: Sync health and the ping rule, open.
 
 ***
 
@@ -10644,9 +10644,9 @@ Spec §14.5's privacy part (Phase 3 adds the check-state seeding and `--all`), �
   - `recordings plaud baseline [--json]`: holds `plaud` (`plaud-baseline`), waits `CLI_WAIT` then exits 75; prints the counts; exit 0, or 1 when anything is unwritten.
   - `recordings plaud keep-out-words [--drop <word>] [--json]`: holds nothing; lists the enforced words, or drops one.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-10-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-10-base`
 
-- [ ] **Step 1: Write the failing tests.** Create `packages/core/tests/test_plaud_baseline.py`:
+- [x] **Step 1: Write the failing tests.** Create `packages/core/tests/test_plaud_baseline.py`:
 
 ```python
 """The baseline's privacy part, the new-pattern pass, the keep-out words enforced and the `plaud`
@@ -10914,12 +10914,12 @@ def test_plaud_keep_out_words_lists_and_drops(writer, tmp_path, monkeypatch, cap
     assert json.loads(capsys.readouterr().out)["enforced"] == ["noarchive"]
 ```
 
-- [ ] **Step 2: Run them; watch them fail.**
+- [x] **Step 2: Run them; watch them fail.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_baseline.py packages/core/tests/test_plaud_cli.py -q`
 Expected: `test_plaud_baseline.py` fails at collection with `ModuleNotFoundError: No module named 'recordings.plaud.baseline'`; the new CLI tests fail with `SystemExit: 2` (`invalid choice: 'baseline'`) or a `ModuleNotFoundError` for `recordings.plaud.runlock` or `recordings.plaud.baseline`.
 
-- [ ] **Step 3: The lock's name.** In `packages/core/src/recordings/locks.py`, replace:
+- [x] **Step 3: The lock's name.** In `packages/core/src/recordings/locks.py`, replace:
 
 ```python
 OPS_LOCK = "ops"  # one bulk job at a time: the import (Task 9) and ops.run_job (Task 11)
@@ -10934,7 +10934,7 @@ OPS_LOCK = "ops"  # one bulk job at a time: the import (Task 9) and ops.run_job 
 PLAUD_LOCK = "plaud"
 ```
 
-- [ ] **Step 4: Write `runlock.py`.** Create `packages/core/src/recordings/plaud/runlock.py`:
+- [x] **Step 4: Write `runlock.py`.** Create `packages/core/src/recordings/plaud/runlock.py`:
 
 ```python
 """The `plaud` lock (stage 2b spec §9.4): one Plaud sync at a time, held for one run.
@@ -10988,7 +10988,7 @@ def plaud_holder(state: State) -> tuple[str, datetime] | None:
     return running(state.locks_dir, PLAUD_LOCK)
 ```
 
-- [ ] **Step 5: Write `baseline.py`.** Create `packages/core/src/recordings/plaud/baseline.py`:
+- [x] **Step 5: Write `baseline.py`.** Create `packages/core/src/recordings/plaud/baseline.py`:
 
 ```python
 """The baseline's privacy part, the new-pattern pass, and the keep-out words enforced (stage 2b
@@ -11180,7 +11180,7 @@ def patterns_pass(
     return result
 ```
 
-- [ ] **Step 6: The two commands.** In `packages/core/src/recordings/plaud/commands.py`, replace the imports:
+- [x] **Step 6: The two commands.** In `packages/core/src/recordings/plaud/commands.py`, replace the imports:
 
 ```python
 from recordings import config
@@ -11344,14 +11344,14 @@ COMMANDS = {
 }
 ```
 
-- [ ] **Step 7: Run them; they pass.**
+- [x] **Step 7: Run them; they pass.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_baseline.py packages/core/tests/test_plaud_cli.py packages/core/tests/test_locks.py -q`
 Expected: every test passes.
 
-- [ ] **Step 8: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
+- [x] **Step 8: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
 
-- [ ] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(plaud): 🤖 recordings plaud baseline checks every title once; enforced keep-out words; the plaud lock
@@ -11374,7 +11374,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/locks.py packages/core/src/recordings/plaud/runlock.py packages/core/src/recordings/plaud/baseline.py packages/core/src/recordings/plaud/commands.py packages/core/tests/test_plaud_baseline.py packages/core/tests/test_plaud_cli.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 10: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 10: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `7c2a421`; the listings above are the plan as written): one error tuple, `writer.RECONCILE_ERRORS` (with `sqlite3.Error`), serves `reindex`, the baseline and the pattern pass, so a busy or full `state.db` lists the recording and the pass goes on; a recording in `archive.problems` is listed unwritten (`InvalidFile`), never skipped; a busy recording is counted as busy, and `plaud baseline` exits 75 when only busy ones are left, 1 when any is unwritten; the pass reports what it couldn't check, and `K_PATTERNS_PASS` is `{"version", "attempted", "at", "checked", "tagged", "unwritten": [ids], "busy": [ids]}`, `version` being the last complete pass's, so the next start reruns an incomplete one; the fix printed follows the cause (decision 58); `keep-out-words` never prints an invalid word, refuses a non-list row, and `drop_word`/`enforce_word` each read and write in one transaction (`PlaudDB.update`); `_read_state`/`_write_state`; `lock_timeout=10`; `CLI_WAIT` pinned. Task 19 now lists the pass's unchecked recordings in Needs attention, by ID (`PATTERNS_UNCHECKED`; forward review).
 
 ### Task 11: Sync health and the ping rule
 
@@ -18918,6 +18920,21 @@ def test_a_late_consent_pass_that_failed_names_its_class_and_a_remedy_that_helps
     assert not [a for a in panel["attention"] if a.startswith("Late consent listings stopped")]
 
 
+def test_a_recording_the_patterns_pass_couldnt_check_needs_attention_by_id(plaud_scene):
+    # why: spec §13.2, "Needs attention shows it at once, by ID": a recording the last patterns
+    # pass couldn't check stays unchecked until a reconcile reaches it (Task 10's review).
+    from recordings.plaud.checks import K_PATTERNS_PASS
+    from recordings_ui.plaud import PATTERNS_UNCHECKED
+
+    s = plaud_scene
+    pass_ = {"version": 1, "attempted": 2, "at": T0.isoformat(), "checked": 3, "tagged": 0}
+    s.db.put(K_PATTERNS_PASS, {**pass_, "unwritten": ["rec-a"], "busy": []}, now=T0)
+    attention = sync_panel(s.settings, now=T0)["attention"]
+    assert PATTERNS_UNCHECKED.format(id="rec-a") in attention
+    s.db.put(K_PATTERNS_PASS, {**pass_, "unwritten": [], "busy": []}, now=T0)
+    assert not [a for a in sync_panel(s.settings, now=T0)["attention"] if "patterns" in a]
+
+
 def test_an_unwritten_flag_says_what_its_cause_needs(plaud_scene):
     # why: `recordings reindex` mends a file edited outside the app (StaleFile, InvalidFile), not
     # a disk or permissions fault: Task 8 records each flag's cause, and the sentences follow it.
@@ -19359,6 +19376,12 @@ CONSENT_UNREADABLE = "the consent list can't be read"  # keepout.STOP_UNREADABLE
 NO_WORKER_YET = "The Plaud worker hasn't reported yet: check that the worker container is running."
 WORKER_FAILED = "The Plaud worker couldn't start (`{}`): see `rc logs worker` (runbook)."
 PING_FAILING = "The sync's Healthchecks ping has failed for 2 hours."
+# A recording the last auto-private patterns pass couldn't check (Task 10's K_PATTERNS_PASS
+# "unwritten"): its marker stays behind, so any reconcile judges it (spec §13.2, by ID).
+PATTERNS_UNCHECKED = (
+    "Recording {id} wasn't checked against the private patterns: run `recordings reindex`, "
+    "which says what stops it."
+)
 # A late consent pass that failed as a whole (Task 13's private-unwritten blocker, with the class it
 # raised): the remedy that can help, never `recordings reindex`.
 UNWRITTEN_STOPPED = (
@@ -19662,6 +19685,10 @@ class _Read:
         self.flags = self.db.open_flags(FLAG_EVENTS)
         unwritten = _dict(get(checks.BLOCKER_PREFIX + "private-unwritten"))
         self.unwritten_error = _class_name(_dict(unwritten.get("detail")).get("error"))
+        unchecked = _dict(get(checks.K_PATTERNS_PASS)).get("unwritten")
+        self.patterns_unchecked = (
+            [x for x in unchecked if isinstance(x, str)] if isinstance(unchecked, list) else []
+        )
 
     def gate_reason(self) -> str | None:
         return None if self.gate.open else self.gate.reason
@@ -20054,6 +20081,7 @@ def _panel_from(r: _Read) -> dict:
     if r.unwritten_error:
         attention.append(_cap(UNWRITTEN_STOPPED.format(r.unwritten_error)) + ".")
     attention += flag_lines
+    attention += [PATTERNS_UNCHECKED.format(id=rid) for rid in r.patterns_unchecked]
     if worker_line:
         attention.append(worker_line)
     holder = plaud_holder(r.state)
@@ -24850,6 +24878,7 @@ Their full plans are written at their phase start, against the code as built and
 - `test_flow_2b.py` and the leak scan at DEBUG (C7.01); the sign-in criterion on the fake (C4).
 - `make e2e-live` and its CI job: `web` and `worker` against the fake; CLAUDE.md's Toolchain line for it.
 - The README's config table gains the Plaud sign-in (`make plaud-sign-in`), as spec §19 says (Task 7's review).
+- The `audio-router` import takes the `plaud` lock too (spec §9.4; Task 10's review).
 - The runbook: section 6's sign-in step, sections 7 and 8, "Plaud sign-in", the hold and consent-stop recovery; the README's 2b paragraph; main spec §9.1's buckets and token paragraph, §9.3's deferred rows.
 - From decision 44: `plaud/cache.py` (the compare's rows, titles hidden in a consent stop, no title for an ID consent-listed or matching an enforced word since the compare, and the tick purging those titles: P1); the views' readers of the listing, the hold, the sign-in (with Needs attention's "sign-in expiring within 7 days": BD3), compare, re-keyed and review rows; Release's title path (read and delete the preview in one writable transaction, keyed by the request's own `request_id`, the Plaud ID taken from the row: BD1, P6, P8); the snapshot marks before every 2b snapshot, by every path, `Writer.add` at import included, the interrupted state, the rebuild record and its scan, `plaud review` (its runbook section runs `plaud review` between "Restoring for real" step 4's `reindex` and its `rc up -d`: BB1), and decision 15's "the sync's record was rebuilt"; coalescing (one "Already queued" per kind), and park for a Plaud ID that failed to import; `HANDLED` widened to each kind as its handler lands.
 
@@ -24880,3 +24909,6 @@ Their full plans are written at their phase start, against the code as built and
 | 8 | Minor | `packages/core/src/recordings/plaud/flags.py` | A recording folder under a parent the worker can't enter is reported unwritten with cause `FileNotFoundError` (because `mutate` raises `KeyError`), so its flag says "recording.json is missing" where the fix is permissions; `recordings reindex`, which it suggests, then reports the permission error itself. Give it the error `os.stat` raises as its cause (Task 8's last round). | open |
 | 8 | Minor | `packages/core/src/recordings/writer.py` | 2a's `Writer._catch_up_index` drops a missing or invalid file's pending index mark at the next `add`, but lets a `PermissionError` there fail the `add` (Task 8's re-review). | open |
 | 8 | Question for Dan | `packages/ui/frontend/src/app.css` | At 320 px the top bar has 3.3 px to spare in Atkinson Hyperlegible, so a larger default font, or a webfont that fails to load, would make the Status page scroll sideways (the flaky test's investigation). Should the top bar wrap or shrink? A design call. | open |
+| 9 | Important | `packages/core/src/recordings/plaud/privacy.py` | The phase-end council's security lens rereads the marker's judged-set rule (`judged:<recording_id>`): it replaced a time-based fix that failed open, and it is the core of "every title the app has seen" (Task 9's review). | open |
+| 10 | Minor | `packages/core/src/recordings/plaud/baseline.py` | Every `archive.problems` entry is listed `InvalidFile`, including a `recording.json` its permissions keep from being read and a copied folder whose ID doesn't match, and both are told to run `recordings reindex`; folders whose names aren't IDs collapse into one. Carry the exception's class in `Problem` and key by relative path (Task 10's re-review). | open |
+| 9 | Minor | `packages/core/src/recordings/writer.py` | `Writer.keep_out_words` reads a `keep_out_words` row that isn't a list as no words, so reconcile and the baseline check only the configured word; fail closed as `enforce_word` now does (Task 10's re-review). | open |
