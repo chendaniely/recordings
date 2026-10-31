@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 21: The Sync screen, open.
+**Now:** Task 22: Status's sync panel, open.
 
 ***
 
@@ -21963,11 +21963,11 @@ Spec §15.1, J6: a new page, `#/add`, "Library · Tags · Add · Status".
 - Before any listing (`SyncView.listed` false, all of Phase 1) the screen shows no counts: "No sync has run yet." (unless the summary already says it), the consent list's line and the flags; the equation, "Nothing is waiting", Import all, Kept out, Gone from Plaud and Parked aren't drawn. Once listed, "No listing yet: Compare reads one." shows only while Compare is live. A flag whose sentence names its recording (Task 8's sentence for a `private` that couldn't be written) isn't prefixed with the ID again.
 - Also produced here, for Tasks 22 and 23 (named, not in the skeleton), in `SyncSummary.tsx`: `SyncHoldLine({ hold, why, onAccept })`, `SyncBreakerLine({ breaker, why, onAccept })`, `FlagRow({ flag, why, onKeepHere })` (a Keep it here that is off says why beside it), `CopyId({ text, label })` and `copyText(text)` (the Clipboard API, else `execCommand("copy")` on a selected hidden textarea, as a page served over plain HTTP needs; when neither copies, the ID shows to select by hand), `equationText(eq)`, `archiveText(a)`, `consentText(c)`, `reasonsFor(prefix, reasons)` and `Reasons({ prefix, list })`; in `ReleaseDialog.tsx`, `releaseQuestion(preview)` and `releaseButton(plaudId)` (the Release button marked `data-release-for`). Every button that sends a request carries `data-request="<kind>"` (Task 24's e2e tests find them by it). The toast of "what came in" is Task 20's (`usePlaud` shows every final reply's message, and an import's offers View).
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-21-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-21-base`
 
-- [ ] **Step 1: Check the docs first** (CLAUDE.md). Read the shadcn skill (`.claude/skills/shadcn/SKILL.md`, `rules/composition.md`: `AlertDialog` is the component for a confirmation; `rules/styling.md`) and `packages/ui/frontend/components.json` (style `radix-nova`), and confirm `src/components/ui/alert-dialog.tsx` and `button.tsx` are the generated components this task composes (no new shadcn component is added). Read Tailwind v4's docs on cascade layers (https://tailwindcss.com/docs, "Adding custom styles"): `app.css`'s rules are unlayered, so they win over the Button's and ToggleGroup's layered utilities without `!important` (CLAUDE.md). For Copy ID, read MDN on `navigator.clipboard` (available only in a secure context, so `undefined` on the tailnet's plain HTTP) and `document.execCommand("copy")` (deprecated, but still copies a selection in every browser the app supports, from a click). Read `src/tagging/useReturnFocus.ts`: a dialog that opens on a reply has no Trigger, so Radix alone returns focus to `<body>`. The commit names what was checked.
+- [x] **Step 1: Check the docs first** (CLAUDE.md). Read the shadcn skill (`.claude/skills/shadcn/SKILL.md`, `rules/composition.md`: `AlertDialog` is the component for a confirmation; `rules/styling.md`) and `packages/ui/frontend/components.json` (style `radix-nova`), and confirm `src/components/ui/alert-dialog.tsx` and `button.tsx` are the generated components this task composes (no new shadcn component is added). Read Tailwind v4's docs on cascade layers (https://tailwindcss.com/docs, "Adding custom styles"): `app.css`'s rules are unlayered, so they win over the Button's and ToggleGroup's layered utilities without `!important` (CLAUDE.md). For Copy ID, read MDN on `navigator.clipboard` (available only in a secure context, so `undefined` on the tailnet's plain HTTP) and `document.execCommand("copy")` (deprecated, but still copies a selection in every browser the app supports, from a click). Read `src/tagging/useReturnFocus.ts`: a dialog that opens on a reply has no Trigger, so Radix alone returns focus to `<body>`. The commit names what was checked.
 
-- [ ] **Step 2: Write the failing tests.** Create `packages/ui/frontend/src/components/SyncPage.test.ts`:
+- [x] **Step 2: Write the failing tests.** Create `packages/ui/frontend/src/components/SyncPage.test.ts`:
 
 ```ts
 import { createElement } from "react";
@@ -22381,9 +22381,9 @@ describe("the top bar (spec §7; 2b spec §15.1)", () => {
 });
 ```
 
-- [ ] **Step 3: Run them; watch them fail:** `make test-js`. Expected: the typecheck (which `make test-js` runs before Vitest) fails with `Cannot find module './SyncPage' or its corresponding type declarations` (and `'./SyncSummary'`), and `Argument of type '"add"' is not assignable to parameter of type 'Page'` in `nav.test.ts`.
+- [x] **Step 3: Run them; watch them fail:** `make test-js`. Expected: the typecheck (which `make test-js` runs before Vitest) fails with `Cannot find module './SyncPage' or its corresponding type declarations` (and `'./SyncSummary'`), and `Argument of type '"add"' is not assignable to parameter of type 'Page'` in `nav.test.ts`.
 
-- [ ] **Step 4: The route and the tab.** In `packages/ui/frontend/src/types.ts`, `export type Page = "library" | "tags" | "status";` becomes `export type Page = "library" | "tags" | "add" | "status";`.
+- [x] **Step 4: The route and the tab.** In `packages/ui/frontend/src/types.ts`, `export type Page = "library" | "tags" | "status";` becomes `export type Page = "library" | "tags" | "add" | "status";`.
 
 In `packages/ui/frontend/src/lib/nav.ts`, replace `routeFromHash`'s comment and first lines:
 
@@ -22513,7 +22513,7 @@ make it (the Sync screen needs no library to draw):
           {route.page === "status" ? <StatusPage /> : route.page === "add" ? <SyncPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} /> : (
 ```
 
-- [ ] **Step 5: The components.** Create `packages/ui/frontend/src/components/SyncSummary.tsx`:
+- [x] **Step 5: The components.** Create `packages/ui/frontend/src/components/SyncSummary.tsx`:
 
 ```tsx
 import { useId, useState } from "react";
@@ -23068,7 +23068,7 @@ export function SyncPage() {
 }
 ```
 
-- [ ] **Step 6: The styles.** In `packages/ui/frontend/src/app.css`, before the comment that begins `/* The picker's dialog on a touch screen or a phone (tagging spec §6).`, add:
+- [x] **Step 6: The styles.** In `packages/ui/frontend/src/app.css`, before the comment that begins `/* The picker's dialog on a touch screen or a phone (tagging spec §6).`, add:
 
 ```css
 /* The Sync screen, #/add (2b spec §15.1): its sections as cards, in §15.1's order, one column.
@@ -23122,11 +23122,11 @@ and inside the second `@media (max-width: 760px)` block (the one that ends with 
 
 No new `@media (max-width: 760px)` block: the two there stay the only ones, equal to `PHONE` (CLAUDE.md).
 
-- [ ] **Step 7: Run them; they pass:** `make test-js`. Expected: all pass.
+- [x] **Step 7: Run them; they pass:** `make test-js`. Expected: all pass.
 
-- [ ] **Step 8: Run the checks:** `uv run ruff format .`, `make check`, `make build`, `make e2e`. Expected: all pass (the e2e tests' Status and Library clicks find their tabs by name, so the new tab moves nothing they use).
+- [x] **Step 8: Run the checks:** `uv run ruff format .`, `make check`, `make build`, `make e2e`. Expected: all pass (the e2e tests' Status and Library clicks find their tabs by name, so the new tab moves nothing they use).
 
-- [ ] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(ui): 🤖 the Sync screen at #/add: summary, flags, holds, equations, Not here yet, Kept out with Release's question, Updated, Gone and Parked
@@ -23159,7 +23159,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/ui/frontend/src/components/SyncPage.tsx packages/ui/frontend/src/components/SyncSummary.tsx packages/ui/frontend/src/components/ReleaseDialog.tsx packages/ui/frontend/src/components/SyncPage.test.ts packages/ui/frontend/src/components/TopBar.tsx packages/ui/frontend/src/components/TopBar.test.ts packages/ui/frontend/src/components/ThemeSwitch.tsx packages/ui/frontend/src/lib/nav.ts packages/ui/frontend/src/lib/nav.test.ts packages/ui/frontend/src/types.ts packages/ui/frontend/src/App.tsx packages/ui/frontend/src/app.css`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 10: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 10: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (`f25f75e`, and the review's fix rounds `3a8b0d3` and `10d35b8`; the listings above are the plan as written): the phone Library's list cap gets a floor, `max(40dvh, 92px)`, since below about 215 px tall the cap cut the selection bar off and the pane showed through (older than this task; the one-row top bar moved it onto the e2e test's 170 px), and `test_on_a_short_phone_screen_the_librarys_bar_stays_whole` runs 250, 200, 170, 140 and 125 px with no injected style. Updated on Plaud is drawn only with rows: nothing reads Plaud's edits until edit-sync, so "Nothing changed on Plaud this week." wasn't measured (P2). The tabs are 44 × 44 at 320 px (`min-width` and `min-height`, a negative block margin keeping the bar 45 px), pinned by `test_the_top_bar_at_320_px_is_one_row_of_44_px_targets`: the logo's mark, four tabs and the theme icon fit one row with 12 px to spare. `SyncHoldLine` and `SyncBreakerLine` take a `whyId` and no longer say their reason: the section says it once (`reasonsFor`, `Reasons`). Focus goes to the section's heading when the control that had it goes away; Copy ID announces "Copied" in a live region, and its fallback sets the whole selection in a 16 px textarea (iOS); Not here yet draws no title for a review row or under `titles_hidden`, whatever the server sent; `n` and `equationParts` are defined once.
 
 ### Task 22: Status's sync panel
 
@@ -23176,7 +23178,7 @@ Spec §15.2, J5: plain sentences first, then the numbers, Details folded away; n
 **Interfaces:**
 - Consumes: Task 19's `SyncPanel` (with `handled`, `not_yet` and `listed`), `StatusView.sync`; Task 21's `SyncSummary`; Task 20's `usePlaudContext`, `kindReason` and `NO_PLAUD` (Accept this listing, Accept these changes).
 - Produces: `export function SyncPanel({ panel }: { panel: SyncPanel }): JSX.Element`.
-- Also consumes Task 21's `SyncHoldLine`, `SyncBreakerLine`, `equationText`, `archiveText` and `consentText`, so the panel and the Sync screen word a hold, a breaker and the equations alike.
+- Also consumes Task 21's `SyncHoldLine` and `SyncBreakerLine` (with `whyId`: they don't say their reason, so the panel says it once with `reasonsFor` and `Reasons`, as the Sync screen does), `equationText`, `archiveText`, `consentText` and `n`, so the panel and the Sync screen word a hold, a breaker and the equations alike.
 
 - [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-22-base`
 
@@ -23302,7 +23304,10 @@ describe("Status's sync panel (2b spec §15.2)", () => {
     const breaker = { sentence: "Edit-sync paused since 14:20", accept: true, code_fix: null, fields: ["folder_id"] };
     draw({ ...PANEL, hold, breaker, handled: ["keep-here"] }, fake());
     expect([...host.querySelectorAll("button")].every((b) => b.hasAttribute("disabled"))).toBe(true);
-    expect([...host.querySelectorAll(".sync-why")].map((p) => p.textContent)).toEqual([NOT_YET, NOT_YET]);
+    // Said once, and named by each button's aria-describedby (Task 21's lines).
+    expect([...host.querySelectorAll(".sync-why")].map((p) => p.textContent)).toEqual([NOT_YET]);
+    const ids = [...host.querySelectorAll("button")].map((b) => b.getAttribute("aria-describedby"));
+    expect(ids.every((id) => id !== null && host.querySelector(`#${id}`)?.textContent === NOT_YET)).toBe(true);
   });
   it("before any listing it shows no zero counts", () => {
     // Held, gone, failing, parked and malformed rows wait for the phase that measures them (X5).
@@ -23393,9 +23398,7 @@ import type { ReactNode } from "react";
 
 import { NO_PLAUD, kindReason, usePlaudContext } from "../plaud/usePlaud";
 import type { SyncPanel as Panel } from "../types";
-import { SyncBreakerLine, SyncHoldLine, SyncSummary, archiveText, consentText, equationText } from "./SyncSummary";
-
-const n = (x: number) => x.toLocaleString("en");
+import { Reasons, SyncBreakerLine, SyncHoldLine, SyncSummary, archiveText, consentText, equationText, n, reasonsFor } from "./SyncSummary";
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return <><dt>{label}</dt><dd>{children}</dd></>;
@@ -23413,6 +23416,9 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 export function SyncPanel({ panel }: { panel: Panel }) {
   const plaud = usePlaudContext();
   const why = plaud.available ? null : (plaud.reason ?? NO_PLAUD);
+  const holdWhy = panel.hold?.accept ? kindReason("accept", why, panel) : null;
+  const breakerWhy = panel.breaker?.accept ? kindReason("accept-changes", why, panel) : null;
+  const held = reasonsFor("sync-panel-held", [holdWhy, breakerWhy]);
   const { numbers: x, details: d } = panel;
   return (
     <section className="card sync-panel" aria-labelledby="status-sync" data-testid="sync-panel">
@@ -23423,11 +23429,13 @@ export function SyncPanel({ panel }: { panel: Panel }) {
       {panel.conditions.length > 0 && (
         <ul className="sync-conditions" data-testid="sync-conditions">{panel.conditions.map((c) => <li key={c}>{c}</li>)}</ul>
       )}
-      {panel.hold && <SyncHoldLine hold={panel.hold} why={kindReason("accept", why, panel)} onAccept={() => plaud.send("accept")} />}
+      {panel.hold && <SyncHoldLine hold={panel.hold} why={holdWhy} whyId={held.idOf(holdWhy)} onAccept={() => plaud.send("accept")} />}
       {panel.breaker && (
-        <SyncBreakerLine breaker={panel.breaker} why={kindReason("accept-changes", why, panel)}
+        <SyncBreakerLine breaker={panel.breaker} why={breakerWhy} whyId={held.idOf(breakerWhy)}
           onAccept={() => plaud.send("accept-changes")} />
       )}
+      {/* Task 21's lines don't say their reason: it is said once here, as on the Sync screen. */}
+      {(panel.hold || panel.breaker) && <Reasons prefix="sync-panel-held" list={held.list} />}
       {!panel.no_sync_yet && (
         <>
           <dl className="sync-numbers" data-testid="sync-numbers">
@@ -24975,7 +24983,7 @@ Their full plans are written at their phase start, against the code as built and
 | 7 | Minor | `config.example.toml` | The template's `[plaud]` block is spec §17.4's, which dropped 2a's comments explaining `auto_private_patterns` (regular expressions, case ignored, only ever adds `private`) and the consent list's fail-closed reading: write them back as comments, missing docs (Task 7's review). | open |
 | 8 | Minor | `packages/core/src/recordings/plaud/flags.py` | A recording folder under a parent the worker can't enter is reported unwritten with cause `FileNotFoundError` (because `mutate` raises `KeyError`), so its flag says "recording.json is missing" where the fix is permissions; `recordings reindex`, which it suggests, then reports the permission error itself. Give it the error `os.stat` raises as its cause (Task 8's last round). | open |
 | 8 | Minor | `packages/core/src/recordings/writer.py` | 2a's `Writer._catch_up_index` drops a missing or invalid file's pending index mark at the next `add`, but lets a `PermissionError` there fail the `add` (Task 8's re-review). | open |
-| 8 | Question for Dan | `packages/ui/frontend/src/app.css` | At 320 px the top bar has 3.3 px to spare in Atkinson Hyperlegible, so a larger default font, or a webfont that fails to load, would make the Status page scroll sideways (the flaky test's investigation). Should the top bar wrap or shrink? A design call. | open |
+| 8 | Question for Dan | `packages/ui/frontend/src/app.css` | At 320 px the top bar has 3.3 px to spare in Atkinson Hyperlegible, so a larger default font, or a webfont that fails to load, would make the Status page scroll sideways (the flaky test's investigation). Should the top bar wrap or shrink? A design call. | open: Task 21's 320 px bar (the logo's mark, four 44 px tabs, the theme icon) has 12 px to spare, pinned by an e2e test; the question stands for a larger font |
 | 9 | Important | `packages/core/src/recordings/plaud/privacy.py` | The phase-end council's security lens rereads the marker's judged-set rule (`judged:<recording_id>`): it replaced a time-based fix that failed open, and it is the core of "every title the app has seen" (Task 9's review). | open |
 | 10 | Minor | `packages/core/src/recordings/plaud/baseline.py` | Every `archive.problems` entry is listed `InvalidFile`, including a `recording.json` its permissions keep from being read and a copied folder whose ID doesn't match, and both are told to run `recordings reindex`; folders whose names aren't IDs collapse into one. Carry the exception's class in `Problem` and key by relative path (Task 10's re-review). | open |
 | 9 | Minor | `packages/core/src/recordings/writer.py` | `Writer.keep_out_words` reads a `keep_out_words` row that isn't a list as no words, so reconcile and the baseline check only the configured word; fail closed as `enforce_word` now does (Task 10's re-review). | open |
@@ -24988,3 +24996,6 @@ Their full plans are written at their phase start, against the code as built and
 | 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | One missing 2b table blanks the Sync screen's flags while Status still shows them (Task 19's spec review). | open |
 | 19 | Minor | `packages/ui/src/recordings_ui/plaud.py` | The `kept_out_at` title rule must skip rows Release has released, once Phase 2 writes Release (Task 19's spec review). | open: Phase 2's outline |
 | 20 | Minor | `packages/ui/frontend/src/plaud/usePlaud.tsx` | A double press of Keep it here inserts two rows; the second gets the worker's honest refusal, which becomes the result line. Nothing tells a screen that a request is pending before its first reply, so Task 21's buttons can't disable themselves meanwhile: give `usePlaud` a local pending entry at `send` (Task 20's spec review). | open |
+| 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | The Sync screen's structure (Task 21's standards review): one `RequestButton` for the `disabled`/`aria-describedby` pair written about twelve times; SyncPage as one ~270-line function; names (`b`, `off`, `parking`, `previewing`); the page compares the server's display strings (`FULL_UNKNOWN`, "No sync has run yet") where a field would do. | open |
+| 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | Keep it here's reply ("Queued", the worker down) shows in the Sync card's result line, not beside the flag pressed; the error branch shows `error.message`, as StatusPage does (Task 21's spec review). | open |
+| 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | Updated on Plaud's empty sentence ("Nothing changed on Plaud this week.") comes back once edit-sync measures Plaud's edits. | open: Phase 3's outline |
