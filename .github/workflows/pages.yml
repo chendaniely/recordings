@@ -1,6 +1,7 @@
 # The static demo on GitHub Pages (spec §17.1): https://chendaniely.github.io/recordings/
-# Builds _site/ with `make pages` (only demo/archive/ is ever exported), smoke-tests it in
-# Chromium, and deploys it straight from the Actions artifact, with no gh-pages branch.
+# Builds _site/ with `make pages` (only demo/archive/ and demo/plaud-sync.json are ever
+# exported), smoke-tests it in Chromium, and deploys it straight from the Actions artifact, with
+# no gh-pages branch.
 # Pull requests build and test only, so a Shinylive bump (which changes the Pyodide and shiny the
 # browser runs) is tested before it merges.
 name: pages

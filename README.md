@@ -53,7 +53,7 @@ MIT licensed.
 make lint         # ruff check and ruff format --check
 make test         # pytest and Vitest
 make e2e          # Playwright tests against `make demo`
-make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ is exported)
+make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ and demo/plaud-sync.json)
 make pages-serve  # serve _site/ like Pages, at http://127.0.0.1:8008/recordings/
 make pages-test   # Playwright smoke test of _site/, after `make pages`
 ```

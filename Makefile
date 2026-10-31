@@ -72,7 +72,8 @@ demo: build ## run the app in demo mode
 demo-archive: ## rebuild demo/archive from the cached media
 	uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 
-# The static GitHub Pages demo (spec §17.1): only demo/archive/ is ever exported.
+# The static GitHub Pages demo (spec §17.1): only demo/archive/ and demo/plaud-sync.json are
+# ever exported.
 pages: build ## build the static Pages demo into _site/
 	uv run --group pages python scripts/build_pages.py
 

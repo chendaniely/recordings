@@ -4,14 +4,16 @@
 
 1. Assemble a Shinylive app in build/pages/app/ (git-ignored): pages/app.py and
    pages/requirements.txt, vendored copies of `recordings`, `recordings_ui` (with its built
-   www/, without the FastAPI app) and `shinyreact`, and demo/archive/ without its media.
+   www/, without the FastAPI app) and `shinyreact`, demo/archive/ without its media, and
+   demo/plaud-sync.json, the Plaud views' canned view (2b phase 1 plan, decision 23).
 2. Export it with Shinylive (the `pages` dependency group, 0.8.12) into _site/, through
    scripts/shinylive_local.py, which keeps Shinylive's assets in .cache/shinylive/.
 3. Copy each demo recording's media to _site/media/<id>.<ext>, where the app links it
    (`runtime.configure(media_base="../media/")`), and add _site/.nojekyll.
 
-Only demo/archive/ is ever exported, and nothing here reads config.toml, RECORDINGS_ARCHIVE or
-a secret: everything in the site is public, the source and the archive included.
+Only demo/archive/ and its hand-written canned Plaud view are ever exported, and nothing here
+reads config.toml, RECORDINGS_ARCHIVE or a secret: everything in the site is public, the source
+and the archive included.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from recordings.archive import Archive
 
 REPO = Path(__file__).resolve().parents[1]
 DEMO_ARCHIVE = REPO / "demo" / "archive"  # the only archive this ever exports
+DEMO_VIEW = REPO / "demo" / "plaud-sync.json"  # the Plaud views' canned view (decision 23)
 CORE = REPO / "packages" / "core" / "src" / "recordings"
 UI = REPO / "packages" / "ui" / "src" / "recordings_ui"
 ENTRY = REPO / "pages"
@@ -51,7 +54,7 @@ def _shown(path: Path) -> str:
     return str(path.relative_to(REPO)) if path.is_relative_to(REPO) else str(path)
 
 
-def check_inputs(www: Path = UI / "www", demo: Path = DEMO_ARCHIVE) -> None:
+def check_inputs(www: Path = UI / "www", demo: Path = DEMO_ARCHIVE, view: Path = DEMO_VIEW) -> None:
     for name in ("ui.js", "ui.css"):
         if not (www / name).is_file():
             raise SystemExit(
@@ -62,6 +65,11 @@ def check_inputs(www: Path = UI / "www", demo: Path = DEMO_ARCHIVE) -> None:
         raise SystemExit(
             f"build_pages: the demo archive {_shown(demo)}/ is missing. It is committed: "
             "restore it from git, or rebuild it with `make demo-archive`."
+        )
+    if not view.is_file():
+        raise SystemExit(
+            f"build_pages: {_shown(view)} is missing. It is committed beside the demo archive: "
+            "restore it from git."
         )
 
 
@@ -110,10 +118,19 @@ def refuse_symlinks(*roots: Path) -> None:
         )
 
 
-def assemble(app: Path, media: dict[Path, str], ui: Path = UI, demo: Path = DEMO_ARCHIVE) -> None:
-    """The Shinylive app dir. Its only archive is demo/archive/, without the media files."""
+def assemble(
+    app: Path,
+    media: dict[Path, str],
+    ui: Path = UI,
+    demo: Path = DEMO_ARCHIVE,
+    view: Path = DEMO_VIEW,
+) -> None:
+    """The Shinylive app dir. Its only archive is demo/archive/, without the media files, with
+    the canned Plaud view beside it, where from_env(demo=True) finds it (decision 23)."""
     shinyreact_dir = Path(shinyreact.__file__).parent
-    refuse_symlinks(ENTRY / "app.py", ENTRY / "requirements.txt", CORE, ui, shinyreact_dir, demo)
+    refuse_symlinks(
+        ENTRY / "app.py", ENTRY / "requirements.txt", CORE, ui, shinyreact_dir, demo, view
+    )
     shutil.copy2(ENTRY / "app.py", app / "app.py")
     shutil.copy2(ENTRY / "requirements.txt", app / "requirements.txt")
     shutil.copytree(CORE, app / "recordings", ignore=SKIP)
@@ -129,6 +146,7 @@ def assemble(app: Path, media: dict[Path, str], ui: Path = UI, demo: Path = DEMO
         }
 
     shutil.copytree(demo, app / "demo" / "archive", ignore=ignore)
+    shutil.copy2(view, app / "demo" / "plaud-sync.json")
     # Only this copy changes; the normal build keeps /fonts/, which the server serves.
     css = app / "recordings_ui" / "www" / "ui.css"
     css.write_text(relative_font_urls(css.read_text(encoding="utf-8")), encoding="utf-8")

@@ -25,7 +25,7 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
 - **`make lint`** runs ruff (check and format --check). CI runs it too. The rule set is pinned in
   pyproject.toml.
 - **`make pages`** builds the static GitHub Pages demo into `_site/` (spec §17.1). Only the demo
-  archive is ever exported.
+  archive and its hand-written canned Plaud view (`demo/plaud-sync.json`) are ever exported.
 
 ## Check the docs, never write from memory
 

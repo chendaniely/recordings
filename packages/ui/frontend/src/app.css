@@ -457,6 +457,20 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   .resync-long { display: none; }
   /* Details' Plaud buttons (Re-sync, Copy ID, Keep it here) are 44 px targets (J7). */
   .plaud-details button { min-height: 44px; min-width: 44px; }
+  /* The Sync screen on a phone (2b spec §15.4): the summary first (it is first in the page),
+     full-width buttons, targets of at least 44 pixels, rows stacked. The shadcn Button sets its
+     height with a layered utility (h-8); these rules are unlayered, and min-height beats height.
+     Status's panel already has its 44 px buttons and Details summary (Task 22), so it only gets
+     the width here. */
+  .sync-page { padding: 12px; gap: 12px; }
+  .sync-buttons { flex-direction: column; align-items: stretch; }
+  .sync-page [data-slot=button] { width: 100%; min-height: 44px; }
+  .sync-panel [data-slot=button] { width: 100%; }
+  .sync-copy, .sync-jump { display: inline-flex; align-items: center; min-height: 44px; }
+  .sync-check { min-width: 44px; min-height: 44px; }
+  .sync-more > summary { padding-block: 12px; }  /* Status's Details has its own (Task 22) */
+  .sync-row { flex-direction: column; align-items: stretch; }
+  .sync-row > .sync-check { align-self: flex-start; }
 }
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its

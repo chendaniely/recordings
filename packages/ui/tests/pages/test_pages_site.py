@@ -296,3 +296,44 @@ def test_on_a_phone_the_tags_tab_is_the_untagged_library_and_toasts_sit_at_the_t
     top = toaster.bounding_box()["y"]
     assert top < 370, top  # the top half of the screen
     watch.assert_clean()
+
+
+# Every input name the page sends from now on (shinyreact calls window.Shiny.setInputValue).
+SPY_INPUTS = """() => {
+    window.__sent = [];
+    const set = window.Shiny.setInputValue;
+    window.Shiny.setInputValue = (name, value, opts) => {
+        window.__sent.push(name);
+        return set.call(window.Shiny, name, value, opts);
+    };
+}"""
+
+
+def test_the_canned_sync_screen_on_pyodide_sends_no_request_and_logs_nothing(
+    page: Page, site_url, watch
+):
+    # why: C9.07, spec §15.5. Pages has no worker, no Plaud code and no network: its Sync screen
+    # and Status's panel draw the canned view, every request button is off, and pressing one
+    # sends nothing.
+    app, frame = open_demo(page, site_url)
+    frame.evaluate(SPY_INPUTS)
+    nav = app.get_by_role("navigation", name="Pages")
+    nav.get_by_role("button", name="Add").click()
+    expect(app.get_by_test_id("sync-page")).to_be_visible(timeout=RENDER_TIMEOUT)
+    expect(app.get_by_test_id("sync-summary")).to_contain_text(
+        "Demo: nothing is synced", timeout=RENDER_TIMEOUT
+    )
+    expect(app.get_by_test_id("not-here-row")).to_have_count(3, timeout=RENDER_TIMEOUT)
+    app.locator("details.sync-more > summary").click()
+    asks = app.locator("[data-request]")
+    expect(asks.first).to_be_visible(timeout=RENDER_TIMEOUT)
+    for i in range(asks.count()):
+        expect(asks.nth(i)).to_be_disabled()
+        asks.nth(i).click(force=True)  # a disabled button takes no click
+    nav.get_by_role("button", name="Status").click()
+    expect(app.get_by_test_id("sync-panel")).to_contain_text(
+        "Demo: Plaud sync isn't part of the demo.", timeout=RENDER_TIMEOUT
+    )
+    sent = frame.evaluate("() => window.__sent")
+    assert not [name for name in sent if name.startswith("plaud_request")], sent
+    watch.assert_clean()
