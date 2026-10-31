@@ -65,7 +65,7 @@ make docker                                         # demo mode, http://127.0.0.
 cp config.example.toml config.toml                  # app settings (git-ignored)
 cp docker/deploy.example.conf docker/deploy.env     # host folders, bind address, UID/GID (git-ignored)
 # first time only: run `recordings init` and `recordings backup init` before this (runbook step 2.4)
-make deploy                                         # builds, tags the image by commit, starts web + backup
+make deploy                                         # builds, tags the image by commit, starts web, backup and worker
 make rollback TAG=<tag>                             # starts an older image again, never building one
 make prune-images                                   # removes old images, keeping the newest five
 make deploy-smoke                                   # the real compose file, once, against temporary folders
@@ -79,13 +79,16 @@ make deploy-smoke                                   # the real compose file, onc
 - **A deploy waits for a running job.** Recreating `backup` stops the job it runs, and the job
   starts again from the beginning: hours for a restore test or a check. So `make deploy` refuses
   while a job holds the ops lock, and says which; `make deploy FORCE=1` deploys anyway. It then
-  waits up to 3 minutes for `web` to pass its health check, and fails if it doesn't: roll back.
+  waits up to 3 minutes for `web` and `worker` to pass their health checks (the worker's is
+  `recordings worker --alive`), and fails if either doesn't: roll back.
 - **Rolling back** starts an image that is already on the machine: `docker image ls recordings`
   lists the tags. Each deploy leaves an image on the system disk. `make prune-images` removes all
   but the newest five commit tags (`KEEP=<n>` for another number), never one a container was made
   from. Never `docker image prune -a` or `docker system prune -a`: they remove every rollback
   target. `docker system df` shows what images and the build cache take; `docker builder prune`
-  empties the cache, which only makes the next build slower.
+  empties the cache, which only makes the next build slower. To a release from before stage 2b,
+  follow the runbook's "Rolling back across 2b" instead: this checkout's `compose.yml` would start
+  a `worker` the older image can't run.
 - **At boot,** `docker/recordings.service` waits for the data disk and the Tailscale address,
   then starts the containers again on the tag they last ran (`docker/up-deployed.sh`). The
   runbook installs it. It uses the `compose.yml` and `deploy.env` the checkout holds at boot, so
@@ -124,8 +127,8 @@ file. Docker sets it to `/config/config.toml`.
 | Archive, state and index paths, the writer ID, backups, mirror, alerts | `config.toml` (template: `config.example.toml`) | stage 1 / 2a |
 | The names the app answers to | `[server] allowed_hosts` in `config.toml`, plus `RECORDINGS_ALLOWED_HOSTS` (comma-separated) | stage 1 |
 | Host folders, config path, bind address and port, the trusted proxy (`RECORDINGS_FORWARDED_ALLOW_IPS`), UID/GID | `docker/deploy.env` (template: `docker/deploy.example.conf`) | stage 1 |
-| `RESTIC_PASSWORD`; `RESTIC_REST_PASSWORD`, rest-server's; the NAS's SSH key and host key, `RECORDINGS_NAS_SSH_KEY` and `RECORDINGS_NAS_KNOWN_HOSTS` (files only); `RECORDINGS_NTFY_TOPIC`; `RECORDINGS_DEADMAN_URL`; and rest-server's certificate, the `nas_cacert` file that `[backup] cacert` names | secret files, as `…_FILE` (Docker secrets) | stage 2a |
-| `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | a secret file, which `RECORDINGS_NTFY_AUTH_HOST` in `docker/deploy.env` names (unset: no token is mounted) | stage 2a |
+| `RESTIC_PASSWORD`; `RESTIC_REST_PASSWORD`, rest-server's; the NAS's SSH key and host key, `RECORDINGS_NAS_SSH_KEY` and `RECORDINGS_NAS_KNOWN_HOSTS` (files only); `RECORDINGS_DEADMAN_URL`; and rest-server's certificate, the `nas_cacert` file that `[backup] cacert` names | secret files, as `…_FILE` (Docker secrets) | stage 2a |
+| `RECORDINGS_NTFY_TOPIC`, once ntfy is set up, and `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | secret files, which `RECORDINGS_ALERTS_TOPIC_HOST` and `RECORDINGS_NTFY_AUTH_HOST` in `docker/deploy.env` name (unset: none is mounted) | stage 2a; optional from stage 2b |
 | `RECORDINGS_DEADMAN_SYNC_URL`, the Plaud sync's own Healthchecks ping URL, for the `worker` container only | a secret file, as `RECORDINGS_DEADMAN_SYNC_URL_FILE` | stage 2b |
 | `RECORDINGS_SPARK_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | environment, or `…_FILE` | stage 4 |
 

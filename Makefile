@@ -84,14 +84,16 @@ docker: ## the demo in Docker
 	docker compose -f docker/compose.demo.yml up --build
 
 # Not while a job runs (docker/deploy-guard.sh; FORCE=1 deploys anyway). --wait: fail, rather than
-# succeed silently, when web doesn't pass its health check within 3 minutes; then roll back.
+# succeed silently, when web or the worker doesn't pass its health check within 3 minutes; then roll
+# back (to a release before stage 2b, as the runbook's "Rolling back across 2b" says).
 deploy: ## build and start the deployment; refused while a job runs (FORCE=1)
 	$(if $(findstring -dirty,$(IMAGE_TAG)),$(error make deploy: commit first: a -dirty image has no commit to roll back to))
 	FORCE=$(FORCE) sh docker/deploy-guard.sh
 	$(COMPOSE) up -d --build --wait --wait-timeout 180
 
 # Back to an image built before, never building one: make rollback TAG=<tag>, with a tag from
-# `docker image ls recordings`.
+# `docker image ls recordings`. To a release before stage 2b, the runbook's "Rolling back across
+# 2b" comes first: this compose.yml would start a worker the older image can't run.
 rollback: ## start an image built before: make rollback TAG=<tag>
 	$(if $(TAG),,$(error usage: make rollback TAG=<a tag from docker image ls recordings>))
 	RECORDINGS_IMAGE_TAG=$(TAG) docker compose $(COMPOSE_ARGS) up -d --no-build

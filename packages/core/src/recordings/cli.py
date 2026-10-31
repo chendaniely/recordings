@@ -518,10 +518,11 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
         return _fail(str(exc), args.json, 78)
     if ac.topic and not ac.ntfy_server:
         return _fail("RECORDINGS_NTFY_TOPIC is set but [alerts] ntfy_server is not", args.json, 78)
-    if not ac.enabled and not ac.deadman_url:
+    if not ac.enabled and not ac.deadman_url and not ac.deadman_sync_url:
         return _fail(
             "set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE, or "
-            "RECORDINGS_DEADMAN_URL_FILE, first",
+            "RECORDINGS_DEADMAN_URL_FILE, or (in the worker) RECORDINGS_DEADMAN_SYNC_URL_FILE, "
+            "first",
             args.json,
             78,
         )
@@ -541,8 +542,12 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
     logged = (
         alerts.ping_deadman(ac, "log", message="recordings alert-test") if ac.deadman_url else None
     )
-    _emit({"ntfy": sent, "deadman": logged}, args.json)
-    return 0 if sent is not False and logged is not False else 1
+    result = {"ntfy": sent, "deadman": logged}
+    if ac.deadman_sync_url:  # the worker's: the Plaud sync's own check (stage 2b spec §16)
+        status = alerts.ping_url(ac.deadman_sync_url, "log", message="recordings alert-test")
+        result["deadman_sync"] = status is not None and 200 <= status < 300
+    _emit(result, args.json)
+    return 0 if False not in result.values() else 1
 
 
 def cmd_worker(args: argparse.Namespace) -> int:

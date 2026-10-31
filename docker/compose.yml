@@ -95,11 +95,12 @@ services:
       RESTIC_REST_PASSWORD_FILE: /run/secrets/rest_password
       RECORDINGS_NAS_SSH_KEY_FILE: /run/secrets/nas_ssh_key
       RECORDINGS_NAS_KNOWN_HOSTS_FILE: /run/secrets/nas_known_hosts
-      RECORDINGS_NTFY_TOPIC_FILE: /run/secrets/ntfy_topic
       RECORDINGS_DEADMAN_URL_FILE: /run/secrets/deadman_url
-      # Only an ntfy server that needs an access token. Empty (so unset) unless deploy.env names the
-      # host file in RECORDINGS_NTFY_AUTH_HOST, because the app reads an empty token file as an
-      # error and then sends no alert at all.
+      # ntfy is optional (stage 2b spec, Dan's decision 9): its topic, and an access token for a
+      # server that needs one, are named only when deploy.env names their host files in
+      # RECORDINGS_ALERTS_TOPIC_HOST and RECORDINGS_NTFY_AUTH_HOST. Empty means unset, because the app
+      # reads an empty secret file as an error and then sends no alert and no dead-man ping at all.
+      RECORDINGS_NTFY_TOPIC_FILE: "${RECORDINGS_ALERTS_TOPIC_HOST:+/run/secrets/ntfy_topic}"
       RECORDINGS_NTFY_TOKEN_FILE: "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
     # nas_cacert is rest-server's TLS certificate, for [backup] cacert = "/run/secrets/nas_cacert";
     # the file always exists, and is empty when the NAS is reached over the tailnet.
@@ -129,8 +130,72 @@ services:
         source: "${RECORDINGS_RESTORE_HOST:?set RECORDINGS_RESTORE_HOST in docker/deploy.env}"
         target: /restore
         bind: { create_host_path: false }
+      # The consent folder, for [backup] extra_paths, so a restore never brings back an older list
+      # (stage 2b spec §12.1). A folder, never the file: a replaced file stays visible.
+      - type: bind
+        source: "${RECORDINGS_CONSENT_HOST:?set RECORDINGS_CONSENT_HOST in docker/deploy.env}"
+        target: /consent
+        read_only: true
+        bind: { create_host_path: false }
     # No web server here; the dead-man's switch watches this service instead (spec §14).
     healthcheck: { disable: true }
+    logging: *logging
+    restart: unless-stopped
+
+  # The Plaud worker (stage 2b spec §9.2, §17.1): every Plaud call and every write that comes from
+  # Plaud. With no sign-in, no consent list or a bad keep_out_word it stays up, healthy and idle.
+  worker:
+    image: "recordings:${RECORDINGS_IMAGE_TAG:?run make deploy, which tags the image by commit}"
+    pull_policy: never
+    hostname: recordings-worker
+    init: true  # ffprobe runs as a child; an init reaps it and passes SIGTERM on
+    user: "${RECORDINGS_UID:?}:${RECORDINGS_GID:?}"
+    <<: *hardening
+    command: ["recordings", "worker"]
+    # SIGTERM stops it between ticks, within the grace.
+    stop_grace_period: 30s
+    # Between web's 1024 and backup's 256; the out-of-memory killer takes backup first, then this.
+    cpu_shares: 512
+    oom_score_adj: 300
+    environment:
+      <<: *environment
+      RECORDINGS_ROLE: worker
+      # The sync's own Healthchecks check (stage 2b spec §16): its only alert. Never the backup's.
+      RECORDINGS_DEADMAN_SYNC_URL_FILE: /run/secrets/deadman_sync_url
+    secrets: [deadman_sync_url]
+    volumes:
+      - type: bind
+        source: "${RECORDINGS_CONFIG_HOST:?set RECORDINGS_CONFIG_HOST in docker/deploy.env}"
+        target: /config/config.toml
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: "${RECORDINGS_ARCHIVE_HOST:?set RECORDINGS_ARCHIVE_HOST in docker/deploy.env}"
+        target: /archive
+        bind: { create_host_path: false }
+      - type: bind
+        source: "${RECORDINGS_STATE_HOST:?set RECORDINGS_STATE_HOST in docker/deploy.env}"
+        target: /state
+        bind: { create_host_path: false }
+      - type: volume
+        source: index
+        target: /index
+      - type: bind
+        source: "${RECORDINGS_CONSENT_HOST:?set RECORDINGS_CONSENT_HOST in docker/deploy.env}"
+        target: /consent
+        read_only: true
+        bind: { create_host_path: false }
+      # The Plaud sign-in (tokens.json), in this service alone: never backed up or mirrored.
+      - type: bind
+        source: "${RECORDINGS_PLAUD_HOST:?set RECORDINGS_PLAUD_HOST in docker/deploy.env}"
+        target: /plaud
+        bind: { create_host_path: false }
+    # Its own check, never the image's :8000/healthz (it serves nothing, and listens on no port):
+    # a heartbeat under 90 s and progress within 15 minutes (spec §9.2). `make deploy` waits for it.
+    healthcheck:
+      test: ["CMD", "recordings", "worker", "--alive"]
+      interval: 30s
+      start_period: 60s
     logging: *logging
     restart: unless-stopped
 
@@ -143,7 +208,8 @@ secrets:
   nas_cacert: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/nas_cacert" }
   nas_ssh_key: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/nas_ssh_key" }
   nas_known_hosts: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/nas_known_hosts" }
-  ntfy_topic: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/ntfy_topic" }
   deadman_url: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/deadman_url" }
+  deadman_sync_url: { file: "${RECORDINGS_SECRETS_HOST:?set RECORDINGS_SECRETS_HOST in docker/deploy.env}/deadman_sync_url" }
   # Optional: /dev/null (mounted, never named by the app) unless deploy.env gives the file.
+  ntfy_topic: { file: "${RECORDINGS_ALERTS_TOPIC_HOST:-/dev/null}" }
   ntfy_token: { file: "${RECORDINGS_NTFY_AUTH_HOST:-/dev/null}" }

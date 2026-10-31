@@ -295,3 +295,15 @@ is open…").
 **When it can go.** When a layer listens for Esc from the moment it mounts over another. On a
 Radix bump, re-check where the Escape listener is added: while it is still an effect gated on
 `isHighestLayer` worked out in render, keep this.
+
+## Docker Compose `up --wait`: the reference doesn't say it reads the service's health check
+
+Found 2026-10-31 (Task 17). The `docker compose up` reference (docs.docker.com/reference/cli/docker/compose/up/)
+says only that `--wait` waits for services "to be running|healthy". It doesn't say that a
+service's own `healthcheck` (the worker's `recordings worker --alive`) replaces the image's, or
+that `--wait` fails when it never passes.
+
+**What we do.** `make deploy-smoke` (CI's `compose-smoke` job) runs `up -d --wait` with the worker
+in the real hardened container, so a health check that never passed would fail it.
+
+**When it can go.** When the reference says it, or never: the smoke is the proof.

@@ -1,7 +1,8 @@
 # The first real run (stage 2a)
 
 Steps 1–4 of the spec's "order of the first real run" (§19), and how to restore for real. Steps
-5–7 belong to stage 2b. Each block says which machine it runs on. Nothing here prints a secret: a
+5–7 belong to stage 2b: section 6 deploys its first phase, and its dry run and first catch-up
+come with later phases. Each block says which machine it runs on. Nothing here prints a secret: a
 command that needs one reads it from a file, and secret files are written with an editor, never
 typed on a command line, where shell history would keep them.
 
@@ -1015,6 +1016,106 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
    - `MirrorError` alone: the rsync dry run printed a line the mirror can't read, perhaps from a
      new rsync on the NAS or in the image. Nothing was deleted.
 
+## 6. Deploy 2b
+
+Stage 2b's first phase adds a third container, `worker`, from the same image. Deployed now, it
+stays idle and healthy: doctor says "sign-in needed" until the Plaud sign-in exists (a later phase
+adds it), it applies late consent listings within seconds of an edit, and it holds every scheduled
+sync until the first catch-up. Nothing in this section calls Plaud. On the homelab server, in
+`$REPO_DIR`, with the top block pasted.
+
+**First, the code.** Move the checkout to Phase 1's merge commit, as 2.8 does for a tag. The
+running containers keep their image until step 5's `make deploy`; the new `compose.yml` and
+template are what steps 3 and 5 read. Do steps 1 to 5 in one sitting: at boot, the unit reads this
+checkout's `compose.yml`, which needs step 3's settings.
+```bash
+cd "$REPO_DIR"
+git fetch
+git checkout <Phase 1's merge commit>
+git log -1 --oneline
+```
+Expected: the merge commit you mean to deploy.
+
+**Then, the Library's first load** (stage 2b spec §22): open the Library on one of your devices
+with the browser's network panel open. It must load in under 2 seconds. If it takes longer, stop:
+the Library moves onto `index.db` before 2b deploys.
+
+1. **The consent folder.** The worker reads the list from a folder, never a single-file mount: a
+   container would go on reading a file an editor has replaced. Move the list into it:
+   ```bash
+   install -d -m 700 "$RECORDINGS_HOME/consent"
+   [ ! -f "$RECORDINGS_HOME/consent-list.md" ] || mv -n "$RECORDINGS_HOME/consent-list.md" "$RECORDINGS_HOME/consent/consent-list.md"
+   ls -la "$RECORDINGS_HOME/consent"
+   ```
+   Expected: the folder is `drwx------` and holds `consent-list.md`. `[plaud] consent_list` in
+   `config.toml` stays `/consent/consent-list.md`.
+2. **The Plaud sign-in's folder,** empty until the sign-in:
+   ```bash
+   install -d -m 700 "$RECORDINGS_HOME/plaud"
+   ```
+3. **The settings.** In `docker/deploy.env`, set `RECORDINGS_CONSENT_HOST` to
+   `$RECORDINGS_HOME/consent` and `RECORDINGS_PLAUD_HOST` to `$RECORDINGS_HOME/plaud`, written out
+   as absolute paths (the template has both lines). ntfy's topic is now mounted only when
+   `deploy.env` names its file: if you set ntfy up already (an `ntfy_topic` file among the
+   secrets), set `RECORDINGS_ALERTS_TOPIC_HOST` to that file's absolute path too, or the backup's
+   pushes stop. In `config.toml`, add the consent folder to the backups, so a restore never brings
+   back an older list: `[backup] extra_paths = ["/backup-extra/deploy.env", "/consent"]`. Only the
+   consent folder for now: a missing extra path refuses every backup, and Sync everything's
+   manifests folder only appears with a later phase.
+4. **Required: the sync's own Healthchecks check** (Dan's decision 9). Create a second check with a
+   period of 20 minutes, a grace of 2 hours, emailing you, and "manual resume" off (the default).
+   Its email is the sync's only alert. Copy its ping URL as in 2.2 (no `/start`, `/fail` or `?…`)
+   into a secret file beside the others, and keep it in your password manager:
+   ```bash
+   cd "$RECORDINGS_HOME/secrets"
+   install -m 600 /dev/null deadman_sync_url && ${EDITOR:-vi} deadman_sync_url
+   cd -
+   ```
+   No pause is needed: a check never pinged stays silent, and nothing pings before the catch-up.
+   ntfy stays optional, for later.
+5. **Deploy.** Leave `[plaud] schedule_minutes` at 20: the gate holds every sync until the
+   catch-up. Then:
+   ```bash
+   cd "$REPO_DIR"
+   make deploy
+   export RECORDINGS_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
+   ```
+   `make deploy` waits for the worker's own health check (`recordings worker --alive`), as it
+   does for `web`'s, and fails if either doesn't pass within 3 minutes. Then roll back as "Rolling
+   back across 2b" says, not as 2.8: this checkout's `compose.yml` would start a `worker` the
+   older image can't run.
+6. **The Plaud sign-in** comes with the next phase, and its `make plaud-sign-in` with it. Until it
+   exists the worker stays idle and healthy: doctor reports "sign-in needed", and Status shows the
+   gate's line, "Scheduled sync waits for the first catch-up (runbook)", since nothing opens the
+   sign-in blocker before the first sign-in.
+7. **Check it.**
+   ```bash
+   rc ps
+   rc exec worker recordings doctor --role worker
+   rc exec worker recordings plaud consent
+   rc exec worker recordings alert-test
+   rc exec backup recordings alert-test
+   rc exec backup recordings doctor --role backup
+   ```
+   Expected:
+   - `rc ps` shows `web`, `backup` and `worker` up, and `worker` `(healthy)`.
+   - `doctor --role worker` reports one problem until the sign-in exists: "sign-in needed: the
+     Plaud sign-in comes with stage 2b's next phase". Fix any other first: the
+     consent list's lines, `/plaud`'s mode, the keep-out word, or the sync's URL.
+   - `plaud consent` prints the ID count you expect; the lines it reads as kept, by number (each
+     must mean "keep"); and any recording 2a imported despite its exclusion, by archive ID, marked
+     as 2a's parser having missed it. The worker has already tagged those `private` and flagged
+     them: review each in the app, and take out by hand any that mustn't stay.
+   - `alert-test` in `worker` prints `deadman_sync: True`, and Healthchecks shows a log entry on
+     the sync's check, which still says new: `/log` proves the URL and leaves the check's state
+     alone, and the email channel is the account the backup's check already proved. In `backup`
+     it works as in 2.6.
+   - `doctor --role backup` no longer warns that the consent folder isn't backed up. Until ntfy is
+     set up it still warns that alerts are off, which is expected.
+8. **A day later,** look at the sync's check in Healthchecks again: it must still say new, never
+   down. A check never pinged never goes down (stage 2b spec §22 asks for this to be seen once),
+   and nothing pings it before the catch-up. If it went down, pause it and ask in a Claude session.
+
 ## Setting up ntfy, later
 
 ntfy is optional (stage 2b, decision 9). Until it is set up, Status and the Healthchecks checks
@@ -1022,8 +1123,11 @@ carry every alert: the backup's check, and from stage 2b the Plaud sync's.
 
 - **The backup's pushes** work as soon as section 2 step 2's ntfy parts are done: the server in
   `[alerts] ntfy_server`, the topic in the `ntfy_topic` secret (and a token, only if your server
-  needs one). Then `rc restart backup` and `rc exec backup recordings alert-test`: the phone gets
-  the test push.
+  needs one). From stage 2b (section 6) the topic is mounted only when `docker/deploy.env` names
+  its file: set `RECORDINGS_ALERTS_TOPIC_HOST` to its absolute path, as
+  `RECORDINGS_NTFY_AUTH_HOST` names the token's. Then `make deploy`, which reads `deploy.env`
+  again (a restart doesn't), and `rc exec backup recordings alert-test`: the phone gets the test
+  push.
 - **Until then, doctor warns** "alerts are off: set [alerts] ntfy_server and
   RECORDINGS_NTFY_TOPIC_FILE" for `web` and `backup`. That warning is expected, and it doesn't
   fail doctor.
@@ -1149,6 +1253,29 @@ disk recovers and fills again.
    hourly backup waits for them (its turns are skipped, not failed), and Status names the running
    job and since when. Restarting while the disk is still full sends the alert once more.
 3. If you must restart, do it after step 1, and expect that wait.
+
+## Rolling back across 2b
+
+`make rollback` alone is not enough to go back to a release from before stage 2b: the checkout's
+`compose.yml` would start a `worker` whose command the older image lacks, and the older backup
+refuses every backup while `[backup] extra_paths` names a folder (its compose file mounts no
+`/consent` either). On the homelab server, with the top block pasted:
+1. Pause the sync's Healthchecks check (its Pause button): no sync runs until you deploy forward
+   again.
+2. In `config.toml`, take `"/consent"` out of `[backup] extra_paths`, so that it is
+   `["/backup-extra/deploy.env"]` again.
+3. Then:
+   ```bash
+   rc stop worker && rc rm -f worker
+   cd "$REPO_DIR"
+   git checkout <the tag's commit>
+   make rollback TAG=<tag>
+   ```
+`state.db` only gained tables in 2b, and `recording.json` no field, so the older release opens
+both. To go forward again: `git checkout` the newer commit and `make deploy`; once it has worked,
+put `"/consent"` back in `[backup] extra_paths` (section 6, step 3), then `rc restart backup` (the
+loop reads `config.toml` when it starts) and `rc exec backup recordings doctor --role backup`,
+which no longer warns about the consent folder. Resume the sync's check last.
 
 ## Restoring for real
 

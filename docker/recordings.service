@@ -11,7 +11,7 @@
 # this file: an edited checkout is -dirty, and `make deploy` refuses it.
 # In this file, $$ is a literal $.
 [Unit]
-Description=recordings: the web and backup containers
+Description=recordings: the web, backup and worker containers
 Requires=docker.service
 Wants=tailscaled.service
 After=docker.service tailscaled.service

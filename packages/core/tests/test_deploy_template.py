@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -175,19 +176,22 @@ def test_a_rollback_starts_an_old_image_and_never_builds_one():
 
 def test_the_smoke_script_parses_and_creates_every_compose_secret():
     # why: nothing else without Docker reads scripts/compose_smoke.py; a stray line once made it a
-    # SyntaxError that only `make deploy-smoke` would have found. ntfy_token is the optional one:
-    # its source is /dev/null, so the script makes no file for it.
+    # SyntaxError that only `make deploy-smoke` would have found. ntfy_token and ntfy_topic are the
+    # optional ones: their source is /dev/null, and the smoke runs without ntfy, as a deployment
+    # may (stage 2b spec, Dan's decision 9).
     path = REPO / "scripts" / "compose_smoke.py"
     spec = importlib.util.spec_from_file_location("compose_smoke", path)
     smoke = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(smoke)
-    assert set(smoke.SECRETS) | {"ntfy_token"} == set(compose()["secrets"])
+    assert set(smoke.SECRETS) | {"ntfy_token", "ntfy_topic"} == set(compose()["secrets"])
+    assert "ntfy_topic" not in smoke.SECRETS
     assert not os.access(path, os.X_OK), "no shebang, so no exec bit"
 
 
 def test_the_boot_unit_waits_for_docker_the_disk_and_tailscale():
     unit = UNIT.read_text(encoding="utf-8")
     for line in (
+        "Description=recordings: the web, backup and worker containers",
         "Requires=docker.service",
         "After=docker.service tailscaled.service",
         "RequiresMountsFor=/srv/recordings",
@@ -341,7 +345,7 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
     # smoke test proves passes in the hardened container
     assert deploy[up].endswith(" up -d --build --wait --wait-timeout 180")
     smoke = (REPO / "scripts" / "compose_smoke.py").read_text(encoding="utf-8")
-    assert '"up", "-d", "--wait", "--wait-timeout", "120", "web"' in smoke
+    assert '"up", "-d", "--wait", "--wait-timeout", "120", "web", "worker"' in smoke
     forced = make_dry_run("deploy", "IMAGE_TAG=0123456789ab", "FORCE=1").stdout
     assert "FORCE=1 sh docker/deploy-guard.sh" in forced
 
@@ -513,10 +517,10 @@ def test_the_backup_service_reads_the_archive_and_takes_secrets_only_from_files(
     env = service["environment"]
     for key, value in env.items():
         if key.endswith("_FILE"):
-            # the optional ntfy token's path appears only when deploy.env sets its host file
-            assert value.removeprefix("${RECORDINGS_NTFY_AUTH_HOST:+").startswith(
-                "/run/secrets/"
-            ), key
+            # the optional ntfy topic's and token's paths appear only when deploy.env sets their
+            # host files
+            optional = re.sub(r"^\$\{RECORDINGS_(ALERTS_TOPIC|NTFY_AUTH)_HOST:\+", "", value)
+            assert optional.startswith("/run/secrets/"), key
     for leaked in (
         "RESTIC_PASSWORD",
         "RECORDINGS_NTFY_TOPIC",
@@ -601,3 +605,109 @@ def test_the_example_config_backs_up_the_deploy_file_where_compose_mounts_it():
         "${RECORDINGS_DEPLOY_ENV_HOST:?set RECORDINGS_DEPLOY_ENV_HOST in docker/deploy.env}"
     ]
     assert target in example["backup"]["extra_paths"]
+
+
+def mounts(service: str) -> dict[str, dict]:
+    return {v["target"]: v for v in compose()["services"][service]["volumes"]}
+
+
+def test_the_worker_is_hardened_named_with_a_role_and_its_own_health_check():
+    # why: stage 2b spec §17.1. The image's :8000/healthz probe would mark the worker unhealthy
+    # for ever (it serves nothing), and `make deploy --wait` would fail.
+    worker = compose()["services"]["worker"]
+    assert worker["image"] == compose()["services"]["backup"]["image"]
+    assert worker["pull_policy"] == "never" and worker["hostname"] == "recordings-worker"
+    assert worker["command"] == ["recordings", "worker"]
+    assert worker["environment"]["RECORDINGS_ROLE"] == "worker"
+    assert worker["init"] is True and worker["restart"] == "unless-stopped"
+    assert worker["stop_grace_period"] == "30s"
+    services = compose()["services"]
+    assert services["backup"]["cpu_shares"] < worker["cpu_shares"] < 1024  # web's default
+    assert services["backup"]["oom_score_adj"] > worker["oom_score_adj"] > 0
+    assert worker["healthcheck"] == {
+        "test": ["CMD", "recordings", "worker", "--alive"],
+        "interval": "30s",
+        "start_period": "60s",
+    }
+    assert "8000" not in json.dumps(worker["healthcheck"])
+    for target in ("/config/config.toml", "/archive", "/state", "/index", "/consent", "/plaud"):
+        assert target in mounts("worker"), target
+    assert mounts("worker")["/config/config.toml"]["read_only"] is True
+    assert not mounts("worker")["/archive"].get("read_only")  # it writes the archive
+    assert mounts("worker")["/state"]["source"] == mounts("web")["/state"]["source"]
+    assert mounts("worker")["/index"] == mounts("web")["/index"]
+
+
+def test_the_consent_folder_is_a_read_only_folder_bind_in_worker_and_backup():
+    # why: a single-file bind follows the file's inode, so after an editor replaces the list the
+    # container would read the old one (stage 2b spec §12.1).
+    source = "${RECORDINGS_CONSENT_HOST:?set RECORDINGS_CONSENT_HOST in docker/deploy.env}"
+    for service in ("worker", "backup"):
+        consent = mounts(service)["/consent"]
+        assert consent["type"] == "bind" and consent["source"] == source, service
+        assert consent["read_only"] is True, service
+    assert "/consent" not in mounts("web")
+    template = TEMPLATE.read_text(encoding="utf-8")
+    (value,) = re.findall(r"^RECORDINGS_CONSENT_HOST=(.*)$", template, re.MULTILINE)
+    assert not value.endswith(".md"), "a folder, never the file"
+
+
+def test_each_dead_man_url_is_mounted_in_one_service():
+    # C10.04: the backup's check and the sync's check never share a URL or a service.
+    services = compose()["services"]
+    assert services["worker"]["secrets"] == ["deadman_sync_url"]
+    assert "deadman_sync_url" not in services["backup"]["secrets"]
+    assert "deadman_url" in services["backup"]["secrets"]
+    for name, service in services.items():
+        env = service.get("environment", {})
+        assert ("RECORDINGS_DEADMAN_SYNC_URL_FILE" in env) == (name == "worker"), name
+        assert ("RECORDINGS_DEADMAN_URL_FILE" in env) == (name == "backup"), name
+    assert services["worker"]["environment"]["RECORDINGS_DEADMAN_SYNC_URL_FILE"] == (
+        "/run/secrets/deadman_sync_url"
+    )
+
+
+def test_plaud_is_mounted_in_worker_only():
+    # why: only the worker holds the Plaud sign-in (stage 2b spec §10.4); doctor's web and backup
+    # roles report a /plaud mount as a problem.
+    plaud = mounts("worker")["/plaud"]
+    assert (
+        plaud["source"]
+        == "${RECORDINGS_PLAUD_HOST:?set RECORDINGS_PLAUD_HOST in docker/deploy.env}"
+    )
+    assert not plaud.get("read_only")  # Phase 2's refreshes write tokens.json
+    for name in ("web", "backup"):
+        assert "/plaud" not in mounts(name), name
+
+
+def test_the_worker_publishes_no_port():
+    assert "ports" not in compose()["services"]["worker"]
+    assert "expose" not in compose()["services"]["worker"]
+
+
+def test_make_deploy_waits_for_every_health_check():
+    # C10.01: --wait fails the deploy when a service doesn't pass its health check, the worker's
+    # included. Only backup, watched by its dead-man's switch, has none.
+    deploy = make_dry_run("deploy", "IMAGE_TAG=0123456789ab").stdout
+    assert " up -d --build --wait --wait-timeout 180" in deploy
+    for name, service in compose()["services"].items():
+        disabled = service.get("healthcheck", {}).get("disable", False)
+        assert disabled == (name == "backup"), name
+
+
+def test_the_ntfy_topic_is_an_optional_secret_in_backup_only():
+    # why: stage 2b spec, Dan's decision 9: ntfy is optional. A required topic file made a deploy
+    # without one fail, and an empty one reads as an error that silences the backup's dead-man
+    # pings too. So, like the token, it is mounted and named only when deploy.env names its file.
+    doc = compose()
+    env = doc["services"]["backup"]["environment"]
+    assert (
+        env["RECORDINGS_NTFY_TOPIC_FILE"]
+        == "${RECORDINGS_ALERTS_TOPIC_HOST:+/run/secrets/ntfy_topic}"
+    )
+    assert "ntfy_topic" in doc["services"]["backup"]["secrets"]
+    assert doc["secrets"]["ntfy_topic"]["file"] == "${RECORDINGS_ALERTS_TOPIC_HOST:-/dev/null}"
+    template = TEMPLATE.read_text(encoding="utf-8")
+    assert re.search(r"^RECORDINGS_ALERTS_TOPIC_HOST=$", template, re.MULTILINE), "unset"
+    for name in ("web", "worker"):
+        assert "RECORDINGS_NTFY_TOPIC_FILE" not in doc["services"][name]["environment"], name

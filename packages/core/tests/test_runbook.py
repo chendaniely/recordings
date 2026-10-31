@@ -190,7 +190,7 @@ def test_every_recordings_command_the_runbook_names_parses():
             # The command itself: first on the line, or after a service name, `run` or `exec`.
             # Not `--tag recordings` or a path.
             if token != "recordings" or (
-                i and tokens[i - 1] not in ("web", "backup", "run", "exec")
+                i and tokens[i - 1] not in ("web", "backup", "worker", "run", "exec")
             ):
                 continue
             command = []
@@ -219,9 +219,10 @@ def test_every_recordings_command_the_runbook_names_parses():
         "alert-test",
     } <= named, sorted(named)
     assert any(c[0] == "init" and "--adopt" in c for c in commands)
-    assert {"web", "backup"} <= {
+    assert {"web", "backup", "worker"} <= {
         c[c.index("--role") + 1] for c in commands if c[0] == "doctor" and "--role" in c[:-1]
     }
+    assert ["plaud", "consent"] in commands and ["worker", "--alive"] in commands
     assert any(c[:2] == ["backup", "restore-test"] for c in commands)
     # Two commands the runbook names only in prose, where the parse used to skip them.
     assert ["mirror", "--max-delete", "1"] in commands and ["mirror", "--debug"] in commands
@@ -267,3 +268,70 @@ def test_the_runbook_says_what_to_do_when_the_plaud_alert_comes():
     # A private the disk or a folder's owner stopped (Task 8's PRIVATE_UNWRITTEN_IO, Task 19's
     # "Late consent listings stopped") isn't mended by reindex.
     assert "check the archive disk and its permissions" in text
+
+
+def test_the_runbook_has_a_deploy_2b_section():
+    # why: stage 2b spec §17.5, and 2b phase 1 plan, decision 10: Phase 1 deploys, with the
+    # folders, the sync's own check and the worker's checks, and the sign-in left for Phase 2.
+    headings = [line for line in _text().splitlines() if line.startswith("## ")]
+    six = headings.index("## 6. Deploy 2b")
+    assert headings[six - 1 : six + 2] == [
+        "## 5. The mirror on the Mac",
+        "## 6. Deploy 2b",
+        "## Setting up ntfy, later",
+    ]
+    text = _section("## 6. Deploy 2b")
+    code = "\n".join(_code_lines(text))
+    for needed in (
+        'install -d -m 700 "$RECORDINGS_HOME/consent"',
+        'install -d -m 700 "$RECORDINGS_HOME/plaud"',
+        "install -m 600 /dev/null deadman_sync_url",
+        "make deploy",
+        "rc exec worker recordings doctor --role worker",
+        "rc exec worker recordings plaud consent",
+        "rc exec worker recordings alert-test",
+    ):
+        assert needed in code, needed
+    flat = " ".join(text.split())
+    for needed in (
+        "under 2 seconds",
+        "a period of 20 minutes, a grace of 2 hours",
+        "sign-in needed",
+        "Scheduled sync waits for the first catch-up (runbook)",
+        '"/consent"',
+        "RECORDINGS_CONSENT_HOST",
+        "RECORDINGS_PLAUD_HOST",
+        "RECORDINGS_ALERTS_TOPIC_HOST",
+        'as "Rolling back across 2b" says, not as 2.8',
+        "never goes down",
+    ):
+        assert needed in flat, needed
+    assert "/state/manifests" not in flat  # decision 9: the consent folder only, for now
+    lines = [line.strip() for line in _code_lines(text)]  # the code first, as 2.8 does for a tag
+    checkout = lines.index("git checkout <Phase 1's merge commit>")
+    assert lines.index("git fetch") < checkout < lines.index("make deploy")
+    ntfy = " ".join(_section("## Setting up ntfy, later").split())
+    assert "RECORDINGS_ALERTS_TOPIC_HOST" in ntfy and "`make deploy`" in ntfy
+
+
+def test_the_runbook_rolls_back_across_2b():
+    # why: stage 2b spec §17.3. The checkout's compose file would start a worker whose command an
+    # older image lacks, so it goes before `make rollback`; and the older backup refuses every
+    # backup while [backup] extra_paths names a folder (decision 9), so "/consent" comes out
+    # first and goes back only once the deploy forward has worked.
+    text = _section("## Rolling back across 2b")
+    back = _code_lines(text)
+
+    def first(pattern: str) -> int:
+        return next(i for i, line in enumerate(back) if re.search(pattern, line))
+
+    assert (
+        first(r"rc stop worker && rc rm -f worker")
+        < first(r"^\s*git checkout ")
+        < first(r"make rollback TAG=")
+    )
+    flat = " ".join(text.split())
+    assert "Pause the sync's Healthchecks check" in flat
+    out, back_in = 'take `"/consent"` out of `[backup] extra_paths`', 'put `"/consent"` back'
+    assert flat.index(out) < flat.index("make rollback TAG=")
+    assert flat.index("`make deploy`") < flat.index(back_in) < flat.index("rc restart backup")
