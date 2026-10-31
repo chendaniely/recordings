@@ -1,10 +1,13 @@
 """Backups with restic (spec §15.1): encrypted, deduplicated and versioned, to the NAS.
 
-What is backed up is an explicit list: the archive, config.toml, docker/deploy.env (as
-[backup] extra_paths), and a consistent copy of state.db taken with SQLite's own backup command.
-Nothing else in the state folder is named, so voice.db is left out by
-construction. The archive must carry its sentinel, with the UUID state.db expects, before anything
-is backed up: an empty mount point backed up hourly would age the real snapshots out (§6.7).
+What is backed up is an explicit list: the archive, config.toml, [backup] extra_paths (in Docker,
+deploy.env and the consent folder: an extra path may be a file or a folder, which is backed up
+whole), and a consistent copy of state.db taken with SQLite's own backup command. Nothing else in
+the state folder is named, so voice.db is left out by construction, and so is the Plaud token
+store, in a folder of its own; doctor refuses an extra path that would carry the token's folder
+or the whole state folder. The archive must carry its sentinel, with the UUID state.db expects,
+before anything is backed up: an empty mount point backed up hourly would age the real snapshots
+out (§6.7).
 
 restic is run through its CLI, with --json where it has it
 (https://restic.readthedocs.io/en/stable/075_scripting.html). The repository's password reaches
@@ -350,6 +353,12 @@ def _check_archive(bc: BackupConfig, state: State) -> str:
     return identity.uuid
 
 
+def missing_paths(bc: BackupConfig) -> list[Path]:
+    """config.toml and the extra paths that aren't there now, as a file or a folder (2b phase 1
+    plan, decision 9). A backup refuses while any is missing, as before."""
+    return [p for p in bc.paths if not (p.is_file() or p.is_dir())]
+
+
 @dataclass(frozen=True)
 class BackupResult:
     snapshot_id: str
@@ -372,9 +381,8 @@ def run_backup(
     runner=subprocess.run,
 ) -> BackupResult:
     _check_archive(bc, state)
-    for path in bc.paths:
-        if not path.is_file():
-            raise BackupRefused(f"refusing to back up: {path} is missing")
+    if missing := missing_paths(bc):
+        raise BackupRefused(f"refusing to back up: {missing[0]} is missing")
     free = None
     if bc.nas_repo_path and bc.nas.ssh:
         free = nas_free_bytes(bc.nas, bc.nas_repo_path, runner=runner)
@@ -448,7 +456,11 @@ def _check_scratch_space(bc: BackupConfig, keep_free_percents: Sequence[float]) 
     """The restore fits, and doesn't take its disk below a threshold it is above now. The scratch
     folder sits on the archive's disk, where 20% free raises a warning and 5% stops imports
     (Task 9's [disk]); a disk already below one isn't made to fail the test for it."""
-    needed = _tree_bytes(bc.archive) + sum(p.stat().st_size for p in bc.paths if p.is_file())
+    needed = _tree_bytes(bc.archive) + sum(
+        _tree_bytes(p) if p.is_dir() else p.stat().st_size
+        for p in bc.paths
+        if p.is_dir() or p.is_file()
+    )
     usage = shutil.disk_usage(bc.restore_scratch)
     after = usage.free - needed
     crossed = [
@@ -469,17 +481,23 @@ def _in_restore(target: Path, path: Path) -> Path:
     return target / path.relative_to(path.anchor)
 
 
+def _came_back(target: Path, path: Path) -> bool:
+    """A backed-up folder must come back as a folder, and a file as a file."""
+    restored = _in_restore(target, path)
+    return restored.is_dir() if path.is_dir() else restored.is_file()
+
+
 def _not_in_snapshot(bc: BackupConfig, target: Path, restored: Path) -> list[dict]:
     """What the snapshot should hold and doesn't. --verify and the hashes prove what was restored,
     not that everything was: a snapshot missing whole recording folders passes both. Its own
     state.db copy was taken before restic read the archive, so every recording.json that copy has
     committed must be in the snapshot; recordings added since are allowed. config.toml, the extra
-    paths and the copy itself must be there too."""
+    paths (a folder as a folder) and the copy itself must be there too."""
     copy = state_copy_path(bc)
     problems = [
         {"path": str(p), "message": "is not in the snapshot"}
         for p in (*bc.paths, copy)
-        if not _in_restore(target, p).is_file()
+        if not _came_back(target, p)
     ]
     if not _in_restore(target, copy).is_file():
         return problems

@@ -43,6 +43,10 @@ SECRET_ENV = (
 )
 
 
+# As config.example.toml and the runbook's section 6 have it: deploy.env and the consent folder.
+EXTRA_PATHS = 'extra_paths = ["/backup-extra/deploy.env", "/consent"]\n'
+
+
 def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings", backup_extra=""):
     init_archive(tmp_path / "archive", tmp_path / "state", writer_id="homelab")
     (tmp_path / "scratch").mkdir()
@@ -65,7 +69,7 @@ def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings"
         f'[nas]\nssh = "backup@nas"\n'
         f'[backup]\nrepository = "{repository}"\nrestore_scratch = "{tmp_path / "scratch"}"\n'
         f'nas_repo_path = "/volume1/backups/recordings"\n'
-        f'extra_paths = ["/backup-extra/deploy.env"]\n'
+        f"{EXTRA_PATHS}"
         f'cache_dir = "{tmp_path / "cache"}"\n{backup_extra}'
         f'[mirror]\ntarget = "backup@nas:/volume1/recordings-mirror/"\n'
         f'[alerts]\nntfy_server = "https://ntfy.sh"\n',
@@ -337,7 +341,7 @@ def test_the_backup_role_warns_when_deploy_env_is_not_backed_up(tmp_path):
     assert not any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
     cfg = Path(environ["RECORDINGS_CONFIG"])
     cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace('extra_paths = ["/backup-extra/deploy.env"]\n', ""),
+        cfg.read_text(encoding="utf-8").replace(EXTRA_PATHS, 'extra_paths = ["/consent"]\n'),
         encoding="utf-8",
     )
     assert any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
@@ -1153,3 +1157,60 @@ def test_doctor_prints_no_value_or_hash(tmp_path):
         assert hashlib.sha256(value.encode()).hexdigest() not in text
     token_bytes = (tmp_path / "plaud" / "tokens.json").read_bytes()
     assert hashlib.sha256(token_bytes).hexdigest() not in text
+
+
+def with_extra_paths(environ, *entries: str) -> None:
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    text = cfg.read_text(encoding="utf-8")
+    start = text.index("extra_paths = ")
+    end = text.index("\n", start) + 1
+    listed = ", ".join(f'"{e}"' for e in entries)
+    cfg.write_text(text[:start] + f"extra_paths = [{listed}]\n" + text[end:], encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "entry, what",
+    [
+        ("/plaud", "Plaud sign-in"),
+        ("/plaud/tokens.json", "Plaud sign-in"),
+        ("/", "Plaud sign-in"),
+        ("/state", "whole state folder"),
+        ("{state}", "whole state folder"),
+    ],
+)
+def test_extra_paths_holding_the_token_folder_or_the_whole_state_is_a_problem(
+    tmp_path, entry, what
+):
+    # why: stage 2b spec §17.2. The token is never backed up, and state.db is backed up on its
+    # own, as a consistent copy. Every role reads the one config.toml, so each says so.
+    environ = server(tmp_path)
+    entry = entry.format(state=tmp_path / "state")
+    with_extra_paths(environ, "/backup-extra/deploy.env", "/consent", entry)
+    for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
+        problems = doctor(env, role=role)["problems"]
+        assert any(f"names {entry}," in p and what in p for p in problems), role
+
+
+def test_the_manifests_folder_and_the_state_copy_are_not_problems(tmp_path):
+    environ = server(tmp_path)
+    with_extra_paths(environ, "/backup-extra/deploy.env", "/consent", "/state/manifests")
+    assert doctor(environ, role="backup")["problems"] == []
+
+
+def test_backup_without_the_consent_folder_is_a_warning(tmp_path):
+    environ = server(tmp_path)
+    assert not any("consent folder" in w for w in doctor(environ, role="backup")["warnings"])
+    with_extra_paths(environ, "/backup-extra/deploy.env")
+    warnings = doctor(environ, role="backup")["warnings"]
+    assert any("consent folder" in w and 'add "/consent"' in w for w in warnings)
+    for role, env in (("web", web_only(environ)), ("all", environ)):
+        assert not any("consent folder" in w for w in doctor(env, role=role)["warnings"]), role
+    # a consent list configured somewhere else: its own folder counts
+    folder = tmp_path / "elsewhere"
+    with_extra_paths(environ, "/backup-extra/deploy.env", str(folder))
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + f'[plaud]\nconsent_list = "{folder / "c.md"}"\n',
+        encoding="utf-8",
+    )
+    assert not any("consent folder" in w for w in doctor(environ, role="backup")["warnings"])

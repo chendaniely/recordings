@@ -107,9 +107,13 @@ def restore_like_restic(writer, bc, cmd, *, state_copy=None) -> tuple[Path, Path
     target = Path(cmd[cmd.index("--target") + 1])
     copy = target / writer.root.relative_to(writer.root.anchor)
     shutil.copytree(writer.root, copy)
-    for path in bc.paths:
-        (target / path.relative_to(path.anchor)).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target / path.relative_to(path.anchor))
+    for path in bc.paths:  # a folder (the consent folder) comes back whole
+        dest = target / path.relative_to(path.anchor)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_dir():
+            shutil.copytree(path, dest)
+        else:
+            shutil.copy2(path, dest)
     dest = target / backup.state_copy_path(bc).relative_to(bc.state.anchor)
     if state_copy is None:
         writer.state.backup_to(dest)
@@ -1152,3 +1156,124 @@ def test_fetch_restic_checks_the_binary_it_has_not_just_its_version(tmp_path, mo
     name = next(iter(fetch.BINARY_SHA256))
     assert not fetch.installed(fetch.BINARY_SHA256[name])  # it prints the version, but isn't restic
     assert fetch.installed(hashlib.sha256(fake.read_bytes()).hexdigest())  # the hash is what counts
+
+
+def consent_folder(tmp_path) -> Path:
+    """A synthetic consent folder, as the worker and backup services mount it at /consent."""
+    folder = tmp_path / "consent"
+    folder.mkdir(exist_ok=True)
+    (folder / "consent-list.md").write_text(f"- `of_{1:032x}` — synthetic\n", encoding="utf-8")
+    return folder
+
+
+def tree_bytes(root: Path) -> int:
+    return sum(
+        (Path(folder) / name).lstat().st_size
+        for folder, _, names in os.walk(root)
+        for name in names
+    )
+
+
+def test_a_folder_in_extra_paths_is_backed_up(tmp_path, writer, make_incoming):
+    # why: stage 2b spec §12.1. The consent folder is backed up through extra_paths, so a restore
+    # never brings back an older list (2b phase 1 plan, decision 9).
+    writer.add(make_incoming())
+    folder = consent_folder(tmp_path)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    bc = backup.from_config(cfg, environ)
+    fake = FakeRestic(stdout=SUMMARY + "\n")
+    backup.run_backup(bc, writer.state, environ, runner=fake)
+    (_, _), (cmd, _) = fake.calls
+    assert cmd[-3:] == [str(tmp_path / "deploy.env"), str(folder), str(backup.state_copy_path(bc))]
+    assert backup.missing_paths(bc) == []
+
+
+def test_a_missing_extra_folder_still_refuses_the_backup(tmp_path, writer):
+    # why: an unmounted consent folder backed up hourly would age the real list out of the
+    # snapshots, as an unmounted archive would.
+    gone = tmp_path / "consent-not-mounted"
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(gone)])
+    bc = backup.from_config(cfg, environ)
+    assert backup.missing_paths(bc) == [gone]
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(backup.BackupRefused, match="consent-not-mounted is missing"):
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert fake.calls == []
+
+
+def test_the_free_space_estimate_counts_a_folders_files(
+    tmp_path, writer, make_incoming, monkeypatch
+):
+    writer.add(make_incoming())
+    folder = consent_folder(tmp_path)
+    (folder / "consent-list.md.bak").write_bytes(b"synthetic " * 1000)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    bc = backup.from_config(cfg, environ)
+    files = sum(p.stat().st_size for p in bc.paths if p.is_file())
+    needed = tree_bytes(writer.root) + files + tree_bytes(folder)
+
+    def free(nbytes):
+        return lambda path: SimpleNamespace(total=10**15, used=10**15 - nbytes, free=nbytes)
+
+    monkeypatch.setattr(backup.shutil, "disk_usage", free(needed - 1))
+    with pytest.raises(backup.ScratchTooSmall, match="past full"):
+        backup.run_restore_test(
+            bc,
+            environ,
+            expected_uuid=writer.identity.uuid,
+            now=NOW,
+            keep_free_percents=(),
+            runner=FakeRestic(),
+        )
+    monkeypatch.setattr(backup.shutil, "disk_usage", free(needed + 1))
+
+    def restore(cmd):
+        if "restore" in cmd:
+            restore_like_restic(writer, bc, cmd)
+
+    result = backup.run_restore_test(
+        bc,
+        environ,
+        expected_uuid=writer.identity.uuid,
+        now=NOW,
+        keep_free_percents=(),
+        runner=FakeRestic(on_call=restore),
+    )
+    assert result.ok
+
+
+def test_the_restore_test_checks_a_folder_came_back(tmp_path, writer, make_incoming):
+    writer.add(make_incoming())
+    folder = consent_folder(tmp_path)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    bc = backup.from_config(cfg, environ)
+    restored = Path()  # set by each run: where the snapshot's copy of the folder lands
+
+    def run(change):
+        def restore(cmd):
+            nonlocal restored
+            if "restore" in cmd:
+                target, _ = restore_like_restic(writer, bc, cmd)
+                restored = target / folder.relative_to(folder.anchor)
+                change(restored)
+
+        return backup.run_restore_test(
+            bc,
+            environ,
+            expected_uuid=writer.identity.uuid,
+            now=NOW,
+            runner=FakeRestic(on_call=restore),
+        )
+
+    assert run(lambda copy: None).ok
+    assert run(shutil.rmtree).problems == (
+        {"path": str(folder), "message": "is not in the snapshot"},
+    )
+
+    def a_file_in_its_place(copy):
+        shutil.rmtree(copy)
+        copy.write_text("not a folder\n", encoding="utf-8")
+
+    assert run(a_file_in_its_place).problems == (
+        {"path": str(folder), "message": "is not in the snapshot"},
+    )

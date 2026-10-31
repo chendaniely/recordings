@@ -57,7 +57,10 @@ cacert = "/run/secrets/nas_cacert"
 # on Synology, paths start at the shared folder, not /volume1.
 # repository = "sftp:recordings-backup@nas:/backups/recordings"
 restic = "restic"
-# Besides the archive, config.toml and a copy of state.db. In Docker, deploy.env is mounted here.
+# Besides the archive, config.toml and a copy of state.db; a folder is backed up whole. In Docker,
+# deploy.env is mounted at /backup-extra/deploy.env, and from stage 2b the consent folder at
+# /consent: add it (runbook section 6), so a restore never brings back an older consent list.
+# Never the whole state folder or the Plaud sign-in's folder: doctor refuses them.
 extra_paths = ["/backup-extra/deploy.env"]
 keep_hourly = 24
 keep_daily = 14
