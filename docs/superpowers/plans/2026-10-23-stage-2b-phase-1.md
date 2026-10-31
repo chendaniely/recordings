@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 9: The auto-private marker, open.
+**Now:** Task 10: The baseline's privacy part, new patterns, and the `plaud` lock, open.
 
 ***
 
@@ -9560,9 +9560,9 @@ Spec §13 and Dan's decision 3: the marker replaces 2a's `title_seen` rule for p
   `Writer.open` reads `[plaud] keep_out_word` itself and checks it with `keepout.valid_word` (an invalid word is None), never through `plaud_settings`: that raises `ConfigError` for any other bad `[plaud]` key (a mistyped `api_base` or `schedule_minutes`), and a Writer also opens in `web`, which must still open on such a typo.
   - `Writer.reconcile_plaud` records, once its `mutate` has landed, the `retagged-private` event and a late keep-out first, and the markers last, so a note or keep-out `state.db` refuses leaves the title due for the next reconcile.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-9-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-9-base`
 
-- [ ] **Step 1: Write the failing marker tests.** Create `packages/core/tests/test_plaud_marker.py`:
+- [x] **Step 1: Write the failing marker tests.** Create `packages/core/tests/test_plaud_marker.py`:
 
 ```python
 """The auto-private marker (stage 2b spec §13): a removed `private` stays removed until a Plaud
@@ -9935,12 +9935,12 @@ def test_a_new_title_under_either_id_or_in_a_degraded_snapshot_runs_the_patterns
     assert reconcile(removed, degraded, [], privacy=seen).add_private is True
 ```
 
-- [ ] **Step 2: Run them; watch them fail.**
+- [x] **Step 2: Run them; watch them fail.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_marker.py packages/core/tests/test_reconcile.py -q`
 Expected: both files fail at collection with `ModuleNotFoundError: No module named 'recordings.plaud.privacy'`.
 
-- [ ] **Step 3: Write `privacy.py`.** Create `packages/core/src/recordings/plaud/privacy.py`. It imports `reconcile` at the top, so `reconcile` imports it inside the function (the one cycle); and `checks` (which brings `sqlite3`) only inside the functions that build a `Marker` or read the state, so the views can import `why_phrase` on Pyodide.
+- [x] **Step 3: Write `privacy.py`.** Create `packages/core/src/recordings/plaud/privacy.py`. It imports `reconcile` at the top, so `reconcile` imports it inside the function (the one cycle); and `checks` (which brings `sqlite3`) only inside the functions that build a `Marker` or read the state, so the views can import `why_phrase` on Pyodide.
 
 ```python
 """The auto-private marker (stage 2b spec §13): which titles the sync has judged, and against what.
@@ -10126,7 +10126,7 @@ def why_phrase(why: Why) -> str:
     return "title changed"
 ```
 
-- [ ] **Step 4: Reconcile judges through the marker.** In `packages/core/src/recordings/plaud/reconcile.py`, replace the docstring's bullet:
+- [x] **Step 4: Reconcile judges through the marker.** In `packages/core/src/recordings/plaud/reconcile.py`, replace the docstring's bullet:
 
 ```python
 - **Auto-private:** on the first reconcile, and again whenever a Plaud ID's newest title isn't
@@ -10287,7 +10287,7 @@ with:
     )
 ```
 
-- [ ] **Step 5: The Writer records what reconcile judged.** In `packages/core/src/recordings/writer.py`, replace `from datetime import datetime` with `from datetime import UTC, datetime`, and replace:
+- [x] **Step 5: The Writer records what reconcile judged.** In `packages/core/src/recordings/writer.py`, replace `from datetime import datetime` with `from datetime import UTC, datetime`, and replace:
 
 ```python
 from recordings.plaud.reconcile import (
@@ -10533,12 +10533,12 @@ with:
     # ---- housekeeping ------------------------------------------------------------------------
 ```
 
-- [ ] **Step 6: Run them; they pass.**
+- [x] **Step 6: Run them; they pass.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_marker.py packages/core/tests/test_reconcile.py packages/core/tests/test_writer.py packages/core/tests/test_import_run.py packages/core/tests/test_plaud_flags.py -q`
 Expected: every test passes.
 
-- [ ] **Step 7: The archive's own docs.** In `packages/core/src/recordings/format/FORMAT.md`, replace:
+- [x] **Step 7: The archive's own docs.** In `packages/core/src/recordings/format/FORMAT.md`, replace:
 
 ```markdown
 - `tags`: each is `{"tag": …, "by": …}`. `by` is `you`, or `auto` for a `private` tag added
@@ -10560,9 +10560,9 @@ with:
 
 Then copy it into the demo archive: `cp packages/core/src/recordings/format/FORMAT.md demo/archive/FORMAT.md`. Run: `uv run pytest packages/core/tests/test_selfdoc.py packages/core/tests/test_demo_archive.py -q`. Expected: all pass.
 
-- [ ] **Step 8: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
+- [x] **Step 8: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
 
-- [ ] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(plaud): 🤖 the auto-private marker: a removed private stays removed until the Plaud title changes, in every writer
@@ -10588,7 +10588,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/privacy.py packages/core/src/recordings/plaud/reconcile.py packages/core/src/recordings/writer.py packages/core/src/recordings/format/FORMAT.md demo/archive/FORMAT.md packages/core/tests/test_plaud_marker.py packages/core/tests/test_reconcile.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 10: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 10: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix rounds, `848eb74` and `3b67f6a`; the listings above are the plan as written): every title the app has seen is judged (spec Part I; §13.2's "Due" reworded to match): beside case 2's "the newest title's hash differs", a title from a snapshot the marker hasn't judged is judged once, by content, never by time: the marker remembers each Plaud ID's judged `sources[].sha256`s in the `plaud_state` key `judged:<recording_id>`, written with the markers in one transaction, so `[A, "Private: x", A]` merged before a reconcile ends private (a keep-out title there is flagged, a fullwidth one folded), whatever `added_at` an import stamped, and a `private` Dan removed never comes back (Dan's decision 3); a marker with no judged set reads as an empty one, erring private; `State.forget` drops the key; `Marker.judged` replaces `checked_at`, `judge(snapshot_shas=)` the plan's `judge()`; folding is tested; a `state.db` refusal in the privacy record never stops a whole `reindex`; the keep-out word is checked once; `why_phrase` is a dict.
 
 ### Task 10: The baseline's privacy part, new patterns, and the `plaud` lock
 
