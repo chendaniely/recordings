@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 8: Late consent listings and the privacy flags, open.
+**Now:** Task 9: The auto-private marker, open.
 
 ***
 
@@ -8238,9 +8238,9 @@ Spec §12.1's late consent listing (applied from the list and the index alone, n
   ```
   `recordings plaud consent [--json]`: holds no lock; prints the ID count, "on Plaud now" (or "unknown until the first listing"), the file's time, when the worker last read it and how many IDs it read then (`plaud_state.consent`'s `read_at` and `count`, else this command's own read, now), unreadable lines and lines read as kept, by number, and consent-listed recordings in the archive by archive ID, each marked `missed_by_2a`. Exit 0, or 78 on a consent stop.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-8-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-8-base`
 
-- [ ] **Step 1: Write the failing flag tests.** Create `packages/core/tests/test_plaud_flags.py`:
+- [x] **Step 1: Write the failing flag tests.** Create `packages/core/tests/test_plaud_flags.py`:
 
 ```python
 """Late consent listings and the privacy flags (stage 2b spec §12.1, §12.2, P15). Every archive
@@ -8669,12 +8669,12 @@ def test_no_flag_or_event_carries_a_title(writer, make_incoming):
     assert rec.title == TITLE
 ```
 
-- [ ] **Step 2: Run them; watch them fail.**
+- [x] **Step 2: Run them; watch them fail.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_flags.py -q`
 Expected: collection fails with `ModuleNotFoundError: No module named 'recordings.plaud.flags'`. No test here is a pin. (Run as root, which enters any folder, the "a folder it can't enter" case is skipped.)
 
-- [ ] **Step 3: Write `flags.py`.** Create `packages/core/src/recordings/plaud/flags.py`. It imports the Writer at the top; when Task 9's `Writer` comes to need `record_late_keep_out`, it imports it inside the method, so the two modules never import each other at load time.
+- [x] **Step 3: Write `flags.py`.** Create `packages/core/src/recordings/plaud/flags.py`. It imports the Writer at the top; when Task 9's `Writer` comes to need `record_late_keep_out`, it imports it inside the method, so the two modules never import each other at load time.
 
 ```python
 """Late consent listings and the privacy flags (stage 2b spec §12.1, §12.2, P15).
@@ -8958,14 +8958,14 @@ def missed_by_2a(text: str, consent: ConsentList) -> frozenset[str]:
     return frozenset(consent.ids - legacy)
 ```
 
-- [ ] **Step 4: Run them; they pass.**
+- [x] **Step 4: Run them; they pass.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_flags.py -q`
 Expected: every test passes.
 
-- [ ] **Step 5: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
+- [x] **Step 5: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
 
-- [ ] **Step 6: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 6: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(plaud): 🤖 late consent listings are tagged private and flagged once, with no Plaud call; Keep it here
@@ -8994,7 +8994,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/flags.py packages/core/tests/test_plaud_flags.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 7: Write the failing CLI and runbook tests.** Create `packages/core/tests/test_plaud_cli.py` (Task 10 adds to it):
+- [x] **Step 7: Write the failing CLI and runbook tests.** Create `packages/core/tests/test_plaud_cli.py` (Task 10 adds to it):
 
 ```python
 """`recordings plaud …` (stage 2b spec §9.6). Every archive and Plaud ID here is synthetic."""
@@ -9144,12 +9144,12 @@ def test_the_runbook_says_how_to_take_a_recording_out_by_hand():
     assert flat.index("make consent-add") < flat.index("rm -rf") < flat.index("--allow-missing")
 ```
 
-- [ ] **Step 8: Run them; watch them fail.**
+- [x] **Step 8: Run them; watch them fail.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_cli.py packages/core/tests/test_runbook.py -q`
 Expected: the CLI tests fail with `SystemExit: 2` (argparse: `invalid choice: 'plaud'`), and the runbook test with `AssertionError: no heading '## Taking a recording out by hand'`.
 
-- [ ] **Step 9: Write `commands.py`.** Create `packages/core/src/recordings/plaud/commands.py`. Later tasks add a parser block above the `allow_abbrev` loop, a `cmd_…` function and a `COMMANDS` entry.
+- [x] **Step 9: Write `commands.py`.** Create `packages/core/src/recordings/plaud/commands.py`. Later tasks add a parser block above the `allow_abbrev` loop, a `cmd_…` function and a `COMMANDS` entry.
 
 ```python
 """`recordings plaud …` (stage 2b spec §9.6): the sync's commands, run in the `worker` container.
@@ -9369,7 +9369,7 @@ def run(args: argparse.Namespace) -> int:
     return command(args)
 ```
 
-- [ ] **Step 10: Register it in `cli.py`.** In `packages/core/src/recordings/cli.py`, replace:
+- [x] **Step 10: Register it in `cli.py`.** In `packages/core/src/recordings/cli.py`, replace:
 
 ```python
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
@@ -9415,7 +9415,7 @@ with:
     }
 ```
 
-- [ ] **Step 11: Write the runbook section.** In `docs/runbooks/first-run.md`, replace:
+- [x] **Step 11: Write the runbook section.** In `docs/runbooks/first-run.md`, replace:
 
 ```markdown
 ## When the data disk fills
@@ -9452,7 +9452,7 @@ which describes the app's own Delete, like Forget.
 ## When the data disk fills
 ```
 
-- [ ] **Step 12: CLAUDE.md.** In `CLAUDE.md`'s "Tag changes from the app" bullet, replace:
+- [x] **Step 12: CLAUDE.md.** In `CLAUDE.md`'s "Tag changes from the app" bullet, replace:
 
 ```markdown
   `MergeIncoming` (`writer.py`, via `_append_tags`), and `SetPlaudFields`, which adds the automatic
@@ -9469,14 +9469,14 @@ with:
   `apply_late_consent`). All run inside the Writer.
 ```
 
-- [ ] **Step 13: Run them; they pass.**
+- [x] **Step 13: Run them; they pass.**
 
 Run: `uv run pytest packages/core/tests/test_plaud_cli.py packages/core/tests/test_runbook.py packages/core/tests/test_cli.py -q`
 Expected: every test passes (`test_every_recordings_command_the_runbook_names_parses` too: the new section's commands run in `worker`, which that test leaves to the CLI's own tests).
 
-- [ ] **Step 14: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
+- [x] **Step 14: Run the checks:** `uv run ruff format . && make check`. Expected: all pass.
 
-- [ ] **Step 15: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 15: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(plaud): 🤖 recordings plaud consent; the runbook says how to take a recording out by hand
@@ -9499,7 +9499,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/plaud/commands.py packages/core/src/recordings/cli.py packages/core/tests/test_plaud_cli.py packages/core/tests/test_runbook.py docs/runbooks/first-run.md CLAUDE.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 16: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 16: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix rounds, `8b0115e` and `3f2ff99`; the listings above are the plan as written): a pass where nothing changed writes and logs nothing (no per-recording warnings; 2a's `State.flag` writes nothing when the row already says the same, keeping its first time); a folder whose `recording.json` is missing is flagged and reported unwritten (cause `FileNotFoundError`, with its own sentence, `PRIVATE_UNWRITTEN_MISSING`), never skipped, and only a `stat` that says "not found" makes a folder gone (`_gone`), since Python 3.14's `Path.exists()` reads any error as "no"; a pending recording whose file can't be read marks the pass `index_unavailable`; `plaud consent` shares the worker's lookup (`flags.listed_here`), opens `State.read_only`, reads the consent file once (`keepout.read_consent_text`), and its JSON's `on_plaud`/`in_archive` are null or a value plus a note; flag kinds and blocker names live once in `checks.py`; `PlaudDB.open_flags(recording_id=)`. Spec §15.6 and §16 carry the two new sentences (decision 58).
 
 ### Task 9: The auto-private marker
 
@@ -24870,6 +24872,9 @@ Their full plans are written at their phase start, against the code as built and
 | 13 | Minor | `packages/core/src/recordings/worker.py` | The consent read trusts a file only when its signature held still during the read; a list written in place in two flushes can still be read in the pause. Phase 2's read before each download trusts only a file whose mtime is at least one tick old (S11). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | Needs attention's "a sign-in expiring within 7 days" (§15.2) reads `sign_in.expires_at`, which Phase 2 writes (BD3). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | The cache's titles of an ID consent-listed, or matching an enforced word, since the compare must never reach the browser (P1, P13). | open: Phase 2's outline |
-| 1 | Minor | `packages/ui/tests/e2e/test_tagging.py`, `packages/ui/frontend/src/components/TagPicker.test.ts` | Three tagging part A tests failed once each and passed on the same code before and after: `test_the_headers_touch_targets_are_44_px_and_never_overlap` (CI, `ec9d5af`, run 40126882917: `assert 0 == 2`, the chips' × buttons not counted under `hover: none`); `test_t_on_a_selection_esc_keeps_it_and_cmd_z_undoes_after_the_toast` (CI, `ef894b3`, run 41173638427: `Locator.fill` timed out after 30 s); and Vitest's `pointer movement over the list is a choice too` (locally, under `make check`'s load: expected 'notes/lecture', got 'talks'). Investigate with superpowers:systematic-debugging before the phase ends; never just re-run them. | open |
+| 1 | Minor | `packages/ui/tests/e2e/test_tagging.py`, `packages/ui/frontend/src/components/TagPicker.test.ts` | Three tagging part A tests failed once each and passed on the same code before and after: `test_the_headers_touch_targets_are_44_px_and_never_overlap` (CI, `ec9d5af`, run 40126882917: `assert 0 == 2`, the chips' × buttons not counted under `hover: none`); `test_t_on_a_selection_esc_keeps_it_and_cmd_z_undoes_after_the_toast` (CI, `ef894b3`, run 41173638427: `Locator.fill` timed out after 30 s); and Vitest's `pointer movement over the list is a choice too` (locally, under `make check`'s load: expected 'notes/lecture', got 'talks'). Investigate with superpowers:systematic-debugging before the phase ends; never just re-run them. | fixed `964a412`: root causes found and reproduced (the first open's race, in 17 tests; the webfont; `setTimeout` against React's `setImmediate`), tests only |
 | 6 | Minor | `packages/core/src/recordings/state.py` | `State.forget` finds a listing row's title hash only through the recording's markers: Phase 2 must write the hash and its marker together, or `forget` reads the Plaud refs from the last revision before deleting it (Task 6's review). | open: Phase 2's outline |
 | 7 | Minor | `config.example.toml` | The template's `[plaud]` block is spec §17.4's, which dropped 2a's comments explaining `auto_private_patterns` (regular expressions, case ignored, only ever adds `private`) and the consent list's fail-closed reading: write them back as comments, missing docs (Task 7's review). | open |
+| 8 | Minor | `packages/core/src/recordings/plaud/flags.py` | A recording folder under a parent the worker can't enter is reported unwritten with cause `FileNotFoundError` (because `mutate` raises `KeyError`), so its flag says "recording.json is missing" where the fix is permissions; `recordings reindex`, which it suggests, then reports the permission error itself. Give it the error `os.stat` raises as its cause (Task 8's last round). | open |
+| 8 | Minor | `packages/core/src/recordings/writer.py` | 2a's `Writer._catch_up_index` drops a missing or invalid file's pending index mark at the next `add`, but lets a `PermissionError` there fail the `add` (Task 8's re-review). | open |
+| 8 | Question for Dan | `packages/ui/frontend/src/app.css` | At 320 px the top bar has 3.3 px to spare in Atkinson Hyperlegible, so a larger default font, or a webfont that fails to load, would make the Status page scroll sideways (the flaky test's investigation). Should the top bar wrap or shrink? A design call. | open |
