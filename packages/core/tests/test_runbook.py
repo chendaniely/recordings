@@ -389,7 +389,7 @@ def test_keep_a_recording_out_says_what_consent_add_refuses_and_when_the_count_s
     # worker's next look; decision 12's date example; the list is 0400, and a watcher sees any edit.
     keep = " ".join(_section("## Keep a recording out for good").split())
     for needed in (
-        "missing or empty",
+        "missing, empty or only comments",
         "section 6 step 1",
         "is added again",
         "run `rc exec worker recordings plaud consent` again",

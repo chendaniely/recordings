@@ -1281,7 +1281,7 @@ Stage 2b's consent list says which Plaud recordings never enter the archive (spe
   edit whether the editor writes a new file and renames it or writes in place. Then run
   `rc exec worker recordings plaud consent`.
 
-`make consent-add` only appends. It refuses a list that is missing or empty, because that is a
+`make consent-add` only appends. It refuses a list that is missing, empty or only comments, because that is a
 consent stop that fails closed, and one added ID would lift it while the real list's other
 recordings stayed unlisted: put the real list back first (section 6 step 1, or "Restoring for
 real"). An ID already on the list is added again: harmless, and the count stays the same.

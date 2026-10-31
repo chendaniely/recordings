@@ -101,7 +101,8 @@ make consent-add ID='<id>'                          # from the Mac: adds a Plaud
   for the homelab server, and `REPO_DIR`, the checkout there. Keep the single quotes: the Sync
   screen's Copy ID holds backticks, which a shell would run. It checks the ID first (a bare ID,
   the `of_` form, or the Copy ID form), appends the line by writing a new file and renaming it (it
-  refuses a missing or empty list), and prints what the worker reads. The runbook's "Keep a recording out for good" has the rest.
+  refuses a missing, empty or comments-only list), and prints what the worker reads. The runbook's
+  "Keep a recording out for good" has the rest.
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
   always allowed; the app refuses any other name. Give each name alone, with no port or

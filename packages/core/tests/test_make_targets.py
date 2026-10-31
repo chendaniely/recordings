@@ -180,14 +180,16 @@ def test_consent_add_never_makes_a_list_or_extends_an_empty_one(server):
     # why: stage 2b spec §12.1. A missing or empty list is a consent stop that fails closed; one
     # exclusion added to it would lift the stop while the real list's recordings stay unlisted.
     folder = server.list.parent
-    for text in (None, "", " \n\t\n\r\n\n"):
+    for text in (None, "", " \n\t\n\r\n\n", "# only\n   # comments (indented)\n\n"):
         if text is None:
             server.list.unlink()
         else:
             server.list.write_bytes(text.encode())
         done = script(server, PLAUD_A)
         assert done.returncode == 2, text
-        assert "missing or empty" in done.stderr and "section 6 step 1" in done.stderr, text
+        assert (
+            "missing, empty or only comments" in done.stderr and "section 6 step 1" in done.stderr
+        ), text
         assert "Restoring for real" in done.stderr, text
         assert [p.name for p in folder.iterdir()] == ([] if text is None else ["consent-list.md"])
         if text is not None:
@@ -196,6 +198,18 @@ def test_consent_add_never_makes_a_list_or_extends_an_empty_one(server):
     done = consent_add(server, PLAUD_A)
     assert done.returncode != 0 and "adding the ID" in done.stderr and "unchanged" in done.stderr
     assert [p.name for p in folder.iterdir()] == ["consent-list.md"]
+
+
+def test_a_list_with_comments_and_a_kept_line_is_extended(server):
+    # why: such a list is a stop too (no exclusion), but one Dan wrote: his first exclusion is
+    # what he means (the controller's ruling). Only blank lines and comments are refused.
+    text = f"# header\n  # indented\n\nkept: `{KEPT}` — a recording I keep\n"
+    server.list.write_text(text, encoding="utf-8")
+    done = consent_add(server, PLAUD_A)
+    assert done.returncode == 0, done.stderr
+    lines = server.list.read_text(encoding="utf-8").splitlines()
+    assert "\n".join(lines[:4]) + "\n" == text
+    assert re.fullmatch(rf"- `{HEX_A}` — {ADDED}", lines[4]) and len(lines) == 5
 
 
 def english_utf8_locale() -> str | None:
