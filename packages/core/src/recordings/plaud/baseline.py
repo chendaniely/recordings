@@ -12,8 +12,10 @@ spec §14.5, §13.1 case 5, §12.2).
   pattern list has a version newer than the last complete pass's, which the worker checks at
   start. Reconcile runs only the patterns each marker's version lacks, so a tag Dan removed stays
   removed for the patterns it already passed. A pass that left any recording unwritten or busy
-  isn't recorded as complete, so the next start runs it again. It calls `progress` at every
-  recording (§9.2), so a long pass at the worker's start reads as progress, never as stuck.
+  isn't recorded as complete: the worker runs it again at each tick for just those recordings
+  (`only`), and at its next start for the whole archive. It calls `progress` at every recording
+  (§9.2), so a long pass at the worker's start reads as progress, never as stuck. A pass that
+  raises as a whole is recorded by its class (`record_pass_error`).
 - **The keep-out words enforced** live in `plaud_state` (`K_KEEP_OUT_WORDS`, a JSON list, oldest
   first). The worker adds the configured word at every start, so changing the word releases
   nothing (2b phase 1 plan, decision 26); only `keep-out-words --drop` removes an old one, never the
@@ -25,7 +27,7 @@ spec §14.5, §13.1 case 5, §12.2).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -33,6 +35,7 @@ from recordings.ids import ID_RE
 from recordings.locks import LockTimeout
 from recordings.models import fold
 from recordings.plaud.checks import K_KEEP_OUT_WORDS, K_PATTERNS_PASS, UNCHANGED, PlaudDB
+from recordings.plaud.flags import gone
 from recordings.plaud.keepout import valid_word
 from recordings.plaud.privacy import current_patterns
 from recordings.writer import RECONCILE_ERRORS, ReconcileReport, Writer
@@ -106,31 +109,53 @@ class _Sweep:
 
 
 def _sweep(
-    writer: Writer, db: PlaudDB, label: str, progress: Callable[[], object] | None = None
+    writer: Writer,
+    db: PlaudDB,
+    label: str,
+    progress: Callable[[], object] | None = None,
+    *,
+    only: Sequence[str] | None = None,
 ) -> _Sweep:
     """Reconcile every Plaud recording, however one fails. A recording locked by someone else is
     busy; any other refusal (a busy or full state.db included) lists it with its class name; a
     recording.json that doesn't validate, which `iter_recordings` drops, is listed too, so
     nothing is skipped silently. Logs the ID and the class, never the exception's text. A
     keep-out words row that isn't a list refuses the whole sweep first (KeepOutWordsError), since
-    every reconcile would refuse for it: one reason, never every recording listed."""
+    every reconcile would refuse for it: one reason, never every recording listed.
+
+    With `only` (the worker's retry of what a pass left), those recordings alone, and no log line
+    for each: the worker logs what changed. One whose folder is gone since is dropped; a key that
+    isn't a recording ID (a folder `iter_recordings` couldn't read) stays listed until a whole
+    sweep reads the archive again."""
     enforced_words(db)
-    ids = _plaud_recordings(writer)
     sweep = _Sweep()
-    for problem in writer.archive.problems:
-        folder = problem.path.parent.name
-        sweep.unwritten[folder if ID_RE.fullmatch(folder) else "unnamed-folder"] = INVALID_FILE
+    if only is None:
+        ids = _plaud_recordings(writer)
+        for problem in writer.archive.problems:
+            folder = problem.path.parent.name
+            sweep.unwritten[folder if ID_RE.fullmatch(folder) else "unnamed-folder"] = INVALID_FILE
+    else:
+        ids = [key for key in only if ID_RE.fullmatch(key)]
+        sweep.unwritten.update((key, INVALID_FILE) for key in only if not ID_RE.fullmatch(key))
     for rid in ids:
         if progress is not None:
             progress()
         try:
             report, moved, had = _reconcile(writer, db, rid)
         except LockTimeout:
-            log.warning("%s: %s busy", label, rid)
+            if only is None:
+                log.warning("%s: %s busy", label, rid)
             sweep.busy.append(rid)
             continue
         except RECONCILE_ERRORS as exc:
-            log.warning("%s: %s not written (%s)", label, rid, type(exc).__name__)
+            if (
+                only is not None
+                and isinstance(exc, KeyError)
+                and gone(writer.archive.path_for(rid))
+            ):
+                continue  # removed since: nothing left to check
+            if only is None:
+                log.warning("%s: %s not written (%s)", label, rid, type(exc).__name__)
             sweep.unwritten[rid] = type(exc).__name__
             continue
         sweep.checked += moved
@@ -225,12 +250,18 @@ class PatternsPass:
         return text
 
 
+def _count(record: Mapping, key: str) -> int:
+    value = record.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def patterns_pass(
     writer: Writer,
     db: PlaudDB,
     *,
     now: datetime,
     progress: Callable[[], object] | None = None,
+    only: Sequence[str] | None = None,
 ) -> PatternsPass | None:
     """§13.1 case 5 over the archive, when the pattern list has a version newer than the last
     complete pass's. The first version needs none: the baseline and each import check every title.
@@ -239,32 +270,53 @@ def patterns_pass(
     It records `K_PATTERNS_PASS` as `{"version": the last complete pass's, "attempted": this
     pass's, "at": iso, "checked": int, "tagged": int, "unwritten": [recording IDs], "busy":
     [recording IDs]}`. `version` moves to `attempted` only when nothing was unwritten or busy, so
-    the next start runs the pass again; reconcile skips what this one already judged."""
+    the pass runs again; reconcile skips what an earlier attempt already judged. A pass that
+    raised as a whole adds `"error"` (`record_pass_error`); the next attempt that ends drops it.
+
+    `only` (the worker's retry at each tick after its start, of what the last attempt left):
+    just those recordings, when that attempt was of this version and ended, since it checked the
+    others. After an attempt that raised, or of another version, the whole archive again. The
+    counts add up over one version's attempts, and a retry that changed nothing writes nothing."""
     patterns = current_patterns(db, writer.auto_private, now=now)
-    last = db.get(K_PATTERNS_PASS)
-    done = last.get("version") if isinstance(last, dict) else None
+    stored = db.get(K_PATTERNS_PASS)
+    last = stored if isinstance(stored, dict) else {}
+    done = last.get("version")
     done = done if isinstance(done, int) and not isinstance(done, bool) else FIRST_PATTERN_VERSION
     if patterns.version <= done:
         return None
-    sweep = _sweep(writer, db, "patterns pass", progress)
+    again = only is not None and last.get("attempted") == patterns.version and "error" not in last
+    sweep = _sweep(writer, db, "patterns pass", progress, only=only if again else None)
     result = PatternsPass(
         patterns.version,
-        sweep.checked,
-        sweep.private_added,
+        sweep.checked + (_count(last, "checked") if again else 0),
+        sweep.private_added + (_count(last, "tagged") if again else 0),
         dict(sweep.unwritten),
         tuple(sweep.busy),
     )
-    db.put(
-        K_PATTERNS_PASS,
-        {
-            "version": result.version if result.complete else done,
-            "attempted": result.version,
-            "at": now.isoformat(),
-            "checked": result.checked,
-            "tagged": result.tagged,
-            "unwritten": list(result.unwritten),
-            "busy": list(result.busy),
-        },
-        now=now,
-    )
+    record = {
+        "version": result.version if result.complete else done,
+        "attempted": result.version,
+        "at": now.isoformat(),
+        "checked": result.checked,
+        "tagged": result.tagged,
+        "unwritten": list(result.unwritten),
+        "busy": list(result.busy),
+    }
+    if not again or {**last, "at": None} != {**record, "at": None}:
+        db.put(K_PATTERNS_PASS, record, now=now)
     return result
+
+
+def record_pass_error(db: PlaudDB, error: str, *, now: datetime) -> None:
+    """A patterns pass that raised as a whole (the phase-end council's S2): `K_PATTERNS_PASS`
+    keeps what it held (`version` stays the last complete pass's) and gains `"error"`, the class
+    name, with `"at"` when it first failed so. The worker opens the private-unwritten blocker with
+    the class, and its retry then reads the whole archive again."""
+
+    def mark(stored: object) -> object:
+        record = dict(stored) if isinstance(stored, dict) else {}
+        if record.get("error") == error:
+            return UNCHANGED
+        return {**record, "at": now.isoformat(), "error": error}
+
+    db.update(K_PATTERNS_PASS, mark, now=now)

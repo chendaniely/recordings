@@ -3,9 +3,10 @@ how each scheduled turn ends.
 
 The process (Task 13): `recordings worker` is one process with a main thread that owns its Writer
 and a heartbeat thread (spec §9.2). The main thread ticks every 2 seconds: it re-reads the consent
-list when its file changed, applies late consent listings, keeps the consent and private-unwritten
-blockers as the list and the archive say, serves one request from the UI (Task 14, §9.3: Keep it
-here alone in Phase 1), and runs a scheduled turn when one is due (§9.7). It imports no Plaud
+list when its file changed, applies late consent listings, runs the new-pattern pass again for
+what the last one left (§13.1 case 5), keeps the consent and private-unwritten blockers as the
+list, the pass and the archive say, serves one request from the UI (Task 14, §9.3: Keep it here
+alone in Phase 1), and runs a scheduled turn when one is due (§9.7). It imports no Plaud
 client, token store or sync at module level: Phase 2 passes its turn in, so `web`, which reads
 `alive` from here, never pulls them in.
 
@@ -36,9 +37,15 @@ from typing import Any, Literal, Protocol
 from recordings import alerts
 from recordings.alerts import AlertConfig, ping_url
 from recordings.config import Config, ConfigError, load_config
+from recordings.ids import ID_RE
 from recordings.locks import LockTimeout
 from recordings.plaud import keepout, requests
-from recordings.plaud.baseline import PatternsPass, enforce_word, patterns_pass
+from recordings.plaud.baseline import (
+    PatternsPass,
+    enforce_word,
+    patterns_pass,
+    record_pass_error,
+)
 from recordings.plaud.checks import (
     K_CONSENT,
     K_LAST_ENDED,
@@ -49,9 +56,11 @@ from recordings.plaud.checks import (
 from recordings.plaud.flags import (
     KEPT_HERE,
     NOTHING_TO_KEEP,
+    OWED_PATTERNS,
     LateReport,
     apply_late_consent,
     keep_here,
+    private_owed,
     still_owed,
 )
 from recordings.plaud.gate import GATE_ALLOWED, GATE_REFUSAL, Gate, gate_now
@@ -314,16 +323,24 @@ def _file_key(path: Path | None) -> tuple[FileSignature, int] | None:
 
 
 class _Stopped(Exception):
-    """SIGTERM came during the patterns pass at start: it ends between recordings (§9.2)."""
+    """SIGTERM came during the patterns pass: it ends between recordings (§9.2)."""
+
+
+def _left(done: PatternsPass | None) -> tuple[frozenset[str], frozenset[str]]:
+    """What a patterns pass left: its unwritten and its busy recordings."""
+    if done is None:
+        return frozenset(), frozenset()
+    return frozenset(done.unwritten), frozenset(done.busy)
 
 
 class Worker:
     """`recordings worker` (spec §9.2, §9.7): one process, a main thread that owns its Writer, and
     a heartbeat thread. The main thread ticks every TICK seconds: it re-reads the consent list
-    when its file changed and applies late consent listings, serves one request from the UI (a
-    row in `plaud_requests`, checked again, §9.3), then runs a scheduled turn when one is due. It
-    never imports the Plaud client, the token store or the sync at module level: Phase 2 passes
-    its turn in (`turn`), so `recordings_ui`, which reads `alive` from here, never pulls them in.
+    when its file changed and applies late consent listings, retries the patterns pass for what
+    the last one left, serves one request from the UI (a row in `plaud_requests`, checked again,
+    §9.3), then runs a scheduled turn when one is due. It never imports the Plaud client, the
+    token store or the sync at module level: Phase 2 passes its turn in (`turn`), so
+    `recordings_ui`, which reads `alive` from here, never pulls them in.
 
     No token, no consent list, or a bad keep_out_word leaves it up, healthy and idle (§9.2): the
     ticks go on, and Status and doctor say why. What each tick writes (K_CONSENT, the blockers) is
@@ -367,6 +384,8 @@ class Worker:
         self._logged: LateReport | None = None
         self._checked = 0  # the patterns pass at start: recordings checked so far
         self._to_check: int | None = None  # and how many it checks, counted once it begins
+        self._pass: PatternsPass | None = None  # the last patterns pass that ended; None: none due
+        self._pass_failed: str | None = None  # the class it last raised as a whole, if it did
         self._not_before: datetime | None = None  # a turn that didn't run waits one interval
         self._held_by_gate = False  # the last turn found the gate closed
         self._pruned_at: datetime | None = None
@@ -448,16 +467,55 @@ class Worker:
         if done is not None:
             log.info("%s", done.sentence())
 
-    def _patterns(self, now: datetime) -> PatternsPass | None:
-        """Decision 27's pass, under the phase `checking`: each recording it checks bumps the
-        progress and the heartbeat's `done` of `total`, so Status reads "(checking, 412 of 1,234)"
-        (spec §15.2). SIGTERM stops it between recordings (§9.2); a pass stopped so isn't recorded
-        as complete, and the next start runs it again (reconcile skips what it already judged)."""
+    def _patterns(self, now: datetime, *, again: bool = False) -> PatternsPass | None:
+        """Decision 27's pass. At start, under the phase `checking`: each recording it checks
+        bumps the progress and the heartbeat's `done` of `total`, so Status reads "(checking, 412
+        of 1,234)" (spec §15.2). `again` (each tick after the start, while the last pass left
+        recordings or raised): only what it left, or the whole archive after it raised, with a
+        plain bump at each recording, so the phase, `checking`'s count and `alive`'s rules for a
+        start are never claimed by a retry (decision 48). SIGTERM stops it between recordings
+        (§9.2); a pass stopped so isn't recorded as complete, and the next start runs it again
+        (reconcile skips what it already judged).
+
+        What it ends with is kept for `_owed_private`: the recordings it couldn't check (never
+        the busy ones) each open a private-unwritten flag. One that raises as a whole is recorded
+        (`record_pass_error`) and remembered by its class, which opens that blocker (the
+        phase-end council's G1 and S2); the step then logs it once."""
+        left = self._pass if again and self._pass_failed is None else None
+        only = {} if left is None else {"only": [*left.unwritten, *left.busy]}
+        progress = self._bump_one if again else self._check_one
         try:
-            return patterns_pass(self.writer, self.db, now=now, progress=self._check_one)
+            done = patterns_pass(self.writer, self.db, now=now, progress=progress, **only)
         except _Stopped:
             log.info("the patterns pass stopped between recordings: the next start runs it again")
             return None
+        except Exception as exc:
+            self._pass_failed = type(exc).__name__
+            with contextlib.suppress(Exception):  # state.db may be what failed: the blocker says it
+                record_pass_error(self.db, self._pass_failed, now=now)
+            raise
+        if again and done is not None and _left(done) != _left(self._pass):
+            log.info("patterns pass, again: %s", done.sentence())
+        self._pass, self._pass_failed = done, None
+        return done
+
+    def _patterns_again(self) -> None:
+        """The patterns pass again, at every tick, while the last one left recordings unwritten or
+        busy, or raised as a whole, so a `recordings reindex` that mends a recording clears its
+        flag at the next tick, never only at a restart (§13.1 case 5). Nothing at all once a pass
+        is complete."""
+        if self.writer is None:
+            return
+        if self._pass_failed is None and (self._pass is None or self._pass.complete):
+            return
+        self._patterns(self.clock(), again=True)
+
+    def _bump_one(self) -> None:
+        """Called before each recording a retry of the patterns pass checks: SIGTERM ends it here,
+        and each one counts as progress (§9.2)."""
+        if self.stopping.is_set():
+            raise _Stopped
+        self.progress.bump(self.clock())
 
     def _check_one(self) -> None:
         """Called before each recording the pass checks: SIGTERM ends the pass here, between
@@ -517,6 +575,7 @@ class Worker:
         self._step("consent list", self._watch_consent)
         self._step("consent blocker", self._consent_blocker)
         self._step("late consent", self._late_consent)
+        self._step("patterns", self._patterns_again)
         self._step("owed private", self._owed_private)
         self._step("request", self._serve_one)
         self._step("turn", self._turn_if_due)
@@ -628,30 +687,61 @@ class Worker:
         did. A `private` the pass owed but couldn't write (a file edited outside the app, a full
         disk) opens one flag per recording, its detail naming the exception's class (`cause`, from
         Task 8's report); each flag resolves once the `private` isn't owed any more
-        (`flags.still_owed`, against the list in force). The blocker is open while any flag is, or
-        while the last pass failed as a whole (its detail names the error's class), and is written
-        afresh at every tick."""
+        (`flags.still_owed`, against the list in force).
+
+        A recording the patterns pass couldn't check (§13.1 case 5; never one only busy) may owe
+        `private` too (P8), so it opens the same flag, with `"owed": "patterns"`, which resolves
+        once the pass no longer lists it, or it is private or gone (`flags.private_owed`). One
+        flag per recording: flags that resolve go first, so a recording the consent list now owes
+        gets that flag in the same tick, with no tick between without one.
+
+        The blocker is open while any flag is, or while the last late consent pass or patterns
+        pass failed as a whole (its detail names the error's class: `error` or `patterns_error`),
+        and is written afresh at every tick."""
         if self.writer is None:
             return
-        now = self.clock()
+        now, archive = self.clock(), self.writer.archive
         unwritten = set(self._late.unwritten) if self._late is not None else set()
         causes = self._late.causes if self._late is not None else {}
-        open_flags = {e.recording_id: e for e in self.db.open_flags((PRIVATE_UNWRITTEN,))}
-        for rid in sorted(unwritten - open_flags.keys()):
-            detail = {"owed": "consent", **({"cause": causes[rid]} if rid in causes else {})}
-            with contextlib.suppress(sqlite3.IntegrityError):  # another writer just added it
-                self.db.add_event(
-                    PRIVATE_UNWRITTEN, now=now, recording_id=rid, detail=detail, open_flag=True
-                )
-        for rid, event in open_flags.items():
-            if rid not in unwritten and not still_owed(self.writer.archive, event, self.consent):
+        unchecked = {
+            rid: cause
+            for rid, cause in (self._pass.unwritten.items() if self._pass is not None else ())
+            if ID_RE.fullmatch(rid)  # a folder whose name isn't an ID is no recording to flag
+        }
+        for event in self.db.open_flags((PRIVATE_UNWRITTEN,)):
+            rid = event.recording_id
+            if event.detail.get("owed") == OWED_PATTERNS:
+                owed = rid in unchecked and rid not in unwritten and private_owed(archive, rid)
+            else:
+                owed = rid in unwritten or still_owed(archive, event, self.consent)
+            if not owed:
                 self.db.resolve(event.id, now=now)
-        if self._late_failed is not None:
-            open_blocker(self.db, PRIVATE_UNWRITTEN, now=now, detail={"error": self._late_failed})
+        flagged = {e.recording_id for e in self.db.open_flags((PRIVATE_UNWRITTEN,))}
+        for rid in sorted(unwritten - flagged):
+            detail = {"owed": "consent", **({"cause": causes[rid]} if rid in causes else {})}
+            self._flag_unwritten(rid, detail, now=now)
+        for rid in sorted(unchecked.keys() - unwritten - flagged):
+            if private_owed(archive, rid):
+                detail = {"owed": OWED_PATTERNS, "cause": unchecked[rid]}
+                self._flag_unwritten(rid, detail, now=now)
+        failed = {
+            **({"error": self._late_failed} if self._late_failed is not None else {}),
+            **({"patterns_error": self._pass_failed} if self._pass_failed is not None else {}),
+        }
+        if failed:
+            open_blocker(self.db, PRIVATE_UNWRITTEN, now=now, detail=failed)
         elif self.db.open_flags((PRIVATE_UNWRITTEN,)):
             open_blocker(self.db, PRIVATE_UNWRITTEN, now=now)
         else:
             clear_blocker(self.db, PRIVATE_UNWRITTEN)
+
+    def _flag_unwritten(
+        self, recording_id: str, detail: Mapping[str, str], *, now: datetime
+    ) -> None:
+        with contextlib.suppress(sqlite3.IntegrityError):  # another writer just added it
+            self.db.add_event(
+                PRIVATE_UNWRITTEN, now=now, recording_id=recording_id, detail=detail, open_flag=True
+            )
 
     # ---- scheduled turns (spec §9.7) ----------------------------------------------------------
     def due(self) -> bool:

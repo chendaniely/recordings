@@ -2,6 +2,7 @@
 lock (stage 2b spec §14.5, §13.1, §12.2, §9.4). Every archive, title and Plaud ID is synthetic."""
 
 import json
+import shutil
 import sqlite3
 from datetime import UTC, datetime
 
@@ -20,6 +21,7 @@ from recordings.plaud.baseline import (
     enforce_word,
     enforced_words,
     patterns_pass,
+    record_pass_error,
 )
 from recordings.plaud.checks import K_KEEP_OUT_WORDS, K_PATTERNS_PASS, PlaudDB
 from recordings.plaud.flags import record_late_keep_out
@@ -243,6 +245,55 @@ def test_a_pattern_pass_that_could_not_write_one_is_reported_and_runs_again(
     assert again is not None and again.unwritten == {}
     assert db.get(K_PATTERNS_PASS)["version"] == 2 and db.get(K_PATTERNS_PASS)["unwritten"] == []
     assert patterns_pass(wider, db, now=NOW) is None
+
+
+def test_a_retry_checks_only_what_the_pass_left_and_adds_up_its_counts(
+    writer, make_incoming, plaud_env, monkeypatch
+):
+    # why: the council's G1. The worker retries the pass at each tick, so the retry must cost
+    # only what the last attempt left: the others were checked then. One still refused changes
+    # nothing and writes nothing; one removed since is dropped; a folder whose name isn't an ID
+    # waits for a whole pass.
+    therapy, other = first_pass_done(writer, make_incoming, plaud_env)
+    removed = imported_by_2a(writer, make_incoming, plaud_env, 14, "Week 8")
+    db, wider = PlaudDB(writer.state), wider_writer(writer)
+    with monkeypatch.context() as patch:
+        refuse_markers(patch, other, sqlite3.OperationalError("disk full"))
+        first = patterns_pass(wider, db, now=NOW)
+        assert first.unwritten == {other: "OperationalError"}
+        later = datetime(2026, 10, 23, 14, 22, tzinfo=UTC)
+        again = patterns_pass(wider, db, now=later, only=[other])
+        assert again == first and db.get(K_PATTERNS_PASS)["at"] == NOW.isoformat()
+    reconciled = []
+    real = Writer.reconcile_plaud
+
+    def counting(self, recording_id):
+        reconciled.append(recording_id)
+        return real(self, recording_id)
+
+    monkeypatch.setattr(Writer, "reconcile_plaud", counting)
+    shutil.rmtree(writer.archive.path_for(removed))
+    done = patterns_pass(wider, db, now=NOW, only=[other, removed, "unnamed-folder"])
+    assert reconciled == [other, removed]
+    assert done.unwritten == {"unnamed-folder": "InvalidFile"}
+    assert (done.checked, done.tagged) == (first.checked + 1, 1)  # therapy's, from the first
+    done = patterns_pass(wider, db, now=NOW, only=[other])
+    assert done.complete and db.get(K_PATTERNS_PASS)["version"] == 2
+    assert is_private(wider.archive.load(therapy))
+
+
+def test_a_pass_that_raised_is_recorded_and_its_retry_reads_the_whole_archive(
+    writer, make_incoming, plaud_env
+):
+    # why: the council's S2. A pass that raised as a whole left no list of what it checked.
+    therapy, _ = first_pass_done(writer, make_incoming, plaud_env)
+    db, wider = PlaudDB(writer.state), wider_writer(writer)
+    record_pass_error(db, "OperationalError", now=NOW)
+    record_pass_error(db, "OperationalError", now=datetime(2026, 10, 23, 14, 22, tzinfo=UTC))
+    assert db.get(K_PATTERNS_PASS) == {"at": NOW.isoformat(), "error": "OperationalError"}
+    done = patterns_pass(wider, db, now=NOW, only=[])
+    assert done.complete and done.tagged == 1 and is_private(wider.archive.load(therapy))
+    assert "error" not in db.get(K_PATTERNS_PASS)
 
 
 def test_a_pattern_pass_lists_a_busy_recording_and_an_invalid_one(

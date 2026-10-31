@@ -22,7 +22,7 @@ from recordings.archive import Archive, RawSource
 from recordings.cli import main
 from recordings.config import load_config
 from recordings.init import init_archive
-from recordings.locks import PLAUD_LOCK, Locks
+from recordings.locks import PLAUD_LOCK, Locks, LockTimeout
 from recordings.models import is_private
 from recordings.plaud import keepout
 from recordings.plaud.checks import (
@@ -33,6 +33,7 @@ from recordings.plaud.checks import (
     K_LAST_ENDED,
     K_LAST_STARTED,
     K_PATTERNS_PASS,
+    PlaudDB,
 )
 from recordings.plaud.flags import CONSENT_LATE, PRIVATE_UNWRITTEN
 from recordings.plaud.gate import GATE_FIRST
@@ -142,8 +143,10 @@ def make_worker(setup):
             assert not w._beating.is_alive()
 
 
-def add_recording(setup, plaud_id: str, n: int = 1) -> str:
-    """A recording with a Plaud source, made through a Writer as the 2a import made them."""
+def add_recording(setup, plaud_id: str, n: int = 1, *, plaud_title: str | None = None) -> str:
+    """A recording with a Plaud source, made through a Writer as the 2a import made them. With
+    `plaud_title`, its snapshot carries that title, which the private patterns read."""
+    payload = json.dumps({"id": 1, **({"name": plaud_title} if plaud_title else {})}).encode()
     writer = Writer.open(load_config(setup.environ), docs=False)
     media = setup.tmp / "in" / f"{n}.mp3"
     media.parent.mkdir(exist_ok=True)
@@ -156,18 +159,18 @@ def add_recording(setup, plaud_id: str, n: int = 1) -> str:
             time_source="plaud",
             title=f"Week {n}",
             kind="audio",
-            sources=(RawSource(kind="plaud", ref=plaud_id, added_at=T0, payload=b'{"id": 1}'),),
+            sources=(RawSource(kind="plaud", ref=plaud_id, added_at=T0, payload=payload),),
         )
     )
     return added.recording.id
 
 
-def add_pattern(setup) -> None:
+def add_pattern(setup, pattern: str = "^synthetic-pattern") -> None:
     """A new auto-private pattern in config.toml: the next start checks every Plaud recording's
     titles again (decision 27)."""
     setup.cfg_file.write_text(
         setup.cfg_file.read_text(encoding="utf-8").replace(
-            "[plaud]\n", '[plaud]\nauto_private_patterns = ["^synthetic-pattern"]\n'
+            "[plaud]\n", f"[plaud]\nauto_private_patterns = {json.dumps([pattern])}\n"
         ),
         encoding="utf-8",
     )
@@ -900,6 +903,125 @@ def test_sigterm_stops_the_patterns_pass_at_start_between_recordings(
     assert w.db.get(K_PATTERNS_PASS) is None  # not complete: the next start runs it again
     make_worker(Clock(T0 + timedelta(minutes=2))).start()
     assert len(reconciled) == 3 and w.db.get(K_PATTERNS_PASS)["version"] == 2
+
+
+def test_a_recording_the_patterns_pass_couldnt_check_holds_the_ping_until_its_tag_lands(
+    setup, make_worker, ntfy
+):
+    # why: the phase-end council's G1 and Task 13's question (§13.1 case 5, §13.2, §16, P8). A
+    # recording a new pattern couldn't be checked against may owe `private`, so it opens a
+    # private-unwritten flag by ID, which holds the ping. The pass is retried at each tick, so a
+    # `recordings reindex` that lands the tag clears the flag and the blocker at the next one,
+    # with no restart.
+    rid = add_recording(setup, PLAUD_A, plaud_title="10-06 Synthetic therapy check-in")
+    add_recording(setup, PLAUD_B, 2)
+    make_worker(Clock()).start()  # the first pattern version needs no pass
+    edited_by_hand(setup, rid)
+    add_pattern(setup, "therapy")
+    clock, spy = Clock(T0 + timedelta(minutes=1)), TurnSpy()
+    w = make_worker(clock, turn=spy)
+    catch_up_done(w)
+    w.start()
+    w.tick()
+    (flag,) = w.db.open_flags((PRIVATE_UNWRITTEN,))
+    assert (flag.recording_id, flag.detail) == (rid, {"owed": "patterns", "cause": "StaleFile"})
+    assert "private-unwritten" in sync_health(w.state, schedule_minutes=20).blockers
+    assert spy.calls == [False] and ntfy.requests == []  # a good run, and no ping
+    clock.advance(seconds=2)
+    w.tick()  # still unchecked: still one flag
+    assert len(w.db.open_flags((PRIVATE_UNWRITTEN,))) == 1
+    w.writer.reindex()  # `recordings reindex` accepts the edit, and the new pattern tags it
+    assert is_private(Archive(setup.root).load(rid))
+    clock.advance(seconds=2)
+    w.tick()
+    assert w.db.open_flags((PRIVATE_UNWRITTEN,)) == []
+    assert "private-unwritten" not in sync_health(w.state, schedule_minutes=20).blockers
+    record = w.db.get(K_PATTERNS_PASS)
+    assert (record["version"], record["unwritten"], record["busy"]) == (2, [], [])
+    clock.advance(minutes=20)
+    w.tick()
+    assert [r["path"] for r in ntfy.requests] == ["/sync"]
+
+
+def test_a_patterns_pass_that_raises_as_a_whole_is_recorded_holds_the_ping_and_is_retried(
+    setup, make_worker, monkeypatch, caplog
+):
+    # why: the council's S2. A pass that raised as a whole was only logged: no record, no
+    # blocker, and nothing ran it again until a restart, so a new private pattern silently never
+    # ran. Its attempt is recorded, the private-unwritten blocker opens with its class, and the
+    # next tick tries again.
+    add_recording(setup, PLAUD_A)
+    make_worker(Clock()).start()
+    add_pattern(setup)
+    real = worker_module.patterns_pass
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("synthetic: database is locked at Week 1")
+
+    monkeypatch.setattr(worker_module, "patterns_pass", locked)
+    caplog.set_level(logging.WARNING, logger="recordings.worker")
+    clock = Clock(T0 + timedelta(minutes=1))
+    w = make_worker(clock)
+    w.start()
+    record = w.db.get(K_PATTERNS_PASS)
+    assert (record["error"], record["at"]) == ("OperationalError", clock().isoformat())
+    for _ in range(2):
+        clock.advance(seconds=2)
+        w.tick()
+    assert blocker(w, "private-unwritten")["detail"] == {"patterns_error": "OperationalError"}
+    assert not sync_health(w.state, schedule_minutes=20).may_ping()
+    failed = [r.getMessage() for r in caplog.records if "patterns failed" in r.getMessage()]
+    assert failed == ["patterns failed (OperationalError)"]  # once, by class
+    assert "Week 1" not in caplog.text
+    monkeypatch.setattr(worker_module, "patterns_pass", real)
+    clock.advance(seconds=2)
+    w.tick()
+    assert blocker(w, "private-unwritten") is None
+    record = w.db.get(K_PATTERNS_PASS)
+    assert record["version"] == 2 and "error" not in record
+
+
+def test_a_busy_recording_is_retried_at_the_next_tick_and_never_flagged(
+    setup, make_worker, monkeypatch
+):
+    # why: §9.2, "A LockTimeout on a recording is busy": the retry checks it at the next tick,
+    # with no flag and no blocker meanwhile. Only what the pass left is checked again.
+    busy = add_recording(setup, PLAUD_A, plaud_title="10-06 Week 1")  # a title: a marker to write
+    add_recording(setup, PLAUD_B, 2, plaud_title="10-06 Week 2")
+    make_worker(Clock()).start()
+    add_pattern(setup)
+    clock = Clock(T0 + timedelta(minutes=1))
+    w = make_worker(clock)
+    real_markers = PlaudDB.set_markers
+
+    def locked(self, recording_id, markers, *, now):
+        if recording_id == busy:
+            raise LockTimeout("synthetic: busy")
+        return real_markers(self, recording_id, markers, now=now)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(PlaudDB, "set_markers", locked)
+        w.start()
+        w.tick()
+        assert w.db.get(K_PATTERNS_PASS)["busy"] == [busy]
+        assert w.db.open_flags((PRIVATE_UNWRITTEN,)) == []
+        assert blocker(w, "private-unwritten") is None
+    reconciled = []
+    real = Writer.reconcile_plaud
+
+    def counting(writer, recording_id):
+        reconciled.append(recording_id)
+        return real(writer, recording_id)
+
+    monkeypatch.setattr(Writer, "reconcile_plaud", counting)
+    clock.advance(seconds=2)
+    w.tick()
+    assert reconciled == [busy]
+    record = w.db.get(K_PATTERNS_PASS)
+    assert (record["version"], record["busy"]) == (2, [])
+    clock.advance(seconds=2)
+    w.tick()
+    assert reconciled == [busy]  # complete: nothing is checked again
 
 
 def test_recordings_worker_alive_exits_0_or_1(setup, make_worker, monkeypatch, capsys):

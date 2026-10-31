@@ -404,19 +404,53 @@ def test_a_late_consent_pass_that_failed_names_its_class_and_a_remedy_that_helps
     assert not [a for a in panel["attention"] if a.startswith("Late consent listings stopped")]
 
 
-def test_a_recording_the_patterns_pass_couldnt_check_needs_attention_by_id(plaud_scene):
-    # why: spec §13.2, "Needs attention shows it at once, by ID": a recording the last patterns
-    # pass couldn't check stays unchecked until a reconcile reaches it (Task 10's review).
+def test_a_recording_the_patterns_pass_couldnt_check_needs_attention_by_id_while_flagged(
+    plaud_scene,
+):
+    # why: spec §13.2, "Needs attention shows it at once, by ID", and the council's G1. The
+    # worker flags a recording the patterns pass couldn't check (`"owed": "patterns"`), and
+    # resolves the flag at the tick after it is checked, so the line follows the flag: never the
+    # pass's record, which only the worker's next pass rewrote.
     from recordings.plaud.checks import K_PATTERNS_PASS
-    from recordings_ui.plaud import PATTERNS_UNCHECKED
+    from recordings.plaud.flags import PRIVATE_UNCHECKED
 
     s = plaud_scene
+    rid = s.add(33, "Week 33")
+    unchecked = PRIVATE_UNCHECKED.format(id=rid)
+    flag = s.db.add_event(
+        "private-unwritten",
+        now=T0,
+        recording_id=rid,
+        detail={"owed": "patterns", "cause": "StaleFile"},
+        open_flag=True,
+    )
+    open_blocker(s.db, "private-unwritten", now=T0)
+    panel = sync_panel(s.settings, now=T0)
+    assert unchecked in panel["attention"]
+    assert panel["summary"]["sentence"] == unchecked.removesuffix(".")  # what holds the ping
+    view = sync_view(s.settings, now=T0, can_request=None)
+    assert [f["sentence"] for f in view["flags"]] == [unchecked]
+    assert recording_plaud(s.settings, rid, now=T0)["flags"][0]["sentence"] == unchecked
+    s.db.resolve(flag, now=T0)
     pass_ = {"version": 1, "attempted": 2, "at": T0.isoformat(), "checked": 3, "tagged": 0}
-    s.db.put(K_PATTERNS_PASS, {**pass_, "unwritten": ["rec-a"], "busy": []}, now=T0)
-    attention = sync_panel(s.settings, now=T0)["attention"]
-    assert PATTERNS_UNCHECKED.format(id="rec-a") in attention
-    s.db.put(K_PATTERNS_PASS, {**pass_, "unwritten": [], "busy": []}, now=T0)
+    s.db.put(K_PATTERNS_PASS, {**pass_, "unwritten": [rid], "busy": []}, now=T0)
     assert not [a for a in sync_panel(s.settings, now=T0)["attention"] if "patterns" in a]
+
+
+def test_a_patterns_pass_that_stopped_names_its_class_and_a_remedy_that_helps(plaud_scene):
+    # why: the council's S2. A pass that raised as a whole opens the private-unwritten blocker
+    # with its class (`patterns_error`); the summary and Needs attention say so, by class only.
+    s = plaud_scene
+    stopped = (
+        "Checking titles against the private patterns stopped (OperationalError): check the "
+        "archive disk, then the worker's log."
+    )
+    open_blocker(s.db, "private-unwritten", now=T0, detail={"patterns_error": "OperationalError"})
+    panel = sync_panel(s.settings, now=T0)
+    assert panel["summary"]["sentence"] == stopped.removesuffix(".")
+    assert stopped in panel["attention"]
+    open_blocker(s.db, "private-unwritten", now=T0, detail={"patterns_error": "no such /x"})
+    assert not [a for a in sync_panel(s.settings, now=T0)["attention"] if "/x" in a]
 
 
 def test_an_unwritten_flag_says_what_its_cause_needs(plaud_scene):

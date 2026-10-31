@@ -20,6 +20,10 @@
 - **A `private-unwritten` flag stays open while its `private` is owed** (`still_owed`, which the
   worker asks at every tick): until the recording is private or gone; one the consent list owed,
   also until a list that reads cleanly names none of its Plaud IDs. A stop can't say a line went.
+- **A recording the new-pattern pass couldn't check** (stage 2b spec §13.1 case 5) may owe
+  `private` (P8), so the worker opens this flag for it too, with detail `"owed": "patterns"`, and
+  words it `PRIVATE_UNCHECKED`. It stays open while the pass still lists the recording unchecked
+  and `private_owed` holds; a recording only busy is retried, never flagged.
 - **An unwritten `private` says what stopped it.** `LateReport.causes` holds each one's exception
   class, which the worker keeps in its `private-unwritten` flag's detail as `"cause"`, and
   `flag_sentence` words the flag by it: an outside edit or an invalid file keeps §13.2's sentence
@@ -81,6 +85,13 @@ PRIVATE_UNWRITTEN_MISSING = (
     "Recording {id} should be private, but its recording.json is missing: restore it from a "
     "backup, or run `recordings reindex`."
 )
+# A private-unwritten flag the new-pattern pass opened (detail "owed": "patterns"): whatever its
+# cause, `recordings reindex` checks the recording and names what stops it (§13.1 case 5).
+PRIVATE_UNCHECKED = (
+    "Recording {id} wasn't checked against the private patterns: run `recordings reindex`, "
+    "which says what stops it."
+)
+OWED_PATTERNS = "patterns"  # the detail's "owed" for those; "consent" for a late consent listing
 EDITED_CAUSES: frozenset[str] = frozenset({"StaleFile", "InvalidFile"})
 KEPT_HERE = "Kept here: it stays private, and nothing more is fetched from Plaud for it"
 NOTHING_TO_KEEP = "Nothing to keep: there is no open late keep-out for it"
@@ -99,11 +110,16 @@ class LateReport:
     causes: Mapping[str, str] = field(default_factory=dict)
 
 
-def flag_sentence(kind: str, recording_id: str, cause: str | None = None) -> str:
-    """A flag's fixed sentence, as Status and the views show it. A private-unwritten flag whose
-    cause is set and isn't an outside edit or an invalid file says its file couldn't be written,
-    naming the class; anything but a class name in the detail reads as "unknown", so no other text
-    is ever shown. A flag with no cause recorded keeps §13.2's sentence."""
+def flag_sentence(
+    kind: str, recording_id: str, cause: str | None = None, owed: str | None = None
+) -> str:
+    """A flag's fixed sentence, as Status and the views show it. A private-unwritten flag the
+    new-pattern pass opened (`owed` "patterns") says the recording wasn't checked. Otherwise one
+    whose cause is set and isn't an outside edit or an invalid file says its file couldn't be
+    written, naming the class; anything but a class name in the detail reads as "unknown", so no
+    other text is ever shown. A flag with no cause recorded keeps §13.2's sentence."""
+    if kind == PRIVATE_UNWRITTEN and owed == OWED_PATTERNS:
+        return PRIVATE_UNCHECKED.format(id=recording_id)
     if kind == PRIVATE_UNWRITTEN and cause == "FileNotFoundError":
         return PRIVATE_UNWRITTEN_MISSING.format(id=recording_id)
     if kind == PRIVATE_UNWRITTEN and cause is not None and cause not in EDITED_CAUSES:
@@ -203,17 +219,29 @@ def still_owed(archive: Archive, event: Event, consent: ConsentList | None) -> b
     rid = event.recording_id
     if rid is None:
         return False
-    try:
-        rec = archive.load(rid)
-    except KeyError:
-        return not gone(archive.path_for(rid))
-    except (ValueError, OSError):
-        return True
-    if is_private(rec):
-        return False
+    owed, rec = _owed(archive, rid)
+    if not owed or rec is None:
+        return owed
     if event.detail.get("owed") != "consent" or consent is None or not consent.readable:
         return True
     return bool(_ids_of(rec) & consent.ids)
+
+
+def private_owed(archive: Archive, recording_id: str) -> bool:
+    """Whether a `private` can still be owed to this recording: until it is private or gone. A
+    file it can't read, or that doesn't validate, keeps it owed (P8). `still_owed` and the
+    worker's flags for the new-pattern pass ask it."""
+    return _owed(archive, recording_id)[0]
+
+
+def _owed(archive: Archive, recording_id: str) -> tuple[bool, Recording | None]:
+    try:
+        rec = archive.load(recording_id)
+    except KeyError:
+        return not gone(archive.path_for(recording_id)), None
+    except (ValueError, OSError):
+        return True, None
+    return not is_private(rec), rec
 
 
 def _kept_here(db: PlaudDB, recording_id: str) -> bool:

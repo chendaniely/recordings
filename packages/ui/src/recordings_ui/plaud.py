@@ -225,16 +225,18 @@ CONSENT_UNREADABLE = "the consent list can't be read"  # keepout.STOP_UNREADABLE
 NO_WORKER_YET = "The Plaud worker hasn't reported yet: check that the worker container is running."
 WORKER_FAILED = "The Plaud worker couldn't start (`{}`): see `rc logs worker` (runbook)."
 PING_FAILING = "The sync's Healthchecks ping has failed for 2 hours."
-# A recording the last auto-private patterns pass couldn't check (Task 10's K_PATTERNS_PASS
-# "unwritten"): its marker stays behind, so any reconcile judges it (spec §13.2, by ID).
-PATTERNS_UNCHECKED = (
-    "Recording {id} wasn't checked against the private patterns: run `recordings reindex`, "
-    "which says what stops it."
-)
+# A recording the patterns pass couldn't check is a private-unwritten flag of its own (`"owed":
+# "patterns"`), worded by flags.flag_sentence (PRIVATE_UNCHECKED), so its line follows the flag.
 # A late consent pass that failed as a whole (Task 13's private-unwritten blocker, with the class it
 # raised): the remedy that can help, never `recordings reindex`.
 UNWRITTEN_STOPPED = (
     "late consent listings stopped ({}): check the archive disk, then the worker's log"
+)
+# A patterns pass that raised as a whole (the blocker's `patterns_error`): the worker tries it again
+# at each tick, so what lasts is a disk or state.db fault, or a bug its log names by class.
+PATTERNS_STOPPED = (
+    "checking titles against the private patterns stopped ({}): check the archive disk, then "
+    "the worker's log"
 )
 # Spec §22's numbers.
 PING_GRACE = timedelta(minutes=10)  # "one schedule interval plus 10 minutes"
@@ -420,11 +422,17 @@ def _class_name(value: object) -> str | None:
 def _sentence(ev: Event) -> str:
     """A flag's fixed sentence (Task 8's flag_sentence): a `private` that couldn't be written for
     a reason `recordings reindex` can't mend (a full or read-only disk, a folder it can't enter, a
-    busy state.db) names the recording and its cause's class, recorded in the event's detail."""
+    busy state.db) names the recording and its cause's class, recorded in the event's detail; a
+    recording the patterns pass couldn't check (`"owed": "patterns"`) says so, by ID."""
     from recordings.plaud.flags import flag_sentence
 
-    cause = ev.detail.get("cause")
-    return flag_sentence(ev.kind, ev.recording_id or "", cause if isinstance(cause, str) else None)
+    cause, owed = ev.detail.get("cause"), ev.detail.get("owed")
+    return flag_sentence(
+        ev.kind,
+        ev.recording_id or "",
+        cause if isinstance(cause, str) else None,
+        owed if isinstance(owed, str) else None,
+    )
 
 
 # ---- Reading state.db, read-only ----------------------------------------------------------------
@@ -542,12 +550,9 @@ class _Read:
         # Read here, so a row that can't be read stops every view the same way (_guarded).
         recent = self.db.events_since(now - RECENT, ("updated", "retagged-private"))
         self.recent = sorted(recent, key=lambda e: e.at, reverse=True)
-        unwritten = _dict(get(checks.BLOCKER_PREFIX + "private-unwritten"))
-        self.unwritten_error = _class_name(_dict(unwritten.get("detail")).get("error"))
-        unchecked = _dict(get(checks.K_PATTERNS_PASS)).get("unwritten")
-        self.patterns_unchecked = (
-            [x for x in unchecked if isinstance(x, str)] if isinstance(unchecked, list) else []
-        )
+        unwritten = _dict(_dict(get(checks.BLOCKER_PREFIX + "private-unwritten")).get("detail"))
+        self.unwritten_error = _class_name(unwritten.get("error"))
+        self.patterns_error = _class_name(unwritten.get("patterns_error"))
 
     def gate_reason(self) -> str | None:
         return None if self.gate.open else self.gate.reason
@@ -564,8 +569,8 @@ class _Read:
     def health_cause(self) -> str | None:
         """What stops the sync, from sync_health (§16). A `private` that can't be written names
         the remedy that can help, never `recordings reindex` for a disk fault: a late consent pass
-        that failed as a whole says its class; otherwise the first open flag whose cause needs its
-        own remedy says what its own sentence says (§15.6)."""
+        or a patterns pass that failed as a whole says its class; otherwise the first open flag
+        whose cause needs its own remedy says what its own sentence says (§15.6)."""
         from recordings.plaud.flags import PRIVATE_UNWRITTEN, SENTENCES
         from recordings.plaud.health import BLOCKER_PHRASES
 
@@ -574,6 +579,8 @@ class _Read:
             return found
         if self.unwritten_error:
             return UNWRITTEN_STOPPED.format(self.unwritten_error)
+        if self.patterns_error:
+            return PATTERNS_STOPPED.format(self.patterns_error)
         for ev in self.flags:
             said = _sentence(ev)
             if ev.kind == PRIVATE_UNWRITTEN and said != SENTENCES[PRIVATE_UNWRITTEN]:
@@ -1029,8 +1036,9 @@ def _panel_from(r: _Read) -> dict:
         attention.append(consent_stop)
     if r.unwritten_error:
         attention.append(_cap(UNWRITTEN_STOPPED.format(r.unwritten_error)) + ".")
+    if r.patterns_error:
+        attention.append(_cap(PATTERNS_STOPPED.format(r.patterns_error)) + ".")
     attention += flag_lines
-    attention += [PATTERNS_UNCHECKED.format(id=rid) for rid in r.patterns_unchecked]
     if worker_line:
         attention.append(worker_line)
     holder = plaud_holder(r.state)

@@ -1611,6 +1611,14 @@ these cases, and never removes it:
    patterns its marker's version didn't have, **and those only**. So a tag Dan removed stays removed
    for the patterns it already passed (decision 3). Status: "patterns changed: 1,234 titles checked,
    6 tagged private". A removed pattern re-checks nothing.
+   - **A recording the pass can't check** (a file edited outside the app, a full disk) may owe
+     `private`, and under P8 that counts as owed: it opens a `private-unwritten` flag by ID, which
+     holds the ping (§16) until the recording is checked, or is private, or is gone. One that is
+     only busy (§9.2) is retried, never flagged.
+   - **The worker retries the pass at every tick** for what the last attempt left, so a `recordings
+     reindex` that mends the file clears the flag at the next tick, never only at a restart. A pass
+     that raises as a whole records its error in `plaud_state`, opens the same blocker with the
+     error's class, and is tried again, over the whole archive, at the next tick.
 
 A **late consent listing** adds `private` too (§12.1).
 
@@ -2051,6 +2059,10 @@ exception class names. Never a title, a token, a URL from Plaud, or exception te
   One whose `recording.json` is missing (its folder is still there) says "Recording `<id>` should be
   private, but its recording.json is missing: restore it from a backup, or run `recordings
   reindex`." (decision 58).
+  One the new-pattern pass opened (§13.1 case 5) says "Recording `<id>` wasn't checked against the
+  private patterns: run `recordings reindex`, which says what stops it." A pass that raised as a
+  whole says "Checking titles against the private patterns stopped (`<ExceptionClass>`): check the
+  archive disk, then the worker's log."
 - **A recording:** "up to date", "updated: speakers, title", "degraded", "suppressed", "busy",
   "failed: Plaud unavailable", "not checked: kept out", "not checked: on the consent list", "gone from
   Plaud", "parked", "re-tagged private: title changed", "re-tagged private: the sync's record was
@@ -2092,7 +2104,7 @@ attempts, or working imports with the breaker open, can be good), so each stops 
 | `consent` | a consent stop (§12.1) | a run that reads the list cleanly | fix the lines named |
 | `hold` | the listing hold (§11.4) | Accept, or a later listing that no longer meets it | Status's check, then Accept |
 | `breaker` | the breaker trips (§14.4) | Accept these changes, a release that closes it, or `breaker reset` | Accept these changes, or a code fix |
-| `private-unwritten` | a `private` the sync owes fails to land (§13.2) | the tag lands | follows the cause (§15.6): `recordings reindex` for an outside edit, a backup or reindex for a missing `recording.json`, the disk and its permissions otherwise |
+| `private-unwritten` | a `private` the sync owes fails to land (§13.2); or the new-pattern pass can't check a recording, or raises as a whole (§13.1 case 5) | the tag lands; for the pass, the recording is checked (or private, or gone), or a retry ends | follows the cause (§15.6): `recordings reindex` for an outside edit or a recording the pass couldn't check, a backup or reindex for a missing `recording.json`, the disk and its permissions otherwise |
 
 **Never a blocker:** late keep-outs and late consent listings (already `private`, and flagged once
 per recording); a rebuild's review list (§11.6); failing or parked recordings (P4); a failed Sync
@@ -3131,3 +3143,7 @@ None: every bullet of §20 is planned in a phase.
 - 2026-10-31: §15.6's replies gain "Running" and the expiry phrase, which the worker writes on a
   claim and on expiry, so no reply repeats the insert's words after the row has moved on (Task 20's
   review).
+- 2026-10-31: §13.1 case 5, §15.6 and §16: a recording the new-pattern pass couldn't check, or a
+  pass that raised as a whole, opens the `private-unwritten` blocker (P8: a `private` possibly owed
+  counts as owed), and the worker retries the pass at every tick for what it left (Phase 1's phase
+  end: the council's G1 and S2, and Task 13's question). No decision or scenario changed.
