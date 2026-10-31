@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { LOST } from "@/lib/library";
 import { newRequestId } from "@/lib/queue";
 import { useSetShinyInput, useShinyMessageHandler } from "@/sr";
 import { ActionToast } from "@/tagging/ActionToast";
@@ -42,8 +43,12 @@ export function usePlaudContext(): Plaud {
   return plaud;
 }
 
-/** A reply after which nothing more comes for its request. */
+/** A reply after which the server sends nothing more for its request, with one exception: the
+ * NOT_SAVED refusal, which the session may still follow with the row if a hung commit lands it. A
+ * later reply replaces the final one, and takes down the toast the final one made. */
 export const FINAL: ReadonlySet<PlaudResult["state"]> = new Set(["done", "failed", "expired", "refused"]);
+
+type JQuery = (el: Document) => { on(e: string, f: () => void): void; off(e: string, f: () => void): void };
 
 const event = { priority: "event" as const, debounceMs: 0 };
 
@@ -63,12 +68,29 @@ export function usePlaud(view: SyncView | undefined, onView?: () => void): Plaud
   const sent = useRef(new Map<string, PlaudRequest>());
   const viewer = useRef(onView);
   viewer.current = onView;
+  const toasted = useRef(new Set<string>());
+  const [lost, setLost] = useState(false);
+  const lostRef = useRef(false);
+
+  // Shiny's reconnect stays off: after a lost connection a press would get no answer (P6), so
+  // nothing more is sent and the buttons say why, as tagging's do (useTagging).
+  useEffect(() => {
+    const $ = (window as unknown as { jQuery?: JQuery }).jQuery;
+    if (!$) return;
+    const gone = () => {
+      lostRef.current = true;
+      setLost(true);
+    };
+    $(document).on("shiny:disconnected", gone);
+    return () => $(document).off("shiny:disconnected", gone);
+  }, []);
 
   const send = useCallback((kind: PlaudKind, opts: { plaud_ids?: string[]; recording_ids?: string[]; all?: boolean } = {}) => {
     const request: PlaudRequest = {
       request_id: newRequestId(), kind, plaud_ids: opts.plaud_ids ?? [], recording_ids: opts.recording_ids ?? [],
       all: opts.all ?? false,
     };
+    if (lostRef.current) return request.request_id; // nothing is sent on a lost connection
     sent.current.set(request.request_id, request);
     sendRequest(request);
     return request.request_id;
@@ -79,8 +101,10 @@ export function usePlaud(view: SyncView | undefined, onView?: () => void): Plaud
     if (!request) return; // not this window's
     setResults((r) => ({ ...r, [reply.request_id]: reply }));
     setLast(reply);
+    const id = `plaud-${reply.request_id}`;
+    if (!FINAL.has(reply.state) && toasted.current.delete(id)) toast.dismiss(id); // a later reply
     if (FINAL.has(reply.state) && request.kind !== "release-preview") {
-      const id = `plaud-${reply.request_id}`;
+      toasted.current.add(id);
       const opens = request.kind === "import" && reply.state === "done" && viewer.current;
       const viewIt = opens ? { label: "View", run: () => viewer.current?.() } : null;
       toast(<ActionToast id={id} text={[reply.message]} undo={viewIt} />, { duration: Infinity, id });
@@ -88,14 +112,16 @@ export function usePlaud(view: SyncView | undefined, onView?: () => void): Plaud
   });
 
   const why = useCallback((kind: PlaudKind) => {
+    if (lost) return LOST;
     if (!view) return NO_PLAUD;
     return kindReason(kind, view.available ? null : (view.reason ?? NO_PLAUD), view);
-  }, [view]);
+  }, [view, lost]);
 
   const handles = useCallback((kind: PlaudKind) => view?.handled.includes(kind) ?? false, [view]);
 
   return useMemo(() => ({
     send, results, last, lastLine: view?.last_result ?? null,
-    available: view?.available ?? false, reason: view?.reason ?? null, why, handles, gate: view?.gate ?? null,
-  }), [send, results, last, view, why, handles]);
+    available: !lost && (view?.available ?? false), reason: lost ? LOST : (view?.reason ?? null), why, handles,
+    gate: view?.gate ?? null,
+  }), [send, results, last, view, why, handles, lost]);
 }

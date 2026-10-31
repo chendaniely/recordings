@@ -23,11 +23,13 @@ from recordings.plaud.checks import K_CATCH_UP_DONE
 from recordings.plaud.flags import KEPT_HERE, NOTHING_TO_KEEP, record_late_keep_out
 from recordings.plaud.gate import GATE_REFUSAL
 from recordings.plaud.requests import (
+    EXPIRED,
     HANDLED,
     INTERRUPTED,
     KINDS,
     NOT_YET,
     QUEUED,
+    RUNNING,
     UNREADABLE_ROW,
     NotSaved,
     PlaudRequest,
@@ -195,7 +197,7 @@ def test_with_the_worker_down_the_reply_says_so_and_the_row_expires_after_an_hou
     assert (reply.state, reply.message) == ("queued", worker_down("04:55"))
     assert requests.expire(state, now=T0 + timedelta(minutes=59)) == 0
     assert requests.expire(state, now=T0 + timedelta(minutes=61)) == 2
-    assert answer(state, 2) == ("expired", worker_down("04:55"))
+    assert answer(state, 2) == ("expired", EXPIRED)
 
 
 def test_at_start_running_rows_fail_as_interrupted_and_old_queued_rows_expire(state):
@@ -360,3 +362,24 @@ def test_a_row_that_cant_be_read_is_failed_not_retried(state):
             )
         assert requests.claim_next(state, now=T0) is None
         assert answer(state, n) == ("failed", UNREADABLE_ROW)
+
+
+def test_a_claim_writes_running_and_an_expiry_writes_its_phrase(state):
+    # why: the row is what every reader shows (any session, the CLI): a claim or an expiry that
+    # changed only `state` left the insert's "Queued" or "worker isn't running" on a running or
+    # an expired reply.
+    up(state)
+    insert(state, req("keep-here", 1, recording_ids=(R1,)))
+    insert(state, req("keep-here", 2, recording_ids=(R2,)))
+    assert requests.claim_next(state, now=T0) is not None
+    assert answer(state, 1) == ("running", RUNNING)
+    assert requests.expire(state, now=T0 + timedelta(minutes=61)) == 1
+    assert answer(state, 2) == ("expired", EXPIRED)
+
+
+def test_worker_notice_follows_the_heartbeat_read_only(state):
+    up(state)
+    insert(state, req("keep-here", 1, recording_ids=(R1,)))
+    assert requests.worker_notice(state, now=T0, timezone_name=TZ) is None
+    later = T0 + timedelta(minutes=5)  # its heartbeat is five minutes old
+    assert requests.worker_notice(state, now=later, timezone_name=TZ) == worker_down("05:00")

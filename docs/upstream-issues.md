@@ -51,7 +51,7 @@ was logged. It fails without the workaround.
 **When it can go.** The code is `scheduleCleanup` in shinyreact's
 `pkg-js/src/shiny-react/output-registry.ts`, still unchanged on its main branch at e881235. A
 version that unbinds the placeholder before removing it (`Shiny.unbindAll(el, true)`) fixes it.
-To check a new version, remove the two `useShinyOutputStatus` lines from `App` and run
+To check a new version, remove the `useShinyOutputStatus` lines from `App` and run
 `make e2e`: if the test above passes, the bug is fixed. Keeping the lines is harmless either way.
 
 ## shinyreact 0.1.0: its ReactDOM global is `react-dom/client` only

@@ -29,6 +29,7 @@ vi.mock("sonner", () => {
   return { toast: Object.assign(sonner.toast, { dismiss: vi.fn() }) };
 });
 
+import { LOST } from "../lib/library";
 import { NO_PLAUD, kindReason, usePlaud, type Plaud } from "./usePlaud";
 
 const NOT_YET = "Comes with the next part of stage 2b.";
@@ -56,9 +57,15 @@ const draw = (view: SyncView | undefined = VIEW, onView?: () => void) =>
 const hear = (r: PlaudResult) => act(() => shiny.handlers.plaud_result(r));
 const sent = () => (shiny.sent.plaud_request ?? []) as PlaudRequest[];
 
+const jq: Record<string, () => void> = {};
 beforeEach(() => {
   shiny.sent = {};
   sonner.toast.mockClear();
+  (sonner.toast as unknown as { dismiss: ReturnType<typeof vi.fn> }).dismiss.mockClear();
+  (window as unknown as { jQuery: unknown }).jQuery = () => ({
+    on: (event: string, fn: () => void) => { jq[event] = fn; },
+    off: () => {},
+  });
   host = document.body.appendChild(document.createElement("div"));
   root = createRoot(host);
 });
@@ -179,5 +186,38 @@ describe("usePlaud (2b spec §9.3)", () => {
     act(() => void plaud.send("keep-here", { recording_ids: ["20261023T090500+0000_0000beef"] }));
     hear(reply(sent()[1], { state: "done", message: "Kept here" }));
     expect((sonner.toast.mock.calls[1][0] as Toasted).props.undo).toBeNull(); // only an import's
+  });
+  it("a failed, an expired and a queued-after reply say what the server said", () => {
+    draw();
+    const said = (n: number) => (sonner.toast.mock.calls[n][0] as ReactElement<{ text: string[] }>).props.text;
+    const EXPIRED = "Expired: the Plaud worker didn't run it within the hour. Press again once it's back.";
+    act(() => void plaud.send("keep-here", { recording_ids: ["20261023T090500+0000_0000beef"] }));
+    const request = sent()[0];
+    hear(reply(request, { message: "Queued after the current sync (started 14:20)" }));
+    expect(plaud.results[request.request_id].message).toBe("Queued after the current sync (started 14:20)");
+    expect(sonner.toast).not.toHaveBeenCalled();
+    hear(reply(request, { state: "expired", message: EXPIRED }));
+    expect(said(0)).toEqual([EXPIRED]);
+    act(() => void plaud.send("keep-here", { recording_ids: ["20261023T090500+0000_0000beef"] }));
+    hear(reply(sent()[1], { state: "failed", message: "Nothing to keep" }));
+    expect(said(1)).toEqual(["Nothing to keep"]);
+  });
+  it("a NOT_SAVED refusal that a landed row follows loses its toast to the later reply", () => {
+    draw();
+    act(() => void plaud.send("keep-here", { recording_ids: ["20261023T090500+0000_0000beef"] }));
+    const request = sent()[0];
+    hear(reply(request, { state: "refused", message: "The request couldn't be saved: state.db can't be used" }));
+    expect(sonner.toast).toHaveBeenCalledOnce();
+    hear(reply(request, { state: "queued", message: "Queued" }));
+    const dismiss = (sonner.toast as unknown as { dismiss: ReturnType<typeof vi.fn> }).dismiss;
+    expect(dismiss).toHaveBeenCalledWith(`plaud-${request.request_id}`);
+    expect(plaud.results[request.request_id].state).toBe("queued");
+  });
+  it("after the connection is lost nothing is sent, and the buttons say why", () => {
+    draw();
+    act(() => jq["shiny:disconnected"]());
+    expect([plaud.available, plaud.reason, plaud.why("keep-here")]).toEqual([false, LOST, LOST]);
+    act(() => void plaud.send("keep-here", { recording_ids: ["20261023T090500+0000_0000beef"] }));
+    expect(sent()).toEqual([]);
   });
 });

@@ -50,6 +50,7 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     refreshed_at = reactive.value(started)  # the arrivals cue counts from here (decision 22)
     plaud_ended = reactive.value(0)  # this session's Plaud requests that have ended
     following: set[asyncio.Task] = set()
+    closed = False  # the session has ended: no task sets a value or takes the lock after it
 
     async def send_tag_result(reply: dict) -> None:
         await shinyreact.send_message(session, "tag_result", reply)
@@ -124,40 +125,81 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
     def _snippet_request() -> None:
         snippet_job.invoke(tags.check_snippets(input.snippet_request()))
 
-    async def follow(first: dict) -> None:
-        """While the row is pending, read it every POLL_SECONDS and send what changed (§9.3)."""
-        from recordings.plaud import requests  # here: it needs sqlite3, which Pages lacks
+    requests = plaud.requests
 
+    def row_reply(row, down: str | None) -> dict:
+        """A row as a reply. While it is still queued the message follows the worker's heartbeat
+        (spec §9.3): the insert's words said it once, and the worker can stop or come back after."""
+        reply = {**row.to_dict(), "preview": None}
+        if reply["state"] == "queued":
+            if down is not None:
+                reply["message"] = down
+            elif requests.is_worker_down(reply["message"]):
+                reply["message"] = requests.QUEUED
+        return reply
+
+    async def poll(request_id: str) -> tuple[dict | None, bool]:
+        """One read of the row: (its reply or None, whether it was read). A failed read is not an
+        end: sqlite3.Error and OSError (a busy or full disk, a state.db moved) are tried again."""
+        import sqlite3  # here: Pages' Pyodide has none, and never gets this far
+
+        try:
+            row = await asyncio.to_thread(requests.read, plaud_state, request_id)
+            if row is None:
+                return None, True
+            down = None
+            if row.state == "queued":
+                down = await asyncio.to_thread(
+                    requests.worker_notice, plaud_state, now=plaud.clock(), timezone_name=zone
+                )
+            return row_reply(row, down), True
+        except (sqlite3.Error, OSError) as exc:
+            return {"error": type(exc).__name__}, False
+
+    async def follow(first: dict, *, quiet: bool = False) -> None:
+        """While the row is pending, read it every POLL_SECONDS and send what changed (§9.3)."""
         shown = first
+        failing = False
         while True:
             await asyncio.sleep(plaud.POLL_SECONDS)
-            row = await asyncio.to_thread(requests.read, plaud_state, first["request_id"])
-            if row is None:
+            reply, read = await poll(first["request_id"])
+            if not read:
+                if not failing and not quiet:
+                    log.warning("plaud request: reading its row failed (%s)", reply["error"])
+                failing = True
+                continue
+            if failing and not quiet:
+                log.warning("plaud request: reading its row works again")
+            failing = False
+            if reply is None:
                 return  # pruned: nothing of its own to follow
             # `preview` stays None: Release's question and its title come in Phase 2, with the
             # worker's release-preview handler (types.ts's PlaudResult keeps the key).
-            reply = {**row.to_dict(), "preview": None}
             ended = reply["state"] in plaud.FINAL_STATES
             if reply != shown:
                 await send_plaud_result(reply)
                 shown = reply
             if ended:
-                # A reactive value set outside the flush: under the lock, then flushed (spec §5).
+                # Out of `following` before the lock: stop_following (the session's end) must not
+                # cancel this task while it holds the lock in the middle of flush(), where
+                # shiny's invalidate_later tasks are uncancellable (shiny 1.8.0, _core.py).
+                following.discard(asyncio.current_task())
+                if closed:
+                    return
                 async with reactive.lock():
-                    plaud_ended.set(plaud_ended.get() + 1)
+                    with reactive.isolate():  # no Context of an effect's to lean on
+                        plaud_ended.set(plaud_ended.get() + 1)
                     await reactive.flush()
                 return
 
     async def follow_unsaved(first: dict) -> None:
         """`submit`'s backstop answers NOT_SAVED for a commit that hung past its deadline, and
-        that one row may still land (Task 14): look for it for UNSAVED_WINDOW, and follow it."""
-        from recordings.plaud import requests  # here: it needs sqlite3, which Pages lacks
-
+        that one row may still land (Task 14): look for it for UNSAVED_WINDOW, and follow it. The
+        state.db that couldn't be used may still not be: reads that fail are quiet here."""
         for _ in range(max(1, int(plaud.UNSAVED_WINDOW / plaud.POLL_SECONDS))):
             await asyncio.sleep(plaud.POLL_SECONDS)
-            row = await asyncio.to_thread(requests.read, plaud_state, first["request_id"])
-            if row is not None:
-                reply = {**row.to_dict(), "preview": None}
+            reply, read = await poll(first["request_id"])
+            if read and reply is not None:
                 await send_plaud_result(reply)
                 if reply["state"] not in plaud.FINAL_STATES:
                     await follow(reply)
@@ -185,6 +227,8 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
         task.add_done_callback(following.discard)
 
     def stop_following() -> None:
+        nonlocal closed
+        closed = True
         for task in list(following):
             task.cancel()  # its row stays: the worker runs it, and another window can ask again
 

@@ -4,8 +4,9 @@ recordings.plaud.requests, as the worker would: claim, progress, finish. Phase 1
 handles Keep it here alone, so that is the kind these requests use."""
 
 import asyncio
+import sqlite3
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from recordings.plaud import requests
 from recordings.plaud.flags import KEPT_HERE
 from recordings.plaud.requests import NOT_YET
 from recordings.state import State
+from recordings.worker import Progress, heartbeat_once
 from recordings_ui import plaud, runtime
 from recordings_ui.app import NO_CONFIG
 from recordings_ui.plaud import PlaudViewSettings
@@ -212,3 +214,126 @@ async def test_a_crafted_request_without_a_writable_state_is_refused(
     (reply,) = replies(sent, "cra00001test")
     assert (reply["state"], reply["message"]) == ("refused", NO_CONFIG)
     assert rows(writer.state.path) == 0
+
+
+def beat(state, at: datetime) -> None:
+    heartbeat_once(state, Progress("idle", 1, at), now=at)
+
+
+@pytest.mark.anyio
+async def test_running_and_expired_replies_carry_the_workers_phrases(wired):
+    # why: the worker writes the phrase in the same UPDATE, so a running reply no longer says
+    # "The Plaud worker isn't running…" and an expired one no longer says "Queued" (review I1).
+    async with test_server_async(SHINY_APP, timeout_secs=10) as s:
+        await s.set_inputs(plaud_request=request("run00001test", "keep-here", recording_ids=[RID]))
+        await until(lambda: replies(wired.sent, "run00001test"), "the first queued")
+        await s.set_inputs(plaud_request=request("exp00001test", "keep-here", recording_ids=[RID]))
+        await until(lambda: replies(wired.sent, "exp00001test"), "both queued")
+        worker = State(wired.path)
+        assert requests.claim_next(worker, now=T0) is not None  # the oldest
+        await until(
+            lambda: any(r["state"] == "running" for r in replies(wired.sent, "run00001test")),
+            "running",
+        )
+        assert requests.expire(worker, now=T0 + timedelta(minutes=61)) == 1
+        await until(lambda: replies(wired.sent, "exp00001test")[-1]["state"] == "expired", "expiry")
+    running = next(r for r in replies(wired.sent, "run00001test") if r["state"] == "running")
+    assert running["message"] == requests.RUNNING
+    assert replies(wired.sent, "exp00001test")[-1]["message"] == requests.EXPIRED
+
+
+@pytest.mark.anyio
+async def test_a_worker_that_stops_after_the_press_is_said_once_and_unsaid_when_back(
+    wired, monkeypatch
+):
+    # why: §9.3. The insert's "Queued" would stay until the tab closed (review I2).
+    now = [T0]
+    monkeypatch.setattr(plaud, "clock", lambda: now[0])
+    beat(wired.state, T0)
+    async with test_server_async(SHINY_APP, timeout_secs=10) as s:
+        await s.set_inputs(plaud_request=request("down0001test", "keep-here", recording_ids=[RID]))
+        await until(lambda: replies(wired.sent, "down0001test"), "queued")
+        assert replies(wired.sent, "down0001test")[0]["message"] == requests.QUEUED
+        now[0] = T0 + timedelta(minutes=5)  # its heartbeat is five minutes old
+        await until(lambda: len(replies(wired.sent, "down0001test")) >= 2, "the worker down")
+        await asyncio.sleep(0.1)  # many polls: the sentence is sent once, not every tick
+        assert [r["message"] for r in replies(wired.sent, "down0001test")] == [
+            requests.QUEUED,
+            requests.worker_down("14:20"),
+        ]
+        beat(wired.state, now[0])
+        await until(lambda: len(replies(wired.sent, "down0001test")) >= 3, "the worker back")
+    assert replies(wired.sent, "down0001test")[-1]["message"] == requests.QUEUED
+
+
+@pytest.mark.anyio
+async def test_one_failed_read_does_not_end_the_poll(wired, monkeypatch, caplog):
+    # why: review I3. A busy or moved state.db for one tick must not lose the final reply, the
+    # toast or the redraw. The class is logged once when reads fail and once when they recover.
+    real = requests.read
+    calls = [0]
+
+    def flaky(state, request_id):
+        calls[0] += 1
+        if calls[0] in (1, 2):
+            raise sqlite3.OperationalError("database is locked")
+        return real(state, request_id)
+
+    async with test_server_async(SHINY_APP, timeout_secs=10) as s:
+        await s.set_inputs(plaud_request=request("flk00001test", "keep-here", recording_ids=[RID]))
+        await until(lambda: replies(wired.sent, "flk00001test"), "queued")
+        monkeypatch.setattr(requests, "read", flaky)
+        worker = State(wired.path)
+        assert requests.claim_next(worker, now=T0) is not None
+        requests.finish(worker, "flk00001test", ok=True, message=KEPT_HERE, now=T0)
+        await until(lambda: replies(wired.sent, "flk00001test")[-1]["state"] == "done", "the end")
+    assert calls[0] >= 3
+    failures = [r.getMessage() for r in caplog.records if "reading its row" in r.getMessage()]
+    assert failures == [
+        "plaud request: reading its row failed (OperationalError)",
+        "plaud request: reading its row works again",
+    ]
+
+
+@pytest.mark.anyio
+async def test_arrivals_count_from_the_later_of_the_start_and_the_last_refresh(wired, monkeypatch):
+    # why: decision 22.
+    now = [T0]
+    monkeypatch.setattr(plaud, "clock", lambda: now[0])
+    seen: list[datetime] = []
+
+    def spy(settings, *, since, now):
+        seen.append(since)
+        return {"new": 0, "private": 0, "updated": 0, "kept_out_late": 0, "consent_late": 0}
+
+    monkeypatch.setattr(plaud, "arrivals", spy)
+    async with test_server_async(SHINY_APP, timeout_secs=10) as s:
+        s.get_output("plaud_arrivals")
+        assert seen[-1] == T0
+        now[0] = T0 + timedelta(minutes=10)
+        await s.set_inputs(refresh=1)
+        s.get_output("plaud_arrivals")
+        await until(lambda: seen[-1] == T0 + timedelta(minutes=10), "since moves to the Refresh")
+    assert seen[0] == T0
+
+
+@pytest.mark.anyio
+async def test_plaud_sync_is_drawn_again_when_a_request_ends(wired, monkeypatch):
+    # why: so SyncView.last_result follows this window's requests (spec §9.3).
+    drawn = [0]
+
+    def spy(settings, *, now, can_request):
+        drawn[0] += 1
+        return {"n": drawn[0]}
+
+    monkeypatch.setattr(plaud, "sync_view", spy)
+    async with test_server_async(SHINY_APP, timeout_secs=10) as s:
+        s.get_output("plaud_sync")
+        await s.set_inputs(plaud_request=request("syn00001test", "keep-here", recording_ids=[RID]))
+        await until(lambda: replies(wired.sent, "syn00001test"), "queued")
+        assert drawn[0] == 1  # pending: not drawn again
+        worker = State(wired.path)
+        assert requests.claim_next(worker, now=T0) is not None
+        requests.finish(worker, "syn00001test", ok=True, message=KEPT_HERE, now=T0)
+        await until(lambda: replies(wired.sent, "syn00001test")[-1]["state"] == "done", "the end")
+        await until(lambda: drawn[0] > 1, "the redraw")

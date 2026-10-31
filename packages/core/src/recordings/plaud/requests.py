@@ -63,6 +63,8 @@ KEEP_FINISHED = timedelta(days=7)
 SAVE_WAIT = 0.8
 REQUEST_ID_RE = re.compile(r"[A-Za-z0-9_-]{8,64}")
 QUEUED = "Queued"
+RUNNING = "Running"
+EXPIRED = "Expired: the Plaud worker didn't run it within the hour. Press again once it's back."
 INTERRUPTED = "interrupted"
 UNREADABLE_ROW = "The request couldn't be read."
 
@@ -75,11 +77,18 @@ def queued_after(started: str) -> str:
     return f"Queued after the current sync (started {started})"
 
 
+WORKER_DOWN = "The Plaud worker isn't running"
+
+
 def worker_down(last: str) -> str:
     return (
-        f"The Plaud worker isn't running (last reported {last}): your request runs when it's "
+        f"{WORKER_DOWN} (last reported {last}): your request runs when it's "
         "back, if that's within the hour."
     )
+
+
+def is_worker_down(message: str) -> bool:
+    return message.startswith(WORKER_DOWN)
 
 
 @dataclass(frozen=True)
@@ -150,18 +159,34 @@ def _reply(row: tuple) -> Reply:
     )
 
 
-def _notice(conn: sqlite3.Connection, state: State, *, now: datetime, timezone_name: str) -> str:
-    """What a queued request's reply says, read inside the insert's transaction (so within its
-    deadline): the worker down (by its heartbeat), or a run holding `plaud`, or plain "Queued"."""
-    from recordings.plaud.runlock import plaud_holder  # the lock probe: fcntl, server only
+def _down(conn: sqlite3.Connection, *, now: datetime, timezone_name: str) -> str | None:
+    """worker_down's sentence when the heartbeat says the worker isn't running, else None."""
     from recordings.worker import HEARTBEAT_KEY, beat_alive, parse_heartbeat
 
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (HEARTBEAT_KEY,)).fetchone()
     beat = parse_heartbeat(row[0] if row else None)
+    if beat_alive(beat, now=now)[0]:
+        return None
+    last = parse_stamp(beat.get("at")) if beat is not None else None
+    return worker_down("never" if last is None else _hhmm(last, timezone_name))
+
+
+def worker_notice(state: State, *, now: datetime, timezone_name: str) -> str | None:
+    """For a session following a queued row (spec §9.3): worker_down's sentence while the worker's
+    heartbeat says it isn't running, else None. Read only; the same rule `insert` uses."""
+    with state.db() as conn:
+        return _down(conn, now=now, timezone_name=timezone_name)
+
+
+def _notice(conn: sqlite3.Connection, state: State, *, now: datetime, timezone_name: str) -> str:
+    """What a queued request's reply says, read inside the insert's transaction (so within its
+    deadline): the worker down (by its heartbeat), or a run holding `plaud`, or plain "Queued"."""
+    from recordings.plaud.runlock import plaud_holder  # the lock probe: fcntl, server only
+
+    down = _down(conn, now=now, timezone_name=timezone_name)
     holder = plaud_holder(state)
-    if not beat_alive(beat, now=now)[0]:
-        last = parse_stamp(beat.get("at")) if beat is not None else None
-        return worker_down("never" if last is None else _hhmm(last, timezone_name))
+    if down is not None:
+        return down
     if holder is not None:
         return queued_after(_hhmm(holder[1], timezone_name))
     return QUEUED
@@ -258,8 +283,8 @@ def claim_next(state: State, *, now: datetime) -> Claimed | None:
             )
             return None
         conn.execute(
-            "UPDATE plaud_requests SET state = 'running', started_at = ? WHERE id = ?",
-            (utc_iso(now), row[0]),
+            "UPDATE plaud_requests SET state = 'running', started_at = ?, message = ? WHERE id = ?",
+            (utc_iso(now), RUNNING, row[0]),
         )
     return claimed
 
@@ -333,9 +358,9 @@ def at_start(state: State, *, now: datetime) -> tuple[int, int]:
 def expire(state: State, *, now: datetime) -> int:
     with state.db() as conn:
         return conn.execute(
-            "UPDATE plaud_requests SET state = 'expired', finished_at = ? WHERE state = 'queued' "
-            "AND datetime(queued_at) < datetime(?)",
-            (utc_iso(now), utc_iso(now - EXPIRE_AFTER)),
+            "UPDATE plaud_requests SET state = 'expired', finished_at = ?, message = ? "
+            "WHERE state = 'queued' AND datetime(queued_at) < datetime(?)",
+            (utc_iso(now), EXPIRED, utc_iso(now - EXPIRE_AFTER)),
         ).rowcount
 
 
