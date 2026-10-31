@@ -152,9 +152,12 @@ _Decisions 10 and 11 change how decisions 4, 5, 8 and 9 are carried out. Where t
 
 12. **A consent-list ID split by a space or a line wrap: "Stop and tell me"** (recommended; asked
     2026-10-24, after the plan council found the gap). A line whose text before the dash is only hex
-    digits (spaces, backticks and `of_` aside), 8 or more of them, and isn't one whole ID is a typo
-    (§12.1, rule 4): downloads stop and Status names the line, as for any typo. An odd line such as
-    `- 20261023 — asked` stops too, until it's reworded.
+    digits (spaces, backticks and `of_` aside), with one unbroken run of 8 or more of them that isn't
+    one whole ID, is a typo (§12.1, rule 4): downloads stop and Status names the line, as for any
+    typo. An odd line such as `- 20261023 — asked` stops too, until it's reworded. Refined 2026-10-30
+    ("Solid chunks only", recommended, after Task 3's review): only an unbroken run counts, so a
+    note line spelled with the letters a–f and digits, such as `- Added 2026-10-23`, is a plain
+    note, while a split ID always leaves such a run.
 
 ## 2. Your days with 2b
 
@@ -1411,9 +1414,10 @@ is a separate piece of work, and the thresholds are constants, not settings.
   4. **A typo:** a line whose first word (after the bullet and backtick) holds 24 or more hex digits,
      with or without `of_`, but isn't a valid ID (31 or 33 hex digits, or a non-hex character among
      them); or (decision 12) a line whose text before the dash, or the whole line when it has no
-     dash, is only hex digits once spaces, backticks and `of_` are set aside, 8 or more of them, and
-     isn't one whole ID (an ID split by a space, or wrapped over two lines). It fails closed (P8):
-     the list is unreadable.
+     dash, is only hex digits once spaces, backticks and `of_` are set aside, and holds one unbroken
+     run of 8 or more of them that isn't one whole ID (an ID split by a space, or wrapped over two
+     lines; a note such as `- Added 2026-10-23` has no such run). It fails closed (P8): the list is
+     unreadable.
 
   Every line that holds an ID but isn't an exclusion (a kept line, an ID in a sentence, or an ID
   after a `+` or `1.` bullet, which today's parser doesn't read either) is listed by line number by
@@ -3090,3 +3094,5 @@ None: every bullet of §20 is planned in a phase.
   states only Phases 2 and 3 can reach moves to them, so scenarios C5.19, C5.24, C5.27 and C6.02's
   rebuild clause move to Phase 2; Phase 1's request path handles Keep it here alone. No expected
   outcome changed.
+- 2026-10-30: Dan's decision 12 refined, "Solid chunks only": only an unbroken run of 8 or more hex
+  characters makes a typo, so an ordinary note line isn't one (§12.1 rule 4; Phase 1, Task 3).

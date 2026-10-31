@@ -61,7 +61,10 @@ is reworded.
 - C. Only a run of 16 or more counts: fewer false stops, but a wrap that leaves a short piece is
   missed.
 
-Waiting for Dan's answer.
+Dan first asked "what is happening here? this is all about file names?"; after the consent list's
+codes and a note line spelled only with a–f letters were shown, he chose **"Solid chunks only"**,
+option A, the recommended one, on 2026-10-30, with no further reason given. Decision 12's rule now
+counts only an unbroken run of 8 or more hex characters (spec §12.1 rule 4); Task 3 builds it.
 
 ## Calls made for Dan
 
