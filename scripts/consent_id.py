@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import sys
 
+from recordings.models import visible
 from recordings.plaud.keepout import parse_consent
 
 # Plaud IDs are 32 hex digits; 24 or more in a row is one, or the start of one that is damaged.
@@ -25,10 +26,10 @@ _ID_LIKE = re.compile(r"[0-9a-fA-F]{24,}")
 def consent_id(text: str) -> str | None:
     if "\n" in text or "\r" in text:
         return None  # one line, one ID
-    if len(_ID_LIKE.findall(text)) > 1:
-        return (
-            None  # two IDs pasted on one line: the line holds one, the other would stay importable
-        )
+    # Two IDs pasted on one line: the line holds one, and the other would stay importable. Read
+    # as the parser reads it, so a fullwidth digit or a zero-width space doesn't hide one.
+    if len(_ID_LIKE.findall(visible(text))) > 1:
+        return None
     parsed = parse_consent(text)
     lines = [line for line in parsed.lines if line.kind == "exclusion"]
     if len(lines) != 1 or parsed.typo_lines:

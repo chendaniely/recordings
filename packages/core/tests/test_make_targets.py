@@ -58,7 +58,8 @@ def server(tmp_path):
     log = tmp_path / "ssh.log"
     fails = tmp_path / "readback-fails"
     (checkout / "docker" / "up-deployed.sh").write_text(
-        f'printf "up-deployed %s\\n" "$*" >> "{log}"\n[ ! -e "{fails}" ] || exit 1\n',
+        f'printf "up-deployed %s\\n" "$*" >> "{log}"\n'
+        f'if [ -e "{fails}" ]; then c=$(cat "{fails}"); exit "${{c:-1}}"; fi\n',
         encoding="utf-8",
     )
     bin_dir = tmp_path / "bin"
@@ -176,11 +177,31 @@ def test_consent_add_accepts_the_copy_id_form(server):
     assert re.fullmatch(rf"- `{HEX_C}` — {ADDED}", lines[4])
 
 
+# Lists the parser reads as empty or comments-only after NFKC and without invisible characters,
+# which the script must refuse too (a BOM before a comment header is the realistic one).
+INVISIBLE_STOPS = (
+    "\ufeff",  # a BOM alone
+    "\ufeff# comments\n",  # a BOM, then comments
+    "\u00a0\n",  # a no-break-space-only line
+    "\u200b# zero-width space before the number sign\n",
+    "\uff03 header\n",  # a fullwidth number sign
+    "\ufe5f small number sign\n",
+    "\u3000\n",  # an ideographic space only
+    "\x1f\n",  # a unit separator only
+)
+
+
 def test_consent_add_never_makes_a_list_or_extends_an_empty_one(server):
     # why: stage 2b spec §12.1. A missing or empty list is a consent stop that fails closed; one
     # exclusion added to it would lift the stop while the real list's recordings stay unlisted.
     folder = server.list.parent
-    for text in (None, "", " \n\t\n\r\n\n", "# only\n   # comments (indented)\n\n"):
+    for text in (
+        None,
+        "",
+        " \n\t\n\r\n\n",
+        *INVISIBLE_STOPS,
+        "# only\n   # comments (indented)\n\n",
+    ):
         if text is None:
             server.list.unlink()
         else:
@@ -212,6 +233,42 @@ def test_a_list_with_comments_and_a_kept_line_is_extended(server):
     assert re.fullmatch(rf"- `{HEX_A}` — {ADDED}", lines[4]) and len(lines) == 5
 
 
+def test_a_second_id_the_parser_would_read_is_refused_too(server):
+    # why: the parser reads the text after NFKC and without invisible characters, so a second ID in
+    # fullwidth digits, or split by a zero-width space, is one it would list; it must not pass.
+    fullwidth = "".join(chr(0xFF10 + int(c, 16)) if c.isdigit() else c for c in HEX_B)
+    split = HEX_B[:16] + "\u200b" + HEX_B[16:]
+    for second in (fullwidth, split):
+        done = consent_add(server, f"- `{PLAUD_A}` —- `of_{second}` —")
+        assert done.returncode != 0 and "not a Plaud ID" in done.stderr, second
+    assert not server.log.exists()
+    assert server.list.read_text(encoding="utf-8") == SEED
+
+
+def test_a_bom_before_a_real_list_is_still_extended(server):
+    # why: the BOM is invisible to the parser, which reads the first line as it is; only a list with
+    # nothing but blanks and comments is refused.
+    text = f"\ufeff- `{KEPT}` — x\n"
+    server.list.write_text(text, encoding="utf-8")
+    done = consent_add(server, PLAUD_A)
+    assert done.returncode == 0, done.stderr
+    assert server.list.read_text(encoding="utf-8").startswith(text)
+
+
+def test_an_unreadable_list_is_not_told_to_be_put_back(server):
+    # why: advice to put the real list back could put an older list over a newer one.
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 file, so the test would prove nothing")
+    server.list.chmod(0)
+    try:
+        done = script(server, PLAUD_A)
+    finally:
+        server.list.chmod(0o600)
+    assert done.returncode == 2 and "cannot read" in done.stderr and "owner and mode" in done.stderr
+    assert "Put the real list" not in done.stderr
+    assert server.list.read_text(encoding="utf-8") == SEED
+
+
 def english_utf8_locale() -> str | None:
     names = run(["locale", "-a"], cwd=REPO, env={"PATH": os.environ["PATH"]}).stdout.split()
     for name in names:
@@ -239,7 +296,8 @@ def test_each_failure_names_its_step(server):
     # list is unchanged) and "reading back failed after a good add" (the ID is on the list).
     unreachable = consent_add(server, PLAUD_A, env=server.env | {"FAKE_SSH_EXIT": "255"})
     assert unreachable.returncode != 0 and "could not be reached" in unreachable.stderr
-    assert "nothing was added" in unreachable.stderr
+    assert "connection dropped" in unreachable.stderr
+    assert "rc exec worker recordings plaud consent" in unreachable.stderr
     assert server.list.read_text(encoding="utf-8") == SEED
 
     server.list.unlink()
@@ -254,6 +312,14 @@ def test_each_failure_names_its_step(server):
     assert readback.returncode != 0 and "step 3 failed" in readback.stderr
     assert "reading the list back" in readback.stderr and "is on the list" in readback.stderr
     assert f"`{HEX_A}`" in server.list.read_text(encoding="utf-8")
+
+    # a readback that worked but still shows a stop (the command exits 78): not "failed"
+    server.readback_fails.write_text("78", encoding="utf-8")
+    stopped = consent_add(server, HEX_B)
+    assert (
+        stopped.returncode != 0 and "the ID was added, but the list still stops" in stopped.stderr
+    )
+    assert "reading the list back" not in stopped.stderr
 
 
 def test_the_documented_line_takes_a_pasted_copy_id_through_a_real_shell(server):
@@ -285,7 +351,7 @@ def test_consent_add_expands_server_and_repo_dir_on_the_mac(server, tmp_path):
     assert command.startswith(
         f"command cd '{server.checkout}' && sh docker/consent-add.sh '{HEX_A}'"
     )
-    assert "$" not in command
+    assert "$" not in command.replace("$?", "")  # the one `$?` is the server's own
     # local.mk, -include'd, is read from the folder make runs in
     mac = tmp_path / "mac"
     mac.mkdir()

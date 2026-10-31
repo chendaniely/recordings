@@ -1288,7 +1288,7 @@ real"). An ID already on the list is added again: harmless, and the count stays 
 
 Either way, `recordings plaud consent` must show the new count, and no line it can't read. The
 Mac's target prints it right after the add, which can be before the worker's next look (a few
-seconds): if the count is still the old one, run `rc exec worker recordings plaud consent` again.
+seconds): if the line `(by the worker: N IDs)` still shows the old count, run `rc exec worker recordings plaud consent` again.
 If it still isn't there after a minute, the worker didn't see the edit. If the recording is already
 in the archive, the worker tags it `private` within seconds and flags it; take it out by hand if it
 mustn't stay.

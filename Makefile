@@ -126,17 +126,18 @@ consent-add: ## add a Plaud ID to the server's consent list, from the Mac: make 
 	$(if $(REPO_DIR),,$(error make consent-add: set REPO_DIR, the repo's checkout on the server, in local.mk))
 	@id=$$(uv run python scripts/consent_id.py "$$ID") \
 	  || { echo "make consent-add: step 1 failed, checking the ID (above)" >&2; exit 1; }; \
-	ssh "$(SERVER)" "cd '$(REPO_DIR)' && sh docker/consent-add.sh '$$id' || exit 3; sh docker/up-deployed.sh exec -T worker recordings plaud consent || exit 4"; \
+	ssh "$(SERVER)" "cd '$(REPO_DIR)' && sh docker/consent-add.sh '$$id' || exit 3; sh docker/up-deployed.sh exec -T worker recordings plaud consent || { [ \$$? = 78 ] && exit 5; exit 4; }"; \
 	rc=$$?; \
 	case $$rc in \
 	  0) ;; \
-	  255) echo "make consent-add: step 2 failed: the server could not be reached (ssh exit 255); nothing was added" >&2 ;; \
+	  255) echo "make consent-add: step 2 failed: the server could not be reached, or the connection dropped (ssh exit 255): run: rc exec worker recordings plaud consent, on the server, to see whether the ID is on the list" >&2 ;; \
 	  3) echo "make consent-add: step 2 failed, on the server: adding the ID (above); the list is unchanged" >&2 ;; \
+	  5) echo "make consent-add: the ID was added, but the list still stops imports (above): fix the lines it names" >&2 ;; \
 	  4) echo "make consent-add: step 3 failed, on the server: reading the list back (above); the ID is on the list" >&2 ;; \
 	  *) echo "make consent-add: step 2 failed: ssh exited $$rc; check the list on the server" >&2 ;; \
 	esac; \
 	[ $$rc = 0 ] || exit 1; \
-	echo "make consent-add: the worker reads the new list within a few seconds. If its count above is still the old one, run: rc exec worker recordings plaud consent"
+	echo "make consent-add: the worker reads the new list within a few seconds. If the line (by the worker: N IDs) above still shows the old count, run: rc exec worker recordings plaud consent"
 
 restic: ## fetch the pinned restic into .cache/bin
 	uv run python scripts/fetch_restic.py

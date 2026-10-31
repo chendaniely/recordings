@@ -5,8 +5,8 @@
 # over the list, so the worker, which watches the folder, reads the old list or the new one, never
 # half of one. The ID must be 32 hex digits, bare or after `of_`: anything else is refused before
 # the list is touched. It never makes a list and never extends an empty one: a missing list, an
-# empty one and one of only blank lines and comments (`#` after optional spaces, as the parser
-# reads them) are a consent stop that fails closed (§12.1), and one exclusion added to it would
+# empty one and one of only blank lines and comments (see the check below) are a consent stop
+# that fails closed (§12.1), and one exclusion added to it would
 # lift the stop while the real list's other recordings were still unlisted. A list with kept or
 # text lines but no exclusion is also a stop, but one Dan wrote: his first exclusion is allowed.
 # It reads RECORDINGS_CONSENT_HOST from docker/deploy.env, and no secret.
@@ -37,9 +37,17 @@ list="$folder/consent-list.md"
 gone="the consent list is missing, empty or only comments, which stops every import on purpose. Put the real list"
 gone="$gone back first (the runbook's section 6 step 1, or Restoring for real), then add the ID"
 [ -f "$list" ] || refuse "$gone"
-# a list of blank lines and comments only is empty too: drop the comments, then the blanks, and
-# grep -q . finds any character left. A list with kept or text lines but no exclusion is allowed.
-grep -v '^[[:space:]]*#' "$list" | tr -d ' \t\r\n' | grep -q . || refuse "$gone"
+[ -r "$list" ] || refuse "cannot read $list: check its owner and mode"
+# A list of blank lines and comments only is empty too. The parser reads a list after Unicode
+# NFKC and without invisible characters (a BOM, a zero-width space), and strips Unicode
+# whitespace, so this does not copy its rule: it counts only printable ASCII (! to ~), in the
+# C locale. A line is a comment when its first printable ASCII character is # or when a number
+# sign that NFKC folds to # (U+FF03, U+FE5F: the only two besides #) comes before it. The list
+# must then hold a printable ASCII character somewhere. This refuses more than the parser does
+# for a list of non-ASCII text only, which fails closed. A list with kept or text lines but no
+# exclusion is a stop that stays allowed: it is one Dan wrote.
+LC_ALL=C grep -v -e '^[^!-~]*#' -e '^[^!-~]*＃' -e '^[^!-~]*﹟' "$list" \
+  | LC_ALL=C grep -q '[!-~]' || refuse "$gone"
 tmp=$(mktemp "$folder/.consent-list.md.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
 cat "$list" > "$tmp"
