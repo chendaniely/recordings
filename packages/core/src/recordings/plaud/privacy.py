@@ -18,7 +18,8 @@
     are judged once, erring private;
   - a marker of an older pattern version (case 5): only the patterns added since that version, over
     every title of that ID. A removed pattern re-checks nothing.
-  Each title is tried as given and folded (`keepout.fold`). Nothing ever removes `private`.
+  Each title is tried as given and folded (`matches_auto_private` and `keep_out_match` each
+  fold it). Nothing ever removes `private`.
 - **A marker moves only once the result is written,** and only when it was due: the Writer records
   `Verdict.markers` after its `mutate` lands, and after the note and any late keep-out, so one
   `state.db` refuses leaves the title due. What the retry does then: the recording is already
@@ -43,7 +44,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
-from recordings.plaud.keepout import fold, keep_out_match
+from recordings.plaud.keepout import keep_out_match
 from recordings.plaud.reconcile import matches_auto_private
 
 if TYPE_CHECKING:
@@ -107,10 +108,6 @@ class PrivacyInputs:
     words: tuple[str, ...]
 
 
-def _hits(title: str, patterns: Sequence[str]) -> bool:
-    return bool(patterns) and matches_auto_private([title, fold(title)], patterns)
-
-
 def judge(
     titles_by_id: Mapping[str, Sequence[str]],
     markers: Mapping[str, Marker],
@@ -136,7 +133,7 @@ def judge(
     ) -> None:
         nonlocal why, word
         checked.add((pid, i))
-        if why is None and _hits(title, run):
+        if why is None and matches_auto_private([title], run):
             why = case
         if words_too and word is None:
             word = keep_out_match(title, words)

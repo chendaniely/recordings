@@ -523,6 +523,40 @@ def test_privacy_is_in_place_when_a_recording_is_created(
     assert seen == {A: [("private", "you")], B: [("private", "auto")]}
 
 
+@pytest.mark.parametrize(
+    ("title", "tags"),
+    [
+        ("10-06 Ｐrivate catch-up", [("private", "auto")]),  # a fullwidth P
+        ("10-06 Pri\u200bvate catch-up", [("private", "auto")]),  # a zero-width space
+        ("10-06 PRI\u00advate catch-up", [("private", "auto")]),  # a soft hyphen
+        ("10-06 Catch-up", []),  # no pattern matches: untagged
+    ],
+)
+def test_a_title_is_tried_folded_when_the_recording_is_created(
+    ar_archive, plaud_env, writer, monkeypatch, title, tags
+):
+    # why: S1, stage 2b spec §13.1 case 1, "every title the app has seen at that moment". The
+    # import's create-time check folds the title (NFKC, without invisible characters), as the
+    # marker's judge does, so `private` is in Incoming.tags, never left to the reconcile after it.
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name=title)])
+    ar_archive.write_catalog()
+    seen = {}
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen[incoming.sources[0].ref] = [(t.tag, t.by) for t in incoming.tags]
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    report = run(
+        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
+        writer,
+        now=NOW,
+    )
+    assert report.failed == []
+    assert seen == {B: tags}
+
+
 def test_privacy_covers_every_copy_of_the_audio_before_the_first_is_created(
     ar_archive, plaud_env, writer, monkeypatch
 ):

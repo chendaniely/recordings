@@ -53,7 +53,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from recordings.config import ConfigError
-from recordings.models import Recording, Rendition, is_private
+from recordings.models import Recording, Rendition, fold, is_private
 from recordings.plaud.blocks import render_note
 from recordings.plaud.normalise import (
     GENERIC_SPEAKER,
@@ -136,13 +136,16 @@ def matches_auto_private(
     titles: Iterable[str], patterns: Sequence[str] = DEFAULT_AUTO_PRIVATE
 ) -> bool:
     """Whether any of these Plaud titles matches an auto-private pattern (§7.4). Each pattern is
-    searched, ignoring case, in the title as given and with its "MM-DD " prefix stripped; trying
-    both errs towards private. The import calls it to tag a recording when it is created, and
-    `privacy.judge` for each title the marker says is due."""
+    searched, ignoring case, in the title as given and folded (`models.fold`: NFKC, without
+    invisible characters such as a zero-width space or a soft hyphen, then casefolded; stage 2b
+    spec §13.1), each with and without its "MM-DD " prefix; trying every form errs towards
+    private. The fold is here, so every caller has it: the import, to tag a recording when it is
+    created, and `privacy.judge`, for each title the marker says is due."""
     return any(
         re.search(pattern, text, re.IGNORECASE)
         for title in titles
-        for text in (title, strip_date_prefix(title))
+        for given in (title, fold(title))
+        for text in (given, strip_date_prefix(given))
         for pattern in patterns
     )
 
