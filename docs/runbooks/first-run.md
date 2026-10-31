@@ -520,7 +520,7 @@ plan (stage 2b spec §10.3) needs a new decision before session A can go on.
 
 **Each spike,** on the homelab server, in that shell, in `$SPIKE_SRC`: `uv run python
 scripts/plaud_spike.py s1`, and so on. Exit 78 means "refused before any call": nothing was sent
-to Plaud, and the line says why. Exit 1 means it stopped after at least one call (a "stopped:"
+to Plaud, and the line says why. Exit 1 means it stopped; calls may have been made (a "stopped:"
 line, or an error named by its class). If a call says `PlaudAuthError` in the middle of a session,
 the sign-in has expired or was signed out: stop, make a fresh session sign-in (above), and rerun
 that spike from its start. Record the sign-out as a finding for S3.

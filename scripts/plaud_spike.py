@@ -25,7 +25,7 @@ Every spike ends by printing how many it refused, by reason.
 **What it prints** is each spike's §18 print list: counts, yes or no, times, status codes, field
 names and `short()` prefixes (8 hex of a SHA-256). Never a token, a title, transcript text or a
 whole Plaud ID. An error line names an exception's class, never its text, except a `ConfigError`'s:
-that is written for display and names keys, never values.
+that is written for display and names keys and paths, never values.
 
 **Exit codes:** 78 means "refused before any call": nothing was sent to Plaud. A stop after a
 call was made (`SpikeStopped`), and any other error, exits 1.
@@ -491,6 +491,32 @@ def _checked(session: Session, row: Listed) -> dict | None:
     return env if _gate(session, row.listed_id, title if isinstance(title, str) else None) else None
 
 
+def _follow(session: Session, env: dict) -> dict:
+    """The links in an envelope the guard passed, followed as `PlaudClient.envelope` does, but on
+    that very envelope: files/{id} is never fetched again after its title was checked. A block
+    that fails records its error's class name in place."""
+    enriched: list[str] = []
+    for section in ("source_list", "note_list"):
+        blocks = env.get(section)
+        for block in blocks if isinstance(blocks, list) else []:
+            if not isinstance(block, dict):
+                continue
+            content, link = block.get("data_content"), block.get("data_link")
+            if (isinstance(content, str) and content.strip()) or not link:
+                continue
+            try:
+                block["data_content"] = session.client.fetch_link(link).decode("utf-8", "replace")
+            except PlaudError as exc:
+                block["_data_link_error"] = type(exc).__name__
+                continue
+            block["_fetched_from_data_link"] = True
+            enriched.append(str(block.get("data_type") or "?"))
+    meta = env.setdefault("_meta", {})
+    if isinstance(meta, dict):
+        meta["enriched_from_links"] = enriched
+    return env
+
+
 def _same_archive(session: Session, listing: Listing) -> None:
     """The consent and private checks match by ID. When the listing and the archive share none,
     they would match nothing (a wrong archive, or an ID form that differs): stop before any
@@ -834,13 +860,15 @@ def s8(session: Session) -> None:
     for row in _named(session, listing, 5):
         name = short(row.canonical_id)
         try:
-            if _checked(session, row) is None:
+            env = _checked(session, row)
+            if env is None:
                 continue
-            first = session.client.envelope(row.listed_id)
+            first = _follow(session, env)
             sleep(PAUSE)
-            if _checked(session, row) is None:
+            env = _checked(session, row)
+            if env is None:
                 continue
-            second = session.client.envelope(row.listed_id)
+            second = _follow(session, env)
         except PlaudError as exc:
             say(f"{name}: {_error(exc)}")
             continue
@@ -881,7 +909,7 @@ def _clip(session: Session, listing: Listing, last: dict) -> tuple[str, Listed |
     if _SHORT.fullmatch(given):
         rows = [row for row in listing.rows if short(row.canonical_id) == given]
         if len(rows) > 1:
-            raise SpikeRefused("refused: two listed recordings print that name: give the Plaud ID")
+            raise SpikeStopped("stopped: two listed recordings print that name: give the Plaud ID")
         if rows:
             return given, rows[0], rows[0].listed_id
         kept = last.get("listed_id") if last.get("id") == given else None
@@ -945,18 +973,22 @@ def s9(session: Session) -> None:
             say(f"{name}: files/{{id}}: {_error(exc)}")
         return
     say(f"{name}: keep-out word: {_yes(keep_out_match(row.title, session.guard.words))}")
-    if not _gate(session, row.listed_id, row.title) or _checked(session, row) is None:
+    if not _gate(session, row.listed_id, row.title):
+        return
+    env = _checked(session, row)
+    if env is None:
         return
     raw = next(
         (r for r in _raw_rows(session.client) if canonical_plaud_id(str(r.get("id"))) == canonical),
         {},
     )
     try:
-        first = session.client.envelope(row.listed_id)
+        first = _follow(session, env)
         sleep(MOMENT)
-        if _checked(session, row) is None:
+        env = _checked(session, row)
+        if env is None:
             return
-        second = session.client.envelope(row.listed_id)
+        second = _follow(session, env)
     except PlaudError as exc:
         say(f"{name}: {_error(exc)}")
         return
@@ -991,7 +1023,7 @@ def s10(session: Session) -> None:
     statuses: collections.Counter[str] = collections.Counter()
     for n in range(20):
         auth = {"Authorization": f"Bearer {session.tokens.access_token()}"}
-        status, names = _raw_get(url, {**auth, "User-Agent": "recordings-spike"})
+        status, names = _raw_get(url, {**auth, "User-Agent": USER_AGENT})
         statuses[str(status)] += 1
         limits |= {h for h in names if "ratelimit" in h.lower() or "retry" in h.lower()}
         if status == 429:
@@ -1023,7 +1055,8 @@ def s11(session: Session) -> None:
     say(f"Range honoured: {_yes(status == 206)} (HTTP {status})")
     # download() refuses a body without one, as IncompleteDownload: the same word as a stall.
     has_length = any(name.lower() == "content-length" for name in seen)
-    say(f"Content-Length: {'present' if has_length else 'absent'}")
+    answered = status in (200, 206)  # any other answer says nothing about the real response
+    say(f"Content-Length: {('present' if has_length else 'absent') if answered else 'unknown'}")
     dest = session.folder / "s11.audio"
     start = session.monotonic()
     try:
@@ -1139,7 +1172,7 @@ def main(argv: list[str] | None = None) -> int:
         say(str(exc))
         return EXIT_REFUSED
     except ConfigError as exc:
-        say(f"refused: {exc}")  # written for display: names keys, never values
+        say(f"refused: {exc}")  # written for display: keys and paths, never values
         return EXIT_REFUSED
     except SpikeStopped as exc:
         say(str(exc))

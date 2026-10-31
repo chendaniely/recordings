@@ -460,7 +460,7 @@ def test_s9_never_prints_a_note_tabs_name(env, spike, capsys):
         note = {
             "data_type": "auto_sum_note",
             "data_tab_name": "Counselling Notes",
-            "data_content": "first" if len(calls) <= 2 else "second",  # checked, fetched, ...
+            "data_content": "first" if len(calls) <= 1 else "second",  # one files/{id} per check
         }
         return Response(
             200, json.dumps({"name": "x", "source_list": [], "note_list": [note]}).encode()
@@ -551,7 +551,7 @@ def test_s8_checks_the_title_on_every_envelope_it_fetches(env, spike, capsys):
 
     def title():
         fetched.append(1)
-        return TITLES[0] if len(fetched) <= 2 else "Private: synthetic"  # check, fetch, check
+        return TITLES[0] if len(fetched) <= 1 else "Private: synthetic"  # the second check refuses
 
     _serve_account(env.fake, envelope_title=title)
     assert spike.main(["s8", "--home", str(env.home), "--id", NORMAL]) == 0
@@ -559,6 +559,8 @@ def test_s8_checks_the_title_on_every_envelope_it_fetches(env, spike, capsys):
     assert f"{spike.short(NORMAL)}: refused by the guard" in out
     assert out.rstrip().endswith("refused: 1 (pattern 1)")
     assert len([r for r in env.fake.requests if r.host == "storage"]) == 1  # the first block only
+    # why: the links followed are the checked envelope's own: no files/{id} again after a check.
+    assert [r.path for r in env.fake.requests].count(FILE_PATH.format("of_" + NORMAL)) == 2
 
 
 def test_an_enforced_words_row_that_cant_be_read_refuses_before_any_call(env, spike, capsys):
@@ -575,3 +577,31 @@ def test_an_enforced_words_row_that_cant_be_read_refuses_before_any_call(env, sp
     assert spike.main(["s5", "--home", str(env.home)]) == 78
     assert capsys.readouterr().out.startswith("refused before any call: the keep-out words")
     assert env.fake.requests == []
+
+
+def test_two_listed_recordings_that_print_one_name_stop_s9_after_the_listing(
+    env, spike, capsys, monkeypatch
+):
+    # why: the stop comes after the listing was read, so it is exit 1, never 78.
+    _serve_rows(env.fake, _clip_rows(datetime.now(UTC).isoformat()))
+    monkeypatch.setattr(spike, "short", lambda value: "abcdef01")
+    assert spike.main(["s9", "--home", str(env.home), "--id", "abcdef01"]) == 1
+    assert "stopped: two listed recordings print that name" in capsys.readouterr().out
+
+
+def test_s11_says_unknown_unless_the_range_probe_got_a_200_or_a_206(
+    env, spike, capsys, monkeypatch
+):
+    _serve_account(env.fake)
+    env.fake.link("audio.mp3", b"synthetic audio " * 8)
+    for answer in ((403, ["Content-Length"]), (None, [])):
+        monkeypatch.setattr(spike, "_raw_get", lambda url, headers, answer=answer: answer)
+        assert spike.main(["s11", "--home", str(env.home), "--id", NORMAL]) == 0
+        assert "Content-Length: unknown" in capsys.readouterr().out
+
+
+def test_s10_sends_the_clients_user_agent(env, spike, capsys, monkeypatch):
+    sent = []
+    monkeypatch.setattr(spike, "_raw_get", lambda url, headers: sent.append(headers) or (200, []))
+    assert spike.main(["s10", "--home", str(env.home)]) == 0
+    assert len(sent) == 20 and {h["User-Agent"] for h in sent} == {USER_AGENT}
