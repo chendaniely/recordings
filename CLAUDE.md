@@ -138,6 +138,12 @@ smoke test on purpose until someone does the steps below:
   first. Until then it carries whatever tags Dan gave it; with none, external agents already
   treat it as private. Don't read a private recording's transcript or notes. No report, alert or
   log carries a title.
+- **The Plaud client is read-only and runs only in the worker.** `recordings_ui` never imports
+  the client, the token store or the sync (`packages/ui/tests/test_plaud_imports.py`), not even
+  at runtime: what reads settings takes `API_BASE` and `check_api_base` from the network-free
+  `plaud/endpoint.py`, never from the client. No test reaches Plaud: the root `conftest.py`
+  refuses every `plaud.ai` host and drops every `*_proxy` variable, and the client's tests use
+  the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture).
 - **Tag changes from the app go through `recordings.tagops`** (`AddTags`, `RemoveTags`, `RestoreTags`),
   applied by `Writer.mutate` on the tag service's one writer thread
   (`recordings_ui/tagging.py`, `writing.py`). The privacy gate is inside the operations: a

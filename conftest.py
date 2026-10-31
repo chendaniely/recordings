@@ -1,6 +1,7 @@
 """Fixtures for every test in the repo: packages/core/tests and packages/ui/tests."""
 
 import os
+import socket
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,13 @@ from recordings import config
 # real-restic tests instead of skipping them; RECORDINGS_TEST_RESTIC names a restic to use.
 KEEP = frozenset({"RECORDINGS_REQUIRE_RESTIC", "RECORDINGS_TEST_RESTIC"})
 NO_CONFIG = Path("/nonexistent/recordings-tests/config.toml")
+
+# No test goes through a proxy. Through an https proxy, urllib hands a host name to the proxy, which
+# looks it up itself, past no_plaud_network's guard; and the Plaud client builds its openers from
+# the environment when it is imported. So every *_proxy variable goes here, before any test module
+# is imported (the plan council's S6).
+for _name in [name for name in os.environ if name.lower().endswith("_proxy")]:
+    del os.environ[_name]
 
 
 def host_settings(environ) -> list[str]:
@@ -29,3 +37,19 @@ def no_settings_from_this_machine(monkeypatch):
         monkeypatch.delenv(name)
     monkeypatch.setattr(config, "DEFAULT_PATH", NO_CONFIG)
     return host_settings
+
+
+@pytest.fixture(autouse=True)
+def no_plaud_network(monkeypatch):
+    """No test reaches Plaud (stage 2b phase 1 plan, decision 30): looking up any host ending in
+    plaud.ai fails, so a test that would call Plaud by mistake fails loudly instead. urllib, and
+    so the client, resolves every host through socket.getaddrinfo."""
+    real = socket.getaddrinfo
+
+    def guarded(host, *args, **kwargs):
+        name = host.decode("ascii", "replace") if isinstance(host, bytes) else str(host or "")
+        if name.rstrip(".").lower().endswith("plaud.ai"):
+            raise OSError("tests never reach Plaud")
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded)

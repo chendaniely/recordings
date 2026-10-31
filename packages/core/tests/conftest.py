@@ -2,9 +2,11 @@
 
 import csv
 import hashlib
+import importlib.util
 import io
 import itertools
 import json
+import sys
 import threading
 import wave
 from datetime import UTC, datetime
@@ -20,6 +22,19 @@ from recordings.writer import Incoming, Writer
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 LOCAL = datetime.fromisoformat("2026-10-06T14:00:03-07:00")
+
+
+def _helper(name: str):
+    """A helper module beside this file, importable by its name from every test here: pytest's
+    importlib mode (pyproject.toml) puts no test folder on sys.path."""
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+fake_plaud = _helper("fake_plaud")
 
 
 @pytest.fixture
@@ -535,5 +550,13 @@ def ntfy():
 def other_ntfy():
     """A second FakeNtfy, on another port: where a redirect would lead."""
     server = FakeNtfy()
+    yield server
+    server.close()
+
+
+@pytest.fixture
+def plaud_server():
+    """The fake Plaud server (fake_plaud.py): its API and storage ports, and its request log."""
+    server = fake_plaud.FakePlaud()
     yield server
     server.close()
