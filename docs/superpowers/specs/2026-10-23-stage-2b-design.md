@@ -2040,6 +2040,9 @@ exception class names. Never a title, a token, a URL from Plaud, or exception te
   folder's owner, a busy `state.db`) says instead "Recording `<id>` should be private, but its file
   couldn't be written (`<ExceptionClass>`): check the archive disk and its permissions.", because
   `recordings reindex` can't mend those (2b phase 1 plan, decision 58).
+  One whose `recording.json` is missing (its folder is still there) says "Recording `<id>` should be
+  private, but its recording.json is missing: restore it from a backup, or run `recordings
+  reindex`." (decision 58).
 - **A recording:** "up to date", "updated: speakers, title", "degraded", "suppressed", "busy",
   "failed: Plaud unavailable", "not checked: kept out", "not checked: on the consent list", "gone from
   Plaud", "parked", "re-tagged private: title changed", "re-tagged private: the sync's record was
@@ -2079,7 +2082,7 @@ attempts, or working imports with the breaker open, can be good), so each stops 
 | `consent` | a consent stop (§12.1) | a run that reads the list cleanly | fix the lines named |
 | `hold` | the listing hold (§11.4) | Accept, or a later listing that no longer meets it | Status's check, then Accept |
 | `breaker` | the breaker trips (§14.4) | Accept these changes, a release that closes it, or `breaker reset` | Accept these changes, or a code fix |
-| `private-unwritten` | a `private` the sync owes fails to land (§13.2) | the tag lands | `recordings reindex` |
+| `private-unwritten` | a `private` the sync owes fails to land (§13.2) | the tag lands | follows the cause (§15.6): `recordings reindex` for an outside edit, a backup or reindex for a missing `recording.json`, the disk and its permissions otherwise |
 
 **Never a blocker:** late keep-outs and late consent listings (already `private`, and flagged once
 per recording); a rebuild's review list (§11.6); failing or parked recordings (P4); a failed Sync
@@ -3106,3 +3109,5 @@ None: every bullet of §20 is planned in a phase.
   characters makes a typo, so an ordinary note line isn't one (§12.1 rule 4; Phase 1, Task 3).
 - 2026-10-31: §15.6 gains the private-unwritten sentence for a cause other than an outside edit or
   an invalid file, beside the `recordings reindex` one (2b phase 1 plan, decision 58; Phase 1, Task 8).
+- 2026-10-31: §15.6 gains the private-unwritten sentence for a missing `recording.json`, and §16's
+  row says the step follows the cause (2b phase 1 plan, decision 58; Phase 1, Task 8).

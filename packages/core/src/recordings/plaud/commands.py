@@ -107,8 +107,8 @@ def _here(
     cfg: config.Config, state: State | None, ids: frozenset[str]
 ) -> dict[str, set[str]] | None:
     """Each recording here that the list names, with the IDs that name it, as the worker finds
-     them (`flags.listed_here`); None when the index can't answer (missing, another archive's, busy,
-    )."""
+    them (`flags.listed_here`); None when the index can't answer (missing, another archive's,
+    busy, or a pending update that can't be read)."""
     if cfg.archive_path is None or cfg.index_path is None:
         return None
     try:

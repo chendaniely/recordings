@@ -19,6 +19,7 @@ from recordings.plaud.flags import (
     NOTHING_TO_KEEP,
     PRIVATE_UNWRITTEN,
     PRIVATE_UNWRITTEN_IO,
+    PRIVATE_UNWRITTEN_MISSING,
     SENTENCES,
     apply_late_consent,
     flag,
@@ -313,6 +314,9 @@ def test_an_unwritten_flags_sentence_follows_its_cause():
     )
     io = flag_sentence(PRIVATE_UNWRITTEN, rid, "OSError")
     assert io == PRIVATE_UNWRITTEN_IO.format(id=rid, cause="OSError") and "reindex" not in io
+    missing = flag_sentence(PRIVATE_UNWRITTEN, rid, "FileNotFoundError")
+    assert missing == PRIVATE_UNWRITTEN_MISSING.format(id=rid) and "disk" not in missing
+    assert "recording.json is missing" in missing and "reindex" in missing
     assert flag_sentence(CONSENT_LATE, rid, "OSError") == SENTENCES[CONSENT_LATE]
     # Only a class name is ever shown: anything else in the detail reads as "unknown".
     odd = flag_sentence(PRIVATE_UNWRITTEN, rid, "Synthetic 042: a title")
@@ -466,3 +470,27 @@ def test_a_pending_recording_whose_file_cant_be_read_marks_the_pass_unavailable(
         writer, PlaudDB(writer.state), parse_consent(listed(pid(99))), now=NOW
     )
     assert report.index_unavailable is True
+
+
+@pytest.mark.skipif(ROOT, reason="root enters any folder")
+def test_a_folder_under_a_parent_it_cant_enter_is_owed_not_gone(writer, make_incoming):
+    # why: §12.1. Path.exists() reads any OSError as "no": only "not found" means removed.
+    september = datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
+    first = plaud_rec(writer, make_incoming, 44, recorded_at=september)  # its own month folder
+    second = plaud_rec(writer, make_incoming, 45)
+    db = PlaudDB(writer.state)
+    parent = writer.archive.path_for(first.id).parent
+    mode = parent.stat().st_mode & 0o777
+    parent.chmod(0o000)
+    try:
+        report = apply_late_consent(writer, db, parse_consent(listed(pid(44), pid(45))), now=NOW)
+        writer.state.mark_index_pending(first.id)
+        pending = apply_late_consent(writer, db, parse_consent(listed(pid(99))), now=NOW)
+    finally:
+        parent.chmod(mode)
+    assert report.unwritten == (first.id,) and report.causes[first.id] in {
+        "PermissionError",
+        "FileNotFoundError",
+    }
+    assert report.tagged == (second.id,)
+    assert pending.index_unavailable is True

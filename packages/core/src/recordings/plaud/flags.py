@@ -14,7 +14,8 @@
   `state.db`, a file that doesn't decode: `UNWRITTEN`) is reported in `unwritten`, so the worker
   opens its blocker (§16), and the loop goes on; a flag `state.db` refuses is added at the next
   tick. Python reads a folder it can't enter as "no file there", so only `mutate`, which reads
-  the file itself, decides that a recording is gone.
+  the file itself, decides that a recording is missing a file, and `_gone` (a `stat`, where only
+  "not found" counts) decides that its folder is.
 - **An unwritten `private` says what stopped it.** `LateReport.causes` holds each one's exception
   class, which the worker keeps in its `private-unwritten` flag's detail as `"cause"`, and
   `flag_sentence` words the flag by it: an outside edit or an invalid file keeps §13.2's sentence
@@ -33,6 +34,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -69,6 +71,11 @@ PRIVATE_UNWRITTEN_IO = (
     "Recording {id} should be private, but its file couldn't be written ({cause}): check the "
     "archive disk and its permissions."
 )
+# A recording.json that is missing (its folder is still here): reindex or a backup mends it.
+PRIVATE_UNWRITTEN_MISSING = (
+    "Recording {id} should be private, but its recording.json is missing: restore it from a "
+    "backup, or run `recordings reindex`."
+)
 EDITED_CAUSES: frozenset[str] = frozenset({"StaleFile", "InvalidFile"})
 KEPT_HERE = "Kept here: it stays private, and nothing more is fetched from Plaud for it"
 NOTHING_TO_KEEP = "Nothing to keep: there is no open late keep-out for it"
@@ -96,6 +103,8 @@ def flag_sentence(kind: str, recording_id: str, cause: str | None = None) -> str
     cause is set and isn't an outside edit or an invalid file says its file couldn't be written,
     naming the class; anything but a class name in the detail reads as "unknown", so no other text
     is ever shown. A flag with no cause recorded keeps §13.2's sentence."""
+    if kind == PRIVATE_UNWRITTEN and cause == "FileNotFoundError":
+        return PRIVATE_UNWRITTEN_MISSING.format(id=recording_id)
     if kind == PRIVATE_UNWRITTEN and cause is not None and cause not in EDITED_CAUSES:
         shown = cause if cause.isidentifier() and len(cause) <= 64 else "unknown"
         return PRIVATE_UNWRITTEN_IO.format(id=recording_id, cause=shown)
@@ -124,6 +133,18 @@ def flag(db: PlaudDB, kind: str, recording_id: str, *, plaud_id: str | None, now
     return False
 
 
+def _gone(path) -> bool:
+    """Whether a folder is removed. Only "not found" says so: `Path.exists()` reads any OSError
+    (a parent it can't enter, an I/O error) as "no", which would drop a recording still owed."""
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def listed_here(
     index: Index, uuid: str, state: State | None, archive: Archive, ids: frozenset[str]
 ) -> tuple[list[tuple[str, str]], bool]:
@@ -148,7 +169,7 @@ def listed_here(
     for rid in pending:
         found = _plaud_ids(archive, rid)
         if found is None:
-            unavailable = unavailable or archive.path_for(rid).exists()  # else: removed
+            unavailable = unavailable or not _gone(archive.path_for(rid))
             continue
         for pid in sorted(found & ids):
             hits.setdefault(rid, pid)
@@ -203,7 +224,7 @@ def apply_late_consent(
             try:
                 writer.mutate(rid, SetPlaudFields(add_private=True))
             except KeyError:
-                if not writer.archive.path_for(rid).exists():
+                if _gone(writer.archive.path_for(rid)):
                     continue  # removed since the index answered
                 # The folder is still here without its recording.json: owed, never skipped.
                 unwritten.append(rid)
