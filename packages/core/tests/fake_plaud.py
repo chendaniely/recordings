@@ -12,6 +12,7 @@ decision 6). Every title, name and text a test serves is invented.
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,7 @@ class Response:
     status: int = 200
     body: bytes = b""
     headers: dict[str, str] = field(default_factory=dict)
+    hold: float = 0.0  # seconds to keep the connection open, sending nothing, after the body
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,8 @@ class FakePlaud:
                 self.end_headers()
                 if self.command != "HEAD":
                     self.wfile.write(response.body)
+                    if response.hold:
+                        time.sleep(response.hold)
 
             do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = _answer
 
@@ -89,10 +93,12 @@ class FakePlaud:
         *,
         status: int = 200,
         headers: Mapping[str, str] | None = None,
+        hold: float = 0.0,
     ) -> str:
         """Serve `body` at /<name> on the storage host, and return a presigned-style link to it.
-        The signature is synthetic: no test may hold a real one."""
-        response = Response(status, body, dict(headers or {}))
+        The signature is synthetic: no test may hold a real one. `hold` keeps the connection open
+        and silent that many seconds after the body, to make a stall."""
+        response = Response(status, body, dict(headers or {}), hold)
         with self._lock:
             self._routes[("storage", "GET", f"/{name}")] = lambda _query: response
         return f"{self.storage_url}/{name}?X-Amz-Signature=synthetic&X-Amz-Expires=300"

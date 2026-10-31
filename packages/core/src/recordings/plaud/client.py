@@ -18,15 +18,20 @@ own code, relicensed MIT for this repo (main spec §19). The edits, each from §
   in `endpoint`, which loads no network module: the settings reader imports it, never this module,
   so the web app never loads the client (2b phase 1 plan, decision 31). Both names are imported
   here, so `client.API_BASE` and `client.check_api_base` still work.
-- **Nothing secret or personal leaves it.** Every error is one of this module's classes, with a
-  fixed message, raised `from None` outside the handler that caught the cause, so no chained
-  exception carries a URL, a token or a body (some `urllib` errors hold the whole URL). A block
+- **Nothing secret or personal leaves it.** Every error from the network is one of this
+  module's classes, with a fixed message, raised `from None` outside the handler that caught the
+  cause, so no chained exception carries a URL, a token or a body (some `urllib` errors hold the
+  whole URL). Not its own: `ConfigError` from the constructor (a bad `api_base`), `ValueError` from
+  `get_json` for a path that isn't one, and the `OSError` of a local file (the destination's folder,
+  its `.part`, the rename), which is the archive's trouble and never reads as "offline". A block
   that fails records its error's class name, never `str(exc)`. A Plaud ID is shown only as
   `id_hash`.
 - **Timeouts:** 10 seconds to connect, 60 to read. A download also has a stall rule: no bytes for
-  60 seconds (the read timeout), or under 50 KB/s on average after its first minute. Past that
-  minute, staying above the average also bounds the whole download by Content-Length / MIN_RATE,
-  which is §10.1's ceiling scaled from Content-Length.
+  60 seconds (the read timeout, which raises `IncompleteDownload`), or under 50 KB/s on average
+  after its first minute. Past that minute, staying above the average also bounds the whole
+  download by Content-Length / MIN_RATE, which is §10.1's ceiling scaled from Content-Length. A
+  download needs a Content-Length (ASCII digits, not 0) and never writes more than it declares.
+  Other answers are read up to 64 MiB.
 
 Phase 2 sets `PAGE_SIZE` from S5 and adds pacing, the budget and backoff from S5 and S10 (§10.2):
 this copy makes one call when asked and never waits.
@@ -34,6 +39,7 @@ this copy makes one call when asked and never waits.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import http.client
 import json
@@ -65,6 +71,7 @@ USER_AGENT = f"recordings/{__version__}"  # bare urllib's default gets a flat 40
 _CHUNK = 64 * 1024
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _LIST_KEYS = ("data", "data_list", "files", "items", "list")
+_MAX_BODY = 64 * 1024 * 1024  # an API answer or a block is never near this; more is refused
 
 
 class PlaudError(Exception):
@@ -131,7 +138,7 @@ class TokenSource(Protocol):
 class Listed:
     """One row of the list endpoint: metadata only, no content."""
 
-    listed_id: str  # exactly as the listing gave it
+    listed_id: str  # as the listing gave it, stripped of surrounding whitespace
     title: str | None  # None: the row had no title field
     created_at: datetime | None
     start_at: datetime | None
@@ -257,9 +264,18 @@ _API_OPENER = _opener(_NoRedirect())
 _LINK_OPENER = _opener(_HttpsRedirect())
 
 
+def _ascii_number(value: object) -> int | None:
+    """A whole number from a header: ASCII digits only. str.isdigit() is also True for '\u00b2',
+    which int() and float() then refuse with a bare ValueError."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return int(text) if text.isascii() and text.isdigit() else None
+
+
 def _retry_after(headers: Any) -> float | None:
-    value = headers.get("Retry-After") if headers is not None else None
-    return float(value) if isinstance(value, str) and value.strip().isdigit() else None
+    seconds = _ascii_number(headers.get("Retry-After") if headers is not None else None)
+    return None if seconds is None else float(seconds)
 
 
 def _from_http(exc: urllib.error.HTTPError) -> PlaudError:
@@ -277,13 +293,17 @@ def _from_http(exc: urllib.error.HTTPError) -> PlaudError:
     return PlaudBadResponse()
 
 
-def _from_transport(exc: BaseException, short: type[PlaudError]) -> PlaudError:
-    """A failure below HTTP (§10.2): a body cut short is `short`; no connection at all (refused,
-    unreachable, no DNS) is "offline"; a timeout, a reset, TLS or a broken reply is "Plaud
-    unavailable"."""
+def _from_transport(
+    exc: BaseException, on_short_body: type[PlaudError], *, stall: type[PlaudError] | None = None
+) -> PlaudError:
+    """A failure below HTTP (§10.2): a body cut short is `on_short_body`; a timeout while reading
+    a body is `stall` when one is given; no connection at all (refused, unreachable, no DNS) is
+    "offline"; a timeout, a reset, TLS or a broken reply is "Plaud unavailable"."""
     reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
     if isinstance(reason, http.client.IncompleteRead):
-        return short()
+        return on_short_body()
+    if stall is not None and isinstance(reason, TimeoutError):
+        return stall()
     if isinstance(
         reason, TimeoutError | ConnectionResetError | ssl.SSLError | http.client.HTTPException
     ):
@@ -291,6 +311,31 @@ def _from_transport(exc: BaseException, short: type[PlaudError]) -> PlaudError:
     if isinstance(reason, OSError):
         return PlaudOffline()
     return PlaudUnavailable()
+
+
+_CAUGHT = (PlaudError, urllib.error.URLError, http.client.HTTPException, OSError, ValueError)
+
+
+def _guarded(
+    call: Callable[[], Any],
+    on_short_body: type[PlaudError],
+    *,
+    stall: type[PlaudError] | None = None,
+) -> Any:
+    """Run one network call (opening a request, or reading its body) and turn whatever it raises
+    into this module's own error, raised after the handler that caught it, so nothing chained to
+    it holds a URL. Only network calls go through here: a local file error is not "offline"."""
+    error: PlaudError
+    try:
+        return call()
+    except PlaudError as exc:  # a refused link redirect, raised in _HttpsRedirect
+        error = exc
+    except urllib.error.HTTPError as exc:
+        error = _from_http(exc)
+        exc.close()
+    except _CAUGHT as exc:
+        error = _from_transport(exc, on_short_body, stall=stall)
+    raise error from None
 
 
 class PlaudClient:
@@ -317,7 +362,7 @@ class PlaudClient:
         url: str,
         *,
         token: str | None,
-        short: type[PlaudError],
+        on_short_body: type[PlaudError],
     ) -> bytes:
         request = urllib.request.Request(url, method="GET")
         request.add_header("User-Agent", USER_AGENT)
@@ -327,18 +372,14 @@ class PlaudClient:
             request.add_unredirected_header("Authorization", f"Bearer {token}")
             request.add_header("Accept", "application/json, text/plain, */*")
             opener = _API_OPENER
-        error: PlaudError | None = None
-        try:
-            with opener.open(request, timeout=CONNECT_TIMEOUT) as response:
-                return response.read()  # a body shorter than Content-Length raises IncompleteRead
-        except PlaudError as exc:  # a refused link redirect, raised in _HttpsRedirect
-            error = exc
-        except urllib.error.HTTPError as exc:
-            error = _from_http(exc)
-            exc.close()
-        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
-            error = _from_transport(exc, short)
-        raise error from None
+        response = _guarded(lambda: opener.open(request, timeout=CONNECT_TIMEOUT), on_short_body)
+        with response:
+            # A body shorter than Content-Length raises IncompleteRead; one past the limit is
+            # refused as a short-body error, whatever it declared.
+            body = _guarded(lambda: response.read(_MAX_BODY + 1), on_short_body)
+        if len(body) > _MAX_BODY:
+            raise on_short_body() from None
+        return body
 
     def get_json(self, path: str) -> Any:
         """GET `api_base + path` with the access token. A 401 asks the token source for a new
@@ -348,15 +389,17 @@ class PlaudClient:
         url = self.api_base + path
         token = self.tokens.access_token()
         try:
-            body: bytes | None = self._get(url, token=token, short=PlaudBadResponse)
+            body: bytes | None = self._get(url, token=token, on_short_body=PlaudBadResponse)
         except PlaudAuthError:
             body = None
         if body is None:  # a 401: one refresh, then one more try
-            body = self._get(url, token=self.tokens.refresh(token), short=PlaudBadResponse)
+            body = self._get(url, token=self.tokens.refresh(token), on_short_body=PlaudBadResponse)
+        error = PlaudBadResponse()
         try:
             return json.loads(body)
         except ValueError:  # broken JSON, an HTML page, bytes that aren't UTF-8
-            raise PlaudBadResponse() from None
+            pass  # raised below, outside the handler: no JSONDecodeError (it holds the body)
+        raise error from None
 
     # -- endpoints -------------------------------------------------------------------------------
     def list_page(self, page: int, page_size: int = PAGE_SIZE) -> Page:
@@ -427,52 +470,54 @@ class PlaudClient:
     def fetch_link(self, url: str) -> bytes:
         """A presigned link's body: checked by check_link, sent without Authorization."""
         return self._get(
-            check_link(url, api_base=self.api_base), token=None, short=IncompleteDownload
+            check_link(url, api_base=self.api_base), token=None, on_short_body=IncompleteDownload
         )
 
     def download(self, url: str, dest: Path) -> int:
         """Stream a presigned link to `dest`. Complete as well as atomic: a body that isn't
         exactly Content-Length bytes, an empty one, one with no Content-Length, or a stall, is
-        IncompleteDownload, and no file is left. CPython's read(amt) returns b"" at a premature
+        IncompleteDownload, and no file is left. At most Content-Length bytes are ever written.
+        CPython's read(amt) returns b"" at a premature
         end rather than raising, which once let audio-router rename a 100-byte fragment into
         place, so the count is compared here (S11 checks the storage host sends the length)."""
         link = check_link(url, api_base=self.api_base)
         dest = Path(dest)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        part = dest.with_name(dest.name + ".part")
         request = urllib.request.Request(link, method="GET")
         request.add_header("User-Agent", USER_AGENT)
-        error: PlaudError | None = None
-        written = 0
-        try:
-            with (
-                _LINK_OPENER.open(request, timeout=CONNECT_TIMEOUT) as response,
-                part.open("wb") as fh,
-            ):
-                declared = response.headers.get("Content-Length")
-                expected = int(declared) if declared and declared.isdigit() else None
-                start = self.monotonic()
-                while chunk := response.read1(_CHUNK):
-                    fh.write(chunk)
-                    written += len(chunk)
-                    elapsed = self.monotonic() - start
-                    if elapsed > self.stall_seconds and written / elapsed < self.min_rate:
-                        raise IncompleteDownload()
-            if expected is None or written != expected or written == 0:
-                raise IncompleteDownload()
-            os.replace(part, dest)
-            return written
-        except PlaudError as exc:
-            error = exc
-        except urllib.error.HTTPError as exc:
-            error = _from_http(exc)
-            exc.close()
-        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
-            error = _from_transport(exc, IncompleteDownload)
-        finally:
-            if error is not None or not dest.exists():
-                part.unlink(missing_ok=True)
-        raise error from None
+        response = _guarded(
+            lambda: _LINK_OPENER.open(request, timeout=CONNECT_TIMEOUT), IncompleteDownload
+        )
+        with response:
+            # The length bounds the download (§10.1's ceiling, §11.5's disk guard): without a
+            # usable one, nothing is written. http.client ignores it for a chunked body, so the
+            # loop also stops the moment a chunk would pass it.
+            expected = _ascii_number(response.headers.get("Content-Length"))
+            if not expected:
+                raise IncompleteDownload() from None
+            # Past here only the file side raises OSError, and it goes up unchanged.
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            part = dest.with_name(dest.name + ".part")
+            written = 0
+            try:
+                with part.open("wb") as fh:
+                    start = self.monotonic()
+                    while chunk := _guarded(
+                        lambda: response.read1(_CHUNK), IncompleteDownload, stall=IncompleteDownload
+                    ):
+                        if written + len(chunk) > expected:
+                            raise IncompleteDownload() from None
+                        fh.write(chunk)
+                        written += len(chunk)
+                        elapsed = self.monotonic() - start
+                        if elapsed > self.stall_seconds and written / elapsed < self.min_rate:
+                            raise IncompleteDownload() from None
+                if written != expected:
+                    raise IncompleteDownload() from None
+                os.replace(part, dest)
+            finally:
+                with contextlib.suppress(OSError):  # cleanup must not hide the real error
+                    part.unlink(missing_ok=True)
+        return written
 
 
 def stamp_meta(listed: Listed, tz_name: str) -> dict:

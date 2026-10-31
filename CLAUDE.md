@@ -142,7 +142,8 @@ smoke test on purpose until someone does the steps below:
   the client, the token store or the sync (`packages/ui/tests/test_plaud_imports.py`), not even
   at runtime: what reads settings takes `API_BASE` and `check_api_base` from the network-free
   `plaud/endpoint.py`, never from the client. No test reaches Plaud: the root `conftest.py`
-  refuses every `plaud.ai` host and drops every `*_proxy` variable, and the client's tests use
+  refuses every `plaud.ai` host and drops every `*_proxy` variable, for the whole run of pytest's
+  own process (not for a subprocess a test starts), and the client's tests use
   the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture).
 - **Tag changes from the app go through `recordings.tagops`** (`AddTags`, `RemoveTags`, `RestoreTags`),
   applied by `Writer.mutate` on the tag service's one writer thread

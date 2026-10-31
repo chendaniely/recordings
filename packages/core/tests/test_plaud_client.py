@@ -234,6 +234,7 @@ def test_presigned_links_may_redirect_only_to_https(plaud_server):
     # The redirect handler itself: https is followed, anything else refused.
     handler = client_module._HttpsRedirect()
     request = urllib.request.Request("https://storage.example/a")
+    request.add_unredirected_header("Authorization", "Bearer synthetic-access-1")  # as _get does
     headers = {"Location": "https://other.example/b"}
     moved = handler.redirect_request(
         request, _Body(), 302, "Found", headers, "https://other.example/b"
@@ -475,6 +476,21 @@ def test_no_test_can_reach_plaud():
     assert socket.getaddrinfo("127.0.0.1", 80)  # anything else still resolves
 
 
+@pytest.fixture(scope="module")
+def lookup_in_a_module_fixture():
+    # A module-scoped fixture runs before any function-scoped one, so a guard that only a
+    # function-scoped fixture installs would not cover it.
+    try:
+        socket.getaddrinfo("platform.plaud.ai", 443)
+    except OSError as exc:
+        return str(exc)
+    return "resolved"
+
+
+def test_the_guard_covers_module_scoped_fixtures_too(lookup_in_a_module_fixture):
+    assert lookup_in_a_module_fixture == "tests never reach Plaud"
+
+
 def test_no_test_goes_through_a_proxy():
     # why: S6. Through an https proxy, urllib hands Plaud's host name to the proxy, which looks it
     # up itself, past the guard above. The root conftest drops every *_proxy variable before the
@@ -483,3 +499,128 @@ def test_no_test_goes_through_a_proxy():
     for opener in (client_module._API_OPENER, client_module._LINK_OPENER):
         proxies = [h.proxies for h in opener.handlers if isinstance(h, urllib.request.ProxyHandler)]
         assert not any(proxies), proxies
+
+
+def _chunked(body: bytes) -> bytes:
+    return f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n"
+
+
+def test_a_download_is_bounded_by_its_content_length(plaud_server, tmp_path, monkeypatch):
+    # why: §10.1's ceiling is scaled from Content-Length, and §11.5's disk guard assumes it. A
+    # chunked body ignores the length in http.client, and a missing or odd length bounds nothing.
+    sizes = []
+    real_open = Path.open
+
+    def spying_open(self, *args, **kwargs):
+        handle = real_open(self, *args, **kwargs)
+        if self.name.endswith(".part"):
+            real_write = handle.write
+            handle.write = lambda data: sizes.append(len(data)) or real_write(data)
+        return handle
+
+    monkeypatch.setattr(Path, "open", spying_open)
+    chunked = {"Transfer-Encoding": "chunked", "Content-Length": "10"}
+    cases = [
+        (_chunked(AUDIO), chunked),  # more than it declared
+        (AUDIO, {"Content-Length": ""}),  # no length
+        (AUDIO, {"Content-Length": "0"}),  # a zero length
+        (AUDIO, {"Content-Length": "²"}),  # not an ASCII number
+    ]
+    for n, (body, headers) in enumerate(cases):
+        link = plaud_server.link(f"bounded-{n}.mp3", body, headers=headers)
+        with pytest.raises(IncompleteDownload) as info:
+            _client(plaud_server).download(link, tmp_path / "a.mp3")
+        _no_url_in(info.value, "127.0.0.1")
+        assert not list(tmp_path.iterdir())
+    assert sum(sizes) <= 10  # only the chunked case could write, and never past its length
+
+
+@pytest.mark.parametrize("digit", ["²", "³", "¹"])
+def test_a_header_number_is_read_in_ascii_digits_only(plaud_server, tmp_path, digit):
+    # why: '²'.isdigit() is True and float() then raises a bare ValueError, whose context is an
+    # HTTPError that holds the whole presigned URL. Every error here is the module's own.
+    plaud_server.route("GET", LIST_PATH, lambda q: Response(429, b"", {"Retry-After": digit}))
+    with pytest.raises(PlaudRateLimited) as info:
+        _client(plaud_server).list_page(1)
+    assert info.value.retry_after is None
+    _no_url_in(info.value, plaud_server.api_url)
+    limited = plaud_server.link("limited", b"", status=429, headers={"Retry-After": digit})
+    for call in (
+        lambda: _client(plaud_server).fetch_link(limited),
+        lambda: _client(plaud_server).download(limited, tmp_path / "a.mp3"),
+    ):
+        with pytest.raises(PlaudRateLimited) as info:
+            call()
+        _no_url_in(info.value, limited, plaud_server.storage_url)
+    odd = plaud_server.link("odd", AUDIO, headers={"Content-Length": digit})
+    with pytest.raises(IncompleteDownload) as info:
+        _client(plaud_server).download(odd, tmp_path / "a.mp3")
+    _no_url_in(info.value, odd, plaud_server.storage_url)
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+def test_a_local_file_error_is_not_offline(plaud_server, tmp_path):
+    # why: a read-only folder or a full disk is the archive's trouble, not a lost connection.
+    folder = tmp_path / "locked"
+    folder.mkdir()
+    folder.chmod(0o500)
+    try:
+        link = plaud_server.link("audio.mp3", AUDIO)
+        with pytest.raises(OSError) as info:
+            _client(plaud_server).download(link, folder / "a.mp3")
+        assert not isinstance(info.value, PlaudError)
+    finally:
+        folder.chmod(0o700)
+    assert not list(folder.iterdir())
+
+
+def test_a_stall_in_the_read_loop_is_an_incomplete_download(plaud_server, tmp_path, monkeypatch):
+    # why: the docs say a stalled download is IncompleteDownload: no bytes for READ_TIMEOUT.
+    monkeypatch.setattr(client_module, "READ_TIMEOUT", 0.3)
+    link = plaud_server.link(
+        "stalls.mp3", AUDIO[:1000], headers={"Content-Length": str(len(AUDIO))}, hold=3.0
+    )
+    with pytest.raises(IncompleteDownload) as info:
+        _client(plaud_server).download(link, tmp_path / "a.mp3")
+    _no_url_in(info.value, "127.0.0.1")
+    assert not list(tmp_path.iterdir())
+
+
+def test_a_body_past_the_read_limit_is_refused(plaud_server, monkeypatch):
+    monkeypatch.setattr(client_module, "_MAX_BODY", 100)
+    plaud_server.route("GET", LIST_PATH, lambda q: Response(200, b"[" + b" " * 200 + b"]"))
+    with pytest.raises(PlaudBadResponse):
+        _client(plaud_server).list_page(1)
+    link = plaud_server.link("big", b"x" * 200)
+    with pytest.raises(IncompleteDownload):
+        _client(plaud_server).fetch_link(link)
+    small = plaud_server.link("small", b"x" * 100)
+    assert _client(plaud_server).fetch_link(small) == b"x" * 100
+
+
+def test_broken_json_leaves_no_context_holding_the_body(plaud_server):
+    plaud_server.route("GET", LIST_PATH, lambda q: Response(200, b"<html>sign in</html>"))
+    with pytest.raises(PlaudBadResponse) as info:
+        _client(plaud_server).list_page(1)
+    assert info.value.__context__ is None and info.value.__cause__ is None
+    _no_url_in(info.value, "sign in")
+
+
+def test_connections_use_the_connect_and_read_timeouts(plaud_server, monkeypatch):
+    # why: §10.1. 10 seconds to connect (the opener's timeout, which http.client keeps as
+    # `timeout`), then 60 to read (set on the socket once connected).
+    seen = []
+    real = client_module._HTTPConnection.connect
+
+    def spy(self):
+        real(self)
+        seen.append((self.timeout, self.sock.gettimeout()))
+
+    monkeypatch.setattr(client_module._HTTPConnection, "connect", spy)
+    plaud_server.route("GET", LIST_PATH, lambda q: _json([]))
+    _client(plaud_server).list_page(1)
+    assert seen == [(10.0, 60.0)]
+    for opener in (client_module._API_OPENER, client_module._LINK_OPENER):
+        kinds = {type(h) for h in opener.handlers}
+        assert client_module._HTTPHandler in kinds and client_module._HTTPSHandler in kinds
