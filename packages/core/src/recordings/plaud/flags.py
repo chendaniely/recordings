@@ -11,8 +11,9 @@
   "nothing here". Recordings whose index update is still pending are read from their files.
 - **One recording never stops the others** (§12.1, "Every other recording keeps flowing"). A
   `private` that can't be written (an outside edit, a folder it can't enter, a full disk, a busy
-  `state.db`, a file that doesn't decode: `UNWRITTEN`) is reported in `unwritten`, so the worker
-  opens its blocker (§16), and the loop goes on; a flag `state.db` refuses is added at the next
+  `state.db`, a file that doesn't decode, or a bug in that one recording: the Writer's
+  `RECONCILE_ERRORS`) is reported in `unwritten`, so the worker opens its blocker (§16), and the
+  loop goes on; a flag `state.db` refuses is added at the next
   tick. Python reads a folder it can't enter as "no file there", so only `mutate`, which reads
   the file itself, decides that a recording is missing a file, and `gone` (a `stat`, where only
   "not found" counts) decides that its folder is.
@@ -60,7 +61,7 @@ from recordings.plaud.consent import LEGACY_ENTRY_RE
 from recordings.plaud.keepout import ConsentList
 from recordings.refs import canonical_plaud_id
 from recordings.state import State
-from recordings.writer import InvalidFile, NotTheWriter, SetPlaudFields, StaleFile, Writer
+from recordings.writer import RECONCILE_ERRORS, SetPlaudFields, Writer
 
 SENTENCES: dict[str, str] = {
     CONSENT_LATE: "On the consent list, but in the archive: take it out by hand (runbook)",
@@ -83,10 +84,6 @@ PRIVATE_UNWRITTEN_MISSING = (
 EDITED_CAUSES: frozenset[str] = frozenset({"StaleFile", "InvalidFile"})
 KEPT_HERE = "Kept here: it stays private, and nothing more is fetched from Plaud for it"
 NOTHING_TO_KEEP = "Nothing to keep: there is no open late keep-out for it"
-# What writing one recording's `private` can raise that leaves it owed: the Writer's refusals, the
-# file system's (a folder's owner, a full or read-only disk), state.db's, and a file that doesn't
-# decode (UnicodeDecodeError is a ValueError).
-UNWRITTEN = (StaleFile, InvalidFile, NotTheWriter, OSError, sqlite3.Error, ValueError)
 
 
 @dataclass(frozen=True)
@@ -265,7 +262,8 @@ def apply_late_consent(
             except LockTimeout:
                 busy.append(rid)  # retried at the next tick, flag and all
                 continue
-            except UNWRITTEN as exc:
+            except RECONCILE_ERRORS as exc:
+                # The Writer's one list: a bug in this recording stops none after it.
                 # Not logged: the pass runs every tick, and the report carries the ID and class.
                 unwritten.append(rid)
                 causes[rid] = type(exc).__name__  # a class name only: never the exception's text

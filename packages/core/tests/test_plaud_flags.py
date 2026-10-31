@@ -258,6 +258,22 @@ def busy_state_db(writer, rec, monkeypatch) -> None:
     monkeypatch.setattr(writer, "mutate", mutate)
 
 
+def raising(exc: Exception):
+    """A fault: the Writer's mutate raises `exc` for this recording only."""
+
+    def fault(writer, rec, monkeypatch) -> None:
+        real = writer.mutate
+
+        def mutate(recording_id, op):
+            if recording_id == rec.id:
+                raise exc
+            return real(recording_id, op)
+
+        monkeypatch.setattr(writer, "mutate", mutate)
+
+    return fault
+
+
 def file_missing(writer, rec, monkeypatch) -> None:
     """Its folder is still here, but its recording.json is gone."""
     (writer.archive.path_for(rec.id) / "recording.json").unlink()
@@ -278,6 +294,10 @@ ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
         pytest.param(undecodable, "InvalidFile", id="a file that doesn't decode"),
         pytest.param(busy_state_db, "OperationalError", id="a busy state.db"),
         pytest.param(file_missing, "FileNotFoundError", id="a folder with no recording.json"),
+        # RECONCILE_ERRORS' wider members: one recording's bug is that recording's alone
+        pytest.param(raising(TypeError("x")), "TypeError", id="a TypeError"),
+        pytest.param(raising(RecursionError("x")), "RecursionError", id="a RecursionError"),
+        pytest.param(raising(ZeroDivisionError("x")), "ZeroDivisionError", id="an ArithmeticError"),
     ],
 )
 def test_one_recording_that_cant_be_written_stops_none_after_it(
