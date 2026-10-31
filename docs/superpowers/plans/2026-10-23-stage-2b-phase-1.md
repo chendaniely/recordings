@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 25: Phase end, step 2 (the rest of the ledger copied into the plan), open.
+**Now:** Task 25: Phase end, step 3 (the phase-end council), open.
 
 ***
 
@@ -6093,6 +6093,8 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 - [x] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit. The close tells Dan the spike sessions can be scheduled.
 
 **Built differently** (the review's fix rounds, `2aecd27` and `eff76f2`; the listings above are the plan as written): S7's ID-form step fetches only a row the guard passed; S8 and S9 follow the links of the very envelope the guard checked (`_follow`), never a second fetch; `--own-clip` needs a row not in the archive and listed within the last 24 hours; S9 masks note tab names as S8 does; S2, S4 and S10 send the client's `User-Agent`, no status reads "unreachable", and every refusal says to compare with the vendor CLI's own refresh first; the listing and the archive must share a canonical ID before any `files/{id}`; S11 reports `Content-Length` as present, absent or unknown; exit 78 (`SpikeRefused`) only before any call, a stop after calls is `SpikeStopped` (exit 1), and `--id` is checked before any call; an unparsable `keep_out_words` row refuses; runbook 1c copies `[backup]`, gives session C its own setup and sign-in, says what to do on a mid-session `PlaudAuthError`, stops session B when S7 finds no listed ID in the archive, and says only 78 means nothing was sent.
+
+**From the ledger:** at the close Dan was told the spike sessions (runbook 1c) can be scheduled whenever he likes; the script had never run against Plaud.
 
 ### Task 6: The 2b tables, the time helpers and `index.db`'s WAL
 
@@ -14067,6 +14069,8 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 - [x] **Step 9: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
 
 **Built differently** (the build's adaptations, `8ecb3d7`, and the review's fix round, `f165eb3`; the listings above are the plan as written): a private-unwritten flag closes by `flags.still_owed`, and a folder is gone only by `flags.gone` (a folder under a parent the worker can't enter is never read as removed); the pattern pass at start is part of the start: its heartbeat (`checking`) keeps `starting_since`, so a crash loop inside it is STUCK after 30 minutes, the start writes `idle` once the pass ends, and SIGTERM stops it between recordings (a stopped pass isn't recorded complete); `--alive` exits 0 or 1 only (a config it can't read prints a fixed line and exits 1; the daemon still exits 78); CLAUDE.md names the three Writers that write no docs and the baseline and pattern pass among `reconcile_plaud`'s callers; spec §9.2's "Alive" says the same (decision 48).
+
+**From the ledger:** this task's implementer ran on Opus, the largest core task with many consumed names changed in earlier reviews; every other implementer ran on Sonnet. The reviewers ran on Opus, except Task 12's two (Sonnet, for a small diff).
 
 ### Task 14: Requests from the UI
 
@@ -24925,7 +24929,7 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 From `phase-end.md`, the large-project version. Each step ends with its commit (`docs(plan): 🤖 phase end step K: <what it did>`, its trailer `Plan: docs/superpowers/plans/2026-10-23-stage-2b-phase-1.md Phase end`), which ticks its box and sets **Now** to the next step.
 
 - [x] **1. The final whole-branch review:** Matt Pocock's two-axis `code-review` from `git merge-base main HEAD`; superpowers' one fix dispatch and one scoped re-review; a ruling on whatever is left. Each fix is its own commit.
-- [ ] **2. The rest of the ledger copied into the plan:** whatever `.superpowers/sdd/2026-10-23-stage-2b-phase-1/progress.md` holds that no closing commit carries, under the task it belongs to.
+- [x] **2. The rest of the ledger copied into the plan:** whatever `.superpowers/sdd/2026-10-23-stage-2b-phase-1/progress.md` holds that no closing commit carries, under the task it belongs to.
 - [ ] **3. The phase-end council:** four read-only reviewers (goal fit and scenarios, reliability, security, simplicity) on the whole branch; their reports committed first, in `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-end-council.md`; each claim checked against the code before Dan sees it; each finding given a severity and a decision. The security reviewer re-checks every task's tier.
 - [ ] **4. The phase-end list worked through:** each item fixed in its own commit at the tier of what it touches, or moved to the spec's Later with a reason; missing docs written now.
 - [ ] **5. The forward look:** the Phase 2 and Phase 3 outlines below rewritten to fit what was built (every Consumes line they will need, by its built name).
