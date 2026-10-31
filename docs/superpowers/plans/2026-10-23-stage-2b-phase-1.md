@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 24: Demo, Pages, phones and accessibility, open.
+**Now:** Task 25: Phase end, open.
 
 ***
 
@@ -24288,11 +24288,11 @@ Spec §15.4, §15.5 and §21's e2e and Pages lines.
 - Produces: tests and CSS only.
 - Also produced here (named, not in the skeleton): `build_pages.DEMO_VIEW`, and `check_inputs(…, view: Path = DEMO_VIEW)` and `assemble(…, view: Path = DEMO_VIEW)`, which refuse a missing or symlinked canned view as they refuse a missing or symlinked archive.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-24-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-24-base`
 
-- [ ] **Step 1: Check the docs first** (CLAUDE.md): Tailwind v4 on cascade layers and the shadcn Button's own height utility (https://tailwindcss.com/docs; `app.css`'s phone rules are unlayered, so `min-height: 44px` and `width: 100%` win over the Button's `h-8` without `!important`, and `min-height` beats `height`), and WCAG 2.5.8's inline exception, which the target test applies to links in a sentence. The commit names what was checked.
+- [x] **Step 1: Check the docs first** (CLAUDE.md): Tailwind v4 on cascade layers and the shadcn Button's own height utility (https://tailwindcss.com/docs; `app.css`'s phone rules are unlayered, so `min-height: 44px` and `width: 100%` win over the Button's `h-8` without `!important`, and `min-height` beats `height`), and WCAG 2.5.8's inline exception, which the target test applies to links in a sentence. The commit names what was checked.
 
-- [ ] **Step 2: Write the failing tests.** Create `packages/ui/tests/e2e/test_sync.py`:
+- [x] **Step 2: Write the failing tests.** Create `packages/ui/tests/e2e/test_sync.py`:
 
 ```python
 """The Sync screen and Status's sync panel in demo mode (2b spec §15.4, §15.5, §21; phase 1 plan,
@@ -24707,9 +24707,9 @@ def test_the_canned_sync_screen_on_pyodide_sends_no_request_and_logs_nothing(
     watch.assert_clean()
 ```
 
-- [ ] **Step 3: Run them; watch them fail:** `uv run pytest packages/ui/tests/test_build_pages.py packages/ui/tests/test_demo_guard.py -q`. Expected: `TypeError: check_inputs() got an unexpected keyword argument 'view'`, `FileNotFoundError` for the vendored `demo/plaud-sync.json`, and `AttributeError: 'NoneType' object has no attribute 'demo_view'` in the Pages entry's test. The three new demo guard tests may already pass: they guard what Tasks 14, 19 and 20 built (spec §21's guard tests, which fail without it). Then `make build` and `uv run pytest -m e2e packages/ui/tests/e2e/test_sync.py -q`. Expected: `test_targets_are_at_least_44_pixels_at_320` fails listing the small targets (`Sync now: 32 px`, …), and the full-width check with it.
+- [x] **Step 3: Run them; watch them fail:** `uv run pytest packages/ui/tests/test_build_pages.py packages/ui/tests/test_demo_guard.py -q`. Expected: `TypeError: check_inputs() got an unexpected keyword argument 'view'`, `FileNotFoundError` for the vendored `demo/plaud-sync.json`, and `AttributeError: 'NoneType' object has no attribute 'demo_view'` in the Pages entry's test. The three new demo guard tests may already pass: they guard what Tasks 14, 19 and 20 built (spec §21's guard tests, which fail without it). Then `make build` and `uv run pytest -m e2e packages/ui/tests/e2e/test_sync.py -q`. Expected: `test_targets_are_at_least_44_pixels_at_320` fails listing the small targets (`Sync now: 32 px`, …), and the full-width check with it.
 
-- [ ] **Step 4: Pages carries the canned view.** Apply to `scripts/build_pages.py`:
+- [x] **Step 4: Pages carries the canned view.** Apply to `scripts/build_pages.py`:
 
 ```diff
 --- a/scripts/build_pages.py
@@ -24841,7 +24841,7 @@ and to `pages/app.py`:
  from recordings_ui.shiny_app import app  # noqa: E402  after configure()
 ```
 
-- [ ] **Step 5: Phones.** In `packages/ui/frontend/src/app.css`, inside the second `@media (max-width: 760px)` block, after Task 23's `.resync-long` rule, add:
+- [x] **Step 5: Phones.** In `packages/ui/frontend/src/app.css`, inside the second `@media (max-width: 760px)` block, after Task 23's `.resync-long` rule, add:
 
 ```css
   /* The Sync screen and Status's sync panel on a phone (2b spec §15.4): the summary first (it is
@@ -24858,7 +24858,7 @@ and to `pages/app.py`:
   .sync-row > .sync-check { align-self: flex-start; }
 ```
 
-- [ ] **Step 6: The docs the copy makes untrue.** In `CLAUDE.md`, the Toolchain line
+- [x] **Step 6: The docs the copy makes untrue.** In `CLAUDE.md`, the Toolchain line
 
 ```text
 - **`make pages`** builds the static GitHub Pages demo into `_site/` (spec §17.1). Only the demo
@@ -24888,11 +24888,11 @@ pages: build ## build the static Pages demo into _site/
 ```
  In `.github/workflows/pages.yml`, `(only demo/archive/ is ever exported)` becomes `(only demo/archive/ and demo/plaud-sync.json are ever exported)`.
 
-- [ ] **Step 7: Run them; they pass:** `uv run pytest packages/ui/tests/test_build_pages.py packages/ui/tests/test_demo_guard.py -q`, then `make build`, `uv run pytest -m e2e packages/ui/tests/e2e/test_sync.py -q`, and `make pages pages-test`. Expected: all pass.
+- [x] **Step 7: Run them; they pass:** `uv run pytest packages/ui/tests/test_build_pages.py packages/ui/tests/test_demo_guard.py -q`, then `make build`, `uv run pytest -m e2e packages/ui/tests/e2e/test_sync.py -q`, and `make pages pages-test`. Expected: all pass.
 
-- [ ] **Step 8: Run the checks:** `uv run ruff format .`, `make check`, `make e2e`, `make pages pages-test`. Expected: all pass.
+- [x] **Step 8: Run the checks:** `uv run ruff format .`, `make check`, `make e2e`, `make pages pages-test`. Expected: all pass.
 
-- [ ] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 9: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 test(ui): 🤖 the Sync screen and Status's sync panel in demo mode and on Pages, at 1,280 and 320 pixels, with axe and no network
@@ -24916,7 +24916,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/ui/tests/e2e/test_sync.py packages/ui/tests/test_demo_guard.py packages/ui/tests/test_build_pages.py packages/ui/tests/pages/test_pages_site.py scripts/build_pages.py pages/app.py packages/ui/frontend/src/app.css CLAUDE.md README.md Makefile .github/workflows/pages.yml`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 10: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), adding the security checklist's secrets, failing-closed and logging lines (the canned view goes out on public Pages: synthetic, with nothing but the demo archive beside it), the forward review and the close commit.
+- [x] **Step 10: Review, look forward, close.** The controller runs the Tier 2 review (the template's *Reviews*), adding the security checklist's secrets, failing-closed and logging lines (the canned view goes out on public Pages: synthetic, with nothing but the demo archive beside it), the forward review and the close commit.
+
+**Built differently** (`a03ed4c`, and the review's fix round `507aa65`; the listings above are the plan as written): the four-tabs test isn't repeated (Task 21's `test_the_top_bar_at_320_px_is_one_row_of_44_px_targets` pins it), and Step 5's panel rules are left out (Task 22 has them). On a phone a Not here yet row keeps its box and its date and duration on one line, and the title takes the row's full width below (`.sync-page .sync-row .sync-title { flex-basis: 100% }`), tested so that it fails without the rule; `.sync-copy` is scoped to `.sync-page`, so Details' Plaud section keeps Task 23's rules; the equation's numbers (`.sync-jump`) are WCAG 2.5.8's inline exception, neither sized nor counted. The demo guard's request-row test sends Keep it here, a kind the worker handles, so only the demo's guard stops the row, with a control that lifts the guard and sees one land; the Pages smoke test's input spy has a positive control (`selected_id`); the dark axe run checks `html.dark` first. Main spec §17.1 now names the canned view among what Pages exports (amended at the close, by the controller).
 
 ### Task 25: Phase end
 
@@ -24970,6 +24972,7 @@ Their full plans are written at their phase start, against the code as built and
 - The breaker (§14.4): the double fetch, suppression, **Accept these changes**, the normaliser-version close, `breaker reset`, `check --volatility`.
 - Re-sync of one recording and of a selection (`resync`), parking's effects, **Sync everything** (`--full`, resume, the monthly run, the manifest), `/state/manifests` in `extra_paths` and doctor's warning (decision 9).
 - Held removals counted (§14.7) and `recordings plaud held`.
+- `make e2e-live`'s breaker and "Re-sync on a selection" items (§21), which need this phase's handlers (Task 24's spec review); and the Library and Details at 320 px, with Re-sync drawn: the selection bar's height in the short-screen tests, `.plaud-details button`'s 44 px and `.resync-long`.
 - The README's keep-out paragraph with S9's finding; Re-sync's delay note; the runbook's DAN-15 step and `retired_at`; main spec §9.1.1's edit-sync amendments.
 
 ## The phase-end list
@@ -25005,3 +25008,4 @@ Their full plans are written at their phase start, against the code as built and
 | 21 | Minor | `packages/ui/frontend/src/components/SyncPage.tsx` | Updated on Plaud's empty sentence ("Nothing changed on Plaud this week.") comes back once edit-sync measures Plaud's edits. | open: Phase 3's outline |
 | 22 | Minor | `packages/ui/src/recordings_ui/plaud.py`, `packages/ui/frontend/src/components/SyncPanel.tsx` | Signals read from display text or empty values (Task 22's fix round): `_panel_from` finds "failing (since" in the summary's sentence, `held_by_gate` repeats `SyncHealth.cause`'s order, and the panel takes an empty `details.normaliser` for unreadable records; a field each (`summary.says_failing`, `health.cause_kind`, `panel.unreadable`) would say it. A recorded `gate` turn keeps its reason, as no-sync, until the worker's next turn. | open |
 | 23 | Minor | `packages/ui/frontend/src/app.css` | At 320 px the Library's Refresh (tagging part A's) is 26 px tall and the flags line's "See Status" an inline 59 × 16 link: under J7's 44 px (Task 23's spec review). Task 24's scan covers only the Sync screen and the panel. | open |
+| 24 | Minor | `packages/ui/tests/e2e/test_sync.py`, `packages/ui/tests/test_demo_guard.py` | Copied test helpers: `axe`, `AXE` and `WCAG` (from `test_tagging.py`), `DETACHED` (from `test_library.py`), `TWO_FRAMES` (from `test_tagging.py`), and the websocket read loop three times in `test_demo_guard.py`; the guard's control test lifts the guard through `runtime._plaud_state` and `_plaud_reason` (Task 24's reviews). One e2e helpers module. | open |

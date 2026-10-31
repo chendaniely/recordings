@@ -2604,7 +2604,9 @@ come from that frame.
   Pyodide) and deployed by `.github/workflows/pages.yml` on every push to `main`. There is no
   `gh-pages` branch; the workflow uploads the site directly.
 - **Demo only:** the Pages entry module runs demo mode and nothing else. It never reads
-  `config.toml` or `RECORDINGS_ARCHIVE`, and the build exports only `demo/archive/`.
+  `config.toml` or `RECORDINGS_ARCHIVE`, and the build exports only `demo/archive/` and, from
+  stage 2b, the hand-written canned Plaud view beside it, `demo/plaud-sync.json` (synthetic, with
+  every action off).
   Everything in the site is public, including the source and the archive.
 - **No FastAPI in the browser:** Shinylive bundles Starlette 0.38, which can't run the FastAPI
   layer and can't answer Range requests. So Pages serves the media itself, as static files at
