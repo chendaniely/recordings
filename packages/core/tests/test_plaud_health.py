@@ -74,6 +74,12 @@ def streak(db):
         pytest.param(None, QUIET, True, id="a good run with no attempts"),
         pytest.param(None, NO_LISTING, False, id="no listing"),
         pytest.param(None, NO_SUCCESS, False, id="attempts, no success"),
+        pytest.param(
+            None,
+            RunOutcome("good", 3, 2, True, "imports stopped"),
+            False,
+            id="imports succeeded, then the disk guard refused one",
+        ),
         pytest.param(streak, QUIET, False, id="a work streak open"),
         *(pytest.param(blocked(n), GOOD, False, id=f"blocker {n}") for n in BLOCKERS),
         # Busy, the gate, a sign-in pause and a rate-limit wait all reach conclude_turn as a turn
@@ -312,3 +318,40 @@ def test_a_restart_neither_drops_nor_repeats_a_ping(state, ntfy):
     assert conclude_turn(restarted, GOOD) is True
     assert conclude_turn(context(State.open(state.path), ntfy), GOOD) is True
     assert len(pings(ntfy)) == 2  # one per good turn, none twice
+
+
+def test_imports_that_succeed_before_the_disk_guard_refuses_are_not_a_good_run(state, ntfy):
+    # why: C6.10, §11.7 "A full disk". Some imports worked, then the guard refused one: not good,
+    # so no ping, whatever the successes say. The next run the guard doesn't refuse ends the streak.
+    ctx = context(state, ntfy)
+    partial = RunOutcome("good", 3, 2, True, "imports stopped")
+    assert judge_run(partial) is False
+    assert conclude_turn(ctx, partial) is False
+    assert ctx.db.get(K_FAILING)["cause"] == "disk"
+    assert pings(ntfy) == []
+    assert conclude_turn(ctx, DISK) is False
+    assert conclude_turn(ctx, QUIET) is True
+    assert ctx.db.get(K_FAILING) is None
+    assert pings(ntfy) == [("POST", "/ping/sync-check", "")]
+
+
+def test_a_small_shrink_listing_counts_as_good(state, ntfy):
+    # why: §11.7, §16. A small shrink is a good listing: it pings, and it ends a listing streak.
+    shrink = RunOutcome("small-shrink", 2, 1, False, "ok")
+    assert judge_run(shrink) is True
+    ctx = context(state, ntfy)
+    record_run(ctx.db, NO_LISTING, now=NOW)
+    assert conclude_turn(ctx, shrink) is True
+    assert ctx.db.get(K_FAILING) is None
+
+
+@pytest.mark.parametrize("junk", ["yes", 7, ["work"], True])
+def test_a_failing_value_that_isnt_a_record_stops_the_ping(state, ntfy, junk):
+    # why: §16, fail closed. A K_FAILING nobody can read is a streak, like an unknown cause.
+    ctx = context(state, ntfy)
+    ctx.db.put(K_FAILING, junk, now=NOW)
+    assert sync_health(state, schedule_minutes=20).may_ping() is False
+    # It reads as a work streak: a quiet run (no attempts) leaves it, a run with a success ends it.
+    assert conclude_turn(ctx, QUIET) is False
+    assert pings(ntfy) == []
+    assert conclude_turn(ctx, GOOD) is True

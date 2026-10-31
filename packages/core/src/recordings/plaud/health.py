@@ -18,8 +18,8 @@
   isn't written again, so `at` reads as "since" and a closed gate writes nothing every tick. The
   schedule off isn't a turn: `cause()` reads it from `schedule_minutes`.
 - **`sync_health`** reads `plaud_state` only, so what Status says is what stopped the ping (§16).
-  Phrases are §15.6's; none carries a title, a token or a URL. Times are read and shown through
-  `plaud/when.py`, as every reader of these stamps does.
+  Phrases are §15.6's and §15.2's; none carries a title, a token or a URL. Times are read and
+  shown through `plaud/when.py`, as every reader of these stamps does.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from recordings.plaud.checks import (
     BLOCKER_PREFIX,
@@ -56,6 +56,8 @@ DISK = "imports stopped: the disk is too full to import"
 OFF = "scheduled sync is off"
 GATE = "gate closed"
 _CAUSES = ("listing", "disk", "work")
+_GOOD_LISTINGS = ("good", "small-shrink")
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -69,45 +71,69 @@ class RunOutcome:
 
 def judge_run(outcome: RunOutcome) -> bool:
     return (
-        outcome.listing in ("good", "small-shrink")
+        outcome.listing in _GOOD_LISTINGS
         and (outcome.attempts == 0 or outcome.successes > 0)
         and not outcome.disk_refused
     )
 
 
 def _cause_of(outcome: RunOutcome) -> Cause:
-    if outcome.listing not in ("good", "small-shrink"):
+    if outcome.listing not in _GOOD_LISTINGS:
         return "listing"
     return "disk" if outcome.disk_refused else "work"
 
 
-def _ends(cause: Cause, outcome: RunOutcome, good: bool) -> bool:
+def _cause_ended(cause: Cause, outcome: RunOutcome, good: bool) -> bool:
     if cause == "listing":
         # A good listing ends it; record_run then clears the streak, or carries it on under the
         # run's own cause (every fetch failing), `since` kept: never "up" mid-failure (§11.7).
-        return outcome.listing in ("good", "small-shrink")
+        return outcome.listing in _GOOD_LISTINGS
     if cause == "disk":
         return not outcome.disk_refused
     return good and outcome.successes > 0
 
 
+def _read_failing(db: PlaudDB) -> tuple[str | None, Cause] | None:
+    """K_FAILING as (since stamp or None, cause); None when there is no streak. A value nobody can
+    read is a streak, and an unknown cause is the strictest, "work": both fail closed (§16)."""
+    failing = db.get(K_FAILING)
+    if failing is None:
+        return None
+    if not isinstance(failing, dict):
+        return None, "work"
+    since = failing.get("since")
+    cause = failing.get("cause")
+    return (since if isinstance(since, str) else None), (cause if cause in _CAUSES else "work")
+
+
 def record_run(db: PlaudDB, outcome: RunOutcome, *, now: datetime) -> bool:
     """Start, carry or end the failing streak by its cause (§11.7). Returns judge_run."""
     good = judge_run(outcome)
-    failing = db.get(K_FAILING)
-    if not isinstance(failing, dict):
+    failing = _read_failing(db)
+    if failing is None:
         if not good:
             db.put(K_FAILING, {"since": now.isoformat(), "cause": _cause_of(outcome)}, now=now)
         return good
-    cause = failing.get("cause") if failing.get("cause") in _CAUSES else "work"  # the strictest
-    if _ends(cause, outcome, good):
+    since, cause = failing
+    if _cause_ended(cause, outcome, good):
         if good:
             db.delete(K_FAILING)
         else:
-            since = failing.get("since") if isinstance(failing.get("since"), str) else None
             carried = {"since": since or now.isoformat(), "cause": _cause_of(outcome)}
             db.put(K_FAILING, carried, now=now)
     return good
+
+
+def record_ping(db: PlaudDB, *, now: datetime, ok: bool, status: int | None) -> None:
+    """K_LAST_PING: `failed_since` is the first failed ping's time, kept across later failures and
+    dropped by a good ping, so Status can say "the ping has failed for 2 hours" (§15.2; 2b phase 1
+    plan, decision 32)."""
+    previous = db.get(K_LAST_PING)
+    record: dict[str, Any] = {"at": now.isoformat(), "ok": ok, "status": status}
+    if not ok:
+        before = previous.get("failed_since") if isinstance(previous, dict) else None
+        record["failed_since"] = before if isinstance(before, str) else now.isoformat()
+    db.put(K_LAST_PING, record, now=now)
 
 
 def open_blocker(
@@ -149,15 +175,29 @@ def record_turn(
     db.put(K_LAST_TURN, {"outcome": outcome, "at": now.isoformat(), "detail": detail}, now=now)
 
 
-EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+class Failing(NamedTuple):
+    since: datetime
+    cause: Cause
+
+
+class LastTurn(NamedTuple):
+    outcome: TurnOutcome
+    at: datetime
+    detail: Mapping[str, Any]
+
+
+class LastPing(NamedTuple):
+    at: datetime
+    ok: bool
+    status: int | None  # the HTTP status, None when the check couldn't be reached
 
 
 @dataclass(frozen=True)
 class SyncHealth:
     blockers: Mapping[str, datetime]  # name -> since
-    failing: tuple[datetime, Cause] | None
-    last_turn: tuple[TurnOutcome, datetime, Mapping[str, Any]] | None
-    last_ping: tuple[datetime, bool, int | None] | None  # at, ok, HTTP status
+    failing: Failing | None
+    last_turn: LastTurn | None
+    last_ping: LastPing | None
     catch_up_done: datetime | None
     schedule_minutes: int
 
@@ -211,8 +251,7 @@ def sync_health(state: State, *, schedule_minutes: int) -> SyncHealth:
         or EPOCH
         for key, value in db.with_prefix(BLOCKER_PREFIX).items()
     }
-    failing = db.get(K_FAILING)
-    failing_at = parse_stamp(failing.get("since")) if isinstance(failing, dict) else None
+    failing = _read_failing(db)
     turn = db.get(K_LAST_TURN)
     turn_at = parse_stamp(turn.get("at")) if isinstance(turn, dict) else None
     ping = db.get(K_LAST_PING)
@@ -221,17 +260,15 @@ def sync_health(state: State, *, schedule_minutes: int) -> SyncHealth:
     return SyncHealth(
         blockers=blockers,
         failing=(
-            (failing_at or EPOCH, failing["cause"] if failing.get("cause") in _CAUSES else "work")
-            if isinstance(failing, dict)
-            else None
+            Failing(parse_stamp(failing[0]) or EPOCH, failing[1]) if failing is not None else None
         ),
         last_turn=(
-            (turn["outcome"], turn_at, dict(turn.get("detail") or {}))
+            LastTurn(turn["outcome"], turn_at, dict(turn.get("detail") or {}))
             if turn_at is not None and isinstance(turn.get("outcome"), str)
             else None
         ),
         last_ping=(
-            (ping_at, bool(ping.get("ok")), status if isinstance(status, int) else None)
+            LastPing(ping_at, bool(ping.get("ok")), status if isinstance(status, int) else None)
             if ping_at is not None
             else None
         ),

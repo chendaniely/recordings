@@ -254,12 +254,15 @@ def test_the_runbook_says_what_to_do_when_the_plaud_alert_comes():
     # why: stage 2b spec §17.5, §16. The email carries no reason: Status's line names it, and the
     # runbook must know every phrase Status can show there, as the code spells it.
     from recordings.plaud.health import BLOCKER_PHRASES, DISK, OFF
+    from recordings.plaud.settings import BAD_WORD
 
     text = " ".join(_section("## When the Plaud alert comes").split())
     for needed in ("isn't being pinged since", "`rc ps`", "`rc logs worker`", "Email Reports"):
         assert needed in text, needed
-    for phrase in (*BLOCKER_PHRASES.values(), DISK, OFF):
+    for phrase in (*BLOCKER_PHRASES.values(), DISK, OFF, BAD_WORD):
         assert phrase in text, phrase
+    # The two phrases cause() builds from a name: an error's class and a blocker the app lacks.
+    assert "error: `<Class>`" in text and "blocked: <name>" in text
     assert "`make plaud-sign-in`" in text and "recordings reindex" in text
     # A private the disk or a folder's owner stopped (Task 8's PRIVATE_UNWRITTEN_IO, Task 19's
     # "Late consent listings stopped") isn't mended by reindex.

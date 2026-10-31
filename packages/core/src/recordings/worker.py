@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from recordings.alerts import AlertConfig, ping_url
-from recordings.plaud.checks import K_LAST_PING, PlaudDB
-from recordings.plaud.health import RunOutcome, record_run, sync_health
+from recordings.plaud.checks import PlaudDB
+from recordings.plaud.health import RunOutcome, record_ping, record_run, sync_health
 from recordings.state import State
 
 log = logging.getLogger(__name__)
@@ -29,17 +29,6 @@ class TurnContext:
     alerts: AlertConfig
     schedule_minutes: int
     clock: Callable[[], datetime]
-
-
-def _ping_record(previous: object, *, now: datetime, ok: bool, status: int | None) -> dict:
-    """K_LAST_PING's value: `failed_since` is the first failed ping's time, kept across later
-    failures and dropped by a good ping, so Status can say "the ping has failed for 2 hours"
-    (§15.2; 2b phase 1 plan, decision 32)."""
-    record: dict = {"at": now.isoformat(), "ok": ok, "status": status}
-    if not ok:
-        before = previous.get("failed_since") if isinstance(previous, dict) else None
-        record["failed_since"] = before if isinstance(before, str) else now.isoformat()
-    return record
 
 
 def conclude_turn(ctx: TurnContext, ran: RunOutcome | None) -> bool:
@@ -71,10 +60,7 @@ def conclude_turn(ctx: TurnContext, ran: RunOutcome | None) -> bool:
     status = ping_url(url)
     ok = status is not None and 200 <= status < 300
     try:
-        record = _ping_record(ctx.db.get(K_LAST_PING), now=now, ok=ok, status=status)
-        ctx.db.put(K_LAST_PING, record, now=now)
+        record_ping(ctx.db, now=now, ok=ok, status=status)
     except Exception as exc:  # noqa: BLE001  the ping went; Status just won't show it
         log.warning("conclude_turn: the ping wasn't recorded (%s)", type(exc).__name__)
-    if not ok:
-        log.warning("conclude_turn: the ping failed (HTTP %s)", status)
     return ok
