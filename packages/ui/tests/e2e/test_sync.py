@@ -4,6 +4,7 @@ note, 44-pixel targets on a phone, axe in both themes, and a clean console. The 
 pixels is pinned by test_tagging.py. Run with `make e2e`; each test gets its own demo server
 (conftest's `server`)."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -15,9 +16,10 @@ pytestmark = pytest.mark.e2e
 AXE = Path(__file__).resolve().parents[2] / "frontend" / "node_modules" / "axe-core" / "axe.min.js"
 WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]
 # Every button, disclosure and checkbox target in `scope` under 44 px tall, by its text. Inline
-# links in a sentence are WCAG 2.5.8's inline exception, and aren't counted.
+# links and the equation's numbers (.sync-jump, buttons inside a sentence) are WCAG 2.5.8's inline
+# exception, and aren't counted.
 SMALL_TARGETS = """(scope) => [...document.querySelectorAll(
-        `${scope} button, ${scope} summary, ${scope} .sync-check`)]
+        `${scope} button:not(.sync-jump), ${scope} summary, ${scope} .sync-check`)]
     .map((el) => [el, el.getBoundingClientRect()])
     .filter(([, r]) => r.width > 0 && r.height > 0 && r.height < 43.5)
     .map(([el, r]) => `${(el.textContent || el.className).trim()}: ${Math.round(r.height)} px`)"""
@@ -117,23 +119,43 @@ def test_targets_are_at_least_44_pixels_at_320(page: Page, server, console):
     full = page.locator("[data-request=compare]").bounding_box()
     card = page.get_by_test_id("sync-actions").bounding_box()
     assert full["width"] > card["width"] - 40  # a full-width button, inside the card's padding
+    # The canned panel has no request buttons; what this checks is its open Details summary.
     open_panel(page, server.url)
     assert page.evaluate(SMALL_TARGETS, ".sync-panel") == []
 
 
 def test_a_row_stacks_its_date_and_title_at_320(page: Page, server, console):
+    # §15.4: the box and the date with its duration on one line, the title below on a line of its
+    # own. Plain wrapping already puts a long title under the date, but a short one ("Synthetic
+    # 043") would sit beside it: only the title's full-width basis puts every title below, so each
+    # title spans the row, and the date is one line high.
     page.set_viewport_size({"width": 320, "height": 800})
     open_sync(page, server.url)
-    row = page.get_by_test_id("not-here-row").first
-    when = row.locator(".sync-when").bounding_box()
-    title = row.locator(".sync-title").bounding_box()
-    assert title["y"] >= when["y"] + when["height"] - 1, (when, title)
+    rows = page.get_by_test_id("not-here-row")
+    for i in range(rows.count()):
+        row = rows.nth(i)
+        box = row.bounding_box()
+        check = row.locator(".sync-check").bounding_box()
+        when = row.locator(".sync-when").bounding_box()
+        title = row.locator(".sync-title").bounding_box()
+        line = row.locator(".sync-when").evaluate(
+            "(el) => parseFloat(getComputedStyle(el).lineHeight)"
+        )
+        assert when["height"] < line * 1.5, (i, "the date wraps", when, line)
+        assert abs(check["y"] - when["y"]) < check["height"], (i, "the box is beside the date")
+        assert title["y"] >= when["y"] + when["height"] - 1, (i, when, title)
+        assert title["width"] >= box["width"] - 1, (i, "the title has its own line", title, box)
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_axe_finds_nothing_in_light_and_dark(page: Page, server, console, theme):
     open_sync(page, server.url)
     page.get_by_test_id(f"theme-{theme}").click()
+    dark = re.compile(r"\bdark\b")
+    if theme == "dark":
+        expect(page.locator("html")).to_have_class(dark)
+    else:
+        expect(page.locator("html")).not_to_have_class(dark)
     open_more(page)
     assert axe(page, ".sync-page") == []
     open_panel(page, server.url)

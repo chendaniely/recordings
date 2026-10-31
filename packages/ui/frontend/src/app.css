@@ -450,7 +450,7 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   /* On a phone the panel's numbers stack, each label above its value (2b spec §15.4). */
   .sync-numbers { grid-template-columns: minmax(0, 1fr); }
   /* Its Details summary and Accept buttons are 44 px targets (J7). */
-  .sync-panel .sync-details > summary { padding-block: 12px; }  /* display stays list-item: the marker */
+  .sync-panel .sync-details > summary, .sync-page .sync-more > summary { padding-block: 12px; }  /* display stays list-item: the marker */
   .sync-panel button { min-height: 44px; }
   /* The selection bar's Re-sync is "Re-sync" on a phone, so the bar stays one line (spec §6's
      phone bar, whose height the short-screen tests measure). */
@@ -466,11 +466,14 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   .sync-buttons { flex-direction: column; align-items: stretch; }
   .sync-page [data-slot=button] { width: 100%; min-height: 44px; }
   .sync-panel [data-slot=button] { width: 100%; }
-  .sync-copy, .sync-jump { display: inline-flex; align-items: center; min-height: 44px; }
+  /* Scoped to the Sync screen: Details' Plaud section has its own Copy ID and rows (Task 23).
+     The equation's numbers (.sync-jump) sit inside a sentence: WCAG 2.5.8's inline exception, so
+     they keep their text size. */
+  .sync-page .sync-copy { display: inline-flex; align-items: center; min-height: 44px; }
   .sync-check { min-width: 44px; min-height: 44px; }
-  .sync-more > summary { padding-block: 12px; }  /* Status's Details has its own (Task 22) */
-  .sync-row { flex-direction: column; align-items: stretch; }
-  .sync-row > .sync-check { align-self: flex-start; }
+  /* Rows stacked (§15.4): the box and the date with its duration on one line, the title below on
+     a line of its own. */
+  .sync-page .sync-row .sync-title { flex-basis: 100%; }
 }
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its

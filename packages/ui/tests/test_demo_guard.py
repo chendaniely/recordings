@@ -446,18 +446,42 @@ def test_the_demo_refuses_a_crafted_plaud_request():
     assert reply["message"] == cannot_request_reason(settings, None)
 
 
-def test_the_demos_state_db_never_gets_a_request_row():
+def _request_rows(demo_ids, *, lift_guard: bool) -> int:
+    """How many rows a crafted Keep it here (a kind the worker handles in Phase 1, so only the
+    demo's own guard can refuse it; an Import is refused as not-yet before any insert) leaves in the
+    demo's temporary state.db. With `lift_guard`, the demo's reason and its missing State are
+    taken away first, as a control: it shows the guard is what stops the row."""
+    from recordings.state import State
+
     settings = from_env({}, demo=True)
+    request = {
+        "request_id": "guard0003demo",
+        "kind": "keep-here",
+        "plaud_ids": [],
+        "recording_ids": [next(iter(demo_ids.values()))],
+        "all": False,
+    }
+    state = State(settings.archive.parent / "state")
     try:
         with TestClient(create_app(settings), base_url="http://localhost") as client:
-            assert _plaud_request(client, {**CRAFTED, "request_id": "guard0003demo"})
+            if lift_guard:
+                runtime._plaud_state, runtime._plaud_reason = state, None
+            assert _plaud_request(client, request)
             # The demo's own Writer has opened by now, so its temporary state.db exists.
             assert runtime.tagging().store.wait_open(30) == (True, None)
     finally:
         runtime.configure(None)
-    db = settings.archive.parent / "state" / "state.db"
-    with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM plaud_requests").fetchone() == (0,)
+    with closing(sqlite3.connect(f"file:{state.db_path}?mode=ro", uri=True)) as conn:
+        return conn.execute("SELECT COUNT(*) FROM plaud_requests").fetchone()[0]
+
+
+def test_the_demos_state_db_never_gets_a_request_row(demo_ids):
+    assert _request_rows(demo_ids, lift_guard=False) == 0
+
+
+def test_the_request_row_test_can_fail_when_the_guard_is_lifted(demo_ids):
+    # The control for the test above: the same request lands a row once the demo's guard is gone.
+    assert _request_rows(demo_ids, lift_guard=True) == 1
 
 
 def test_the_demo_starts_no_worker(tmp_path):

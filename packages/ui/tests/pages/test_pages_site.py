@@ -334,6 +334,13 @@ def test_the_canned_sync_screen_on_pyodide_sends_no_request_and_logs_nothing(
     expect(app.get_by_test_id("sync-panel")).to_contain_text(
         "Demo: Plaud sync isn't part of the demo.", timeout=RENDER_TIMEOUT
     )
+    # A positive control: the spy does see an input when the page sends one (choosing a recording
+    # sends selected_id), so "no request sent" isn't vacuous.
+    nav.get_by_role("button", name="Library").click()
+    app.get_by_test_id("recording-row").first.click()
+    frame.wait_for_function(
+        "() => window.__sent.some((n) => n.startsWith('selected_id'))", timeout=RENDER_TIMEOUT
+    )
     sent = frame.evaluate("() => window.__sent")
     assert not [name for name in sent if name.startswith("plaud_request")], sent
     watch.assert_clean()
