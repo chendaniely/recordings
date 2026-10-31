@@ -175,14 +175,65 @@ def test_the_not_pinged_line_names_the_cause_from_sync_health(plaud_scene):
     record_turn(s.db, "ran", now=failed, detail={"result": "Plaud unavailable"})
     panel = sync_panel(s.settings, now=T0)
     assert panel["summary"]["sentence"] == "The sync is failing (since 14:00)"
-    assert panel["failing"] == "Plaud sync failing since 14:00 (Plaud unavailable)."
+    # P12: the failing time is the summary's alone; the lines under it don't say it again.
+    assert panel["failing"] == "Plaud sync failing (Plaud unavailable)."
     assert panel["not_pinged"] == (
-        "The sync's Healthchecks check isn't being pinged since 13:40: the sync is failing "
-        "(since 14:00). It emails you about 2 hours after that."
+        "The sync's Healthchecks check isn't being pinged since 13:40: the sync is failing. "
+        "It emails you about 2 hours after that."
     )
+    said = " ".join([panel["summary"]["sentence"], panel["failing"], panel["not_pinged"]])
+    assert said.count("14:00") == 1
     assert panel["numbers"]["healthchecks"] == "last pinged 13:40"
     # One schedule interval plus 10 minutes after the last ping, and not before.
     assert sync_panel(s.settings, now=T0 - timedelta(minutes=11))["not_pinged"] is None
+
+
+def test_a_failed_ping_shows_its_time_and_http_status(plaud_scene):
+    # C6.09: the Healthchecks line says when the last ping failed and with which status, or that
+    # the check couldn't be reached; a not-pinged line counts a failed attempt as the last ping.
+    s = plaud_scene
+    s.open_gate()
+    failed = T0 - timedelta(minutes=40)
+    s.db.put(K_LAST_PING, {"at": failed.isoformat(), "ok": False, "status": 404}, now=failed)
+    panel = sync_panel(s.settings, now=T0)
+    assert panel["numbers"]["healthchecks"] == "last ping failed 13:40 (HTTP 404)"
+    assert "isn't being pinged since 13:40" in panel["not_pinged"]
+    s.db.put(K_LAST_PING, {"at": failed.isoformat(), "ok": False, "status": None}, now=failed)
+    unreachable = sync_panel(s.settings, now=T0)
+    assert unreachable["numbers"]["healthchecks"] == "last ping failed 13:40 (unreachable)"
+
+
+def test_the_gate_after_the_workers_first_gated_turn_is_still_no_sync_not_a_problem(plaud_scene):
+    # why: §11.6. The worker records a `gate` turn each tick, and sync_health().cause() then
+    # returns the gate's reason; the gate waiting for the first catch-up isn't a failure.
+    s = plaud_scene
+    record_turn(s.db, "gate", now=T0, detail={"reason": GATE_FIRST})
+    view = sync_view(s.settings, now=T0, can_request=None)
+    assert view["summary"]["kind"] == "no-sync" and view["summary"]["sentence"] == GATE_FIRST
+    assert sync_panel(s.settings, now=T0)["summary"] == view["summary"]
+    # A blocker opened after it is a problem, whatever the last turn said.
+    open_blocker(s.db, "consent", now=T0)
+    assert sync_view(s.settings, now=T0, can_request=None)["summary"]["kind"] == "problem"
+
+
+def test_status_says_a_line_needs_attention_holds_once(plaud_scene):
+    # why: P12. The consent stop, a late flag's line and the disk line are in Needs attention
+    # (Status draws it first): the panel's conditions don't repeat them.
+    s = plaud_scene
+    s.open_gate()
+    s.add(12, "Week 12")
+    rid = s.kept_out_late(12)
+    panel = sync_panel(s.settings, now=T0)
+    line = (
+        f"Recording {rid} was kept out by title after it came in. "
+        "Take it out by hand (runbook), or Keep it here."
+    )
+    assert panel["attention"].count(line) == 1 and line not in panel["conditions"]
+    s.db.put(K_CONSENT, {"count": 3, "stop": typo_phrase([14]), "read_at": T0.isoformat()}, now=T0)
+    open_blocker(s.db, "consent", now=T0)
+    panel = sync_panel(s.settings, now=T0)
+    assert not set(panel["conditions"]) & set(panel["attention"])
+    assert any(a.startswith("Plaud imports stopped:") for a in panel["attention"])
 
 
 def test_the_cause_shows_its_times_in_the_default_zone(plaud_scene):
@@ -681,6 +732,11 @@ def _assert_unreadable(s, name):
     assert view["configured"] is True and "disk" in view  # the backups section survives
     assert view["sync"]["summary"]["sentence"] == UNREADABLE_SYNC
     assert view["sync"]["summary"]["see_status"] is True
+    # Nothing was measured: no version, no keep-out words, no numbers for the panel to draw.
+    assert (
+        view["sync"]["details"]["normaliser"] == ""
+        and view["sync"]["details"]["keep_out_words"] == []
+    )
     assert UNREADABLE_LINE.format(name) in view["attention"]
     assert UNREADABLE_LINE.format(name) in view["sync"]["attention"]
     screen = sync_view(s.settings, now=T0, can_request=None)

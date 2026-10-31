@@ -11,7 +11,7 @@ vi.mock("../sr", () => ({ useSetShinyInput: () => () => {}, useShinyMessageHandl
 import { PlaudContext, type Plaud } from "../plaud/usePlaud";
 import { SyncPanel } from "./SyncPanel";
 
-const NOT_PINGED = "The sync's Healthchecks check isn't being pinged since 14:20: sign-in needed. It emails you about 2 hours after that.";
+const NOT_PINGED = "The sync's Healthchecks check isn't being pinged since 14:40: sign-in needed. It emails you about 2 hours after that.";
 const NOT_YET = "Comes with the next part of stage 2b.";
 const EVERY: PlaudKind[] = ["compare", "sync", "import", "resync", "full", "accept", "accept-changes",
   "release-preview", "release", "unrelease", "park", "unpark", "keep-here"];
@@ -84,6 +84,32 @@ describe("Status's sync panel (2b spec §15.2)", () => {
     // C6.09.
     expect(markup(PANEL)).toContain("<dt>Healthchecks</dt><dd>last ping failed 14:40 (HTTP 404)</dd>");
   });
+  it("links to the Sync screen for the gate and a missing listing, not for the demo or no sync yet", () => {
+    // Compare and Keep it here live only on the Sync screen.
+    const gate = { ...PANEL, summary: { kind: "no-sync" as const, sentence: "Waiting for the first catch-up", explain: null, see_status: true } };
+    expect(markup(gate)).toContain('href="#/add">Open the Sync screen');
+    expect(markup({ ...PANEL, demo: true })).not.toContain("Open the Sync screen");
+    expect(markup({ ...PANEL, no_sync_yet: true })).not.toContain("Open the Sync screen");
+  });
+  it("draws no numbers and no Details when the sync's records couldn't be read", () => {
+    const empty = { ...PANEL.details, normaliser: "", census: {}, runs: [], keep_out_words: [] };
+    const html = markup({ ...PANEL, listed: false, details: empty, numbers: { ...PANEL.numbers, equation: null,
+      archive: null, consent: null, last_good_listing: null, sign_in: null, worker: null, healthchecks: null } });
+    expect(html).not.toContain("<dl");
+    expect(html).not.toContain("Normaliser");
+    expect(html).not.toContain("Keep-out words");
+    expect(html).not.toContain("<details");
+  });
+  it("Accept waits for the gate as well as the worker", () => {
+    const hold = { sentence: "Plaud sync paused.", accept: true, refused: null };
+    const breaker = { sentence: "Edit-sync paused since 14:20", accept: true, code_fix: null, fields: ["folder_id"] };
+    const closed = "Waiting for the first catch-up";
+    draw({ ...PANEL, hold, breaker }, fake({ gate: closed }));
+    expect([...host.querySelectorAll("button")].every((b) => b.hasAttribute("disabled"))).toBe(true);
+    expect([...host.querySelectorAll(".sync-why")].map((p) => p.textContent)).toEqual([closed]);
+    draw({ ...PANEL, hold, breaker }, fake({ gate: null }));
+    expect([...host.querySelectorAll("button")].some((b) => b.hasAttribute("disabled"))).toBe(false);
+  });
   it("no sync yet says so", () => {
     const html = markup({ ...PANEL, no_sync_yet: true, failing: null, not_pinged: null, conditions: [],
       summary: { kind: "no-sync", sentence: "No sync has run yet", explain: null, see_status: false } });
@@ -128,6 +154,9 @@ describe("Status's sync panel (2b spec §15.2)", () => {
       expect(html).not.toContain(`<dt>${label}</dt>`);
     }
     expect(html).toContain("<dt>Plaud worker</dt>");
+    // The Archive row waits for a listing too, as on the Sync screen.
+    expect(markup({ ...PANEL, listed: false })).not.toContain("<dt>Archive</dt>");
+    expect(markup(PANEL)).toContain("<dt>Archive</dt>");
     expect(markup(PANEL)).toContain("<dt>Held for review</dt><dd>0</dd>");
   });
   it("the demo says Plaud sync isn't part of the demo", () => {

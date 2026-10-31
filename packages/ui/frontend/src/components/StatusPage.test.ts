@@ -88,7 +88,7 @@ describe("StatusPage", () => {
     const sync: StatusView["sync"] = {
       demo: false, no_sync_yet: false,
       summary: { kind: "problem", sentence: "Imports stopped: consent list", explain: null, see_status: true },
-      failing: null, not_pinged: null, conditions: [line], hold: null, breaker: null,
+      failing: null, not_pinged: null, conditions: [], hold: null, breaker: null, // Needs attention holds it
       handled: ["keep-here"], not_yet: "Comes with the next part of stage 2b.", listed: false,
       numbers: {
         equation: null, archive: null, consent: null, last_good_listing: null, next_sync: null, sweep: null,
@@ -113,6 +113,8 @@ describe("StatusPage", () => {
     expect(panel).toBeGreaterThan(attention);
     expect(panel).toBeLessThan(html.indexOf('aria-labelledby="status-backups"'));
     expect(html).toContain("Imports stopped: consent list");
+    // A line Needs attention holds is said once (the view model keeps it out of the conditions).
+    expect(html.split(line).length - 1).toBe(1);
   });
   it("draws no sync panel where the view has none", () => {
     const html = render({ configured: true, jobs: [backup], attention: [], flags: 0, disk: null });

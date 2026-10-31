@@ -1228,7 +1228,7 @@ And these stop it without a blocker:
 
 | Status says | Do |
 |---|---|
-| the sync is failing (since 12:00) | Status's numbers say why. Plaud unavailable, or offline: wait; it recovers at the next good run. Every fetch failed: `rc logs worker` names the error's class. |
+| the sync is failing (since 12:00) | Status's "Plaud sync failing" line says why. Plaud unavailable, or offline: wait; it recovers at the next good run. Every fetch failed: `rc logs worker` names the error's class. |
 | imports stopped: the disk is too full to import | Free space ("When the data disk fills"); the next run the disk guard doesn't refuse ends it. |
 | scheduled sync is off | Set `[plaud] schedule_minutes` back to 20, then `rc restart worker`. |
 | configuration: `keep_out_word` is invalid | Fix `[plaud] keep_out_word` (1 to 32 letters, digits, `-` or `_`, with at least one letter or digit), then `rc restart worker`. |

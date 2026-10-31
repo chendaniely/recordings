@@ -89,7 +89,7 @@
       "archive": {"from_plaud": 4, "here": 4, "gone": 0, "absent": 0},
       "consent": {"ids": 3, "on_plaud": 1, "file_changed": "2026-10-23 09:12", "read_at": "14:20", "stop": null},
       "last_good_listing": "14:20 (9 listed)",
-      "next_sync": "14:40",
+      "next_sync": null,
       "sweep": "every recording checked within the last 2 hours (oldest 2026-10-23 12:31)",
       "sign_in": null,
       "full": "2026-10-01: all 4 checked",

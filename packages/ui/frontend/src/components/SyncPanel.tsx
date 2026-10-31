@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import { NO_PLAUD, kindReason, usePlaudContext } from "../plaud/usePlaud";
 import type { SyncPanel as Panel } from "../types";
-import { Reasons, SyncBreakerLine, SyncHoldLine, SyncSummary, archiveText, consentText, equationText, n, reasonsFor } from "./SyncSummary";
+import { CodeList, Reasons, SyncBreakerLine, SyncHoldLine, SyncSummary, archiveText, consentBody, equationText, n, reasonsFor } from "./SyncSummary";
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return <><dt>{label}</dt><dd>{children}</dd></>;
@@ -20,14 +20,18 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 export function SyncPanel({ panel }: { panel: Panel }) {
   const plaud = usePlaudContext();
   const why = plaud.available ? null : (plaud.reason ?? NO_PLAUD);
-  const holdWhy = panel.hold?.accept ? kindReason("accept", why, panel) : null;
-  const breakerWhy = panel.breaker?.accept ? kindReason("accept-changes", why, panel) : null;
+  // Off while the gate is closed too: the worker refuses Accept then (spec §9.3), as on the Sync screen.
+  const holdWhy = panel.hold?.accept ? (kindReason("accept", why, panel) ?? plaud.gate) : null;
+  const breakerWhy = panel.breaker?.accept ? (kindReason("accept-changes", why, panel) ?? plaud.gate) : null;
   const held = reasonsFor("sync-panel-held", [holdWhy, breakerWhy]);
-  const { numbers: x, details: d } = panel;
+  const { numbers, details } = panel;
+  // The records that couldn't be read leave the panel's details empty, with no normaliser version:
+  // nothing was measured, so it draws no numbers and no Details.
+  const measured = !panel.no_sync_yet && details.normaliser !== "";
   return (
     <section className="card sync-panel" aria-labelledby="status-sync" data-testid="sync-panel">
       <h2 id="status-sync">Plaud sync</h2>
-      <SyncSummary summary={panel.summary} link="add" />
+      <SyncSummary summary={panel.summary} link={panel.demo || panel.no_sync_yet ? "none" : "add"} />
       {panel.failing && <p className="warn" data-testid="sync-failing">{panel.failing}</p>}
       {panel.not_pinged && <p className="warn" data-testid="sync-not-pinged">{panel.not_pinged}</p>}
       {panel.conditions.length > 0 && (
@@ -40,49 +44,49 @@ export function SyncPanel({ panel }: { panel: Panel }) {
       )}
       {/* Task 21's lines don't say their reason: it is said once here, as on the Sync screen. */}
       {(panel.hold || panel.breaker) && <Reasons prefix="sync-panel-held" list={held.list} />}
-      {!panel.no_sync_yet && (
+      {measured && (
         <>
           <dl className="sync-numbers" data-testid="sync-numbers">
-            {x.equation && <Row label="Listing">{equationText(x.equation)}{x.equation.listing_at && ` · from the listing at ${x.equation.listing_at}`}</Row>}
-            {x.equation && x.equation.arrive_private > 0 && <Row label="Arrive private">{n(x.equation.arrive_private)} of the waiting and missing</Row>}
-            {x.archive && <Row label="Archive">{archiveText(x.archive)}</Row>}
-            {x.consent && <Row label="Consent list">{consentText(x.consent).replace(/^Consent list: /, "")}</Row>}
-            {x.last_good_listing && <Row label="Last good listing">{x.last_good_listing}</Row>}
-            {x.next_sync && <Row label="Next sync">{x.next_sync}</Row>}
-            {x.sweep && <Row label="Sweep">{x.sweep}</Row>}
-            {x.sign_in && <Row label="Sign-in">{x.sign_in}</Row>}
-            {x.full && <Row label="Sync everything">{x.full}</Row>}
+            {numbers.equation && <Row label="Listing">{equationText(numbers.equation)}{numbers.equation.listing_at && ` · from the listing at ${numbers.equation.listing_at}`}</Row>}
+            {numbers.equation && numbers.equation.arrive_private > 0 && <Row label="Arrive private">{n(numbers.equation.arrive_private)} of the waiting and missing</Row>}
+            {panel.listed && numbers.archive && <Row label="Archive">{archiveText(numbers.archive)}</Row>}
+            {numbers.consent && <Row label="Consent list">{consentBody(numbers.consent)}</Row>}
+            {numbers.last_good_listing && <Row label="Last good listing">{numbers.last_good_listing}</Row>}
+            {numbers.next_sync && <Row label="Next sync">{numbers.next_sync}</Row>}
+            {numbers.sweep && <Row label="Sweep">{numbers.sweep}</Row>}
+            {numbers.sign_in && <Row label="Sign-in">{numbers.sign_in}</Row>}
+            {numbers.full && <Row label="Sync everything">{numbers.full}</Row>}
             {panel.listed && (
               <>
-                <Row label="Held for review">{n(x.held)}</Row>
-                <Row label="Gone from Plaud">{n(x.gone)}</Row>
-                <Row label="Failing">{n(x.failing)}</Row>
-                <Row label="Parked">{n(x.parked)}</Row>
+                <Row label="Held for review">{n(numbers.held)}</Row>
+                <Row label="Gone from Plaud">{n(numbers.gone)}</Row>
+                <Row label="Failing">{n(numbers.failing)}</Row>
+                <Row label="Parked">{n(numbers.parked)}</Row>
               </>
             )}
-            {x.worker && <Row label="Plaud worker">{x.worker}</Row>}
-            {x.healthchecks && <Row label="Healthchecks">{x.healthchecks}</Row>}
+            {numbers.worker && <Row label="Plaud worker">{numbers.worker}</Row>}
+            {numbers.healthchecks && <Row label="Healthchecks">{numbers.healthchecks}</Row>}
           </dl>
           <details className="sync-details" data-testid="sync-details">
             <summary>Details</summary>
             <dl className="sync-numbers">
-              <Row label="Normaliser">version {d.normaliser}</Row>
-              {d.fields.length > 0 && <Row label="Fields added or gone">{d.fields.map((f, i) => <span key={f}>{i > 0 && ", "}<code>{f}</code></span>)}</Row>}
-              {Object.keys(d.census).length > 0 && (
-                <Row label="ID forms">{Object.entries(d.census).map(([form, count]) => `${form}: ${n(count)}`).join(" · ")}</Row>
+              <Row label="Normaliser">version {details.normaliser}</Row>
+              {details.fields.length > 0 && <Row label="Fields added or gone"><CodeList items={details.fields} /></Row>}
+              {Object.keys(details.census).length > 0 && (
+                <Row label="ID forms">{Object.entries(details.census).map(([form, count]) => `${form}: ${n(count)}`).join(" · ")}</Row>
               )}
-              {d.form_change && <Row label="Form change">{d.form_change}</Row>}
-              {Object.keys(d.changes_24h).length > 0 && (
-                <Row label="Changes in 24 hours">{Object.entries(d.changes_24h).map(([part, count]) => `${part} ${n(count)}`).join(" · ")}</Row>
+              {details.form_change && <Row label="Form change">{details.form_change}</Row>}
+              {Object.keys(details.changes_24h).length > 0 && (
+                <Row label="Changes in 24 hours">{Object.entries(details.changes_24h).map(([part, count]) => `${part} ${n(count)}`).join(" · ")}</Row>
               )}
-              {d.named_share && <Row label="Named segments">{d.named_share}</Row>}
-              <Row label="Keep-out words">{d.keep_out_words.length > 0 ? d.keep_out_words.map((w, i) => <span key={w}>{i > 0 && ", "}<code>{w}</code></span>) : "none"}</Row>
-              {panel.listed && <Row label="Malformed listing rows">{n(d.malformed)}</Row>}
+              {details.named_share && <Row label="Named segments">{details.named_share}</Row>}
+              <Row label="Keep-out words">{details.keep_out_words.length > 0 ? <CodeList items={details.keep_out_words} /> : "none"}</Row>
+              {panel.listed && <Row label="Malformed listing rows">{n(details.malformed)}</Row>}
             </dl>
-            {d.runs.length > 0 && (
+            {details.runs.length > 0 && (
               <>
-                <h3>The last {n(d.runs.length)} runs</h3>
-                <ul className="sync-runs">{d.runs.map((r, i) => <li key={`${r.at}-${i}`}>{r.at}: {r.result}</li>)}</ul>
+                <h3>The last {n(details.runs.length)} runs</h3>
+                <ul className="sync-runs">{details.runs.map((r, i) => <li key={`${r.at}-${i}`}>{r.at}: {r.result}</li>)}</ul>
               </>
             )}
           </details>

@@ -442,7 +442,7 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   /* On a phone the panel's numbers stack, each label above its value (2b spec §15.4). */
   .sync-numbers { grid-template-columns: minmax(0, 1fr); }
   /* Its Details summary and Accept buttons are 44 px targets (J7). */
-  .sync-panel .sync-details > summary { display: flex; align-items: center; min-height: 44px; }
+  .sync-panel .sync-details > summary { padding-block: 12px; }  /* display stays list-item: the marker */
   .sync-panel button { min-height: 44px; }
 }
 

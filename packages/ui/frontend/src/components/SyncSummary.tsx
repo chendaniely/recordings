@@ -8,16 +8,15 @@ export const n = (x: number) => x.toLocaleString("en");
 
 /** The one summary line the Sync screen and Status's panel share (2b spec §15): "All here ·
  * checked 14:20 · next sync 14:40", explained under it, or the problem in one sentence. On the
- * Sync screen a problem links to Status; on Status the line links to the Sync screen. */
-export function SyncSummary({ summary, link }: { summary: SyncSummaryView; link: "status" | "add" }) {
+ * Sync screen a problem links to Status; on Status the line links to the Sync screen, except where
+ * there is nothing there to open (`link` "none": the demo, and no sync yet). */
+export function SyncSummary({ summary, link }: { summary: SyncSummaryView; link: "status" | "add" | "none" }) {
   return (
     <div className={`sync-summary ${summary.kind}`} data-testid="sync-summary">
       <p className="sync-sentence">
         {summary.sentence}
         {link === "status" && summary.see_status && <> {"·"} <a href="#/status">See Status</a></>}
-        {link === "add" && summary.kind !== "demo" && summary.kind !== "no-sync" && (
-          <> {"·"} <a href="#/add">Open the Sync screen</a></>
-        )}
+        {link === "add" && <> {"·"} <a href="#/add">Open the Sync screen</a></>}
       </p>
       {summary.explain && <p className="muted">{summary.explain}</p>}
     </div>
@@ -47,10 +46,15 @@ export function archiveText(a: ArchiveEquation): string {
 
 /** "Consent list: 14 IDs, 4 on Plaud now · file changed 2026-10-23 09:12 · read 14:20" (§12.1). */
 export function consentText(c: ConsentSummary): string {
-  if (c.stop) return `Consent list: imports stopped: ${c.stop}`;
+  return `Consent list: ${consentBody(c)}`;
+}
+
+/** The same without its "Consent list: " label, for a row that carries the label itself. */
+export function consentBody(c: ConsentSummary): string {
+  if (c.stop) return `imports stopped: ${c.stop}`;
   const on = c.on_plaud === null ? "on Plaud: unknown until the first listing" : `${n(c.on_plaud)} on Plaud now`;
   const ids = `${n(c.ids)} ID${c.ids === 1 ? "" : "s"}`;
-  return [`Consent list: ${ids}, ${on}`, c.file_changed && `file changed ${c.file_changed}`, c.read_at && `read ${c.read_at}`]
+  return [`${ids}, ${on}`, c.file_changed && `file changed ${c.file_changed}`, c.read_at && `read ${c.read_at}`]
     .filter(Boolean).join(" · ");
 }
 
@@ -127,6 +131,11 @@ export function SyncHoldLine({ hold, why, whyId, onAccept }: { hold: SyncHold; w
   );
 }
 
+/** Field names or words as `<code>`, comma-separated. */
+export function CodeList({ items }: { items: string[] }) {
+  return <>{items.map((f, i) => <span key={f}>{i > 0 && ", "}<code>{f}</code></span>)}</>;
+}
+
 /** A breaker trip (§14.4): its sentence, the field names (never values), and Accept these
  * changes, or why it needs a code fix. `why` and `whyId` are as for SyncHoldLine. */
 export function SyncBreakerLine({ breaker, why, whyId, onAccept }: { breaker: SyncBreaker; why: string | null; whyId?: string; onAccept: () => void }) {
@@ -134,7 +143,7 @@ export function SyncBreakerLine({ breaker, why, whyId, onAccept }: { breaker: Sy
     <div className="sync-breaker" data-testid="sync-breaker">
       <p>
         {breaker.sentence}
-        {breaker.fields.length > 0 && <> ({breaker.fields.map((f, i) => <span key={f}>{i > 0 && ", "}<code>{f}</code></span>)})</>}
+        {breaker.fields.length > 0 && <> (<CodeList items={breaker.fields} />)</>}
       </p>
       {breaker.accept && (
         <Button data-request="accept-changes" disabled={why !== null} aria-describedby={why !== null ? whyId : undefined} onClick={onAccept}>

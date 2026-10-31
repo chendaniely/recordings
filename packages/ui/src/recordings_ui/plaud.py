@@ -580,6 +580,19 @@ class _Read:
                 return said.removesuffix(".")
         return found
 
+    def held_by_gate(self) -> bool:
+        """Whether `health_cause` is the gate's reason, from the worker's recorded `gate` turn
+        (health.py's `cause` reaches that outcome only when no blocker, no failing streak and no
+        schedule-off comes first). The gate waiting for the first catch-up isn't a failure."""
+        h = self.health
+        return (
+            not h.blockers
+            and h.failing is None
+            and h.schedule_minutes > 0
+            and h.last_turn is not None
+            and h.last_turn.outcome == "gate"
+        )
+
     def cause(self) -> str | None:
         """What stops the sync, else the gate's reason."""
         return self.health_cause() or self.gate_reason()
@@ -593,7 +606,7 @@ class _Read:
         sentence = _cap(problem) if problem else NO_GOOD_LISTING
         # The gate waiting for the first catch-up, and a listing not yet written, aren't failures
         # (§11.6, §15.2): only what sync_health says stops the sync is a problem.
-        kind = "problem" if stopped else "no-sync"
+        kind = "problem" if stopped and not self.held_by_gate() else "no-sync"
         return {"kind": kind, "sentence": sentence, "explain": None, "see_status": True}
 
     def consent_view(self) -> dict | None:
@@ -940,6 +953,9 @@ def _panel_from(r: _Read) -> dict:
     summary = r.summary_view()
     gate = r.gate_reason()
     cause = r.cause() or silent
+    said_since = "failing (since" in summary["sentence"]
+    if said_since and (cause or "").startswith("the sync is failing (since"):
+        cause = "the sync is failing"  # its time is the summary's (P12)
     failing = None
     if health.failing is not None:
         since, why = health.failing
@@ -947,7 +963,13 @@ def _panel_from(r: _Read) -> dict:
         # listing 11:40." with its reader of the listing (§15.2).
         detail = health.last_turn[2].get("result") if health.last_turn else None
         detail = detail if isinstance(detail, str) and detail else CAUSES.get(why, why)
-        failing = f"Plaud sync failing since {r.when(since)} ({detail})."
+        # The summary says "the sync is failing (since …)" when failing is its cause: the time is
+        # said once, there (P12).
+        failing = (
+            f"Plaud sync failing ({detail})."
+            if said_since
+            else f"Plaud sync failing since {r.when(since)} ({detail})."
+        )
     disk = health.failing is not None and health.failing[1] == "disk"
     stop = r.consent.get("stop")
     consent_stop = (
@@ -987,8 +1009,6 @@ def _panel_from(r: _Read) -> dict:
         conditions.append("Auto-import is off: new recordings wait for you on the Sync screen.")
     if not r.settings.keep_out_word_ok:
         conditions.append(f"Plaud sync is idle: {BAD_WORD}.")
-    # P12: a condition the summary line already says isn't said again under it.
-    conditions = [c for c in conditions if c.removesuffix(".") != summary["sentence"]]
 
     attention: list[str] = []
     if health.failing is not None and now - health.failing[0] > FAILING_FOR:
@@ -1026,6 +1046,11 @@ def _panel_from(r: _Read) -> dict:
         and now - failed_since >= PING_FAILING_FOR
     ):
         attention.append(PING_FAILING)
+    # P12: a condition the summary line already says, or Needs attention already holds (Status
+    # draws that first), isn't said again under it.
+    conditions = [
+        c for c in conditions if c.removesuffix(".") != summary["sentence"] and c not in attention
+    ]
 
     healthchecks = None
     if health.last_ping is not None:
