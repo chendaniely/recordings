@@ -110,7 +110,7 @@ full_sweep_days = 1                # check every recording against Plaud within 
 keep_out_word = "noarchive"        # a Plaud title starting with this word is never downloaded
 auto_private_patterns = ["^\\s*private", "interview:"]
 consent_list = "/consent/consent-list.md"   # inside the consent folder; never a file mount
-token_store = "/plaud/tokens.json" # the Plaud sign-in (worker only; `make plaud-sign-in`)
+token_store = "/plaud/tokens.json" # the Plaud sign-in (worker only; the sign-in comes with stage 2b's next phase)
 # api_base = "https://…"           # Plaud's API: the copied client's by default; tests set a fake
 
 [spark]                                 # stage 4

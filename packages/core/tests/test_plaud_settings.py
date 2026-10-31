@@ -171,3 +171,13 @@ def test_reading_the_settings_imports_no_client_even_when_called():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+def test_no_shipped_template_or_ignore_file_names_a_make_target_that_does_not_exist():
+    # why: Phase 1 has no `make plaud-sign-in` (the Plaud sign-in comes with Phase 2), and doctor
+    # already refuses to point at it. The template and .gitignore must not either.
+    makefile = (REPO / "Makefile").read_text()
+    if "plaud-sign-in:" in makefile:
+        pytest.skip("the target exists now")
+    for name in ("config.example.toml", ".gitignore"):
+        assert "plaud-sign-in" not in (REPO / name).read_text(), name
