@@ -24,7 +24,11 @@ Every spike ends by printing how many it refused, by reason.
 
 **What it prints** is each spike's §18 print list: counts, yes or no, times, status codes, field
 names and `short()` prefixes (8 hex of a SHA-256). Never a token, a title, transcript text or a
-whole Plaud ID. An error line names an exception's class, never its text, whatever the exception.
+whole Plaud ID. An error line names an exception's class, never its text, except a `ConfigError`'s:
+that is written for display and names keys, never values.
+
+**Exit codes:** 78 means "refused before any call": nothing was sent to Plaud. A stop after a
+call was made (`SpikeStopped`), and any other error, exits 1.
 
 **The spike folder** is `$RECORDINGS_HOME/spike`, mode 0700, outside the archive, the state folder,
 the index, `/plaud` and every backup path. The session's sign-in (a temporary HOME, `--token-file`)
@@ -53,9 +57,9 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from recordings.archive import Archive, sha256_file
@@ -67,7 +71,9 @@ from recordings.plaud.client import (
     FILE_PATH,
     LIST_PATH,
     PAGE_SIZE,
+    USER_AGENT,
     Listed,
+    Page,
     PlaudAuthError,
     PlaudClient,
     PlaudError,
@@ -84,7 +90,10 @@ from recordings.sentinel import SentinelError, read_sentinel
 from recordings.state import State
 
 SPIKES = ("s1", "s2", "s3", "s4", "s5", "s7", "s8", "s9", "s10", "s11", "s12")
-REASONS = ("consent", "private", "keep-out", "pattern")
+Reason = Literal["consent", "private", "no title", "keep-out", "pattern"]
+REASONS: tuple[Reason, ...] = ("consent", "private", "no title", "keep-out", "pattern")
+NEEDS_ID = {"s7": 3, "s8": 5, "s11": 1, "s12": 3}  # the spikes that name recordings with --id
+RECENT = timedelta(hours=24)  # S9: how new a clip must be for --own-clip
 EXIT_REFUSED = 78
 PLAUD_MOUNT = Path("/plaud")
 PAUSE = 60.0  # S5 and S8: "a minute apart"
@@ -100,7 +109,11 @@ sleep = time.sleep  # the tests replace it: a spike's pauses are real only in Da
 
 
 class SpikeRefused(Exception):
-    """A fixed phrase: main() prints it and exits 78."""
+    """A fixed phrase, raised only before any call to Plaud: main() prints it and exits 78."""
+
+
+class SpikeStopped(Exception):
+    """A fixed phrase, raised after a call was made: main() prints it and exits 1."""
 
 
 @dataclass
@@ -116,12 +129,13 @@ class Guard:
         """Whether a spike may fetch or download this recording. `own_clip` (S9's clip) skips the
         keep-out check, and nothing else."""
         canonical = canonical_plaud_id(plaud_id)
+        reason: Reason
         if canonical in self.consent:
             reason = "consent"
         elif canonical in self.private_ids:
             reason = "private"
         elif title is None:
-            reason = "pattern"  # no title to check: refused, the safe way
+            reason = "no title"  # nothing to check: refused, the safe way
         elif not own_clip and keep_out_match(title, self.words):
             reason = "keep-out"
         elif matches_auto_private([title, fold(title)], self.patterns):
@@ -203,8 +217,13 @@ def _enforced_words(cfg: Config) -> list[str]:
     try:
         words = json.loads(row[0]) if row else []
     except ValueError:
-        words = []
-    return [w for w in words if valid_word(w)] if isinstance(words, list) else []
+        words = None
+    if not isinstance(words, list):
+        raise SpikeRefused(
+            "refused before any call: the keep-out words the sync enforces can't be read "
+            "(state.db's plaud_state row is not a list)"
+        )
+    return [w for w in words if valid_word(w)]
 
 
 def build_guard(cfg: Config, archive: Archive, production: Path | None) -> Guard:
@@ -409,48 +428,78 @@ class Listing:
         return {row.canonical_id: row for row in self.rows}
 
 
-def _listing(client: PlaudClient) -> Listing:
-    """Every page until an empty one, never stopping at a short one (§11.2)."""
-    rows: list[Listed] = []
-    malformed = 0
+def _paged(read: Callable[[int], Any]) -> tuple[list[Any], int]:
+    """Every page until `read` answers None for an empty one, never stopping at a short one
+    (§11.2): the pages' results, and the number of the empty page that ended it."""
+    results = []
     for page in range(1, PAGE_CAP + 1):
+        result = read(page)
+        if result is None:
+            return results, page
+        results.append(result)
+    raise SpikeStopped(f"stopped: the listing reached {PAGE_CAP} pages, which makes it bad")
+
+
+def _listing(client: PlaudClient) -> Listing:
+    """Every listed row, as `client.list_page` parses it."""
+
+    def read(page: int) -> Page | None:
         result = client.list_page(page)
-        if not result.rows and not result.malformed:
-            return Listing(rows, malformed, page)
-        rows += result.rows
-        malformed += result.malformed
-    raise SpikeRefused(f"stopped: the listing reached {PAGE_CAP} pages, which makes it bad")
+        return result if result.rows or result.malformed else None
+
+    results, pages = _paged(read)
+    return Listing(
+        [row for result in results for row in result.rows],
+        sum(result.malformed for result in results),
+        pages,
+    )
 
 
 def _raw_rows(client: PlaudClient) -> list[dict]:
     """Every listed row as Plaud gave it (S9's listing fields, S12's times), paging alike."""
-    rows: list[dict] = []
-    for page in range(1, PAGE_CAP + 1):
+
+    def read(page: int) -> list | None:
         _shape, batch = _batch(client.get_json(f"{LIST_PATH}?page={page}&page_size={PAGE_SIZE}"))
-        if not batch:
-            return rows
-        rows += [row for row in batch if isinstance(row, dict)]
-    raise SpikeRefused(f"stopped: the listing reached {PAGE_CAP} pages, which makes it bad")
+        return batch or None
+
+    results, _pages_read = _paged(read)
+    return [row for batch in results for row in batch if isinstance(row, dict)]
 
 
 def _files(client: PlaudClient, listed_id: str) -> dict:
     """files/{id}, without fetching the blocks behind links (S7, S9, S11)."""
     env = client.get_json(FILE_PATH.format(urllib.parse.quote(listed_id, safe="")))
     if not isinstance(env, dict):
-        raise SpikeRefused("stopped: files/{id} didn't answer an object")
+        raise SpikeStopped("stopped: files/{id} didn't answer an object")
     return env
+
+
+def _gate(session: Session, listed_id: str, title: str | None) -> bool:
+    """The guard on one recording, and the "refused by the guard" line when it says no."""
+    if session.guard.allows(listed_id, title, own_clip=session.args.own_clip):
+        return True
+    say(f"{short(listed_id)}: refused by the guard")
+    return False
 
 
 def _checked(session: Session, row: Listed) -> dict | None:
     """files/{id}, and the guard again on the title the envelope itself gives, before any block or
-    download (§11.5: the listing's title alone isn't enough). None, said, when it is refused."""
+    download (§11.5: the listing's title alone isn't enough, and one fetch's check never covers a
+    later fetch). None, said, when it is refused."""
     env = _files(session.client, row.listed_id)
     title = env.get("name")
-    title = title if isinstance(title, str) else None
-    if session.guard.allows(row.listed_id, title, own_clip=session.args.own_clip):
-        return env
-    say(f"{short(row.canonical_id)}: refused by the guard")
-    return None
+    return env if _gate(session, row.listed_id, title if isinstance(title, str) else None) else None
+
+
+def _same_archive(session: Session, listing: Listing) -> None:
+    """The consent and private checks match by ID. When the listing and the archive share none,
+    they would match nothing (a wrong archive, or an ID form that differs): stop before any
+    files/{id}."""
+    if not set(listing.by_canonical()) & session.guard.here:
+        raise SpikeStopped(
+            "stopped: the listing and the archive share no recording, so the consent and private "
+            "checks would match nothing: is [archive] path this account's archive? (S7, runbook 1c)"
+        )
 
 
 def _resolve(session: Session, given: str) -> str:
@@ -461,15 +510,13 @@ def _resolve(session: Session, given: str) -> str:
         except (KeyError, ValueError):
             ids = []
         if not ids:
-            raise SpikeRefused(f"refused: {short(given)} is no recording with a Plaud source")
+            raise SpikeStopped(f"stopped: {short(given)} is no recording with a Plaud source")
         return ids[0]
     return canonical_plaud_id(given)
 
 
 def _named(session: Session, listing: Listing, count: int) -> list[Listed]:
     """The recordings Dan named with --id, as listed, each passed by the guard."""
-    if not session.args.id:
-        raise SpikeRefused(f"refused: name up to {count} recordings with --id")
     found = listing.by_canonical()
     allowed = []
     for given in session.args.id[:count]:
@@ -477,10 +524,8 @@ def _named(session: Session, listing: Listing, count: int) -> list[Listed]:
         row = found.get(canonical)
         if row is None:
             say(f"{short(canonical)}: not listed")
-        elif session.guard.allows(row.listed_id, row.title, own_clip=session.args.own_clip):
+        elif _gate(session, row.listed_id, row.title):
             allowed.append(row)
-        else:
-            say(f"{short(canonical)}: refused by the guard")
     return allowed
 
 
@@ -496,7 +541,11 @@ def _post_form(url: str, fields: dict[str, str]) -> tuple[int | None, dict]:
         url,
         data=urllib.parse.urlencode(fields).encode("ascii"),
         method="POST",
-        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,  # bare urllib's gets a flat 403 from this API (client.py)
+        },
     )
     try:
         with urllib.request.build_opener(_NoRedirect).open(request, timeout=TIMEOUT) as response:
@@ -548,18 +597,30 @@ def _refresh_fields(data: dict, refresh_token: str) -> dict[str, str]:
     return fields
 
 
-def _refused(reply: dict) -> str:
-    """What a refused refresh means for the session. An OAuth error code usually means the request
-    isn't the one Plaud expects: compare it with the vendor CLI's own refresh first (runbook 1c,
-    session A step 3). Only when the two match, and the Mac refreshes while this server is refused,
-    is it spec §18's "refused from the server's address"."""
-    if _code(reply):
-        return (
-            "the refresh was refused with an OAuth error code: compare this request with the "
-            "vendor CLI's own refresh (runbook 1c, session A step 3) before reading it as the "
-            "design failing"
-        )
-    return "the refresh was refused from this machine: stop and ask Dan"
+def _http(status: int | None) -> str:
+    return "unreachable" if status is None else f"HTTP {status}"
+
+
+def _refused() -> str:
+    """What a refused refresh means for the session. Any refusal, with an OAuth error code or not,
+    is first read as a request that differs from the one Plaud expects: compare it with the vendor
+    CLI's own refresh (runbook 1c, session A step 3). Only when the two match, and the Mac refreshes
+    while this server is refused, is it spec §18's "refused from the server's address" (the runbook
+    says to stop and ask Dan then)."""
+    return (
+        "the refresh was refused: compare this request with the vendor CLI's own refresh "
+        "(runbook 1c, session A step 3) before reading it as the design failing"
+    )
+
+
+def _refresh_start(session: Session) -> tuple[str, dict, str]:
+    """S2's and S4's start: the token URL, the token file's data, and its refresh token."""
+    url = _token_url(session.args.token_url)
+    data = session.tokens.data()
+    old = data.get("refresh_token")
+    if not isinstance(old, str) or not old:
+        raise SpikeRefused("refused: the sign-in has no refresh token: stop and ask Dan (S1)")
+    return url, data, old
 
 
 def _save_tokens(session: Session, data: dict, reply: dict) -> None:
@@ -622,15 +683,14 @@ def s1(session: Session) -> None:
 
 def s2(session: Session) -> None:
     """Refresh and rotation: one refresh, the old refresh token again, then one listing page."""
-    url = _token_url(session.args.token_url)
-    data = session.tokens.data()
-    old = data.get("refresh_token")
-    if not isinstance(old, str) or not old:
-        raise SpikeRefused("refused: the sign-in has no refresh token: stop and ask Dan (S1)")
+    url, data, old = _refresh_start(session)
     status, reply = _post_form(url, _refresh_fields(data, old))
-    say(f"refresh: HTTP {status}{_code(reply)}")
+    say(f"refresh: {_http(status)}{_code(reply)}")
+    if status is None:
+        say("the token URL didn't answer: check --token-url and the network")
+        return
     if status != 200 or not reply.get("access_token"):
-        say(_refused(reply))
+        say(_refused())
         return
     new = reply.get("refresh_token")
     say(f"reply keys: {_names(reply)}")
@@ -639,7 +699,7 @@ def s2(session: Session) -> None:
         say(f"expires_in: {_time(reply['expires_in'])}")
     _save_tokens(session, data, reply)
     again, again_reply = _post_form(url, _refresh_fields(data, old))
-    say(f"the old refresh token again: HTTP {again}{_code(again_reply)}")
+    say(f"the old refresh token again: {_http(again)}{_code(again_reply)}")
     if again == 200 and again_reply.get("access_token"):
         _save_tokens(session, session.tokens.data(), again_reply)  # the newest pair is kept
     try:
@@ -660,14 +720,10 @@ def s3(session: Session) -> None:
 
 def s4(session: Session) -> None:
     """A refused refresh: a copy of the refresh token with one character changed."""
-    url = _token_url(session.args.token_url)
-    data = session.tokens.data()
-    old = data.get("refresh_token")
-    if not isinstance(old, str) or not old:
-        raise SpikeRefused("refused: the sign-in has no refresh token: stop and ask Dan (S1)")
+    url, data, old = _refresh_start(session)
     changed = old[:-1] + ("A" if old[-1] != "A" else "B")
     status, reply = _post_form(url, _refresh_fields(data, changed))
-    say(f"refused refresh: HTTP {status}{_code(reply)}")
+    say(f"refused refresh: {_http(status)}{_code(reply)}")
 
 
 def _pass(client: PlaudClient, n: int) -> set[str]:
@@ -722,8 +778,9 @@ def s7(session: Session) -> None:
         f"{len(listed - set(here))} · in the archive, not listed: {len(set(here) - listed)}"
     )
     say(f"consent-list IDs in the listing: {len(session.guard.consent & listed)}")
-    named = _named(session, listing, 3)
-    for row in named:
+    _same_archive(session, listing)
+    passed: list[Listed] = []  # the rows whose envelope title the guard passed
+    for row in _named(session, listing, 3):
         name = short(row.canonical_id)
         if row.canonical_id not in here:
             say(f"{name}: not in the archive")
@@ -733,6 +790,7 @@ def s7(session: Session) -> None:
             env = _checked(session, row)
             if env is None:
                 continue
+            passed.append(row)
             link = check_link(env.get("presigned_url"), api_base=session.client.api_base)
             session.client.download(link, dest)
             say(f"{name}: audio identical: {_yes(sha256_file(dest) == here[row.canonical_id])}")
@@ -740,8 +798,8 @@ def s7(session: Session) -> None:
             say(f"{name}: {_error(exc)}")
         finally:
             dest.unlink(missing_ok=True)
-    if named:
-        bare = named[0].canonical_id
+    if passed:  # only a recording whose envelope the guard passed is fetched again
+        bare = passed[0].canonical_id
         for label, form in (("of_ form", f"of_{bare}"), ("bare hex", bare)):
             try:
                 _files(session.client, form)
@@ -758,9 +816,20 @@ def _blocks(env: dict) -> list[dict]:
     return blocks
 
 
+def _part_label(part: str) -> str:
+    """A part as it may be printed: a note tab's name is Dan's, so every tab is just "notes"."""
+    return "notes" if part.startswith("notes:") else part
+
+
+def _labels(parts: Iterable[str]) -> str:
+    return _names({_part_label(part) for part in parts})
+
+
 def s8(session: Session) -> None:
-    """The envelope and volatility: five recordings, each fetched twice, a minute apart."""
+    """The envelope and volatility: five recordings, each fetched twice, a minute apart, the
+    envelope's title checked before each fetch."""
     listing = _listing(session.client)
+    _same_archive(session, listing)
     owners: dict[str, set[str]] = collections.defaultdict(set)  # embeddingKey's hash -> recordings
     for row in _named(session, listing, 5):
         name = short(row.canonical_id)
@@ -769,6 +838,8 @@ def s8(session: Session) -> None:
                 continue
             first = session.client.envelope(row.listed_id)
             sleep(PAUSE)
+            if _checked(session, row) is None:
+                continue
             second = session.client.envelope(row.listed_id)
         except PlaudError as exc:
             say(f"{name}: {_error(exc)}")
@@ -792,7 +863,7 @@ def s8(session: Session) -> None:
                 owners[short(r["embeddingKey"])].add(row.canonical_id)
         before, after = part_hashes(first), part_hashes(second)
         for part in sorted(set(before) | set(after)):
-            label = "notes" if part.startswith("notes:") else part  # a tab's name is Dan's
+            label = _part_label(part)
             say(f"{name}: part {label}: matched {_yes(before.get(part) == after.get(part))}")
     shared = sum(1 for recordings in owners.values() if len(recordings) > 1)
     say(f"embeddingKey values seen in more than one recording: {shared}")
@@ -819,6 +890,24 @@ def _clip(session: Session, listing: Listing, last: dict) -> tuple[str, Listed |
     return short(canonical), listing.by_canonical().get(canonical), given
 
 
+def _own_clip(session: Session, canonical: str | None, row: Listed | None, last: dict) -> None:
+    """--own-clip skips the keep-out check, so it is allowed only for Dan's new clip: one that isn't
+    in the archive (a kept-out recording never was imported, so that alone doesn't tell them apart)
+    and was made in the last 24 hours: by its listed start time, or the one the last run kept."""
+    when = row.recorded_at if row else None
+    if row is None and isinstance(last.get("recorded_at"), str):
+        try:
+            when = datetime.fromisoformat(last["recorded_at"])
+        except ValueError:
+            when = None
+    recent = when is not None and timedelta(0) <= session.now() - when <= RECENT
+    if canonical in session.guard.here or not recent:
+        raise SpikeStopped(
+            "stopped: --own-clip is for a clip that isn't in the archive and was made in the "
+            "last 24 hours"
+        )
+
+
 def s9(session: Session) -> None:
     """What an edit looks like, on Dan's own throwaway clip (session C). Without --id: the newest
     listed rows, for (a), each by the name --id then takes. With --id (and --own-clip): the clip's
@@ -839,8 +928,9 @@ def s9(session: Session) -> None:
     last = last if isinstance(last, dict) else {}
     name, row, ask_by = _clip(session, listing, last)
     canonical = row.canonical_id if row else canonical_plaud_id(ask_by) if ask_by else None
-    if session.args.own_clip and canonical in session.guard.here:
-        raise SpikeRefused("refused: --own-clip is for a clip that isn't in the archive")
+    if session.args.own_clip:
+        _own_clip(session, canonical, row, last if last.get("id") == name else {})
+    _same_archive(session, listing)
     say(f"{name}: listed: {_yes(row)}")
     if row is None:
         # Its title was checked by the run that recorded it; consent and private are checked now.
@@ -855,10 +945,7 @@ def s9(session: Session) -> None:
             say(f"{name}: files/{{id}}: {_error(exc)}")
         return
     say(f"{name}: keep-out word: {_yes(keep_out_match(row.title, session.guard.words))}")
-    if not session.guard.allows(row.listed_id, row.title, own_clip=session.args.own_clip):
-        say(f"{name}: refused by the guard")
-        return
-    if _checked(session, row) is None:
+    if not _gate(session, row.listed_id, row.title) or _checked(session, row) is None:
         return
     raw = next(
         (r for r in _raw_rows(session.client) if canonical_plaud_id(str(r.get("id"))) == canonical),
@@ -867,25 +954,28 @@ def s9(session: Session) -> None:
     try:
         first = session.client.envelope(row.listed_id)
         sleep(MOMENT)
+        if _checked(session, row) is None:
+            return
         second = session.client.envelope(row.listed_id)
     except PlaudError as exc:
         say(f"{name}: {_error(exc)}")
         return
     parts = {p: h[:8] for p, h in part_hashes(first).items()}
     again = {p: h[:8] for p, h in part_hashes(second).items()}
-    say(f"{name}: parts that differ a moment apart: {_names(_changed(parts, again))}")
+    say(f"{name}: parts that differ a moment apart: {_labels(_changed(parts, again))}")
     fields = {key: short(json.dumps(value, sort_keys=True)) for key, value in raw.items()}
     record = {
         "id": name,
         "listed_id": row.listed_id,  # kept in the 0700 spike folder only, never printed
         "at": session.now().isoformat(),
+        "recorded_at": row.recorded_at.isoformat() if row.recorded_at else None,
         "parts": parts,
         "fields": fields,
         "pattern_ok": True,
     }
     if last.get("id") == name:
         seconds = int((session.now() - datetime.fromisoformat(last["at"])).total_seconds())
-        say(f"{name}: parts changed since the last run: {_names(_changed(parts, last['parts']))}")
+        say(f"{name}: parts changed since the last run: {_labels(_changed(parts, last['parts']))}")
         changed_fields = _names(_changed(fields, last["fields"]))
         say(f"{name}: listing fields changed since the last run: {changed_fields}")
         say(f"{name}: seconds since the last run: {seconds}")
@@ -915,7 +1005,9 @@ def s10(session: Session) -> None:
 
 def s11(session: Session) -> None:
     """A large download: size, time, throughput, Content-Length, Range, and the link's expiry."""
-    named = _named(session, _listing(session.client), 1)
+    listing = _listing(session.client)
+    _same_archive(session, listing)
+    named = _named(session, listing, 1)
     if not named:
         return
     row = named[0]
@@ -927,15 +1019,17 @@ def s11(session: Session) -> None:
     except PlaudError as exc:
         say(f"{short(row.canonical_id)}: {_error(exc)}")
         return
-    status, _names_seen = _raw_get(link, {"Range": "bytes=0-0"})
+    status, seen = _raw_get(link, {"Range": "bytes=0-0"})
     say(f"Range honoured: {_yes(status == 206)} (HTTP {status})")
+    # download() refuses a body without one, as IncompleteDownload: the same word as a stall.
+    has_length = any(name.lower() == "content-length" for name in seen)
+    say(f"Content-Length: {'present' if has_length else 'absent'}")
     dest = session.folder / "s11.audio"
     start = session.monotonic()
     try:
         size = session.client.download(link, dest)
         seconds = max(session.monotonic() - start, 0.001)
         say(f"size: {size / 1e6:.1f} MB · {seconds:.0f} s · {size / 1e6 / seconds:.2f} MB/s")
-        say("Content-Length: present")  # download() refuses a body without one
         expires = _expires(link)
         passed = expires != "unknown" and seconds > float(expires.split()[0])
         say(f"link expires in {expires} · its expiry passed during the download: {_yes(passed)}")
@@ -1023,6 +1117,8 @@ def main(argv: list[str] | None = None) -> int:
             _token_url(args.token_url)  # before anything is read
         elif args.token_url is not None:
             raise SpikeRefused("refused: --token-url is for S2 and S4 only")
+        if args.spike in NEEDS_ID and not args.id:
+            raise SpikeRefused(f"refused: name up to {NEEDS_ID[args.spike]} recordings with --id")
         if not args.home:
             raise SpikeRefused("refused: give --home (RECORDINGS_HOME)")
         cfg = load_config(os.environ)
@@ -1043,8 +1139,11 @@ def main(argv: list[str] | None = None) -> int:
         say(str(exc))
         return EXIT_REFUSED
     except ConfigError as exc:
-        say(f"refused: {exc}")
+        say(f"refused: {exc}")  # written for display: names keys, never values
         return EXIT_REFUSED
+    except SpikeStopped as exc:
+        say(str(exc))
+        return 1
     except PlaudError as exc:
         say(f"stopped: {_error(exc)}")
         return 1

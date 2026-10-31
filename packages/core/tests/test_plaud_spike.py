@@ -10,6 +10,7 @@ import os
 import sqlite3
 import stat
 import sys
+import urllib.error
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from recordings.archive import Archive, RawSource
 from recordings.config import load_config
 from recordings.init import init_archive
 from recordings.models import TagRef
-from recordings.plaud.client import FILE_PATH, LIST_PATH
+from recordings.plaud.client import FILE_PATH, LIST_PATH, USER_AGENT
 from recordings.plaud.reconcile import DEFAULT_AUTO_PRIVATE
 
 REPO = Path(__file__).resolve().parents[3]
@@ -130,7 +131,7 @@ def test_the_guard_refuses_a_pattern_title_even_for_the_own_clip(env, spike):
     assert not guard.allows(NORMAL, "Private: synthetic", own_clip=True)
     assert not guard.allows(NORMAL, "ｐｒｉｖａｔｅ notes", own_clip=True)  # folded, as §13.1 says
     assert not guard.allows(NORMAL, None, own_clip=True)  # no title: it can't be checked
-    assert guard.report() == "refused: 3 (pattern 3)"
+    assert guard.report() == "refused: 3 (no title 1, pattern 2)"
 
 
 @pytest.mark.parametrize(
@@ -146,7 +147,8 @@ def test_a_consent_stop_refuses_before_any_call(env, spike, capsys, consent_text
     assert CONSENTED not in out and CONSENTED[:31] not in out
 
 
-def _serve_account(fake, envelope_title: str = TITLES[0]) -> None:
+def _serve_account(fake, envelope_title=TITLES[0]) -> None:
+    """`envelope_title` is a string, or a function called for each files/{id} request."""
     rows = [
         {"id": "of_" + NORMAL, "name": TITLES[0], "start_at": "2026-08-01T16:00:00Z"},
         {"id": CONSENTED.upper(), "name": TITLES[1], "start_at": "2026-08-02T16:00:00Z"},
@@ -161,17 +163,25 @@ def _serve_account(fake, envelope_title: str = TITLES[0]) -> None:
     fake.route("GET", LIST_PATH, listing)
     segments = [{"content": WORDS_SAID, "start_time": 0, "end_time": 900, "embeddingKey": "ek-1"}]
     block = fake.link("transcript", json.dumps(segments).encode())
-    envelope = {
-        "id": "of_" + NORMAL,
-        "name": envelope_title,
-        "presigned_url": f"{fake.storage_url}/audio.mp3?X-Amz-Expires=300",
-        "source_list": [{"data_type": "transaction", "data_content": "", "data_link": block}],
-        "note_list": [
-            {"data_type": "auto_sum_note", "data_tab_name": "Summary", "data_content": WORDS_SAID}
-        ],
-    }
-    body = json.dumps(envelope).encode()
-    fake.route("GET", FILE_PATH.format("of_" + NORMAL), lambda q: Response(200, body))
+
+    def envelope(query):
+        title = envelope_title() if callable(envelope_title) else envelope_title
+        body = {
+            "id": "of_" + NORMAL,
+            "name": title,
+            "presigned_url": f"{fake.storage_url}/audio.mp3?X-Amz-Expires=300",
+            "source_list": [{"data_type": "transaction", "data_content": "", "data_link": block}],
+            "note_list": [
+                {
+                    "data_type": "auto_sum_note",
+                    "data_tab_name": "Summary",
+                    "data_content": WORDS_SAID,
+                }
+            ],
+        }
+        return Response(200, json.dumps(body).encode())
+
+    fake.route("GET", FILE_PATH.format("of_" + NORMAL), envelope)
 
 
 def test_nothing_printed_holds_a_title_a_token_or_a_whole_id(env, spike, capsys):
@@ -313,7 +323,8 @@ def test_the_own_clip_is_never_a_recording_in_the_archive(env, spike, capsys):
     # why: S8. --own-clip skips the keep-out check, so a mistyped --id must not reach an older
     # recording kept out by its word: the clip is new, so it isn't in the archive.
     _serve_account(env.fake)
-    assert spike.main(["s9", "--home", str(env.home), "--id", NORMAL, "--own-clip"]) == 78
+    # why: exit 1, not 78: the listing was already read, and 78 means nothing was sent.
+    assert spike.main(["s9", "--home", str(env.home), "--id", NORMAL, "--own-clip"]) == 1
     assert "--own-clip is for a clip that isn't in the archive" in capsys.readouterr().out
     assert FILE_PATH.format("of_" + NORMAL) not in [r.path for r in env.fake.requests]
 
@@ -322,7 +333,10 @@ def test_s9_finds_the_clip_by_the_name_it_printed(env, spike, capsys):
     # why: G4. The clip isn't in the archive and nothing prints a whole ID, so S9 takes the 8-hex
     # name its run without --id printed, and keeps the clip's ID in the spike folder for the runs
     # after it leaves the listing.
-    rows = [{"id": "of_" + CLIP, "name": "NoArchive synthetic clip", "start_at": T0.isoformat()}]
+    now = datetime.now(UTC).isoformat()  # --own-clip needs a clip made in the last 24 hours
+    clip = {"id": "of_" + CLIP, "name": "NoArchive synthetic clip", "start_at": now}
+    older = {"id": "of_" + NORMAL, "name": TITLES[0], "start_at": "2026-08-01T16:00:00Z"}
+    rows = [clip, older]  # the archive's recording is listed too: the two share an ID
     listed = {"rows": rows}
     env.fake.route(
         "GET",
@@ -331,7 +345,7 @@ def test_s9_finds_the_clip_by_the_name_it_printed(env, spike, capsys):
             200, json.dumps({"data_list": listed["rows"] if q["page"] == ["1"] else []}).encode()
         ),
     )
-    envelope = {"id": "of_" + CLIP, "name": rows[0]["name"], "source_list": [], "note_list": []}
+    envelope = {"id": "of_" + CLIP, "name": clip["name"], "source_list": [], "note_list": []}
     body = json.dumps(envelope).encode()
     env.fake.route("GET", FILE_PATH.format("of_" + CLIP), lambda q: Response(200, body))
     name = spike.short(CLIP)
@@ -339,7 +353,7 @@ def test_s9_finds_the_clip_by_the_name_it_printed(env, spike, capsys):
     assert f"{name}: keep-out word: yes" in capsys.readouterr().out
     assert spike.main(["s9", "--home", str(env.home), "--id", name, "--own-clip"]) == 0
     assert f"{name}: listed: yes" in capsys.readouterr().out
-    listed["rows"] = []  # deleted to the trash: no longer listed
+    listed["rows"] = [older]  # deleted to the trash: no longer listed
     assert spike.main(["s9", "--home", str(env.home), "--id", name, "--own-clip"]) == 0
     out = capsys.readouterr().out
     assert f"{name}: listed: no" in out and f"{name}: files/{{id}}: ok" in out
@@ -368,7 +382,11 @@ def test_s2_sends_the_client_id_and_reads_a_refusal_by_its_error_code(
     assert "error invalid_client" in first
     assert "compare this request with the vendor CLI's own refresh" in first
     assert spike.main(args) == 0
-    assert "refused from this machine: stop and ask Dan" in capsys.readouterr().out
+    second = capsys.readouterr().out
+    # why: a refusal without a code is also read as "compare first": a request that differs from the
+    # vendor CLI's own is the likelier cause. "Stop and ask Dan" is the runbook's, once they match.
+    assert "compare this request with the vendor CLI's own refresh" in second
+    assert "stop and ask Dan" not in first + second
     assert TOKEN not in first and REFRESH not in first and env.fake.requests == []
 
 
@@ -382,3 +400,178 @@ def test_an_unexpected_error_prints_its_class_only(env, spike, capsys, monkeypat
     assert spike.main(["s5", "--home", str(env.home)]) == 1
     out = capsys.readouterr().out
     assert "stopped: RuntimeError" in out and WORDS_SAID not in out
+
+
+# -- the fix round (Task 5's Tier 1 review) --------------------------------------------------------
+def _serve_rows(fake, rows: list[dict]) -> None:
+    fake.route(
+        "GET",
+        LIST_PATH,
+        lambda q: Response(
+            200, json.dumps({"data_list": rows if q["page"] == ["1"] else []}).encode()
+        ),
+    )
+
+
+def _clip_rows(start_at: str, title: str = "NoArchive synthetic clip") -> list[dict]:
+    """The throwaway clip, and one recording the archive holds too, so the two share an ID."""
+    return [
+        {"id": "of_" + CLIP, "name": title, "start_at": start_at},
+        {"id": "of_" + NORMAL, "name": TITLES[0], "start_at": "2026-08-01T16:00:00Z"},
+    ]
+
+
+def test_s7_fetches_the_id_forms_only_for_a_recording_whose_envelope_title_passed(
+    env, spike, capsys
+):
+    # why: §18 never fetches a private recording. The envelope's own title is what refuses it
+    # here, and the ID-form step must not fetch files/{id} for the row it just refused.
+    _serve_account(env.fake, envelope_title="Private: synthetic")
+    assert spike.main(["s7", "--home", str(env.home), "--id", NORMAL]) == 0
+    out = capsys.readouterr().out
+    assert f"{spike.short(NORMAL)}: refused by the guard" in out
+    assert "by its" not in out
+    paths = [r.path for r in env.fake.requests]
+    assert paths.count(FILE_PATH.format("of_" + NORMAL)) == 1  # the title check, and no more
+    assert FILE_PATH.format(NORMAL) not in paths  # the bare form was never asked for
+
+
+def test_the_own_clip_must_be_recent(env, spike, capsys):
+    # why: --own-clip skips the keep-out check, and an old row kept out by its word was never
+    # imported, so "not in the archive" doesn't tell it from Dan's new clip. It must be recent.
+    _serve_rows(env.fake, _clip_rows(T0.isoformat(), title="NoArchive old recording"))
+    body = json.dumps({"id": "of_" + CLIP, "name": "NoArchive old recording"}).encode()
+    env.fake.route("GET", FILE_PATH.format("of_" + CLIP), lambda q: Response(200, body))
+    args = ["s9", "--home", str(env.home), "--id", spike.short(CLIP), "--own-clip"]
+    assert spike.main(args) == 1
+    out = capsys.readouterr().out
+    assert "stopped: --own-clip is for a clip that isn't in the archive" in out
+    assert "last 24 hours" in out
+    assert [r.path for r in env.fake.requests if r.path != LIST_PATH] == []
+
+
+def test_s9_never_prints_a_note_tabs_name(env, spike, capsys):
+    # why: a note tab's name or slug is Dan's. S8 prints "notes" for it, and so must S9.
+    _serve_rows(env.fake, _clip_rows(datetime.now(UTC).isoformat()))
+    calls = []
+
+    def answer(query):
+        calls.append(1)
+        note = {
+            "data_type": "auto_sum_note",
+            "data_tab_name": "Counselling Notes",
+            "data_content": "first" if len(calls) <= 2 else "second",  # checked, fetched, ...
+        }
+        return Response(
+            200, json.dumps({"name": "x", "source_list": [], "note_list": [note]}).encode()
+        )
+
+    env.fake.route("GET", FILE_PATH.format("of_" + CLIP), answer)
+    args = ["s9", "--home", str(env.home), "--id", spike.short(CLIP), "--own-clip"]
+    assert spike.main(args) == 0
+    out = capsys.readouterr().out
+    assert "parts that differ a moment apart: notes" in out
+    assert "counselling" not in out.lower() and "notes:" not in out
+
+
+def test_the_token_url_posts_send_the_clients_user_agent(spike, monkeypatch):
+    # why: bare urllib's default User-Agent gets a flat 403 from Plaud's API (client.py), which S2
+    # and S4 would read as the design failing.
+    seen = []
+
+    class Opener:
+        def open(self, request, timeout):
+            seen.append(request)
+            raise urllib.error.URLError("down")
+
+    monkeypatch.setattr(spike.urllib.request, "build_opener", lambda *handlers: Opener())
+    assert spike._post_form("https://auth.example/token", {"a": "b"}) == (None, {})
+    assert seen[0].get_header("User-agent") == USER_AGENT
+
+
+def test_s2_and_s4_say_unreachable_when_the_token_url_gives_no_status(
+    env, spike, capsys, monkeypatch
+):
+    env.tokens.write_text(
+        json.dumps({"access_token": TOKEN, "refresh_token": REFRESH}), encoding="utf-8"
+    )
+    monkeypatch.setattr(spike, "_post_form", lambda url, fields: (None, {}))
+    for which in ("s2", "s4"):
+        args = [which, "--home", str(env.home), "--token-url", "https://auth.example/token"]
+        assert spike.main(args) == 0
+        out = capsys.readouterr().out
+        assert "unreachable" in out and "stop and ask Dan" not in out and "HTTP None" not in out
+
+
+def test_a_listing_that_shares_no_recording_with_the_archive_stops_before_any_files_call(
+    env, spike, capsys
+):
+    # why: the consent and private checks match by ID. A valid but wrong archive, or an ID form
+    # that differs, would match nothing, and S8 and S11 would then run on titles alone.
+    other = f"{0x99:032x}"
+    _serve_rows(
+        env.fake, [{"id": "of_" + other, "name": TITLES[0], "start_at": "2026-08-01T16:00:00Z"}]
+    )
+    for spike_name in ("s7", "s8", "s11"):
+        args = [spike_name, "--home", str(env.home), "--id", other]
+        assert spike.main(args) == 1
+        out = capsys.readouterr().out
+        assert "share no recording" in out and "refused before any call" not in out
+    assert {r.path for r in env.fake.requests} == {LIST_PATH}
+
+
+def test_s11_reports_content_length_from_the_range_probe(env, spike, capsys, monkeypatch):
+    # why: §18 asks whether Plaud sends Content-Length. A missing one stops the download as
+    # IncompleteDownload, the same as a stall, so the probe's header names are what say it.
+    _serve_account(env.fake)
+    env.fake.link("audio.mp3", b"synthetic audio " * 8)
+    assert spike.main(["s11", "--home", str(env.home), "--id", NORMAL]) == 0
+    assert "Content-Length: present" in capsys.readouterr().out
+    monkeypatch.setattr(spike, "_raw_get", lambda url, headers: (200, ["Content-Type"]))
+    assert spike.main(["s11", "--home", str(env.home), "--id", NORMAL]) == 0
+    assert "Content-Length: absent" in capsys.readouterr().out
+
+
+def test_exit_78_means_nothing_was_sent_and_1_means_something_was(env, spike, capsys):
+    _serve_account(env.fake)
+    for name in ("s7", "s8", "s11", "s12"):  # these need --id: checked before any call
+        assert spike.main([name, "--home", str(env.home)]) == 78
+        assert "--id" in capsys.readouterr().out
+    assert env.fake.requests == []
+    args = ["s9", "--home", str(env.home), "--id", NORMAL, "--own-clip"]
+    assert spike.main(args) == 1  # the listing was read first: this is a stop, not a refusal
+    out = capsys.readouterr().out
+    assert out.startswith("stopped:") and "refused before any call" not in out
+
+
+def test_s8_checks_the_title_on_every_envelope_it_fetches(env, spike, capsys):
+    # why: one fetch's check never covers a later fetch: the second can have a new title, and its
+    # blocks are fetched from the links in it.
+    fetched = []
+
+    def title():
+        fetched.append(1)
+        return TITLES[0] if len(fetched) <= 2 else "Private: synthetic"  # check, fetch, check
+
+    _serve_account(env.fake, envelope_title=title)
+    assert spike.main(["s8", "--home", str(env.home), "--id", NORMAL]) == 0
+    out = capsys.readouterr().out
+    assert f"{spike.short(NORMAL)}: refused by the guard" in out
+    assert out.rstrip().endswith("refused: 1 (pattern 1)")
+    assert len([r for r in env.fake.requests if r.host == "storage"]) == 1  # the first block only
+
+
+def test_an_enforced_words_row_that_cant_be_read_refuses_before_any_call(env, spike, capsys):
+    # why: unreadable words are unknown words, not none: the sync enforces them, the spike can't.
+    with sqlite3.connect(env.writer.state.db_path) as db:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS plaud_state "
+            "(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        db.execute(
+            "INSERT OR REPLACE INTO plaud_state VALUES ('keep_out_words', 'not json', ?)",
+            (T0.isoformat(),),
+        )
+    assert spike.main(["s5", "--home", str(env.home)]) == 78
+    assert capsys.readouterr().out.startswith("refused before any call: the keep-out words")
+    assert env.fake.requests == []

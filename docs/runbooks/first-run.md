@@ -493,12 +493,14 @@ install -d -m 700 "$RECORDINGS_HOME/spike"
 ${EDITOR:-vi} "$RECORDINGS_HOME/spike/config.toml"
 export RECORDINGS_CONFIG="$RECORDINGS_HOME/spike/config.toml"
 ```
-Each session clones afresh, at the commit it runs. The session's own config uses this server's paths, because the containers'
-`/archive`, `/state` and `/consent` don't exist out here: `[archive] path` and `default_timezone`,
-`[state] path`, and `[plaud] consent_list` (the list's path on this server). It holds no secret.
-The script adds the deployment's own `[plaud] auto_private_patterns` and `keep_out_word` (from
-`$REPO_DIR/config.toml`, or `--production-config`) and every word the worker has enforced (from
-`state.db`) to whatever this file sets, so nothing there needs copying.
+Each session clones afresh, at the commit it runs. The session's own config uses this server's
+paths, because the containers' `/archive`, `/state` and `/consent` don't exist out here:
+`[archive] path` and `default_timezone`, `[state] path`, `[plaud] consent_list` (the list's path on
+this server), and `[backup]`'s `restore_scratch`, `cache_dir` and `extra_paths` as the deployment
+has them (the script keeps its spike folder out of those paths, and a copy that is missing one
+can't). It holds no secret. The script adds the deployment's own `[plaud] auto_private_patterns`
+and `keep_out_word` (from `$REPO_DIR/config.toml`, or `--production-config`) and every word the
+worker has enforced (from `state.db`) to whatever this file sets, so nothing there needs copying.
 
 **The session's sign-in,** on the Mac, under a temporary `HOME`, so the Mac's own Plaud sign-ins
 are untouched. The token file goes into the spike folder without being printed. `HOMELAB` and
@@ -507,7 +509,8 @@ are untouched. The token file goes into the spike folder without being printed. 
 tmphome="$(mktemp -d)" && chmod 700 "$tmphome"
 HOME="$tmphome" plaud login
 ls -A "$tmphome" "$tmphome/.plaud"
-ssh "$HOMELAB" "umask 077 && mkdir -p '$SRV_HOME/spike/home/.plaud' && cat > '$SRV_HOME/spike/home/.plaud/tokens.json'" < "$tmphome/.plaud/tokens.json"
+ssh "$HOMELAB" "umask 077 && mkdir -p '$SRV_HOME/spike/home/.plaud' \
+  && cat > '$SRV_HOME/spike/home/.plaud/tokens.json'" < "$tmphome/.plaud/tokens.json"
 rm -rf "$tmphome"
 ```
 `ls -A` shows file names only. If the CLI wrote its sign-in somewhere else under `$tmphome`, copy
@@ -516,8 +519,11 @@ sign-in elsewhere, such as the system keychain), stop: that is S1's result, and 
 plan (stage 2b spec §10.3) needs a new decision before session A can go on.
 
 **Each spike,** on the homelab server, in that shell, in `$SPIKE_SRC`: `uv run python
-scripts/plaud_spike.py s1`, and so on. Exit 78 means the guard refused before any call; it says
-why.
+scripts/plaud_spike.py s1`, and so on. Exit 78 means "refused before any call": nothing was sent
+to Plaud, and the line says why. Exit 1 means it stopped after at least one call (a "stopped:"
+line, or an error named by its class). If a call says `PlaudAuthError` in the middle of a session,
+the sign-in has expired or was signed out: stop, make a fresh session sign-in (above), and rerun
+that spike from its start. Record the sign-out as a finding for S3.
 
 **Session A** (s1, s2, s4, s3):
 1. Before the session, find the token URL and how the vendor CLI refreshes: its own refresh
@@ -530,12 +536,13 @@ why.
    this request with the vendor CLI's own refresh", don't read the refusal as the design failing
    yet. Compare the script's request (`_refresh_fields` and `_post_form`: a form POST with
    `grant_type=refresh_token`, the refresh token and any `client_id`,
-   `application/x-www-form-urlencoded`, `Accept: application/json` and urllib's own `User-Agent`)
-   with what step 1 found:
+   `application/x-www-form-urlencoded`, `Accept: application/json` and the client's own
+   `User-Agent`, `recordings/<version>`) with what step 1 found:
    - **They differ:** the script needs a new commit, which Dan reviews; then a fresh session
      sign-in and S2 again. That is not a design failure.
    - **They match:** sign in under a new temporary `HOME` on the Mac
-     (`cmphome="$(mktemp -d)" && chmod 700 "$cmphome" && HOME="$cmphome" plaud login`) and let the
+     (`cmphome="$(mktemp -d)" && chmod 700 "$cmphome" && echo "$cmphome"`, then
+     `HOME="$cmphome" plaud login`; write the path down) and let the
      CLI refresh there (its own refresh, or any call once its access token has expired). If the
      Mac refreshes while the server is still refused, that is S2's "refused from the server's
      address": stop and ask Dan. If the Mac is refused too, stop and ask Dan.
@@ -545,15 +552,22 @@ why.
    doing.
 5. Then three sign-ins, each followed by `s3`: Plaud's web app; the Plaud MCP's `login` on the
    Mac; the vendor CLI under another temporary `HOME`
-   (`otherhome="$(mktemp -d)" && chmod 700 "$otherhome" && HOME="$otherhome" plaud login`).
-   Record which one, if any, makes `s3` say "signed in: no".
+   (`otherhome="$(mktemp -d)" && chmod 700 "$otherhome" && echo "$otherhome"`, then
+   `HOME="$otherhome" plaud login`; write the path down). Record which one, if any, makes `s3` say
+   "signed in: no".
 
 **Session B** (s5, s7, s8, s10, s12, s11): a fresh session sign-in, then each spike in that
 order. S7, S8, S11 and S12 take one `--id` per recording you name for it (a Plaud ID or an
-archive recording ID): none private, none consent-listed.
+archive recording ID): none private, none consent-listed. S7 comes first of those: if its "in the
+archive" count is 0, stop session B. The listing and the archive share no recording, so
+`[archive] path` is probably not this account's archive, and the guard could not tell which
+recordings are private or consent-listed.
 
 **Session C** (s9), on a short clip you title on the phone, before it uploads, starting with the
-keep-out word, and that isn't private:
+keep-out word, and that isn't private. It is its own session: clone and sync at the commit you
+read, write the session config, and make a fresh session sign-in, all as above, before the clip
+is transferred. `--own-clip` accepts only a clip that isn't in the archive and was made in the
+last 24 hours, so start the steps below the day you make it.
 1. From the moment the phone transfers it, run `s9` with no `--id` every minute or so. Each row
    it prints is the newest listed, by its 8-hex name, with whether its title starts with the
    keep-out word and how old it is. When the clip shows (the word: yes, a few minutes old), its
@@ -578,7 +592,8 @@ rm -rf "$RECORDINGS_HOME/spike"
 rm -rf "$SPIKE_SRC"
 ```
 After session A, on the Mac, also delete the temporary `HOME`s of steps 3 and 5, with the live
-sign-ins in them (the session's own was deleted once it was copied):
+sign-ins in them (the session's own was deleted once it was copied). `cmphome` and `otherhome`
+exist only in the shell that made them: in another shell, delete the paths you wrote down.
 ```bash
 rm -rf "$cmphome" "$otherhome"
 ```
