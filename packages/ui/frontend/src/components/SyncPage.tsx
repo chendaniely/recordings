@@ -1,5 +1,5 @@
 import { Lock } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -8,10 +8,9 @@ import { useShinyOutputError, useShinyOutputValue } from "../sr";
 import type { KeptOutRow, NotHereRow, PlaudKind, PlaudResult, SyncView } from "../types";
 import { ReleaseDialog } from "./ReleaseDialog";
 import {
-  CopyId, FlagRow, Reasons, SyncBreakerLine, SyncHoldLine, SyncSummary, archiveText, consentText, reasonsFor,
+  CopyId, FlagRow, Reasons, SyncBreakerLine, SyncHoldLine, SyncSummary, archiveText, consentText, equationParts, n, reasonsFor,
 } from "./SyncSummary";
 
-const n = (x: number) => x.toLocaleString("en");
 const FULL_UNKNOWN = "unknown until the first run";
 const BY: Record<KeptOutRow["by"], string> = {
   consent: "On the consent list",
@@ -24,7 +23,7 @@ const BY: Record<KeptOutRow["by"], string> = {
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <section className="card sync-section" id={id} data-testid={id} aria-labelledby={`${id}-h`}>
-      <h2 id={`${id}-h`}>{title}</h2>
+      <h2 id={`${id}-h`} tabIndex={-1}>{title}</h2>
       {children}
     </section>
   );
@@ -68,6 +67,21 @@ export function SyncPage() {
   const [asking, setAsking] = useState<{ request: string; plaud_id: string } | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({}); // review rows' titles, on demand
 
+  // Focus must not fall to <body> when what has it goes: a Keep it here whose flag a redraw drops,
+  // or Import selected, which turns itself off once it has sent. It goes to the heading of the
+  // section the control was in, else the page's own.
+  const focused = useRef<{ el: HTMLElement; home: string | null } | null>(null);
+  useLayoutEffect(() => {
+    const last = focused.current;
+    if (!last) return;
+    const gone = !last.el.isConnected || (last.el instanceof HTMLButtonElement && last.el.disabled);
+    const now = document.activeElement;
+    if (!gone || (now && now !== document.body && now !== last.el)) return;
+    focused.current = null;
+    const home = last.home && document.getElementById(`${last.home}-h`);
+    (home || document.getElementById("sync-page-h"))?.focus({ preventScroll: true });
+  });
+
   if (error) return <main className="sync-page"><div className="problems" role="alert" data-testid="sync-error">The Sync screen can't be shown: {error.message}</div></main>;
   if (!view) return <main className="sync-page"><p className="empty">Loading…</p></main>;
 
@@ -95,8 +109,12 @@ export function SyncPage() {
     view.kept_out.some((r) => r.release && !r.released) ? previewing : null, view.kept_out.some((r) => r.released) ? unreleasing : null,
   ]);
   const parked = reasonsFor("sync-parked", [view.parked.length > 0 ? unparking : null]);
+  const holdWhy = view.hold?.accept ? gated("accept") : null;
+  const breakerWhy = view.breaker?.accept ? gated("accept-changes") : null;
+  const held = reasonsFor("sync-held", [holdWhy, breakerWhy]); // said once, when both have one
   // What is ticked and still listed: a redraw that drops a row drops it from the count.
   const listed = new Set(view.not_here.map((r) => r.plaud_id));
+  const equation = view.equation ? equationParts(view.equation) : null;
   const chosen = [...picked].filter((id) => listed.has(id));
   const ready = view.not_here.filter((r) => !r.review);
   const choose = (id: string, on: boolean) => setPicked((p) => {
@@ -115,8 +133,9 @@ export function SyncPage() {
   };
 
   return (
-    <main className="sync-page" data-testid="sync-page">
-      <h1>Add</h1>
+    <main className="sync-page" data-testid="sync-page"
+      onFocus={(e) => { focused.current = { el: e.target as HTMLElement, home: e.target.closest("section")?.id ?? null }; }}>
+      <h1 id="sync-page-h" tabIndex={-1}>Add</h1>
       <SyncSummary summary={view.summary} link="status" />
 
       {view.flags.length > 0 && (
@@ -132,8 +151,11 @@ export function SyncPage() {
 
       {(view.hold || view.breaker) && (
         <Section id="sync-held" title="Held">
-          {view.hold && <SyncHoldLine hold={view.hold} why={gated("accept")} onAccept={() => plaud.send("accept")} />}
-          {view.breaker && <SyncBreakerLine breaker={view.breaker} why={gated("accept-changes")} onAccept={() => plaud.send("accept-changes")} />}
+          {view.hold && <SyncHoldLine hold={view.hold} why={holdWhy} whyId={held.idOf(holdWhy)} onAccept={() => plaud.send("accept")} />}
+          {view.breaker && (
+            <SyncBreakerLine breaker={view.breaker} why={breakerWhy} whyId={held.idOf(breakerWhy)} onAccept={() => plaud.send("accept-changes")} />
+          )}
+          <Reasons prefix="sync-held" list={held.list} />
         </Section>
       )}
 
@@ -168,13 +190,11 @@ export function SyncPage() {
           // Said here unless the summary already says it: the gate's reason is also kind "no-sync"
           // (Task 19's fix round), and under it the section would be empty.
           view.summary.sentence !== "No sync has run yet" && <p data-testid="sync-no-listing">No sync has run yet.</p>
-        ) : view.equation ? (
+        ) : view.equation && equation ? (
           <>
             <p>
-              Listed {n(view.equation.listed)} = {n(view.equation.here)} here +{" "}
-              <Jump to="sync-not-here">{n(view.equation.waiting)} waiting</Jump> +{" "}
-              <Jump to="sync-kept-out">{n(view.equation.excluded)} excluded</Jump> +{" "}
-              <Jump to="sync-not-here">{n(view.equation.missing)} missing</Jump>
+              {equation.listed} = {equation.here} + <Jump to="sync-not-here">{equation.waiting}</Jump> +{" "}
+              <Jump to="sync-kept-out">{equation.excluded}</Jump> + <Jump to="sync-not-here">{equation.missing}</Jump>
               {view.equation.listing_at && <span className="muted"> {"·"} from the listing at {view.equation.listing_at}</span>}
             </p>
             {view.equation.arrive_private > 0 && (
@@ -193,6 +213,9 @@ export function SyncPage() {
             <ul className="sync-rows">
               {view.not_here.map((r) => {
                 const shown = titles[r.plaud_id] ? plaud.results[titles[r.plaud_id]]?.preview?.title : undefined;
+                // A review row's title comes only on demand, and none shows while titles are hidden,
+                // whatever the server sent (P13, as Kept out and the flags).
+                const title = r.review || view.titles_hidden ? null : r.title;
                 return (
                   <li key={r.plaud_id} className="sync-row" data-testid="not-here-row">
                     {/* A review row has its box too (§11.6): Import selected brings it in, Import all
@@ -203,7 +226,7 @@ export function SyncPage() {
                     </label>
                     <span className="sync-when">{when(r)}</span>
                     <span className="sync-title">
-                      {r.title ?? shown ?? <span className="muted">{r.review ? "title on demand" : "title hidden"}</span>}
+                      {title ?? shown ?? <span className="muted">{r.review ? "title on demand" : "title hidden"}</span>}
                       {r.arrives_private && <> <Lock size={13} className="lock" aria-hidden="true" /> arrives private</>}
                     </span>
                     <span className="sync-state">{r.state}</span>
@@ -265,8 +288,10 @@ export function SyncPage() {
         </Section>
       )}
 
-      <Section id="sync-updated" title="Updated on Plaud (7 days)">
-        {view.updated.length === 0 ? <p className="muted">Nothing changed on Plaud this week.</p> : (
+      {/* Drawn only with rows: nothing reads Plaud's edits until edit-sync (Phase 3), so "Nothing
+          changed on Plaud this week" would be a sentence nothing measured (P2). */}
+      {view.updated.length > 0 && (
+        <Section id="sync-updated" title="Updated on Plaud (7 days)">
           <ul className="sync-rows">
             {view.updated.map((u, i) => (
               <li key={`${u.recording_id}-${i}`} className="sync-row" data-testid="updated-row">
@@ -277,8 +302,8 @@ export function SyncPage() {
               </li>
             ))}
           </ul>
-        )}
-      </Section>
+        </Section>
+      )}
 
       {view.listed && (
         <Section id="sync-gone" title="Gone from Plaud">

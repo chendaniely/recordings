@@ -415,13 +415,18 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
      height is its minimum. On a screen too short even for that the panes scroll, and the bar
      sticks to their bottom (Task 15 fix round 1, item 12). */
   .list { overflow: clip; min-height: auto; }
+  /* The cap (40dvh, above) gets a floor: a list with a selection must be tall enough for its head
+     (45 px) and the selection bar (43 px) and their borders, 92 px. Below that the clip cut the
+     bar off and the pane behind it showed through, on any phone shorter than about 215 px. */
+  .list { max-height: max(40dvh, 92px); }
   .selection-bar { position: sticky; bottom: 0; z-index: 3; }
   /* The top bar at 320 pixels: four short tabs on one row, the logo's mark without its name, and
-     the theme switch as one icon (2b spec §15.1). Here, after `button.nav`'s own rule, which
-     this one must follow to win. */
+     the theme switch as one icon (2b spec §15.1). `.topbar button.nav` outranks the plain
+     `button.nav` rule by specificity, wherever it comes. The tabs are 44 px targets (J7), and the
+     negative block margin keeps the bar as tall as it was, like the icon's. */
   .topbar { gap: 12px; padding: 6px 12px; }
   .topbar nav { display: flex; gap: 12px; }
-  .topbar button.nav { margin-right: 0; }
+  .topbar button.nav { margin-right: 0; min-height: 44px; margin-block: -6px; }
   .logo-name, .theme-full { display: none; }
   /* Its 44 px target overhangs the bar's padding, so the bar stays as tall as it was. */
   .theme-icon { display: inline-grid; margin-block: -6px; }

@@ -312,6 +312,48 @@ describe("the Sync screen (2b spec §15.1)", () => {
     expect($("[data-testid=flag-row]")!.textContent!.split(rid)).toHaveLength(2); // the ID once
   });
 
+  it("Updated is drawn only with rows: no sentence says nothing changed, which nothing measures yet", () => {
+    const none = markup({ ...VIEW, updated: [] });
+    expect(none).not.toContain('data-testid="sync-updated"');
+    expect(none).not.toContain("Nothing changed on Plaud");
+    expect(markup(VIEW)).toContain('data-testid="sync-updated"');
+  });
+
+  it("a hold and a breaker with one reason say it once, and both Accept buttons name it", () => {
+    draw({ ...VIEW, handled: ["keep-here"], breaker: { ...VIEW.breaker!, accept: true, code_fix: null } }, fake());
+    const said = $$("#sync-held .sync-why").filter((p) => p.textContent === NOT_YET);
+    expect(said).toHaveLength(1);
+    for (const kind of ["accept", "accept-changes"]) {
+      const accept = $(`[data-request=${kind}]`)!;
+      expect(accept.hasAttribute("disabled")).toBe(true);
+      expect(accept.getAttribute("aria-describedby")).toBe(said[0].id);
+    }
+  });
+
+  it("focus doesn't fall to the page when the flag it was on goes, or when Import selected turns itself off", () => {
+    const p = fake();
+    draw(VIEW, p);
+    button("[data-testid=sync-flags]", "Keep it here").focus();
+    draw({ ...VIEW, flags: [] }, p); // the redraw drops the flag
+    expect(document.activeElement).toBe($("#sync-page-h"));
+    click($$("[data-testid=not-here-row]")[0].querySelector<HTMLInputElement>("input[type=checkbox]")!);
+    const selected = $("[data-testid=import-selected]")!;
+    selected.focus();
+    click(selected); // sends, clears the ticks, and is off
+    expect(selected.hasAttribute("disabled")).toBe(true);
+    expect(document.activeElement).toBe($("#sync-not-here-h"));
+  });
+
+  it("Not here yet shows no title for a review row, nor any while titles are hidden", () => {
+    // P13: the server sends none, and a title sent anyway is still not drawn.
+    const leaky = VIEW.not_here.map((r) => (r.review ? { ...r, title: "Leaked review title" } : r));
+    expect(markup({ ...VIEW, not_here: leaky })).not.toContain("Leaked review title");
+    expect(markup({ ...VIEW, not_here: leaky })).toContain("Synthetic 042"); // a ready row's title shows
+    const hidden = markup({ ...VIEW, titles_hidden: "titles hidden until the consent list reads" });
+    expect(hidden).not.toContain("Synthetic 042");
+    expect(hidden).toContain("Titles hidden until the consent list reads.");
+  });
+
   it("Gone from Plaud points to the steps for taking a recording out", () => {
     expect(markup(VIEW)).toContain("To take one out of the archive: &quot;Taking a recording out by hand&quot; in the runbook.");
   });
@@ -340,13 +382,17 @@ describe("Copy ID on a page served over plain HTTP (2b spec §15.1)", () => {
   it("with no Clipboard API it copies through a selected textarea, then puts focus back", async () => {
     setClipboard(undefined);
     let copied: string | undefined;
+    let field: { from: number; to: number; size: string } | null | undefined;
     document.execCommand = vi.fn(() => {
-      copied = document.querySelector("textarea")?.value;
+      const area = document.querySelector("textarea");
+      copied = area?.value;
+      field = area && { from: area.selectionStart, to: area.selectionEnd, size: area.style.fontSize };
       return true;
     });
     const copyButton = await copyIt();
     expect(document.execCommand).toHaveBeenCalledWith("copy");
     expect(copied).toBe(copy(5));
+    expect(field).toEqual({ from: 0, to: copy(5).length, size: "16px" }); // all selected (iOS); no zoom into it
     expect(document.querySelector("textarea")).toBeNull(); // the textarea goes again
     expect(copyButton.textContent).toBe("Copied");
     expect(document.activeElement).toBe(copyButton);
@@ -368,5 +414,8 @@ describe("Copy ID on a page served over plain HTTP (2b spec §15.1)", () => {
     expect(writeText).toHaveBeenCalledWith(copy(5));
     expect(document.execCommand).not.toHaveBeenCalled();
     expect(copyButton.textContent).toBe("Copied");
+    // The button's name is fixed, so a polite live region says it.
+    expect($("[data-testid=copy-status]")!.getAttribute("aria-live")).toBe("polite");
+    expect($("[data-testid=copy-status]")!.textContent).toBe("Copied");
   });
 });

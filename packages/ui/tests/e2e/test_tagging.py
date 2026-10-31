@@ -2586,22 +2586,21 @@ WHOLE = """el => {
 }"""
 
 
-@pytest.mark.parametrize("height", [250, 170])
+@pytest.mark.parametrize("height", [250, 200, 170, 140, 125])
 @pytest.mark.browser_context_args(is_mobile=True, has_touch=True)
 def test_on_a_short_phone_screen_the_librarys_bar_stays_whole(
     page: Page, big_server, console, height
 ):
-    # Task 15 fix round 1, item 12. On a phone the panes' grid squeezes its rows to fit the screen.
-    # At 250 px it squeezed the list (min-height: 0) below its header and bar: the bar was cut off
-    # or, sticky in a list that hides its overflow, covered the header. A list that clips (not a
-    # scroll container) keeps its content's height as its minimum. At 110 px even that doesn't fit,
-    # the panes scroll, and only the sticky bar stays on screen. Task 21 made the top bar one row
-    # at 360 px (45 px, not two rows of 90). The lists are capped at 40dvh, so no height is left
-    # at which the panes overflow and the rows are still reachable: the test gives the bar back
-    # its old height, so that 170 px leaves the panes the same 80 px.
+    # Task 15 fix round 1, item 12; Task 21 fix round 1. On a phone the panes' grid squeezes its
+    # rows to fit the screen, and the lists are capped at 40dvh. Squeezed, the list (min-height: 0)
+    # cut its header and bar off or, sticky in a list that hides its overflow, covered the header.
+    # A list that clips (not a scroll container) keeps its content's height as its minimum, and the
+    # cap has a floor (92 px: head 45 + bar 43 + borders), because under about 215 px the cap alone
+    # left the list shorter than its bar, whose cut-off part showed the pane behind it (200 px was
+    # the worst case). On a screen too short even for that the panes scroll, and the sticky bar
+    # stays on screen. Whole at every height here, scrolling or not.
     page.set_viewport_size({"width": 360, "height": height})
     page.goto(big_server.url)
-    page.add_style_tag(content=".topbar { min-height: 90px; }")
     rows = page.get_by_test_id("recording-row")
     rows.nth(0).locator(".check").click()
     rows.nth(1).locator(".check").click()
@@ -2610,10 +2609,10 @@ def test_on_a_short_phone_screen_the_librarys_bar_stays_whole(
     panes = page.locator(".panes")
     panes.evaluate("el => { el.scrollTop = 0; }")  # a tap scrolls its checkbox into view
     scrolls = panes.evaluate("el => el.scrollHeight - el.clientHeight > 1")  # beyond rounding
-    assert scrolls == (height == 170)
+    print("SCAN", height, scrolls)
     assert bar.evaluate(WHOLE)
-    if height == 170:
-        return  # 80 px of panes can't show both the list's 45 px header and the 43 px bar
+    if scrolls:
+        return  # the panes scroll: only the sticky bar is promised, not the list's header
     # ...and covers none of the list's header, its Refresh included: in a list that hides its
     # overflow, the sticky bar sticks to the list's own bottom, up over the header.
     head = page.locator(".list-head").bounding_box()

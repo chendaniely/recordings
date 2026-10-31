@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 
 import type { ArchiveEquation, ConsentSummary, SyncBreaker, SyncEquation, SyncFlag, SyncHold, SyncSummaryView } from "../types";
 
-const n = (x: number) => x.toLocaleString("en");
+export const n = (x: number) => x.toLocaleString("en");
 
 /** The one summary line the Sync screen and Status's panel share (2b spec §15): "All here ·
  * checked 14:20 · next sync 14:40", explained under it, or the problem in one sentence. On the
@@ -24,9 +24,18 @@ export function SyncSummary({ summary, link }: { summary: SyncSummaryView; link:
   );
 }
 
+/** The terms of the equation (§11.3), which the Sync screen draws with a jump on three of them. */
+export function equationParts(eq: SyncEquation) {
+  return {
+    listed: `Listed ${n(eq.listed)}`, here: `${n(eq.here)} here`, waiting: `${n(eq.waiting)} waiting`,
+    excluded: `${n(eq.excluded)} excluded`, missing: `${n(eq.missing)} missing`,
+  };
+}
+
 /** "Listed 9 = 4 here + 2 waiting + 2 excluded + 1 missing" (§11.3). */
 export function equationText(eq: SyncEquation): string {
-  return `Listed ${n(eq.listed)} = ${n(eq.here)} here + ${n(eq.waiting)} waiting + ${n(eq.excluded)} excluded + ${n(eq.missing)} missing`;
+  const t = equationParts(eq);
+  return `${t.listed} = ${t.here} + ${t.waiting} + ${t.excluded} + ${t.missing}`;
 }
 
 /** "In the archive from Plaud: 4 = 4 here + 0 gone from Plaud", and the absent term only when it
@@ -64,8 +73,10 @@ export async function copyText(text: string): Promise<boolean> {
   area.setAttribute("readonly", "");
   area.style.position = "fixed";
   area.style.opacity = "0";
+  area.style.fontSize = "16px"; // iOS zooms the page into a field under 16 px
   document.body.appendChild(area);
   area.select();
+  area.setSelectionRange(0, text.length); // iOS ignores select() alone
   try {
     return typeof document.execCommand === "function" && document.execCommand("copy");
   } catch {
@@ -88,6 +99,8 @@ export function CopyId({ text, label }: { text: string; label: string }) {
         onClick={() => void copyText(text).then((ok) => setState(ok ? "copied" : "failed"))}>
         {state === "copied" ? "Copied" : "Copy ID"}
       </button>
+      {/* The button's name is fixed (it says which ID), so "Copied" is said here. */}
+      <span className="sr-only" role="status" aria-live="polite" data-testid="copy-status">{state === "copied" ? "Copied" : ""}</span>
       {state === "failed" && (
         <span className="sync-copy-failed" role="status" data-testid="copy-failed">
           Copy failed: select it <code className="sync-copy-text">{text}</code>
@@ -97,30 +110,38 @@ export function CopyId({ text, label }: { text: string; label: string }) {
   );
 }
 
-/** A hold (§11.4): its sentence and Accept this listing, or the reason Accept is refused. */
-export function SyncHoldLine({ hold, why, onAccept }: { hold: SyncHold; why: string | null; onAccept: () => void }) {
-  const refused = hold.refused ?? (hold.accept ? why : null);
+/** A hold (§11.4): its sentence and Accept this listing. `why` is the reason Accept is off, which
+ * the caller says once (`Reasons`, so a hold and a breaker with one reason don't say it twice) at
+ * `whyId`, which Accept names; the hold's own refusal is drawn here. */
+export function SyncHoldLine({ hold, why, whyId, onAccept }: { hold: SyncHold; why: string | null; whyId?: string; onAccept: () => void }) {
   return (
     <div className="sync-hold" data-testid="sync-hold">
       <p>{hold.sentence}</p>
-      {hold.accept && <Button data-request="accept" disabled={why !== null} onClick={onAccept}>Accept this listing</Button>}
-      {refused && <p className="sync-why">{refused}</p>}
+      {hold.accept && (
+        <Button data-request="accept" disabled={why !== null} aria-describedby={why !== null ? whyId : undefined} onClick={onAccept}>
+          Accept this listing
+        </Button>
+      )}
+      {hold.refused && <p className="sync-why">{hold.refused}</p>}
     </div>
   );
 }
 
 /** A breaker trip (§14.4): its sentence, the field names (never values), and Accept these
- * changes, or why it needs a code fix. */
-export function SyncBreakerLine({ breaker, why, onAccept }: { breaker: SyncBreaker; why: string | null; onAccept: () => void }) {
+ * changes, or why it needs a code fix. `why` and `whyId` are as for SyncHoldLine. */
+export function SyncBreakerLine({ breaker, why, whyId, onAccept }: { breaker: SyncBreaker; why: string | null; whyId?: string; onAccept: () => void }) {
   return (
     <div className="sync-breaker" data-testid="sync-breaker">
       <p>
         {breaker.sentence}
         {breaker.fields.length > 0 && <> ({breaker.fields.map((f, i) => <span key={f}>{i > 0 && ", "}<code>{f}</code></span>)})</>}
       </p>
-      {breaker.accept && <Button data-request="accept-changes" disabled={why !== null} onClick={onAccept}>Accept these changes</Button>}
+      {breaker.accept && (
+        <Button data-request="accept-changes" disabled={why !== null} aria-describedby={why !== null ? whyId : undefined} onClick={onAccept}>
+          Accept these changes
+        </Button>
+      )}
       {breaker.code_fix && <p className="sync-why">{breaker.code_fix}</p>}
-      {breaker.accept && why && <p className="sync-why">{why}</p>}
     </div>
   );
 }
