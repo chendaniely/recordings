@@ -64,7 +64,8 @@ class BackupError(RuntimeError):
 
 
 class BackupRefused(BackupError):
-    """Refused before restic ran: no sentinel, another archive, a missing file or password."""
+    """Refused before restic ran: no sentinel, another archive, a missing file or folder (or a
+    symbolic link in its place), or a missing password."""
 
 
 class NasLowOnSpace(BackupRefused):
@@ -355,8 +356,9 @@ def _check_archive(bc: BackupConfig, state: State) -> str:
 
 def missing_paths(bc: BackupConfig) -> list[Path]:
     """config.toml and the extra paths that aren't there now, as a file or a folder (2b phase 1
-    plan, decision 9). A backup refuses while any is missing, as before."""
-    return [p for p in bc.paths if not (p.is_file() or p.is_dir())]
+    plan, decision 9). A backup refuses while any is missing, as before. A symbolic link counts
+    as missing: restic backs it up as a link, and its target never."""
+    return [p for p in bc.paths if p.is_symlink() or not (p.is_file() or p.is_dir())]
 
 
 @dataclass(frozen=True)
@@ -382,7 +384,8 @@ def run_backup(
 ) -> BackupResult:
     _check_archive(bc, state)
     if missing := missing_paths(bc):
-        raise BackupRefused(f"refusing to back up: {missing[0]} is missing")
+        why = "is a symbolic link" if missing[0].is_symlink() else "is missing"
+        raise BackupRefused(f"refusing to back up: {missing[0]} {why}")
     free = None
     if bc.nas_repo_path and bc.nas.ssh:
         free = nas_free_bytes(bc.nas, bc.nas_repo_path, runner=runner)
@@ -482,9 +485,14 @@ def _in_restore(target: Path, path: Path) -> Path:
 
 
 def _came_back(target: Path, path: Path) -> bool:
-    """A backed-up folder must come back as a folder, and a file as a file."""
+    """A backed-up folder must come back as a folder, and a file as a file. When the live path is
+    gone by now, the snapshot's copy may be either kind."""
     restored = _in_restore(target, path)
-    return restored.is_dir() if path.is_dir() else restored.is_file()
+    if path.is_dir():
+        return restored.is_dir()
+    if path.is_file():
+        return restored.is_file()
+    return restored.is_dir() or restored.is_file()
 
 
 def _not_in_snapshot(bc: BackupConfig, target: Path, restored: Path) -> list[dict]:

@@ -719,7 +719,10 @@ def test_sigterm_still_reaches_the_handler_that_was_there_before():
 def test_with_a_real_restic_backup_check_forget_and_restore(tmp_path, writer, make_incoming):
     exe = restic_or_skip()
     writer.add(make_incoming())
-    cfg, environ = config(tmp_path, writer, restic=exe)
+    folder = consent_folder(tmp_path)  # the real restic must bring a folder back as a folder
+    (folder / "empty").mkdir()
+    extra = [str(tmp_path / "deploy.env"), str(folder)]
+    cfg, environ = config(tmp_path, writer, restic=exe, extra_paths=extra)
     bc = replace(backup.from_config(cfg, environ), retry_lock="1m")  # as the CLI runs it
     backup.run_init(bc, environ)
     first = backup.run_backup(bc, writer.state, environ, tags=("pre-import",))
@@ -1277,3 +1280,43 @@ def test_the_restore_test_checks_a_folder_came_back(tmp_path, writer, make_incom
     assert run(a_file_in_its_place).problems == (
         {"path": str(folder), "message": "is not in the snapshot"},
     )
+
+
+def test_a_folder_gone_at_the_restore_test_is_still_found_in_the_snapshot(
+    tmp_path, writer, make_incoming
+):
+    # why: the live folder is gone when the test runs; the snapshot's copy is what counts, of
+    # either kind, so the message is not "is not in the snapshot" for a snapshot that holds it.
+    writer.add(make_incoming())
+    folder = consent_folder(tmp_path)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    bc = backup.from_config(cfg, environ)
+
+    def restore(cmd):
+        if "restore" in cmd:
+            restore_like_restic(writer, bc, cmd)
+            shutil.rmtree(folder)  # unmounted since the restore began
+
+    result = backup.run_restore_test(
+        bc,
+        environ,
+        expected_uuid=writer.identity.uuid,
+        now=NOW,
+        runner=FakeRestic(on_call=restore),
+    )
+    assert result.ok
+
+
+def test_a_symlink_in_extra_paths_refuses_the_backup(tmp_path, writer):
+    # why: restic backs up a link as a link; its target is never backed up, so the snapshot
+    # would hold nothing of the consent folder.
+    folder = consent_folder(tmp_path)
+    link = tmp_path / "consent-link"
+    link.symlink_to(folder)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(link)])
+    bc = backup.from_config(cfg, environ)
+    assert backup.missing_paths(bc) == [link]
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(backup.BackupRefused, match="consent-link is a symbolic link"):
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert fake.calls == []

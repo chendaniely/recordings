@@ -43,7 +43,8 @@ SECRET_ENV = (
 )
 
 
-# As config.example.toml and the runbook's section 6 have it: deploy.env and the consent folder.
+# As the runbook's section 6 has Dan do: deploy.env, which the template lists, and the consent
+# folder, which only the template's comment names.
 EXTRA_PATHS = 'extra_paths = ["/backup-extra/deploy.env", "/consent"]\n'
 
 
@@ -1176,24 +1177,39 @@ def with_extra_paths(environ, *entries: str) -> None:
         ("/", "Plaud sign-in"),
         ("/state", "whole state folder"),
         ("{state}", "whole state folder"),
+        ("plaud", "Plaud sign-in"),
+        ("//plaud", "Plaud sign-in"),
+        ("/plaud/../plaud/tokens.json", "Plaud sign-in"),
     ],
 )
 def test_extra_paths_holding_the_token_folder_or_the_whole_state_is_a_problem(
-    tmp_path, entry, what
+    tmp_path, monkeypatch, entry, what
 ):
+    monkeypatch.chdir("/")  # a relative entry is read from the working folder, as restic would
     # why: stage 2b spec §17.2. The token is never backed up, and state.db is backed up on its
     # own, as a consistent copy. Every role reads the one config.toml, so each says so.
     environ = server(tmp_path)
     entry = entry.format(state=tmp_path / "state")
     with_extra_paths(environ, "/backup-extra/deploy.env", "/consent", entry)
-    for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
+    for role, env in (
+        ("web", web_only(environ)),
+        ("worker", environ),
+        ("backup", environ),
+        ("all", environ),
+    ):
         problems = doctor(env, role=role)["problems"]
         assert any(f"names {entry}," in p and what in p for p in problems), role
 
 
 def test_the_manifests_folder_and_the_state_copy_are_not_problems(tmp_path):
     environ = server(tmp_path)
-    with_extra_paths(environ, "/backup-extra/deploy.env", "/consent", "/state/manifests")
+    with_extra_paths(
+        environ,
+        "/backup-extra/deploy.env",
+        "/consent",
+        "/state/manifests",
+        "/state/backup/state.db",
+    )
     assert doctor(environ, role="backup")["problems"] == []
 
 

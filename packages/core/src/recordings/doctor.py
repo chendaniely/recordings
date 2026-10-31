@@ -723,6 +723,13 @@ def _worker(
     info["keep_out_words"] = _enforced_words(cfg, problems)
 
 
+def _normal(path: Path) -> Path:
+    """Absolute and normalised (`//plaud`, `a/../b`, a relative path from the working folder), so
+    two spellings of one folder compare equal. Links are not followed."""
+    absolute = os.path.normpath(os.path.abspath(path))
+    return Path("/" + absolute.lstrip("/"))  # POSIX keeps a leading `//` as its own spelling
+
+
 def _holds(entry: Path, path: Path) -> bool:
     """`entry`, backed up, would carry `path`: it is the path or one of its folders."""
     return entry == path or entry in path.parents
@@ -752,9 +759,10 @@ def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str
     found = section.get("extra_paths", [])
     paths = [p for p in found if isinstance(p, str)] if isinstance(found, list) else []
     token_folder, consent_folder = _plaud_folders(cfg)
-    states = [Path("/state"), *([cfg.state_path] if cfg.state_path is not None else [])]
+    token_folder = _normal(token_folder)
+    states = [_normal(Path("/state")), *([_normal(cfg.state_path)] if cfg.state_path else [])]
     for entry in paths:
-        held = Path(os.path.normpath(entry))
+        held = _normal(Path(entry))
         if any(_holds(held, f) or _holds(f, held) for f in (token_folder, PLAUD_MOUNT)):
             problems.append(
                 f"[backup] extra_paths names {entry}, which would carry the Plaud sign-in: it is "
@@ -772,8 +780,8 @@ def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str
             "deploy.env is not in [backup] extra_paths, so no backup carries it "
             "(config.example.toml has the line)"
         )
-    wanted = {CONSENT_MOUNT, *([consent_folder] if consent_folder is not None else [])}
-    if not any(Path(os.path.normpath(p)) in wanted for p in paths):
+    wanted = {CONSENT_MOUNT, *([_normal(consent_folder)] if consent_folder is not None else [])}
+    if not any(_normal(Path(p)) in wanted for p in paths):
         warnings.append(
             f"the consent folder is not in [backup] extra_paths, so no backup carries the consent "
             f'list: add "{CONSENT_MOUNT}" (runbook section 6)'
