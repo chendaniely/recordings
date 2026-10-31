@@ -20,6 +20,7 @@ from recordings.writer import NotTheWriter, Writer
 
 from recordings_ui import runtime
 from recordings_ui.hosts import HostGuard, WriteGuard
+from recordings_ui.plaud import PlaudViewSettings, demo_view_settings, plaud_view_settings
 from recordings_ui.settings import Settings, find_demo_archive
 from recordings_ui.status import status_settings
 from recordings_ui.tagging import LOCK_WAIT, ArchiveStore, TagService
@@ -79,6 +80,15 @@ def writer_opener(settings: Settings) -> Callable[[], Writer]:
     return lambda: Writer.open(cfg, lock_timeout=LOCK_WAIT)
 
 
+def plaud_views(settings: Settings) -> PlaudViewSettings | None:
+    """What the Plaud views read (2b spec §15): demo mode's canned view beside its copy (2b phase
+    1 plan, decision 23), the server's state folder and [plaud] keys, or, with no config.toml,
+    nothing."""
+    if settings.demo:
+        return demo_view_settings(settings.archive)
+    return plaud_view_settings(settings.config) if settings.config else None
+
+
 def create_app(settings: Settings) -> HostGuard:
     archive = Archive(settings.archive)
     tagging = TagService(ArchiveStore(archive, writer_opener(settings)))
@@ -86,6 +96,7 @@ def create_app(settings: Settings) -> HostGuard:
         archive,
         status=status_settings(settings.config) if settings.config else None,
         tagging=tagging,
+        plaud=plaud_views(settings),
     )
     from recordings_ui.shiny_app import app as shiny_app  # after configure()
 

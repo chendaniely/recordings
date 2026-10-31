@@ -1,5 +1,5 @@
-"""The Plaud sync's side of the web app (stage 2b spec §9.3, §15): the request checks and inserts;
-Task 19 adds the views.
+"""The Plaud sync's side of the web app (stage 2b spec §9.3, §15): the request checks and inserts,
+and the views.
 
 The browser's `plaud_request` input is checked here, then inserted as a row in state.db's
 `plaud_requests` (recordings.plaud.requests.insert) on `asyncio.to_thread`: never on the event
@@ -12,16 +12,25 @@ It imports no Plaud client, token store or sync module (test_plaud_imports.py as
 also imports on the Pages demo's Pyodide (Python 3.12, no sqlite3, fcntl or threads): state.db is
 reached only through `requests.insert`, inside the thread, and sqlite3 is imported where a
 request with a writable state.db needs it.
+
+The views (Task 19; 2b spec §15, §22): the Sync screen's SyncView, Status's SyncPanel, the
+Library's Arrivals and Details' RecordingPlaud, read-only from state.db, or from
+demo/plaud-sync.json in the demos. They import what reads state.db inside each function,
+never at the top, because the Pages demo imports this module on Pyodide, which has no sqlite3.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
+from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from recordings.ids import parse_id
 from recordings.plaud import requests
@@ -38,9 +47,12 @@ from recordings.plaud.requests import (
     PlaudRequest,
     Reply,
 )
+from recordings.plaud.when import local_hhmm, parse_stamp
 from recordings.sentinel import is_mirror
 
 if TYPE_CHECKING:
+    from recordings.config import Config
+    from recordings.plaud.checks import Event
     from recordings.state import State
 
     from recordings_ui.settings import Settings
@@ -185,3 +197,1073 @@ async def submit(
         log.warning("a Plaud request failed (%s)", type(exc).__name__)
         return _refused(checked.request_id, checked.kind, f"error: `{type(exc).__name__}`")
     return reply.to_dict()
+
+
+# ---- The views (Task 19; 2b spec §15, §22) -------------------------------------------------
+# Phase 1's views read Phase 1's own data, read-only: the summary and what stops the sync
+# (sync_health), the blockers, the privacy flags, what the worker read from the consent list (a
+# count), the gate, the worker's heartbeat, the ping, and the requests' last result. What a later
+# phase writes (the listing and its compare, holds, the breaker, checks, Sync everything, the
+# sign-in's expiry, parking) is null or empty here: each reader comes with its writer, against
+# types.ts and the canned view (2b phase 1 plan, Task 19). Every reader is imported inside the
+# function that needs it, never at the top: the Pages demo runs this module on Pyodide, which has
+# no sqlite3, and draws only the canned view (decision 23). Times and dates are formatted here, in
+# the default zone; a title appears only in the Sync screen's Updated rows.
+
+DEMO_NOTE = "Demo: nothing is synced"
+DEMO_STATUS = "Demo: Plaud sync isn't part of the demo."
+DEMO_VIEW_NAME = "plaud-sync.json"
+NO_SYNC = (
+    "No sync has run yet"  # checks.NO_SYNC_YET, kept here: checks needs sqlite3 (a test pins it)
+)
+NO_GOOD_LISTING = "No good listing yet"
+UNREADABLE_SYNC = "The sync's records in state.db can't be read now: see Needs attention"
+FULL_UNKNOWN = "unknown until the first run"
+CONSENT_UNREADABLE = "the consent list can't be read"  # keepout.STOP_UNREADABLE
+NO_WORKER_YET = "The Plaud worker hasn't reported yet: check that the worker container is running."
+WORKER_FAILED = "The Plaud worker couldn't start (`{}`): see `rc logs worker` (runbook)."
+PING_FAILING = "The sync's Healthchecks ping has failed for 2 hours."
+# A recording the last auto-private patterns pass couldn't check (Task 10's K_PATTERNS_PASS
+# "unwritten"): its marker stays behind, so any reconcile judges it (spec §13.2, by ID).
+PATTERNS_UNCHECKED = (
+    "Recording {id} wasn't checked against the private patterns: run `recordings reindex`, "
+    "which says what stops it."
+)
+# A late consent pass that failed as a whole (Task 13's private-unwritten blocker, with the class it
+# raised): the remedy that can help, never `recordings reindex`.
+UNWRITTEN_STOPPED = (
+    "late consent listings stopped ({}): check the archive disk, then the worker's log"
+)
+# Spec §22's numbers.
+PING_GRACE = timedelta(minutes=10)  # "one schedule interval plus 10 minutes"
+FAILING_FOR = timedelta(hours=2)
+PING_FAILING_FOR = timedelta(hours=2)
+SCHEDULE_OFF_FOR = timedelta(hours=24)
+STUCK_AFTER = timedelta(hours=2)
+STUCK_AFTER_LONG = timedelta(hours=12)  # Sync everything and the catch-up
+RECENT = timedelta(days=7)  # Updated on Plaud
+FLAG_EVENTS = ("kept-out-late", "consent-late", "private-unwritten")
+ARRIVAL_EVENTS = ("imported", "arrived-private", "updated", "retagged-private")
+PRIVATE_EVENTS = ("retagged-private", "arrived-private")
+LONG_JOBS = ("plaud-full", "plaud-catch-up")
+# Events that mark a recording whose title must never reach a view (P13): a privacy flag, open or
+# resolved, and Keep it here. A `retagged-private` whose reason is a late keep-out counts too.
+TITLE_HIDING_EVENTS = (*FLAG_EVENTS, "kept-here")
+KEPT_OUT_WHY = ("kept out late", "kept out by title")
+# Decision 15: the `why` a retagged-private event records (privacy.why_phrase), as Details says it.
+# Phase 2's rebuild record adds "the sync's record was rebuilt" with its wording.
+WHY_DETAILS = {
+    "title changed": "its Plaud title changed",
+    "first check": "its title matched a private pattern",
+    "patterns changed": "its title matched a private pattern",
+    "kept out by title": "kept out by title",  # a keep-out word alone (Task 9's "kept out late")
+}
+ARRIVED_PRIVATE = "its title matched when it arrived"
+CAUSES = {
+    "listing": "no good listing",
+    "disk": "the disk is too full to import",
+    "work": "every fetch failed",
+}
+# The heartbeat's phase in plain words, for "last reported 14:21 (idle)" (§15.2).
+PHASES = {
+    "starting": "starting",
+    "idle": "idle",
+    "turn": "syncing",
+    "request": "answering a request",
+    "consent": "reading the consent list",
+    "checking": "checking",  # the patterns pass at start, with its count (Task 13)
+    "stopping": "stopping",
+}
+KIND_LABELS = {
+    "compare": "Compare",
+    "sync": "Sync now",
+    "import": "Import selected",
+    "resync": "Re-sync",
+    "full": "Sync everything",
+    "accept": "Accept this listing",
+    "accept-changes": "Accept these changes",
+    "release-preview": "Release",
+    "release": "Release",
+    "unrelease": "Undo release",
+    "park": "Park",
+    "unpark": "Unpark",
+    "keep-here": "Keep it here",
+}
+JOB_LABELS = {
+    "plaud-sync": "A sync",
+    "plaud-compare": "A compare",
+    "plaud-import": "An import",
+    "plaud-resync": "A re-sync",
+    "plaud-full": "Sync everything",
+    "plaud-baseline": "The baseline",
+    "plaud-catch-up": "The catch-up",
+}
+
+
+@dataclass(frozen=True)
+class PlaudViewSettings:
+    state_path: Path | None
+    timezone_name: str
+    schedule_minutes: int
+    full_sweep_days: int
+    auto_import: bool
+    keep_out_word_ok: bool
+    demo_view: Path | None  # demo mode and Pages: the canned view's file
+
+
+def plaud_view_settings(cfg: Config) -> PlaudViewSettings:
+    """For the server only: the state folder and the [plaud] keys the views read. A [plaud]
+    section that won't read gives the spec's defaults here, so the app still starts; doctor and
+    the worker name the fault."""
+    from recordings.config import ConfigError
+    from recordings.plaud.settings import (
+        DEFAULT_FULL_SWEEP_DAYS,
+        DEFAULT_SCHEDULE_MINUTES,
+        plaud_settings,
+    )
+
+    try:
+        ps = plaud_settings(cfg)
+    except ConfigError:
+        return PlaudViewSettings(
+            state_path=cfg.state_path,
+            timezone_name=cfg.default_timezone,
+            schedule_minutes=DEFAULT_SCHEDULE_MINUTES,
+            full_sweep_days=DEFAULT_FULL_SWEEP_DAYS,
+            auto_import=True,
+            keep_out_word_ok=True,
+            demo_view=None,
+        )
+    return PlaudViewSettings(
+        state_path=cfg.state_path,
+        timezone_name=cfg.default_timezone,
+        schedule_minutes=ps.schedule_minutes,
+        full_sweep_days=ps.full_sweep_days,
+        auto_import=ps.auto_import,
+        keep_out_word_ok=ps.keep_out_word_ok,
+        demo_view=None,
+    )
+
+
+def demo_view_settings(archive: Path) -> PlaudViewSettings:
+    """Demo mode and Pages: no state folder, only the canned view that
+    `settings.from_env(demo=True)` copied beside the archive's copy (decision 23)."""
+    return PlaudViewSettings(
+        state_path=None,
+        timezone_name="UTC",
+        schedule_minutes=0,
+        full_sweep_days=7,
+        auto_import=False,
+        keep_out_word_ok=True,
+        demo_view=archive.parent / DEMO_VIEW_NAME,
+    )
+
+
+def _handled() -> dict:
+    """What the worker can do yet, which every view carries (G7): the UI disables every other
+    request button with `not_yet` as its reason, as it shows the gate's and the demo's. Phase 1
+    handles Keep it here alone; each later phase widens requests.HANDLED with its handlers."""
+    return {"handled": sorted(HANDLED), "not_yet": NOT_YET}
+
+
+# ---- Formatting: the server formats every time, in the default zone ----------------------------
+
+
+def _local(t: datetime, tz: str) -> datetime:
+    return t.astimezone(ZoneInfo(tz))
+
+
+def _hm(t: datetime | None, tz: str) -> str | None:
+    return None if t is None else local_hhmm(t, ZoneInfo(tz))
+
+
+def _date(t: datetime | None, tz: str) -> str | None:
+    return None if t is None else f"{_local(t, tz):%Y-%m-%d}"
+
+
+def _stamp(t: datetime | None, tz: str) -> str | None:
+    return None if t is None else f"{_date(t, tz)} {_hm(t, tz)}"
+
+
+def _when(t: datetime | None, now: datetime, tz: str) -> str | None:
+    """`14:20` on the same local day as now, else `2026-10-22 14:20`."""
+    if t is None:
+        return None
+    return _hm(t, tz) if _local(t, tz).date() == _local(now, tz).date() else _stamp(t, tz)
+
+
+def _copy_form(plaud_id: str) -> str:
+    """Copy ID: the whole ID in the consent list's own form (§15.1), which `make consent-add`
+    and the list read as an exclusion."""
+    return f"- `{plaud_id}` —"
+
+
+def _cap(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def _dict(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _int(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _class_name(value: object) -> str | None:
+    """An exception's class name as the worker recorded it; anything else is none (§15.6)."""
+    return value if isinstance(value, str) and value.isidentifier() else None
+
+
+def _sentence(ev: Event) -> str:
+    """A flag's fixed sentence (Task 8's flag_sentence): a `private` that couldn't be written for
+    a reason `recordings reindex` can't mend (a full or read-only disk, a folder it can't enter, a
+    busy state.db) names the recording and its cause's class, recorded in the event's detail."""
+    from recordings.plaud.flags import flag_sentence
+
+    cause = ev.detail.get("cause")
+    return flag_sentence(ev.kind, ev.recording_id or "", cause if isinstance(cause, str) else None)
+
+
+# ---- Reading state.db, read-only ----------------------------------------------------------------
+
+
+def _open(settings: PlaudViewSettings | None) -> State | None:
+    if settings is None or settings.state_path is None:
+        return None
+    if not (settings.state_path / "state.db").is_file():
+        return None
+    from recordings.state import State  # imports sqlite3: only where a state.db exists
+
+    return State.read_only(settings.state_path)
+
+
+def _q(state: State, sql: str, args: tuple = ()) -> list[tuple]:
+    """A read of state.db; a 2b table that isn't there yet is NoSyncYet (§9.5), never the
+    "restore state.db" text."""
+    import sqlite3
+
+    from recordings.plaud.checks import NO_SYNC_YET, NoSyncYet, no_such_table
+
+    try:
+        with state.db() as db:
+            return db.execute(sql, args).fetchall()
+    except sqlite3.OperationalError as exc:
+        if no_such_table(exc):
+            raise NoSyncYet(NO_SYNC_YET) from None
+        raise
+
+
+def _body(state: State, recording_id: str) -> dict | None:
+    """The recording.json the app last committed (state.db's merge base, main spec §6.4). The
+    Sync screen names a recording here from it, as the Library names it from the file."""
+    from recordings.ids import ID_RE, relative_dir
+
+    if not ID_RE.fullmatch(recording_id or ""):
+        return None
+    rel = (relative_dir(recording_id) / "recording.json").as_posix()
+    rows = _q(
+        state,
+        "SELECT body FROM revisions WHERE file = ? AND committed = 1 ORDER BY id DESC LIMIT 1",
+        (rel,),
+    )
+    if not rows:
+        return None
+    try:
+        body = json.loads(rows[0][0])
+    except (TypeError, ValueError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _plaud_refs(body: dict | None) -> list[str]:
+    return [
+        s["ref"]
+        for s in (body or {}).get("sources") or []
+        if isinstance(s, dict) and s.get("kind") == "plaud" and isinstance(s.get("ref"), str)
+    ]
+
+
+def _next_sync(
+    settings: PlaudViewSettings, gate_open: bool, last: datetime | None, now: datetime
+) -> str | None:
+    """When the next scheduled turn is due: schedule_minutes after the later of last_started and
+    last_ended (§9.2); none while the schedule is off or the gate closed."""
+    if settings.schedule_minutes <= 0 or not gate_open or last is None:
+        return None
+    due = max(last + timedelta(minutes=settings.schedule_minutes), now)
+    return _when(due, now, settings.timezone_name)
+
+
+def _flag(db: Any, ev: Event) -> dict:
+    """One privacy flag (P15), by recording ID with its next step; never a title. Its Plaud ID is
+    shown as the listing row holds it (a late keep-out makes one), else in its canonical form. A
+    `private` that couldn't be written says what its cause needs (_sentence)."""
+    from recordings.plaud.flags import KEPT_OUT_LATE
+
+    listed = None
+    if ev.canonical_plaud_id:
+        row = db.listing(ev.canonical_plaud_id)
+        listed = row.listed_id if row is not None else ev.canonical_plaud_id
+    return {
+        "kind": ev.kind,
+        "recording_id": ev.recording_id,
+        "plaud_id": listed,
+        "copy_id": _copy_form(listed) if listed else None,
+        "sentence": _sentence(ev),
+        "keep_here": ev.kind == KEPT_OUT_LATE and ev.recording_id is not None,
+        "date": None,  # a possible re-keyed match's date and duration come from Phase 2's compare
+        "duration": None,
+    }
+
+
+class _Read:
+    """What one view reads, read once (spec §22). Raises NoSyncYet without the 2b tables."""
+
+    def __init__(self, settings: PlaudViewSettings, state: State, now: datetime) -> None:
+        from recordings.plaud import checks
+        from recordings.plaud.gate import gate_now
+        from recordings.plaud.health import sync_health
+
+        self.settings, self.state, self.now = settings, state, now
+        self.tz = settings.timezone_name
+        self.db = checks.PlaudDB(state)
+        self.health = sync_health(state, schedule_minutes=settings.schedule_minutes)
+        self.gate = gate_now(self.db)
+        get = self.db.get
+        self.consent = _dict(get(checks.K_CONSENT))
+        self.ping = _dict(get(checks.K_LAST_PING))
+        self.words = [w for w in get(checks.K_KEEP_OUT_WORDS) or [] if isinstance(w, str)]
+        stamps = (parse_stamp(get(checks.K_LAST_STARTED)), parse_stamp(get(checks.K_LAST_ENDED)))
+        self.last_turn = max((t for t in stamps if t is not None and t <= now), default=None)
+        self.flags = self.db.open_flags(FLAG_EVENTS)
+        unwritten = _dict(get(checks.BLOCKER_PREFIX + "private-unwritten"))
+        self.unwritten_error = _class_name(_dict(unwritten.get("detail")).get("error"))
+        unchecked = _dict(get(checks.K_PATTERNS_PASS)).get("unwritten")
+        self.patterns_unchecked = (
+            [x for x in unchecked if isinstance(x, str)] if isinstance(unchecked, list) else []
+        )
+
+    def gate_reason(self) -> str | None:
+        return None if self.gate.open else self.gate.reason
+
+    def when(self, t: datetime | None) -> str | None:
+        return _when(t, self.now, self.tz)
+
+    def next_sync(self) -> str | None:
+        return _next_sync(self.settings, self.gate.open, self.last_turn, self.now)
+
+    def flag_rows(self) -> list[dict]:
+        return [_flag(self.db, ev) for ev in self.flags]
+
+    def cause(self) -> str | None:
+        """What stops the sync (sync_health, §16), else the gate's reason. A late consent pass
+        that failed as a whole names its class and the remedy that can help."""
+        from recordings.plaud.health import BLOCKER_PHRASES
+
+        found = self.health.cause(tz=ZoneInfo(self.tz))
+        if found == BLOCKER_PHRASES["private-unwritten"] and self.unwritten_error:
+            return UNWRITTEN_STOPPED.format(self.unwritten_error)
+        return found or self.gate_reason()
+
+    def summary_view(self) -> dict:
+        """The one summary line the Sync screen and Status share (§15.1, §15.2): what stops the
+        sync, or the gate's reason. "All here" needs the last good listing, which Phase 2 writes
+        and reads; until then a sync nothing stops has no good listing yet."""
+        problem = self.cause()
+        sentence = _cap(problem) if problem else NO_GOOD_LISTING
+        return {"kind": "problem", "sentence": sentence, "explain": None, "see_status": True}
+
+    def consent_view(self) -> dict | None:
+        """What the worker read from the consent list (§12.1): its count, never its IDs (Task 13
+        writes `count`). How many are on Plaud now needs the listing (Phase 2)."""
+        if not self.consent:
+            return None
+        stop = self.consent.get("stop")
+        return {
+            "ids": _int(self.consent.get("count")),
+            "on_plaud": None,
+            "file_changed": _stamp(parse_stamp(self.consent.get("file_changed")), self.tz),
+            "read_at": self.when(parse_stamp(self.consent.get("read_at"))),
+            "stop": stop if isinstance(stop, str) and stop else None,
+        }
+
+    def schedule_off_since(self) -> datetime | None:
+        """The schedule can't have been off before the last turn that ran ended, nor before the
+        catch-up, while the gate kept every turn from running (§11.6). None: never ran."""
+        stamps = (self.last_turn, self.health.catch_up_done)
+        return max((t for t in stamps if t is not None), default=None)
+
+
+# ---- The Sync screen ----------------------------------------------------------------------------
+
+
+def _summary(kind: str, sentence: str) -> dict:
+    return {"kind": kind, "sentence": sentence, "explain": None, "see_status": False}
+
+
+def _empty_sync(reason: str | None) -> dict:
+    """The Sync screen before any sync, or where there is nothing to read: every button off. The
+    sections a later phase fills (the equations, Not here yet, Kept out, Gone, Parked, a hold, a
+    breaker) are empty here until their readers come."""
+    why = reason or NO_SYNC
+    return {
+        "demo": False,
+        "available": False,
+        "reason": why,
+        "summary": _summary("no-sync", NO_SYNC),
+        "flags": [],
+        "hold": None,
+        "breaker": None,
+        "buttons": {"sync": why, "compare": why, "full": why, "import": why},
+        **_handled(),
+        "gate": None,
+        "listed": False,  # until Phase 2 writes a listing: the screens then show no counts
+        "full_estimate": FULL_UNKNOWN,
+        "equation": None,
+        "archive": None,
+        "consent": None,
+        "titles_hidden": None,
+        "not_here": [],
+        "import_all": {"count": 0, "review_more": 0},
+        "kept_out": [],
+        "updated": [],
+        "gone": {"rows": [], "last_7_days": 0},
+        "parked": [],
+        "last_result": None,
+        "next_sync": None,
+    }
+
+
+def _guarded(build, empty, unreadable):
+    """A view from state.db: NoSyncYet without the 2b tables, and a state.db that can't be read
+    gives its own line, never a traceback (Status has the restore advice, §9.5)."""
+    import sqlite3
+
+    from recordings.plaud.checks import NoSyncYet
+
+    try:
+        return build()
+    except NoSyncYet:
+        return empty()
+    except sqlite3.DatabaseError:
+        return unreadable()
+
+
+def sync_view(
+    settings: PlaudViewSettings | None, *, now: datetime, can_request: str | None
+) -> dict:
+    """The Sync screen (§15.1), as SyncView. `can_request` is why this app can't make requests
+    (cannot_request_reason: the demo, no config.toml, the mirror's copy), or None."""
+    if settings is not None and settings.demo_view is not None:
+        return demo_view(settings.demo_view)["sync"]
+    state = _open(settings)
+    if settings is None or state is None:
+        return _empty_sync(can_request)
+
+    def unreadable() -> dict:
+        return {**_empty_sync(UNREADABLE_SYNC), "summary": _summary("problem", UNREADABLE_SYNC)}
+
+    return _guarded(
+        lambda: _sync_from(_Read(settings, state, now), can_request),
+        lambda: _empty_sync(can_request),
+        unreadable,
+    )
+
+
+def _sync_from(r: _Read, can_request: str | None) -> dict:
+    from recordings.plaud.settings import BAD_WORD
+
+    gate = r.gate_reason()
+    word = None if r.settings.keep_out_word_ok else BAD_WORD
+    held_back = can_request or word or gate  # Compare runs whatever the gate says (§11.6)
+    return {
+        **_empty_sync(can_request),
+        "available": can_request is None,
+        "reason": can_request,
+        "summary": r.summary_view(),
+        "flags": r.flag_rows(),
+        # Each button's own reason; the UI puts not_yet first for a kind not handled yet (G7).
+        "buttons": {
+            "sync": held_back,
+            "compare": can_request,
+            "full": held_back,
+            "import": held_back,
+        },
+        "gate": gate,
+        "consent": r.consent_view(),
+        "updated": _updated(r),
+        "last_result": _last_result(r),
+        "next_sync": r.next_sync(),
+    }
+
+
+def _untitled(r: _Read) -> set[str]:
+    """The recordings whose title never reaches a view (P13): one with a privacy flag, open or
+    resolved (consent-listed, or kept out by title, after it came in), one Keep it here was pressed
+    for, and one the sync re-tagged private only because of a keep-out word."""
+
+    marks = ", ".join("?" for _ in (*TITLE_HIDING_EVENTS, "retagged-private"))
+    rows = _q(
+        r.state,
+        "SELECT recording_id, kind, detail FROM plaud_events WHERE recording_id IS NOT NULL "
+        f"AND kind IN ({marks})",
+        (*TITLE_HIDING_EVENTS, "retagged-private"),
+    )
+    hidden = {ev.recording_id for ev in r.flags if ev.recording_id}
+    for recording_id, kind, raw in rows:
+        if kind != "retagged-private":
+            hidden.add(recording_id)
+            continue
+        try:
+            why = _dict(json.loads(raw)).get("why")
+        except (TypeError, ValueError):
+            why = None
+        if why in KEPT_OUT_WHY:
+            hidden.add(recording_id)
+    return hidden
+
+
+def _title_for(r: _Read, recording_id: str, hidden: set[str]) -> str | None:
+    """The recording's own title, from the file the app last committed, but never for one in
+    `hidden`, nor one whose Plaud ID the listing keeps out (by a word or the consent list)."""
+    if recording_id in hidden:
+        return None
+    body = _body(r.state, recording_id)
+    if body is None:
+        return None
+    for ref in _plaud_refs(body):
+        row = r.db.listing(ref)
+        if row is not None and row.kept_out_at is not None:
+            return None
+    title = body.get("title")
+    return title if isinstance(title, str) else None
+
+
+def _updated(r: _Read) -> list[dict]:
+    """Updated on Plaud, the last 7 days (§15.1): the marker's `retagged-private` (Phase 1), and
+    edit-sync's `updated` (Phase 3). The title is the recording's own, from the file the app last
+    committed, but never for a recording with a privacy flag or kept out: one kept out by title or
+    consent-listed after it came in shows by ID alone, as everywhere else (P13)."""
+    rows, titles = [], {}
+    hidden = _untitled(r)
+    events = r.db.events_since(r.now - RECENT, ("updated", "retagged-private"))
+    for ev in sorted(events, key=lambda e: e.at, reverse=True):
+        if ev.recording_id is None:
+            continue
+        if ev.recording_id not in titles:
+            titles[ev.recording_id] = _title_for(r, ev.recording_id, hidden)
+        parts = ["re-tagged private"]
+        if ev.kind == "updated":
+            parts = [p for p in ev.detail.get("parts") or [] if isinstance(p, str)] or ["updated"]
+        rows.append(
+            {
+                "recording_id": ev.recording_id,
+                "title": titles[ev.recording_id],
+                "parts": parts,
+                "at": r.when(ev.at),
+            }
+        )
+    return rows
+
+
+def _last_result(r: _Read) -> str | None:
+    """The newest finished request's line, "Keep it here, 14:20: Kept here: …", so a phone that
+    slept through the toast still sees it (§15.1). The UI shows this line, never one of its own.
+    A preview's answer is its dialog, never a line."""
+    rows = _q(
+        r.state,
+        "SELECT kind, select_all, finished_at, message FROM plaud_requests "
+        "WHERE state IN ('done', 'failed') AND kind != 'release-preview' "
+        "ORDER BY id DESC LIMIT 1",
+    )
+    if not rows:
+        return None
+    kind, select_all, finished, message = rows[0]
+    label = "Import all" if kind == "import" and select_all else KIND_LABELS.get(kind, kind)
+    return f"{label}, {r.when(parse_stamp(finished))}: {message}"
+
+
+# ---- Status's sync panel ------------------------------------------------------------------------
+
+
+def _empty_panel() -> dict:
+    """Status's panel before any sync. The numbers and details a later phase fills (the listing,
+    the sweep, the sign-in, Sync everything, held, gone, failing, parked, the runs) keep these
+    empty values until their readers come."""
+    return {
+        "demo": False,
+        "no_sync_yet": True,
+        "summary": _summary("no-sync", NO_SYNC),
+        "failing": None,
+        "not_pinged": None,
+        "conditions": [],
+        "hold": None,
+        "breaker": None,
+        **_handled(),
+        "listed": False,  # until Phase 2 writes a listing: Status then shows no zero counts
+        "numbers": {
+            "equation": None,
+            "archive": None,
+            "consent": None,
+            "last_good_listing": None,
+            "next_sync": None,
+            "sweep": None,
+            "sign_in": None,
+            "full": None,
+            "held": 0,
+            "gone": 0,
+            "failing": 0,
+            "parked": 0,
+            "worker": None,
+            "healthchecks": None,
+        },
+        "details": {
+            "normaliser": "",
+            "fields": [],
+            "census": {},
+            "form_change": None,
+            "changes_24h": {},
+            "named_share": None,
+            "runs": [],
+            "keep_out_words": [],
+            "malformed": 0,
+        },
+        "attention": [],
+    }
+
+
+def sync_panel(settings: PlaudViewSettings | None, *, now: datetime) -> dict:
+    """Status's sync panel (§15.2), as SyncPanel: true sentences first, then the numbers, then
+    the details. No title anywhere: recordings are named by ID (P13)."""
+    if settings is not None and settings.demo_view is not None:
+        return demo_view(settings.demo_view)["panel"]
+    state = _open(settings)
+    if settings is None or state is None:
+        return _empty_panel()
+
+    def unreadable() -> dict:
+        return {
+            **_empty_panel(),
+            "no_sync_yet": False,
+            "summary": _summary("problem", UNREADABLE_SYNC),
+        }
+
+    return _guarded(lambda: _panel_from(_Read(settings, state, now)), _empty_panel, unreadable)
+
+
+def _worker(r: _Read) -> tuple[str | None, str | None, str | None]:
+    """The worker's last report for the numbers, in plain words; its "silent", "stuck" or
+    "couldn't start" reason; and its Needs attention line (§9.2). A start that failed writes the
+    phase `failed` and its error's class (Task 13), shown as a class, never as text. The patterns
+    pass at start runs as `checking`, its heartbeat carrying `done` and `total` (Task 13)."""
+    from recordings.worker import HEARTBEAT_KEY, alive
+
+    beat = r.state.meta(HEARTBEAT_KEY)
+    if beat is None:
+        return None, "the Plaud worker hasn't reported yet", NO_WORKER_YET
+    try:
+        data = _dict(json.loads(beat))
+    except ValueError:
+        data = {}
+    at = parse_stamp(data.get("at"))
+    phase = data.get("phase")
+    if phase == "failed":
+        error = _class_name(data.get("error")) or "Exception"
+        report = f"last reported {r.when(at)} (couldn't start: `{error}`)" if at else None
+        return report, "the Plaud worker couldn't start", WORKER_FAILED.format(error)
+    words = PHASES.get(phase, "working") if isinstance(phase, str) else "working"
+    done, total = _int(data.get("done")), _int(data.get("total"))
+    if phase == "checking" and total > 0:
+        words = f"checking, {done:,} of {total:,}"  # §15.2's "(checking, 412 of 1,234)"
+    report = f"last reported {r.when(at)} ({words})" if at else None
+    ok, why = alive(r.state, now=r.now)
+    if ok or why is None:
+        return report, None, None
+    since = f" (last reported {r.when(at)})" if at else ""
+    return report, why, f"{_cap(why)}{since}: check that the worker container is running."
+
+
+def _not_pinged(r: _Read, cause: str | None) -> str | None:
+    """§15.2: whenever the last ping is older than one schedule interval plus 10 minutes."""
+    stale_after = timedelta(minutes=max(r.settings.schedule_minutes, 0)) + PING_GRACE
+    last = r.health.last_ping
+    if last is None:
+        done = r.health.catch_up_done
+        if done is None or r.now - done <= stale_after:
+            return None  # a check never pinged stays silent before the catch-up (§11.6)
+        return (
+            "The sync's Healthchecks check hasn't been pinged since the catch-up: "
+            f"{cause or 'no good sync since then'}."
+        )
+    if r.now - last[0] <= stale_after:
+        return None
+    return (
+        f"The sync's Healthchecks check isn't being pinged since {r.when(last[0])}: "
+        f"{cause or 'no good sync since then'}. It emails you about 2 hours after that."
+    )
+
+
+def _panel_from(r: _Read) -> dict:
+    from recordings.plaud.flags import CONSENT_LATE, KEPT_OUT_LATE, PRIVATE_UNWRITTEN, SENTENCES
+    from recordings.plaud.normalise import NORMALISER_VERSION
+    from recordings.plaud.runlock import plaud_holder
+    from recordings.plaud.settings import BAD_WORD
+
+    tz, now, health = r.tz, r.now, r.health
+    report, silent, worker_line = _worker(r)
+    summary = r.summary_view()
+    gate = r.gate_reason()
+    cause = r.cause() or silent
+    failing = None
+    if health.failing is not None:
+        since, why = health.failing
+        # A turn that ran records its run phrase as `result` (Task 13). Phase 2 adds "Last good
+        # listing 11:40." with its reader of the listing (§15.2).
+        detail = health.last_turn[2].get("result") if health.last_turn else None
+        detail = detail if isinstance(detail, str) and detail else CAUSES.get(why, why)
+        failing = f"Plaud sync failing since {r.when(since)} ({detail})."
+    disk = health.failing is not None and health.failing[1] == "disk"
+    stop = r.consent.get("stop")
+    consent_stop = (
+        f"Plaud imports stopped: {stop if isinstance(stop, str) and stop else CONSENT_UNREADABLE}."
+    )
+    late = {
+        CONSENT_LATE: "Recording {} is on the consent list, but in the archive. "
+        "Take it out by hand (runbook).",
+        KEPT_OUT_LATE: "Recording {} was kept out by title after it came in. "
+        "Take it out by hand (runbook), or Keep it here.",
+        PRIVATE_UNWRITTEN: "Recording {} should be private, but its file was edited outside "
+        "the app: run `recordings reindex`.",
+    }
+
+    def flag_line(ev: Event) -> str:
+        said = _sentence(ev)  # names the recording itself when its cause needs its own remedy
+        return said if said != SENTENCES[ev.kind] else late[ev.kind].format(ev.recording_id)
+
+    flag_lines = [flag_line(ev) for ev in r.flags if ev.kind in late]
+    off_since = r.schedule_off_since() if r.settings.schedule_minutes <= 0 else None
+
+    conditions: list[str] = []
+    if "consent" in health.blockers:
+        conditions.append(consent_stop)
+    conditions += flag_lines
+    if disk:
+        conditions.append("Plaud imports stopped: the disk is too full to import.")
+    if gate:
+        conditions.append(f"{gate}.")
+    if r.settings.schedule_minutes <= 0:
+        conditions.append(
+            f"Scheduled sync is off since {_stamp(off_since, tz)}."
+            if off_since
+            else "Scheduled sync is off."
+        )
+    if not r.settings.auto_import:
+        conditions.append("Auto-import is off: new recordings wait for you on the Sync screen.")
+    if not r.settings.keep_out_word_ok:
+        conditions.append(f"Plaud sync is idle: {BAD_WORD}.")
+    # P12: a condition the summary line already says isn't said again under it.
+    conditions = [c for c in conditions if c.removesuffix(".") != summary["sentence"]]
+
+    attention: list[str] = []
+    if health.failing is not None and now - health.failing[0] > FAILING_FOR:
+        attention.append(f"Plaud sync has been failing since {r.when(health.failing[0])}.")
+    if disk:
+        attention.append("Plaud imports stopped: the disk is too full to import.")
+    if "consent" in health.blockers:
+        attention.append(consent_stop)
+    if r.unwritten_error:
+        attention.append(_cap(UNWRITTEN_STOPPED.format(r.unwritten_error)) + ".")
+    attention += flag_lines
+    attention += [PATTERNS_UNCHECKED.format(id=rid) for rid in r.patterns_unchecked]
+    if worker_line:
+        attention.append(worker_line)
+    holder = plaud_holder(r.state)
+    if holder is not None:
+        job, since = holder
+        limit = STUCK_AFTER_LONG if job in LONG_JOBS else STUCK_AFTER
+        if now - since > limit:  # a start in the future (a clock put right) is never stuck
+            label = JOB_LABELS.get(job, job)
+            attention.append(f"{label} has run since {r.when(since)}: it may be stuck.")
+    if (
+        off_since is not None
+        and health.catch_up_done is not None
+        and now - off_since >= SCHEDULE_OFF_FOR
+    ):
+        attention.append(
+            f"Scheduled sync has been off since {_stamp(off_since, tz)}: set [plaud] "
+            "schedule_minutes to turn it back on, or pause the sync's Healthchecks check (runbook)."
+        )
+    failed_since = parse_stamp(r.ping.get("failed_since"))
+    if (
+        r.ping.get("ok") is False
+        and failed_since is not None
+        and now - failed_since >= PING_FAILING_FOR
+    ):
+        attention.append(PING_FAILING)
+
+    healthchecks = None
+    if health.last_ping is not None:
+        at, ok, status = health.last_ping
+        healthchecks = (
+            f"last pinged {r.when(at)}"
+            if ok
+            else f"last ping failed {r.when(at)} "
+            f"({f'HTTP {status}' if status is not None else 'unreachable'})"
+        )
+    panel = _empty_panel()
+    panel["numbers"].update(
+        {
+            "consent": r.consent_view(),
+            "next_sync": r.next_sync(),
+            "worker": report,
+            "healthchecks": healthchecks,
+        }
+    )
+    panel["details"].update({"normaliser": str(NORMALISER_VERSION), "keep_out_words": r.words})
+    panel.update(
+        {
+            "no_sync_yet": False,
+            "summary": summary,
+            "failing": failing,
+            "not_pinged": _not_pinged(r, cause),
+            "conditions": conditions,
+            "attention": attention,
+        }
+    )
+    return panel
+
+
+# ---- The Library's arrivals cue ---------------------------------------------------------------
+
+
+def arrivals(settings: PlaudViewSettings | None, *, since: datetime, now: datetime) -> dict:
+    """The Library's cue (§15.3, P10): what came in since `since` (the page's load or its last
+    Refresh, decision 22), and the open privacy flags, by count only."""
+    zero = {"new": 0, "private": 0, "updated": 0, "kept_out_late": 0, "consent_late": 0}
+    if settings is not None and settings.demo_view is not None:
+        return demo_view(settings.demo_view)["arrivals"]
+    state = _open(settings)
+    if state is None:
+        return zero
+
+    def build() -> dict:
+        from recordings.plaud.checks import FLAG_KINDS, PlaudDB
+
+        db = PlaudDB(state)
+        seen = Counter(e.kind for e in db.events_since(since, ARRIVAL_EVENTS) if e.at <= now)
+        flags = Counter(e.kind for e in db.open_flags(FLAG_KINDS))
+        return {
+            "new": seen["imported"],
+            "private": seen["arrived-private"],
+            "updated": seen["updated"] + seen["retagged-private"],
+            "kept_out_late": flags["kept-out-late"],
+            "consent_late": flags["consent-late"],
+        }
+
+    return _guarded(build, lambda: zero, lambda: zero)
+
+
+# ---- Details' Plaud lines ---------------------------------------------------------------------
+
+
+def recording_plaud(
+    settings: PlaudViewSettings | None, recording_id: str, *, now: datetime
+) -> dict | None:
+    """Details' Plaud lines (§15.3), as RecordingPlaud; None for a recording with no Plaud
+    source, and in the demos, whose canned view has no recordings of its own. When it was checked
+    and when next, and gone from Plaud, come with the checks (Phase 3): None until then."""
+    if settings is None or settings.demo_view is not None:
+        return None
+    state = _open(settings)
+    if state is None:
+        return None
+    import sqlite3
+
+    from recordings.plaud.checks import NoSyncYet
+
+    try:
+        body = _body(state, recording_id)
+    except sqlite3.DatabaseError:
+        return None
+    refs = _plaud_refs(body)
+    if not refs:
+        return None
+    from recordings.refs import canonical_plaud_id
+
+    seen: set[str] = set()
+    unique = []
+    for ref in refs:  # one line per recording on Plaud, whichever form its sources use
+        if canonical_plaud_id(ref) not in seen:
+            seen.add(canonical_plaud_id(ref))
+            unique.append(ref)
+    bare = {
+        "plaud_ids": [{"id": ref, "copy_id": _copy_form(ref)} for ref in unique],
+        "checked": None,
+        "next_by": None,
+        "gone_since": None,
+        "tagged_private": None,
+        "removed_private": None,
+        "flags": [],
+        "resync": None,
+        **_handled(),
+    }
+    try:
+        return {**bare, **_recording_lines(settings, state, recording_id, body or {}, unique)}
+    except NoSyncYet:
+        return bare  # before any sync: the IDs, for `make consent-add`
+    except sqlite3.DatabaseError:
+        return bare
+
+
+def _recording_lines(
+    settings: PlaudViewSettings,
+    state: State,
+    recording_id: str,
+    body: dict,
+    refs: list[str],
+) -> dict:
+    from recordings.models import is_private_tag
+    from recordings.plaud.checks import PlaudDB
+    from recordings.plaud.flags import CONSENT_LATE
+    from recordings.plaud.gate import gate_now
+
+    tz = settings.timezone_name
+    db = PlaudDB(state)
+    plaud_ids, kept_out = [], False
+    for ref in refs:
+        row = db.listing(ref)
+        listed = row.listed_id if row is not None else ref
+        kept_out = kept_out or (row is not None and row.kept_out_at is not None)
+        plaud_ids.append({"id": listed, "copy_id": _copy_form(listed)})
+    tags = [
+        t for t in body.get("tags") or [] if isinstance(t, dict) and isinstance(t.get("tag"), str)
+    ]
+    private_now = any(is_private_tag(t["tag"]) for t in tags)
+    auto_private = any(is_private_tag(t["tag"]) and t.get("by") == "auto" for t in tags)
+    events = _q(
+        state,
+        "SELECT at, kind, detail FROM plaud_events WHERE recording_id = ? AND kind IN (?, ?) "
+        "ORDER BY id DESC LIMIT 1",
+        (recording_id, *PRIVATE_EVENTS),
+    )
+    tagged = removed = None
+    if events:
+        raw_at, kind, raw_detail = events[0]
+        try:
+            detail = _dict(json.loads(raw_detail))
+        except (TypeError, ValueError):
+            detail = {}
+        on = _date(parse_stamp(raw_at), tz)
+        reason = (
+            ARRIVED_PRIVATE if kind == "arrived-private" else WHY_DETAILS.get(detail.get("why"))
+        )
+        if private_now:
+            tagged = f"Tagged private by the sync on {on}" + (f": {reason}" if reason else "")
+        else:  # decision 3, made visible
+            when = _removed_on(state, recording_id, tz)
+            removed = (
+                f"Tagged private by the sync on {on}. You removed it"
+                f"{f' on {when}' if when else ''}. It comes back only if its Plaud title "
+                "changes to a private one."
+            )
+    elif auto_private:
+        tagged = "Tagged private by the sync"  # decision 15: its event aged out after 90 days
+    flags = [_flag(db, ev) for ev in db.open_flags(FLAG_EVENTS) if ev.recording_id == recording_id]
+    gate = gate_now(db)
+    if not gate.open:
+        resync = gate.reason
+    elif any(f["kind"] == CONSENT_LATE for f in flags):
+        resync = "Not checked: on the consent list"
+    elif kept_out:
+        resync = "Not checked: kept out"
+    else:
+        resync = None
+    return {
+        "plaud_ids": plaud_ids,
+        "tagged_private": tagged,
+        "removed_private": removed,
+        "flags": flags,
+        "resync": resync,
+    }
+
+
+def _removed_on(state: State, recording_id: str, tz: str) -> str | None:
+    """The date of the revision that took the recording's `private` away (§15.3), from the merge
+    bases state.db keeps (KEEP_REVISIONS); None once it has aged out of them."""
+    from recordings.ids import relative_dir
+    from recordings.models import is_private_tag
+
+    rel = (relative_dir(recording_id) / "recording.json").as_posix()
+    rows = _q(
+        state,
+        "SELECT body, written_at FROM revisions WHERE file = ? AND committed = 1 ORDER BY id",
+        (rel,),
+    )
+    found, before = None, False
+    for raw, written in rows:
+        try:
+            tags = _dict(json.loads(raw)).get("tags") or []
+        except (TypeError, ValueError):
+            continue
+        private = any(isinstance(t, dict) and is_private_tag(str(t.get("tag", ""))) for t in tags)
+        if before and not private:
+            found = parse_stamp(written)
+        before = private
+    return _date(found, tz)
+
+
+# ---- The canned view (decision 23) --------------------------------------------------------------
+
+
+def demo_view(path: Path) -> dict:
+    """The canned view, hand-written in demo/plaud-sync.json, as {"sync", "panel", "arrivals"}:
+    the UI's contract for every section, Phase 2's and 3's included. Whatever it says, every
+    action is off and the demo's notes show (§15.5). It never raises: a missing or broken file
+    gives an empty canned view, so the demo still starts."""
+    try:
+        raw = _dict(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        raw = {}
+    sync = _empty_sync(DEMO_NOTE)
+    sync.update({k: v for k, v in _dict(raw.get("sync")).items() if k in sync})
+    sync.update(
+        {
+            "demo": True,
+            "available": False,
+            "reason": DEMO_NOTE,
+            "summary": _summary("demo", DEMO_NOTE),
+            "buttons": dict.fromkeys(("sync", "compare", "full", "import"), DEMO_NOTE),
+            **_handled(),
+            "gate": None,
+            "flags": [{**_dict(f), "keep_here": False} for f in sync["flags"] or []],
+            "not_here": [{**_dict(row), "park": False} for row in sync["not_here"] or []],
+            "kept_out": [{**_dict(row), "release": False} for row in sync["kept_out"] or []],
+            "hold": {**sync["hold"], "accept": False, "refused": DEMO_NOTE}
+            if isinstance(sync["hold"], dict)
+            else None,
+            "breaker": {**sync["breaker"], "accept": False}
+            if isinstance(sync["breaker"], dict)
+            else None,
+        }
+    )
+    panel = _empty_panel()
+    panel.update({k: v for k, v in _dict(raw.get("panel")).items() if k in panel})
+    panel.update(
+        {
+            "demo": True,
+            "no_sync_yet": False,
+            "summary": _summary("demo", DEMO_STATUS),
+            **_handled(),
+            "hold": {**panel["hold"], "accept": False, "refused": DEMO_NOTE}
+            if isinstance(panel["hold"], dict)
+            else None,
+            "breaker": {**panel["breaker"], "accept": False}
+            if isinstance(panel["breaker"], dict)
+            else None,
+            "attention": [],  # the demo needs nothing of anyone
+        }
+    )
+    counts = _dict(raw.get("arrivals"))
+    keys = ("new", "private", "updated", "kept_out_late", "consent_late")
+    return {"sync": sync, "panel": panel, "arrivals": {k: _int(counts.get(k)) for k in keys}}

@@ -1,10 +1,14 @@
+import json
 import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from recordings import disk
+from recordings.plaud.checks import NO_SYNC_YET
+from recordings_ui.plaud import arrivals, recording_plaud, sync_view
 from recordings_ui.status import StatusSettings, status_view
 
 T0 = datetime(2026, 10, 9, 8, 0, tzinfo=UTC)
@@ -136,3 +140,67 @@ def test_status_without_state_never_loads_sqlite(demo_archive):
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
+
+
+PLAUD_TABLES = (
+    "plaud_requests",
+    "plaud_listing",
+    "plaud_checks",
+    "plaud_check_log",
+    "plaud_private_checked",
+    "plaud_events",
+    "plaud_state",
+)
+T0_SYNC = datetime(2026, 10, 23, 14, 20, tzinfo=UTC)
+
+
+def _status_settings(state_path) -> StatusSettings:
+    return StatusSettings(
+        state_path=state_path, timezone_name="UTC", warn=20.0, stop=5.0, jobs=("disk",)
+    )
+
+
+def test_status_never_carries_a_title(plaud_scene):
+    # why: P13 and §15.2. Status names recordings by ID; the Sync screen alone may name one,
+    # from the recording here, and never one kept out by title.
+    s = plaud_scene
+    s.open_gate()
+    s.add(2, "Private synthetic title 2")
+    flagged = s.kept_out_late(2, at=T0_SYNC)
+    other = s.add(3, "Week 3 synthetic title")
+    s.db.add_event(
+        "retagged-private",
+        now=T0_SYNC - timedelta(minutes=5),
+        recording_id=other,
+        plaud_id=s.plaud_id(3),
+        detail={"why": "title changed"},
+    )
+    settings = _status_settings(s.writer.state.path)
+    view = status_view(s.writer.root, settings, now=T0_SYNC, plaud=s.settings)
+    assert view["sync"]["no_sync_yet"] is False
+    assert any(flagged in line for line in view["attention"])  # by ID
+    assert "synthetic title" not in json.dumps(view).lower()
+    screen = sync_view(s.settings, now=T0_SYNC, can_request=None)
+    titles = {row["recording_id"]: row["title"] for row in screen["updated"]}
+    assert titles == {flagged: None, other: "Week 3 synthetic title"}
+
+
+def test_without_the_2b_tables_it_says_no_sync_has_run_yet_never_the_restore_text(plaud_scene):
+    # why: §9.5. A state.db from before 2b, or a release rolled back to, has no 2b tables. That
+    # is "No sync has run yet", never a damaged state.db: restoring a sound one loses its queue.
+    s = plaud_scene
+    rid = s.add(1, "Week 1")
+    with closing(sqlite3.connect(s.writer.state.db_path)) as conn, conn:
+        for table in PLAUD_TABLES:
+            conn.execute(f"DROP TABLE {table}")
+    settings = _status_settings(s.writer.state.path)
+    view = status_view(s.writer.root, settings, now=T0_SYNC, plaud=s.settings)
+    assert view["sync"]["no_sync_yet"] is True
+    assert view["sync"]["summary"]["sentence"] == NO_SYNC_YET
+    assert not [line for line in view["attention"] if "restore" in line]
+    assert sync_view(s.settings, now=T0_SYNC, can_request=None)["summary"]["kind"] == "no-sync"
+    assert set(arrivals(s.settings, since=T0_SYNC, now=T0_SYNC).values()) == {0}
+    # Details still names its Plaud ID, for `make consent-add`.
+    lines = recording_plaud(s.settings, rid, now=T0_SYNC)
+    assert lines["plaud_ids"] == [{"id": s.plaud_id(1), "copy_id": f"- `{s.plaud_id(1)}` —"}]
+    assert lines["checked"] is None

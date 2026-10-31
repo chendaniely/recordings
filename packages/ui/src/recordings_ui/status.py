@@ -1,9 +1,13 @@
-"""The Status page's view (spec §12.5): backups and disk, read-only.
+"""The Status page's view (spec §12.5): backups and disk, and the Plaud sync panel, read-only.
 
 The backup records come from state.db, opened read-only. sqlite3 is imported only when a state.db
 exists, so the Pages demo (Pyodide), which has none, never needs it. A state.db that can't be read
 is shown as something needing attention, with the way back only if it is damaged, rather than
 breaking the page. Demo mode has no settings, and shows no disk figure.
+
+With `plaud` (2b spec §15.2), the view gains "sync", Status's sync panel, and the panel's Needs
+attention lines join "attention". A 2b table that isn't there yet is "No sync has run yet", never
+the "restore state.db" text, which only damage may bring (§9.5).
 """
 
 from __future__ import annotations
@@ -11,6 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from recordings_ui.plaud import PlaudViewSettings
 
 
 @dataclass(frozen=True)
@@ -61,13 +69,27 @@ def _without_state(
 
 
 def status_view(
-    archive_root: Path, settings: StatusSettings | None, *, now: datetime | None = None
+    archive_root: Path,
+    settings: StatusSettings | None,
+    *,
+    now: datetime | None = None,
+    plaud: PlaudViewSettings | None = None,
 ) -> dict:
+    now = now or datetime.now(UTC)
+    view = _backups_view(archive_root, settings, now)
+    if plaud is None:
+        return view
+    from recordings_ui.plaud import sync_panel  # it reads state.db only where there is one
+
+    panel = sync_panel(plaud, now=now)
+    return {**view, "sync": panel, "attention": [*view["attention"], *panel["attention"]]}
+
+
+def _backups_view(archive_root: Path, settings: StatusSettings | None, now: datetime) -> dict:
     if settings is None:
         # Demo mode: its disk is a temporary copy, or on Pages, Pyodide's in-memory file system,
         # so any free-space figure would be made up (§17).
         return {"configured": False, "jobs": [], "attention": [], "flags": 0, "disk": None}
-    now = now or datetime.now(UTC)
     state_db = settings.state_path / "state.db" if settings.state_path else None
     state = None
     if state_db is not None and state_db.is_file():

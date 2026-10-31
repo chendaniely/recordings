@@ -1,0 +1,120 @@
+{
+  "sync": {
+    "demo": true,
+    "available": false,
+    "reason": "Demo: nothing is synced",
+    "summary": {"kind": "demo", "sentence": "Demo: nothing is synced", "explain": null, "see_status": false},
+    "flags": [],
+    "hold": null,
+    "breaker": null,
+    "buttons": {
+      "sync": "Demo: nothing is synced",
+      "compare": "Demo: nothing is synced",
+      "full": "Demo: nothing is synced",
+      "import": "Demo: nothing is synced"
+    },
+    "handled": ["keep-here"],
+    "not_yet": "Comes with the next part of stage 2b.",
+    "gate": null,
+    "listed": true,
+    "full_estimate": "about 4 minutes",
+    "equation": {"listed": 9, "here": 4, "waiting": 2, "excluded": 2, "missing": 1, "arrive_private": 1, "listing_at": "14:20"},
+    "archive": {"from_plaud": 4, "here": 4, "gone": 0, "absent": 0},
+    "consent": {"ids": 3, "on_plaud": 1, "file_changed": "2026-10-23 09:12", "read_at": "14:20", "stop": null},
+    "titles_hidden": null,
+    "not_here": [
+      {
+        "plaud_id": "of_00000000000000000000000000000001",
+        "copy_id": "- `of_00000000000000000000000000000001` —",
+        "date": "2026-10-23", "time": "09:05", "duration": "47 min",
+        "title": "Week 4 lecture", "arrives_private": false,
+        "state": "imports at the next sync", "review": false, "park": false
+      },
+      {
+        "plaud_id": "of_00000000000000000000000000000002",
+        "copy_id": "- `of_00000000000000000000000000000002` —",
+        "date": "2026-10-22", "time": "16:40", "duration": "12 min",
+        "title": "Synthetic 042", "arrives_private": true,
+        "state": "imports at the next sync", "review": false, "park": false
+      },
+      {
+        "plaud_id": "of_00000000000000000000000000000003",
+        "copy_id": "- `of_00000000000000000000000000000003` —",
+        "date": "2026-10-21", "time": "11:15", "duration": "3 min",
+        "title": "Synthetic 043", "arrives_private": false,
+        "state": "failed 3 times", "review": false, "park": false
+      }
+    ],
+    "import_all": {"count": 3, "review_more": 0},
+    "kept_out": [
+      {
+        "plaud_id": "of_00000000000000000000000000000004",
+        "copy_id": "- `of_00000000000000000000000000000004` —",
+        "date": "2026-10-20", "time": "10:00", "duration": "25 min",
+        "by": "consent", "release": false, "released": null
+      },
+      {
+        "plaud_id": "of_00000000000000000000000000000005",
+        "copy_id": "- `of_00000000000000000000000000000005` —",
+        "date": "2026-10-19", "time": "18:30", "duration": "8 min",
+        "by": "title", "release": false, "released": null
+      }
+    ],
+    "updated": [
+      {
+        "recording_id": "19620912T100000-0500_229ce3ea",
+        "title": "JFK at Rice University: We choose to go to the Moon (opening)",
+        "parts": ["speakers"], "at": "13:55"
+      }
+    ],
+    "gone": {"rows": [], "last_7_days": 0},
+    "parked": [],
+    "last_result": null,
+    "next_sync": "14:40"
+  },
+  "panel": {
+    "demo": true,
+    "no_sync_yet": false,
+    "summary": {"kind": "demo", "sentence": "Demo: Plaud sync isn't part of the demo.", "explain": null, "see_status": false},
+    "failing": null,
+    "not_pinged": null,
+    "conditions": [],
+    "hold": null,
+    "breaker": null,
+    "handled": ["keep-here"],
+    "not_yet": "Comes with the next part of stage 2b.",
+    "listed": true,
+    "numbers": {
+      "equation": {"listed": 9, "here": 4, "waiting": 2, "excluded": 2, "missing": 1, "arrive_private": 1, "listing_at": "14:20"},
+      "archive": {"from_plaud": 4, "here": 4, "gone": 0, "absent": 0},
+      "consent": {"ids": 3, "on_plaud": 1, "file_changed": "2026-10-23 09:12", "read_at": "14:20", "stop": null},
+      "last_good_listing": "14:20 (9 listed)",
+      "next_sync": "14:40",
+      "sweep": "every recording checked within the last 2 hours (oldest 2026-10-23 12:31)",
+      "sign_in": null,
+      "full": "2026-10-01: all 4 checked",
+      "held": 0,
+      "gone": 0,
+      "failing": 1,
+      "parked": 0,
+      "worker": "last reported 14:21 (idle)",
+      "healthchecks": "last pinged 14:20"
+    },
+    "details": {
+      "normaliser": "1",
+      "fields": [],
+      "census": {"of_": 9},
+      "form_change": null,
+      "changes_24h": {"speakers": 1},
+      "named_share": null,
+      "runs": [
+        {"at": "2026-10-23 14:20", "result": "ok"},
+        {"at": "2026-10-23 14:00", "result": "ok"}
+      ],
+      "keep_out_words": ["noarchive"],
+      "malformed": 0
+    },
+    "attention": []
+  },
+  "arrivals": {"new": 0, "private": 0, "updated": 0, "kept_out_late": 0, "consent_late": 0}
+}

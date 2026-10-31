@@ -308,6 +308,8 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
         for p in (
             settings.archive.parent,
             find_demo_archive({}),
+            # The canned Plaud view beside it, which from_env copies (2b phase 1 plan, decision 23).
+            find_demo_archive({}).parent / "plaud-sync.json",
             sys.prefix,
             sys.base_prefix,
             Path(views.__file__).parent,
