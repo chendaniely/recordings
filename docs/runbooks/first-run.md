@@ -1275,18 +1275,28 @@ Stage 2b's consent list says which Plaud recordings never enter the archive (spe
   ID. It checks the ID on the Mac, appends `` - `<id>` — added <date> `` on the server (the 32 hex
   digits, which the list matches in any form) by writing a new file and renaming it over the list,
   and prints what the worker reads (`recordings plaud consent`).
-- **On the server:** edit `$RECORDINGS_HOME/consent/consent-list.md` with any editor, which writes a
-  new file and renames it; the worker watches the folder, so it sees the new file. Then run
+- **On the server:** edit `$RECORDINGS_HOME/consent/consent-list.md` with any editor. Section 3
+  made it read-only (mode 0400), so `chmod u+w` it first (or save with sudo), and `chmod 400` it
+  after. The worker watches the folder and compares the file's inode, size and time, so it sees an
+  edit whether the editor writes a new file and renames it or writes in place. Then run
   `rc exec worker recordings plaud consent`.
 
-Either way, `recordings plaud consent` must show the new count, and no line it can't read. If your
-edit doesn't show, the worker didn't see it. If the recording is already in the archive, the
-worker tags it `private` within seconds and flags it; take it out by hand if it mustn't stay.
+`make consent-add` only appends. It refuses a list that is missing or empty, because that is a
+consent stop that fails closed, and one added ID would lift it while the real list's other
+recordings stayed unlisted: put the real list back first (section 6 step 1, or "Restoring for
+real"). An ID already on the list is added again: harmless, and the count stays the same.
+
+Either way, `recordings plaud consent` must show the new count, and no line it can't read. The
+Mac's target prints it right after the add, which can be before the worker's next look (a few
+seconds): if the count is still the old one, run `rc exec worker recordings plaud consent` again.
+If it still isn't there after a minute, the worker didn't see the edit. If the recording is already
+in the archive, the worker tags it `private` within seconds and flags it; take it out by hand if it
+mustn't stay.
 
 A line that holds a valid ID but is read as a typo: write it as `` - `of_…` — note ``, the ID first
 (bare or in one pair of backticks, nothing else in them), then a dash. The list stops on a line
 that looks like an ID but can't be read: an ID split by a space or a line wrap (Dan's decision 12),
-one in brackets or quotes (`(ID)`, `'ID'`), `of-` for `of_`, or a space inside the backticks.
+a date of 8 digits before the dash (`- 20261023 — asked`), one in brackets or quotes (`(ID)`, `'ID'`), `of-` for `of_`, or a space inside the backticks.
 
 ## Planned work and the sync's check
 

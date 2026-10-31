@@ -308,17 +308,3 @@ the same defaults for what it leaves unset.)
 in the real hardened container, so a health check that never passed would fail it.
 
 **When it can go.** When the reference says it, or never: the smoke is the proof.
-
-## GNU make and POSIX sh: parts the pages I could reach didn't cover (Task 18)
-
-Found 2026-10-31. The GNU make manual (gnu.org/software/make/manual/make.html) covered `override`,
-`value`, `origin` and `-include`; the `export` directive's own section was not in the slices I
-could read (the per-node pages answered HTTP 429). POSIX's shell chapter
-(pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html) covered `${#x}`, `${x#w}` and
-`${x%w}`, but not `trap ... EXIT` in the slice read, and `mktemp` is not a POSIX utility at all.
-
-**What we do.** `make consent-add` and `docker/consent-add.sh` are run for real by
-`packages/core/tests/test_make_targets.py` under macOS's `/usr/bin/make` (GNU make 3.81) and `sh`.
-
-**When it can go.** When the `export` and `trap` pages have been read and `mktemp`'s availability
-on the server (Linux, GNU coreutils) is confirmed. Local note only.

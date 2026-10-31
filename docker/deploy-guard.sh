@@ -12,6 +12,11 @@
 # through the shared state/locks. FORCE=1 deploys anyway. It reads no secret.
 set -eu
 cd "$(dirname "$0")/.."
+cannot_ask() {
+  echo "make deploy: could not ask the backup container whether a job is running ($1)." \
+    "make deploy FORCE=1 deploys anyway." >&2
+  exit 1
+}
 [ "${FORCE:-}" = 1 ] && exit 0
 ids=$(docker ps -q --filter label=com.docker.compose.project=recordings \
   --filter label=com.docker.compose.service=backup --filter label=com.docker.compose.oneoff=False) \
@@ -31,9 +36,7 @@ if [ -z "$id" ]; then
     || { echo "deploy-guard: docker inspect failed (is the Docker daemon running?)" >&2; exit 1; }
   case "$image" in
     recordings:?*) tag=${image#recordings:} ;;
-    *) echo "make deploy: could not ask the backup container whether a job is running (it" \
-         "runs no image make deploy tagged). make deploy FORCE=1 deploys anyway." >&2
-       exit 1 ;;
+    *) cannot_ask "it runs no image make deploy tagged" ;;
   esac
 fi
 
@@ -54,10 +57,12 @@ if [ "$status" = 0 ]; then
 fi
 case "$status" in
   0) exit 0 ;;
-  3) echo "make deploy: a job is running${held:+ ($held)}. A deploy now would stop it (it would" \
-       "start again from the beginning), or start the backup service in its way. Wait for it" \
-       "(Status shows it), or deploy anyway: make deploy FORCE=1" >&2 ;;
-  *) echo "make deploy: could not ask the backup container whether a job is running (exit" \
-       "$status). make deploy FORCE=1 deploys anyway." >&2 ;;
+  3) echo "make deploy: a job is running${held:+ ($held)}. A deploy now would stop it, or start" \
+       "the backup service in its way. What a stop costs: a backup, restore test or check starts" \
+       "again from the beginning (hours); Sync everything carries on with the recordings not yet" \
+       "checked, but a stop loses the one in progress; the first catch-up or the baseline stops" \
+       "part-way, and you run it again by hand (the runbook). Wait for it (Status shows it), or" \
+       "deploy anyway: make deploy FORCE=1" >&2 ;;
+  *) cannot_ask "exit $status" ;;
 esac
 exit 1

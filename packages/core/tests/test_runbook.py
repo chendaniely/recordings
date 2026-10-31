@@ -382,3 +382,20 @@ def test_re_imports_stop_the_worker_and_mount_the_consent_folder():
     (mounts,) = [line for line in _code_lines() if line.startswith("IMPORT_MOUNTS=(")]
     assert '-v "$RECORDINGS_HOME/consent:/consent:ro"' in mounts
     assert "consent-list.md:/consent" not in mounts
+
+
+def test_keep_a_recording_out_says_what_consent_add_refuses_and_when_the_count_shows():
+    # why: consent-add never makes or extends a list (spec §12.1); its readback can precede the
+    # worker's next look; decision 12's date example; the list is 0400, and a watcher sees any edit.
+    keep = " ".join(_section("## Keep a recording out for good").split())
+    for needed in (
+        "missing or empty",
+        "section 6 step 1",
+        "is added again",
+        "run `rc exec worker recordings plaud consent` again",
+        "- 20261023 — asked",
+        "mode 0400",
+        "in place",
+    ):
+        assert needed in keep, needed
+    assert "any editor, which writes a new file" not in keep

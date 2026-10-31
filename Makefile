@@ -118,15 +118,25 @@ deploy-smoke: ## run the real compose file once, as CI's compose-smoke does
 
 # Run on the Mac (stage 2b spec §12.1): checks the ID (a bare ID, of_..., or what the Sync screen's
 # Copy ID copied, in single quotes), appends it to the server's consent list by writing a new file
-# and renaming it, then prints what the worker reads.
+# and renaming it (never making a list, or extending an empty one), then prints what the worker
+# last read: its count may still be the old one for a few seconds.
 consent-add: ## add a Plaud ID to the server's consent list, from the Mac: make consent-add ID='<id>'
 	$(if $(ID),,$(error usage: make consent-add ID='<a Plaud ID, or what Copy ID copied>'))
 	$(if $(SERVER),,$(error make consent-add: set SERVER, your ssh name for the homelab server, in local.mk))
 	$(if $(REPO_DIR),,$(error make consent-add: set REPO_DIR, the repo's checkout on the server, in local.mk))
 	@id=$$(uv run python scripts/consent_id.py "$$ID") \
-	  || { echo "make consent-add: step 1 failed: the ID isn't a Plaud ID" >&2; exit 1; }; \
-	ssh "$(SERVER)" "cd '$(REPO_DIR)' && sh docker/consent-add.sh '$$id' && sh docker/up-deployed.sh exec -T worker recordings plaud consent" \
-	  || { echo "make consent-add: step 2 failed, on the server: adding the ID, or reading the list back (above)" >&2; exit 1; }
+	  || { echo "make consent-add: step 1 failed, checking the ID (above)" >&2; exit 1; }; \
+	ssh "$(SERVER)" "cd '$(REPO_DIR)' && sh docker/consent-add.sh '$$id' || exit 3; sh docker/up-deployed.sh exec -T worker recordings plaud consent || exit 4"; \
+	rc=$$?; \
+	case $$rc in \
+	  0) ;; \
+	  255) echo "make consent-add: step 2 failed: the server could not be reached (ssh exit 255); nothing was added" >&2 ;; \
+	  3) echo "make consent-add: step 2 failed, on the server: adding the ID (above); the list is unchanged" >&2 ;; \
+	  4) echo "make consent-add: step 3 failed, on the server: reading the list back (above); the ID is on the list" >&2 ;; \
+	  *) echo "make consent-add: step 2 failed: ssh exited $$rc; check the list on the server" >&2 ;; \
+	esac; \
+	[ $$rc = 0 ] || exit 1; \
+	echo "make consent-add: the worker reads the new list within a few seconds. If its count above is still the old one, run: rc exec worker recordings plaud consent"
 
 restic: ## fetch the pinned restic into .cache/bin
 	uv run python scripts/fetch_restic.py

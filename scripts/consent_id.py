@@ -7,19 +7,28 @@ the consent list's own line), read with the consent list's own exclusion rule
 (recordings.plaud.keepout.parse_consent), so whatever the list would read as an exclusion is
 accepted here and nothing else. It prints that line's canonical ID, the 32 hex digits in lower
 case, which the list matches whatever form Plaud lists it in and docker/consent-add.sh accepts;
-or it exits 1 with "not a Plaud ID".
+or it exits 1 with "not a Plaud ID". Text that holds a second run of 24 or more hex digits
+(two Copy IDs pasted together, an ID in the note) is refused too, so no ID is silently dropped.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 
 from recordings.plaud.keepout import parse_consent
+
+# Plaud IDs are 32 hex digits; 24 or more in a row is one, or the start of one that is damaged.
+_ID_LIKE = re.compile(r"[0-9a-fA-F]{24,}")
 
 
 def consent_id(text: str) -> str | None:
     if "\n" in text or "\r" in text:
         return None  # one line, one ID
+    if len(_ID_LIKE.findall(text)) > 1:
+        return (
+            None  # two IDs pasted on one line: the line holds one, the other would stay importable
+        )
     parsed = parse_consent(text)
     lines = [line for line in parsed.lines if line.kind == "exclusion"]
     if len(lines) != 1 or parsed.typo_lines:

@@ -293,12 +293,12 @@ def test_the_ops_probe_sees_a_held_lock_and_what_it_announced(tmp_path):
     assert subprocess.run(probe, check=False).returncode == 0  # let go: free again
 
 
-def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
-    # why: recreating backup stops the job it runs (restic and rsync stop cleanly), and the job
-    # starts again from the beginning: hours for a restore test or a check (ops council, Task 14).
+def fake_running_backup(tmp_path) -> dict[str, str]:
+    """The environment for deploy-guard.sh against a fake docker whose running backup container is
+    this machine. `ps -q` lists the container ($FAKE_ID; $FAKE_DOWN makes docker fail), and the
+    probe the guard pipes into its python runs here instead, on the test's own lock folder, with
+    the guard's arguments."""
     fake = tmp_path / "docker"
-    # `ps -q` lists the running backup container. The guard pipes docker/ops-busy.py into that
-    # container's python; the fake runs it here instead, on the test's own lock folder.
     fake.write_text(
         '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; '
         "exit 1; fi\n"
@@ -308,12 +308,18 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
         encoding="utf-8",
     )
     fake.chmod(0o755)
-    env = {
+    return {
         "PATH": f"{tmp_path}:/usr/bin:/bin",
         "FAKE_ID": "abc123",
         "FAKE_PYTHON": sys.executable,
         "FAKE_LOCKS": str(tmp_path / "locks"),
     }
+
+
+def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
+    # why: recreating backup stops the job it runs (restic and rsync stop cleanly), and the job
+    # starts again from the beginning: hours for a restore test or a check (ops council, Task 14).
+    env = fake_running_backup(tmp_path)
 
     def guard(**extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -707,21 +713,8 @@ def test_the_ntfy_topic_and_token_are_optional_secrets_in_backup_only(name, host
 
 
 def running_backup_guard(tmp_path):
-    """deploy-guard.sh against a fake docker whose running backup container is this machine: the
-    probe it pipes in runs here, on the test's own lock folder, with the guard's arguments."""
-    fake = tmp_path / "docker"
-    fake.write_text(
-        '#!/bin/sh\nif [ "$1" = ps ]; then echo abc123; exit 0; fi\n'
-        'if [ "$1 $2 $3 $4 $5 $6" = "exec -i abc123 python - /state/locks" ]; then\n'
-        '  shift 6; exec "$FAKE_PYTHON" - "$FAKE_LOCKS" "$@"\nfi\nexit 99\n',
-        encoding="utf-8",
-    )
-    fake.chmod(0o755)
-    env = {
-        "PATH": f"{tmp_path}:/usr/bin:/bin",
-        "FAKE_PYTHON": sys.executable,
-        "FAKE_LOCKS": str(tmp_path / "locks"),
-    }
+    """deploy-guard.sh against a running backup container (see fake_running_backup)."""
+    env = fake_running_backup(tmp_path)
 
     def guard() -> subprocess.CompletedProcess:
         return subprocess.run(
