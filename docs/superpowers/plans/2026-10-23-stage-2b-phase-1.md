@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 6: The 2b tables, the time helpers and `index.db`'s WAL, open.
+**Now:** Task 7: Plaud settings and secrets, open.
 
 ***
 
@@ -6225,9 +6225,9 @@ Spec §9.5, with decision 3: every table, every column, `SCHEMA_VERSION` still 1
 - `Index.wal(*, timeout: float = 5.0) -> bool`: switches the file to WAL (a no-op once it is); on `sqlite3.OperationalError` (another process has the file open) it logs "index.db stays in rollback-journal mode for now (<class>)" and returns False. `Index.rebuild` calls it after its commit; `Writer.__init__` calls it on an index it finds this archive's and doesn't rebuild (the one stage 2a deployed), so `index.db` is WAL after the first start of the new release.
 - `State.forget(file)`: also deletes the recording's `plaud_checks`, `plaud_private_checked` and `plaud_events` rows, and clears `title_sha256`, `duration_ms` and `change_marker` on the `plaud_listing` rows of its canonical IDs (read from `plaud_private_checked` before deleting).
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-6-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-6-base`
 
-- [ ] **Step 1: Write the failing tests.** The new file `packages/core/tests/test_plaud_tables.py`:
+- [x] **Step 1: Write the failing tests.** The new file `packages/core/tests/test_plaud_tables.py`:
 
 ```python
 """Stage 2b's tables in state.db (2b spec §9.5): tables only, keyed by canonical Plaud ID, read
@@ -6594,9 +6594,9 @@ def test_a_switch_to_wal_that_cant_happen_now_is_logged_and_tried_again(
 def test_a_missing_index_answers_nothing(tmp_path):
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_tables.py packages/core/tests/test_plaud_when.py packages/core/tests/test_index.py -q`. Expected: `test_plaud_tables.py` errors at collection with `ModuleNotFoundError: No module named 'recordings.plaud.checks'`, `test_plaud_when.py` with `ModuleNotFoundError: No module named 'recordings.plaud.when'`; `test_index_db_is_in_wal_mode` and `test_a_writer_switches_this_archives_index_to_wal` fail with `AssertionError: assert 'delete' == 'wal'`, and `test_a_switch_to_wal_that_cant_happen_now_is_logged_and_tried_again` with `AttributeError: 'Index' object has no attribute 'wal'`.
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_plaud_tables.py packages/core/tests/test_plaud_when.py packages/core/tests/test_index.py -q`. Expected: `test_plaud_tables.py` errors at collection with `ModuleNotFoundError: No module named 'recordings.plaud.checks'`, `test_plaud_when.py` with `ModuleNotFoundError: No module named 'recordings.plaud.when'`; `test_index_db_is_in_wal_mode` and `test_a_writer_switches_this_archives_index_to_wal` fail with `AssertionError: assert 'delete' == 'wal'`, and `test_a_switch_to_wal_that_cant_happen_now_is_logged_and_tried_again` with `AttributeError: 'Index' object has no attribute 'wal'`.
 
-- [ ] **Step 3: Write the code.** The schema, `State.forget`, the index's WAL, `checks.py` and `when.py`:
+- [x] **Step 3: Write the code.** The schema, `State.forget`, the index's WAL, `checks.py` and `when.py`:
 
 In `packages/core/src/recordings/state.py`:
 
@@ -7281,7 +7281,7 @@ def local_hhmm(dt: datetime, tz: tzinfo) -> str:
     return aware.astimezone(tz).strftime("%H:%M")
 ```
 
-- [ ] **Step 4: Run it; see what WAL changes.** `uv run pytest packages/core/tests/test_plaud_tables.py packages/core/tests/test_plaud_when.py packages/core/tests/test_index.py packages/core/tests/test_import_plan.py -q`. Expected: everything new passes, and two busy-index tests now fail: `test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none` with `Failed: DID NOT RAISE OperationalError`, and `test_a_busy_index_fails_the_plan_instead_of_answering_none` with `AssertionError: assert 'present' == 'unplaced'`. In WAL mode a writer no longer blocks readers, which is the point; a holder in exclusive locking mode still does, so their holders take that mode:
+- [x] **Step 4: Run it; see what WAL changes.** `uv run pytest packages/core/tests/test_plaud_tables.py packages/core/tests/test_plaud_when.py packages/core/tests/test_index.py packages/core/tests/test_import_plan.py -q`. Expected: everything new passes, and two busy-index tests now fail: `test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none` with `Failed: DID NOT RAISE OperationalError`, and `test_a_busy_index_fails_the_plan_instead_of_answering_none` with `AssertionError: assert 'present' == 'unplaced'`. In WAL mode a writer no longer blocks readers, which is the point; a holder in exclusive locking mode still does, so their holders take that mode:
 
 In `packages/core/tests/test_index.py`:
 
@@ -7338,11 +7338,11 @@ with
         yield
 ```
 
-- [ ] **Step 5: Run it; it passes.** `uv run pytest packages/core/tests/test_plaud_tables.py packages/core/tests/test_plaud_when.py packages/core/tests/test_index.py packages/core/tests/test_import_plan.py packages/core/tests/test_writer.py -q`. Expected: all pass (`test_writer.py` is a pin: a Writer that switches the index changes nothing else).
+- [x] **Step 5: Run it; it passes.** `uv run pytest packages/core/tests/test_plaud_tables.py packages/core/tests/test_plaud_when.py packages/core/tests/test_index.py packages/core/tests/test_import_plan.py packages/core/tests/test_writer.py -q`. Expected: all pass (`test_writer.py` is a pin: a Writer that switches the index changes nothing else).
 
-- [ ] **Step 6: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 6: Run the checks.** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 7: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(state): 🤖 the 2b tables, keyed by canonical Plaud ID, with no schema version bump; one stamp parser; index.db in WAL mode
@@ -7369,7 +7369,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git add packages/core/src/recordings/state.py packages/core/src/recordings/index.py packages/core/src/recordings/writer.py packages/core/src/recordings/plaud/checks.py packages/core/src/recordings/plaud/when.py packages/core/tests/test_plaud_tables.py packages/core/tests/test_plaud_when.py packages/core/tests/test_index.py packages/core/tests/test_import_plan.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`, `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 8: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `a71f6d8`; the listings above are the plan as written): a naive datetime is UTC everywhere (`checks._utc` read it as local), through one `when._aware`; a time column takes only a `datetime` (a string raises `TypeError`), and is read back through `when.parse_stamp`; `index.wal()` catches any `sqlite3.DatabaseError` and logs `ModeRefused` when SQLite answers with another mode; `set_listing` and `set_markers` refuse a `*_sha256` that isn't 64 lowercase hex, so no title can land where a hash belongs; `_row`, `_marks` and `_refuse_unknown_columns` helpers; the SCHEMA comment says the spec's "flagged" lives in `plaud_events` (decision 16). Tasks 8 and 11 now pass `set_check` datetimes, not ISO strings (forward review).
 
 ### Task 7: Plaud settings and secrets
 
@@ -8343,7 +8345,7 @@ def test_an_already_flagged_or_gone_recording_gets_no_second_flag(writer, make_i
     gone = plaud_rec(writer, make_incoming, 5)
     db = PlaudDB(writer.state)
     assert record_late_keep_out(db, kept_out.id, [f"of_{pid(4)}"], "noarchive", now=NOW)
-    db.set_check(gone.id, gone_since=NOW.isoformat())
+    db.set_check(gone.id, gone_since=NOW)
     consent = parse_consent(listed(pid(4), pid(5)))
     report = apply_late_consent(writer, db, consent, now=NOW)
     assert sorted(report.flagged) == sorted([kept_out.id, gone.id])
@@ -8932,7 +8934,7 @@ def keep_here(db: PlaudDB, recording_id: str, *, now: datetime) -> str:
         return NOTHING_TO_KEEP
     # kept_here_at first: a crash after it leaves a flag Dan can press again, never one that comes
     # back with the next title.
-    db.set_check(recording_id, kept_here_at=now.isoformat())
+    db.set_check(recording_id, kept_here_at=now)
     db.add_event(
         "kept-here", now=now, recording_id=recording_id, plaud_id=open_flags[0].canonical_plaud_id
     )
@@ -11556,7 +11558,7 @@ def test_flags_a_failing_recording_and_a_failed_full_never_stop_it(state, ntfy):
     db.add_event(
         "consent-late", now=NOW, recording_id="20261006T150003-0700_bbbbbbbb", open_flag=True
     )
-    db.set_check(rid, failures=3, failing_since=NOW.isoformat())
+    db.set_check(rid, failures=3, failing_since=NOW)
     db.put(K_FULL, {"ok": False, "detail": "partial: 3 recordings failed"}, now=NOW)
     assert conclude_turn(ctx, GOOD) is True
 
@@ -24866,3 +24868,4 @@ Their full plans are written at their phase start, against the code as built and
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | Needs attention's "a sign-in expiring within 7 days" (§15.2) reads `sign_in.expires_at`, which Phase 2 writes (BD3). | open: Phase 2's outline |
 | 19 | Important | `packages/ui/src/recordings_ui/plaud.py` | The cache's titles of an ID consent-listed, or matching an enforced word, since the compare must never reach the browser (P1, P13). | open: Phase 2's outline |
 | 1 | Minor | `packages/ui/tests/e2e/test_tagging.py`, `packages/ui/frontend/src/components/TagPicker.test.ts` | Three tagging part A tests failed once each and passed on the same code before and after: `test_the_headers_touch_targets_are_44_px_and_never_overlap` (CI, `ec9d5af`, run 40126882917: `assert 0 == 2`, the chips' × buttons not counted under `hover: none`); `test_t_on_a_selection_esc_keeps_it_and_cmd_z_undoes_after_the_toast` (CI, `ef894b3`, run 41173638427: `Locator.fill` timed out after 30 s); and Vitest's `pointer movement over the list is a choice too` (locally, under `make check`'s load: expected 'notes/lecture', got 'talks'). Investigate with superpowers:systematic-debugging before the phase ends; never just re-run them. | open |
+| 6 | Minor | `packages/core/src/recordings/state.py` | `State.forget` finds a listing row's title hash only through the recording's markers: Phase 2 must write the hash and its marker together, or `forget` reads the Plaud refs from the last revision before deleting it (Task 6's review). | open: Phase 2's outline |
