@@ -2204,8 +2204,10 @@ these changes:
   - `load_config` has no unknown-key check, so an older release ignores the new `[plaud]` keys;
   - the token's folder is untouched.
 - **Rolling back across 2b:** pause the sync's check; `rc stop worker && rc rm -f worker`, because
-  the checkout's compose file would start a worker whose command the old image lacks; `git checkout`
-  the tag's commit; `make rollback TAG=<tag>`.
+  the checkout's compose file would start a worker whose command the old image lacks; take
+  `"/consent"` out of `[backup] extra_paths`, because 2a's backup refuses a folder there (and 2a's
+  compose file doesn't mount it), and put it back after deploying forward; `git checkout` the
+  tag's commit; `make rollback TAG=<tag>`.
 - **The boot unit** needs no logic change: `up -d` starts every service. Its description becomes "the
   web, backup and worker containers".
 
@@ -3122,3 +3124,5 @@ None: every bullet of §20 is planned in a phase.
 - 2026-10-31: §13.2's Due aligned with Part I's "every title the app has seen": a snapshot the marker hasn't judged, by content (Task 9's reviews; Phase 1, Task 9).
 - 2026-10-31: §9.2's Alive counts `starting` and `checking` from the first unfinished start, and a
   failed start is never alive (Phase 1 plan, decision 48; Task 13's review).
+- 2026-10-31: §17.3's "Rolling back across 2b" takes `/consent` out of `[backup] extra_paths` first, as
+  the runbook does (2a's backup refuses a folder there; Task 16's review).

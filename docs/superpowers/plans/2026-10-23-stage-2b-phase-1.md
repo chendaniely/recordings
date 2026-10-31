@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 16: Backups carry the consent folder, open.
+**Now:** Task 17: The worker service, and deploying it, open.
 
 ***
 
@@ -16019,9 +16019,9 @@ Spec §12.1 ("Backed up") and §17.2's `extra_paths` checks, with decision 9.
   ```
   An entry inside the token's folder (`/plaud/tokens.json`) is a problem too. The consent folder counts as `/consent` or the folder of `[plaud] consent_list`. A backed-up folder must come back as a folder in the restore test. Doctor's test fixture names the consent folder in `extra_paths`, as the runbook's section 6 has Dan do. Spec §17.2's third entry, `plaud-cache.db`, comes with the cache in Phase 2: Phase 1 has no cache file, and nothing names it.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-16-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-16-base`
 
-- [ ] **Step 1: Write the failing tests.** In `packages/core/tests/test_backup.py`, let `restore_like_restic` put a backed-up folder back whole, as restic does:
+- [x] **Step 1: Write the failing tests.** In `packages/core/tests/test_backup.py`, let `restore_like_restic` put a backed-up folder back whole, as restic does:
 
 ```python
 # before
@@ -16243,9 +16243,9 @@ def test_backup_without_the_consent_folder_is_a_warning(tmp_path):
     assert not any("consent folder" in w for w in doctor(environ, role="backup")["warnings"])
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_backup.py packages/core/tests/test_doctor.py -q -k "folder or extra_paths or manifests"`. Expected: `test_a_folder_in_extra_paths_is_backed_up` fails with `BackupRefused: refusing to back up: …/consent is missing` (an existing folder), `test_a_missing_extra_folder_still_refuses_the_backup` with `AttributeError: module 'recordings.backup' has no attribute 'missing_paths'`, `test_the_free_space_estimate_counts_a_folders_files` with `Failed: DID NOT RAISE ScratchTooSmall`, `test_the_restore_test_checks_a_folder_came_back` on its first `.ok` (a folder that came back reads as "is not in the snapshot"), doctor's extra_paths cases find no problem, and `test_backup_without_the_consent_folder_is_a_warning` finds no warning. One new test is a pin, passing before the code: `test_the_manifests_folder_and_the_state_copy_are_not_problems` (nothing yet calls an extra path a problem; it guards the new checks against reaching too far).
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_backup.py packages/core/tests/test_doctor.py -q -k "folder or extra_paths or manifests"`. Expected: `test_a_folder_in_extra_paths_is_backed_up` fails with `BackupRefused: refusing to back up: …/consent is missing` (an existing folder), `test_a_missing_extra_folder_still_refuses_the_backup` with `AttributeError: module 'recordings.backup' has no attribute 'missing_paths'`, `test_the_free_space_estimate_counts_a_folders_files` with `Failed: DID NOT RAISE ScratchTooSmall`, `test_the_restore_test_checks_a_folder_came_back` on its first `.ok` (a folder that came back reads as "is not in the snapshot"), doctor's extra_paths cases find no problem, and `test_backup_without_the_consent_folder_is_a_warning` finds no warning. One new test is a pin, passing before the code: `test_the_manifests_folder_and_the_state_copy_are_not_problems` (nothing yet calls an extra path a problem; it guards the new checks against reaching too far).
 
-- [ ] **Step 3: Write the folder support,** `packages/core/src/recordings/backup.py`. The module docstring's first paragraph:
+- [x] **Step 3: Write the folder support,** `packages/core/src/recordings/backup.py`. The module docstring's first paragraph:
 
 ```text
 before:
@@ -16338,7 +16338,7 @@ def _not_in_snapshot(bc: BackupConfig, target: Path, restored: Path) -> list[dic
     ]
 ```
 
-- [ ] **Step 4: Write doctor's checks,** `packages/core/src/recordings/doctor.py`. The imports and constants:
+- [x] **Step 4: Write doctor's checks,** `packages/core/src/recordings/doctor.py`. The imports and constants:
 
 ```python
 # before
@@ -16427,7 +16427,7 @@ In `doctor()`:
     _retention(cfg, warnings)
 ```
 
-- [ ] **Step 5: The template,** `config.example.toml`, `[backup]`:
+- [x] **Step 5: The template,** `config.example.toml`, `[backup]`:
 
 ```toml
 # before
@@ -16441,11 +16441,11 @@ extra_paths = ["/backup-extra/deploy.env"]
 extra_paths = ["/backup-extra/deploy.env"]
 ```
 
-- [ ] **Step 6: Run them; they pass.** `uv run pytest packages/core/tests/test_backup.py packages/core/tests/test_doctor.py packages/ui/tests/test_template_settings.py -q`. Expected: all pass.
+- [x] **Step 6: Run them; they pass.** `uv run pytest packages/core/tests/test_backup.py packages/core/tests/test_doctor.py packages/ui/tests/test_template_settings.py -q`. Expected: all pass.
 
-- [ ] **Step 7: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 7: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(backup): 🤖 extra paths may be folders, so the consent folder is backed up; doctor refuses extra paths that would carry the token or the whole state folder
@@ -16469,7 +16469,9 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 `git add packages/core/src/recordings/backup.py packages/core/src/recordings/doctor.py config.example.toml packages/core/tests/test_backup.py packages/core/tests/test_doctor.py`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`,
 `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 9: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 9: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the review's fix round, `9636364`; the listings above are the plan as written): the real-restic test backs up and restores a consent folder (a file and an empty subfolder), so a folder coming back as a folder is proven against the pinned restic, not only the fake; a symlink in `extra_paths` is refused (its target would never be backed up); a folder gone by the restore test is accepted in either kind from the snapshot; doctor compares extra paths and the token folder made absolute and normalised. Spec §17.3's "Rolling back across 2b" now takes `/consent` out of `extra_paths` first, as Task 17's runbook does.
 
 ### Task 17: The worker service, and deploying it
 
