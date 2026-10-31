@@ -1,6 +1,7 @@
 """The first catch-up's gate, as Phase 1 needs it (stage 2b spec §11.6). Phase 2's catch-up adds
 the snapshot mark, the interrupted catch-up and a rebuilt or restored `state.db`."""
 
+import sqlite3
 from datetime import UTC, datetime
 
 import pytest
@@ -40,4 +41,28 @@ def test_a_state_db_without_the_2b_tables_says_no_sync_yet(db):
     with db.state.db() as conn:
         conn.execute("DROP TABLE plaud_state")
     with pytest.raises(NoSyncYet):
+        gate_now(db)
+
+
+@pytest.mark.parametrize("junk", ["", False, 0, [], {}, "junk", 42, True])
+def test_only_a_real_timestamp_opens_the_gate(db, junk):
+    # why: a stored value that isn't a stamp (a hand edit, a bad write) must not open the gate to
+    # an import before the supervised catch-up. Fail closed.
+    db.put(K_CATCH_UP_DONE, junk, now=NOW)
+    assert gate_now(db) == Gate(False, GATE_FIRST)
+
+
+@pytest.mark.parametrize(
+    "stamp", [NOW.isoformat(), "2026-10-23T21:20:00", "2099-01-01T00:00:00+00:00"]
+)
+def test_a_valid_stamp_opens_the_gate_even_in_the_future(db, stamp):
+    # why: a real catch-up wrote it; the clock may be behind, so a future stamp still counts.
+    db.put(K_CATCH_UP_DONE, stamp, now=NOW)
+    assert gate_now(db) == Gate(True, None)
+
+
+def test_an_unreadable_state_db_raises_rather_than_opens(db):
+    # why: the gate must never open on a read it couldn't make (locked, damaged).
+    db.state.db_path.write_bytes(b"not a database" * 100)
+    with pytest.raises(sqlite3.DatabaseError):
         gate_now(db)

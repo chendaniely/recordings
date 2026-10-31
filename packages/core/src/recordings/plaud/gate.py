@@ -1,7 +1,8 @@
 """The first catch-up's gate (stage 2b spec §11.6), as Phase 1 needs it.
 
 - **The gate** holds every scheduled sync, and every request that would write a snapshot, until
-  `plaud_state.catch_up_done_at` is set: the first import is a supervised run on the server.
+  `plaud_state.catch_up_done_at` holds a real timestamp: the first import is a supervised run on
+  the server.
   Late consent listings, which only add `private` or a flag, still apply (§12.1), and so do the
   kinds `GATE_ALLOWED` names, which write no snapshot.
 - **It is read from `plaud_state` alone,** at the worker's start and at its ticks: no archive
@@ -18,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from recordings.plaud.checks import K_CATCH_UP_DONE, PlaudDB
+from recordings.plaud.when import parse_stamp
 
 GATE_FIRST = "Scheduled sync waits for the first catch-up (runbook)"
 GATE_REFUSAL = "The first import is a supervised run on the server (runbook)"
@@ -34,7 +36,11 @@ class Gate:
 
 def gate_now(db: PlaudDB) -> Gate:
     """The gate now, from `plaud_state` alone: open exactly when the first catch-up is done.
-    Raises NoSyncYet when `state.db` has no 2b tables."""
-    if db.get(K_CATCH_UP_DONE) is not None:
+    Only a string that reads as a timestamp opens it: any other value (empty, false, a number, a
+    list, junk) leaves it closed, and a stamp in the future still counts (the clock may be behind).
+    Raises NoSyncYet when `state.db` has no 2b tables, and any database error (locked, unreadable)
+    as it is: the gate never opens on a read it couldn't make."""
+    value = db.get(K_CATCH_UP_DONE)
+    if isinstance(value, str) and parse_stamp(value) is not None:
         return Gate(open=True, reason=None)
     return Gate(open=False, reason=GATE_FIRST)
