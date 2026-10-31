@@ -2,6 +2,8 @@
 
 import json
 import shutil
+import subprocess
+import sys
 from datetime import UTC, datetime
 
 from recordings.archive import RawSource
@@ -172,3 +174,90 @@ def test_plaud_consent_creates_nothing(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     assert names() == before
     assert not (state / "locks").exists()
+
+
+def plaud_lock_held(locks_dir, job: str):
+    """Another process holds `plaud`, announcing `job`, until its stdin closes."""
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib, sys\n"
+                "from datetime import UTC, datetime\n"
+                "from recordings.locks import PLAUD_LOCK, Locks, announce\n"
+                "folder = pathlib.Path(sys.argv[1])\n"
+                "with Locks(folder, timeout=0).hold(PLAUD_LOCK):\n"
+                "    with announce(folder, sys.argv[2], datetime.now(UTC), PLAUD_LOCK):\n"
+                "        print('held', flush=True)\n"
+                "        sys.stdin.read()\n"
+            ),
+            str(locks_dir),
+            job,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout.readline() == "held\n"
+    return holder
+
+
+def test_the_baseline_prints_counts_and_no_title(
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
+    payload = json.dumps(plaud_env(pid(0xE1), name=f"Interview: {TITLE}")).encode()
+    source = RawSource(kind="plaud", ref=pid(0xE1), added_at=T0, fetched_at=T0, payload=payload)
+    writer.add(make_incoming(title=TITLE, sources=(source,)))
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline", "--json"]) == 0
+    raw = capsys.readouterr().out
+    assert json.loads(raw) == {
+        "titles_checked": 1,
+        "private_added": 1,
+        "kept_out_late": 0,
+        "already_seen": 0,
+        "unwritten": [],
+    }
+    assert main(["plaud", "baseline"]) == 0
+    raw += capsys.readouterr().out
+    assert "already seen: 1" in raw and "Synthetic 042" not in raw
+
+
+def test_the_baseline_waits_for_a_held_plaud_lock_then_exits_75(
+    writer, tmp_path, monkeypatch, capsys
+):
+    # why: §9.4. The CLI waits up to 60 seconds for a held `plaud`, then exits 75.
+    from recordings.plaud import runlock
+
+    monkeypatch.setattr(runlock, "CLI_WAIT", 0.2)
+    configure(tmp_path, monkeypatch, writer)
+    holder = plaud_lock_held(writer.state.locks_dir, "plaud-sync")
+    try:
+        assert main(["plaud", "baseline", "--json"]) == 75
+    finally:
+        holder.communicate("")
+    assert json.loads(capsys.readouterr().out) == {"error": "skipped: busy (`plaud-sync`)"}
+    assert main(["plaud", "baseline", "--json"]) == 0  # free again
+
+
+def test_plaud_keep_out_words_lists_and_drops(writer, tmp_path, monkeypatch, capsys):
+    from recordings.plaud.baseline import enforce_word
+    from recordings.plaud.checks import PlaudDB
+
+    db = PlaudDB(writer.state)
+    for word in ("skipme", "noarchive"):
+        enforce_word(db, word, now=datetime.now(UTC))
+    configure(tmp_path, monkeypatch, writer, plaud='keep_out_word = "noarchive"\n')
+    assert main(["plaud", "keep-out-words", "--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed == {
+        "configured": "noarchive",
+        "configured_ok": True,
+        "enforced": ["skipme", "noarchive"],
+    }
+    assert main(["plaud", "keep-out-words", "--drop", "noarchive", "--json"]) == 1
+    refused = json.loads(capsys.readouterr().out)
+    assert refused["result"].startswith("that is the configured keep_out_word")
+    assert main(["plaud", "keep-out-words", "--drop", "skipme", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["enforced"] == ["noarchive"]

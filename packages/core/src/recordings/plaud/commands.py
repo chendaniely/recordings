@@ -20,6 +20,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from recordings import config
 from recordings.archive import Archive
 from recordings.index import Index
+from recordings.locks import LockTimeout
+from recordings.plaud import runlock
+from recordings.plaud.baseline import DROPPED, baseline_privacy, drop_word, enforced_words
 from recordings.plaud.checks import K_CONSENT, K_LAST_GOOD_LISTING, NoSyncYet, PlaudDB
 from recordings.plaud.flags import listed_here, missed_by_2a
 from recordings.plaud.keepout import read_consent_text, signature
@@ -27,6 +30,7 @@ from recordings.plaud.settings import plaud_settings
 from recordings.plaud.when import local_hhmm, parse_stamp
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.state import State, StateError
+from recordings.writer import Writer, WriterError
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -50,6 +54,17 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
         help="what the worker reads from the consent list: IDs, kept and unreadable lines, "
         "and consent-listed recordings already here",
     )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "baseline",
+        help="check every title of the archive's Plaud recordings once, for privacy and the "
+        "keep-out words (before the catch-up)",
+    )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser("keep-out-words", help="list the keep-out words enforced, or drop one")
+    c.add_argument("--drop", metavar="WORD", help="stop enforcing an old word")
     c.add_argument("--json", action="store_true")
 
     # No abbreviated flags, as cli.build_parser: its loop doesn't reach these subparsers.
@@ -205,8 +220,97 @@ def cmd_consent(args: argparse.Namespace) -> int:
     return EXIT_CONFIG if consent.stop else EXIT_OK
 
 
+def _open_state(cfg: config.Config, as_json: bool) -> State | int:
+    if cfg.state_path is None:
+        return _fail("set [state] path in config.toml first", as_json, EXIT_CONFIG)
+    try:
+        return State.open(cfg.state_path)
+    except StateError as exc:
+        return _fail(str(exc), as_json, EXIT_CONFIG)
+
+
+def _writer(cfg: config.Config, as_json: bool) -> Writer | int:
+    """The CLI's Writer in the worker container: as the worker's, it writes no docs (§9.1)."""
+    try:
+        return Writer.open(cfg, docs=False)
+    except LockTimeout as exc:
+        return _fail(str(exc), as_json, EXIT_BUSY)
+    except (WriterError, OSError, sqlite3.Error) as exc:
+        return _fail(str(exc), as_json, EXIT_CONFIG)
+
+
+def _busy(state: State) -> str:
+    """§15.6's "skipped: busy (`plaud-full`)", naming the run that holds `plaud`."""
+    holder = runlock.plaud_holder(state)
+    return f"skipped: busy (`{holder[0]}`)" if holder else "skipped: busy"
+
+
+def cmd_baseline(args: argparse.Namespace) -> int:
+    """§14.5's privacy part. Holds `plaud`, waiting up to runlock.CLI_WAIT."""
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    state = _open_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    now = datetime.now(UTC)
+    try:
+        with runlock.plaud_run(state, "plaud-baseline", timeout=runlock.CLI_WAIT, now=now):
+            writer = _writer(cfg, args.json)
+            if isinstance(writer, int):
+                return writer
+            report = baseline_privacy(writer, PlaudDB(writer.state), now=now)
+    except LockTimeout:
+        return _fail(_busy(state), args.json, EXIT_BUSY)
+    lines = [
+        f"titles checked: {report.titles_checked:,}",
+        f"private added: {report.private_added:,}",
+        f"kept out late: {report.kept_out_late:,}",
+        f"already seen: {report.already_seen:,}",
+    ]
+    if report.unwritten:
+        lines.append(
+            f"not written ({len(report.unwritten):,}): {', '.join(report.unwritten)}; run "
+            "`recordings reindex`, then the baseline again"
+        )
+    _emit(report.to_dict(), lines, args.json)
+    return EXIT_FAILED if report.unwritten else EXIT_OK
+
+
+def cmd_keep_out_words(args: argparse.Namespace) -> int:
+    """§12.2: the words enforced, or `--drop` one. Holds no lock."""
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        settings = plaud_settings(cfg)
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, EXIT_CONFIG)
+    state = _open_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    db, code, payload = PlaudDB(state), EXIT_OK, {}
+    if args.drop is not None:
+        result = drop_word(db, args.drop, configured=settings.keep_out_word, now=datetime.now(UTC))
+        payload["result"] = result
+        code = EXIT_OK if result == DROPPED else EXIT_FAILED
+    payload |= {
+        "configured": settings.keep_out_word,
+        "configured_ok": settings.keep_out_word_ok,
+        "enforced": list(enforced_words(db)),
+    }
+    lines = [payload["result"]] if "result" in payload else []
+    state_of = "" if settings.keep_out_word_ok else " (invalid: the worker idles)"
+    lines.append(f"configured: {settings.keep_out_word}{state_of}")
+    lines.append(f"enforced: {', '.join(payload['enforced']) or 'none yet'}")
+    _emit(payload, lines, args.json)
+    return code
+
+
 COMMANDS = {
     "consent": cmd_consent,
+    "baseline": cmd_baseline,
+    "keep-out-words": cmd_keep_out_words,
 }
 
 

@@ -30,6 +30,9 @@ from recordings.ids import ID_RE
 
 PEOPLE_FILES = ("people.yaml", "people.private.yaml")
 OPS_LOCK = "ops"  # one bulk job at a time: the import (Task 9) and ops.run_job (Task 11)
+# One Plaud sync at a time (stage 2b §9.4), taken through its own Locks instance, as ops is, and
+# held for one run: plaud.runlock.plaud_run. Like ops, it sorts as "anything else".
+PLAUD_LOCK = "plaud"
 _KEY = re.compile(r"[A-Za-z0-9._+-]+")
 
 
