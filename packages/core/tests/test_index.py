@@ -13,6 +13,7 @@ from recordings.index import Index, IndexRefused
 from recordings.models import MediaInfo, Recording, SourceRef, dump_json
 from recordings.refs import canonical_plaud_id, canonical_ref
 from recordings.state import State
+from recordings.writer import Writer
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 HEX = "0123456789abcdef0123456789abcdef"
@@ -81,6 +82,56 @@ def test_rebuild_then_look_up_by_hash_and_by_either_plaud_id_form(new_archive, t
     assert index.find_by_source("plaud", "of_" + HEX) == [a.id]
     assert index.find_by_source("audio_router", f"plaud/{HEX}") == [a.id]
     assert index.find_by_source("plaud", "f" * 32) == []
+
+
+def test_index_db_is_in_wal_mode(new_archive, tmp_path):
+    # why: 2b spec §9.5 (2a rulings, item 72d). web and the worker each hold a Writer: in WAL mode
+    # one upserts or rebuilds while the other reads, instead of waiting on a whole-file lock.
+    root, _ = new_archive
+    rec = put(root)
+    index = Index(tmp_path / "index" / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+    with closing(sqlite3.connect(index.path)) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    index.upsert(rec)  # a later writer's connection keeps the mode the file holds
+    assert index.find_by_sha256(rec.media.sha256) == rec.id
+
+
+def test_a_writer_switches_this_archives_index_to_wal(writer):
+    # why: the plan council's R6 and BA1. A Writer rebuilds only a new, damaged or foreign index,
+    # so the valid index a 2a deploy left, in rollback-journal mode, would have stayed so: a Writer
+    # that finds the index this archive's switches it.
+    with closing(sqlite3.connect(writer.index.path)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")  # as stage 2a left it
+    Writer(writer.root, writer.state, Index(writer.index.path), writer_id="test")
+    with closing(sqlite3.connect(writer.index.path)) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_a_switch_to_wal_that_cant_happen_now_is_logged_and_tried_again(
+    new_archive, tmp_path, caplog
+):
+    # why: the plan council's BA5. The switch needs the file to itself, so it fails while another
+    # process reads it (web, as the worker starts). WAL only speeds things up: the rebuild or the
+    # Writer carries on, a fixed phrase is logged, and the next one tries again.
+    root, _ = new_archive
+    put(root)
+    index = Index(tmp_path / "index" / "index.db")
+    index.rebuild(Archive(root), archive_uuid="u-1")
+    with closing(sqlite3.connect(index.path)) as conn:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    reader = sqlite3.connect(index.path)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM recordings").fetchone()  # a read in progress
+        with caplog.at_level("WARNING", logger="recordings.index"):
+            assert index.wal(timeout=0.05) is False
+    finally:
+        reader.close()
+    assert "index.db stays in rollback-journal mode for now (OperationalError)" in caplog.text
+    assert index.wal() is True
+    with closing(sqlite3.connect(index.path)) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
 def test_a_missing_index_answers_nothing(tmp_path):
@@ -402,7 +453,10 @@ def test_a_strict_lookup_raises_on_a_busy_index_where_a_plain_one_answers_none(
         "sha256_of": lambda **kw: index.sha256_of(rec.id, **kw),
     }
     holder = sqlite3.connect(index.path)
-    holder.execute("BEGIN EXCLUSIVE")  # another process is writing the index
+    # Another process holds the index. In WAL mode (2b spec §9.5) a plain writer no longer blocks
+    # readers, so the holder takes the file in exclusive locking mode, which does.
+    holder.execute("PRAGMA locking_mode=EXCLUSIVE")
+    holder.execute("BEGIN EXCLUSIVE")
     try:
         for name, lookup in lookups.items():
             with pytest.raises(sqlite3.OperationalError) as busy:

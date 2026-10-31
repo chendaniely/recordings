@@ -14,13 +14,13 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from recordings.files import fsync_dir, temp_name
 
 SCHEMA_VERSION = 1
-# The version-1 tables. Later tasks in stage 2a append theirs here. Every statement is
-# CREATE ... IF NOT EXISTS, so opening a state.db made earlier in 2a adds what is missing.
+# The version-1 tables: stage 2a's, then stage 2b's. Every statement is CREATE ... IF NOT EXISTS,
+# so opening a state.db made by an earlier release adds what is missing.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS revisions (
@@ -38,6 +38,57 @@ CREATE TABLE IF NOT EXISTS ops_runs (
 CREATE INDEX IF NOT EXISTS ops_runs_by_job ON ops_runs (job, id);
 CREATE TABLE IF NOT EXISTS alerts (
   key TEXT PRIMARY KEY, failing INTEGER NOT NULL, last_sent_at TEXT);
+-- Stage 2b's tables (its spec §9.5; recordings.plaud.checks reads and writes them). Tables only,
+-- every column from the start and SCHEMA_VERSION still 1, so an older release's open ignores them
+-- and `make rollback` keeps working (2b phase 1 plan, decision 3). Plaud IDs are canonical.
+CREATE TABLE IF NOT EXISTS plaud_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
+  plaud_ids TEXT NOT NULL DEFAULT '[]', recording_ids TEXT NOT NULL DEFAULT '[]',
+  select_all INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL,                     -- queued | running | done | failed | expired | refused
+  queued_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+  progress TEXT,                           -- JSON {"done", "total"}
+  message TEXT,                            -- a §15.6 reply phrase
+  result TEXT);                            -- JSON: counts and IDs, never a title
+CREATE INDEX IF NOT EXISTS plaud_requests_by_state ON plaud_requests (state, id);
+CREATE TABLE IF NOT EXISTS plaud_listing (
+  canonical_plaud_id TEXT PRIMARY KEY, listed_id TEXT NOT NULL,
+  first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, absent_since TEXT,
+  kept_out_at TEXT, kept_out_word TEXT,    -- by a word (§12.2); a late keep-out's too
+  rekey_of TEXT,                           -- §11.4 step 6: the absent ID it matched; '*': several
+  released_at TEXT,                        -- §12.2
+  needs_review INTEGER NOT NULL DEFAULT 0, -- §11.6
+  import_failures INTEGER NOT NULL DEFAULT 0, next_import_at TEXT, parked_at TEXT,
+  title_sha256 TEXT, duration_ms INTEGER, change_marker TEXT);   -- only while its recording is here
+CREATE TABLE IF NOT EXISTS plaud_checks (
+  recording_id TEXT PRIMARY KEY, last_checked_at TEXT, last_changed_at TEXT, next_check_at TEXT,
+  interval_seconds INTEGER, fast_checks_left INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0, failing_since TEXT,
+  settled INTEGER NOT NULL DEFAULT 0, baseline_pending INTEGER NOT NULL DEFAULT 0,
+  held_removals TEXT NOT NULL DEFAULT '[]', parked_at TEXT, degraded INTEGER NOT NULL DEFAULT 0,
+  gone_since TEXT, kept_here_at TEXT);
+CREATE TABLE IF NOT EXISTS plaud_check_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, recording_id TEXT NOT NULL,
+  result TEXT NOT NULL, parts_changed TEXT NOT NULL DEFAULT '[]',
+  parts_volatile TEXT NOT NULL DEFAULT '[]', counted INTEGER NOT NULL DEFAULT 0,
+  failure_class TEXT);
+CREATE INDEX IF NOT EXISTS plaud_check_log_by_at ON plaud_check_log (at);
+CREATE TABLE IF NOT EXISTS plaud_private_checked (
+  recording_id TEXT NOT NULL, canonical_plaud_id TEXT NOT NULL, title_sha256 TEXT NOT NULL,
+  patterns_version INTEGER NOT NULL, checked_at TEXT NOT NULL,
+  PRIMARY KEY (recording_id, canonical_plaud_id));
+CREATE TABLE IF NOT EXISTS plaud_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, kind TEXT NOT NULL,
+  recording_id TEXT, canonical_plaud_id TEXT,
+  detail TEXT NOT NULL DEFAULT '{}',       -- JSON: parts, a fixed "why"; never a title
+  open INTEGER NOT NULL DEFAULT 0, resolved_at TEXT);
+CREATE INDEX IF NOT EXISTS plaud_events_by_at ON plaud_events (at);
+CREATE UNIQUE INDEX IF NOT EXISTS plaud_events_one_flag ON plaud_events (recording_id)
+  WHERE open = 1 AND kind IN ('kept-out-late', 'consent-late');
+CREATE UNIQUE INDEX IF NOT EXISTS plaud_events_one_unwritten ON plaud_events (recording_id)
+  WHERE open = 1 AND kind = 'private-unwritten';
+CREATE TABLE IF NOT EXISTS plaud_state (
+  key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
 """
 # Every change after version 1, keyed by the version it makes: MIGRATIONS[2] takes a state.db
 # from version 1 to 2. CREATE TABLE IF NOT EXISTS can't add a column, so a later stage that changes
@@ -340,10 +391,26 @@ class State:
             ]
 
     def forget(self, file: str) -> None:
-        """Drop everything state.db remembers about a file that was removed on purpose."""
+        """Drop everything state.db remembers about a file that was removed on purpose: its
+        revisions and flags, and its recording's Plaud rows (2b spec §9.5): its checks, markers
+        and events, and the title hash, duration and change marker on the listing rows of its
+        Plaud IDs, which are kept only while it is here. Its other listing state (kept out,
+        released, parked) stays, keyed by the Plaud ID."""
+        recording_id = PurePosixPath(file).parent.name
         with self.db() as db:
             db.execute("DELETE FROM revisions WHERE file = ?", (file,))
             db.execute("DELETE FROM flags WHERE file = ?", (file,))
+            plaud_ids = db.execute(
+                "SELECT canonical_plaud_id FROM plaud_private_checked WHERE recording_id = ?",
+                (recording_id,),
+            ).fetchall()
+            db.executemany(
+                "UPDATE plaud_listing SET title_sha256 = NULL, duration_ms = NULL, "
+                "change_marker = NULL WHERE canonical_plaud_id = ?",
+                plaud_ids,
+            )
+            for table in ("plaud_checks", "plaud_private_checked", "plaud_events"):
+                db.execute(f"DELETE FROM {table} WHERE recording_id = ?", (recording_id,))
 
     # ---- index updates not yet made: a crash between a write and its index update ---------
     def mark_index_pending(self, recording_id: str) -> None:

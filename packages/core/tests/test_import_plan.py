@@ -757,8 +757,9 @@ def test_a_row_waits_for_an_unplaced_row_linked_to_it_through_a_deferred_one(ar_
 
 @contextlib.contextmanager
 def _busy(index, monkeypatch):
-    """Another process is writing the index, and lookups don't wait for it (the real ones wait 30 s
-    for the lock, then fail just the same)."""
+    """Another process holds the index, and lookups don't wait for it (the real ones wait 30 s
+    for the lock, then fail just the same). index.db is in WAL mode (2b spec §9.5), where a plain
+    writer no longer blocks readers, so the holder takes the file in exclusive locking mode."""
 
     @contextlib.contextmanager
     def at_once(self):
@@ -767,6 +768,7 @@ def _busy(index, monkeypatch):
 
     monkeypatch.setattr(Index, "_db", at_once)
     holder = sqlite3.connect(index.path)
+    holder.execute("PRAGMA locking_mode=EXCLUSIVE")
     holder.execute("BEGIN EXCLUSIVE")
     try:
         yield

@@ -342,6 +342,10 @@ class Writer:
                     "and the index's folder are mounted and belong to this user; the index is "
                     "derived, so an empty folder for it will do."
                 ) from None
+        elif not foreign:
+            # This archive's index, not rebuilt (as stage 2a left it, in rollback-journal mode):
+            # switched to WAL here, since web and the worker each hold a Writer (2b spec §9.5).
+            index.wal()
 
     @classmethod
     def open(
