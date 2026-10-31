@@ -1,0 +1,279 @@
+"""Late consent listings and the privacy flags (stage 2b spec §12.1, §12.2, P15).
+
+- **A late consent listing** is an exclusion on the consent list whose recording is already here,
+  under any of its Plaud IDs. It is applied from the list and the index alone, with no Plaud call,
+  whatever the sign-in, the listing, the schedule or the gate: the recording gets `private`
+  (`by: auto`) through `mutate`, and a flag. During a consent stop the exclusions that do read are
+  applied too (§12.1): adding `private` is always safe. A flag is cleared only while the list reads
+  cleanly, because a line that turned into a typo must never read as "exclude fewer".
+- **The index is asked strictly.** One that can't answer now (busy, an I/O error, gone or another
+  archive's) is retried at the next tick, and shown (`LateReport.index_unavailable`), never read as
+  "nothing here". Recordings whose index update is still pending are read from their files.
+- **One recording never stops the others** (§12.1, "Every other recording keeps flowing"). A
+  `private` that can't be written (an outside edit, a folder it can't enter, a full disk, a busy
+  `state.db`, a file that doesn't decode: `UNWRITTEN`) is reported in `unwritten`, so the worker
+  opens its blocker (§16), and the loop goes on; a flag `state.db` refuses is added at the next
+  tick. Python reads a folder it can't enter as "no file there", so only `mutate`, which reads
+  the file itself, decides that a recording is gone.
+- **An unwritten `private` says what stopped it.** `LateReport.causes` holds each one's exception
+  class, which the worker keeps in its `private-unwritten` flag's detail as `"cause"`, and
+  `flag_sentence` words the flag by it: an outside edit or an invalid file keeps §13.2's sentence
+  (`recordings reindex`, or a fix by hand); any other class (a full disk, a folder's owner, a busy
+  `state.db`) gets `PRIVATE_UNWRITTEN_IO`, which points at the disk, since reindex can't help.
+- **One flag per recording (P15).** A recording with an open late keep-out flag that becomes
+  consent-listed has that flag changed, never a second one. A recording gone from Plaud has no
+  privacy flag of its own (it is listed under Gone from Plaud), so it gets this one, and only it.
+  `plaud_events`' partial unique index enforces it across processes.
+- **Keep it here** resolves a late keep-out's flag and changes no archive file. The recording stays
+  `private`, nothing more is fetched from Plaud for it (`plaud_listing.kept_out_at` stays), and
+  `plaud_checks.kept_here_at` keeps a later title with the word from flagging it again (2b phase 1
+  plan, decision 16).
+- **No title,** ever: flags and events carry IDs and fixed phrases only.
+"""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from recordings.locks import LockTimeout
+from recordings.models import is_private
+from recordings.plaud.checks import FLAG_KINDS, PlaudDB
+from recordings.plaud.consent import LEGACY_ENTRY_RE
+from recordings.plaud.keepout import ConsentList
+from recordings.refs import canonical_plaud_id
+from recordings.writer import InvalidFile, NotTheWriter, SetPlaudFields, StaleFile, Writer
+
+KEPT_OUT_LATE = "kept-out-late"
+CONSENT_LATE = "consent-late"
+PRIVATE_UNWRITTEN = "private-unwritten"
+SENTENCES: dict[str, str] = {
+    CONSENT_LATE: "On the consent list, but in the archive: take it out by hand (runbook)",
+    KEPT_OUT_LATE: "Kept out by title, but already in the archive: take it out by hand (runbook)",
+    PRIVATE_UNWRITTEN: (
+        "Should be private, but its file was edited outside the app: run `recordings reindex`"
+    ),
+}
+# A private-unwritten flag whose cause (its detail's "cause": the exception's class name) is
+# neither an outside edit nor an invalid file: reindex can't mend a full disk or a folder's owner.
+PRIVATE_UNWRITTEN_IO = (
+    "Recording {id} should be private, but its file couldn't be written ({cause}): check the "
+    "archive disk and its permissions."
+)
+EDITED_CAUSES: frozenset[str] = frozenset({"StaleFile", "InvalidFile"})
+KEPT_HERE = "Kept here: it stays private, and nothing more is fetched from Plaud for it"
+NOTHING_TO_KEEP = "Nothing to keep: there is no open late keep-out for it"
+# What writing one recording's `private` can raise that leaves it owed: the Writer's refusals, the
+# file system's (a folder's owner, a full or read-only disk), state.db's, and a file that doesn't
+# decode (UnicodeDecodeError is a ValueError).
+UNWRITTEN = (StaleFile, InvalidFile, NotTheWriter, OSError, sqlite3.Error, ValueError)
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LateReport:
+    tagged: tuple[str, ...]  # recording IDs that got `private`
+    flagged: tuple[str, ...]  # newly flagged, or changed to consent-late
+    cleared: tuple[str, ...]  # consent-late flags cleared because the line went (`private` stays)
+    unwritten: tuple[str, ...]  # a `private` owed but not written: the blocker opens (§13.2)
+    busy: tuple[str, ...]  # LockTimeout: retried at the next tick
+    index_unavailable: bool  # the strict lookup couldn't answer: retried at the next tick, shown
+    # Each `unwritten` ID's exception class name: the worker keeps it in that recording's
+    # private-unwritten flag as detail "cause", and flag_sentence words the flag by it.
+    causes: Mapping[str, str] = field(default_factory=dict)
+
+
+def flag_sentence(kind: str, recording_id: str, cause: str | None = None) -> str:
+    """A flag's fixed sentence, as Status and the views show it. A private-unwritten flag whose
+    cause is set and isn't an outside edit or an invalid file says its file couldn't be written,
+    naming the class; anything but a class name in the detail reads as "unknown", so no other text
+    is ever shown. A flag with no cause recorded keeps §13.2's sentence."""
+    if kind == PRIVATE_UNWRITTEN and cause is not None and cause not in EDITED_CAUSES:
+        shown = cause if cause.isidentifier() and len(cause) <= 64 else "unknown"
+        return PRIVATE_UNWRITTEN_IO.format(id=recording_id, cause=shown)
+    return SENTENCES[kind]
+
+
+def flag(db: PlaudDB, kind: str, recording_id: str, *, plaud_id: str | None, now: datetime) -> bool:
+    """Open `kind`'s flag on a recording, keeping one open privacy flag per recording (P15): an
+    open late keep-out becomes consent-late, and a consent-late flag is never turned back. True
+    when a flag was added or changed."""
+    if kind not in FLAG_KINDS:
+        raise ValueError(f"{kind!r} is not a privacy flag")
+    pid = canonical_plaud_id(plaud_id) if plaud_id else None
+    for _ in range(2):  # a second pass only after another process flagged it in between
+        current = [e for e in db.open_flags() if e.recording_id == recording_id]
+        if current:
+            if current[0].kind == kind or kind == KEPT_OUT_LATE:
+                return False
+            db.change_kind(current[0].id, kind)
+            return True
+        try:
+            db.add_event(kind, now=now, recording_id=recording_id, plaud_id=pid, open_flag=True)
+        except sqlite3.IntegrityError:
+            continue
+        return True
+    return False
+
+
+def _listed_here(writer: Writer, ids: frozenset[str]) -> tuple[list[tuple[str, str]], bool]:
+    """Each recording here that one of `ids` names, with that ID: from the index, asked strictly,
+    and from the files of recordings whose index update is pending. (recordings, unavailable)."""
+    if not ids:
+        return [], False
+    if writer.index.archive_uuid() != writer.identity.uuid:
+        return [], True  # gone, unreadable or another archive's: it would answer "none"
+    hits: dict[str, str] = {}
+    try:
+        for pid in sorted(ids):
+            for rid in writer.index.find_by_source("plaud", pid, strict=True):
+                hits.setdefault(rid, pid)
+        pending = writer.state.index_pending()
+    except sqlite3.DatabaseError as exc:
+        log.warning("late consent listings: the index can't answer (%s)", type(exc).__name__)
+        return [], True
+    for rid in pending:
+        try:
+            rec = writer.archive.load(rid)
+        except (KeyError, OSError, ValueError):
+            continue  # gone, or a file that doesn't read: nothing to match it by
+        for source in rec.sources:
+            if source.kind == "plaud" and canonical_plaud_id(source.ref) in ids:
+                hits.setdefault(rid, canonical_plaud_id(source.ref))
+                break
+    return sorted(hits.items()), False
+
+
+def _plaud_ids(writer: Writer, recording_id: str) -> frozenset[str] | None:
+    """The recording's canonical Plaud IDs, or None when its file can't be read now."""
+    try:
+        rec = writer.archive.load(recording_id)
+    except (KeyError, OSError, ValueError):
+        return None
+    return frozenset(canonical_plaud_id(s.ref) for s in rec.sources if s.kind == "plaud")
+
+
+def _kept_out_late_owed(db: PlaudDB, recording_id: str, ids: Iterable[str]) -> bool:
+    check = db.check_row(recording_id)
+    if check is not None and check.kept_here_at is not None:
+        return False
+    for pid in ids:
+        row = db.listing(pid)
+        if row is not None and row.kept_out_at is not None:
+            return True
+    return False
+
+
+def apply_late_consent(
+    writer: Writer, db: PlaudDB, consent: ConsentList, *, now: datetime
+) -> LateReport:
+    """Tag and flag every recording here that an exclusion names; clear the flags whose line went.
+    No Plaud call. Safe to run at every tick: a recording already `private` is only flagged. One
+    recording that can't be written is reported in `unwritten`, its class in `causes`, and stops
+    none after it."""
+    tagged, flagged, unwritten, busy, cleared = [], [], [], [], []
+    causes: dict[str, str] = {}
+    found, unavailable = _listed_here(writer, consent.ids)
+    for rid, pid in found:
+        try:
+            private = is_private(writer.archive.load(rid))
+        except (KeyError, OSError, ValueError):
+            # Gone, or a file it can't read or decode now. A folder it can't enter reads as "no
+            # file" here too, so `mutate`, which reads the file itself, tells them apart.
+            private = False
+        if not private:
+            try:
+                writer.mutate(rid, SetPlaudFields(add_private=True))
+            except KeyError:
+                continue  # removed since the index answered
+            except LockTimeout:
+                busy.append(rid)  # retried at the next tick, flag and all
+                continue
+            except UNWRITTEN as exc:
+                log.warning("late consent listing: %s not tagged (%s)", rid, type(exc).__name__)
+                unwritten.append(rid)
+                causes[rid] = type(exc).__name__  # a class name only: never the exception's text
+            else:
+                tagged.append(rid)
+        try:
+            if flag(db, CONSENT_LATE, rid, plaud_id=pid, now=now):
+                flagged.append(rid)
+        except sqlite3.Error as exc:  # flag() reads the open flags afresh: the next tick adds it
+            log.warning("late consent listing: %s not flagged (%s)", rid, type(exc).__name__)
+    if consent.readable and not unavailable:
+        for event in db.open_flags((CONSENT_LATE,)):
+            rid = event.recording_id
+            ids = _plaud_ids(writer, rid) if rid is not None else None
+            if ids is None or ids & consent.ids:
+                continue  # still listed, or its file can't be read now: the flag stays
+            if _kept_out_late_owed(db, rid, ids):
+                db.change_kind(event.id, KEPT_OUT_LATE)  # its title kept it out too
+            else:
+                db.resolve(event.id, now=now)
+            cleared.append(rid)
+    return LateReport(
+        tagged=tuple(tagged),
+        flagged=tuple(flagged),
+        cleared=tuple(cleared),
+        unwritten=tuple(unwritten),
+        busy=tuple(busy),
+        index_unavailable=unavailable,
+        causes=causes,
+    )
+
+
+def record_late_keep_out(
+    db: PlaudDB, recording_id: str, plaud_ids: Iterable[str], word: str, *, now: datetime
+) -> bool:
+    """A recording here whose title has a keep-out word (§12.2, "Too late"): each of its Plaud IDs
+    is kept out from now on (never fetched again), and the recording is flagged once, unless Dan
+    pressed Keep it here. The caller has written `private`. True when a flag was added or changed.
+
+    An ID no listing has shown yet (a 2a recording's, before Phase 2 lists) gets its
+    `plaud_listing` row from `set_listing`, as the archive holds it and dated by the keep-out, so
+    it never looks listed when no listing ran (2b phase 1 plan, decision 36)."""
+    given: dict[str, str] = {}
+    for pid in plaud_ids:
+        given.setdefault(canonical_plaud_id(pid), pid)
+    for canonical, as_given in sorted(given.items()):
+        row = db.listing(canonical)
+        if row is None or row.kept_out_at is None:
+            db.set_listing(as_given, kept_out_at=now, kept_out_word=word)
+    check = db.check_row(recording_id)
+    if check is not None and check.kept_here_at is not None:
+        return False
+    first = min(given) if given else None
+    return flag(db, KEPT_OUT_LATE, recording_id, plaud_id=first, now=now)
+
+
+def keep_here(db: PlaudDB, recording_id: str, *, now: datetime) -> str:
+    """Keep it here (request `keep-here`): resolve the open late keep-out flag. Changes no archive
+    file; `private` stays and nothing more is fetched. KEPT_HERE, or NOTHING_TO_KEEP."""
+    open_flags = [e for e in db.open_flags((KEPT_OUT_LATE,)) if e.recording_id == recording_id]
+    if not open_flags:
+        return NOTHING_TO_KEEP
+    # kept_here_at first: a crash after it leaves a flag Dan can press again, never one that comes
+    # back with the next title.
+    db.set_check(recording_id, kept_here_at=now)
+    db.add_event(
+        "kept-here", now=now, recording_id=recording_id, plaud_id=open_flags[0].canonical_plaud_id
+    )
+    for event in open_flags:
+        db.resolve(event.id, now=now)
+    return KEPT_HERE
+
+
+def missed_by_2a(text: str, consent: ConsentList) -> frozenset[str]:
+    """The exclusions stage 2a's parser didn't read (an `of_` or upper-case ID, §12.1): read here
+    exactly as `load_consent_list` read them then."""
+    legacy = {
+        canonical_plaud_id(m.group(1))
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+        for m in [LEGACY_ENTRY_RE.match(line)]
+        if m
+    }
+    return frozenset(consent.ids - legacy)
