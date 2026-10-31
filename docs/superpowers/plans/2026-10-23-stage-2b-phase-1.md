@@ -13,7 +13,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Task 13: The worker process, open.
+**Now:** Task 14: Requests from the UI, open.
 
 ***
 
@@ -12435,9 +12435,9 @@ Spec §9.2 and §9.7: one process, a main thread that owns its `Writer`, a heart
   - **Blockers:** `consent` with `{"stop": phrase}`; `private-unwritten` with `{}` while a flag is open, or `{"error": <class name>}` while the last late consent pass failed as a whole, or `{"error": "IndexUnavailable"}` once the index couldn't answer for 60 seconds (cleared when it answers). Both are written afresh at every tick. A `private-unwritten` flag's event detail is `{"owed": "consent", "cause": <class name>}` (`cause` from `LateReport.causes`, absent when unknown; Task 8's `flag_sentence` words it); it resolves once the recording is private or gone (its folder gone: a folder it can't enter is never "gone"), or once the list reads cleanly and names none of its Plaud IDs.
   - A turn that ran records `K_LAST_TURN`'s detail as `{"result": <the run's §15.6 phrase>}`, one that raised as `{"error": <class name>}` (Task 19 reads `result`). A turn that didn't run (the gate, busy, idle-config) waits one interval in memory, so it isn't recorded at every tick; after a "gate" outcome the gate's opening ends that wait at the next tick.
 
-- [ ] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-13-base`
+- [x] **Step 0: Record the base:** `git rev-parse HEAD > .superpowers/sdd/2026-10-23-stage-2b-phase-1/task-13-base`
 
-- [ ] **Step 1: Write the failing tests,** `packages/core/tests/test_worker.py` (new):
+- [x] **Step 1: Write the failing tests,** `packages/core/tests/test_worker.py` (new):
 
 ```python
 """The Plaud worker (spec §9.2, §9.7): its start, the tick, scheduled turns, the heartbeat and
@@ -13270,9 +13270,9 @@ def test_importing_the_worker_brings_no_client_token_store_or_sync():
     assert done.stdout.strip() == "[]"
 ```
 
-- [ ] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_worker.py -q`. Expected: the module doesn't collect, `ImportError: cannot import name 'FAILED' from 'recordings.worker'` (Task 11's `worker.py` holds only `TurnContext` and `conclude_turn`), so all 29 fail first; none is a pin.
+- [x] **Step 2: Run them; watch them fail.** `uv run pytest packages/core/tests/test_worker.py -q`. Expected: the module doesn't collect, `ImportError: cannot import name 'FAILED' from 'recordings.worker'` (Task 11's `worker.py` holds only `TurnContext` and `conclude_turn`), so all 29 fail first; none is a pin.
 
-- [ ] **Step 3: Write the worker,** `packages/core/src/recordings/worker.py`. Task 11 made the module with `TurnContext` and `conclude_turn`; keep both, and its docstring's paragraph on `conclude_turn`. Add to the module docstring, after its first paragraph:
+- [x] **Step 3: Write the worker,** `packages/core/src/recordings/worker.py`. Task 11 made the module with `TurnContext` and `conclude_turn`; keep both, and its docstring's paragraph on `conclude_turn`. Add to the module docstring, after its first paragraph:
 
 ```text
 The process (Task 13): `recordings worker` is one process with a main thread that owns its Writer
@@ -13955,7 +13955,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 ```
 
-- [ ] **Step 4: Register `recordings worker`,** `packages/core/src/recordings/cli.py`. The import line:
+- [x] **Step 4: Register `recordings worker`,** `packages/core/src/recordings/cli.py`. The import line:
 
 ```python
 # before
@@ -14009,9 +14009,9 @@ and in `main`'s `commands` table:
         "plaud": plaud_commands.run,
 ```
 
-- [ ] **Step 5: Run them; they pass.** `uv run pytest packages/core/tests/test_worker.py -q`. Expected: `29 passed` (`28 passed, 1 skipped` as root: a folder it can't enter is no barrier to root).
+- [x] **Step 5: Run them; they pass.** `uv run pytest packages/core/tests/test_worker.py -q`. Expected: `29 passed` (`28 passed, 1 skipped` as root: a folder it can't enter is no barrier to root).
 
-- [ ] **Step 6: Docs,** `CLAUDE.md`, the Archive rules' first bullet:
+- [x] **Step 6: Docs,** `CLAUDE.md`, the Archive rules' first bullet:
 
 ```text
 before:
@@ -14027,9 +14027,9 @@ after:
   any other way, in code or in tests.
 ```
 
-- [ ] **Step 7: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
+- [x] **Step 7: Run the checks:** `uv run ruff format .`, then `make check`. Expected: all pass.
 
-- [ ] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
+- [x] **Step 8: Commit.** Write the message to `.superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`:
 
 ```text
 feat(worker): 🤖 recordings worker: the tick, the heartbeat thread, scheduled turns and --alive; late consent listings at every tick
@@ -14064,7 +14064,9 @@ Then: `uv run --script scripts/commitmsg.py .superpowers/sdd/2026-10-23-stage-2b
 `git add packages/core/src/recordings/worker.py packages/core/src/recordings/cli.py packages/core/tests/test_worker.py CLAUDE.md`, `git commit -F .superpowers/sdd/2026-10-23-stage-2b-phase-1/commit-msg.txt`,
 `git log -1 --format='%(trailers)'` (shows `Plan:`).
 
-- [ ] **Step 9: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+- [x] **Step 9: Review, look forward, close.** The controller runs the Tier 1 review (the template's *Reviews*), the forward review and the close commit.
+
+**Built differently** (the build's adaptations, `8ecb3d7`, and the review's fix round, `f165eb3`; the listings above are the plan as written): a private-unwritten flag closes by `flags.still_owed`, and a folder is gone only by `flags.gone` (a folder under a parent the worker can't enter is never read as removed); the pattern pass at start is part of the start: its heartbeat (`checking`) keeps `starting_since`, so a crash loop inside it is STUCK after 30 minutes, the start writes `idle` once the pass ends, and SIGTERM stops it between recordings (a stopped pass isn't recorded complete); `--alive` exits 0 or 1 only (a config it can't read prints a fixed line and exits 1; the daemon still exits 78); CLAUDE.md names the three Writers that write no docs and the baseline and pattern pass among `reconcile_plaud`'s callers; spec §9.2's "Alive" says the same (decision 48).
 
 ### Task 14: Requests from the UI
 
@@ -24917,3 +24919,5 @@ Their full plans are written at their phase start, against the code as built and
 | 9 | Important | `packages/core/src/recordings/plaud/privacy.py` | The phase-end council's security lens rereads the marker's judged-set rule (`judged:<recording_id>`): it replaced a time-based fix that failed open, and it is the core of "every title the app has seen" (Task 9's review). | open |
 | 10 | Minor | `packages/core/src/recordings/plaud/baseline.py` | Every `archive.problems` entry is listed `InvalidFile`, including a `recording.json` its permissions keep from being read and a copied folder whose ID doesn't match, and both are told to run `recordings reindex`; folders whose names aren't IDs collapse into one. Carry the exception's class in `Problem` and key by relative path (Task 10's re-review). | open |
 | 9 | Minor | `packages/core/src/recordings/writer.py` | `Writer.keep_out_words` reads a `keep_out_words` row that isn't a list as no words, so reconcile and the baseline check only the configured word; fail closed as `enforce_word` now does (Task 10's re-review). | open |
+| 13 | Question for the council | `packages/core/src/recordings/worker.py` | A recording the pattern pass at start couldn't check (`K_PATTERNS_PASS.unwritten`) shows in Needs attention by ID (Task 19) and is re-checked at the next start or any `reindex`, but opens no flag and no `private-unwritten` blocker, since a `private` isn't known to be owed. Should an unchecked recording also stop the sync's ping (§13.2, §16)? (Task 13's review.) | open |
+| 13 | Minor | `packages/core/src/recordings/worker.py` | `alive` gives `checking` 30 minutes from the first unfinished start, so a pattern pass at start on a very large archive reads STUCK while it still progresses: decision 48's accepted limit (Task 13's fix round). | open |

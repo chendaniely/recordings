@@ -653,9 +653,11 @@ Every contradiction the council found is settled in the text, and listed with it
   listing page, every MiB of a download, every slice of a wait or backoff, and as `Writer.open`
   rebuilds the index.
   - **Alive** means a heartbeat under 90 seconds old, and progress in the last 15 minutes (30 while
-    the phase is `starting`). An idle worker (no token, the gate closed, the schedule off) is alive,
-    because its loop ticks. A wedged main thread is not, because a tick that never returns bumps
-    nothing.
+    the phase is `starting`, or `checking` in the pattern pass at start, counted from the first
+    start that hasn't finished, so a crash loop never gets a fresh 30 minutes; Phase 1 plan,
+    decision 48). A start that failed says `failed`, which is never alive. An idle worker (no token,
+    the gate closed, the schedule off) is alive, because its loop ticks. A wedged main thread is
+    not, because a tick that never returns bumps nothing.
   - `recordings worker --alive` (the compose health check) and Status read both.
   - A synchronous step (an index rebuild in `Writer.open`, a download, a `Retry-After` wait) no
     longer silences it. This replaces the draft's claim that "the heartbeat keeps the health check
@@ -3118,3 +3120,5 @@ None: every bullet of §20 is planned in a phase.
 - 2026-10-31: §15.6 gains the private-unwritten sentence for a missing `recording.json`, and §16's
   row says the step follows the cause (2b phase 1 plan, decision 58; Phase 1, Task 8).
 - 2026-10-31: §13.2's Due aligned with Part I's "every title the app has seen": a snapshot the marker hasn't judged, by content (Task 9's reviews; Phase 1, Task 9).
+- 2026-10-31: §9.2's Alive counts `starting` and `checking` from the first unfinished start, and a
+  failed start is never alive (Phase 1 plan, decision 48; Task 13's review).
