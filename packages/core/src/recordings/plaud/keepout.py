@@ -130,6 +130,13 @@ def _join_and(items: Sequence[str]) -> str:
     return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
+def kept_lines_note(numbers: Sequence[int]) -> str:
+    """The lines read as kept, not as exclusions, by line number: `plaud consent` and doctor say
+    it in these words."""
+    listed = ", ".join(str(n) for n in numbers)
+    return f"lines read as kept, not excluded (check each meant keep): {listed}"
+
+
 def typo_phrase(numbers: Sequence[int]) -> str:
     """The consent stop for typo lines, by line number only (§12.1, §15.6)."""
     lines = _join_and([str(n) for n in numbers])

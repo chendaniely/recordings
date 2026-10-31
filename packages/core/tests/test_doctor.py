@@ -20,7 +20,7 @@ from recordings.plaud.keepout import typo_phrase
 from recordings.plaud.settings import BAD_WORD
 from recordings.sentinel import MIRROR, SENTINEL, read_sentinel
 from recordings.ssh import nas_free_bytes
-from recordings.state import SCHEMA_VERSION
+from recordings.state import SCHEMA_VERSION, State
 
 NAS_FREE = 500 * 1024**3
 
@@ -537,7 +537,7 @@ def test_the_web_role_needs_no_secrets_and_refuses_any(tmp_path):
     assert any("nas_ssh_key" in p for p in doctor(web_only(full), role="web")["problems"])
 
 
-def test_every_job_secret_is_a_known_secret():
+def test_every_secret_a_role_forbids_is_a_known_secret():
     assert {*BACKUP_SECRETS, *ALERT_SECRETS, "deadman_sync_url"} <= set(SECRETS)
 
 
@@ -927,11 +927,12 @@ def test_a_worker_consent_stop_names_line_numbers_and_kept_lines_are_a_note(tmp_
     consent = f"# synthetic\n- `{typo}` — one digit short\n{KEPT} kept: she agreed later\n"
     report = doctor(worker(tmp_path, consent=consent), role="worker")
     assert report["problems"] == [
-        f"{typo_phrase([2])}: nothing is imported until it reads (spec §12.1)"
+        f"{typo_phrase([2])}: nothing is imported until it reads (stage 2b spec §12.1)"
     ]
     assert report["plaud"]["consent_stop"] == typo_phrase([2])
     assert report["plaud"]["consent_ids"] is None and report["plaud"]["review_lines"] == [3]
-    assert any("line 3 as kept" in n for n in report["notes"])
+    # the same sentence `recordings plaud consent` prints (one keepout helper)
+    assert "lines read as kept, not excluded (check each meant keep): 3" in report["notes"]
     text = json.dumps(report)
     assert typo not in text and KEPT not in text  # line numbers, never the text
 
@@ -939,13 +940,16 @@ def test_a_worker_consent_stop_names_line_numbers_and_kept_lines_are_a_note(tmp_
 def test_a_worker_with_no_consent_list_reports_it(tmp_path):
     report = doctor(worker(tmp_path, consent=None), role="worker")
     assert report["problems"] == [
-        "the consent list is missing: nothing is imported until it reads (spec §12.1)"
+        "the consent list is missing: nothing is imported until it reads (stage 2b spec §12.1)"
     ]
 
 
 def test_a_worker_with_no_token_store_needs_the_sign_in(tmp_path):
     report = doctor(worker(tmp_path, token=False), role="worker")
-    assert report["problems"] == ["sign-in needed: run `make plaud-sign-in`"]
+    (problem,) = report["problems"]
+    assert problem.startswith("sign-in needed")
+    assert "make plaud-sign-in" not in problem  # that target arrives in Phase 2
+    assert "runbook section 6" in problem
     assert report["plaud"]["token_store"] is False
 
 
@@ -1035,6 +1039,98 @@ def test_web_and_backup_report_a_mounted_plaud_or_a_plaud_token(tmp_path):
         report = doctor(environ | {"RECORDINGS_PLAUD_TOKEN": "token-do-not-print"}, role=role)
         assert any("RECORDINGS_PLAUD_TOKEN is set here" in p for p in report["problems"]), role
         assert "token-do-not-print" not in json.dumps(report)
+
+
+def test_the_token_file_variable_is_a_problem_in_web_and_backup_too(tmp_path):
+    full = server(tmp_path)
+    for role, environ in (("web", web_only(full)), ("backup", full)):
+        report = doctor(environ | {"RECORDINGS_PLAUD_TOKEN_FILE": "/x/not-read"}, role=role)
+        assert any("RECORDINGS_PLAUD_TOKEN_FILE is set here" in p for p in report["problems"]), role
+
+
+def test_web_and_backup_check_the_folder_token_store_names(tmp_path):
+    full = server(tmp_path)
+    other = tmp_path / "other-plaud"
+    other.mkdir()
+    cfg = Path(full["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + f'[plaud]\ntoken_store = "{other / "tokens.json"}"\n',
+        encoding="utf-8",
+    )
+    for role, environ in (("web", web_only(full)), ("backup", full)):
+        problems = doctor(environ, role=role)["problems"]
+        assert any(f"{other} is mounted here" in p for p in problems), role
+
+
+def test_the_workers_consent_notes_are_true_for_the_worker(tmp_path):
+    # why: the worker stays up and needs the list; the 2a notes ("the services that stay up don't
+    # need it", "not mounted here") were written for the other services.
+    environ = worker(tmp_path, consent=None)
+    for role in ("worker",):
+        report = doctor(environ, role=role)
+        assert not any("stay up" in n or "not mounted" in n for n in report["notes"])
+        assert (report["consent_list"] or {}).get("note") is None
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        "".join(
+            line
+            for line in cfg.read_text(encoding="utf-8").splitlines(keepends=True)
+            if not line.startswith("consent_list")
+        ),
+        encoding="utf-8",
+    )
+    report = doctor(environ, role="worker")
+    assert not any("stay up" in n or "not mounted" in n for n in report["notes"])
+    assert any("consent list" in p for p in report["problems"])
+
+
+def _store_words(tmp_path, value):
+    from datetime import datetime
+
+    from recordings.plaud.checks import K_KEEP_OUT_WORDS, PlaudDB
+
+    state = State.open(tmp_path / "state")
+    PlaudDB(state).put(K_KEEP_OUT_WORDS, value, now=datetime(2026, 10, 1, tzinfo=UTC))
+
+
+def test_doctor_lists_the_enforced_keep_out_words(tmp_path):
+    # why: stage 2b spec §12.2: doctor lists the words the worker enforces.
+    environ = worker(tmp_path)
+    _store_words(tmp_path, ["noarchive", "hush"])
+    report = doctor(environ, role="worker")
+    assert report["problems"] == []
+    assert report["plaud"]["keep_out_words"] == ["noarchive", "hush"]
+
+
+def test_a_keep_out_words_row_that_isnt_a_list_is_a_worker_problem(tmp_path):
+    environ = worker(tmp_path)
+    _store_words(tmp_path, {"not": "a list"})
+    report = doctor(environ, role="worker")
+    (problem,) = report["problems"]
+    assert "keep-out words" in problem or "keep_out" in problem
+    assert report["plaud"]["keep_out_words"] is None
+
+
+def test_an_unreadable_state_db_reports_no_words_not_an_empty_list(tmp_path):
+    environ = worker(tmp_path)
+    (tmp_path / "state" / "state.db").write_bytes(b"not a database" * 100)
+    report = doctor(environ, role="worker")
+    assert report["problems"]  # _state says so
+    assert report["plaud"]["keep_out_words"] is None
+
+
+def test_the_sync_url_hint_only_names_the_sync_url_when_it_is_the_cause(tmp_path):
+    environ = worker(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace(
+            'ntfy_server = "https://ntfy.sh"', 'ntfy_server = "http://plain.example"'
+        ),
+        encoding="utf-8",
+    )
+    problems = doctor(environ, role="worker")["problems"]
+    assert any("ntfy_server" in p for p in problems)
+    assert not any("ntfy_server" in p and "DEADMAN_SYNC_URL_FILE" in p for p in problems)
 
 
 def test_doctor_never_calls_plaud(tmp_path, monkeypatch):

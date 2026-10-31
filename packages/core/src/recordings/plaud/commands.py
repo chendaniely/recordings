@@ -32,7 +32,7 @@ from recordings.plaud.baseline import (
 )
 from recordings.plaud.checks import K_CONSENT, K_LAST_GOOD_LISTING, NoSyncYet, PlaudDB
 from recordings.plaud.flags import listed_here, missed_by_2a
-from recordings.plaud.keepout import read_consent_text, signature
+from recordings.plaud.keepout import kept_lines_note, read_consent_text, signature
 from recordings.plaud.settings import BAD_WORD, plaud_settings
 from recordings.plaud.when import local_hhmm, parse_stamp
 from recordings.sentinel import SentinelError, read_sentinel
@@ -216,8 +216,7 @@ def cmd_consent(args: argparse.Namespace) -> int:
     if consent.stop:
         lines.append(f"imports stopped: {consent.stop}")
     if consent.review_lines:
-        numbers = ", ".join(str(n) for n in consent.review_lines)
-        lines.append(f"lines read as kept, not excluded (check each meant keep): {numbers}")
+        lines.append(kept_lines_note(consent.review_lines))
     if in_archive is None:
         lines.append(f"in the archive: {INDEX_UNAVAILABLE}")
     for row in in_archive or ():
