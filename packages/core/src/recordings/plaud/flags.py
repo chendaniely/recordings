@@ -14,8 +14,11 @@
   `state.db`, a file that doesn't decode: `UNWRITTEN`) is reported in `unwritten`, so the worker
   opens its blocker (§16), and the loop goes on; a flag `state.db` refuses is added at the next
   tick. Python reads a folder it can't enter as "no file there", so only `mutate`, which reads
-  the file itself, decides that a recording is missing a file, and `_gone` (a `stat`, where only
+  the file itself, decides that a recording is missing a file, and `gone` (a `stat`, where only
   "not found" counts) decides that its folder is.
+- **A `private-unwritten` flag stays open while its `private` is owed** (`still_owed`, which the
+  worker asks at every tick): until the recording is private or gone; one the consent list owed,
+  also until a list that reads cleanly names none of its Plaud IDs. A stop can't say a line went.
 - **An unwritten `private` says what stopped it.** `LateReport.causes` holds each one's exception
   class, which the worker keeps in its `private-unwritten` flag's detail as `"cause"`, and
   `flag_sentence` words the flag by it: an outside edit or an invalid file keeps §13.2's sentence
@@ -43,13 +46,14 @@ from datetime import datetime
 from recordings.archive import Archive
 from recordings.index import Index
 from recordings.locks import LockTimeout
-from recordings.models import is_private
+from recordings.models import Recording, is_private
 from recordings.plaud.checks import (
     CONSENT_LATE,
     FLAG_KINDS,
     KEPT_HERE_EVENT,
     KEPT_OUT_LATE,
     PRIVATE_UNWRITTEN,
+    Event,
     PlaudDB,
 )
 from recordings.plaud.consent import LEGACY_ENTRY_RE
@@ -133,9 +137,10 @@ def flag(db: PlaudDB, kind: str, recording_id: str, *, plaud_id: str | None, now
     return False
 
 
-def _gone(path) -> bool:
+def gone(path) -> bool:
     """Whether a folder is removed. Only "not found" says so: `Path.exists()` reads any OSError
-    (a parent it can't enter, an I/O error) as "no", which would drop a recording still owed."""
+    (a parent it can't enter, an I/O error) as "no", which would drop a recording still owed.
+    The late consent pass and the worker's `private-unwritten` flags (`still_owed`) both ask it."""
     try:
         os.stat(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -169,12 +174,16 @@ def listed_here(
     for rid in pending:
         found = _plaud_ids(archive, rid)
         if found is None:
-            unavailable = unavailable or not _gone(archive.path_for(rid))
+            unavailable = unavailable or not gone(archive.path_for(rid))
             continue
         for pid in sorted(found & ids):
             hits.setdefault(rid, pid)
             break
     return sorted(hits.items()), unavailable
+
+
+def _ids_of(rec: Recording) -> frozenset[str]:
+    return frozenset(canonical_plaud_id(s.ref) for s in rec.sources if s.kind == "plaud")
 
 
 def _plaud_ids(archive: Archive, recording_id: str) -> frozenset[str] | None:
@@ -183,7 +192,31 @@ def _plaud_ids(archive: Archive, recording_id: str) -> frozenset[str] | None:
         rec = archive.load(recording_id)
     except (KeyError, OSError, ValueError):
         return None
-    return frozenset(canonical_plaud_id(s.ref) for s in rec.sources if s.kind == "plaud")
+    return _ids_of(rec)
+
+
+def still_owed(archive: Archive, event: Event, consent: ConsentList | None) -> bool:
+    """Whether a `private-unwritten` flag's `private` is still owed (§16): until its recording is
+    private or gone. No file it can read is "gone" only when its folder is (`gone`: a folder it
+    can't enter, or one under a parent it can't enter, hides a file that is there); a file it
+    can't read or that doesn't validate keeps it owed. One the consent list owed (detail
+    `"owed": "consent"`) is no longer owed once `consent`, the list in force, reads cleanly and
+    names none of the recording's Plaud IDs: a line added by mistake, then taken out. A stop, or
+    no list read yet, can't say a line went."""
+    rid = event.recording_id
+    if rid is None:
+        return False
+    try:
+        rec = archive.load(rid)
+    except KeyError:
+        return not gone(archive.path_for(rid))
+    except (ValueError, OSError):
+        return True
+    if is_private(rec):
+        return False
+    if event.detail.get("owed") != "consent" or consent is None or not consent.readable:
+        return True
+    return bool(_ids_of(rec) & consent.ids)
 
 
 def _kept_here(db: PlaudDB, recording_id: str) -> bool:
@@ -224,7 +257,7 @@ def apply_late_consent(
             try:
                 writer.mutate(rid, SetPlaudFields(add_private=True))
             except KeyError:
-                if _gone(writer.archive.path_for(rid)):
+                if gone(writer.archive.path_for(rid)):
                     continue  # removed since the index answered
                 # The folder is still here without its recording.json: owed, never skipped.
                 unwritten.append(rid)

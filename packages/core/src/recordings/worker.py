@@ -1,4 +1,5 @@
-"""The Plaud worker (stage 2b spec §9.2, §16): how each scheduled turn ends.
+"""The Plaud worker (stage 2b spec §9.2, §9.7, §16): the process, its heartbeat and `--alive`, and
+how each scheduled turn ends.
 
 The process (Task 13): `recordings worker` is one process with a main thread that owns its Writer
 and a heartbeat thread (spec §9.2). The main thread ticks every 2 seconds: it re-reads the consent
@@ -35,7 +36,6 @@ from recordings import alerts
 from recordings.alerts import AlertConfig, ping_url
 from recordings.config import Config, ConfigError, load_config
 from recordings.locks import LockTimeout
-from recordings.models import is_private
 from recordings.plaud import keepout
 from recordings.plaud.baseline import PatternsPass, enforce_word, patterns_pass
 from recordings.plaud.checks import (
@@ -43,10 +43,9 @@ from recordings.plaud.checks import (
     K_LAST_ENDED,
     K_LAST_STARTED,
     PRIVATE_UNWRITTEN,
-    Event,
     PlaudDB,
 )
-from recordings.plaud.flags import LateReport, _gone, apply_late_consent
+from recordings.plaud.flags import LateReport, apply_late_consent, still_owed
 from recordings.plaud.gate import Gate, gate_now
 from recordings.plaud.health import (
     RunOutcome,
@@ -62,7 +61,6 @@ from recordings.plaud.keepout import ConsentList, FileSignature
 from recordings.plaud.runlock import plaud_holder, plaud_run
 from recordings.plaud.settings import BAD_WORD, PlaudSettings, plaud_settings
 from recordings.plaud.when import parse_stamp
-from recordings.refs import canonical_plaud_id
 from recordings.state import State, StateError
 from recordings.writer import NotTheWriter, Writer
 
@@ -121,9 +119,15 @@ ALIVE_HEARTBEAT = timedelta(seconds=90)
 ALIVE_PROGRESS = timedelta(minutes=15)
 ALIVE_PROGRESS_STARTING = timedelta(minutes=30)
 Phase = Literal["starting", "idle", "checking", "turn", "request", "consent", "stopping", "failed"]
+# A start that hasn't finished: starting, its patterns pass (`checking`), or a start that failed.
+# Its heartbeat carries `starting_since`, which a restart keeps, so a crash loop at any point of
+# the start is STUCK 30 minutes after its first start (decision 48).
+UNFINISHED: tuple[Phase, ...] = ("starting", "checking", "failed")
 SILENT = "the Plaud worker is silent"
 STUCK = "the Plaud worker may be stuck"
 FAILED = "the Plaud worker failed to start"
+# `--alive` when config.toml can't be read: a fixed line, never the file's path or text.
+NO_CONFIG = "the Plaud worker's config.toml can't be read: run `recordings doctor --role worker`"
 HEARTBEAT_KEY = "worker_heartbeat"  # state.db's meta table (spec §9.5)
 PRUNE_EVERY = timedelta(days=1)
 WRITER_LOCK_WAIT = 10.0  # spec §9.2: Writer.open(cfg, docs=False, lock_timeout=10)
@@ -147,10 +151,10 @@ class Progress:
     counter, and `alive` then says STUCK, while the heartbeat thread keeps writing.
 
     `starting_since` is when this run of starts began: a worker whose previous start never finished
-    (it said `starting` or `failed` last) keeps that start's time, so a worker that fails and
-    restarts over and over is STUCK after 30 minutes, never `starting` for ever. `error` is a failed
-    start's exception class. `done` and `total` count the patterns pass at start, phase
-    `checking`."""
+    (its last heartbeat was UNFINISHED: `starting`, `checking` or `failed`) keeps that start's time,
+    so a worker that fails or dies and restarts over and over is STUCK after 30 minutes, never
+    starting for ever. `error` is a failed start's exception class. `done` and `total` count the
+    patterns pass at start, phase `checking`."""
 
     phase: Phase
     counter: int
@@ -187,8 +191,9 @@ class Progress:
             return self.phase, self.counter, self.at
 
     def beat(self, now: datetime) -> dict[str, Any]:
-        """The heartbeat's value: `starting_since` while it starts or after a failed start, a
-        failed start's `error`, and the patterns pass's `done` and `total` while `checking`."""
+        """The heartbeat's value: `starting_since` while the start is UNFINISHED (starting, its
+        patterns pass, or failed), a failed start's `error`, and the patterns pass's `done` and
+        `total` while `checking`."""
         with self._lock:
             value: dict[str, Any] = {
                 "at": now.isoformat(),
@@ -196,7 +201,7 @@ class Progress:
                 "progress_counter": self.counter,
                 "progress_at": self.at.isoformat(),
             }
-            if self.phase in ("starting", "failed"):
+            if self.phase in UNFINISHED:
                 value["starting_since"] = self.starting_since.isoformat()
             if self.phase == "failed":
                 value["error"] = self.error
@@ -237,29 +242,36 @@ def _within(t: datetime | None, now: datetime, limit: timedelta) -> bool:
 
 
 def alive(state: State, *, now: datetime) -> tuple[bool, str | None]:
-    """Spec §9.2: a heartbeat under 90 seconds old, and progress within 15 minutes; while it
-    starts, within 30 minutes of `starting_since`, the first of the starts that never finished. A
-    failed start is FAILED, however old. `recordings worker --alive` and Status read it."""
+    """Spec §9.2: a heartbeat under 90 seconds old, and progress within 15 minutes. While the start
+    is unfinished (`starting`, or its patterns pass, `checking`), within 30 minutes of
+    `starting_since`, the first of the starts that never finished: a pass at start that takes
+    longer reads STUCK, as a start does. While `starting`, that is all (Writer.open may rebuild the
+    index for a long while); while `checking`, its progress counts too. A failed start is FAILED,
+    however old. `recordings worker --alive` and Status read it."""
     beat = _heartbeat(state)
     if beat is None:
         return False, SILENT
-    if beat.get("phase") == "failed":
+    phase = beat.get("phase")
+    if phase == "failed":
         return False, FAILED
     if not _within(parse_stamp(beat.get("at")), now, ALIVE_HEARTBEAT):
         return False, SILENT
-    if beat.get("phase") == "starting":
+    if phase in UNFINISHED:
         since = parse_stamp(beat.get("starting_since")) or parse_stamp(beat.get("progress_at"))
-        return (True, None) if _within(since, now, ALIVE_PROGRESS_STARTING) else (False, STUCK)
+        if not _within(since, now, ALIVE_PROGRESS_STARTING):
+            return False, STUCK
+        if phase == "starting":
+            return True, None
     if not _within(parse_stamp(beat.get("progress_at")), now, ALIVE_PROGRESS):
         return False, STUCK
     return True, None
 
 
 def _starting_since(state: State, now: datetime) -> datetime:
-    """The previous heartbeat's `starting_since` when it said `starting` or `failed`: that start
-    never finished, so a restart doesn't renew the 30 minutes. Otherwise now."""
+    """The previous heartbeat's `starting_since` when its phase was UNFINISHED: that start never
+    finished, so a restart doesn't renew the 30 minutes. Otherwise now."""
     beat = _heartbeat(state)
-    if beat is not None and beat.get("phase") in ("starting", "failed"):
+    if beat is not None and beat.get("phase") in UNFINISHED:
         since = parse_stamp(beat.get("starting_since"))
         if since is not None and since <= now:
             return since
@@ -277,6 +289,10 @@ def _file_key(path: Path | None) -> tuple[FileSignature, int] | None:
         return sig, path.stat().st_ctime_ns
     except OSError:
         return None
+
+
+class _Stopped(Exception):
+    """SIGTERM came during the patterns pass at start: it ends between recordings (§9.2)."""
 
 
 class Worker:
@@ -343,16 +359,17 @@ class Worker:
     def start(self) -> None:
         """1. the heartbeat thread, phase `starting`; 2. (Task 14) the requests left over; 3. the
         Writer; 4. the gate. (§9.2's sweep of `.tmp/plaud-dl/` comes with Phase 2's downloads.)
-        The start is then done, phase `idle`, written to the heartbeat at once (a start that
-        follows failed ones must not read STUCK until the next beat). Then the configured keep-out
-        word is recorded as enforced (decision 26), and a new pattern's pass runs (decision 27),
-        under the phase `checking`."""
+        5. the configured keep-out word recorded as enforced (decision 26), and a new pattern's
+        pass (decision 27), under the phase `checking`, which SIGTERM stops between recordings.
+        The pass is part of the start: a crash during it keeps the first start's time, as a crash
+        before it does. The start is then done, phase `idle`, written to the heartbeat at once (a
+        start that follows failed ones must not read STUCK until the next beat)."""
         self._start_heartbeat()
         self.writer = self._open_writer()
         self.gate = self._open_gate()
+        self._enforce()
         self.progress.bump(self.clock(), "idle")
         self._beat()
-        self._enforce()
 
     def _start_heartbeat(self) -> None:
         self._beat()  # at once, so `--alive` passes from the first second
@@ -376,9 +393,11 @@ class Worker:
             self._beat_failed = None
 
     def _open_writer(self) -> Writer:
-        """Writer.open with the worker's 10-second lock wait and no docs (only the web app's and
-        the CLI's Writers write the archive's docs). A busy index or lock is tried again each
-        tick, bumping the progress, so `--alive` stays green while web rebuilds the index."""
+        """Writer.open with the worker's 10-second lock wait and no docs (the archive's docs are
+        the web app's and the CLI's to write). Only LockTimeout, a lock another process holds past
+        those 10 seconds (web rebuilding the index, say), is tried again, each TICK, bumping the
+        progress, so `--alive` stays green meanwhile. Any other refusal ends the start: `run`
+        writes phase `failed`."""
         while True:
             self.progress.bump(self.clock())
             try:
@@ -409,13 +428,19 @@ class Worker:
     def _patterns(self, now: datetime) -> PatternsPass | None:
         """Decision 27's pass, under the phase `checking`: each recording it checks bumps the
         progress and the heartbeat's `done` of `total`, so Status reads "(checking, 412 of 1,234)"
-        (spec §15.2), and a long pass is never stuck."""
+        (spec §15.2). SIGTERM stops it between recordings (§9.2); a pass stopped so isn't recorded
+        as complete, and the next start runs it again (reconcile skips what it already judged)."""
         try:
             return patterns_pass(self.writer, self.db, now=now, progress=self._check_one)
-        finally:
-            self.progress.bump(self.clock(), "idle")
+        except _Stopped:
+            log.info("the patterns pass stopped between recordings: the next start runs it again")
+            return None
 
     def _check_one(self) -> None:
+        """Called before each recording the pass checks: SIGTERM ends the pass here, between
+        recordings."""
+        if self.stopping.is_set():
+            raise _Stopped
         if self._to_check is None:  # the pass has begun: count what it checks, once
             self._to_check = sum(
                 any(s.kind == "plaud" for s in rec.sources)
@@ -578,9 +603,10 @@ class Worker:
         """Spec §16's `private-unwritten`, its own step, so it runs whatever the late consent pass
         did. A `private` the pass owed but couldn't write (a file edited outside the app, a full
         disk) opens one flag per recording, its detail naming the exception's class (`cause`, from
-        Task 8's report); each flag resolves once the `private` isn't owed any more. The blocker
-        is open while any flag is, or while the last pass failed as a whole (its detail names the
-        error's class), and is written afresh at every tick."""
+        Task 8's report); each flag resolves once the `private` isn't owed any more
+        (`flags.still_owed`, against the list in force). The blocker is open while any flag is, or
+        while the last pass failed as a whole (its detail names the error's class), and is written
+        afresh at every tick."""
         if self.writer is None:
             return
         now = self.clock()
@@ -594,7 +620,7 @@ class Worker:
                     PRIVATE_UNWRITTEN, now=now, recording_id=rid, detail=detail, open_flag=True
                 )
         for rid, event in open_flags.items():
-            if rid not in unwritten and not self._still_owed(event):
+            if rid not in unwritten and not still_owed(self.writer.archive, event, self.consent):
                 self.db.resolve(event.id, now=now)
         if self._late_failed is not None:
             open_blocker(self.db, PRIVATE_UNWRITTEN, now=now, detail={"error": self._late_failed})
@@ -602,29 +628,6 @@ class Worker:
             open_blocker(self.db, PRIVATE_UNWRITTEN, now=now)
         else:
             clear_blocker(self.db, PRIVATE_UNWRITTEN)
-
-    def _still_owed(self, event: Event) -> bool:
-        """A flag's `private` is owed until the recording is private or gone. One the consent list
-        owed is no longer owed once the list reads cleanly and names none of its Plaud IDs (a line
-        added by mistake, then taken out)."""
-        if event.recording_id is None:
-            return False
-        try:
-            rec = self.writer.archive.load(event.recording_id)
-        except KeyError:  # no file it can read: gone only if its folder is. A folder it can't
-            # enter, or one under a parent it can't enter, hides a file that is there, and
-            # Path.exists() reads that as "no": only a `stat` that says "not found" counts (Task 8).
-            return not _gone(self.writer.archive.path_for(event.recording_id))
-        except (ValueError, OSError):  # unreadable or invalid: still owed
-            return True
-        if is_private(rec):
-            return False
-        if event.detail.get("owed") != "consent" or self.consent is None:
-            return True
-        if not self.consent.readable:
-            return True  # only a list that reads cleanly can say a line went
-        ids = {canonical_plaud_id(s.ref) for s in rec.sources if s.kind == "plaud"}
-        return bool(ids & self.consent.ids)
 
     # ---- scheduled turns (spec §9.7) ----------------------------------------------------------
     def due(self) -> bool:
@@ -704,13 +707,19 @@ class Worker:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`recordings worker [--alive]`: the daemon, or the compose health check (exit 0 or 1)."""
+    """`recordings worker [--alive]`: the daemon, or the compose health check. `--alive` exits 0 or
+    1 and nothing else, 1 with a fixed line when config.toml can't be read too: Docker's health
+    check gives a meaning to 0 and 1 only. The daemon exits 78 when it can't start as configured,
+    1 when anything else stops it."""
     parser = argparse.ArgumentParser(prog="recordings worker")
     parser.add_argument("--alive", action="store_true")
     args = parser.parse_args(argv)
     try:
         cfg = load_config(os.environ)
     except ConfigError as exc:
+        if args.alive:
+            print(NO_CONFIG)
+            return 1
         print(f"recordings worker: {exc}", file=sys.stderr)
         return 78
     if args.alive:

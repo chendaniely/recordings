@@ -124,8 +124,9 @@ smoke test on purpose until someone does the steps below:
   `my-notes.md`, only appended to, under the recording's lock; and `tags.yaml`, by atomic
   replace. The archive's docs (`README.md`, `AGENTS.md`, `FORMAT.md`, `recordings/README.md`,
   `catalog/README.md` and `schemas/`) are replaced from `packages/core/src/recordings/format/`,
-  by atomic replace, whenever the web app's or the CLI's Writer opens (the worker's doesn't), or
-  the web app starts against an archive it may write (`selfdoc.write_docs`). Media, `source/`
+  by atomic replace, whenever the web app's or the CLI's Writer opens, or the web app starts
+  against an archive it may write (`selfdoc.write_docs`). Three Writers write no docs: the
+  worker's, `recordings reindex`'s and `recordings plaud …`'s (`docs=False`). Media, `source/`
   and `renditions/` are published write-once and never overwritten. Never write archive files
   any other way, in code or in tests.
 - **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
@@ -154,8 +155,9 @@ smoke test on purpose until someone does the steps below:
   rebuilds a record with `model_dump` and `model_validate`, never `dump_json`, because of
   Pyodide's pydantic. The other paths that set tags are the import's: `Writer.add` and
   `MergeIncoming` (`writer.py`, via `_append_tags`), and `SetPlaudFields`, which adds the automatic
-  `private` tag through `AddTags` in `Writer.reconcile_plaud` (from `Writer.reindex` and the
-  audio-router import) and in the worker's late consent listings (`plaud/flags.py`,
+  `private` tag through `AddTags` in `Writer.reconcile_plaud` (from `Writer.reindex`, the
+  audio-router import, `recordings plaud baseline` and the patterns pass the worker runs at start,
+  both in `plaud/baseline.py`) and in the worker's late consent listings (`plaud/flags.py`,
   `apply_late_consent`). All run inside the Writer.
 - **To add a tag operation or rule:** write the operation in `tagops.py` (its `apply`, and the
   `Effect` it records so `RestoreTags` can undo it), put it behind the privacy gate, then teach the

@@ -144,7 +144,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--alive",
         action="store_true",
-        help="exit 0 if the worker's heartbeat and progress are recent, else 1",
+        help=(
+            "exit 0 if the worker's heartbeat and progress are recent, else 1 (a config.toml it "
+            "can't read included)"
+        ),
     )
 
     plaud_commands.add_parser(sub)  # `recordings plaud …` (stage 2b): its own subcommands

@@ -32,6 +32,7 @@ from recordings.plaud.checks import (
     K_KEEP_OUT_WORDS,
     K_LAST_ENDED,
     K_LAST_STARTED,
+    K_PATTERNS_PASS,
 )
 from recordings.plaud.flags import CONSENT_LATE, PRIVATE_UNWRITTEN
 from recordings.plaud.gate import GATE_FIRST
@@ -135,6 +136,10 @@ def make_worker(setup):
     yield make
     for w in made:
         w.stopping.set()
+    for w in made:  # no heartbeat thread outlives its test
+        if w._beating is not None:
+            w._beating.join(5)
+            assert not w._beating.is_alive()
 
 
 def add_recording(setup, plaud_id: str, n: int = 1) -> str:
@@ -155,6 +160,17 @@ def add_recording(setup, plaud_id: str, n: int = 1) -> str:
         )
     )
     return added.recording.id
+
+
+def add_pattern(setup) -> None:
+    """A new auto-private pattern in config.toml: the next start checks every Plaud recording's
+    titles again (decision 27)."""
+    setup.cfg_file.write_text(
+        setup.cfg_file.read_text(encoding="utf-8").replace(
+            "[plaud]\n", '[plaud]\nauto_private_patterns = ["^synthetic-pattern"]\n'
+        ),
+        encoding="utf-8",
+    )
 
 
 def edited_by_hand(setup, rid: str) -> None:
@@ -405,12 +421,7 @@ def test_a_patterns_pass_at_start_reads_as_checking_n_of_m(setup, make_worker, m
     for n, plaud_id in enumerate((PLAUD_A, PLAUD_B), start=1):
         add_recording(setup, plaud_id, n)
     make_worker(Clock()).start()  # the patterns as configured: their first version needs no pass
-    setup.cfg_file.write_text(
-        setup.cfg_file.read_text(encoding="utf-8").replace(
-            "[plaud]\n", '[plaud]\nauto_private_patterns = ["^synthetic-pattern"]\n'
-        ),
-        encoding="utf-8",
-    )
+    add_pattern(setup)
     w = make_worker(Clock(T0 + timedelta(minutes=1)))
     seen = []
     real = worker_module.patterns_pass
@@ -427,6 +438,45 @@ def test_a_patterns_pass_at_start_reads_as_checking_n_of_m(setup, make_worker, m
     w.start()
     assert seen == [("checking", 1, 2), ("checking", 2, 2)]
     assert w.progress.read()[0] == "idle"
+
+
+class Killed(BaseException):
+    """The process killed mid-step (out of memory): no handler sees it, and nothing it would have
+    written afterwards is written."""
+
+
+def test_a_crash_during_the_patterns_pass_at_start_never_gets_a_fresh_30_minutes(
+    setup, make_worker, monkeypatch
+):
+    # why: decision 48. The pass at start is part of the start: one that dies at every restart (an
+    # OOM kill, say) is a crash loop, so each restart keeps the first start's time, and it is
+    # STUCK 30 minutes after that start, never alive for ever.
+    for n, plaud_id in enumerate((PLAUD_A, PLAUD_B), start=1):
+        add_recording(setup, plaud_id, n)
+    make_worker(Clock()).start()  # a start that finished: the next one begins a new run of starts
+    add_pattern(setup)
+    current: list[Worker] = []
+
+    def killed(writer, db, *, now, progress):
+        progress()  # the pass reaches its first recording
+        w = current[-1]
+        heartbeat_once(w.state, w.progress, now=w.clock())  # the heartbeat thread's beat
+        raise Killed  # and the process dies
+
+    monkeypatch.setattr(worker_module, "patterns_pass", killed)
+    first = T0 + timedelta(minutes=1)
+    for minutes in (1, 11, 21):
+        current.append(make_worker(Clock(T0 + timedelta(minutes=minutes))))
+        with pytest.raises(Killed):
+            current[-1].start()
+        beat = beat_of(setup)
+        assert (beat["phase"], beat["starting_since"]) == ("checking", first.isoformat())
+        assert alive(current[-1].state, now=T0 + timedelta(minutes=minutes)) == (True, None)
+    current.append(make_worker(Clock(T0 + timedelta(minutes=32))))
+    assert current[-1].progress.starting_since == first
+    with pytest.raises(Killed):
+        current[-1].start()
+    assert alive(current[-1].state, now=T0 + timedelta(minutes=32)) == (False, STUCK)
 
 
 def test_the_heartbeat_keeps_writing_during_a_long_synchronous_step(
@@ -592,6 +642,20 @@ def test_a_consent_typo_opens_the_consent_blocker_at_the_tick_and_a_clean_read_c
     clock.advance(seconds=2)
     w.tick()
     assert "consent" not in sync_health(w.state, schedule_minutes=20).blockers
+
+
+def test_a_typo_stop_still_applies_the_exclusions_that_read(setup, make_worker):
+    # why: spec §12.1. A typo stops every import, but adding `private` is always safe: the
+    # exclusions that do read are applied at once, and the stop shows as the consent blocker.
+    rid = add_recording(setup, PLAUD_A)
+    consent_list(setup.consent, PLAUD_C, PLAUD_A, extra="- `" + "a" * 31 + "` — one digit short\n")
+    w = make_worker(Clock())
+    w.start()
+    w.tick()
+    assert w.consent.stop is not None and canonical_plaud_id(PLAUD_A) in w.consent.ids
+    assert is_private(Archive(setup.root).load(rid))
+    assert [(e.kind, e.recording_id) for e in w.db.open_flags()] == [(CONSENT_LATE, rid)]
+    assert "consent" in sync_health(w.state, schedule_minutes=20).blockers
 
 
 def test_a_private_that_cant_be_written_opens_its_blocker_and_flag_until_it_lands(
@@ -804,6 +868,34 @@ def test_sigterm_stops_between_ticks(setup, make_worker, monkeypatch):
     assert signal.getsignal(signal.SIGTERM) == before
 
 
+def test_sigterm_stops_the_patterns_pass_at_start_between_recordings(
+    setup, make_worker, monkeypatch
+):
+    # why: spec §9.2, "it stops between recordings". `docker stop` gives 30 seconds: a long pass at
+    # start ends after the recording in hand, isn't recorded as complete, and the next start runs
+    # it again.
+    for n, plaud_id in enumerate((PLAUD_A, PLAUD_B), start=1):
+        add_recording(setup, plaud_id, n)
+    make_worker(Clock()).start()
+    add_pattern(setup)
+    reconciled = []
+    real = Writer.reconcile_plaud
+
+    def reconcile(writer, recording_id):
+        reconciled.append(recording_id)
+        if len(reconciled) == 1:
+            signal.raise_signal(signal.SIGTERM)  # `docker stop`, during the first recording
+        return real(writer, recording_id)
+
+    monkeypatch.setattr(Writer, "reconcile_plaud", reconcile)
+    w = make_worker(Clock(T0 + timedelta(minutes=1)))
+    assert w.run() == 0
+    assert len(reconciled) == 1
+    assert w.db.get(K_PATTERNS_PASS) is None  # not complete: the next start runs it again
+    make_worker(Clock(T0 + timedelta(minutes=2))).start()
+    assert len(reconciled) == 3 and w.db.get(K_PATTERNS_PASS)["version"] == 2
+
+
 def test_recordings_worker_alive_exits_0_or_1(setup, make_worker, monkeypatch, capsys):
     for key, value in setup.environ.items():
         monkeypatch.setenv(key, value)
@@ -816,6 +908,21 @@ def test_recordings_worker_alive_exits_0_or_1(setup, make_worker, monkeypatch, c
     heartbeat_once(w.state, w.progress, now=now - timedelta(minutes=2))
     assert main(["worker", "--alive"]) == 1
     assert capsys.readouterr().out.strip() == SILENT
+
+
+def test_alive_with_a_config_it_cant_read_exits_1_with_a_fixed_line(setup, monkeypatch, capsys):
+    # why: Docker's health check gives a meaning to 0 and 1 only (2 is reserved), so `--alive`
+    # says "unhealthy" as 1, whatever stops it, in a fixed line that never carries the config's
+    # text or path.
+    broken = setup.tmp / "broken-config" / "config.toml"
+    broken.parent.mkdir()
+    broken.write_text('[archive]\npath = "/srv/synthetic-path\n', encoding="utf-8")  # unclosed
+    for config_file in (broken, setup.tmp / "nowhere" / "config.toml"):
+        monkeypatch.setenv("RECORDINGS_CONFIG", str(config_file))
+        assert main(["worker", "--alive"]) == 1
+        out, err = capsys.readouterr()
+        assert (out.strip(), err) == (worker_module.NO_CONFIG, "")
+        assert "synthetic-path" not in out and "nowhere" not in out
 
 
 def test_anything_else_that_stops_the_worker_prints_its_class_only(setup, monkeypatch, capsys):

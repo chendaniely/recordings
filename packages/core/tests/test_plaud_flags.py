@@ -1,6 +1,7 @@
 """Late consent listings and the privacy flags (stage 2b spec §12.1, §12.2, P15). Every archive
 and Plaud ID here is synthetic."""
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 from recordings.archive import RawSource
+from recordings.ids import make_id
 from recordings.models import is_private
 from recordings.plaud import flags as flags_module
 from recordings.plaud.checks import PlaudDB
@@ -29,6 +31,7 @@ from recordings.plaud.flags import (
     record_late_keep_out,
 )
 from recordings.plaud.keepout import parse_consent
+from recordings.writer import SetPlaudFields
 
 NOW = datetime(2026, 10, 23, 14, 20, tzinfo=UTC)
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
@@ -494,3 +497,46 @@ def test_a_folder_under_a_parent_it_cant_enter_is_owed_not_gone(writer, make_inc
     }
     assert report.tagged == (second.id,)
     assert pending.index_unavailable is True
+
+
+@pytest.mark.skipif(ROOT, reason="root enters any folder")
+def test_gone_is_only_a_folder_that_isnt_there(writer, make_incoming):
+    # why: §12.1. The late consent pass and the worker's flags share one rule: a folder under a
+    # parent it can't enter is still there, and only "not found" means removed.
+    folder = writer.archive.path_for(plaud_rec(writer, make_incoming, 46).id)
+    assert flags_module.gone(folder) is False
+    assert flags_module.gone(folder / "nowhere") is True
+    parent = folder.parent
+    mode = parent.stat().st_mode & 0o777
+    parent.chmod(0o000)
+    try:
+        assert flags_module.gone(folder) is False
+    finally:
+        parent.chmod(mode)
+
+
+def test_a_private_unwritten_flag_is_owed_until_private_gone_or_no_longer_listed(
+    writer, make_incoming
+):
+    # why: §16's `private-unwritten`, one rule for the worker's flags. A `private` is owed until the
+    # recording is private or gone; one the consent list owed, also until a list that reads
+    # cleanly names none of its IDs (a line added by mistake, then taken out). A stop can't say a
+    # line went, and a `private` owed for another reason stays owed whatever the list says.
+    rec = plaud_rec(writer, make_incoming, 47)
+    db = PlaudDB(writer.state)
+    db.add_event(
+        PRIVATE_UNWRITTEN, now=NOW, recording_id=rec.id, detail={"owed": "consent"}, open_flag=True
+    )
+    (event,) = db.open_flags((PRIVATE_UNWRITTEN,))
+    still_owed, archive = flags_module.still_owed, writer.archive
+    typo = "- `" + "a" * 31 + "` — one digit short\n"
+    assert still_owed(archive, event, parse_consent(listed(pid(47)))) is True
+    assert still_owed(archive, event, None) is True  # no list read yet
+    assert still_owed(archive, event, parse_consent(listed(pid(48)) + typo)) is True
+    assert still_owed(archive, event, parse_consent(listed(pid(48)))) is False  # the line went
+    other = dataclasses.replace(event, detail={"owed": "pattern"})
+    assert still_owed(archive, other, parse_consent(listed(pid(48)))) is True
+    never_added = make_id(EARLIER, hashlib.sha256(b"never added").hexdigest())
+    assert still_owed(archive, dataclasses.replace(event, recording_id=never_added), None) is False
+    writer.mutate(rec.id, SetPlaudFields(add_private=True))
+    assert still_owed(archive, event, parse_consent(listed(pid(47)))) is False  # private now
