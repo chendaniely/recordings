@@ -139,6 +139,30 @@ def test_an_id_followed_only_by_hex_before_any_dash_is_a_kept_line(line):
 
 
 @pytest.mark.parametrize(
+    "line",
+    [
+        f"- `{A} ` — asked",
+        f"- ``{A}`` — asked",
+        f"- of_ {A} — asked",
+        f"- of_`{A}`",
+        f"- `{A}``",
+        f"- abc 3fa9of_{A[4:]}",  # of_ inside a chunk is not an ID's prefix
+    ],
+)
+def test_one_whole_id_in_a_form_the_grammar_does_not_read_is_a_typo(line):
+    # why: Part I, "a line that looks like an ID but can't be read stops every import". An
+    # exclusion read as text would let the recording be downloaded.
+    consent = parse_consent(f"- `{B}` —\n{line}\n")
+    assert consent.typo_lines == (2,) and consent.stop == typo_phrase([2])
+
+
+@pytest.mark.parametrize("line", [f"{A}:", f"- `{A}` added", f"{A} {B}", f"- {A}, fine"])
+def test_those_forms_still_read_as_kept_lines(line):
+    consent = parse_consent(f"- `{C}` —\n{line}\n")
+    assert consent.lines[1].kind == "kept" and consent.readable
+
+
+@pytest.mark.parametrize(
     "note", ["- Added 2026-10-23", "A bad decade", "Added 2026-10-23: two more", "- bed cafe"]
 )
 def test_a_note_made_of_short_hex_words_is_plain_text(note):

@@ -1416,7 +1416,11 @@ is a separate piece of work, and the thresholds are constants, not settings.
      them); or (decision 12) a line whose text before the dash, or the whole line when it has no
      dash, is only hex digits once spaces, backticks and `of_` are set aside, and holds one unbroken
      run of 8 or more of them that isn't one whole ID (an ID split by a space, or wrapped over two
-     lines; a note such as `- Added 2026-10-23` has no such run). It fails closed (P8): the list is
+     lines; a note such as `- Added 2026-10-23` has no such run); or a line that is only hex once
+     those are set aside and holds exactly one whole ID that the exclusion rule doesn't read
+     (`` - `<id> ` — asked ``, doubled backticks, `of_ <id>`); or a line holding a line or
+     paragraph separator other than `\r\n`, `\r` and `\n` (`\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028,
+     U+2029), because lines are numbered as an editor does. It fails closed (P8): the list is
      unreadable.
 
   Every line that holds an ID but isn't an exclusion (a kept line, an ID in a sentence, or an ID

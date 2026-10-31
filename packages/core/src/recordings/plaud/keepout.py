@@ -20,10 +20,12 @@ tried in this order:
   aside, and holds one unbroken run of 8 or more of them (no space inside) that isn't one whole
   ID: an ID split by a space, or wrapped over two lines (each half is a typo). A note such as
   `- Added 2026-10-23` has no such run and is plain text; a line of two whole IDs, or an ID then
-  `added`, is a kept line. Exclusions and comments are classified first, so it never touches
-  them. A line that still holds a line or paragraph separator other than `\r` and `\n` (`\v`,
-  `\f`, `\x1c`-`\x1e`, `\x85`, U+2028, U+2029) is a typo too: lines are numbered as an editor
-  does, and such a line would otherwise be read as two. A typo fails closed (P8): the list stops;
+  `added`, is a kept line; one whole ID alone in a form the exclusion rule doesn't read
+  (`` - `ID ` — asked ``, doubled backticks, `of_ ID`) is a typo.
+  Exclusions and comments are classified first, so it never touches them. A line that still
+  holds a line or paragraph separator other than `\r` and `\n` (`\v`, `\f`, `\x1c`-`\x1e`,
+  `\x85`, U+2028, U+2029) is a typo too: lines are numbered as an editor does, and such a line
+  would otherwise be read as two. A typo fails closed (P8): the list stops;
 - **a kept line:** any other line that holds an ID: one followed by other words, by a character
   that is neither hex nor a dash in the same word (`3fa9…:`), an ID in a sentence, or after a `+`
   or `1.` bullet. It names a recording Dan kept, so it is never an exclusion, and it is listed by
@@ -78,7 +80,7 @@ _BULLET = re.compile(_BULLET_PATTERN)
 _DASH = re.compile(r"[—–-]")
 _SET_ASIDE = re.compile(r"\s|`|of_", re.IGNORECASE)
 _CHUNKS = re.compile(r"[\s`]+")
-_OF = re.compile(r"of_", re.IGNORECASE)
+_OF = re.compile(r"^of_", re.IGNORECASE)
 _ID_LENGTH = 32
 _SPLIT_HEX = 8
 # A line or paragraph separator `str.splitlines` would split on, apart from \r and \n.
@@ -153,12 +155,17 @@ def _is_typo(line: str) -> bool:
     # the dash (the whole line when there is none), with spaces, backticks and `of_` set aside, is
     # hex digits and nothing else, and holds one unbroken run (no space inside) of 8 or more that
     # isn't one whole ID. Exclusions and comments never reach here. A note like `Added 2026-10-23`
-    # has no such run, and a line of two whole IDs, or an ID then `added`, is a kept line.
+    # has no such run, and a line of two whole IDs, or an ID then `added`, is a kept line. One whole
+    # ID alone, unread as an exclusion, is a typo.
     before = _DASH.split(line[_BULLET.match(line).end() :], maxsplit=1)[0]
     if not set(_SET_ASIDE.sub("", before)) <= _HEX:
         return False
-    runs = (_OF.sub("", chunk) for chunk in _CHUNKS.split(before))
-    return any(len(run) >= _SPLIT_HEX and len(run) != _ID_LENGTH for run in runs)
+    runs = [run for chunk in _CHUNKS.split(before) if (run := _OF.sub("", chunk))]
+    if any(len(run) >= _SPLIT_HEX and len(run) != _ID_LENGTH for run in runs):
+        return True
+    # One whole ID and nothing else, in a form the exclusion rule didn't read (`ID `, doubled
+    # backticks, `of_ ID`): it looks like an ID but can't be read, so the list stops (Part I).
+    return len(runs) == 1 and len(runs[0]) == _ID_LENGTH
 
 
 def _classify(number: int, raw: str) -> ConsentLine:
