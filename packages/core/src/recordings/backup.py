@@ -4,10 +4,11 @@ What is backed up is an explicit list: the archive, config.toml, [backup] extra_
 deploy.env and the consent folder: an extra path may be a file or a folder, which is backed up
 whole), and a consistent copy of state.db taken with SQLite's own backup command. Nothing else in
 the state folder is named, so voice.db is left out by construction, and so is the Plaud token
-store, in a folder of its own; doctor refuses an extra path that would carry the token's folder
-or the whole state folder. The archive must carry its sentinel, with the UUID state.db expects,
-before anything is backed up: an empty mount point backed up hourly would age the real snapshots
-out (§6.7).
+store, in a folder of its own. An extra path that would carry the token's folder, the whole state
+folder or Docker's secrets is refused by `never_backed_up`: doctor reports it, and `run_backup`
+refuses to run, as it does for a symbolic link. The archive must carry its sentinel, with the
+UUID state.db expects, before anything is backed up: an empty mount point backed up hourly would
+age the real snapshots out (§6.7).
 
 restic is run through its CLI, with --json where it has it
 (https://restic.readthedocs.io/en/stable/075_scripting.html). The repository's password reaches
@@ -41,6 +42,7 @@ from pathlib import Path
 from recordings.archive import Archive, utc_stamp
 from recordings.config import Config, ConfigError, secret
 from recordings.disk import STOP_FREE_PERCENT, WARN_FREE_PERCENT
+from recordings.plaud.settings import DEFAULT_TOKEN_STORE, plaud_settings
 from recordings.selfdoc import validate
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.ssh import Nas, nas_free_bytes, nas_from_config, require_known_hosts
@@ -51,6 +53,19 @@ TAG = "recordings"
 MILESTONE_TAGS = ("pre-import", "post-import")
 _USERINFO = re.compile(r"(\w+://)[^/@\s]+@")
 _PASSWORD_IN_URL = re.compile(r"://[^/@\s]*:[^/@\s]*@")
+PLAUD_MOUNT = DEFAULT_TOKEN_STORE.parent  # the sign-in's folder, mounted in `worker` only
+STATE_MOUNT = Path("/state")  # the state folder, in every container
+SECRETS_DIR = Path("/run/secrets")  # where Docker mounts a service's secrets, by name
+# never_backed_up's reasons: fixed phrases, after the entry's path (doctor and run_backup).
+CARRIES_SIGN_IN = "which would carry the Plaud sign-in: it is never backed up (stage 2b spec §17.2)"
+WHOLE_STATE = (
+    "the whole state folder: state.db is backed up on its own, as a consistent copy (stage 2b "
+    "spec §17.2)"
+)
+CARRIES_SECRETS = (
+    "which would carry Docker's secrets (the restic password, the NAS key): a secret is never "
+    "backed up (stage 2b spec §17.2)"
+)
 
 
 class BackupError(RuntimeError):
@@ -111,6 +126,8 @@ class BackupConfig:
     rest_username: str | None = None  # rest-server's user, with a rest: repository
     cacert: Path | None = None  # rest-server's self-signed certificate, for an https: repository
     retry_lock: str | None = None  # restic --retry-lock: set by ops.backup_config for the CLI
+    extra_paths: tuple[Path, ...] = ()  # [backup] extra_paths, as given (also in `paths`)
+    token_folder: Path = DEFAULT_TOKEN_STORE.parent  # the Plaud sign-in's, never backed up
 
 
 def _positive_int(section: dict, key: str, default: int) -> int:
@@ -192,6 +209,8 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
         min_nas_free_bytes=int(min_free_gb * 1024**3),
         rest_username=section.get("rest_username") or None,
         cacert=cacert_path,
+        extra_paths=tuple(Path(p) for p in extra),
+        token_folder=token_folder(cfg),
     )
 
 
@@ -354,6 +373,60 @@ def _check_archive(bc: BackupConfig, state: State) -> str:
     return identity.uuid
 
 
+def normal_path(path: Path) -> Path:
+    """Absolute and normalised (`//plaud`, `a/../b`, a relative path from the working folder), so
+    two spellings of one folder compare equal. Links are not followed."""
+    absolute = os.path.normpath(os.path.abspath(path))
+    return Path("/" + absolute.lstrip("/"))  # POSIX keeps a leading `//` as its own spelling
+
+
+def holds(entry: Path, path: Path) -> bool:
+    """`entry`, backed up, would carry `path`: it is the path or one of its folders."""
+    return entry == path or entry in path.parents
+
+
+def token_folder(cfg: Config) -> Path:
+    """The Plaud sign-in's folder, as configured: the default when [plaud] can't be read (its own
+    problem is reported elsewhere)."""
+    if not isinstance(cfg.data.get("plaud", {}), dict):
+        return DEFAULT_TOKEN_STORE.parent
+    try:
+        return plaud_settings(cfg).token_store.parent
+    except ConfigError:
+        return DEFAULT_TOKEN_STORE.parent
+
+
+def never_backed_up(entry: Path, *, token_folder: Path, state: Path | None) -> str | None:
+    """Why `[backup] extra_paths`' `entry` must never be backed up, as a fixed reason, or None.
+    The one check (the phase-end council's S4): doctor reports it as a problem in every role, and
+    `run_backup` refuses it. An entry that holds the Plaud sign-in's folder (as configured, or the
+    `/plaud` mount) or lies inside it, since the token is never backed up; one that holds the
+    whole state folder (`/state`, or as configured), since state.db is backed up on its own, as a
+    consistent copy, and the folder also holds voice.db and, from Phase 2, the Plaud cache; one
+    that holds Docker's secrets folder or lies inside it, since the restic password and the NAS
+    key are never backed up. A folder inside the state folder (`/state/manifests`) is fine.
+    (plaud-cache.db's own check comes with the cache, in Phase 2.)"""
+    held = normal_path(entry)
+    if any(holds(held, f) or holds(f, held) for f in (normal_path(token_folder), PLAUD_MOUNT)):
+        return CARRIES_SIGN_IN
+    states = [STATE_MOUNT, *([normal_path(state)] if state is not None else [])]
+    if any(holds(held, s) for s in states):
+        return WHOLE_STATE
+    if holds(held, SECRETS_DIR) or holds(SECRETS_DIR, held):
+        return CARRIES_SECRETS
+    return None
+
+
+def refused_paths(bc: BackupConfig) -> list[tuple[Path, str]]:
+    """The extra paths `never_backed_up` refuses, each with its reason."""
+    found = []
+    for path in bc.extra_paths:
+        why = never_backed_up(path, token_folder=bc.token_folder, state=bc.state)
+        if why is not None:
+            found.append((path, why))
+    return found
+
+
 def missing_paths(bc: BackupConfig) -> list[Path]:
     """config.toml and the extra paths that aren't there now, as a file or a folder (2b phase 1
     plan, decision 9). A backup refuses while any is missing, as before. A symbolic link counts
@@ -383,6 +456,9 @@ def run_backup(
     runner=subprocess.run,
 ) -> BackupResult:
     _check_archive(bc, state)
+    if refused := refused_paths(bc):
+        path, why = refused[0]
+        raise BackupRefused(f"refusing to back up: {path}, {why}")
     if missing := missing_paths(bc):
         why = "is a symbolic link" if missing[0].is_symlink() else "is missing"
         raise BackupRefused(f"refusing to back up: {missing[0]} {why}")

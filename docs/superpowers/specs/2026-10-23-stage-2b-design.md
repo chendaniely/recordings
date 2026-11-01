@@ -2196,8 +2196,10 @@ these changes:
   and the consent list's ID count. Never a value, never a hash.
 - **Every role:** an `extra_paths` entry that holds the token's folder, the whole of `/state`, or
   `plaud-cache.db` is a problem: the last two would send titles of recordings not yet here to the
-  backup. For `backup`, an `extra_paths` without the consent folder or `/state/manifests` is a
-  warning.
+  backup. So is one that holds Docker's secrets folder (`/run/secrets`) or lies inside it: the
+  restic password and the NAS key are never backed up. The backup itself refuses to run while any
+  of these is there, by the same check. For `backup`, an `extra_paths` without the consent folder
+  or `/state/manifests` is a warning.
 - **Doctor never calls Plaud.** `recordings plaud check` does.
 - `test_doctor.py` gains a `worker` case for each.
 
@@ -3147,3 +3149,5 @@ None: every bullet of §20 is planned in a phase.
   pass that raised as a whole, opens the `private-unwritten` blocker (P8: a `private` possibly owed
   counts as owed), and the worker retries the pass at every tick for what it left (Phase 1's phase
   end: the council's G1 and S2, and Task 13's question). No decision or scenario changed.
+- 2026-10-31: §17.2's extra_paths rule adds Docker's secrets folder, and the backup refuses what
+  doctor reports, by one check (Phase 1's phase end: the council's S4).

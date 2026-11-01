@@ -1307,6 +1307,53 @@ def test_a_folder_gone_at_the_restore_test_is_still_found_in_the_snapshot(
     assert result.ok
 
 
+@pytest.mark.parametrize(
+    ("entry", "why"),
+    [
+        ("/state", "the whole state folder"),
+        ("{state}", "the whole state folder"),  # the configured state folder
+        ("{plaud}", "would carry the Plaud sign-in"),  # the configured token store's folder
+        ("{plaud}/tokens.json", "would carry the Plaud sign-in"),
+        ("/plaud", "would carry the Plaud sign-in"),
+        ("/run/secrets", "would carry Docker's secrets"),
+        ("/run/secrets/nas_ssh_key", "would carry Docker's secrets"),
+    ],
+)
+def test_an_extra_path_doctor_reports_refuses_the_backup(tmp_path, writer, entry, why):
+    # why: the council's S4. Folders are allowed in extra_paths (Task 16), so `/state` would back
+    # up voice.db and Phase 2's cache, and `/run/secrets` the restic password and the NAS key.
+    # Doctor's problem alone isn't enough: the backup refuses what doctor reports, by one check,
+    # as it refuses a symbolic link, with a fixed reason and before restic runs.
+    plaud = tmp_path / "plaud"
+    plaud.mkdir()
+    (plaud / "tokens.json").write_text("{}\n", encoding="utf-8")  # synthetic: never a token
+    entry = entry.format(state=writer.state.path, plaud=plaud)
+    _, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), entry])
+    cfg_file = Path(environ["RECORDINGS_CONFIG"])
+    cfg_file.write_text(
+        cfg_file.read_text(encoding="utf-8")
+        + f'[plaud]\ntoken_store = "{plaud / "tokens.json"}"\n',
+        encoding="utf-8",
+    )
+    bc = backup.from_config(load_config(environ), environ)
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(
+        backup.BackupRefused, match=f"refusing to back up: {re.escape(entry)}, "
+    ) as e:
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert why in str(e.value)
+    assert fake.calls == []
+
+
+def test_the_consent_folder_and_the_manifests_folder_are_never_refused():
+    # why: §17.2. The consent folder and `/state/manifests` are what extra_paths is for.
+    for entry in ("/consent", "/state/manifests", "/state/backup/state.db", "/run/other"):
+        assert (
+            backup.never_backed_up(Path(entry), token_folder=Path("/plaud"), state=Path("/state"))
+            is None
+        ), entry
+
+
 def test_a_symlink_in_extra_paths_refuses_the_backup(tmp_path, writer):
     # why: restic backs up a link as a link; its target is never backed up, so the snapshot
     # would hold nothing of the consent folder.

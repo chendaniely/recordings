@@ -1180,6 +1180,9 @@ def with_extra_paths(environ, *entries: str) -> None:
         ("plaud", "Plaud sign-in"),
         ("//plaud", "Plaud sign-in"),
         ("/plaud/../plaud/tokens.json", "Plaud sign-in"),
+        ("/run/secrets", "Docker's secrets"),  # the council's S4: one check with run_backup
+        ("/run", "Docker's secrets"),
+        ("/run/secrets/restic_password", "Docker's secrets"),
     ],
 )
 def test_extra_paths_holding_the_token_folder_or_the_whole_state_is_a_problem(

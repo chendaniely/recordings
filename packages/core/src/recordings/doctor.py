@@ -67,14 +67,14 @@ BACKUP_SECRETS = (
     "deadman_url",
 )
 ALERT_SECRETS = ("ntfy_topic", "ntfy_token")
-SECRETS_DIR = Path("/run/secrets")  # where Docker mounts a service's secrets, by name
+SECRETS_DIR = backup.SECRETS_DIR  # where Docker mounts a service's secrets, by name
 # What each role must not hold (see the comment above): the table `doctor()` reads.
 FORBIDDEN = {
     "web": (*BACKUP_SECRETS, *ALERT_SECRETS, "deadman_sync_url"),
     "worker": BACKUP_SECRETS,
     "backup": ("deadman_sync_url",),
 }
-PLAUD_MOUNT = DEFAULT_TOKEN_STORE.parent  # the sign-in's folder, mounted in `worker` only
+PLAUD_MOUNT = backup.PLAUD_MOUNT  # the sign-in's folder, mounted in `worker` only
 CONSENT_MOUNT = Path("/consent")  # the consent folder, in `worker` and `backup` (read-only)
 OPEN_TO_OTHERS = 0o077  # ssh refuses a key with any of these bits set; doctor warns for any secret
 
@@ -723,56 +723,33 @@ def _worker(
     info["keep_out_words"] = _enforced_words(cfg, problems)
 
 
-def _normal(path: Path) -> Path:
-    """Absolute and normalised (`//plaud`, `a/../b`, a relative path from the working folder), so
-    two spellings of one folder compare equal. Links are not followed."""
-    absolute = os.path.normpath(os.path.abspath(path))
-    return Path("/" + absolute.lstrip("/"))  # POSIX keeps a leading `//` as its own spelling
-
-
-def _holds(entry: Path, path: Path) -> bool:
-    """`entry`, backed up, would carry `path`: it is the path or one of its folders."""
-    return entry == path or entry in path.parents
-
-
-def _plaud_folders(cfg: Config) -> tuple[Path, Path | None]:
-    """The sign-in's folder and the consent list's, as configured (the defaults when [plaud] can't
-    be read: its own problem is reported elsewhere)."""
+def _consent_folder(cfg: Config) -> Path | None:
+    """The consent list's folder, as configured; None when [plaud] can't be read (its own problem
+    is reported elsewhere)."""
     if not isinstance(cfg.data.get("plaud", {}), dict):  # a crash line from _consent says so
-        return DEFAULT_TOKEN_STORE.parent, None
+        return None
     try:
         settings = plaud_settings(cfg)
     except ConfigError:
-        return DEFAULT_TOKEN_STORE.parent, None
-    consent = settings.consent_list.parent if settings.consent_list is not None else None
-    return settings.token_store.parent, consent
+        return None
+    return settings.consent_list.parent if settings.consent_list is not None else None
 
 
 def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str]) -> None:
     """[backup] extra_paths (stage 2b spec §17.2), in every role, which all read one config.toml.
-    An entry that holds the Plaud sign-in's folder (or lies inside it), or the whole state folder,
-    is a problem: the token must never be backed up, and state.db is backed up on its own, as a
-    consistent copy. (plaud-cache.db's check comes with the cache, in Phase 2.) For `backup`, with
-    a repository set, deploy.env and the consent folder missing from it are warnings (a restore
-    would bring back no list, or an older one)."""
+    An entry `backup.never_backed_up` refuses is a problem, with its reason: one that would carry
+    the Plaud sign-in, the whole state folder or Docker's secrets. `run_backup` refuses the same
+    entries by the same check (the phase-end council's S4). For `backup`, with a repository set,
+    deploy.env and the consent folder missing from it are warnings (a restore would bring back no
+    list, or an older one)."""
     section = cfg.data.get("backup", {})
     found = section.get("extra_paths", [])
     paths = [p for p in found if isinstance(p, str)] if isinstance(found, list) else []
-    token_folder, consent_folder = _plaud_folders(cfg)
-    token_folder = _normal(token_folder)
-    states = [_normal(Path("/state")), *([_normal(cfg.state_path)] if cfg.state_path else [])]
+    token = backup.token_folder(cfg)
     for entry in paths:
-        held = _normal(Path(entry))
-        if any(_holds(held, f) or _holds(f, held) for f in (token_folder, PLAUD_MOUNT)):
-            problems.append(
-                f"[backup] extra_paths names {entry}, which would carry the Plaud sign-in: it is "
-                "never backed up (stage 2b spec §17.2)"
-            )
-        elif any(_holds(held, s) for s in states):
-            problems.append(
-                f"[backup] extra_paths names {entry}, the whole state folder: state.db is backed "
-                "up on its own, as a consistent copy (stage 2b spec §17.2)"
-            )
+        why = backup.never_backed_up(Path(entry), token_folder=token, state=cfg.state_path)
+        if why is not None:
+            problems.append(f"[backup] extra_paths names {entry}, {why}")
     if role != "backup" or not section.get("repository"):
         return
     if not any(Path(p).name == "deploy.env" for p in paths):
@@ -780,8 +757,10 @@ def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str
             "deploy.env is not in [backup] extra_paths, so no backup carries it "
             "(config.example.toml has the line)"
         )
-    wanted = {CONSENT_MOUNT, *([_normal(consent_folder)] if consent_folder is not None else [])}
-    if not any(_normal(Path(p)) in wanted for p in paths):
+    consent_folder = _consent_folder(cfg)
+    normal = backup.normal_path
+    wanted = {CONSENT_MOUNT, *([normal(consent_folder)] if consent_folder is not None else [])}
+    if not any(normal(Path(p)) in wanted for p in paths):
         warnings.append(
             f"the consent folder is not in [backup] extra_paths, so no backup carries the consent "
             f'list: add "{CONSENT_MOUNT}" (runbook section 6)'
