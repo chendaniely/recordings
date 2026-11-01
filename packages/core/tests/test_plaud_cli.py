@@ -343,6 +343,32 @@ def test_the_baseline_refuses_a_keep_out_words_row_that_is_not_a_list(
 
 
 @pytest.mark.parametrize("fault", [OSError, sqlite3.OperationalError], ids=["OSError", "sqlite3"])
+def test_a_baseline_that_stops_prints_its_class_and_never_the_exception_text(
+    writer, tmp_path, monkeypatch, capsys, fault
+):
+    # why: the phase-end list (the final re-review), §9.6. An OSError or a sqlite3 error outside
+    # the per-recording loop (state.db refusing, the archive unreadable) escaped `main` with its
+    # text in a traceback, and `--json` printed no object. A fixed phrase, the class, exit 1.
+    from recordings.plaud import commands
+
+    secret = f"/Volumes/archive/recordings/2026/10/{TITLE}/recording.json"
+
+    def stops(*args, **kwargs):
+        raise fault(secret)
+
+    monkeypatch.setattr(commands, "baseline_privacy", stops)
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline", "--json"]) == commands.EXIT_FAILED
+    out = json.loads(capsys.readouterr().out)
+    assert set(out) == {"error"} and f"({fault.__name__})" in out["error"]
+    assert main(["plaud", "baseline"]) == commands.EXIT_FAILED
+    seen = capsys.readouterr()
+    shown = json.dumps(out) + seen.out + seen.err
+    assert f"({fault.__name__})" in seen.err
+    assert secret not in shown and "Synthetic 042" not in shown and "/Volumes" not in shown
+
+
+@pytest.mark.parametrize("fault", [OSError, sqlite3.OperationalError], ids=["OSError", "sqlite3"])
 def test_a_writer_that_cant_open_prints_its_class_and_never_the_exception_text(
     writer, tmp_path, monkeypatch, capsys, fault
 ):
