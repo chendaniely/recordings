@@ -166,6 +166,10 @@ smoke test on purpose until someone does the steps below:
   catches later. It is derived (the next listing rebuilds it) and never backed up
   (`backup.never_backed_up` refuses it in `extra_paths`). Only the Sync screen reads it, through
   `Cache.read_only`, and a reader applies `cache.title_allowed` again before a title leaves it.
+  The one other title in it is Release's preview (§12.2): written by the worker under the
+  `release-preview` request's own ID, read and deleted at once by the web app for the session
+  that asked (`cache.take_preview`, writable but never creating the file), gone after 10 minutes
+  or as soon as the consent list or a word catches it.
 - **`tokens.json` is a secret** (the Plaud sign-in, `plaud/tokens.py`): used by reference, never
   read or printed, and a Claude session never runs `make plaud-sign-in` or `token-import`. Its
   tests use invented tokens against the fake, and a fake `plaud` and `ssh` on `PATH`. The sign-in's

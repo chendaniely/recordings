@@ -51,7 +51,7 @@ from recordings.plaud.baseline import (
     patterns_pass,
     record_pass_error,
 )
-from recordings.plaud.cache import Cache, cache_path
+from recordings.plaud.cache import PREVIEW_KEPT, Cache, Preview, cache_path
 from recordings.plaud.checks import (
     K_CONSENT,
     K_LAST_ENDED,
@@ -396,11 +396,18 @@ class Worker:
         clock: Callable[[], datetime] = _utc_now,
         turn: SyncTurn = stand_in_turn,
         heartbeat: float = HEARTBEAT,
+        client_factory: Callable[[], Any] | None = None,
     ) -> None:
         if cfg.state_path is None or cfg.archive_path is None:
             raise NotTheWriter("set [archive] path and [state] path in config.toml first")
         self.cfg, self.environ, self.clock = cfg, environ, clock
         self.turn, self.heartbeat = turn, heartbeat
+        self._client_factory = client_factory  # tests hand in the fake server's client
+        self._client: Any | None = None
+        # The run's newest complete listing, in memory only (titles never leave it): A5's run
+        # sets it; Release's handlers read a title from it while it is one interval fresh.
+        self.newest_listing: Any | None = None
+        self._preview_at: datetime | None = None  # when the last Release preview was written
         self.state = State.open(cfg.state_path)
         self.db = PlaudDB(self.state)
         self.settings: PlaudSettings = plaud_settings(cfg)
@@ -684,6 +691,7 @@ class Worker:
         self._step("consent list", self._watch_consent)
         self._step("consent blocker", self._consent_blocker)
         self._step("cache titles", self._purge_cache)
+        self._step("release previews", self._expire_previews)
         self._step("late consent", self._late_consent)
         self._step("patterns", self._patterns_again)
         self._step("owed private", self._owed_private)
@@ -779,6 +787,88 @@ class Worker:
             log.info("the Plaud cache: %d titles hidden by the consent list or a word", hidden)
         settled = seen - st.st_mtime_ns >= CACHE_SETTLED_NS
         self._purged = (self.consent, words, stamp) if settled else None
+
+    def _expire_previews(self) -> None:
+        """A Release preview no one answered goes after 10 minutes (§9.5): asked only while one
+        this worker wrote may still be there."""
+        if self._preview_at is None or self.cfg.state_path is None:
+            return
+        now = self.clock()
+        Cache(self.cfg.state_path).expire_previews(now=now)
+        if now - self._preview_at > PREVIEW_KEPT:
+            self._preview_at = None
+
+    # ---- the worker's one Plaud client (area A4's Release; A5's run shares it) ---------------
+    def plaud_client(self) -> Any:
+        """The worker's Plaud client: the token store and the API base from `[plaud]`, and one
+        Throttle for the process (§10.2), whose waits bump the heartbeat's progress and stop on
+        SIGTERM. Imported here: the worker never loads the client at module level."""
+        if self._client is None:
+            if self._client_factory is not None:
+                self._client = self._client_factory()
+            else:
+                from recordings.plaud.client import PlaudClient, Throttle
+                from recordings.plaud.tokens import TokenStore
+
+                store = TokenStore(
+                    self.settings.token_store, token_url=self.settings.token_url, clock=self.clock
+                )
+                self._client = PlaudClient(
+                    store,
+                    api_base=self.settings.api_base,
+                    throttle=Throttle(progress=self._waiting),
+                )
+        return self._client
+
+    def _waiting(self) -> None:
+        """A slice of a Plaud wait, or a MiB of a download (§9.2): progress, and SIGTERM."""
+        self.progress.bump(self.clock())
+        if self.stopping.is_set():
+            raise _Stopped
+
+    def listed_now(self, plaud_id: str) -> Any | None:
+        """This ID's row as Plaud lists it now: from the run's newest listing while it is one
+        schedule interval fresh, else from a fresh listing (which then becomes the newest). None
+        when Plaud doesn't list it. A listing that ends on an error raises it, unless the row was
+        read before the error."""
+        from recordings.refs import canonical_plaud_id
+        from recordings.sources.plaud import PlaudSource
+
+        pid, now = canonical_plaud_id(plaud_id), self.clock()
+        minutes = self.settings.schedule_minutes or DEFAULT_SCHEDULE_MINUTES
+        listing = self.newest_listing
+        fresh = listing is not None and now - listing.at <= timedelta(minutes=minutes)
+        if not fresh:
+            listing = PlaudSource(self.plaud_client(), clock=self.clock).list_all()
+            if listing.complete:
+                self.newest_listing = listing
+        row = next((r for r in listing.rows if r.canonical_id == pid), None)
+        if row is None and not listing.complete and listing.error is not None:
+            raise listing.error
+        return row
+
+    def next_sync_at(self) -> datetime | None:
+        """When the next scheduled turn comes due (§9.2): None with the schedule off or the gate
+        closed."""
+        minutes = self.settings.schedule_minutes
+        if minutes <= 0 or not gate_now(self.db).open:
+            return None
+        stamps = [parse_stamp(self.db.get(k)) for k in (K_LAST_STARTED, K_LAST_ENDED)]
+        past = [t for t in stamps if t is not None]
+        now = self.clock()
+        return max(max(past) + timedelta(minutes=minutes), now) if past else now
+
+    def _here(self, plaud_id: str) -> bool:
+        from recordings.plaud.flags import listed_here
+        from recordings.refs import canonical_plaud_id
+
+        w = self.writer
+        found, unavailable = listed_here(
+            w.index, w.identity.uuid, w.state, w.archive, frozenset({canonical_plaud_id(plaud_id)})
+        )
+        if unavailable:
+            raise LookupError("the index can't answer now")
+        return bool(found)
 
     def _late_consent(self) -> None:
         """Late consent listings (spec §12.1), from the list in force and the index alone. A pass
@@ -1115,6 +1205,133 @@ def _accept(worker: Worker, claimed: Claimed) -> requests.Reply:
     )
 
 
+# ---- Release (area A4, spec §12.2): its preview, Let it in, and Undo -------------------------
+def _one_id(claimed: Claimed) -> str | None:
+    req = claimed.request
+    if len(req.plaud_ids) != 1 or req.recording_ids or req.select_all:
+        return None
+    return req.plaud_ids[0]
+
+
+def _failed(claimed: Claimed, message: str) -> requests.Reply:
+    return requests.Reply(claimed.request.request_id, claimed.request.kind, "failed", message)
+
+
+def _plaud_failure(exc: BaseException) -> str:
+    """A Plaud error's fixed phrase (§15.6), or its class: never its text."""
+    from recordings.plaud.client import PlaudError
+
+    return (
+        f"failed: {exc.message}"
+        if isinstance(exc, PlaudError)
+        else f"error: `{type(exc).__name__}`"
+    )
+
+
+def _release_preview(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """§12.2 step 1: the recording's current title, written to the cache only, keyed by this
+    request's own ID; the web app shows it once in Release's question. Refused, with no title
+    fetched, for a consent-listed ID or during a consent stop (the gate is the serve_request's);
+    and when the title still carries a keep-out word, which is never shown."""
+    from recordings.plaud import release
+    from recordings.plaud.keepout import keep_out_match
+
+    plaud_id = _one_id(claimed)
+    if plaud_id is None:
+        return _failed(claimed, release.ONE_ID)
+    worker._watch_consent()  # the list as it is now
+    verdict = release.may_preview(plaud_id, worker.consent, worker.db, here=worker._here(plaud_id))
+    if not verdict.ok:
+        return _failed(claimed, verdict.message)
+    try:
+        listed = worker.listed_now(plaud_id)
+    except Exception as exc:  # noqa: BLE001  a Plaud error's phrase, or a class
+        return _failed(claimed, _plaud_failure(exc))
+    if listed is None:
+        return _failed(claimed, release.NOT_LISTED)
+    word = keep_out_match(listed.title, worker.writer.keep_out_words())
+    if word is not None:
+        return _failed(claimed, release.refused_word(word))
+    now = worker.clock()
+    Cache(worker.cfg.state_path).put_preview(
+        claimed.request.request_id,
+        Preview(listed.canonical_id, listed.title or "", listed.recorded_at, listed.duration_ms),
+        now=now,
+    )
+    worker._preview_at = now
+    return requests.Reply(
+        claimed.request.request_id,
+        claimed.request.kind,
+        "done",
+        release.ASK,
+        result={"plaud_id": listed.canonical_id},
+    )
+
+
+def _release(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """§12.2 step 3: checked again, against the consent list as it is now and the current
+    title against every enforced word, then released: it comes in at the next sync."""
+    from zoneinfo import ZoneInfo
+
+    from recordings.plaud import release
+    from recordings.plaud.when import local_hhmm
+
+    plaud_id = _one_id(claimed)
+    if plaud_id is None:
+        return _failed(claimed, release.ONE_ID)
+    worker._watch_consent()
+    here = worker._here(plaud_id)
+    early = release.may_preview(plaud_id, worker.consent, worker.db, here=here, review_ok=False)
+    if not early.ok:  # no listing is read for one that can't be released anyway
+        return _failed(claimed, early.message)
+    try:
+        listed = worker.listed_now(plaud_id)
+    except Exception as exc:  # noqa: BLE001  a Plaud error's phrase, or a class
+        return _failed(claimed, _plaud_failure(exc))
+    if listed is None:
+        return _failed(claimed, release.NOT_LISTED)
+    verdict = release.may_release(
+        plaud_id,
+        listed.title,
+        worker.consent,
+        worker.writer.keep_out_words(),
+        worker.db,
+        here=here,
+    )
+    if not verdict.ok:
+        return _failed(claimed, verdict.message)
+    kind = release.release(worker.db, listed.listed_id, now=worker.clock())
+    log.info("released a recording kept out (%s)", kind)
+    at = worker.next_sync_at()
+    zone = ZoneInfo(worker.cfg.default_timezone)
+    line = release.released_line(local_hhmm(at, zone) if at is not None else None)
+    return requests.Reply(
+        claimed.request.request_id,
+        claimed.request.kind,
+        "done",
+        line,
+        result={"plaud_id": listed.canonical_id},
+    )
+
+
+def _unrelease(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """§12.2 step 4: Undo, until a sync has fetched it."""
+    from recordings.plaud import release
+
+    plaud_id = _one_id(claimed)
+    if plaud_id is None:
+        return _failed(claimed, release.ONE_ID)
+    done = release.unrelease(worker.db, plaud_id, here=worker._here(plaud_id), now=worker.clock())
+    state = "done" if done == release.UNDONE else "failed"
+    return requests.Reply(claimed.request.request_id, claimed.request.kind, state, done)
+
+
 # What the worker serves. requests.HANDLED names the same kinds for web, which refuses the others
 # before inserting; each later area adds its handlers here and its kinds there.
-HANDLERS: dict[str, Handler] = {"keep-here": _keep_here, "accept": _accept}
+HANDLERS: dict[str, Handler] = {
+    "keep-here": _keep_here,
+    "accept": _accept,
+    "release-preview": _release_preview,
+    "release": _release,
+    "unrelease": _unrelease,
+}

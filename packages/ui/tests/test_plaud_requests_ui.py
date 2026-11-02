@@ -124,11 +124,11 @@ def test_accept_names_nothing_and_is_inserted(archive, run):
 
 def test_a_kind_with_no_handler_yet_is_refused_before_any_row(archive, run):
     # C5.18: before the first catch-up an import request is refused; every kind the worker has no
-    # handler for yet (all but Keep it here and Accept) waits for a later area, so web refuses it
-    # with NOT_YET and inserts nothing.
+    # handler for yet (all but Keep it here, Accept and Release's three) waits for a later area,
+    # so web refuses it with NOT_YET and inserts nothing.
     _, state, _ = archive
     later = [k for k in KINDS if k not in HANDLED]
-    assert "import" in later and len(later) == 11
+    assert "import" in later and len(later) == 8
     for kind in later:
         assert check_request(raw(kind=kind)) == Refusal("abcdef12", NOT_YET), kind
         reply = run(submit(state, raw(kind=kind), now=T0, timezone_name="UTC", reason=None))

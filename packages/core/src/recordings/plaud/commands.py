@@ -92,6 +92,15 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     c.add_argument("--json", action="store_true")
 
     c = plaud.add_parser(
+        "release",
+        help="Release: let in a recording kept out by its title (or a possible re-keyed one). "
+        "Shows its ID, date and duration, never its title, and asks y/N; --undo keeps it out "
+        "again until a sync has fetched it",
+    )
+    c.add_argument("plaud_id", help="the Plaud ID, as the Sync screen's Copy ID gives it")
+    c.add_argument("--undo", action="store_true", help="keep it out again (before the next sync)")
+
+    c = plaud.add_parser(
         "token-import",
         help="install a Plaud sign-in from the vendor CLI's token file on stdin (`make "
         "plaud-sign-in` runs it; never by hand in a Claude session)",
@@ -599,6 +608,117 @@ def cmd_accept_listing(args: argparse.Namespace) -> int:
     return EXIT_CONFIG if done.why == hold.CONSENT_FIRST else EXIT_FAILED
 
 
+def _release_client(settings):
+    """The CLI's Plaud client for Release's listing (the worker container's sign-in)."""
+    from recordings.plaud import tokens
+    from recordings.plaud.client import PlaudClient
+
+    store = tokens.TokenStore(settings.token_store, token_url=settings.token_url)
+    return PlaudClient(store, api_base=settings.api_base)
+
+
+def _duration(ms: int | None) -> str:
+    if ms is None:
+        return "duration unknown"
+    minutes, seconds = divmod(round(ms / 1000), 60)
+    return f"{minutes} min {seconds:02d} s" if minutes else f"{seconds} s"
+
+
+def cmd_release(args: argparse.Namespace) -> int:
+    """§12.2's Release without its on-screen question (§9.6): the ID, date and duration, never
+    the title, and y/N on the terminal; then checked as the worker checks it (the consent list as
+    it reads now, and the current title, from a fresh listing, against every enforced word).
+    `--undo` keeps it out again until a sync has fetched it. Holds no lock. Exit 0 released or
+    undone; 1 refused, answered no, or nothing to do; 69 Plaud unreachable; 77 sign-in needed;
+    78 the consent list can't be read."""
+    from recordings.plaud import release
+    from recordings.plaud.cache import Cache
+    from recordings.plaud.client import PlaudAuthError, PlaudError
+    from recordings.refs import canonical_plaud_id
+    from recordings.sources.plaud import PlaudSource
+
+    cfg = _config(False)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        settings = plaud_settings(cfg)
+    except config.ConfigError as exc:
+        return _fail(str(exc), False, EXIT_CONFIG)
+    state = _write_state(cfg, False)
+    if isinstance(state, int):
+        return state
+    writer = _writer(cfg, False)
+    if isinstance(writer, int):
+        return writer
+    db, pid, now, tz = (
+        PlaudDB(state),
+        canonical_plaud_id(args.plaud_id),
+        datetime.now(UTC),
+        _zone(cfg),
+    )
+    found, unavailable = listed_here(
+        writer.index, writer.identity.uuid, writer.state, writer.archive, frozenset({pid})
+    )
+    if unavailable:
+        return _fail(INDEX_UNAVAILABLE, False, EXIT_FAILED)
+    here = bool(found)
+    if args.undo:
+        done = release.unrelease(db, args.plaud_id, here=here, now=now)
+        print(done)
+        return EXIT_OK if done == release.UNDONE else EXIT_FAILED
+    consent = read_consent(settings.consent_list)
+    early = release.may_preview(pid, consent, db, here=here, review_ok=False)
+    if not early.ok:
+        code = EXIT_CONFIG if early.message == release.REFUSED_STOP else EXIT_FAILED
+        return _fail(early.message, False, code)
+    known = None
+    with contextlib.suppress(OSError, sqlite3.Error):
+        known = Cache(cfg.state_path).keyed_out().get(pid)
+    when = _shown(known.start_at, tz) if known and known.start_at else "date unknown"
+    print(f"Plaud ID {args.plaud_id} · {when} · {_duration(known.duration_ms if known else None)}")
+    print("It downloads at the next sync, and then stays in the backups.")
+    try:
+        answer = input("Let it in? [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
+        print("Nothing changed.")
+        return EXIT_FAILED
+    try:
+        listing = PlaudSource(_release_client(settings)).list_all()
+    except PlaudError as exc:  # a client built without a sign-in file, say
+        listing = None
+        error: PlaudError | None = exc
+    else:
+        error = listing.error if isinstance(listing.error, PlaudError) else None
+    row = (
+        None if listing is None else next((r for r in listing.rows if r.canonical_id == pid), None)
+    )
+    if row is None and error is not None:
+        if isinstance(error, PlaudAuthError):
+            return _fail(f"{error.message}: {signin_fix()}", False, EXIT_SIGN_IN)
+        return _fail(f"Plaud couldn't be reached: {error.message}", False, EXIT_UNREACHABLE)
+    if row is None:
+        return _fail(release.NOT_LISTED, False, EXIT_FAILED)
+    try:
+        words = writer.keep_out_words()
+    except KeepOutWordsError as exc:
+        return _fail(str(exc), False, EXIT_FAILED)
+    verdict = release.may_release(pid, row.title, consent, words, db, here=here)
+    if not verdict.ok:
+        return _fail(verdict.message, False, EXIT_FAILED)
+    release.release(db, row.listed_id, now=now)
+    print(release.released_line(None))
+    print(f"To keep it out again before then: `recordings plaud release {args.plaud_id} --undo`")
+    return EXIT_OK
+
+
+def signin_fix() -> str:
+    from recordings.plaud import signin
+
+    return signin.SIGN_IN_FIX
+
+
 COMMANDS = {
     "consent": cmd_consent,
     "baseline": cmd_baseline,
@@ -606,6 +726,7 @@ COMMANDS = {
     "check": cmd_check,
     "token-import": cmd_token_import,
     "accept-listing": cmd_accept_listing,
+    "release": cmd_release,
 }
 
 

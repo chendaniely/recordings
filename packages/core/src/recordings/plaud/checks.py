@@ -219,6 +219,16 @@ _DATING = (
 )
 
 
+# A listing keeps out (again) an ID its title's word catches now: one never kept out, or one
+# Release had let in (released after it was last kept out). Kept out stays kept out otherwise:
+# the first time and word stay (§12.2).
+_KEEP_AGAIN = (
+    "excluded.kept_out_at IS NOT NULL AND (plaud_listing.kept_out_at IS NULL OR "
+    "(plaud_listing.released_at IS NOT NULL AND "
+    "plaud_listing.released_at >= plaud_listing.kept_out_at))"
+)
+
+
 def _encode(name: str, value: Any) -> Any:
     if name in _TIMES:
         if value is None:
@@ -412,9 +422,10 @@ class PlaudDB:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (canonical_plaud_id) DO UPDATE SET "
                 "listed_id = excluded.listed_id, last_seen = excluded.last_seen, "
                 "absent_since = NULL, "
-                "kept_out_word = CASE WHEN plaud_listing.kept_out_at IS NULL "
+                f"kept_out_word = CASE WHEN {_KEEP_AGAIN} "
                 "THEN excluded.kept_out_word ELSE plaud_listing.kept_out_word END, "
-                "kept_out_at = COALESCE(plaud_listing.kept_out_at, excluded.kept_out_at), "
+                f"kept_out_at = CASE WHEN {_KEEP_AGAIN} "
+                "THEN excluded.kept_out_at ELSE plaud_listing.kept_out_at END, "
                 "rekey_of = COALESCE(plaud_listing.rekey_of, excluded.rekey_of), "
                 "title_sha256 = excluded.title_sha256, duration_ms = excluded.duration_ms",
                 values,

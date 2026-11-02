@@ -130,11 +130,13 @@ def answer(state: State, n: int) -> tuple:
     return reply.state, reply.message
 
 
-def test_the_worker_handles_keep_it_here_and_accept_so_far():
+def test_the_worker_handles_keep_it_here_accept_and_release_so_far():
     # why: decision 2. A button whose handler comes in a later area is disabled with NOT_YET,
     # and a crafted request for it is refused before any row is inserted. Phase 1 handled Keep it
-    # here; Phase 2's area A3 adds Accept this listing. HANDLED and the worker's handlers agree.
-    assert HANDLED == {"keep-here", "accept"} == set(worker_module.HANDLERS)
+    # here; Phase 2's area A3 adds Accept this listing, and A4 Release's preview, Let it in and
+    # Undo. HANDLED and the worker's handlers agree.
+    release = {"release-preview", "release", "unrelease"}
+    assert HANDLED == {"keep-here", "accept", *release} == set(worker_module.HANDLERS)
     assert HANDLED.issubset(KINDS)
     assert NOT_YET == "Comes with the next part of stage 2b."
 

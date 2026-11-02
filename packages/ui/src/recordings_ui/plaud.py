@@ -78,6 +78,7 @@ NO_CONFIG_REASON = "there's no config.toml, so this app only reads the archive"
 MIRROR_REASON = "this is the NAS mirror's copy, which never syncs: open the archive's own app"
 NO_STATE_REASON = "there's no state.db here, so this app can't ask the Plaud worker"
 _KEYS = frozenset({"request_id", "kind", "plaud_ids", "recording_ids", "all"})
+RELEASE_KINDS = frozenset({"release-preview", "release", "unrelease"})
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,8 @@ def check_request(raw: object) -> PlaudRequest | Refusal:
         return Refusal(request_id, UNREADABLE)  # it uses recording IDs alone, and carries no more
     if kind == "accept" and (plaud_ids or recording_ids or select_all):
         return Refusal(request_id, UNREADABLE)  # it accepts the held listing, and names nothing
+    if kind in RELEASE_KINDS and (len(plaud_ids) != 1 or recording_ids or select_all):
+        return Refusal(request_id, UNREADABLE)  # Release names one Plaud ID, and nothing else
     if kind not in HANDLED:
         return Refusal(request_id, NOT_YET)  # its handler comes with a later phase
     return PlaudRequest(
@@ -855,10 +858,19 @@ def _title_for(r: _Read, recording_id: str, hidden: set[str]) -> str | None:
         return None
     for ref in _plaud_refs(body):
         row = r.db.listing(ref)
-        if row is not None and row.kept_out_at is not None:
+        if row is not None and row.kept_out_at is not None and not _released(row):
             return None
     title = body.get("title")
     return title if isinstance(title, str) else None
+
+
+def _released(row: Any) -> bool:
+    """Release let it in (§12.2): released after it was last kept out, as the compare reads it
+    (`compare._released`). A recording Dan released and the sync then imported shows its title
+    like any other (Phase 1's phase-end list, Task 19)."""
+    if row.released_at is None:
+        return False
+    return row.kept_out_at is None or row.released_at >= row.kept_out_at
 
 
 def _updated(r: _Read) -> list[dict]:
@@ -902,6 +914,62 @@ def _last_result(r: _Read) -> str | None:
     kind, select_all, finished, message = rows[0]
     label = "Import all" if kind == "import" and select_all else KIND_LABELS.get(kind, kind)
     return f"{label}, {r.when(parse_stamp(finished))}: {message}"
+
+
+# ---- Release's question (§12.2; BD1, P6, P8) -------------------------------------------------
+
+
+def release_preview(
+    settings: PlaudViewSettings | None, request_id: str, *, now: datetime
+) -> dict | None:
+    """The preview for Release's question, for the session that sent the `release-preview`
+    request (shiny_app's follow, when its row is done): read and deleted in one writable
+    transaction of the cache, keyed by the request's own `request_id` (BD1); its Plaud ID is the
+    one the worker wrote from the request's row, never anything the browser sends (P8). Shown once:
+    a second read finds nothing. The only title any reply carries (P13). None in the demos, with
+    no state folder, or when the preview has gone (10 minutes, or caught by the consent list or a
+    keep-out word since)."""
+    if settings is None or settings.state_path is None:
+        return None
+    import sqlite3  # here: the Pages demo's Pyodide has none, and never asks
+
+    from recordings.plaud.cache import take_preview
+    from recordings.plaud.checks import K_LAST_ENDED, K_LAST_STARTED, PlaudDB
+    from recordings.plaud.gate import gate_now
+    from recordings.state import State
+
+    try:
+        preview = take_preview(settings.state_path, request_id, now=now)
+    except (sqlite3.Error, OSError) as exc:
+        log.warning("Release's preview couldn't be read (%s)", type(exc).__name__)
+        return None
+    if preview is None:
+        return None
+    tz = settings.timezone_name
+    next_sync = None
+    try:
+        db = PlaudDB(State.read_only(settings.state_path))
+        stamps = [parse_stamp(db.get(k)) for k in (K_LAST_STARTED, K_LAST_ENDED)]
+        last = max((t for t in stamps if t is not None), default=None)
+        next_sync = _next_sync(settings, gate_now(db).open, last, now)
+    except Exception as exc:  # noqa: BLE001  the question still shows, without the time
+        log.warning("Release's next sync couldn't be read (%s)", type(exc).__name__)
+    return {
+        "plaud_id": preview.canonical_plaud_id,
+        "title": preview.title,
+        "date": _date(preview.start_at, tz) or "",
+        "time": _hm(preview.start_at, tz) or "",
+        "duration": _minutes(preview.duration_ms),
+        "next_sync": next_sync,
+    }
+
+
+def _minutes(ms: int | None) -> str | None:
+    """A duration as Release's question says it: "12 min", or "40 s" under a minute."""
+    if ms is None:
+        return None
+    seconds = round(ms / 1000)
+    return f"{seconds // 60} min" if seconds >= 60 else f"{seconds} s"
 
 
 # ---- Status's sync panel ------------------------------------------------------------------------

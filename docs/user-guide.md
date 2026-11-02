@@ -112,6 +112,35 @@ Each sync reads every title Plaud lists, and checks the ones that changed since 
   flag it again.
 - "Should be private …": on the server, `rc exec worker recordings reindex`. The next sync tags it.
 
+## Keeping a recording out from your phone, and Release
+
+Start a recording's title in Plaud's app with your keep-out word (`noarchive` unless you chose
+another) and the sync never downloads it. The word is forgiving: "NoArchive:", "No archive" and
+"[noarchive]" all count; "noarchived" doesn't.
+
+**What you see**
+
+- The Sync screen lists it under **Kept out**, by date, time and duration, never by title.
+- If the title later loses the word (Plaud's AI retitles it, or autocorrect), it stays out, as
+  "was kept out by title", with **Release**.
+- If the sync downloaded it before the rename reached Plaud, see "Renaming a recording in Plaud
+  after it came in": too late, so it is tagged `private` and flagged.
+
+**What to do**
+
+- To let one in after all: press **Release** on its row. It asks first, and only there shows the
+  title: "Let '…' (date, length) in? It downloads at the next sync, and then stays in the
+  backups." **Let it in**, or Cancel.
+- Release is refused, with the reason, while the title still starts with the word ("its title
+  still starts with `noarchive`": rename it in Plaud first), while the recording is on the
+  consent list, and while the consent list can't be read.
+- Until the next sync fetches it, the row reads "Released · comes in at the next sync (14:40) ·
+  Undo": **Undo** keeps it out again.
+- A row "may be a … recording back under a new ID" that is really a different recording: press
+  **Release** too. Its question shows the title Plaud lists now.
+- On the server, `rc exec worker recordings plaud release <Plaud ID>` does the same, showing only
+  the ID, date and duration and asking y/N; `--undo` keeps it out again.
+
 ## What the sync compares, and the equations
 
 Each sync, and each **Compare**, reads Plaud's whole list of recordings and puts every recording

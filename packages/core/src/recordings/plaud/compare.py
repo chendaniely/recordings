@@ -363,7 +363,7 @@ def classify(
                     EXCLUDED,
                     excluded_by=BY_TITLE,
                     word=word,
-                    kept_out_now=row is None or row.kept_out_at is None,
+                    kept_out_now=row is None or row.kept_out_at is None or _released(row),
                 )
             )
             continue

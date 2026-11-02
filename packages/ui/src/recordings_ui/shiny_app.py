@@ -173,9 +173,12 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
             failing = False
             if reply is None:
                 return  # pruned: nothing of its own to follow
-            # `preview` stays None: Release's question and its title come in Phase 2, with the
-            # worker's release-preview handler (types.ts's PlaudResult keeps the key).
             ended = reply["state"] in plaud.FINAL_STATES
+            if reply["kind"] == "release-preview" and reply["state"] == "done":
+                # Release's question (§12.2), for this session only: read and deleted at once.
+                reply["preview"] = await asyncio.to_thread(
+                    plaud.release_preview, plaud_views, reply["request_id"], now=plaud.clock()
+                )
             if reply != shown:
                 await send_plaud_result(reply)
                 shown = reply

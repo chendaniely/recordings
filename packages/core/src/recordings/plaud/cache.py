@@ -16,7 +16,15 @@ compare writes none (`plaud.compare`), and the worker's tick nulls any the conse
 keep-out word has caught since (`purge_titles`, the outline's P1). A reader can apply the same
 rule again (`title_allowed`) before a title reaches a browser (P13). So no title of a recording Dan
 then keeps out reaches any backup, the `pre-import` one included. Only the Sync screen reads it,
-through `Cache.read_only`. Release's preview (§12.2) adds its own table with Release (area A4).
+through `Cache.read_only`.
+
+**Release's preview** (§12.2, area A4): the one title Release's question shows, in
+`release_preview`, keyed by the `release-preview` request's own `request_id` (never by anything
+the browser sends: the Plaud ID comes from the request's row, P8). The worker writes it; the web
+app reads and deletes it in one writable transaction when it answers the asking session
+(`take_preview`: a read-only cache can't delete, BD1), so it is shown once. One left unanswered
+goes after PREVIEW_KEPT (10 minutes), and the worker's tick deletes any whose ID the consent list
+names, or whose title a keep-out word matches, since it was written (`purge_titles`).
 
 Not WAL: one writer (the worker or the CLI, under `plaud`), and readers that open it `mode=ro`.
 """
@@ -36,6 +44,7 @@ from recordings.refs import canonical_plaud_id
 
 CACHE_NAME = "plaud-cache.db"
 KEYED_OUT_KEPT = timedelta(days=30)  # §9.5: until absent for 30 days
+PREVIEW_KEPT = timedelta(minutes=10)  # §9.5: a Release preview no one answered goes after this
 CACHE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS compare_rows (
   canonical_plaud_id TEXT PRIMARY KEY, listed_id TEXT NOT NULL,
@@ -49,6 +58,9 @@ CREATE TABLE IF NOT EXISTS keyed_out (   -- §11.4 step 6: consent-listed and ke
   canonical_plaud_id TEXT PRIMARY KEY, kind TEXT NOT NULL, start_at TEXT, duration_ms INTEGER,
   last_listed_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS release_preview (  -- §12.2: Release's question, shown once
+  request_id TEXT PRIMARY KEY, canonical_plaud_id TEXT NOT NULL, title TEXT NOT NULL,
+  start_at TEXT, duration_ms INTEGER, written_at TEXT NOT NULL);
 """
 _COMPARE = (
     "canonical_plaud_id",
@@ -79,6 +91,16 @@ class CompareRow:
 
 
 @dataclass(frozen=True)
+class Preview:
+    """Release's question (§12.2): the title, and the date and duration it is shown with."""
+
+    canonical_plaud_id: str
+    title: str
+    start_at: datetime | None
+    duration_ms: int | None
+
+
+@dataclass(frozen=True)
 class KeyedOut:
     canonical_plaud_id: str
     kind: str  # "consent" | "title"
@@ -105,6 +127,42 @@ def title_allowed(
     if canonical_plaud_id(plaud_id) in consent.ids:
         return False
     return keep_out_match(title, words) is None
+
+
+def _preview_allowed(
+    plaud_id: str, title: str | None, *, consent: ConsentList | None, words: Sequence[str] | None
+) -> bool:
+    """A Release preview stays while its ID isn't consent-listed (and the list reads) and its
+    title carries no keep-out word."""
+    return title_allowed(plaud_id, title, consent=consent, words=words)
+
+
+def take_preview(state_dir: Path, request_id: str, *, now: datetime) -> Preview | None:
+    """Release's preview for the session that asked (the web app, §12.2; BD1, P6, P8): read
+    and delete in one writable transaction, keyed by the request's own `request_id`, so it is
+    shown once. None when there is none, it is older than PREVIEW_KEPT, or no cache exists: the
+    file is opened `mode=rw`, never created here."""
+    path = cache_path(state_dir)
+    if not path.is_file():
+        return None
+    uri = f"{path.absolute().as_uri()}?mode=rw"
+    with closing(sqlite3.connect(uri, uri=True, timeout=5)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT canonical_plaud_id, title, start_at, duration_ms, written_at "
+                "FROM release_preview WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:  # no such table: no Release has been asked yet
+            return None
+        if row is None:
+            return None
+        conn.execute("DELETE FROM release_preview WHERE request_id = ?", (request_id,))
+    written = parse_stamp(row[4])
+    if written is None or now - written > PREVIEW_KEPT:
+        return None
+    return Preview(row[0], row[1], parse_stamp(row[2]), row[3])
 
 
 def _row(r: tuple) -> CompareRow:
@@ -199,8 +257,19 @@ class Cache:
     def purge_titles(self, *, consent: ConsentList | None, words: Sequence[str] | None) -> int:
         """The worker's tick (the outline's P1): null every title `title_allowed` no longer
         allows (a consent stop, an ID the list names since the compare, a keep-out word added
-        since, words that can't be read). Returns how many; writes nothing when there are none."""
+        since, words that can't be read), and delete every Release preview the consent list or a
+        keep-out word now catches. Returns how many; writes nothing when there are none."""
         with self.db() as db:
+            previews = db.execute(
+                "SELECT request_id, canonical_plaud_id, title FROM release_preview"
+            ).fetchall()
+            caught = [
+                (request_id,)
+                for request_id, pid, title in previews
+                if not _preview_allowed(pid, title, consent=consent, words=words)
+            ]
+            if caught:
+                db.executemany("DELETE FROM release_preview WHERE request_id = ?", caught)
             titled = db.execute(
                 "SELECT canonical_plaud_id, title FROM compare_rows WHERE title IS NOT NULL"
             ).fetchall()
@@ -213,7 +282,42 @@ class Cache:
                 db.executemany(
                     "UPDATE compare_rows SET title = NULL WHERE canonical_plaud_id = ?", gone
                 )
-        return len(gone)
+        return len(gone) + len(caught)
+
+    # ---- Release's preview (§12.2) ----------------------------------------------------------
+    def put_preview(self, request_id: str, preview: Preview, *, now: datetime) -> None:
+        """The worker's answer to a `release-preview` request, keyed by its `request_id`; and
+        any preview older than PREVIEW_KEPT goes."""
+        with self.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "DELETE FROM release_preview WHERE written_at < ?",
+                (utc_iso(now - PREVIEW_KEPT),),
+            )
+            db.execute(
+                "INSERT INTO release_preview (request_id, canonical_plaud_id, title, start_at, "
+                "duration_ms, written_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (request_id) DO "
+                "UPDATE SET canonical_plaud_id = excluded.canonical_plaud_id, title = "
+                "excluded.title, start_at = excluded.start_at, duration_ms = "
+                "excluded.duration_ms, written_at = excluded.written_at",
+                (
+                    request_id,
+                    canonical_plaud_id(preview.canonical_plaud_id),
+                    preview.title,
+                    utc_iso(preview.start_at) if preview.start_at is not None else None,
+                    preview.duration_ms,
+                    utc_iso(now),
+                ),
+            )
+
+    def expire_previews(self, *, now: datetime) -> int:
+        """Delete the previews no one answered within PREVIEW_KEPT. Returns how many."""
+        if not self.path.is_file():
+            return 0
+        with self.db() as db:
+            return db.execute(
+                "DELETE FROM release_preview WHERE written_at < ?", (utc_iso(now - PREVIEW_KEPT),)
+            ).rowcount
 
     # ---- consent-listed and kept-out IDs, for the re-key match (§11.4 step 6) ---------------
     def keyed_out(self) -> dict[str, KeyedOut]:

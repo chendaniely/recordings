@@ -90,14 +90,15 @@ def test_before_the_catch_up_the_summary_is_the_gate_said_once(plaud_scene):
 
 
 def test_the_views_carry_what_the_worker_handles_and_each_button_its_own_reason(plaud_scene):
-    # why: the worker handles Keep it here and Accept this listing so far. Every view says so, and
-    # the UI disables every other button with not_yet, so no press comes back
+    # why: the worker handles Keep it here, Accept this listing and Release so far. Every view
+    # says so, and the UI disables every other button with not_yet, so no press comes back
     # "error: NotImplementedError".
     s = plaud_scene
     rid = s.add(1, "Week 1")
     view = sync_view(s.settings, now=T0, can_request=None)
+    handled = ["accept", "keep-here", "release", "release-preview", "unrelease"]
     for shown in (view, sync_panel(s.settings, now=T0), recording_plaud(s.settings, rid, now=T0)):
-        assert (shown["handled"], shown["not_yet"]) == (["accept", "keep-here"], NOT_YET)
+        assert (shown["handled"], shown["not_yet"]) == (handled, NOT_YET)
     assert view["available"] is True and view["reason"] is None
     # The gate holds back every kind but Compare (§11.6).
     assert view["buttons"] == {
@@ -556,7 +557,7 @@ def test_the_demo_view_is_the_hand_written_fixture_with_the_demo_notes(tmp_path)
     assert sync["summary"]["kind"] == "demo" and sync["summary"]["sentence"] == DEMO_NOTE
     assert set(sync["buttons"].values()) == {DEMO_NOTE}
     assert (sync["handled"], sync["not_yet"], sync["gate"]) == (
-        ["accept", "keep-here"],
+        ["accept", "keep-here", "release", "release-preview", "unrelease"],
         NOT_YET,
         None,
     )
@@ -969,6 +970,16 @@ def test_a_kept_out_listing_row_alone_hides_the_title(plaud_scene):
     _updated_by_the_marker(s, 66)
     s.db.set_listing(s.plaud_id(66), kept_out_at=T0, kept_out_word="noarchive")
     assert _shown_title(s, 66) is None
+
+
+def test_a_released_listing_row_shows_the_title_once_it_came_in(plaud_scene):
+    # Phase 1's phase-end list, Task 19: Release let it in (released after it was kept out), so
+    # the recording the sync then imported is shown like any other (§12.2).
+    s = plaud_scene
+    _updated_by_the_marker(s, 67)
+    s.db.set_listing(s.plaud_id(67), kept_out_at=T0, kept_out_word="noarchive")
+    s.db.set_listing(s.plaud_id(67), released_at=T0 + timedelta(minutes=1))
+    assert _shown_title(s, 67) is not None
 
 
 def test_constants_copied_to_keep_sqlite_out_of_pyodide_match_their_sources():

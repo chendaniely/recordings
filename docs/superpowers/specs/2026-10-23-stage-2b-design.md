@@ -3096,9 +3096,9 @@ smoke.
 | C5.02 | Fake: a keep-out title | It is never requested (the request log) | Phase 2, area A4 | `packages/core/tests/test_plaud_import.py` (the request log: never requested; a word only in the envelope's title stops before any block or audio) | built |
 | C5.03 | Fake: the keep-out word added after the recording came in | `private` and one flag; nothing of it is fetched again, even when its transcript appears | Phase 2, area A4 (the checks' skip: Phase 3, area B1) | `packages/core/tests/test_plaud_listing_privacy.py` (`test_a_keep_out_word_after_it_came_in_tags_and_flags_it_once`: `private`, one flag, its ID kept out, the import fetching nothing again) | built (the sweep's skip: B1) |
 | C5.04 | **Keep it here** on a late keep-out | The flag clears and no archive file changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | built |
-| C5.05 | A kept-out title that later loses the word | It stays kept out until **Release** | Phase 2 | Phase 2's plan | planned |
+| C5.05 | A kept-out title that later loses the word | It stays kept out until **Release** | Phase 2, area A4 | `packages/core/tests/test_plaud_import.py` (`test_kept_out_stays_out_until_released`, `test_a_released_id_whose_title_takes_the_word_again_is_kept_out_again`) and `packages/core/tests/test_plaud_release.py` (Release, then the compare reads it waiting; a word again after it keeps it out again) | built |
 | C5.06 | **Release** on a row kept out by title | It asks first, with the title in its question only | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
-| C5.07 | **Release** while the title carries the word, or the ID is consent-listed | Refused, saying why | Phase 2 | Phase 2's plan | planned |
+| C5.07 | **Release** while the title carries the word, or the ID is consent-listed | Refused, saying why | Phase 2, area A4 | `packages/core/tests/test_plaud_release.py` (the preview and Let it in each refused, saying why; nothing fetched for a consent-listed ID; the CLI likewise) | built |
 | C5.08 | A consent-list typo | The `consent` blocker opens and the sync's check isn't pinged | Phase 1, Tasks 11 and 13 | `packages/core/tests/test_plaud_health.py`, `packages/core/tests/test_worker.py` | built |
 | C5.09 | A consent-list typo during syncs | Every import stops | Phase 2, areas A4 (the import) and A5 (the run) | the import: `packages/core/tests/test_plaud_import.py` (`test_a_consent_stop_stops_every_import_before_any_request`); the run: A5 | import built; run planned |
 | C5.10 | A bare `ID kept: …` line | Not an exclusion; listed for review by line number | Phase 1, Tasks 3 and 8 | `packages/core/tests/test_keepout.py`, `packages/core/tests/test_plaud_cli.py` | built |
@@ -3264,3 +3264,14 @@ None: every bullet of §20 is planned in a phase.
   (decision 3; without it, every rename in Plaud would re-check the older titles). A `private` the
   listing owes but can't write opens its `private-unwritten` flag at once (detail `owed: title`).
   No decision or scenario's outcome changed.
+- 2026-11-02: area A4 built Release (§12.2): the worker's `release-preview`, `release` and
+  `unrelease` handlers (`plaud/release.py`; `requests.HANDLED` widened), the cache's
+  `release_preview` table, the web app's read-and-delete of it for the asking session
+  (`cache.take_preview`, BD1, P6, P8), and `recordings plaud release <plaud-id> [--undo]`. Its
+  title comes from the run's newest listing in memory, or a fresh listing, never from the
+  envelope, which would fetch a kept-out recording's content. Two readings that fail closed: the
+  preview too is refused while the title still carries a keep-out word (Release would be refused,
+  and that title is never shown), and a listing whose title takes the word again after a Release
+  keeps the ID out again (`write_listing`'s `_KEEP_AGAIN`). The views show the title of a
+  recording Release let in and the sync then imported (Phase 1's phase-end list, Task 19). No
+  decision or scenario's outcome changed.
