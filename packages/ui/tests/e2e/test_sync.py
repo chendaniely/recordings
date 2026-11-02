@@ -77,14 +77,29 @@ def test_the_sync_screen_and_status_panel_draw_the_canned_view_at_1280_and_320(
     open_sync(page, server.url)
     summary = page.get_by_test_id("sync-summary")
     expect(summary).to_contain_text(DEMO_NOTE)
-    expect(page.get_by_test_id("not-here-row")).to_have_count(3)
-    expect(page.get_by_test_id("kept-out-row")).to_have_count(2)
-    expect(page.get_by_test_id("updated-row")).to_have_count(1)
+    expect(page.get_by_test_id("not-here-row")).to_have_count(5)
+    expect(page.get_by_test_id("kept-out-row")).to_have_count(5)
+    expect(page.get_by_test_id("updated-row")).to_have_count(3)
+    expect(page.get_by_test_id("flag-row")).to_have_count(2)
+    expect(page.get_by_test_id("gone-row")).to_have_count(1)
+    expect(page.get_by_test_id("parked-row")).to_have_count(2)
     expect(page.get_by_test_id("sync-equations")).to_contain_text(
-        "Listed 9 = 4 here + 2 waiting + 2 excluded + 1 missing"
+        "Listed 43 = 33 here + 0 waiting + 5 excluded + 5 missing"
     )
-    expect(page.get_by_test_id("sync-not-here")).to_contain_text("Synthetic 042")
+    expect(page.get_by_test_id("sync-not-here")).to_contain_text("Private: synthetic call 2")
     expect(page.get_by_test_id("sync-kept-out")).not_to_contain_text("Synthetic")
+    expect(page.get_by_test_id("sync-kept-out")).not_to_contain_text("synthetic")
+    # Area B3: the public demo shows 2b's states: a hold and the breaker, each with its Accept,
+    # Release on a kept-out row and a released one, Park, Keep it here, all off with the demo's
+    # note.
+    expect(page.get_by_test_id("sync-hold")).to_contain_text("Plaud now lists 6 fewer")
+    expect(page.get_by_test_id("sync-breaker")).to_contain_text("share_state")
+    expect(page.get_by_test_id("sync-kept-out")).to_contain_text(
+        "Released · comes in at the next sync (14:40)"
+    )
+    offered = ("accept", "accept-changes", "release-preview", "park", "keep-here", "unrelease")
+    for request in offered:
+        expect(page.locator(f".sync-page [data-request={request}]").first).to_be_disabled()
     # The summary comes first (§15.4), and nothing scrolls sideways.
     top = summary.bounding_box()["y"]
     assert top < page.get_by_test_id("sync-actions").bounding_box()["y"]
@@ -92,9 +107,17 @@ def test_the_sync_screen_and_status_panel_draw_the_canned_view_at_1280_and_320(
     page.get_by_role("navigation", name="Pages").get_by_role("button", name="Status").click()
     panel = page.get_by_test_id("sync-panel")
     expect(panel).to_contain_text(DEMO_STATUS)
-    expect(panel.get_by_test_id("sync-numbers")).to_contain_text("14:20 (9 listed)")
+    expect(panel.get_by_test_id("sync-numbers")).to_contain_text("13:40 (46 listed)")
+    expect(panel.get_by_test_id("sync-hold")).to_be_visible()
+    expect(panel.get_by_test_id("sync-breaker")).to_be_visible()
+    expect(panel.get_by_test_id("sync-failing-checks")).to_contain_text("1 recording fails")
+    expect(panel.get_by_test_id("sync-conditions")).to_contain_text("held for your review")
     expect(panel.get_by_test_id("sync-details")).not_to_have_attribute("open", "")
     assert page.evaluate(SIDEWAYS, "[data-testid=status-page]") == [0, 0]
+    # The arrivals cue (2b spec §15.3), short at 320 px.
+    page.get_by_role("navigation", name="Pages").get_by_role("button", name="Library").click()
+    cue = "5 from Plaud · Refresh" if width == 320 else "2 new · 1 private · 2 updated from Plaud"
+    expect(page.get_by_test_id("refresh")).to_contain_text(cue)
 
 
 def test_every_sync_button_is_disabled_with_the_demo_note(page: Page, server, console):

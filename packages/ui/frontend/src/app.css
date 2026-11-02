@@ -472,6 +472,10 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
      Details' tab row scrolls within itself, never the panes sideways (G5), as the top bar's does:
      its tabs keep their width and the row clips them to its own. */
   .refresh { min-height: 44px; margin-block: -9px; }
+  /* With Plaud's arrivals cue in Refresh ("5 from Plaud · Refresh", 2b spec §15.3) the header's
+     count and Refresh no longer fit one 320 px line, and the header grew to two (area B3, found by
+     the demo's canned arrivals): the order goes, the count stays. */
+  .list-order { display: none; }
   .plaud-flags a { display: inline-flex; align-items: center; min-height: 44px; margin-block: -14px; }
   /* flex: none: a box that scrolls loses a flex item's automatic minimum height, and the pane's
      column squeezed the row to a few pixels. */

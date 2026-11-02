@@ -4,9 +4,34 @@
     "available": false,
     "reason": "Demo: nothing is synced",
     "summary": {"kind": "demo", "sentence": "Demo: nothing is synced", "explain": null, "see_status": false},
-    "flags": [],
-    "hold": null,
-    "breaker": null,
+    "flags": [
+      {
+        "kind": "kept-out-late",
+        "recording_id": "19330312T220000-0500_4c589e0a",
+        "plaud_id": "of_0000000000000000000000000000000c",
+        "copy_id": "- `of_0000000000000000000000000000000c` —",
+        "sentence": "Kept out by title, but already in the archive: take it out by hand (runbook)",
+        "keep_here": true, "date": null, "duration": null
+      },
+      {
+        "kind": "rekeyed",
+        "recording_id": null,
+        "plaud_id": "of_0000000000000000000000000000000a",
+        "copy_id": "- `of_0000000000000000000000000000000a` —",
+        "sentence": "May be a consent-listed recording back under a new Plaud ID: it stays out until you confirm (runbook)",
+        "keep_here": false, "date": "2026-10-20 10:00", "duration": "25 min"
+      }
+    ],
+    "hold": {
+      "sentence": "Plaud now lists 6 fewer of the recordings here (and 2 look new). If you deleted them in Plaud, Accept this listing: they show as gone from Plaud.",
+      "accept": true, "refused": null
+    },
+    "breaker": {
+      "sentence": "Edit-sync paused since 13:40: Plaud started sending something new on 12 recordings",
+      "fields": ["share_state"],
+      "accept": true, "code_fix": null,
+      "note": "New recordings still arrive. If Plaud added a feature, accept it: each recording gets one new snapshot. If a name looks like a link or a key, don't: it needs a code fix (a Claude session)."
+    },
     "checked_week": true,
     "buttons": {
       "sync": "Demo: nothing is synced",
@@ -14,13 +39,13 @@
       "full": "Demo: nothing is synced",
       "import": "Demo: nothing is synced"
     },
-    "handled": ["keep-here"],
+    "handled": ["accept", "accept-changes", "compare", "full", "import", "keep-here", "park", "release", "release-preview", "resync", "sync", "unpark", "unrelease"],
     "not_yet": "Comes with the next part of stage 2b.",
     "gate": null,
     "listed": true,
     "full_estimate": "about 4 minutes",
-    "equation": {"listed": 9, "here": 4, "waiting": 2, "excluded": 2, "missing": 1, "arrive_private": 1, "listing_at": "14:20"},
-    "archive": {"from_plaud": 4, "here": 4, "gone": 0, "absent": 0},
+    "equation": {"listed": 43, "here": 33, "waiting": 0, "excluded": 5, "missing": 5, "arrive_private": 1, "listing_at": "14:20"},
+    "archive": {"from_plaud": 40, "here": 33, "gone": 1, "absent": 6},
     "consent": {"ids": 3, "on_plaud": 1, "file_changed": "2026-10-23 09:12", "read_at": "14:20", "stop": null},
     "titles_hidden": null,
     "not_here": [
@@ -29,24 +54,38 @@
         "copy_id": "- `of_00000000000000000000000000000001` —",
         "date": "2026-10-23", "time": "09:05", "duration": "47 min",
         "title": "Week 4 lecture", "arrives_private": false,
-        "state": "imports at the next sync", "review": false, "park": false
+        "state": "held: see Status", "review": false, "park": false
       },
       {
         "plaud_id": "of_00000000000000000000000000000002",
         "copy_id": "- `of_00000000000000000000000000000002` —",
         "date": "2026-10-22", "time": "16:40", "duration": "12 min",
-        "title": "Synthetic 042", "arrives_private": true,
-        "state": "imports at the next sync", "review": false, "park": false
+        "title": "Private: synthetic call 2", "arrives_private": true,
+        "state": "held: see Status", "review": false, "park": false
       },
       {
         "plaud_id": "of_00000000000000000000000000000003",
         "copy_id": "- `of_00000000000000000000000000000003` —",
         "date": "2026-10-21", "time": "11:15", "duration": "3 min",
         "title": "Synthetic 043", "arrives_private": false,
-        "state": "failed 3 times", "review": false, "park": false
+        "state": "failed 3 times", "review": false, "park": true
+      },
+      {
+        "plaud_id": "of_00000000000000000000000000000006",
+        "copy_id": "- `of_00000000000000000000000000000006` —",
+        "date": "2026-10-18", "time": "15:30", "duration": "19 min",
+        "title": null, "arrives_private": false,
+        "state": "needs your review: the sync's records were rebuilt", "review": true, "park": false
+      },
+      {
+        "plaud_id": "of_00000000000000000000000000000009",
+        "copy_id": "- `of_00000000000000000000000000000009` —",
+        "date": "2026-10-14", "time": "07:50", "duration": "2 min",
+        "title": "Synthetic 039", "arrives_private": false,
+        "state": "parked", "review": false, "park": false
       }
     ],
-    "import_all": {"count": 3, "review_more": 0},
+    "import_all": {"count": 4, "review_more": 1},
     "kept_out": [
       {
         "plaud_id": "of_00000000000000000000000000000004",
@@ -55,22 +94,53 @@
         "by": "consent", "release": false, "released": null
       },
       {
+        "plaud_id": "of_0000000000000000000000000000000a",
+        "copy_id": "- `of_0000000000000000000000000000000a` —",
+        "date": "2026-10-20", "time": "10:00", "duration": "25 min",
+        "by": "rekeyed", "release": true, "released": null
+      },
+      {
         "plaud_id": "of_00000000000000000000000000000005",
         "copy_id": "- `of_00000000000000000000000000000005` —",
         "date": "2026-10-19", "time": "18:30", "duration": "8 min",
         "by": "title", "release": false, "released": null
+      },
+      {
+        "plaud_id": "of_00000000000000000000000000000007",
+        "copy_id": "- `of_00000000000000000000000000000007` —",
+        "date": "2026-10-17", "time": "08:45", "duration": "31 min",
+        "by": "was-title", "release": true, "released": null
+      },
+      {
+        "plaud_id": "of_00000000000000000000000000000008",
+        "copy_id": "- `of_00000000000000000000000000000008` —",
+        "date": "2026-10-16", "time": "13:10", "duration": "52 min",
+        "by": "was-title", "release": false, "released": "Released · comes in at the next sync (14:40)"
       }
     ],
     "updated": [
       {
         "recording_id": "19620912T100000-0500_229ce3ea",
         "title": "JFK at Rice University: We choose to go to the Moon (opening)",
-        "parts": ["speakers"], "at": "13:55"
+        "parts": ["speakers", "removal held"], "at": "13:55"
+      },
+      {
+        "recording_id": "19700413T210756-0600_ee569ed0",
+        "title": "Apollo 13: Houston, we've had a problem",
+        "parts": ["title"], "at": "2026-10-22 09:10"
+      },
+      {
+        "recording_id": "19330312T220000-0500_4c589e0a",
+        "title": "Fireside Chat 1: On the Banking Crisis (opening)",
+        "parts": ["re-tagged private"], "at": "2026-10-21 18:02"
       }
     ],
-    "gone": {"rows": [], "last_7_days": 0},
-    "parked": [],
-    "last_result": null,
+    "gone": {"rows": [{"recording_id": "20261002T081500-0700_0000000b", "since": "2026-10-20"}], "last_7_days": 1},
+    "parked": [
+      {"id": "of_00000000000000000000000000000009", "kind": "plaud"},
+      {"id": "19690720T215615-0500_70636d05", "kind": "recording"}
+    ],
+    "last_result": "Compare, 14:20: Compared: listed 43 = here 33 + waiting 0 + excluded 5 + missing 5",
     "next_sync": "14:40"
   },
   "panel": {
@@ -79,44 +149,57 @@
     "summary": {"kind": "demo", "sentence": "Demo: Plaud sync isn't part of the demo.", "explain": null, "see_status": false},
     "failing": null,
     "failing_checks": [{"recording_id": "19700413T210756-0600_ee569ed0", "since": "2026-10-21"}],
-    "not_pinged": null,
-    "conditions": [],
-    "hold": null,
-    "breaker": null,
-    "handled": ["keep-here"],
+    "not_pinged": "The sync's Healthchecks check isn't being pinged since 13:40: held: see Status. It emails you about 2 hours after that.",
+    "conditions": [
+      "Recording 19330312T220000-0500_4c589e0a was kept out by title after it came in. Take it out by hand (runbook), or Keep it here.",
+      "While this is open, the sync's check stays down, so a new problem won't send another email: glance at Status until it's fixed.",
+      "1 change from Plaud is held for your review (the review list comes with stage 3a)."
+    ],
+    "hold": {
+      "sentence": "Plaud now lists 6 fewer of the recordings here (and 2 look new). If you deleted them in Plaud, Accept this listing: they show as gone from Plaud.",
+      "accept": true, "refused": null
+    },
+    "breaker": {
+      "sentence": "Edit-sync paused since 13:40: Plaud started sending something new on 12 recordings",
+      "fields": ["share_state"],
+      "accept": true, "code_fix": null,
+      "note": "New recordings still arrive. If Plaud added a feature, accept it: each recording gets one new snapshot. If a name looks like a link or a key, don't: it needs a code fix (a Claude session)."
+    },
+    "handled": ["accept", "accept-changes", "compare", "full", "import", "keep-here", "park", "release", "release-preview", "resync", "sync", "unpark", "unrelease"],
     "not_yet": "Comes with the next part of stage 2b.",
     "listed": true,
     "numbers": {
-      "equation": {"listed": 9, "here": 4, "waiting": 2, "excluded": 2, "missing": 1, "arrive_private": 1, "listing_at": "14:20"},
-      "archive": {"from_plaud": 4, "here": 4, "gone": 0, "absent": 0},
+      "equation": {"listed": 43, "here": 33, "waiting": 0, "excluded": 5, "missing": 5, "arrive_private": 1, "listing_at": "14:20"},
+      "archive": {"from_plaud": 40, "here": 33, "gone": 1, "absent": 6},
       "consent": {"ids": 3, "on_plaud": 1, "file_changed": "2026-10-23 09:12", "read_at": "14:20", "stop": null},
-      "last_good_listing": "14:20 (9 listed)",
-      "next_sync": null,
-      "sweep": "every recording checked within the last 2 hours (oldest 2026-10-23 12:31)",
-      "sign_in": null,
-      "full": "2026-10-01: all 4 checked",
-      "held": 0,
-      "gone": 0,
-      "failing": 2,
-      "parked": 0,
+      "last_good_listing": "13:40 (46 listed)",
+      "next_sync": "14:40",
+      "sweep": "every recording checked within the last 21 hours (oldest 2026-10-22 17:10) · an edit in Plaud shows within about 25 hours",
+      "sign_in": "works (last used 14:20) · access token expires 2026-10-24 09:12 · refresh token expires 2027-01-21 09:12",
+      "full": "2026-10-01: all 38 checked (1 parked)",
+      "held": 1,
+      "gone": 1,
+      "failing": 1,
+      "parked": 2,
       "worker": "last reported 14:21 (idle)",
-      "healthchecks": "last pinged 14:20"
+      "healthchecks": "last pinged 13:40"
     },
     "details": {
       "normaliser": "1",
-      "fields": [],
-      "census": {"of_": 9},
+      "fields": ["share_state"],
+      "census": {"of_": 43},
       "form_change": null,
-      "changes_24h": {"speakers": 1},
+      "changes_24h": {"speakers": 3, "title": 1, "other": 12},
       "named_share": null,
       "runs": [
-        {"at": "2026-10-23 14:20", "result": "ok"},
-        {"at": "2026-10-23 14:00", "result": "ok"}
+        {"at": "2026-10-23 14:20", "result": "held: many gone from Plaud"},
+        {"at": "2026-10-23 14:00", "result": "paused: unexpected changes"},
+        {"at": "2026-10-23 13:40", "result": "ok"}
       ],
       "keep_out_words": ["noarchive"],
       "malformed": 0
     },
     "attention": []
   },
-  "arrivals": {"new": 0, "private": 0, "updated": 0, "kept_out_late": 0, "consent_late": 0}
+  "arrivals": {"new": 2, "private": 1, "updated": 2, "kept_out_late": 0, "consent_late": 0}
 }

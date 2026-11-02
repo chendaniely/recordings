@@ -241,4 +241,4 @@ def test_pyodide_never_imports_the_client_the_token_store_or_the_sync(build_page
         timeout=60,
     )
     found = json.loads(out.stdout.strip().splitlines()[-1])
-    assert found == {"vendored": [True, True], "rows": 3, "loaded": []}
+    assert found == {"vendored": [True, True], "rows": 5, "loaded": []}

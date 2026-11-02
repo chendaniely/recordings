@@ -1091,7 +1091,8 @@ def test_just_tagged_stays_through_a_refresh_that_keeps_the_selection(
     refresh = page.get_by_test_id("refresh")
     expect(refresh).to_contain_text("2 changed")
     page.keyboard.press("r")  # focus is back on the row T was pressed on
-    expect(refresh).to_have_text("Refresh")  # the new library has come: the marks are gone
+    # The new library has come: the marks are gone (the demo's canned arrivals cue stays).
+    expect(refresh).not_to_contain_text("changed")
     bar = page.get_by_test_id("selection-bar")
     expect(bar).to_contain_text("2 selected")
     expect(bar).to_contain_text("just tagged review")

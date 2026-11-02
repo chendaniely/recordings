@@ -2088,8 +2088,11 @@ def _removed_on(state: State, recording_id: str, tz: str) -> str | None:
 def demo_view(path: Path) -> dict:
     """The canned view, hand-written in demo/plaud-sync.json, as {"sync", "panel", "arrivals"}:
     the UI's contract for every section, Phase 2's and 3's included. Whatever it says, every
-    action is off and the demo's notes show (§15.5). It never raises: a missing or broken file
-    gives an empty canned view, so the demo still starts."""
+    action is off and the demo's notes show (§15.5): the view is unavailable, with the demo's
+    note as its reason, so the screens draw each button the file offers (a row's Release, Park
+    or Keep it here, a hold's or the breaker's Accept) disabled with that note, and the demo's
+    server refuses any request anyway (`test_demo_guard`). It never raises: a missing or broken
+    file gives an empty canned view, so the demo still starts."""
     try:
         raw = _dict(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
@@ -2105,15 +2108,11 @@ def demo_view(path: Path) -> dict:
             "buttons": dict.fromkeys(("sync", "compare", "full", "import"), DEMO_NOTE),
             **_handled(),
             "gate": None,
-            "flags": [{**_dict(f), "keep_here": False} for f in sync["flags"] or []],
-            "not_here": [{**_dict(row), "park": False} for row in sync["not_here"] or []],
-            "kept_out": [{**_dict(row), "release": False} for row in sync["kept_out"] or []],
-            "hold": {**sync["hold"], "accept": False, "refused": DEMO_NOTE}
-            if isinstance(sync["hold"], dict)
-            else None,
-            "breaker": {**sync["breaker"], "accept": False}
-            if isinstance(sync["breaker"], dict)
-            else None,
+            "flags": [_dict(f) for f in sync["flags"] or []],
+            "not_here": [_dict(row) for row in sync["not_here"] or []],
+            "kept_out": [_dict(row) for row in sync["kept_out"] or []],
+            "hold": _dict(sync["hold"]) or None,
+            "breaker": _dict(sync["breaker"]) or None,
         }
     )
     panel = _empty_panel()
@@ -2125,12 +2124,8 @@ def demo_view(path: Path) -> dict:
             "summary": _summary("demo", DEMO_STATUS),
             **_handled(),
             "failing_checks": [_dict(row) for row in panel["failing_checks"] or []],
-            "hold": {**panel["hold"], "accept": False, "refused": DEMO_NOTE}
-            if isinstance(panel["hold"], dict)
-            else None,
-            "breaker": {**panel["breaker"], "accept": False}
-            if isinstance(panel["breaker"], dict)
-            else None,
+            "hold": _dict(panel["hold"]) or None,
+            "breaker": _dict(panel["breaker"]) or None,
             "attention": [],  # the demo needs nothing of anyone
         }
     )

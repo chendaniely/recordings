@@ -333,7 +333,9 @@ export function RecordingList({ rows, sel, act, openId, onOpen, announce, fitted
   return (
     <section className="list">
       <div className="list-head">
-        <span>{rows.length.toLocaleString("en")} recording{rows.length === 1 ? "" : "s"} {"·"} newest first</span>
+        {/* On a phone "· newest first" is dropped (app.css), so the count and Refresh, with
+            Plaud's arrivals cue in it, stay one line. */}
+        <span>{rows.length.toLocaleString("en")} recording{rows.length === 1 ? "" : "s"}<span className="list-order"> {"·"} newest first</span></span>
         <RefreshButton testId="refresh" />
         <HeadNotes hint={KEY_HINT} announce={announce} />
       </div>

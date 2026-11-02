@@ -604,9 +604,20 @@ def test_the_demo_view_is_the_hand_written_fixture_with_the_demo_notes(tmp_path)
         None,
     )
     assert sync["listed"] is True and panel["listed"] is True  # the demo shows every part
-    assert sync["not_here"] == [{**row, "park": False} for row in raw["sync"]["not_here"]]
-    assert not [r for r in sync["kept_out"] if r["release"]]
-    assert not [f for f in sync["flags"] if f["keep_here"]]
+    # The rows' own buttons are drawn as the file offers them (area B3: the public demo shows
+    # Release, Park, Keep it here and both Accepts); every one is off, because the view is
+    # unavailable with the demo's note, which the UI gives each button as its reason.
+    for key in ("flags", "not_here", "kept_out", "hold", "breaker"):
+        assert sync[key] == raw["sync"][key], key
+    for key in ("hold", "breaker", "failing_checks"):
+        assert panel[key] == raw["panel"][key], key
+    offered = (
+        [r for r in sync["not_here"] if r["park"]],
+        [r for r in sync["kept_out"] if r["release"]],
+        [f for f in sync["flags"] if f["keep_here"]],
+        [v for v in (sync["hold"], sync["breaker"]) if v["accept"]],
+    )
+    assert all(offered)  # the canned view shows each of them
     assert panel["summary"]["sentence"] == DEMO_STATUS and panel["attention"] == []
     assert view["arrivals"] == raw["arrivals"]
     # Hand-written and synthetic: every Plaud ID is a small counter.

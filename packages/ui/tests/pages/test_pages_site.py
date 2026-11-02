@@ -323,7 +323,12 @@ def test_the_canned_sync_screen_on_pyodide_sends_no_request_and_logs_nothing(
     expect(app.get_by_test_id("sync-summary")).to_contain_text(
         "Demo: nothing is synced", timeout=RENDER_TIMEOUT
     )
-    expect(app.get_by_test_id("not-here-row")).to_have_count(3, timeout=RENDER_TIMEOUT)
+    expect(app.get_by_test_id("not-here-row")).to_have_count(5, timeout=RENDER_TIMEOUT)
+    # Stage 2b's states, invented (area B3): a hold, the breaker, a released row, Parked.
+    expect(app.get_by_test_id("sync-hold")).to_contain_text("Plaud now lists 6 fewer")
+    expect(app.get_by_test_id("sync-breaker")).to_contain_text("share_state")
+    expect(app.get_by_test_id("sync-kept-out")).to_contain_text("Released · comes in")
+    expect(app.get_by_test_id("parked-row")).to_have_count(2)
     app.locator("details.sync-more > summary").click()
     asks = app.locator("[data-request]")
     expect(asks.first).to_be_visible(timeout=RENDER_TIMEOUT)
@@ -337,6 +342,10 @@ def test_the_canned_sync_screen_on_pyodide_sends_no_request_and_logs_nothing(
     # A positive control: the spy does see an input when the page sends one (choosing a recording
     # sends selected_id), so "no request sent" isn't vacuous.
     nav.get_by_role("button", name="Library").click()
+    # The arrivals cue, from the canned view (2b spec §15.3).
+    expect(app.get_by_test_id("refresh")).to_contain_text(
+        "2 new · 1 private · 2 updated from Plaud", timeout=RENDER_TIMEOUT
+    )
     app.get_by_test_id("recording-row").first.click()
     frame.wait_for_function(
         "() => window.__sent.some((n) => n.startsWith('selected_id'))", timeout=RENDER_TIMEOUT
