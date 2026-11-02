@@ -2961,7 +2961,8 @@ and S8: field names only, with invented values.
   fake and a synthetic archive. Built (area A6) on `make demo-live`'s own script,
   `scripts/demo_live.py`, which the tests start and type commands into, as Dan does; in
   `packages/ui/tests/e2e_live/`, and CI's `e2e-live` job. The breaker's item is built (area B1:
-  the script's `breaker` command); Re-sync's waits for area B2's handler.
+  the script's `breaker` command), and Re-sync's (area B2: `speakers`, then the Library's
+  selection bar), with a recording that fails every check parked from Status (`fail`, `mend`).
   - Before the catch-up, only Compare is enabled.
   - Compare shows the equations; Import selected imports with progress and a toast.
   - Kept out and Flags show no title; Release opens its question with the title, and lets the
@@ -3168,7 +3169,7 @@ smoke.
 | C9.02 | Kept out and Flags rows | No title | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
 | C9.03 | **Release** | Its question, then Let it in | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
 | C9.04 | **Park** | It sends `park`, and **Unpark** undoes it | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
-| C9.05 | **Re-sync from Plaud** on a selection | One request for the selection, with its progress and end line (the worker's handling: Phase 3) | Phase 1, Task 23 | `packages/ui/frontend/src/components/SelectionBar.test.ts` | built |
+| C9.05 | **Re-sync from Plaud** on a selection | One request for the selection, with its progress and end line (the worker's handling: Phase 3) | Phase 1, Task 23; the worker's handling, area B2 | `packages/ui/frontend/src/components/SelectionBar.test.ts`; `packages/core/tests/test_plaud_resync.py`; `packages/ui/tests/e2e_live/test_live.py` (`test_resync_on_a_selection_updates_its_rows`) | built |
 | C9.06 | The arrivals cue | It counts what came in since the page loaded, shortened at 320 pixels | Phase 1, Task 23 | `packages/ui/frontend/src/components/HeadNotes.test.ts` | built |
 | C9.07 | Demo and Pages | The canned view, with no network and no request | Phase 1, Task 24 | `packages/ui/tests/test_demo_guard.py`, `packages/ui/tests/pages/test_pages_site.py` | built |
 | C10.01 | `make deploy` | It waits for the worker's health check | Phase 1, Task 17 | `packages/core/tests/test_deploy_template.py` | built |

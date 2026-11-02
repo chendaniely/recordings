@@ -34,6 +34,9 @@ Type a command and Enter in the terminal, then look at the app:
 | `signout`, `signin` | Plaud refuses the sign-in; a new one | `tick`, then Status |
 | `tick` | The scheduled sync runs now, as if 20 minutes had passed | the Library's header counts what came in |
 | `breaker` | Plaud starts sending a new field on every recording here (it needs 10: `new` and **Sync now** first if it says so) | `tick`, then Status: edit-sync paused, with the field's name and **Accept these changes** |
+| `speakers` | Two recordings here get a speaker named in Plaud | In the Library select both, then **Re-sync from Plaud**: "2 checked: 2 updated (speakers 2)"; or one, from its Details |
+| `fail`, `mend` | A recording here fails every check; `mend` makes it work again | Status: "1 recording fails every check" with **Re-sync** and **Park**; parked, it is under **Parked** on the Sync screen, with **Unpark** |
+| (none) | **Sync everything**, under the Sync screen's **More** | Every recording checked; its line on Status, and the manifest in the scratch folder's `state/manifests` |
 | `catch-up` | With `ARGS=--before-catch-up`: the first catch-up | before it, only **Compare** works |
 | `dump` | Writes the screens' data as JSON (start with `ARGS=--keep` to keep it) | |
 

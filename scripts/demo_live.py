@@ -55,7 +55,7 @@ REPO = Path(__file__).resolve().parents[1]
 TESTS = REPO / "packages" / "core" / "tests"
 sys.path.insert(0, str(TESTS))  # fake_plaud.py: importable from outside tests, no pytest in it
 
-from fake_plaud import FakePlaud, FakeRecording  # noqa: E402
+from fake_plaud import FakePlaud, FakeRecording, html_page  # noqa: E402
 from recordings.config import load_config  # noqa: E402
 from recordings.init import init_archive  # noqa: E402
 from recordings.plaud.breaker import TRIP_AT  # noqa: E402
@@ -97,8 +97,14 @@ What to try (spec §15.1, J6):
   - Type `signout`, then `tick`: Status says the sign-in is needed. `signin` mends it.
   - Type `breaker`, then `tick`: Plaud sends a new field on every recording, edit-sync's breaker
     trips, and Status names the field with Accept these changes; pressed, it closes.
-Commands: new, hold, back, rename, late, signout, signin, tick, breaker, catch-up, dump, help,
-quit (or Ctrl-C). `dump` writes the screens' data as JSON (start with --keep to keep it)."""
+  - Type `speakers`: two recordings here get a speaker named in Plaud. In the Library select both,
+    then Re-sync from Plaud: "2 checked: 2 updated (speakers 2)" (or one, in its Details).
+  - Type `fail`: a recording here fails every check, and Status says so with Re-sync and Park.
+    Park it (the Sync screen lists it under Parked, with Unpark); `mend` makes it work again.
+  - Sync everything, under the Sync screen's More: every recording checked, and the manifest.
+Commands: new, hold, back, rename, late, signout, signin, tick, breaker, speakers, fail, mend,
+catch-up, dump, help, quit (or Ctrl-C). `dump` writes the screens' data as JSON (start with
+--keep to keep it)."""
 
 
 def say(text: str) -> None:
@@ -247,6 +253,7 @@ class Demo:
         self.stopping = threading.Event()
         self._stopped = False
         self.made = 0  # `new`'s count, for its titles
+        self.failing: list = []  # `fail`'s injected faults, which `mend` lifts
         self.started_at = datetime.now(UTC)  # the arrivals cue counts from here
         root = self.scratch
         self.archive, self.state = root / "archive", root / "state"
@@ -499,6 +506,24 @@ class Demo:
             self.made += 1
             self.account.send_field("synthetic_feature", f"on-{self.made}")
             say("ok: Plaud sends a new field on every recording: `tick`, then see Status")
+        elif word == "speakers":
+            named = self.listed_before()[:2]
+            self.made += 1
+            for rec in named:
+                self.account.rename_speaker(rec.plaud_id, f"Synthetic Speaker {self.made}")
+            say(
+                f"ok: {len(named)} recordings here have a speaker named in Plaud: select them in "
+                "the Library and press Re-sync from Plaud"
+            )
+        elif word == "fail":
+            say(self.fail())
+        elif word == "mend":
+            mended = self.mend()
+            say(
+                f"ok: {mended} recording works again: Re-sync it, or Unpark it"
+                if mended
+                else "ok: nothing is failing"
+            )
         elif word == "catch-up":
             self.catch_up()
             say("ok: the first catch-up is done: the scheduled sync starts by itself")
@@ -540,6 +565,46 @@ class Demo:
             }
         )
         return len(rows)
+
+    def fail(self) -> str:
+        """One recording here fails every check from now (its envelope answers an HTML page), and
+        is on the failing list at once, as after three failed checks (§14.6): Status's "fails every
+        check · Re-sync · Park" line. `mend` lifts the fault."""
+        from recordings.plaud.checks import FAILING_AFTER
+        from recordings.plaud.client import FILE_PATH
+
+        listed = self.listed_before()
+        db = PlaudDB(State.open(self.state))
+        here = {r.recording_id for r in db.check_rows() if r.gone_since is None}
+        target = next((r for r in listed[2:] if self._recording_of(r.plaud_id) in here), None)
+        if target is None:
+            return "ok: nothing here to fail"
+        rid = self._recording_of(target.plaud_id)
+        self.failing.append(
+            self.plaud.fault(FILE_PATH.format(target.listed_id(self.account.form)), html_page())
+        )
+        now = datetime.now(UTC)
+        db.set_check(rid, failures=FAILING_AFTER, failing_since=now, parked_at=None)
+        return f"ok: recording {rid} fails every check: see Status (Re-sync, Park)"
+
+    def mend(self) -> int:
+        with self.plaud._lock:
+            for fault in self.failing:
+                if fault in self.plaud.faults:
+                    self.plaud.faults.remove(fault)
+        mended, self.failing = len(self.failing), []
+        return mended
+
+    def _recording_of(self, plaud_id: str) -> str | None:
+        from recordings.archive import Archive
+        from recordings.refs import canonical_plaud_id
+
+        for rec in Archive(self.archive).iter_recordings():
+            if any(
+                s.kind == "plaud" and canonical_plaud_id(s.ref) == plaud_id for s in rec.sources
+            ):
+                return rec.id
+        return None
 
     def make_due(self) -> None:
         """As if the schedule's interval had passed: the last turn's times moved back by it."""

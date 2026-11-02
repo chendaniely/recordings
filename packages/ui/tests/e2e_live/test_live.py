@@ -3,10 +3,10 @@
 its first catch-up. In order, sharing one demo (its start paces one call a second): Compare lists
 what waits; Kept out and the flags show no title; Import selected imports with its toast; the
 arrivals cue after a scheduled tick; Release's question, Let it in and Undo; a breaker trip that
-offers Accept these changes, which clears it (area B1); a hold that turns Sync now and the imports
+offers Accept these changes, which clears it (area B1); Re-sync on a selection and a recording
+that fails every check parked from Status (area B2); a hold that turns Sync now and the imports
 off, cleared by Accept this listing; a refused sign-in on Status; the worker killed; then Ctrl-C
-stops everything, with no stray process. Re-sync on a selection comes with area B2's handler. Run
-with `make e2e-live`."""
+stops everything, with no stray process. Run with `make e2e-live`."""
 
 from __future__ import annotations
 
@@ -131,6 +131,60 @@ def test_a_breaker_trip_offers_accept_these_changes_which_clears_it(page: Page, 
     expect(page.get_by_test_id("status-attention")).to_contain_text("Edit-sync is paused")
     breaker.get_by_role("button", name="Accept these changes").click()
     expect(page.get_by_test_id("sync-breaker")).to_have_count(0, timeout=RUN)
+
+
+def test_resync_on_a_selection_updates_its_rows(page: Page, demo, console):
+    # §14.6, decision 6, C9.05: two recordings get a speaker named in Plaud; selected in the
+    # Library, one press of Re-sync from Plaud checks both now, with progress and its end line.
+    assert demo.send("speakers").startswith("ok: 2 recordings here have a speaker named")
+    page.goto(f"{demo.url}#/library")
+    rows = page.get_by_test_id("recording-row")
+    rows.filter(has_text="Synthetic weekly standup").click()
+    rows.filter(has_text="Synthetic lecture, week 3").click(modifiers=["ControlOrMeta"])
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    resync = bar.locator("[data-request=resync]")
+    expect(resync).to_be_enabled()
+    resync.click()
+    expect(bar.get_by_test_id("resync-reply")).to_contain_text(
+        "2 checked: 2 updated (speakers 2", timeout=RUN
+    )
+    # Details shows the check, and a Re-sync of one now finds nothing new.
+    rows.filter(has_text="Synthetic weekly standup").click()
+    page.get_by_test_id("tab-details").click()
+    details = page.get_by_test_id("plaud-details")
+    expect(details).to_be_visible()
+    details.locator("[data-request=resync]").click()
+    expect(details.get_by_test_id("resync-reply")).to_contain_text("Up to date", timeout=RUN)
+    # At 320 px Details' Re-sync is a 44 px target, and nothing scrolls the page sideways (J7).
+    page.set_viewport_size({"width": 320, "height": 700})
+    button = details.locator("[data-request=resync]")
+    button.scroll_into_view_if_needed()
+    box = button.bounding_box()
+    assert box["height"] >= 44 and box["x"] + box["width"] <= 320 + 0.5, box
+    assert page.evaluate("() => document.documentElement.scrollWidth") <= 320
+    page.set_viewport_size({"width": 1280, "height": 720})
+
+
+def test_a_recording_that_fails_every_check_can_be_parked(page: Page, demo, console):
+    # §14.6 and §15.2 (Dan, Phase 1's Q&A §6): Status's line with Re-sync and Park; Park moves it
+    # to the Sync screen's Parked, with Unpark.
+    said = demo.send("fail")
+    assert said.startswith("ok: recording "), said
+    rid = said.split()[2]
+    page.goto(f"{demo.url}#/status")
+    line = page.get_by_test_id("sync-failing-checks")
+    expect(line).to_contain_text("1 recording fails every check", timeout=RUN)
+    line.get_by_role("button", name="Re-sync").click()
+    expect(page.get_by_text("Failed: ", exact=False).first).to_be_visible(timeout=RUN)
+    line.get_by_role("button", name="Park").click()
+    expect(page.get_by_test_id("sync-failing-checks")).to_have_count(0, timeout=RUN)
+    open_sync(page, demo)
+    parked = page.get_by_test_id("parked-row").filter(has_text=rid)
+    expect(parked).to_have_count(1)
+    demo.send("mend")
+    parked.get_by_role("button", name="Unpark").click()
+    expect(page.get_by_test_id("parked-row").filter(has_text=rid)).to_have_count(0, timeout=RUN)
 
 
 def test_a_hold_turns_sync_now_and_the_imports_off_and_accept_clears_it(page: Page, demo, console):
