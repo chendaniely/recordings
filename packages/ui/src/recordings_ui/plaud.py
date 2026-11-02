@@ -276,6 +276,7 @@ PHASES = {
     "request": "answering a request",
     "consent": "reading the consent list",
     "checking": "checking",  # the patterns pass at start, with its count (Task 13)
+    "rechecking": "checking titles again",  # its retry after the start, counted if it is whole
     "stopping": "stopping",
 }
 KIND_LABELS = {
@@ -913,7 +914,8 @@ def _worker(r: _Read) -> tuple[str | None, str | None, str | None]:
     """The worker's last report for the numbers, in plain words; its "silent", "stuck" or
     "couldn't start" reason; and its Needs attention line (§9.2). A start that failed writes the
     phase `failed` and its error's class (Task 13), shown as a class, never as text. The patterns
-    pass at start runs as `checking`, its heartbeat carrying `done` and `total` (Task 13)."""
+    pass at start runs as `checking`, its heartbeat carrying `done` and `total` (Task 13), and its
+    retry after the start as `rechecking`, with them when it re-reads the whole archive."""
     from recordings.worker import HEARTBEAT_KEY, beat_alive, parse_heartbeat
 
     raw = r.state.meta(HEARTBEAT_KEY)  # read once: the same value judged alive and reported
@@ -929,8 +931,8 @@ def _worker(r: _Read) -> tuple[str | None, str | None, str | None]:
         return report, "the Plaud worker couldn't start", WORKER_FAILED.format(error)
     words = PHASES.get(phase, "working") if isinstance(phase, str) else "working"
     done, total = _int(data.get("done")), _int(data.get("total"))
-    if phase == "checking" and total > 0:
-        words = f"checking, {done:,} of {total:,}"  # §15.2's "(checking, 412 of 1,234)"
+    if phase in ("checking", "rechecking") and total > 0:
+        words = f"{words}, {done:,} of {total:,}"  # §15.2's "(checking, 412 of 1,234)"
     report = f"last reported {r.when(at)} ({words})" if at else None
     ok, why = beat_alive(beat, now=r.now)
     if ok or why is None:

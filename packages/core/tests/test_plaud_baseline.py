@@ -16,6 +16,7 @@ from recordings.plaud.baseline import (
     KEEP_CONFIGURED,
     NOT_ENFORCED,
     KeepOutWordsError,
+    WholePassDue,
     baseline_privacy,
     drop_word,
     enforce_word,
@@ -250,20 +251,26 @@ def test_a_pattern_pass_that_could_not_write_one_is_reported_and_runs_again(
 def test_a_retry_checks_only_what_the_pass_left_and_adds_up_its_counts(
     writer, make_incoming, plaud_env, monkeypatch
 ):
-    # why: the council's G1. The worker retries the pass at each tick, so the retry must cost
-    # only what the last attempt left: the others were checked then. One still refused changes
-    # nothing and writes nothing; one removed since is dropped; a folder whose name isn't an ID
-    # waits for a whole pass.
+    # why: the council's G1. The worker retries the pass at each tick, so a retry costs only what
+    # the last attempt left, read from its record: the others were checked then. One still
+    # refused changes nothing and writes nothing; one removed since is dropped; a folder whose
+    # name isn't an ID waits for a whole pass.
     therapy, other = first_pass_done(writer, make_incoming, plaud_env)
     removed = imported_by_2a(writer, make_incoming, plaud_env, 14, "Week 8")
+    junk = writer.root / "recordings" / "2026" / "10" / "not-an-id"
+    junk.mkdir(parents=True)
+    (junk / "recording.json").write_text("{not json", "utf-8")
     db, wider = PlaudDB(writer.state), wider_writer(writer)
     with monkeypatch.context() as patch:
         refuse_markers(patch, other, sqlite3.OperationalError("disk full"))
         first = patterns_pass(wider, db, now=NOW)
-        assert first.unwritten == {other: "OperationalError"}
+        assert first.unwritten == {"unnamed-folder": "InvalidFile", other: "OperationalError"}
         later = datetime(2026, 10, 23, 14, 22, tzinfo=UTC)
-        again = patterns_pass(wider, db, now=later, only=[other])
+        again = patterns_pass(wider, db, now=later, retry=True)
         assert again == first and db.get(K_PATTERNS_PASS)["at"] == NOW.isoformat()
+    with monkeypatch.context() as patch:
+        refuse_markers(patch, other, LockTimeout("busy"))
+        assert patterns_pass(wider, db, now=NOW, retry=True).busy == (other,)
     reconciled = []
     real = Writer.reconcile_plaud
 
@@ -273,27 +280,40 @@ def test_a_retry_checks_only_what_the_pass_left_and_adds_up_its_counts(
 
     monkeypatch.setattr(Writer, "reconcile_plaud", counting)
     shutil.rmtree(writer.archive.path_for(removed))
-    done = patterns_pass(wider, db, now=NOW, only=[other, removed, "unnamed-folder"])
-    assert reconciled == [other, removed]
-    assert done.unwritten == {"unnamed-folder": "InvalidFile"}
+    record = db.get(K_PATTERNS_PASS)
+    db.put(K_PATTERNS_PASS, {**record, "busy": [other, removed]}, now=NOW)
+    done = patterns_pass(wider, db, now=NOW, retry=True)
+    assert reconciled == [other, removed]  # the busy ones; the folder only a whole pass reads
+    assert done.unwritten == {"unnamed-folder": "InvalidFile"} and done.busy == ()
     assert (done.checked, done.tagged) == (first.checked + 1, 1)  # therapy's, from the first
-    done = patterns_pass(wider, db, now=NOW, only=[other])
-    assert done.complete and db.get(K_PATTERNS_PASS)["version"] == 2
-    assert is_private(wider.archive.load(therapy))
+    shutil.rmtree(junk)
+    assert not patterns_pass(wider, db, now=NOW, retry=True).complete  # still listed
+    assert patterns_pass(wider, db, now=NOW).complete  # a whole pass reads the archive again
+    assert db.get(K_PATTERNS_PASS)["version"] == 2 and is_private(wider.archive.load(therapy))
 
 
-def test_a_pass_that_raised_is_recorded_and_its_retry_reads_the_whole_archive(
-    writer, make_incoming, plaud_env
+def test_a_retry_with_no_attempt_of_its_version_ended_checks_nothing(
+    writer, make_incoming, plaud_env, monkeypatch
 ):
-    # why: the council's S2. A pass that raised as a whole left no list of what it checked.
-    therapy, _ = first_pass_done(writer, make_incoming, plaud_env)
+    # why: the council's S2 and step 4's reviews. A pass that raised as a whole before any
+    # attempt of its version ended left no list of what it checked: a retry checks nothing and
+    # says a whole sweep is due, which the worker runs at most once per turn. One that raised
+    # after an attempt of its version ended keeps that attempt's list, so a retry still works.
+    therapy, other = first_pass_done(writer, make_incoming, plaud_env)
     db, wider = PlaudDB(writer.state), wider_writer(writer)
     record_pass_error(db, "OperationalError", now=NOW)
     record_pass_error(db, "OperationalError", now=datetime(2026, 10, 23, 14, 22, tzinfo=UTC))
     assert db.get(K_PATTERNS_PASS) == {"at": NOW.isoformat(), "error": "OperationalError"}
-    done = patterns_pass(wider, db, now=NOW, only=[])
-    assert done.complete and done.tagged == 1 and is_private(wider.archive.load(therapy))
-    assert "error" not in db.get(K_PATTERNS_PASS)
+    with pytest.raises(WholePassDue):
+        patterns_pass(wider, db, now=NOW, retry=True)
+    assert not is_private(wider.archive.load(therapy))  # nothing was checked
+    with monkeypatch.context() as patch:
+        refuse_markers(patch, other, sqlite3.OperationalError("disk full"))
+        patterns_pass(wider, db, now=NOW)
+    assert "error" not in db.get(K_PATTERNS_PASS) and is_private(wider.archive.load(therapy))
+    record_pass_error(db, "OperationalError", now=NOW)
+    done = patterns_pass(wider, db, now=NOW, retry=True)
+    assert done.complete and "error" not in db.get(K_PATTERNS_PASS)
 
 
 def test_a_pattern_pass_lists_a_busy_recording_and_an_invalid_one(

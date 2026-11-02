@@ -24,6 +24,7 @@ from recordings.config import load_config
 from recordings.init import init_archive
 from recordings.locks import PLAUD_LOCK, Locks, LockTimeout
 from recordings.models import is_private
+from recordings.plaud import baseline as baseline_module
 from recordings.plaud import keepout
 from recordings.plaud.checks import (
     BLOCKER_PREFIX,
@@ -949,7 +950,7 @@ def test_a_patterns_pass_that_raises_as_a_whole_is_recorded_holds_the_ping_and_i
     # why: the council's S2. A pass that raised as a whole was only logged: no record, no
     # blocker, and nothing ran it again until a restart, so a new private pattern silently never
     # ran. Its attempt is recorded, the private-unwritten blocker opens with its class, and the
-    # next tick tries again.
+    # pass is tried again: with no attempt of its version ended, a whole sweep, once per turn.
     add_recording(setup, PLAUD_A)
     make_worker(Clock()).start()
     add_pattern(setup)
@@ -975,6 +976,9 @@ def test_a_patterns_pass_that_raises_as_a_whole_is_recorded_holds_the_ping_and_i
     assert "Week 1" not in caplog.text
     monkeypatch.setattr(worker_module, "patterns_pass", real)
     clock.advance(seconds=2)
+    w.tick()  # nothing of this version ended: the whole sweep waits for its turn
+    assert blocker(w, "private-unwritten")["detail"] == {"patterns_error": "OperationalError"}
+    clock.advance(minutes=20)
     w.tick()
     assert blocker(w, "private-unwritten") is None
     record = w.db.get(K_PATTERNS_PASS)
@@ -1022,6 +1026,129 @@ def test_a_busy_recording_is_retried_at_the_next_tick_and_never_flagged(
     clock.advance(seconds=2)
     w.tick()
     assert reconciled == [busy]  # complete: nothing is checked again
+
+
+def flagged_by_the_patterns_pass(setup, make_worker, clock, *, turn=None) -> tuple[Worker, str]:
+    """A recording whose title matches a new pattern, but whose file was edited outside the app:
+    the pass at start can't check it, and the first tick flags it."""
+    rid = add_recording(setup, PLAUD_A, plaud_title="10-06 Synthetic therapy check-in")
+    make_worker(Clock()).start()  # the first pattern version needs no pass
+    edited_by_hand(setup, rid)
+    add_pattern(setup, "therapy")
+    w = make_worker(clock, turn=turn or TurnSpy())
+    catch_up_done(w)
+    w.start()
+    w.tick()
+    assert [e.recording_id for e in w.db.open_flags((PRIVATE_UNWRITTEN,))] == [rid]
+    return w, rid
+
+
+def test_a_flagged_recording_busy_at_a_retry_keeps_its_flag_and_the_ping_held(
+    setup, make_worker, ntfy, monkeypatch
+):
+    # why: step 4's spec review, I1 (§13.1 case 5, §16: "until the recording is checked, or is
+    # private, or is gone"). Another holder keeping the lock past the wait at a retry moves the
+    # recording from unwritten to busy. Busy alone never opens a flag, but it checks nothing
+    # either: the flag and the blocker stay, and the due turn doesn't ping.
+    clock, spy = Clock(T0 + timedelta(minutes=1)), TurnSpy()
+    w, rid = flagged_by_the_patterns_pass(setup, make_worker, clock, turn=spy)
+    real = Writer.reconcile_plaud
+
+    def held(writer, recording_id):
+        if recording_id == rid:
+            raise LockTimeout("synthetic: held past the wait")
+        return real(writer, recording_id)
+
+    monkeypatch.setattr(Writer, "reconcile_plaud", held)
+    clock.advance(minutes=20)
+    w.tick()
+    record = w.db.get(K_PATTERNS_PASS)
+    assert (record["unwritten"], record["busy"]) == ([], [rid])
+    assert [e.recording_id for e in w.db.open_flags((PRIVATE_UNWRITTEN,))] == [rid]
+    assert "private-unwritten" in sync_health(w.state, schedule_minutes=20).blockers
+    assert spy.calls == [False, False] and ntfy.requests == []
+
+
+def test_a_restart_whose_patterns_pass_raises_keeps_the_open_flags(setup, make_worker, monkeypatch):
+    # why: step 4's reviews (Minor). After a restart whose pass at start raised, nothing in
+    # memory says which recordings are unchecked: the open flags stay while the pass is failing,
+    # and the next retry re-checks what the last attempt that ended left, from its record.
+    _, rid = flagged_by_the_patterns_pass(setup, make_worker, Clock(T0 + timedelta(minutes=1)))
+    real = worker_module.patterns_pass
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("synthetic: database is locked")
+
+    monkeypatch.setattr(worker_module, "patterns_pass", locked)
+    clock = Clock(T0 + timedelta(minutes=2))
+    again = make_worker(clock, turn=TurnSpy())
+    again.start()
+    again.tick()
+    flags = again.db.open_flags((PRIVATE_UNWRITTEN,))
+    assert [(e.recording_id, e.detail["owed"]) for e in flags] == [(rid, "patterns")]
+    assert blocker(again, "private-unwritten")["detail"] == {"patterns_error": "OperationalError"}
+    monkeypatch.setattr(worker_module, "patterns_pass", real)
+    reconciled = []
+    real_reconcile = Writer.reconcile_plaud
+
+    def counting(writer, recording_id):
+        reconciled.append(recording_id)
+        return real_reconcile(writer, recording_id)
+
+    monkeypatch.setattr(Writer, "reconcile_plaud", counting)
+    clock.advance(seconds=2)
+    again.tick()
+    assert reconciled == [rid]  # the record's leftovers, not the whole archive
+    flags = again.db.open_flags((PRIVATE_UNWRITTEN,))
+    assert [e.recording_id for e in flags] == [rid]  # still unchecked
+    assert blocker(again, "private-unwritten")["detail"] == {}
+    assert "error" not in again.db.get(K_PATTERNS_PASS)
+
+
+def test_after_a_pass_raises_the_whole_archive_is_retried_once_per_turn(
+    setup, make_worker, monkeypatch, caplog
+):
+    # why: step 4's reviews (I1). With no attempt of this pattern version ended, only a whole
+    # sweep can check the archive; at every tick it would cost ~21 ms a recording, ahead of late
+    # consent and requests. It runs at most once per scheduled turn (20 minutes here), quietly,
+    # as `checking titles again`, which `alive` reads by its ordinary rules.
+    add_recording(setup, PLAUD_A, plaud_title="10-06 Week 1")
+    make_worker(Clock()).start()
+    add_pattern(setup)
+    clock = Clock(T0 + timedelta(minutes=1))
+    w = make_worker(clock)
+    sweeps = []
+    real = baseline_module._plaud_recordings
+
+    def unreadable(writer):
+        sweeps.append(w.progress.read()[0])
+        heartbeat_once(w.state, w.progress, now=clock())
+        assert alive(w.state, now=clock()) == (True, None)
+        raise OSError(5, "synthetic: I/O error under Week 1")
+
+    monkeypatch.setattr(baseline_module, "_plaud_recordings", unreadable)
+    caplog.set_level(logging.INFO, logger="recordings.worker")
+    w.start()
+    assert sweeps == ["starting"]
+    for _ in range(3):
+        clock.advance(seconds=2)
+        w.tick()
+    clock.advance(minutes=19, seconds=50)  # 19:56 after the start's attempt
+    w.tick()
+    assert sweeps == ["starting"]  # one whole attempt per turn, not one per tick
+    assert blocker(w, "private-unwritten")["detail"] == {"patterns_error": "OSError"}
+    clock.advance(seconds=4)
+    w.tick()
+    assert sweeps == ["starting", "rechecking"]
+    assert w.progress.read()[0] == "idle"  # once the retry ends
+    monkeypatch.setattr(baseline_module, "_plaud_recordings", real)
+    clock.advance(minutes=20)
+    w.tick()
+    assert blocker(w, "private-unwritten") is None
+    assert w.db.get(K_PATTERNS_PASS)["version"] == 2
+    said = [r.getMessage() for r in caplog.records if "patterns" in r.getMessage()]
+    assert said.count("patterns failed (OSError)") == 1 and "patterns works again" in said
+    assert "Week 1" not in caplog.text
 
 
 def test_recordings_worker_alive_exits_0_or_1(setup, make_worker, monkeypatch, capsys):

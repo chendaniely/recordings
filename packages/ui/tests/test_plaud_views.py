@@ -382,6 +382,17 @@ def test_the_patterns_pass_at_start_shows_how_far_it_has_checked(plaud_scene):
     assert worker == "last reported 14:19 (checking, 412 of 1,234)"
     s.writer.state.set_meta(HEARTBEAT_KEY, json.dumps({**checking, "total": None}))
     assert sync_panel(s.settings, now=T0)["numbers"]["worker"] == "last reported 14:19 (checking)"
+    # A retry after the start (step 4's reviews) says so, never `idle`: counted when it re-reads
+    # the whole archive, and alive by the ordinary rules, so never STUCK for the start's time.
+    rechecking = {**checking, "phase": "rechecking", "done": 12, "total": 40}
+    s.writer.state.set_meta(HEARTBEAT_KEY, json.dumps(rechecking))
+    panel = sync_panel(s.settings, now=T0)
+    assert panel["numbers"]["worker"] == "last reported 14:19 (checking titles again, 12 of 40)"
+    assert not [a for a in panel["attention"] if "worker" in a]
+    s.writer.state.set_meta(HEARTBEAT_KEY, json.dumps({**rechecking, "total": None}))
+    assert sync_panel(s.settings, now=T0)["numbers"]["worker"] == (
+        "last reported 14:19 (checking titles again)"
+    )
 
 
 def test_a_late_consent_pass_that_failed_names_its_class_and_a_remedy_that_helps(plaud_scene):

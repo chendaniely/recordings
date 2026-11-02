@@ -657,7 +657,8 @@ Every contradiction the council found is settled in the text, and listed with it
     start that hasn't finished, so a crash loop never gets a fresh 30 minutes; Phase 1 plan,
     decision 48). A start that failed says `failed`, which is never alive. An idle worker (no token,
     the gate closed, the schedule off) is alive, because its loop ticks. A wedged main thread is
-    not, because a tick that never returns bumps nothing.
+    not, because a tick that never returns bumps nothing. The pattern pass retried after the start
+    (§13.1 case 5) is `rechecking`, which is no part of a start, so the ordinary 15 minutes apply.
   - `recordings worker --alive` (the compose health check) and Status read both.
   - A synchronous step (an index rebuild in `Writer.open`, a download, a `Retry-After` wait) no
     longer silences it. This replaces the draft's claim that "the heartbeat keeps the health check
@@ -1614,11 +1615,15 @@ these cases, and never removes it:
    - **A recording the pass can't check** (a file edited outside the app, a full disk) may owe
      `private`, and under P8 that counts as owed: it opens a `private-unwritten` flag by ID, which
      holds the ping (§16) until the recording is checked, or is private, or is gone. One that is
-     only busy (§9.2) is retried, never flagged.
-   - **The worker retries the pass at every tick** for what the last attempt left, so a `recordings
-     reindex` that mends the file clears the flag at the next tick, never only at a restart. A pass
-     that raises as a whole records its error in `plaud_state`, opens the same blocker with the
-     error's class, and is tried again, over the whole archive, at the next tick.
+     only busy (§9.2) is retried, never flagged; a flagged one that is busy at a retry keeps its
+     flag, because busy checks nothing.
+   - **The worker retries the pass at every tick** for what the last attempt that ended left, so a
+     `recordings reindex` that mends the file clears the flag at the next tick, never only at a
+     restart. A pass that raises as a whole records its error in `plaud_state` and opens the same
+     blocker with the error's class; its open flags stay meanwhile. With an attempt of its pattern
+     version ended, the retry still re-checks what that attempt left. With none, only a whole sweep
+     can check the archive, so it runs at most once per turn (`schedule_minutes`, or 20 minutes
+     with the schedule off): a sweep costs about 21 ms a recording and holds the tick.
 
 A **late consent listing** adds `private` too (§12.1).
 
@@ -1978,7 +1983,8 @@ component, and link to each other.
   - the sign-in, and the refresh token's own expiry if it has one
   - the last Sync everything: "2026-10-01: all 1,234 checked (2 parked, 1 degraded)", or its failure
   - held for review; gone from Plaud; failing; parked
-  - "The Plaud worker last reported 14:21 (checking, 412 of 1,234)"
+  - "The Plaud worker last reported 14:21 (checking, 412 of 1,234)", or "(checking titles again,
+    412 of 1,234)" for the pattern pass's retry over the whole archive (§13.1 case 5)
   - "Healthchecks: last pinged 14:40", or "last ping failed 14:40 (HTTP 404)"
 - **Details, folded away:** the normaliser's version; the field names added or gone since the last
   good run; the census of ID forms, and a change of form that held nothing ("Plaud's IDs changed
@@ -3151,3 +3157,7 @@ None: every bullet of §20 is planned in a phase.
   end: the council's G1 and S2, and Task 13's question). No decision or scenario changed.
 - 2026-10-31: §17.2's extra_paths rule adds Docker's secrets folder, and the backup refuses what
   doctor reports, by one check (Phase 1's phase end: the council's S4).
+- 2026-11-01: §13.1 case 5, §9.2 and §15.2: a flagged recording busy at a retry keeps its flag;
+  the flags stay while the pattern pass is failing; a whole-archive retry runs at most once per
+  turn, as `rechecking` ("checking titles again"), which `alive` reads by its ordinary rules
+  (step 4's reviews of the phase end). No decision or scenario changed.

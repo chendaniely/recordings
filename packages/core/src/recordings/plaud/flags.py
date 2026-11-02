@@ -22,8 +22,9 @@
   also until a list that reads cleanly names none of its Plaud IDs. A stop can't say a line went.
 - **A recording the new-pattern pass couldn't check** (stage 2b spec §13.1 case 5) may owe
   `private` (P8), so the worker opens this flag for it too, with detail `"owed": "patterns"`, and
-  words it `PRIVATE_UNCHECKED`. It stays open while the pass still lists the recording unchecked
-  and `private_owed` holds; a recording only busy is retried, never flagged.
+  words it `PRIVATE_UNCHECKED`. It stays open while `private_owed` holds and the pass still lists
+  the recording, unwritten or busy (busy checks nothing), or is failing as a whole; busy alone
+  never opens one.
 - **An unwritten `private` says what stopped it.** `LateReport.causes` holds each one's exception
   class, which the worker keeps in its `private-unwritten` flag's detail as `"cause"`, and
   `flag_sentence` words the flag by it: an outside edit or an invalid file keeps §13.2's sentence

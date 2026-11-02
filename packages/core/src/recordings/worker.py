@@ -42,6 +42,7 @@ from recordings.locks import LockTimeout
 from recordings.plaud import keepout, requests
 from recordings.plaud.baseline import (
     PatternsPass,
+    WholePassDue,
     enforce_word,
     patterns_pass,
     record_pass_error,
@@ -77,7 +78,12 @@ from recordings.plaud.health import (
 from recordings.plaud.keepout import ConsentList, FileSignature
 from recordings.plaud.requests import Claimed
 from recordings.plaud.runlock import plaud_holder, plaud_run
-from recordings.plaud.settings import BAD_WORD, PlaudSettings, plaud_settings
+from recordings.plaud.settings import (
+    BAD_WORD,
+    DEFAULT_SCHEDULE_MINUTES,
+    PlaudSettings,
+    plaud_settings,
+)
 from recordings.plaud.when import parse_stamp
 from recordings.state import State, StateError
 from recordings.writer import NotTheWriter, Writer
@@ -136,7 +142,19 @@ HEARTBEAT = 30.0  # seconds between the heartbeat thread's writes
 ALIVE_HEARTBEAT = timedelta(seconds=90)
 ALIVE_PROGRESS = timedelta(minutes=15)
 ALIVE_PROGRESS_STARTING = timedelta(minutes=30)
-Phase = Literal["starting", "idle", "checking", "turn", "request", "consent", "stopping", "failed"]
+Phase = Literal[
+    "starting",
+    "idle",
+    "checking",
+    "rechecking",
+    "turn",
+    "request",
+    "consent",
+    "stopping",
+    "failed",
+]
+# The patterns pass retried after the start (`rechecking`) is no part of a start: `alive` reads it
+# by the ordinary rules, so a retry never inherits the start's `starting_since` (decision 48).
 # A start that hasn't finished: starting, its patterns pass (`checking`), or a start that failed.
 # Its heartbeat carries `starting_since`, which a restart keeps, so a crash loop at any point of
 # the start is STUCK 30 minutes after its first start (decision 48).
@@ -156,6 +174,13 @@ TURN_LOCK_WAIT = 1.0
 # listing, and is shown as a pass that failed.
 INDEX_PATIENCE = timedelta(seconds=60)
 INDEX_UNAVAILABLE = "IndexUnavailable"  # the private-unwritten blocker's `error` then
+# A whole-archive retry of the patterns pass (an attempt raised, and none of its pattern version
+# has ended) runs at most once per scheduled turn, as the phase-end council worded it ("at each
+# turn"): a sweep costs about 21 ms a recording (3.5 minutes at 10,000, the council measured) and
+# holds the tick, so late consent listings and requests wait for it. With the schedule off, the
+# default interval. Either way it is well inside the sync check's 2-hour grace, and the flags and
+# the blocker hold meanwhile, so nothing possibly owed is let go.
+WHOLE_RETRY_MINUTES_OFF = DEFAULT_SCHEDULE_MINUTES
 
 
 def _utc_now() -> datetime:
@@ -198,11 +223,14 @@ class Progress:
         with self._lock:
             self.phase, self.error = "failed", error
 
-    def check(self, now: datetime, done: int, total: int) -> None:
-        """One recording of the patterns pass at start: phase `checking`, `done` of `total`."""
+    def check(
+        self, now: datetime, done: int, total: int | None, *, phase: Phase = "checking"
+    ) -> None:
+        """One recording of the patterns pass: at start, phase `checking`, `done` of `total`; a
+        retry after the start says `rechecking` (`total` None: not counted)."""
         with self._lock:
             self.counter += 1
-            self.at, self.phase, self.done, self.total = now, "checking", done, total
+            self.at, self.phase, self.done, self.total = now, phase, done, total
 
     def read(self) -> tuple[Phase, int, datetime]:
         with self._lock:
@@ -211,7 +239,7 @@ class Progress:
     def beat(self, now: datetime) -> dict[str, Any]:
         """The heartbeat's value: `starting_since` while the start is UNFINISHED (starting, its
         patterns pass, or failed), a failed start's `error`, and the patterns pass's `done` and
-        `total` while `checking`."""
+        `total` while `checking` or `rechecking`."""
         with self._lock:
             value: dict[str, Any] = {
                 "at": now.isoformat(),
@@ -223,7 +251,7 @@ class Progress:
                 value["starting_since"] = self.starting_since.isoformat()
             if self.phase == "failed":
                 value["error"] = self.error
-            if self.phase == "checking":
+            if self.phase in ("checking", "rechecking"):
                 value["done"], value["total"] = self.done, self.total
             return value
 
@@ -386,6 +414,10 @@ class Worker:
         self._to_check: int | None = None  # and how many it checks, counted once it begins
         self._pass: PatternsPass | None = None  # the last patterns pass that ended; None: none due
         self._pass_failed: str | None = None  # the class it last raised as a whole, if it did
+        self._whole_due = False  # no attempt of this pattern version has ended (WholePassDue)
+        self._whole_at: datetime | None = None  # when the last whole-archive attempt began
+        minutes = self.settings.schedule_minutes
+        self._whole_every = timedelta(minutes=minutes if minutes > 0 else WHOLE_RETRY_MINUTES_OFF)
         self._not_before: datetime | None = None  # a turn that didn't run waits one interval
         self._held_by_gate = False  # the last turn found the gate closed
         self._pruned_at: datetime | None = None
@@ -468,54 +500,100 @@ class Worker:
             log.info("%s", done.sentence())
 
     def _patterns(self, now: datetime, *, again: bool = False) -> PatternsPass | None:
-        """Decision 27's pass. At start, under the phase `checking`: each recording it checks
-        bumps the progress and the heartbeat's `done` of `total`, so Status reads "(checking, 412
-        of 1,234)" (spec §15.2). `again` (each tick after the start, while the last pass left
-        recordings or raised): only what it left, or the whole archive after it raised, with a
-        plain bump at each recording, so the phase, `checking`'s count and `alive`'s rules for a
-        start are never claimed by a retry (decision 48). SIGTERM stops it between recordings
-        (§9.2); a pass stopped so isn't recorded as complete, and the next start runs it again
-        (reconcile skips what it already judged).
+        """Decision 27's pass. At start, the whole archive under the phase `checking`: each
+        recording it checks bumps the progress and the heartbeat's `done` of `total`, so Status
+        reads "(checking, 412 of 1,234)" (spec §15.2). `again` (a tick after the start): what the
+        last attempt that ended left, from its record; or, once WholePassDue said none of this
+        version has ended, the whole archive. A retry runs under the phase `rechecking` ("checking
+        titles again", a whole one with its count), which `alive` reads by its ordinary rules, so
+        a retry never claims the start's time (decision 48), and logs no line per recording.
+        SIGTERM stops it between recordings (§9.2); a pass stopped so isn't recorded as complete,
+        and the next start runs it again (reconcile skips what it already judged).
 
         What it ends with is kept for `_owed_private`: the recordings it couldn't check (never
         the busy ones) each open a private-unwritten flag. One that raises as a whole is recorded
         (`record_pass_error`) and remembered by its class, which opens that blocker (the
-        phase-end council's G1 and S2); the step then logs it once."""
-        left = self._pass if again and self._pass_failed is None else None
-        only = {} if left is None else {"only": [*left.unwritten, *left.busy]}
-        progress = self._bump_one if again else self._check_one
+        phase-end council's G1 and S2). It logs that once per class, and once when an attempt
+        ends again, here rather than by `_step`: a retry that waits for its turn, or finds a
+        whole sweep due, has neither failed nor worked."""
+        whole = not again or self._whole_due
+        if whole:
+            self._whole_at = now
         try:
-            done = patterns_pass(self.writer, self.db, now=now, progress=progress, **only)
+            if not again:
+                done = patterns_pass(self.writer, self.db, now=now, progress=self._check_one)
+            else:
+                self.progress.check(now, 0, None, phase="rechecking")
+                done = patterns_pass(
+                    self.writer,
+                    self.db,
+                    now=now,
+                    progress=self._rechecker(whole=whole),
+                    retry=not whole,
+                    quiet=True,
+                )
+        except WholePassDue:
+            self._whole_due = True  # nothing was checked: a whole sweep waits for its turn
+            return None
         except _Stopped:
             log.info("the patterns pass stopped between recordings: the next start runs it again")
             return None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  remembered, recorded and logged once, by class
+            if self._pass_failed != type(exc).__name__:
+                log.warning("patterns failed (%s)", type(exc).__name__)
             self._pass_failed = type(exc).__name__
             with contextlib.suppress(Exception):  # state.db may be what failed: the blocker says it
                 record_pass_error(self.db, self._pass_failed, now=now)
-            raise
+            return None
+        if self._pass_failed is not None:
+            log.info("patterns works again")
         if again and done is not None and _left(done) != _left(self._pass):
             log.info("patterns pass, again: %s", done.sentence())
-        self._pass, self._pass_failed = done, None
+        self._pass, self._pass_failed, self._whole_due = done, None, False
         return done
 
     def _patterns_again(self) -> None:
-        """The patterns pass again, at every tick, while the last one left recordings unwritten or
-        busy, or raised as a whole, so a `recordings reindex` that mends a recording clears its
-        flag at the next tick, never only at a restart (§13.1 case 5). Nothing at all once a pass
-        is complete."""
+        """The patterns pass again, at every tick, while the last attempt left recordings
+        unchecked or raised, so a `recordings reindex` that mends a recording clears its flag at
+        the next tick, never only at a restart (§13.1 case 5). A whole-archive retry runs at most
+        once per turn (WHOLE_RETRY_MINUTES_OFF's reason); nothing at all once a pass is complete.
+        The phase is `idle` again once the retry ends, however it ends."""
         if self.writer is None:
             return
-        if self._pass_failed is None and (self._pass is None or self._pass.complete):
+        if (
+            not self._whole_due
+            and self._pass_failed is None
+            and (self._pass is None or self._pass.complete)
+        ):
             return
-        self._patterns(self.clock(), again=True)
+        now = self.clock()
+        if (
+            self._whole_due
+            and self._whole_at is not None
+            and timedelta(0) <= now - self._whole_at < self._whole_every
+        ):
+            return  # a stamp in the future counts as long ago, as in `due`
+        try:
+            self._patterns(now, again=True)
+        finally:
+            self.progress.bump(self.clock(), "idle")
 
-    def _bump_one(self) -> None:
-        """Called before each recording a retry of the patterns pass checks: SIGTERM ends it here,
-        and each one counts as progress (§9.2)."""
-        if self.stopping.is_set():
-            raise _Stopped
-        self.progress.bump(self.clock())
+    def _rechecker(self, *, whole: bool) -> Callable[[], None]:
+        """The progress of a retry: phase `rechecking` at each recording, counted against the
+        archive's Plaud recordings when it is a whole one. SIGTERM ends it here, between
+        recordings (§9.2)."""
+        done, total = 0, None
+
+        def one() -> None:
+            nonlocal done, total
+            if self.stopping.is_set():
+                raise _Stopped
+            if whole and total is None:
+                total = self._plaud_count()
+            done += 1
+            self.progress.check(self.clock(), done, total, phase="rechecking")
+
+        return one
 
     def _check_one(self) -> None:
         """Called before each recording the pass checks: SIGTERM ends the pass here, between
@@ -523,12 +601,15 @@ class Worker:
         if self.stopping.is_set():
             raise _Stopped
         if self._to_check is None:  # the pass has begun: count what it checks, once
-            self._to_check = sum(
-                any(s.kind == "plaud" for s in rec.sources)
-                for rec in self.writer.archive.iter_recordings()
-            )
+            self._to_check = self._plaud_count()
         self._checked += 1
         self.progress.check(self.clock(), self._checked, self._to_check)
+
+    def _plaud_count(self) -> int:
+        return sum(
+            any(s.kind == "plaud" for s in rec.sources)
+            for rec in self.writer.archive.iter_recordings()
+        )
 
     def _start_failed(self, exc: BaseException) -> None:
         """A start that fails says so in the heartbeat (phase `failed`, the error's class), which
@@ -690,10 +771,13 @@ class Worker:
         (`flags.still_owed`, against the list in force).
 
         A recording the patterns pass couldn't check (§13.1 case 5; never one only busy) may owe
-        `private` too (P8), so it opens the same flag, with `"owed": "patterns"`, which resolves
-        once the pass no longer lists it, or it is private or gone (`flags.private_owed`). One
-        flag per recording: flags that resolve go first, so a recording the consent list now owes
-        gets that flag in the same tick, with no tick between without one.
+        `private` too (P8), so it opens the same flag, with `"owed": "patterns"`. That flag stays
+        while the last attempt that ended still lists the recording, unwritten or busy (busy
+        checks nothing), and while the pass is failing or a whole sweep is due, when nothing says
+        what was checked; it resolves once the recording is checked, private or gone
+        (`flags.private_owed`). One flag per recording: flags that resolve go first, so a
+        recording the consent list now owes gets that flag in the same tick, with no tick between
+        without one.
 
         The blocker is open while any flag is, or while the last late consent pass or patterns
         pass failed as a whole (its detail names the error's class: `error` or `patterns_error`),
@@ -708,10 +792,13 @@ class Worker:
             for rid, cause in (self._pass.unwritten.items() if self._pass is not None else ())
             if ID_RE.fullmatch(rid)  # a folder whose name isn't an ID is no recording to flag
         }
+        left = {*unchecked, *(self._pass.busy if self._pass is not None else ())}
+        unknown = self._pass_failed is not None or self._whole_due
         for event in self.db.open_flags((PRIVATE_UNWRITTEN,)):
             rid = event.recording_id
             if event.detail.get("owed") == OWED_PATTERNS:
-                owed = rid in unchecked and rid not in unwritten and private_owed(archive, rid)
+                owed = (unknown or rid in left) and rid not in unwritten
+                owed = owed and private_owed(archive, rid)
             else:
                 owed = rid in unwritten or still_owed(archive, event, self.consent)
             if not owed:
