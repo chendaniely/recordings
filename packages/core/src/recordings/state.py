@@ -8,6 +8,7 @@ never need it: the Mac's read-only mirror has none.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from collections.abc import Iterator
@@ -17,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from recordings.files import fsync_dir, temp_name
+from recordings.refs import canonical_plaud_id
 
 SCHEMA_VERSION = 1
 # The version-1 tables: stage 2a's, then stage 2b's. Every statement is CREATE ... IF NOT EXISTS,
@@ -90,6 +92,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS plaud_events_one_unwritten ON plaud_events (re
   WHERE open = 1 AND kind = 'private-unwritten';
 CREATE TABLE IF NOT EXISTS plaud_state (
   key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+-- The IDs of the last good listing and of a held one (§11.4), each with its form (of_ | hex |
+-- other), so a hold measures what vanished and what changed form, and Accept can make the held
+-- listing the last good one. Added in Phase 2 (area A3): a table, never a column, so SCHEMA_VERSION
+-- stays 1.
+CREATE TABLE IF NOT EXISTS plaud_listed (
+  listing TEXT NOT NULL,                   -- 'good' | 'held'
+  canonical_plaud_id TEXT NOT NULL, form TEXT NOT NULL,
+  PRIMARY KEY (listing, canonical_plaud_id));
 """
 # Every change after version 1, keyed by the version it makes: MIGRATIONS[2] takes a state.db
 # from version 1 to 2. CREATE TABLE IF NOT EXISTS can't add a column, so a later stage that changes
@@ -165,6 +175,20 @@ class Run:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _plaud_refs(body: bytes | None) -> set[str]:
+    """The canonical Plaud IDs a recording.json body's `sources` name; none for a body that
+    doesn't decode (forget then has the markers' IDs alone)."""
+    try:
+        sources = json.loads(body).get("sources") if body else None
+    except (ValueError, AttributeError):
+        return set()
+    return {
+        canonical_plaud_id(s["ref"])
+        for s in (sources if isinstance(sources, list) else [])
+        if isinstance(s, dict) and s.get("kind") == "plaud" and isinstance(s.get("ref"), str)
+    }
 
 
 class State:
@@ -402,19 +426,30 @@ class State:
         revisions and flags, and its recording's Plaud rows (2b spec §9.5): its checks, markers
         and events, and the title hash, duration and change marker on the listing rows of its
         Plaud IDs, which are kept only while it is here. Its other listing state (kept out,
-        released, parked) stays, keyed by the Plaud ID."""
+        released, parked) stays, keyed by the Plaud ID. Its Plaud IDs are those its markers name
+        and those its last committed revision's `sources` name, read before the revisions go: the
+        listing writes a title hash for a recording here that no reconcile has marked yet."""
         recording_id = PurePosixPath(file).parent.name
         with self.db() as db:
+            plaud_ids = {
+                row[0]
+                for row in db.execute(
+                    "SELECT canonical_plaud_id FROM plaud_private_checked WHERE recording_id = ?",
+                    (recording_id,),
+                )
+            }
+            last = db.execute(
+                "SELECT body FROM revisions WHERE file = ? AND committed = 1 "
+                "ORDER BY id DESC LIMIT 1",
+                (file,),
+            ).fetchone()
+            plaud_ids |= _plaud_refs(last[0] if last else None)
             db.execute("DELETE FROM revisions WHERE file = ?", (file,))
             db.execute("DELETE FROM flags WHERE file = ?", (file,))
-            plaud_ids = db.execute(
-                "SELECT canonical_plaud_id FROM plaud_private_checked WHERE recording_id = ?",
-                (recording_id,),
-            ).fetchall()
             db.executemany(
                 "UPDATE plaud_listing SET title_sha256 = NULL, duration_ms = NULL, "
                 "change_marker = NULL WHERE canonical_plaud_id = ?",
-                plaud_ids,
+                [(pid,) for pid in sorted(plaud_ids)],
             )
             for table in ("plaud_checks", "plaud_private_checked", "plaud_events"):
                 db.execute(f"DELETE FROM {table} WHERE recording_id = ?", (recording_id,))

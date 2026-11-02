@@ -30,6 +30,7 @@ PLAUD_TABLES = (
     "plaud_private_checked",
     "plaud_events",
     "plaud_state",
+    "plaud_listed",  # Phase 2 (area A3): a table, never a column
 )
 TWO_A_SCHEMA = SCHEMA.split("-- Stage 2b's tables")[0]
 

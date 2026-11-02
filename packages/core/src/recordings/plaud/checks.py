@@ -76,6 +76,14 @@ K_FULL = "full_sync"
 # {"until": iso, "at": iso}: a 429 whose wait passed the run's budget ended the run at `at`, and
 # scheduled turns make no Plaud call before `until` (§9.7 case 2, §10.2).
 K_RATE_LIMIT = "rate_limit"
+# The newest compare (§11.3; plaud.compare): the equations, the consent line and the census, with
+# counts only, never a title or an ID list. Written by every complete listing, a Compare's too.
+K_COMPARE = "compare"
+# A small shrink waiting to settle (§11.4 step 5; plaud.hold): {"absent": [recording IDs], "since"}.
+K_SMALL_SHRINK = "small_shrink"
+# plaud_listed's two listings (§11.4): the last good one, and a held one.
+LISTED_GOOD = "good"
+LISTED_HELD = "held"
 
 
 def judged_key(recording_id: str) -> str:
@@ -122,6 +130,18 @@ class ListingRow:
     title_sha256: str | None
     duration_ms: int | None
     change_marker: str | None
+
+
+@dataclass(frozen=True)
+class ListingEntry:
+    """One listed ID, as a complete listing writes its plaud_listing row (§9.5, §11.3)."""
+
+    canonical_plaud_id: str
+    listed_id: str  # as this listing spelt it: the row follows the newest form
+    title_sha256: str | None  # only for an ID here, never one kept out or consent-listed
+    duration_ms: int | None  # likewise: only while its recording is here
+    kept_out_word: str | None = None  # newly kept out by its title (§12.2): the word
+    rekey_of: str | None = None  # newly matched to an absent excluded ID (§11.4 step 6), or "*"
 
 
 @dataclass(frozen=True)
@@ -345,6 +365,173 @@ class PlaudDB:
                     "WHERE canonical_plaud_id = ?",
                     (*encoded.values(), canonical),
                 )
+
+    def listing_rows(self) -> dict[str, ListingRow]:
+        """Every plaud_listing row, by canonical ID: one read for a whole listing's compare."""
+        with self._db() as db:
+            rows = db.execute(f"SELECT {', '.join(_LISTING)} FROM plaud_listing").fetchall()
+        return {row[0]: _row(ListingRow, _LISTING, row) for row in rows}
+
+    def write_listing(self, entries: Iterable[ListingEntry], *, now: datetime) -> None:
+        """A complete listing's rows, in one transaction (§9.5, §11.3): each listed ID's row made
+        or brought up to date (the ID as listed, `last_seen`, no longer absent, and its title
+        hash and duration, which only an ID here has); a newly kept-out ID dated `now` with its
+        word, and a re-keyed one's match, each kept once set (kept out stays kept out, §12.2);
+        then every row this listing didn't list, and not already absent, absent since `now`."""
+        stamp = utc_iso(now)
+        values = []
+        for e in entries:
+            if e.title_sha256 is not None and not _is_sha256(e.title_sha256):
+                raise ValueError("title_sha256 must be 64 lowercase hex characters")
+            kept = stamp if e.kept_out_word is not None else None
+            values.append(
+                (
+                    canonical_plaud_id(e.canonical_plaud_id),
+                    e.listed_id,
+                    stamp,
+                    stamp,
+                    kept,
+                    e.kept_out_word,
+                    e.rekey_of,
+                    e.title_sha256,
+                    e.duration_ms,
+                )
+            )
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.executemany(
+                "INSERT INTO plaud_listing (canonical_plaud_id, listed_id, first_seen, last_seen, "
+                "kept_out_at, kept_out_word, rekey_of, title_sha256, duration_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (canonical_plaud_id) DO UPDATE SET "
+                "listed_id = excluded.listed_id, last_seen = excluded.last_seen, "
+                "absent_since = NULL, "
+                "kept_out_word = CASE WHEN plaud_listing.kept_out_at IS NULL "
+                "THEN excluded.kept_out_word ELSE plaud_listing.kept_out_word END, "
+                "kept_out_at = COALESCE(plaud_listing.kept_out_at, excluded.kept_out_at), "
+                "rekey_of = COALESCE(plaud_listing.rekey_of, excluded.rekey_of), "
+                "title_sha256 = excluded.title_sha256, duration_ms = excluded.duration_ms",
+                values,
+            )
+            db.execute(
+                "UPDATE plaud_listing SET absent_since = ? "
+                "WHERE absent_since IS NULL AND last_seen != ?",
+                (stamp, stamp),
+            )
+
+    # ---- plaud_listed: the last good listing, and a held one (§11.4) ----------------------------
+    def listed(self, which: str) -> dict[str, str]:
+        """The `which` listing's canonical IDs and forms. An empty one is also what no listing
+        reads as: whether there is one at all is its plaud_state record (K_LAST_GOOD_LISTING,
+        K_HOLD), written in the same transaction (`set_listed`)."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT canonical_plaud_id, form FROM plaud_listed WHERE listing = ?", (which,)
+            ).fetchall()
+        return dict(rows)
+
+    def set_listed(
+        self,
+        which: str,
+        forms: Mapping[str, str],
+        *,
+        put: Mapping[str, Any] | None = None,
+        delete: Iterable[str] = (),
+        now: datetime,
+    ) -> None:
+        """Replace the `which` listing's IDs, and put and delete plaud_state keys, in one
+        transaction: a listing and its record never disagree."""
+        if which not in (LISTED_GOOD, LISTED_HELD):
+            raise ValueError(f"not a listing: {which}")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM plaud_listed WHERE listing = ?", (which,))
+            db.executemany(
+                "INSERT INTO plaud_listed (listing, canonical_plaud_id, form) VALUES (?, ?, ?)",
+                [(which, pid, form) for pid, form in forms.items()],
+            )
+            self._apply(db, put, delete, now)
+
+    def promote_held(
+        self,
+        *,
+        put: Mapping[str, Any] | None = None,
+        delete: Iterable[str] = (),
+        now: datetime,
+    ) -> None:
+        """The held listing becomes the last good one (Accept, §11.4 step 4), with puts and
+        deletes, in one transaction."""
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM plaud_listed WHERE listing = ?", (LISTED_GOOD,))
+            db.execute(
+                "UPDATE plaud_listed SET listing = ? WHERE listing = ?", (LISTED_GOOD, LISTED_HELD)
+            )
+            self._apply(db, put, delete, now)
+
+    def _apply(
+        self,
+        db: sqlite3.Connection,
+        put: Mapping[str, Any] | None,
+        delete: Iterable[str],
+        now: datetime,
+    ) -> None:
+        for key, value in (put or {}).items():
+            self._put(db, key, value, now)
+        for key in delete:
+            db.execute("DELETE FROM plaud_state WHERE key = ?", (key,))
+
+    # ---- gone from Plaud (§12.3) ---------------------------------------------------------------
+    def mark_gone(self, recording_ids: Iterable[str], *, now: datetime) -> list[str]:
+        """Each recording here that isn't gone yet is gone from Plaud since `now`, with a `gone`
+        event; returns those newly marked. Nothing is deleted, ever."""
+        wanted = sorted(set(recording_ids))
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            already = {
+                row[0]
+                for row in db.execute(
+                    "SELECT recording_id FROM plaud_checks WHERE gone_since IS NOT NULL"
+                )
+            }
+            marked = [rid for rid in wanted if rid not in already]
+            db.executemany(
+                "INSERT INTO plaud_checks (recording_id, gone_since) VALUES (?, ?) "
+                "ON CONFLICT (recording_id) DO UPDATE SET gone_since = excluded.gone_since",
+                [(rid, utc_iso(now)) for rid in marked],
+            )
+            db.executemany(
+                "INSERT INTO plaud_events (at, kind, recording_id, detail, open) "
+                "VALUES (?, 'gone', ?, '{}', 0)",
+                [(utc_iso(now), rid) for rid in marked],
+            )
+        return marked
+
+    def gone_recordings(self) -> frozenset[str]:
+        """The recordings here that are gone from Plaud (`plaud_checks.gone_since`)."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT recording_id FROM plaud_checks WHERE gone_since IS NOT NULL"
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
+
+    def back_from_gone(self, recording_ids: Iterable[str]) -> list[str]:
+        """Each of these recordings that was gone from Plaud is listed again: it is here again
+        (§12.3, "If it returns"). Returns those."""
+        wanted = set(recording_ids)
+        with self._db() as db:
+            gone = [
+                row[0]
+                for row in db.execute(
+                    "SELECT recording_id FROM plaud_checks WHERE gone_since IS NOT NULL "
+                    "ORDER BY recording_id"
+                )
+                if row[0] in wanted
+            ]
+            db.executemany(
+                "UPDATE plaud_checks SET gone_since = NULL WHERE recording_id = ?",
+                [(rid,) for rid in gone],
+            )
+        return gone
 
     # ---- plaud_checks --------------------------------------------------------------------------
     def check_row(self, recording_id: str) -> CheckRow | None:

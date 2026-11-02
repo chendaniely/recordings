@@ -129,6 +129,8 @@ def check_request(raw: object) -> PlaudRequest | Refusal:
             return Refusal(request_id, BAD_ID)
     if kind == "keep-here" and (plaud_ids or select_all):
         return Refusal(request_id, UNREADABLE)  # it uses recording IDs alone, and carries no more
+    if kind == "accept" and (plaud_ids or recording_ids or select_all):
+        return Refusal(request_id, UNREADABLE)  # it accepts the held listing, and names nothing
     if kind not in HANDLED:
         return Refusal(request_id, NOT_YET)  # its handler comes with a later phase
     return PlaudRequest(
@@ -329,6 +331,7 @@ JOB_LABELS = {
     "plaud-full": "Sync everything",
     "plaud-baseline": "The baseline",
     "plaud-catch-up": "The catch-up",
+    "plaud-accept": "Accept this listing",
 }
 
 
@@ -393,8 +396,9 @@ def demo_view_settings(archive: Path) -> PlaudViewSettings:
 
 def _handled() -> dict:
     """What the worker can do yet, which every view carries (G7): the UI disables every other
-    request button with `not_yet` as its reason, as it shows the gate's and the demo's. Phase 1
-    handles Keep it here alone; each later phase widens requests.HANDLED with its handlers."""
+    request button with `not_yet` as its reason, as it shows the gate's and the demo's. Each area
+    of stage 2b's build widens requests.HANDLED with its handlers (Keep it here, then Accept this
+    listing)."""
     return {"handled": sorted(HANDLED), "not_yet": NOT_YET}
 
 

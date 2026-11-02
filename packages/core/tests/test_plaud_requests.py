@@ -1,5 +1,6 @@
-"""Requests from the UI (spec §9.3): the rows, and the worker's claims and handlers. Phase 1's
-worker handles Keep it here alone; every other kind comes with a later phase. Synthetic IDs only;
+"""Requests from the UI (spec §9.3): the rows, and the worker's claims and handlers. The worker
+handles Keep it here and Accept this listing so far (Accept's own tests are in
+test_plaud_accept.py); every other kind comes with a later area. Synthetic IDs only;
 nothing here reaches Plaud."""
 
 import json
@@ -129,10 +130,11 @@ def answer(state: State, n: int) -> tuple:
     return reply.state, reply.message
 
 
-def test_phase_1_handles_keep_it_here_alone():
-    # why: decision 2. A button whose handler comes in a later phase is disabled with NOT_YET,
-    # and a crafted request for it is refused before any row is inserted.
-    assert HANDLED == {"keep-here"} == set(worker_module.HANDLERS)
+def test_the_worker_handles_keep_it_here_and_accept_so_far():
+    # why: decision 2. A button whose handler comes in a later area is disabled with NOT_YET,
+    # and a crafted request for it is refused before any row is inserted. Phase 1 handled Keep it
+    # here; Phase 2's area A3 adds Accept this listing. HANDLED and the worker's handlers agree.
+    assert HANDLED == {"keep-here", "accept"} == set(worker_module.HANDLERS)
     assert HANDLED.issubset(KINDS)
     assert NOT_YET == "Comes with the next part of stage 2b."
 

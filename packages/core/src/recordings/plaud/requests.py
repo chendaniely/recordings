@@ -49,9 +49,10 @@ KINDS = (
     "unpark",
     "keep-here",
 )
-# The kinds the worker has a handler for. Phase 1 has Keep it here alone; each later phase adds its
-# kinds with their handlers.
-HANDLED: frozenset[str] = frozenset({"keep-here"})
+# The kinds the worker has a handler for (worker.HANDLERS names the same): Phase 1's Keep it here,
+# and Accept this listing (Phase 2, area A3). Each later area adds its kinds with their handlers,
+# never before (CLAUDE.md, "To add a Plaud request kind").
+HANDLED: frozenset[str] = frozenset({"keep-here", "accept"})
 NOT_YET = "Comes with the next part of stage 2b."
 MAX_PLAUD_IDS = 20_000
 MAX_RESYNC_IDS = 1_000

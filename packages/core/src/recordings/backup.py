@@ -42,6 +42,7 @@ from pathlib import Path
 from recordings.archive import Archive, utc_stamp
 from recordings.config import Config, ConfigError, secret
 from recordings.disk import STOP_FREE_PERCENT, WARN_FREE_PERCENT
+from recordings.plaud.cache import CACHE_NAME
 from recordings.plaud.settings import DEFAULT_TOKEN_STORE, plaud_settings
 from recordings.selfdoc import validate
 from recordings.sentinel import SentinelError, read_sentinel
@@ -65,6 +66,10 @@ WHOLE_STATE = (
 CARRIES_SECRETS = (
     "which would carry Docker's secrets (the restic password, the NAS key): a secret is never "
     "backed up (stage 2b spec §17.2)"
+)
+CARRIES_CACHE = (
+    "the Plaud cache, which holds titles of recordings not yet here: it is derived, and never "
+    "backed up (stage 2b spec §9.5)"
 )
 
 
@@ -402,16 +407,19 @@ def never_backed_up(entry: Path, *, token_folder: Path, state: Path | None) -> s
     `run_backup` refuses it. An entry that holds the Plaud sign-in's folder (as configured, or the
     `/plaud` mount) or lies inside it, since the token is never backed up; one that holds the
     whole state folder (`/state`, or as configured), since state.db is backed up on its own, as a
-    consistent copy, and the folder also holds voice.db and, from Phase 2, the Plaud cache; one
-    that holds Docker's secrets folder or lies inside it, since the restic password and the NAS
-    key are never backed up. A folder inside the state folder (`/state/manifests`) is fine.
-    (plaud-cache.db's own check comes with the cache, in Phase 2.)"""
+    consistent copy, and the folder also holds voice.db and the Plaud cache; the Plaud cache
+    itself (`plaud-cache.db` in the state folder, stage 2b spec §9.5), which holds titles of
+    recordings not yet here; and one that holds Docker's secrets folder or lies inside it, since
+    the restic password and the NAS key are never backed up. A folder inside the state folder
+    (`/state/manifests`) is fine."""
     held = normal_path(entry)
     if any(holds(held, f) or holds(f, held) for f in (normal_path(token_folder), PLAUD_MOUNT)):
         return CARRIES_SIGN_IN
     states = [STATE_MOUNT, *([normal_path(state)] if state is not None else [])]
     if any(holds(held, s) for s in states):
         return WHOLE_STATE
+    if any(holds(held, s / CACHE_NAME) for s in states):
+        return CARRIES_CACHE
     if holds(held, SECRETS_DIR) or holds(SECRETS_DIR, held):
         return CARRIES_SECRETS
     return None

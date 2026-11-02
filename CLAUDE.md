@@ -149,12 +149,20 @@ smoke test on purpose until someone does the steps below:
   refuses every `plaud.ai` host and drops every `*_proxy` variable, for the whole run of pytest's
   own process (not for a subprocess a test starts), and the client's tests use
   the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture; its
-  `signed_in()` turns on the sign-in, `fault()` injects §21's errors, and `link()` serves a
+  `signed_in()` turns on the sign-in, `fault()` injects §21's errors, `account()` is the
+  synthetic account behind the paged listing, with its listing-shaped faults, and `link()` serves a
   `FakeLink` that honours `Range`, drops, expires or trickles). Every request the client sends
   goes through its `Throttle` (pacing, the budget, backoff, `Range` resume: spec §10.2), one per
   process. No test really waits on it: `packages/core/tests/conftest.py` skips the waits of a
   `Throttle` given no `sleep`, and a test of the waits injects its clocks and sleep
   (`test_plaud_throughput.py`).
+- **The Plaud cache, `<state>/plaud-cache.db`** (`plaud/cache.py`, spec §9.5), is the one place a
+  title of a recording not yet here is stored: never one consent-listed, kept out or under review,
+  none during a consent stop or while a held listing shows Plaud's IDs changed
+  (`plaud/compare.py` decides), and the worker's tick nulls any the consent list or a keep-out word
+  catches later. It is derived (the next listing rebuilds it) and never backed up
+  (`backup.never_backed_up` refuses it in `extra_paths`). Only the Sync screen reads it, through
+  `Cache.read_only`, and a reader applies `cache.title_allowed` again before a title leaves it.
 - **`tokens.json` is a secret** (the Plaud sign-in, `plaud/tokens.py`): used by reference, never
   read or printed, and a Claude session never runs `make plaud-sign-in` or `token-import`. Its
   tests use invented tokens against the fake, and a fake `plaud` and `ssh` on `PATH`. The sign-in's
@@ -180,6 +188,15 @@ smoke test on purpose until someone does the steps below:
   and Pages' `MemoryStore` (spec §4–§5). The fake-failure tests (busy, full disk, read-only, a
   failed open, a stopped thread) are in `packages/ui/tests/test_tag_stores.py` and
   `test_tag_service.py`: copy one.
+- **To add a Plaud request kind** (spec §9.3; the phase-end council's Simplicity 1): its handler
+  in `worker.py` (`HANDLERS`, a `requests.Reply` with a §15.6 phrase, counts and IDs, never a
+  title), and the kind in `requests.HANDLED` in the same commit, never before (the UI disables
+  every kind not in it, and web refuses one before inserting it); `gate.GATE_ALLOWED` only if it
+  writes no snapshot; `check_request` in `recordings_ui/plaud.py` for what the kind may carry,
+  with `KIND_LABELS`; `PlaudKind` in `types.ts` and `kindReason` in `usePlaud.tsx` for the
+  button; a run that holds `plaud` gets its job in `runlock.JOBS` and `JOB_LABELS`. Then the pins:
+  `test_plaud_requests.py`'s HANDLED test, `test_plaud_requests_ui.py`'s refused kinds and
+  `test_plaud_views.py`'s `handled` lists. Accept this listing (`accept`) is the worked example.
 - **Tagging's logs carry fixed phrases,** IDs, counts and exception class names: never a tag
   name, a title or `str(exc)`. So do replies' `message` and failure reasons. Replies also carry
   `rows` (with titles) and `tags` by design, for the one person using the app. The one text that

@@ -1261,6 +1261,8 @@ def with_extra_paths(environ, *entries: str) -> None:
         ("/run/secrets", "Docker's secrets"),  # the council's S4: one check with run_backup
         ("/run", "Docker's secrets"),
         ("/run/secrets/restic_password", "Docker's secrets"),
+        ("/state/plaud-cache.db", "Plaud cache"),  # stage 2b §9.5: titles of recordings not here
+        ("{state}/plaud-cache.db", "Plaud cache"),
     ],
 )
 def test_extra_paths_holding_the_token_folder_or_the_whole_state_is_a_problem(

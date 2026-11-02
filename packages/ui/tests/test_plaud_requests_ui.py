@@ -15,6 +15,7 @@ from recordings.config import load_config
 from recordings.init import init_archive
 from recordings.plaud import requests
 from recordings.plaud.requests import (
+    HANDLED,
     KINDS,
     MAX_PLAUD_IDS,
     MAX_RESYNC_IDS,
@@ -107,12 +108,27 @@ def test_id_lists_shiny_hands_over_as_tuples_are_read():
     assert check_request(raw(plaud_ids=PLAUD_A)) == Refusal("abcdef12", UNREADABLE)
 
 
-def test_a_kind_with_no_handler_yet_is_refused_before_any_row(archive, run):
-    # C5.18: before the first catch-up an import request is refused; in Phase 1 every kind but
-    # Keep it here waits for a later phase, so web refuses it with NOT_YET and inserts nothing.
+def test_accept_names_nothing_and_is_inserted(archive, run):
+    # §11.4 step 4: Accept this listing accepts the held listing, which the worker reads from
+    # state.db; a request naming IDs or "all" is not one the page sends.
     _, state, _ = archive
-    later = [k for k in KINDS if k != "keep-here"]
-    assert "import" in later and len(later) == 12
+    plain = raw(kind="accept", recording_ids=[])
+    assert check_request(plain) == PlaudRequest("abcdef12", "accept", (), (), False)
+    for over in ({"recording_ids": [RID]}, {"plaud_ids": ["a" * 32]}, {"all": True}):
+        assert check_request(raw(kind="accept", **{"recording_ids": [], **over})) == Refusal(
+            "abcdef12", UNREADABLE
+        )
+    reply = run(submit(state, plain, now=T0, timezone_name="UTC", reason=None))
+    assert (reply["state"], reply["kind"]) == ("queued", "accept") and count(state) == 1
+
+
+def test_a_kind_with_no_handler_yet_is_refused_before_any_row(archive, run):
+    # C5.18: before the first catch-up an import request is refused; every kind the worker has no
+    # handler for yet (all but Keep it here and Accept) waits for a later area, so web refuses it
+    # with NOT_YET and inserts nothing.
+    _, state, _ = archive
+    later = [k for k in KINDS if k not in HANDLED]
+    assert "import" in later and len(later) == 11
     for kind in later:
         assert check_request(raw(kind=kind)) == Refusal("abcdef12", NOT_YET), kind
         reply = run(submit(state, raw(kind=kind), now=T0, timezone_name="UTC", reason=None))

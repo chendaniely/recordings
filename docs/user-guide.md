@@ -56,3 +56,71 @@ minutes: whatever is left comes at the next one. Nothing is lost when a sync sto
 - A long recording that keeps failing to download (the server resumes a download that drops, a
   few times, then gives up until the next sync) is worth a note in a Claude session: the server's
   download rules were set without measuring Plaud's.
+
+## What the sync compares, and the equations
+
+Each sync, and each **Compare**, reads Plaud's whole list of recordings and puts every recording
+in one of four groups. The numbers always add up.
+
+**What you see**
+
+- "listed 120 = here 98 + waiting 3 + excluded 14 + missing 5":
+  - **here:** already in the archive, under either form of its Plaud ID.
+  - **waiting:** comes in at the next sync, by itself.
+  - **excluded:** never comes in. It is on your consent list, its Plaud title starts with your
+    keep-out word, it was kept out by an earlier title, or it may be one of those back under a new
+    Plaud ID. Shown by date, time and duration, never by title.
+  - **missing:** won't come without you. Its line says why: the first catch-up hasn't run, the
+    consent list can't be read, the sync is held, it needs your review, it failed 3 times, the
+    disk is too full, or the schedule or auto-import is off.
+- "In the archive from Plaud 100 = here 98 + gone from Plaud 1 + absent from this listing 1":
+  recordings you have that Plaud no longer lists. "Absent" turns into "gone" once the next listing,
+  an hour or more later, agrees. Nothing is ever deleted from the archive.
+- "titles hidden until the consent list reads" or "titles hidden while Plaud's IDs look changed":
+  the Sync screen shows dates and durations only, so no title of a recording you may have kept out
+  is ever stored.
+- "may be a consent-listed (or kept-out) recording back under a new ID: confirm": Plaud lists a
+  new ID with the same start time and duration as one you kept out. It stays out.
+
+**What to do**
+
+- Nothing, usually. Waiting recordings come in at the next sync.
+- A recording "back under a new ID": if it is the one you kept out, add the new ID to the consent
+  list (`make consent-add ID='…'`; a recording kept out by its title simply stays out). If it is a
+  different recording, press **Release** on its row.
+
+## When the sync is held: Accept this listing
+
+If Plaud's list suddenly looks very different from the last good one, the sync stops importing
+until you look. That protects the consent list: if Plaud changes its IDs again, a recording you
+kept out could otherwise come back under a new ID.
+
+**What you see**
+
+- **Status** says "Plaud sync paused", with what changed, and offers **Accept this listing**:
+  - "Plaud's IDs changed form, and 12 recordings here vanished with them", or "only 15% of the IDs
+    Plaud listed last time are listed now": Plaud changed its IDs.
+  - "Plaud now lists 40 fewer of the recordings here (and 38 look new)": many recordings vanished
+    at once.
+  - "Plaud lists 3 IDs in a form the consent list can't name. It needs a code fix": Accept can't
+    help; ask a Claude session to look.
+- **Sync now** answers "Held: see Status", and the import buttons are off.
+- About 2 hours later, Healthchecks emails that the sync's check is down.
+- A few recordings vanishing (5 or fewer, or under 5% of the archive's) isn't held: Status says
+  "Plaud now lists 3 fewer: waiting for the next listing to agree", and an hour later they show as
+  gone from Plaud by themselves.
+
+**What to do**
+
+1. Check in Plaud's app why the recordings vanished: if you deleted them, that's the answer.
+2. If Plaud's IDs changed, follow the runbook's steps first: every consent-list entry must still
+   name its recording.
+3. Press **Accept this listing** on Status (or the Sync screen). The vanished recordings show as
+   gone from Plaud, and imports resume. On the server, `rc exec worker recordings plaud
+   accept-listing` does the same; it is also how the first catch-up's own listing is accepted, if
+   that one is held.
+4. If Accept is refused with "Fix this first: 4 consent-listed or kept-out IDs vanished while
+   Plaud's IDs changed (runbook)", don't work around it: some recordings you kept out may be back
+   under IDs your consent list can't name. The runbook says how to find them.
+
+A hold also clears by itself if the next listing looks normal again (Plaud put things back).

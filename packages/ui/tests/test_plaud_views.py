@@ -90,13 +90,14 @@ def test_before_the_catch_up_the_summary_is_the_gate_said_once(plaud_scene):
 
 
 def test_the_views_carry_what_the_worker_handles_and_each_button_its_own_reason(plaud_scene):
-    # why: Phase 1's worker handles Keep it here alone. Every view says so, and the UI disables
-    # every other button with not_yet, so no press comes back "error: NotImplementedError".
+    # why: the worker handles Keep it here and Accept this listing so far. Every view says so, and
+    # the UI disables every other button with not_yet, so no press comes back
+    # "error: NotImplementedError".
     s = plaud_scene
     rid = s.add(1, "Week 1")
     view = sync_view(s.settings, now=T0, can_request=None)
     for shown in (view, sync_panel(s.settings, now=T0), recording_plaud(s.settings, rid, now=T0)):
-        assert (shown["handled"], shown["not_yet"]) == (["keep-here"], NOT_YET)
+        assert (shown["handled"], shown["not_yet"]) == (["accept", "keep-here"], NOT_YET)
     assert view["available"] is True and view["reason"] is None
     # The gate holds back every kind but Compare (§11.6).
     assert view["buttons"] == {
@@ -554,7 +555,11 @@ def test_the_demo_view_is_the_hand_written_fixture_with_the_demo_notes(tmp_path)
     assert (sync["demo"], sync["available"], sync["reason"]) == (True, False, DEMO_NOTE)
     assert sync["summary"]["kind"] == "demo" and sync["summary"]["sentence"] == DEMO_NOTE
     assert set(sync["buttons"].values()) == {DEMO_NOTE}
-    assert (sync["handled"], sync["not_yet"], sync["gate"]) == (["keep-here"], NOT_YET, None)
+    assert (sync["handled"], sync["not_yet"], sync["gate"]) == (
+        ["accept", "keep-here"],
+        NOT_YET,
+        None,
+    )
     assert sync["listed"] is True and panel["listed"] is True  # the demo shows every part
     assert sync["not_here"] == [{**row, "park": False} for row in raw["sync"]["not_here"]]
     assert not [r for r in sync["kept_out"] if r["release"]]

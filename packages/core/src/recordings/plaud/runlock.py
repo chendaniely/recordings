@@ -17,7 +17,7 @@ from datetime import datetime
 from recordings.locks import OPS_LOCK, PLAUD_LOCK, Locks, announce, running
 from recordings.state import State
 
-JOBS = (  # §9.4's list
+JOBS = (  # §9.4's list, and Accept this listing's short hold (§11.4 step 4)
     "plaud-sync",
     "plaud-compare",
     "plaud-import",
@@ -25,6 +25,7 @@ JOBS = (  # §9.4's list
     "plaud-full",
     "plaud-baseline",
     "plaud-catch-up",
+    "plaud-accept",
 )
 CLI_WAIT = 60.0  # the CLI waits this long for a held `plaud`, then exits 75 (§9.4)
 

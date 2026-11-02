@@ -291,6 +291,17 @@ class Index:
             "SELECT sha256 FROM recordings WHERE id = ?", (recording_id,), strict=strict
         )
 
+    def refs_of(self, kind: str, *, strict: bool = False) -> list[tuple[str, str]]:
+        """Every (recording ID, canonical ref) of `kind`: one read for a whole listing's compare
+        (stage 2b spec §11.3). strict: an index that can't answer now raises, never says none."""
+        rows = self._rows(
+            "SELECT recording_id, canonical FROM source_refs WHERE kind = ? "
+            "ORDER BY recording_id, canonical",
+            (kind,),
+            strict=strict,
+        )
+        return [(row[0], row[1]) for row in rows]
+
     def find_by_source(self, kind: str, ref: str, *, strict: bool = False) -> list[str]:
         """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""
         rows = self._rows(

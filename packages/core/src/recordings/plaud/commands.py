@@ -23,7 +23,7 @@ from recordings import config
 from recordings.archive import Archive
 from recordings.index import Index
 from recordings.locks import LockTimeout
-from recordings.plaud import runlock
+from recordings.plaud import hold, runlock
 from recordings.plaud.baseline import (
     DROPPED,
     INVALID_FILE,
@@ -34,7 +34,7 @@ from recordings.plaud.baseline import (
 )
 from recordings.plaud.checks import K_CONSENT, K_LAST_GOOD_LISTING, NoSyncYet, PlaudDB
 from recordings.plaud.flags import listed_here, missed_by_2a
-from recordings.plaud.keepout import kept_lines_note, read_consent_text, signature
+from recordings.plaud.keepout import kept_lines_note, read_consent, read_consent_text, signature
 from recordings.plaud.settings import BAD_WORD, plaud_settings
 from recordings.plaud.signin import TokenFacts
 from recordings.plaud.when import local_hhmm, parse_stamp
@@ -81,6 +81,13 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
         "check",
         help="one signed-in read: whether the Plaud sign-in works, its expiry, and whether it "
         "can refresh",
+    )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "accept-listing",
+        help="Accept this listing: clear a listing hold, as Status's button does, refused on the "
+        "same terms (also before the first catch-up, for the catch-up's own listing)",
     )
     c.add_argument("--json", action="store_true")
 
@@ -547,12 +554,58 @@ def cmd_token_import(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_accept_listing(args: argparse.Namespace) -> int:
+    """§11.4 step 4's Accept this listing, as `recordings plaud accept-listing`: the held listing
+    becomes the last good one, its newly absent recordings show as gone from Plaud, and imports
+    resume. Refused on Status's terms, checked against the consent list as it reads now. Holds
+    `plaud` (waiting up to runlock.CLI_WAIT). Unlike the UI's button, it works before the first
+    catch-up: that is how a held catch-up listing is accepted (§11.6). Exit 0 accepted or nothing
+    held; 1 refused; 75 busy; 78 refused because the consent list can't be read."""
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        settings = plaud_settings(cfg)
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, EXIT_CONFIG)
+    state = _write_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    consent = read_consent(settings.consent_list)
+    now = datetime.now(UTC)
+    try:
+        with runlock.plaud_run(state, "plaud-accept", timeout=runlock.CLI_WAIT, now=now):
+            done = hold.accept(PlaudDB(state), consent=consent, now=now)
+    except LockTimeout:
+        return _fail(_busy(state), args.json, EXIT_BUSY)
+    except NoSyncYet:
+        done = hold.Accepted("nothing", hold.NOTHING_HELD)
+    except (OSError, sqlite3.Error, ValueError) as exc:  # never the exception's text
+        return _fail(
+            f"Accept stopped ({type(exc).__name__}): check state.db's disk, then try again",
+            args.json,
+            EXIT_FAILED,
+        )
+    payload = {"result": done.state, "message": done.message, "why": done.why}
+    payload["gone"] = list(done.gone)
+    lines = [done.message]
+    if done.why is not None and done.why not in done.message:
+        lines.append(done.why)
+    if done.gone:
+        lines.append(f"gone from Plaud: {', '.join(done.gone)}")
+    _emit(payload, lines, args.json)
+    if done.state != "refused":
+        return EXIT_OK
+    return EXIT_CONFIG if done.why == hold.CONSENT_FIRST else EXIT_FAILED
+
+
 COMMANDS = {
     "consent": cmd_consent,
     "baseline": cmd_baseline,
     "keep-out-words": cmd_keep_out_words,
     "check": cmd_check,
     "token-import": cmd_token_import,
+    "accept-listing": cmd_accept_listing,
 }
 
 

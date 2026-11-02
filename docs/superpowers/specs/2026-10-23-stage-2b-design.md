@@ -759,7 +759,7 @@ Every contradiction the council found is settled in the text, and listed with it
     make every recording lock taken inside it raise `LockOrderError` (`locks.py:78`).
   - It is held for one run, never between runs, and announced with the run's kind: `plaud-sync`,
     `plaud-compare`, `plaud-import`, `plaud-resync`, `plaud-full`, `plaud-baseline` or
-    `plaud-catch-up`.
+    `plaud-catch-up`; and `plaud-accept` for Accept this listing's short hold (§11.4 step 4).
   - A scheduled turn that finds it held is skipped: busy, neither good nor a failure. A request
     waits its turn. The CLI waits up to 60 seconds, then exits 75.
 - **Scheduled runs, UI requests and every CLI command but `--catch-up` never take `ops`.** The hourly
@@ -793,6 +793,7 @@ Every contradiction the council found is settled in the text, and listed with it
 | `plaud_check_log` | one row per check: time, recording, result, parts changed, parts found volatile. Kept 7 days | worker | both |
 | `plaud_private_checked` | the marker (§13.2): per recording and Plaud ID, a SHA-256 of the title last checked, and the version of the pattern list it passed | every `Writer` that reconciles | the same |
 | `plaud_events` | what Dan sees: imported, arrived private, updated (with parts), re-tagged private (with why), kept out late, consent-listed late, couldn't tag private, kept here, gone from Plaud, released. Kept 90 days; open flags until resolved | worker | web |
+| `plaud_listed` | the canonical IDs of the last good listing and of a held one, each with its form (`of_`, bare hex, other), so a hold measures what vanished or changed form and Accept can make the held listing the last good one (§11.4; added in Phase 2, a table rather than a column) | worker | worker |
 | `plaud_state` | one row per key: the last good listing (its ID-set hash, census and time), holds (with the held listing's absent set), the breaker (its `window_start`, the normaliser version it tripped under, and the fields accepted), the sign-in state, `failing_since` and its cause, `last_ping_at` and `last_ping_ok` (§16), `last_started` and `last_ended`, `catch_up_done_at`, the snapshot mark rows and `rebuilt_at` (§11.6), the keep-out words enforced, the auto-private pattern list by version, Sync everything's progress and pace | worker | both |
 
 - **Keyed by canonical ID.** `plaud_listing` is keyed by `canonical_plaud_id`, never by the ID as
@@ -1205,7 +1206,9 @@ is a separate piece of work, and the thresholds are constants, not settings.
 5. **A small shrink settles by itself** when the next good listing, at least an hour later, is
    missing the same recordings (the same absent set), whatever else changed. If the absent set
    changes, the wait starts again. It is a line among Status's numbers, never in Needs attention:
-   there is nothing for Dan to do.
+   there is nothing for Dan to do. While it waits, its recordings still count as newly absent in
+   the next measure (the last good listing has moved past them), so small shrinks that add up
+   past the large shrink's limit hold (built, area A3).
 6. **A re-keyed recording,** in any listing, held or not. When an ID neither the archive nor
    `plaud_listing` has seen appears while a consent-listed or kept-out ID is absent, the worker
    compares its start time and duration with each absent one's (from the cache, §9.5), before any
@@ -3061,7 +3064,7 @@ smoke.
 
 | ID | Situation | Expected | Phase and task | Proof | Status |
 |---|---|---|---|---|---|
-| C1.01 | Random fake accounts: repeats across pages, both ID forms, consent and keep-out rows, late keep-outs and late consent listings already here, partial listings | Every listed ID lands in exactly one bucket by §11.3's precedence, and the equation adds up | Phase 2 | a property test (Phase 2's plan) | planned |
+| C1.01 | Random fake accounts: repeats across pages, both ID forms, consent and keep-out rows, late keep-outs and late consent listings already here, partial listings | Every listed ID lands in exactly one bucket by §11.3's precedence, and the equation adds up | Phase 2, area A3 | `packages/core/tests/test_plaud_buckets_property.py` (40 seeded accounts through the fake server) | built |
 | C1.02 | The real dry run | Both equations add up and Dan signs them off; the consent list's IDs are found on Plaud | Phase 2 | runbook section 7 | planned |
 | C2.01 | Fake, with an injected clock: 1,000 recordings, 40 speaker renames at once | Each shows within `full_sweep_days` plus one schedule interval, and at once with Re-sync | Phase 3 | Phase 3's plan | planned |
 | C2.02 | Real: S9's clip; after the catch-up, a rename | One shows at once with Re-sync, and one within a day and one sync without it | Phase 3 | runbook (Phase 3) | planned |
@@ -3095,7 +3098,7 @@ smoke.
 | C5.12 | A late consent listing while syncs run | Never fetched again, and the run goes on | Phase 2 | Phase 2's plan | planned |
 | C5.13 | An already-flagged recording added to the consent list | No second flag: its flag changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | built |
 | C5.14 | The consent list replaced by a rename | Read at the next tick | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
-| C5.15 | A consent stop, or a hold with an ID change | The cache and the Sync screen hold no title of a recording not here | Phase 2 | Phase 2's plan | planned |
+| C5.15 | A consent stop, or a hold with an ID change | The cache and the Sync screen hold no title of a recording not here | Phase 2, areas A3 (the cache) and A6 (the Sync screen) | the cache: `packages/core/tests/test_plaud_compare.py`, `test_plaud_hold.py`, `test_plaud_accept.py` (the tick's purge); the screen: A6 | cache built; screen planned |
 | C5.16 | A removed `private`, then a `reindex` in a `web`-role process | It stays removed, and comes back only when the title changes to one that matches, with its note | Phase 1, Task 9 | `packages/core/tests/test_plaud_marker.py` | built |
 | C5.17 | A removed `private` through 100 sync runs | It stays removed | Phase 2 | Phase 2's plan | planned |
 | C5.18 | `schedule_minutes` 20 from deploy, before the first catch-up | A scheduled turn makes no Plaud call, and an import request is refused | Phase 1, Tasks 13 and 14 | `packages/core/tests/test_worker.py`, `packages/core/tests/test_plaud_requests.py` | built |
@@ -3109,19 +3112,19 @@ smoke.
 | C5.26 | A rebuilt `state.db`, then Sync everything | It leaves out what needs review | Phase 3 | Phase 3's plan | planned |
 | C5.27 | `recordings plaud review` after a restore | `rebuilt_at` is recorded as now, holding `plaud` | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
 | C5.28 | Syncs after `plaud review` | Everything made before it that isn't here waits for review | Phase 2 | Phase 2's plan | planned |
-| C5.29 | Fake: one consent-listed ID listed again under new hex, with no hold | Never requested, and no title shown | Phase 2 | Phase 2's plan | planned |
-| C5.30 | Fake: 10% of IDs re-keyed | A large shrink; Accept then imports none of the matched IDs | Phase 2 | Phase 2's plan | planned |
-| C5.31 | Fake: a kept-out ID re-keyed | Likewise | Phase 2 | Phase 2's plan | planned |
-| C5.32 | Fake: two candidates for a re-keyed ID | The new ID is held | Phase 2 | Phase 2's plan | planned |
+| C5.29 | Fake: one consent-listed ID listed again under new hex, with no hold | Never requested, and no title shown | Phase 2, areas A3 (the match) and A4/A5 (never requested, by the import) | the match and no title: `packages/core/tests/test_plaud_compare.py`; never requested: the import's | match built; import planned |
+| C5.30 | Fake: 10% of IDs re-keyed | A large shrink; Accept then imports none of the matched IDs | Phase 2, area A3 | `packages/core/tests/test_plaud_hold.py` (the matched IDs stay excluded after Accept) | built |
+| C5.31 | Fake: a kept-out ID re-keyed | Likewise | Phase 2, area A3 | `packages/core/tests/test_plaud_compare.py`, `test_plaud_hold.py` | built |
+| C5.32 | Fake: two candidates for a re-keyed ID | The new ID is held | Phase 2, area A3 | `packages/core/tests/test_plaud_compare.py` | built |
 | C5.33 | A Plaud ID's form flips between `of_` and bare | Its kept-out state, review mark and flag stay, keyed by canonical ID | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | built |
-| C5.34 | Fake: a form flip with nothing absent, through syncs | Every kept-out ID stays out; every review mark and consent exclusion holds | Phase 2 | Phase 2's plan | planned |
+| C5.34 | Fake: a form flip with nothing absent, through syncs | Every kept-out ID stays out; every review mark and consent exclusion holds | Phase 2, area A3 | `packages/core/tests/test_plaud_hold.py` | built |
 | C6.01 | The ping rule as a table: good or not, a streak or not, each blocker, busy, the gate, a sign-in pause, a rate-limit wait | Each case pings or doesn't, against a fake Healthchecks | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 (the rebuild's review list in Phase 2: decision 44) | `packages/core/tests/test_plaud_health.py` | built |
 | C6.03 | Runs with attempts and no success, failing-list recordings counted | Never good; the pings resume only after a run with a success | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.04 | Fake: every fetch failing while the listing works, or every link 403ing | No pings; once every recording is on the failing list, runs that retry only them stay not good | Phase 2 | Phase 2's plan | planned |
 | C6.05 | Fake: an outage of 1 hour | The pings stop, then resume | Phase 2 | Phase 2's plan | planned |
 | C6.06 | A failed run | Status shows it from the first failed run, with "isn't being pinged since …: <cause>" | Phase 1, Tasks 19 and 22 | `packages/ui/tests/test_plaud_views.py`, `packages/ui/frontend/src/components/SyncPanel.test.ts` | built |
-| C6.07 | A hold; **Accept this listing**; a change of form with nothing absent; a small shrink | Accept clears the hold, refused only when consent-listed or kept-out IDs vanish while Plaud's IDs look changed; the change of form holds nothing; the small shrink settles when the next listing an hour later is missing the same recordings | Phase 2 | Phase 2's plan | planned |
+| C6.07 | A hold; **Accept this listing**; a change of form with nothing absent; a small shrink | Accept clears the hold, refused only when consent-listed or kept-out IDs vanish while Plaud's IDs look changed; the change of form holds nothing; the small shrink settles when the next listing an hour later is missing the same recordings | Phase 2, area A3 | `packages/core/tests/test_plaud_hold.py`, `test_plaud_accept.py` | built |
 | C6.08 | A wedged `plaud` holder | No pings | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
 | C6.09 | A ping that fails | Status shows "last ping failed", with its time and HTTP status | Phase 1, Tasks 11 and 22 | `packages/core/tests/test_plaud_health.py`, `packages/ui/frontend/src/components/SyncPanel.test.ts` | built |
 | C6.10 | A run whose import the disk guard refused | Not good, so no ping; the streak clears at the first run the guard doesn't refuse | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
@@ -3222,3 +3225,9 @@ None: every bullet of §20 is planned in a phase.
   expired link; a dropped download resumes with `Range` (S11's rule) up to 3 times. The numbers
   are the spec's own (`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`). No decision or
   scenario changed.
+- 2026-11-02: area A3 built §11.2 to §11.4 and §9.5's cache. §9.5 gains `plaud_listed` (the last
+  good and held listings' IDs and forms: a table, so `SCHEMA_VERSION` stays 1); §9.4 gains the
+  `plaud-accept` job for Accept this listing's short hold; §11.4 step 5 says a small shrink still
+  waiting counts again in the next measure, so small shrinks that add up past the large shrink's
+  limit hold. The readings the skipped spikes would have settled (S5, S7) are in the guesses file.
+  No decision or scenario changed.

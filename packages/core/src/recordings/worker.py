@@ -3,11 +3,12 @@ how each scheduled turn ends.
 
 The process (Task 13): `recordings worker` is one process with a main thread that owns its Writer
 and a heartbeat thread (spec §9.2). The main thread ticks every 2 seconds: it re-reads the consent
-list when its file changed, applies late consent listings, runs the new-pattern pass again for
+list when its file changed, hides any title in the Plaud cache that the list or a keep-out word now
+catches (§9.5), applies late consent listings, runs the new-pattern pass again for
 what the last one left (§13.1 case 5), keeps the consent and private-unwritten blockers as the
 list, the pass and the archive say, serves one request from the UI (Task 14, §9.3: Keep it here
-alone in Phase 1), and runs a scheduled turn when one is due (§9.7). It imports no Plaud
-client, token store or sync at module level: Phase 2 passes its turn in, so `web`, which reads
+and Accept this listing so far), and runs a scheduled turn when one is due (§9.7). It imports no
+Plaud client, token store or sync at module level: Phase 2 passes its turn in, so `web`, which reads
 `alive` from here, never pulls them in.
 
 `conclude_turn` is the one place the sync tells the outside how it is: it pings the sync's own
@@ -41,12 +42,15 @@ from recordings.ids import ID_RE
 from recordings.locks import LockTimeout
 from recordings.plaud import keepout, requests, signin
 from recordings.plaud.baseline import (
+    KeepOutWordsError,
     PatternsPass,
     WholePassDue,
     enforce_word,
+    enforced_words,
     patterns_pass,
     record_pass_error,
 )
+from recordings.plaud.cache import Cache, cache_path
 from recordings.plaud.checks import (
     K_CONSENT,
     K_LAST_ENDED,
@@ -76,6 +80,7 @@ from recordings.plaud.health import (
     record_turn,
     sync_health,
 )
+from recordings.plaud.hold import accept as accept_listing
 from recordings.plaud.keepout import ConsentList, FileSignature
 from recordings.plaud.requests import Claimed
 from recordings.plaud.runlock import plaud_holder, plaud_run
@@ -411,6 +416,7 @@ class Worker:
         self._late_failed: str | None = None  # that failure's class
         self._index_down: datetime | None = None  # since when the index couldn't answer
         self._logged: LateReport | None = None
+        self._purged: tuple | None = None  # the cache titles last checked: (list, words, mtime)
         self._checked = 0  # the patterns pass at start: recordings checked so far
         self._to_check: int | None = None  # and how many it checks, counted once it begins
         self._pass: PatternsPass | None = None  # the last patterns pass that ended; None: none due
@@ -657,6 +663,7 @@ class Worker:
         self.progress.bump(now, "idle")
         self._step("consent list", self._watch_consent)
         self._step("consent blocker", self._consent_blocker)
+        self._step("cache titles", self._purge_cache)
         self._step("late consent", self._late_consent)
         self._step("patterns", self._patterns_again)
         self._step("owed private", self._owed_private)
@@ -722,6 +729,30 @@ class Worker:
             open_blocker(self.db, "consent", now=self.clock(), detail={"stop": self.consent.stop})
         else:
             clear_blocker(self.db, "consent")
+
+    def _purge_cache(self) -> None:
+        """The cache's titles of recordings not here (spec §9.5, the outline's P1): a title the
+        consent list now names, or a keep-out word now matches, is nulled at the tick, never left
+        for the next compare; during a consent stop, or with keep-out words that can't be read,
+        every title goes. Asked again only when the list in force, the words or the file
+        changed."""
+        if self.cfg.state_path is None:
+            return
+        path = cache_path(self.cfg.state_path)
+        try:
+            stamp = path.stat().st_mtime_ns
+        except FileNotFoundError:
+            return  # no listing has run yet
+        try:
+            words: tuple[str, ...] | None = enforced_words(self.db)
+        except KeepOutWordsError:
+            words = None  # no title can be checked against them: none is kept
+        if (self.consent, words, stamp) == self._purged:
+            return
+        hidden = Cache(self.cfg.state_path).purge_titles(consent=self.consent, words=words)
+        if hidden:
+            log.info("the Plaud cache: %d titles hidden by the consent list or a word", hidden)
+        self._purged = (self.consent, words, path.stat().st_mtime_ns)
 
     def _late_consent(self) -> None:
         """Late consent listings (spec §12.1), from the list in force and the index alone. A pass
@@ -1012,7 +1043,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-# ---- the worker's request handlers (Task 14): Phase 1 has Keep it here alone ---------------------
+# ---- the worker's request handlers (Task 14): Keep it here, and Accept this listing (area A3) ----
 Handler = Callable[[Worker, Claimed], requests.Reply]
 
 
@@ -1031,6 +1062,33 @@ def _keep_here(worker: Worker, claimed: Claimed) -> requests.Reply:
     )
 
 
+def _accept(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """Accept this listing (spec §11.4 step 4): under `plaud`, checked again against the consent
+    list in force and the kept-out records now (`hold.accept`). The gate has already refused it
+    before the first catch-up (the CLI's `accept-listing` alone accepts the catch-up's listing).
+    A run holding `plaud` (the CLI's) answers busy; the press can be made again."""
+    req, now = claimed.request, worker.clock()
+    try:
+        with plaud_run(worker.state, "plaud-accept", timeout=TURN_LOCK_WAIT, now=now):
+            done = accept_listing(worker.db, consent=worker.consent, now=now)
+    except LockTimeout:
+        holder = plaud_holder(worker.state)
+        busy = f"skipped: busy (`{holder[0]}`)" if holder is not None else "skipped: busy"
+        return requests.Reply(req.request_id, req.kind, "failed", busy)
+    result: dict[str, Any] = {"gone": list(done.gone)}
+    if done.why is not None:
+        result["why"] = done.why
+    if done.gone:
+        log.info("accepted a held listing: %d marked gone from Plaud", len(done.gone))
+    return requests.Reply(
+        req.request_id,
+        req.kind,
+        "failed" if done.state == "refused" else "done",
+        done.message,
+        result=result,
+    )
+
+
 # What the worker serves. requests.HANDLED names the same kinds for web, which refuses the others
-# before inserting; each later phase adds its handlers here and its kinds there.
-HANDLERS: dict[str, Handler] = {"keep-here": _keep_here}
+# before inserting; each later area adds its handlers here and its kinds there.
+HANDLERS: dict[str, Handler] = {"keep-here": _keep_here, "accept": _accept}

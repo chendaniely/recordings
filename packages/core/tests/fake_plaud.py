@@ -14,8 +14,12 @@ presigned links point at. This is §10.6's
   short body, a timeout, a dropped connection), and a `FakeLink` drops its connection part-way,
   expires after its first answers, ignores `Range`, or trickles;
 - and step 6's hook (`after`): a change to the account after request number K.
-Steps 1 and 6's account, listing and edits (and §21's listing- and content-shaped faults on top of
-`fault`) grow with later areas.
+Step 1 (area A3): the account and the paged listing (`account`, a `FakeAccount`), in either ID
+form, with §21's listing-shaped faults: a clamped page size, an empty listing, a shrink, a row
+served twice across pages, drift while paging (a recording added through `after`), malformed rows,
+the ID form flipping between bare and `of_`, an ID in a form the consent list can't name, and the
+hex changing with the audio unchanged (a re-key). Envelopes and storage (step 2) and Dan's edits
+(step 6) grow with later areas.
 
 Importable from outside tests (the live demo reuses it): no pytest at module level. Every title,
 name, token and text it serves is invented.
@@ -24,18 +28,20 @@ name, token and text it serves is invented.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import secrets
 import threading
 import time
+import wave
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from recordings.plaud.client import USER_PATH
+from recordings.plaud.client import LIST_PATH, USER_PATH
 from recordings.plaud.endpoint import TOKEN_PATH
 
 
@@ -204,6 +210,160 @@ class FakeLink:
         )
 
 
+# ---- §10.6 step 1: the account and the listing ----------------------------------------------
+ACCOUNT_START = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)  # the first synthetic recording's start
+MIN_PAGE_SIZE = 10  # audio-router: "the API rejects anything under 10" (the 400 is a guess)
+
+
+def tiny_wav(seed: int, seconds: float = 0.5, rate: int = 8000) -> bytes:
+    """A real, tiny WAV whose bytes differ by seed (as conftest's wav_bytes), so each synthetic
+    recording has its own audio and SHA-256."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes([seed % 256, seed // 256 % 256]) * int(seconds * rate))
+    return buf.getvalue()
+
+
+def fake_id(n: int) -> str:
+    """A synthetic Plaud ID: 32 lower-case hex, the canonical form, from a counter."""
+    return hashlib.sha256(f"synthetic-plaud-recording-{n}".encode()).hexdigest()[:32]
+
+
+def _stamp(when: datetime | None) -> str | None:
+    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if when is not None else None
+
+
+@dataclass
+class FakeRecording:
+    """One recording on the synthetic account. `plaud_id` is canonical (32 lower-case hex) unless
+    `other_id` gives an ID in a form the consent list can't name. `name` None: its row has no
+    title field (a malformed row the listing still lists)."""
+
+    plaud_id: str
+    name: str | None
+    start_at: datetime
+    duration_ms: int
+    seed: int
+    created_at: datetime | None = None
+    serial: str = "TEST0001"
+    other_id: str | None = None
+
+    def listed_id(self, form: str) -> str:
+        if self.other_id is not None:
+            return self.other_id
+        return f"of_{self.plaud_id}" if form == "of_" else self.plaud_id
+
+    @property
+    def audio(self) -> bytes:
+        return tiny_wav(self.seed)
+
+    def row(self, form: str) -> dict:
+        row = {
+            "id": self.listed_id(form),
+            "duration": self.duration_ms,
+            "start_at": _stamp(self.start_at),
+            "created_at": _stamp(self.created_at or self.start_at),
+            "serial_number": self.serial,
+        }
+        if self.name is not None:
+            row["name"] = self.name
+        return row
+
+
+class FakeAccount:
+    """The synthetic account behind the paged list endpoint (`GET LIST_PATH?page=&page_size=`,
+    answered `{"data": [...]}` as audio-router's tests have it), newest first. Each listing-shaped
+    fault is a field a test sets, or a method:
+    - `form`: "of_" or "hex", how every ID is spelt; `flip()` switches it;
+    - `clamp`: the most rows a page holds, whatever `page_size` asks (pages come back short);
+    - `malformed`: that many rows with no `id`, listed after the recordings;
+    - `twice`: canonical IDs whose row is listed again at the end (a repeat across pages);
+    - `remove(id)`: a shrink; `rekey(id)`: the same recording (its audio unchanged) under new hex
+      in the same form; `add(...)`, through `FakePlaud.after`, is drift while paging.
+    Every title is invented."""
+
+    def __init__(self, *, form: str = "of_") -> None:
+        self.form = form
+        self.recordings: list[FakeRecording] = []
+        self.clamp: int | None = None
+        self.malformed = 0
+        self.twice: set[str] = set()
+        self._count = 0
+        self._lock = threading.Lock()
+
+    def add(
+        self,
+        name: str | None = None,
+        *,
+        start_at: datetime | None = None,
+        duration_ms: int | None = None,
+        plaud_id: str | None = None,
+        other_id: str | None = None,
+        untitled: bool = False,
+    ) -> FakeRecording:
+        with self._lock:
+            self._count += 1
+            n = self._count
+        title = None if untitled else (f"Synthetic meeting {n}" if name is None else name)
+        rec = FakeRecording(
+            plaud_id=plaud_id or fake_id(n),
+            name=title,
+            start_at=start_at or ACCOUNT_START + timedelta(hours=n),
+            duration_ms=duration_ms if duration_ms is not None else 60_000 + 1_000 * n,
+            seed=n,
+            other_id=other_id,
+        )
+        with self._lock:
+            self.recordings.append(rec)
+        return rec
+
+    def add_many(self, count: int) -> list[FakeRecording]:
+        return [self.add() for _ in range(count)]
+
+    def find(self, plaud_id: str) -> FakeRecording:
+        return next(r for r in self.recordings if r.plaud_id == plaud_id)
+
+    def remove(self, plaud_id: str) -> None:
+        with self._lock:
+            self.recordings = [r for r in self.recordings if r.plaud_id != plaud_id]
+
+    def rekey(self, plaud_id: str, new_id: str | None = None) -> str:
+        """The same recording, audio and times unchanged, listed under new hex (§21)."""
+        rec = self.find(plaud_id)
+        with self._lock:
+            self._count += 1
+            rec.plaud_id = new_id or fake_id(10_000_000 + self._count)
+        return rec.plaud_id
+
+    def flip(self) -> None:
+        self.form = "hex" if self.form == "of_" else "of_"
+
+    def rows(self) -> list[dict]:
+        with self._lock:
+            recordings = sorted(self.recordings, key=lambda r: r.start_at, reverse=True)
+            form, twice, malformed = self.form, set(self.twice), self.malformed
+        rows = [r.row(form) for r in recordings]
+        rows += [r.row(form) for r in recordings if r.plaud_id in twice]
+        rows += [{"name": f"Synthetic row with no id {i}"} for i in range(malformed)]
+        return rows
+
+    def listing(self, query: dict[str, list[str]]) -> Response:
+        try:
+            page = int(query.get("page", ["1"])[0])
+            size = int(query.get("page_size", ["20"])[0])
+        except ValueError:
+            return json_response({"detail": "bad page"}, 400)
+        if page < 1 or size < MIN_PAGE_SIZE:
+            return json_response({"detail": "page_size must be at least 10"}, 400)
+        if self.clamp is not None:
+            size = min(size, self.clamp)
+        rows = self.rows()
+        return json_response({"data": rows[(page - 1) * size : page * size]})
+
+
 class FakeSignIn:
     """The sign-in (§10.6 step 3). Tokens are invented (`fake-access-…`, `fake-refresh-…`) and
     expire by `clock`, the same injectable clock a test gives the token store. Each fault is
@@ -341,6 +501,7 @@ class FakePlaud:
         self.requests: list[LoggedRequest] = []
         self.sign_in: FakeSignIn | None = None  # set by `signed_in`: off, routes answer anyone
         self.links: dict[str, FakeLink] = {}  # by name, as `link` made them
+        self.plaud_account: FakeAccount | None = None  # set by `account`
         self.faults: list[Fault] = []
         self._routes: dict[tuple[str, str, str], Route] = {}
         self._hooks: list[tuple[int, Callable[[], None]]] = []
@@ -387,6 +548,12 @@ class FakePlaud:
             due = [hook for k, hook in self._hooks if k + 1 == count]
             self._hooks = [(k, hook) for k, hook in self._hooks if k + 1 != count]
         return due
+
+    def account(self, *, form: str = "of_") -> FakeAccount:
+        """The synthetic account and its listing route (§10.6 step 1): `GET LIST_PATH`."""
+        self.plaud_account = FakeAccount(form=form)
+        self.route("GET", LIST_PATH, self.plaud_account.listing)
+        return self.plaud_account
 
     def signed_in(
         self, clock: Callable[[], datetime] | None = None, **kwargs: object

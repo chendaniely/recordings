@@ -1317,6 +1317,9 @@ def test_a_folder_gone_at_the_restore_test_is_still_found_in_the_snapshot(
         ("/plaud", "would carry the Plaud sign-in"),
         ("/run/secrets", "would carry Docker's secrets"),
         ("/run/secrets/nas_ssh_key", "would carry Docker's secrets"),
+        # Stage 2b §9.5: the Plaud cache holds titles of recordings not yet here.
+        ("/state/plaud-cache.db", "the Plaud cache"),
+        ("{state}/plaud-cache.db", "the Plaud cache"),
     ],
 )
 def test_an_extra_path_doctor_reports_refuses_the_backup(tmp_path, writer, entry, why):
