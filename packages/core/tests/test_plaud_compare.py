@@ -347,17 +347,44 @@ def test_no_match_beyond_a_second_and_two_candidates_hold_the_new_id(db):
     assert {r.rekey_of for r in result.rows} == {SEVERAL}  # two new IDs for one absent one
 
 
-def test_an_id_already_in_plaud_listing_or_the_archive_is_never_a_rekey_candidate(db):
+def test_a_new_id_listed_beside_the_old_is_matched_once_the_old_vanishes(db, cache):
+    # §11.4 step 6: the match runs for every listed ID not here, not excluded and not released by
+    # Dan, in every listing, not only at an ID's first sighting. Here the new ID first shows
+    # beside the consent-listed one (nothing absent: no match yet); the next listing lacks the old.
+    old = listed(3)
+    twin = listed(40, start_at=old.start_at, duration_ms=old.duration_ms)
+    first = run([old, twin], consent_list=consent(3))
+    record_compare(db, cache, first, consent=consent(3), listing={}, now=T0)
+    later = run([twin], consent_list=consent(3), listing=db.listing_rows(), keyed=cache.keyed_out())
+    assert (later.rows[0].bucket, later.rows[0].excluded_by, later.rows[0].rekey_of) == (
+        EXCLUDED,
+        BY_REKEY,
+        pid(3),
+    )
+    record_compare(db, cache, later, consent=consent(3), listing=db.listing_rows(), now=T0)
+    (flag,) = db.open_flags(("rekeyed",))
+    assert (flag.canonical_plaud_id, flag.detail) == (pid(40), {"of": "consent"})
+
+
+def test_an_id_here_or_released_by_dan_is_never_a_rekey_candidate(db):
+    # A recording here is here (§11.3's precedence); Release keeps a released ID released, so
+    # the match never catches it again (§12.2).
     db.set_listing(pid(3), first_seen=T0 - timedelta(days=2))
-    db.set_listing(pid(60), first_seen=T0 - timedelta(days=2))
     old = keyed(3)
-    seen = listed(60, start_at=old.start_at, duration_ms=old.duration_ms)
-    result = run([seen], consent_list=consent(3), listing=db.listing_rows(), keyed={pid(3): old})
-    assert result.rows[0].bucket == WAITING
     here = Here(by_id={pid(61): frozenset({"rec-z"})})
     mine = listed(61, start_at=old.start_at, duration_ms=old.duration_ms)
     result = run([mine], here=here, consent_list=consent(3), keyed={pid(3): old})
     assert result.rows[0].bucket == HERE
+    db.set_listing(pid(60), first_seen=T0 - timedelta(days=2), rekey_of=pid(3))
+    db.set_listing(pid(60), released_at=T0)
+    db.set_listing(pid(62), first_seen=T0, kept_out_at=T0, kept_out_word="noarchive")
+    db.set_listing(pid(62), released_at=T0 + timedelta(minutes=5))
+    rows = [
+        listed(n, start_at=old.start_at, duration_ms=old.duration_ms, title=f"Synthetic {n}")
+        for n in (60, 62)
+    ]
+    result = run(rows, consent_list=consent(3), listing=db.listing_rows(), keyed={pid(3): old})
+    assert {r.bucket for r in result.rows} == {WAITING}
 
 
 def test_the_cache_keeps_excluded_ids_dates_until_30_days_absent(db, cache):

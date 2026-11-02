@@ -43,7 +43,7 @@ from recordings.plaud.hold import (
     fix_first,
     measure_against,
 )
-from recordings.plaud.keepout import parse_consent
+from recordings.plaud.keepout import parse_consent, read_consent
 from recordings.sources.plaud import PlaudSource
 from recordings.state import State
 
@@ -362,6 +362,36 @@ def test_ten_percent_re_keyed_is_a_large_shrink_and_accept_imports_no_matched_id
     assert {got[new].bucket for new in (new_consented, new_kept)} == {EXCLUDED}
     assert {got[new].bucket for new in rekeyed} == {WAITING}  # here again, by its audio, at import
     assert len(s.db.open_flags(("rekeyed",))) == 2
+
+
+def test_a_consent_listed_id_re_keyed_during_a_consent_stop_never_waits(plaud_server, tmp_path):
+    # §11.4 step 6 and §12.1 (C6.07's family): a consent-listed recording, kept out with its dates
+    # in the cache; the list becomes unreadable (a stop); Plaud re-keys it, and a listing runs
+    # during the stop. The match runs then, against the cache's consent-listed IDs, and again in
+    # every later listing: once the list reads, the new ID is excluded and flagged, never waiting.
+    s = Scene(plaud_server, tmp_path, here=20)
+    old = s.account.add("Synthetic consent-listed meeting").plaud_id
+    s.consent_list(old)
+    readable = s.consent
+    assert s.outcome() == "good" and old in s.cache.keyed_out()
+    unreadable = tmp_path / "consent-list.md"
+    unreadable.write_bytes(b"\xff\xfe not UTF-8\n")
+    s.consent = read_consent(unreadable)
+    assert s.consent.stop is not None and not s.consent.ids
+    new = s.account.rekey(old)
+    during, _, _ = s.run()
+    row = {r.canonical: r for r in during.rows}[new]
+    assert (row.bucket, row.excluded_by, row.rekey_of) == (EXCLUDED, BY_REKEY, old)
+    (flag,) = s.db.open_flags(("rekeyed",))
+    assert (flag.canonical_plaud_id, flag.detail) == (new, {"of": "consent"})
+    s.consent = readable
+    after, _, outcome = s.run()
+    row = {r.canonical: r for r in after.rows}[new]
+    assert outcome == "good"
+    assert (row.bucket, row.excluded_by) == (EXCLUDED, BY_REKEY)
+    assert after.equation["waiting"] == after.equation["missing"] == 0
+    assert {r.canonical_plaud_id: r.title for r in s.cache.compare_rows()}[new] is None
+    assert len(s.db.open_flags(("rekeyed",))) == 1
 
 
 def test_a_compare_never_moves_the_last_good_listing_or_a_hold(plaud_server, tmp_path):

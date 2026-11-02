@@ -22,11 +22,14 @@ listed title matches `auto_private_patterns`); and the consent line (its IDs, an
 Plaud now).
 
 **The re-key match** (§11.4 step 6) runs in every complete listing, held or not, before any title
-of a new ID is stored: an ID neither the archive nor `plaud_listing` has seen, listed while a
+is stored: each listed ID not here, not already excluded and not released by Dan, listed while a
 consent-listed or kept-out ID (or an earlier match) is absent, is compared with each absent one's
-start time and duration from the cache. Within `REKEY_SECONDS` on both is a match. One match, one
-way: the new ID is that recording, excluded and flagged ("rekeyed"). More than one candidate, either
-way: it is excluded the same way (`rekey_of` "*") until Dan decides.
+start time and duration from the cache. Every such ID in every listing, not only one
+`plaud_listing` has never seen, so a first listing that couldn't match it (a consent stop, or the
+old ID still listed beside it) never lets it in later; during a consent stop the cache's
+consent-listed IDs, from the last readable list, count as excluded. Within `REKEY_SECONDS` on both
+is a match. One match, one way: the ID is that recording, excluded and flagged ("rekeyed"). More
+than one candidate, either way: it is excluded the same way (`rekey_of` "*") until Dan decides.
 
 **What a complete listing writes** (`record_compare`): only `plaud_listing` (each listed ID's
 row, absent since for the rest, a newly kept-out ID with its word, a re-keyed match), the cache
@@ -250,8 +253,16 @@ def rekey_matches(
     listing: Mapping[str, ListingRow],
     keyed_out: Mapping[str, KeyedOut],
     excluded: frozenset[str],
+    stop: bool = False,
 ) -> dict[str, str]:
-    """§11.4 step 6: each new ID's match, an absent excluded canonical ID, or SEVERAL."""
+    """§11.4 step 6: the match of each listed ID that is not here, not excluded and not released
+    by Dan, an absent excluded canonical ID, or SEVERAL. Every such ID, in every listing, not
+    only one `plaud_listing` has never seen: an ID whose first listing couldn't match it (a
+    consent stop, or the old ID still listed beside it) must not be let in by the next. During a
+    consent stop (`stop`) the cache's consent-listed IDs, from the last readable list, count as
+    excluded. A false match keeps a recording out and flags it for Dan: the safe direction."""
+    if stop:
+        excluded = excluded | {pid for pid, k in keyed_out.items() if k.kind == BY_CONSENT}
     listed = {row.canonical_id for row in rows}
     absent = [k for pid, k in sorted(keyed_out.items()) if pid not in listed and pid in excluded]
     if not absent:
@@ -260,8 +271,8 @@ def rekey_matches(
         row
         for row in rows
         if row.canonical_id not in here.by_id
-        and row.canonical_id not in listing
         and row.canonical_id not in excluded
+        and not _released(listing.get(row.canonical_id))
     ]
     candidates = {
         row.canonical_id: [
@@ -325,7 +336,7 @@ def classify(
     consent_ids = consent.ids if consent is not None else frozenset()
     excluded = excluded_ids(consent, listing)
     matched = rekey_matches(
-        rows, here=here, listing=listing, keyed_out=keyed_out, excluded=excluded
+        rows, here=here, listing=listing, keyed_out=keyed_out, excluded=excluded, stop=stop
     )
     out = []
     for listed in rows:
@@ -485,16 +496,19 @@ def record_compare(
         now=result.at,
     )
     db.back_from_gone(rid for row in result.rows for rid in row.recording_ids)
-    for row in result.rows:
-        if row.rekey_of is not None:
-            of = BY_CONSENT if row.rekey_of in consent_ids else "kept-out"
-            db.add_event(
-                REKEYED_EVENT,
-                now=now,
-                plaud_id=row.canonical,
-                detail={"of": "several" if row.rekey_of == SEVERAL else of},
-                open_flag=True,
-            )
+    matched = [row for row in result.rows if row.rekey_of is not None]
+    # The cache's kind says "consent" during a stop too, when the list in force names nothing.
+    kinds = {pid: k.kind for pid, k in cache.keyed_out().items()} if matched else {}
+    for row in matched:
+        by_consent = row.rekey_of in consent_ids or kinds.get(row.rekey_of) == BY_CONSENT
+        of = BY_CONSENT if by_consent else "kept-out"
+        db.add_event(
+            REKEYED_EVENT,
+            now=now,
+            plaud_id=row.canonical,
+            detail={"of": "several" if row.rekey_of == SEVERAL else of},
+            open_flag=True,
+        )
     if consent is not None and consent.stop is None:
         _confirmed(db, consent_ids, now=now)
     cache.remember_keyed_out(

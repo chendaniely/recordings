@@ -80,7 +80,8 @@ in one of four groups. The numbers always add up.
   the Sync screen shows dates and durations only, so no title of a recording you may have kept out
   is ever stored.
 - "may be a consent-listed (or kept-out) recording back under a new ID: confirm": Plaud lists a
-  new ID with the same start time and duration as one you kept out. It stays out.
+  new ID with the same start time and duration as one you kept out. It stays out, even if it
+  first appeared while the consent list couldn't be read.
 
 **What to do**
 

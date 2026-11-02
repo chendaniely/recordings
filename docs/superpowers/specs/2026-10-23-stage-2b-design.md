@@ -1209,10 +1209,14 @@ is a separate piece of work, and the thresholds are constants, not settings.
    there is nothing for Dan to do. While it waits, its recordings still count as newly absent in
    the next measure (the last good listing has moved past them), so small shrinks that add up
    past the large shrink's limit hold (built, area A3).
-6. **A re-keyed recording,** in any listing, held or not. When an ID neither the archive nor
-   `plaud_listing` has seen appears while a consent-listed or kept-out ID is absent, the worker
-   compares its start time and duration with each absent one's (from the cache, §9.5), before any
-   title of the new ID is stored. **Within 1 second on both** is a match:
+6. **A re-keyed recording,** in any listing, held or not. While a consent-listed or kept-out ID is
+   absent, the worker compares each listed ID that is not here, not already excluded and not
+   released by Dan with each absent one's start time and duration (from the cache, §9.5), before
+   any title of it is stored. It does so in every listing, not only at an ID's first: a first
+   listing that couldn't match it (during a consent stop, or with the old ID still listed beside
+   it) never lets it in later. During a consent stop, the consent-listed IDs the cache holds from
+   the last readable list count as consent-listed for the match. **Within 1 second on both** is a
+   match:
    - **One match:** the new ID is that recording. It is excluded, never fetched or imported, and its
      title is never stored or shown. Status and the Sync screen flag it, by ID, date and duration:
      "may be a consent-listed (or kept-out) recording back under a new ID: confirm". Dan confirms
@@ -2775,7 +2779,9 @@ server (§10.6); "real" is a runbook step. Each criterion says which half it bel
      restore marks the same way.
    - **Re-keyed in the same form:** one consent-listed ID listed again under new hex, with no hold,
      is never requested and shows no title; 10% re-keyed is a large shrink, and Accept then imports
-     none of the matched IDs; a kept-out one likewise; two candidates hold the new ID.
+     none of the matched IDs; a kept-out one likewise; two candidates hold the new ID. One re-keyed
+     during a consent stop, or first listed beside the old ID, is matched by a later listing and
+     never waits.
    - **A form flip with nothing absent** keeps every kept-out ID out, every review mark and every
      consent exclusion (the tables are keyed by canonical ID).
 6. **Nothing stops silently** (first half; the breaker's part, second half):
@@ -3118,6 +3124,7 @@ smoke.
 | C5.32 | Fake: two candidates for a re-keyed ID | The new ID is held | Phase 2, area A3 | `packages/core/tests/test_plaud_compare.py` | built |
 | C5.33 | A Plaud ID's form flips between `of_` and bare | Its kept-out state, review mark and flag stay, keyed by canonical ID | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | built |
 | C5.34 | Fake: a form flip with nothing absent, through syncs | Every kept-out ID stays out; every review mark and consent exclusion holds | Phase 2, area A3 | `packages/core/tests/test_plaud_hold.py` | built |
+| C5.35 | Fake: a consent-listed ID re-keyed during a consent stop, the list then read again; a new ID first listed beside the old one, which then vanishes | Excluded as a possible re-keyed recording and flagged, in the stop's listing or the first after the old ID vanished, and every later one; never waiting | Phase 2, area A3 (the privacy fix) | `packages/core/tests/test_plaud_hold.py`, `test_plaud_compare.py` | built |
 | C6.01 | The ping rule as a table: good or not, a streak or not, each blocker, busy, the gate, a sign-in pause, a rate-limit wait | Each case pings or doesn't, against a fake Healthchecks | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 (the rebuild's review list in Phase 2: decision 44) | `packages/core/tests/test_plaud_health.py` | built |
 | C6.03 | Runs with attempts and no success, failing-list recordings counted | Never good; the pings resume only after a run with a success | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
@@ -3231,3 +3238,11 @@ None: every bullet of §20 is planned in a phase.
   waiting counts again in the next measure, so small shrinks that add up past the large shrink's
   limit hold. The readings the skipped spikes would have settled (S5, S7) are in the guesses file.
   No decision or scenario changed.
+- 2026-11-02: §11.4 step 6's re-key match runs for every listed ID that is not here, not excluded
+  and not released, in every listing, instead of only for an ID `plaud_listing` had never seen;
+  during a consent stop it counts the cache's consent-listed IDs as consent-listed. A security
+  review of area A3 found that an ID first listed during a consent stop, or beside the old ID, was
+  recorded unmatched and then read as waiting, to be imported, once the stop lifted or the old ID
+  vanished. §20's re-key bullet and C5.35 pin
+  it. The change fails closed (a false match keeps a recording out and flags it for Dan); no
+  decision or scenario's outcome changed.
