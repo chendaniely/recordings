@@ -64,6 +64,13 @@ spike sessions were skipped), each listed with how you would notice it's wrong i
 - The runbook gains sections 6 to 8 (deploy, dry run, catch-up) and a section for each way the
   sync can stop. The user guide covers every screen, and `docs/setup.md` is new.
 
+### From the end-of-branch privacy review
+
+- **Release** on a row that may be a kept-out recording back under a new ID asks with no title
+  (date, time and length only), and no title is fetched for it. While Plaud's IDs look changed,
+  no title can be shown: **Release** on a title row and **Show title** are off until the hold
+  clears.
+
 ## Before stage 2b
 
 Stage 1 (the read-only Library over a demo archive), stage 2a (the real archive, backups, the NAS

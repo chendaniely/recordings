@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 import pytest
 from recordings.init import init_archive
 from recordings.plaud.cache import Cache, Preview
-from recordings.plaud.checks import K_CATCH_UP_DONE, K_LAST_ENDED, PlaudDB
+from recordings.plaud.checks import K_CATCH_UP_DONE, K_COMPARE, K_HOLD, K_LAST_ENDED, PlaudDB
+from recordings.plaud.compare import TITLES_HIDDEN_IDS
 from recordings.plaud.requests import PlaudRequest
 from recordings.state import State
 from recordings_ui.plaud import (
@@ -76,6 +77,28 @@ def test_the_question_reads_its_title_once_by_the_requests_own_id(settings):
         "next_sync": f"{(T0 + timedelta(minutes=15)).astimezone(TZ):%H:%M}",
     }
     assert release_preview(settings, "request-0001", now=T0) is None  # shown once
+
+
+@pytest.mark.parametrize("why", ["rekeyed", "hold", "compare"])
+def test_a_preview_taken_since_its_title_was_barred_shows_no_title(settings, why):
+    # The worker refuses these previews (the end-of-branch privacy review, 2026-11-02); a preview
+    # written before the bar (a re-key matched or a hold recorded since) still leaves no title.
+    db = PlaudDB(State.open(settings.state_path))
+    if why == "rekeyed":
+        db.set_listing(f"of_{PID}", rekey_of="a" * 32, first_seen=T0)
+    elif why == "hold":
+        db.put(K_HOLD, {"ids_changed": True}, now=T0)
+    else:
+        db.put(K_COMPARE, {"titles_hidden": TITLES_HIDDEN_IDS}, now=T0)
+    Cache(settings.state_path).put_preview(
+        "request-0001",
+        Preview(PID, "Synthetic grant timelines", T0 - timedelta(hours=2), 12 * 60_000),
+        now=T0,
+    )
+    shown = release_preview(settings, "request-0001", now=T0)
+    assert shown is not None and shown["title"] == ""
+    assert "Synthetic" not in repr(shown)
+    assert release_preview(settings, "request-0001", now=T0) is None  # and it is gone
 
 
 def test_no_question_in_the_demos_or_before_any_cache(settings, tmp_path):

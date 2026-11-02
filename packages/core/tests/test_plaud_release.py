@@ -15,14 +15,16 @@ from recordings.config import load_config
 from recordings.init import init_archive
 from recordings.plaud import requests
 from recordings.plaud.cache import Cache, take_preview
-from recordings.plaud.checks import K_CATCH_UP_DONE, PlaudDB
+from recordings.plaud.checks import K_CATCH_UP_DONE, K_COMPARE, K_HOLD, PlaudDB
 from recordings.plaud.client import PlaudClient
-from recordings.plaud.compare import Conditions, Here, classify
+from recordings.plaud.compare import TITLES_HIDDEN_IDS, Conditions, Here, classify
 from recordings.plaud.gate import GATE_REFUSAL
 from recordings.plaud.importer import record_kept_out
 from recordings.plaud.keepout import parse_consent
 from recordings.plaud.release import (
     ASK,
+    NO_TITLE_HELD,
+    NO_TITLE_REKEYED,
     NOTHING,
     REFUSED_CONSENT,
     REFUSED_STOP,
@@ -323,3 +325,76 @@ def test_the_cli_refuses_a_title_that_still_carries_the_word(setup, monkeypatch)
     code, out, err = run_cli(setup, monkeypatch, f"of_{rec.plaud_id}")
     assert code == 1 and refused_word("noarchive") in out + err
     assert "synthetic grant chat" not in out + err
+
+
+# ---- the end-of-branch privacy review (2026-11-02): a re-keyed match, and an IDs-changed hold ---
+def rekeyed(setup, name: str = "Synthetic retro"):
+    """A listed ID the compare matched to an absent consent-listed one by start time and duration
+    (§11.4 step 6): flagged, kept out, its title never stored or shown."""
+    rec = setup.account.add(name)
+    setup.db.set_listing(f"of_{rec.plaud_id}", rekey_of="a" * 32, first_seen=T0)
+    setup.db.add_event(
+        "rekeyed", now=T0, plaud_id=rec.plaud_id, detail={"of": "consent"}, open_flag=True
+    )
+    return rec
+
+
+def test_a_re_keyed_match_s_preview_is_refused_and_nothing_is_cached(setup, worker):
+    # §11.4 step 6: a re-keyed match's "title is never stored or shown"; Release's question then
+    # shows no title. So its preview fetches none, writes no cache row and its reply carries none.
+    rec = rekeyed(setup)
+    before = len(setup.server.requests)
+    reply = ask(worker, "release-preview", rec, 1)
+    assert (reply.state, reply.message) == ("failed", NO_TITLE_REKEYED)
+    assert len(setup.server.requests) == before  # no listing read for it
+    assert previews(setup) == 0
+    assert take_preview(setup.state, "request-0001", now=T0) is None
+    assert "Synthetic" not in json.dumps(reply.to_dict())
+
+
+def test_a_re_keyed_match_is_let_in_without_its_title_and_still_checked(setup, worker):
+    # Let it in on a re-keyed row goes straight to `release`: still checked against the consent
+    # list as it is now and its current title against every enforced word (§12.2 step 3), and the
+    # reply names no title either way.
+    rec = rekeyed(setup, "noarchive synthetic retro")
+    reply = ask(worker, "release", rec, 1)
+    assert (reply.state, reply.message) == ("failed", refused_word("noarchive"))
+    assert "synthetic retro" not in json.dumps(reply.to_dict())
+    assert setup.db.listing(rec.plaud_id).released_at is None
+    setup.account.rename(rec.plaud_id, "Synthetic retro")
+    worker.newest_listing = None  # the listing read again
+    setup.consent.write_text(f"- `of_{rec.plaud_id}` — synthetic\n", encoding="utf-8")
+    reply = ask(worker, "release", rec, 2)
+    assert (reply.state, reply.message) == ("failed", REFUSED_CONSENT)
+    setup.consent.write_text(f"- `of_{NEVER_LISTED}` — synthetic\n", encoding="utf-8")
+    reply = ask(worker, "release", rec, 3)
+    assert reply.state == "done" and "Synthetic" not in json.dumps(reply.to_dict())
+    assert setup.db.listing(rec.plaud_id).released_at == T0
+    assert previews(setup) == 0
+
+
+@pytest.mark.parametrize("ids_changed", [True, "unreadable"])
+def test_no_preview_while_a_held_listing_shows_plauds_ids_changed(setup, worker, ids_changed):
+    # §11.4 step 3: while a held listing shows a census change or under 80% overlap, no title of a
+    # recording not here is stored or shown, a review row's Show title included. A record that
+    # can't say reads as changed (fail closed); so does the newest Compare's own measure.
+    rec = kept_out(setup, now_title="Synthetic grant timelines")
+    setup.db.put(K_HOLD, {"ids_changed": ids_changed, "sentence": "held"}, now=T0)
+    before = len(setup.server.requests)
+    reply = ask(worker, "release-preview", rec, 1)
+    assert (reply.state, reply.message) == ("failed", NO_TITLE_HELD)
+    assert len(setup.server.requests) == before
+    assert previews(setup) == 0
+    setup.db.delete(K_HOLD)
+    setup.db.put(K_COMPARE, {"titles_hidden": TITLES_HIDDEN_IDS}, now=T0)
+    reply = ask(worker, "release-preview", rec, 2)
+    assert (reply.state, reply.message) == ("failed", NO_TITLE_HELD)
+    assert previews(setup) == 0
+
+
+def test_a_large_shrink_hold_still_previews(setup, worker):
+    # Only a hold that shows Plaud's IDs changed hides titles (§11.4 step 3).
+    rec = kept_out(setup, now_title="Synthetic grant timelines")
+    setup.db.put(K_HOLD, {"ids_changed": False, "sentence": "held"}, now=T0)
+    reply = ask(worker, "release-preview", rec, 1)
+    assert (reply.state, reply.message) == ("done", ASK)

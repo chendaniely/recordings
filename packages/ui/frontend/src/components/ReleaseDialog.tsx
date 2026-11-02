@@ -7,7 +7,9 @@ import { useReturnFocus } from "@/tagging/useReturnFocus";
 import type { ReleasePreview } from "../types";
 
 /** "Let 'Coffee chat about grant timelines' (2026-10-23 14:05, 12 min) in?" The question's
- * title. A re-keyed match's preview has none, so it asks about "this recording" (§11.4). */
+ * title. A re-keyed match has none (its title is never fetched or shown, §11.4 step 6: SyncPage
+ * draws its question from the row's date, time and duration, with no preview), so it asks about
+ * "this recording". */
 export function releaseQuestion(p: ReleasePreview): string {
   const when = [`${p.date} ${p.time}`.trim(), p.duration].filter(Boolean).join(", ");
   const what = p.title ? `'${p.title}'` : "this recording";
@@ -22,8 +24,8 @@ export function releaseButton(plaudId: string): HTMLElement | null {
 
 /** Release asks first (2b spec §12.2; the fourth exception to "no confirmation dialogs"): it
  * turns "never download" into a copy kept for good. The title shows here and nowhere else, from
- * the preview this window alone was sent, as text: Phase 2's worker builds that preview, and
- * until then the dialog is drawn from fixtures only. Cancel has focus, and Esc means Cancel. It
+ * the preview this window alone was sent, as text (the worker builds that preview); a re-keyed
+ * match's question has no title. Cancel has focus, and Esc means Cancel. It
  * opens on a reply, not from a Trigger, so useReturnFocus gives focus back to its Release button
  * when it closes (Radix alone would leave it on <body>). */
 export function ReleaseDialog({ preview, onCancel, onLetIn }: { preview: ReleasePreview; onCancel: () => void; onLetIn: () => void }) {

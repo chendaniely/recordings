@@ -223,6 +223,39 @@ describe("the Sync screen (2b spec §15.1)", () => {
     expect(document.activeElement).toBe(button("[data-testid=sync-kept-out]", "Release"));
   });
 
+  it("a re-keyed row's Release asks with no title, sends no preview, and Let it in sends release", () => {
+    // §11.4 step 6 (the end-of-branch privacy review, 2026-11-02): a re-keyed match's title is
+    // never fetched or shown, so its question names the row's date, time and duration only.
+    const rekeyed: KeptOutRow = { plaud_id: id(8), copy_id: copy(8), date: "2026-10-22", time: "16:30", duration: "31 min",
+      by: "rekeyed", release: true, released: null };
+    draw({ ...VIEW, kept_out: [rekeyed] }, fake());
+    click(button("[data-testid=sync-kept-out]", "Release"));
+    expect(sends).toEqual([]);
+    const dialog = $("[data-testid=release-dialog]")!;
+    expect(dialog.textContent).toContain("Let this recording (2026-10-22 16:30, 31 min) in?");
+    expect(dialog.textContent).toContain("It downloads at the next sync (14:40)");
+    click(button("[data-testid=release-dialog]", "Let it in"));
+    expect(sends).toEqual([["release", { plaud_ids: [id(8)] }]]);
+    expect($("[data-testid=release-dialog]")).toBeNull();
+  });
+
+  it("while titles are hidden no preview can be asked for, and a re-keyed row's Release still asks", () => {
+    // §11.4 step 3: no title shows while Plaud's IDs look changed (the worker refuses the preview).
+    const rekeyed: KeptOutRow = { plaud_id: id(8), copy_id: copy(8), date: "2026-10-22", time: "16:30", duration: "31 min",
+      by: "rekeyed", release: true, released: null };
+    const hidden = "titles hidden while Plaud's IDs look changed";
+    draw({ ...VIEW, titles_hidden: hidden, kept_out: [...VIEW.kept_out, rekeyed] }, fake());
+    const why = `No title can be shown: ${hidden}`;
+    expect($$("[data-request=release-preview]").every((b) => b.hasAttribute("disabled"))).toBe(true);
+    expect($$("[data-request=release-preview]").length).toBe(2); // the title row's Release, and Show title
+    expect(sectionsSaying(why)).toEqual(["sync-not-here", "sync-kept-out"]);
+    const asks = $("[data-request=release]")!;
+    expect(asks.hasAttribute("disabled")).toBe(false);
+    click(asks);
+    expect(sends).toEqual([]);
+    expect($("[data-testid=release-dialog]")!.textContent).toContain("Let this recording");
+  });
+
   it("a released row reads Released · comes in at the next sync · Undo, and Undo sends unrelease", () => {
     draw(VIEW, fake());
     const row = $$("[data-testid=kept-out-row]").find((r) => r.textContent?.includes(id(6)))!;

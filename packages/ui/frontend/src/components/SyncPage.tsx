@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 
 import { FINAL, NO_PLAUD, kindReason, usePlaudContext } from "../plaud/usePlaud";
 import { useShinyOutputError, useShinyOutputValue } from "../sr";
-import type { KeptOutRow, NotHereRow, PlaudKind, PlaudResult, SyncView } from "../types";
+import type { KeptOutRow, NotHereRow, PlaudKind, PlaudResult, ReleasePreview, SyncView } from "../types";
 import { ReleaseDialog } from "./ReleaseDialog";
 import {
   CopyId, FlagRow, Reasons, SyncBreakerLine, SyncHoldLine, SyncSummary, archiveText, consentText, equationParts, n, reasonsFor,
@@ -64,7 +64,9 @@ export function SyncPage() {
   const error = useShinyOutputError("plaud_sync");
   const plaud = usePlaudContext();
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  const [asking, setAsking] = useState<{ request: string; plaud_id: string } | null>(null);
+  // Release's question: the preview this window asked for (`request`), or, for a re-keyed match,
+  // one drawn here from the row with no title (`local`, §11.4 step 6), no preview sent.
+  const [asking, setAsking] = useState<{ request: string | null; plaud_id: string; local?: ReleasePreview } | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({}); // review rows' titles, on demand
   const [kept, setKept] = useState<Record<string, string>>({}); // flag -> its Keep it here request
 
@@ -90,8 +92,8 @@ export function SyncPage() {
   const why = plaud.available ? null : (plaud.reason ?? NO_PLAUD);
   const off = (kind: PlaudKind, own: string | null = null) => kindReason(kind, why, view) ?? own;
   const gated = (kind: PlaudKind) => off(kind, view.gate);
-  const answer = asking ? plaud.results[asking.request] : undefined;
-  const preview = answer?.state === "done" ? answer.preview : null;
+  const answer = asking?.request ? plaud.results[asking.request] : undefined;
+  const preview = asking?.local ?? (answer?.state === "done" ? answer.preview : null);
   const ended = answer !== undefined && FINAL.has(answer.state) && !preview;
   const pending = plaud.last && !FINAL.has(plaud.last.state) ? plaud.last : null;
   const sync = off("sync", b.sync);
@@ -99,15 +101,19 @@ export function SyncPage() {
   const full = off("full", b.full);
   const importing = off("import", b.import);
   const parking = gated("park");
-  const previewing = gated("release-preview"); // Release's question, and a review row's Show title
+  // Release's question, and a review row's Show title: no title can come while titles are hidden
+  // (a consent stop, or Plaud's IDs looking changed: the worker refuses the preview, §11.4 step 3).
+  const previewing = gated("release-preview") ?? (view.titles_hidden ? `No title can be shown: ${view.titles_hidden}` : null);
+  const releasing = gated("release"); // a re-keyed match's Release, which asks with no title
   const unreleasing = gated("unrelease");
   const unparking = gated("unpark");
   const actions = reasonsFor("sync-actions", [sync, compare, full]);
   const imports = reasonsFor("sync-not-here", [
     importing, view.not_here.some((r) => r.park) ? parking : null, view.not_here.some((r) => r.review) ? previewing : null,
   ]);
+  const releaseWhy = (r: KeptOutRow) => (r.by === "rekeyed" ? releasing : previewing);
   const keptOut = reasonsFor("sync-kept-out", [
-    view.kept_out.some((r) => r.release && !r.released) ? previewing : null, view.kept_out.some((r) => r.released) ? unreleasing : null,
+    ...view.kept_out.filter((r) => r.release && !r.released).map(releaseWhy), view.kept_out.some((r) => r.released) ? unreleasing : null,
   ]);
   const parked = reasonsFor("sync-parked", [view.parked.length > 0 ? unparking : null]);
   const holdWhy = view.hold?.accept ? gated("accept") : null;
@@ -127,7 +133,14 @@ export function SyncPage() {
     plaud.send("import", { plaud_ids: chosen });
     setPicked(new Set());
   };
-  const release = (r: KeptOutRow) => setAsking({ request: plaud.send("release-preview", { plaud_ids: [r.plaud_id] }), plaud_id: r.plaud_id });
+  // A re-keyed match's title is never fetched or shown (§11.4 step 6): its question is drawn from
+  // the row's date, time and duration, and Let it in sends `release` straight away.
+  const release = (r: KeptOutRow) => setAsking(r.by === "rekeyed"
+    ? {
+      request: null, plaud_id: r.plaud_id,
+      local: { plaud_id: r.plaud_id, title: "", date: r.date ?? "", time: r.time ?? "", duration: r.duration, next_sync: view.next_sync },
+    }
+    : { request: plaud.send("release-preview", { plaud_ids: [r.plaud_id] }), plaud_id: r.plaud_id });
   const showTitle = (r: NotHereRow) => {
     const request = plaud.send("release-preview", { plaud_ids: [r.plaud_id] });
     setTitles((t) => ({ ...t, [r.plaud_id]: request }));
@@ -284,8 +297,8 @@ export function SyncPage() {
                         onClick={() => plaud.send("unrelease", { plaud_ids: [r.plaud_id] })}>Undo</Button>
                     </span>
                   ) : r.release && (
-                    <Button variant="outline" data-request="release-preview" data-release-for={r.plaud_id} disabled={previewing !== null}
-                      aria-describedby={keptOut.idOf(previewing)} onClick={() => release(r)}>Release</Button>
+                    <Button variant="outline" data-request={r.by === "rekeyed" ? "release" : "release-preview"} data-release-for={r.plaud_id}
+                      disabled={releaseWhy(r) !== null} aria-describedby={keptOut.idOf(releaseWhy(r))} onClick={() => release(r)}>Release</Button>
                   )}
                   {asking?.plaud_id === r.plaud_id && ended && answer && <span className="sync-why" role="status">{answer.message}</span>}
                 </li>

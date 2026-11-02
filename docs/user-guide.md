@@ -283,7 +283,8 @@ a phone it is the same, in one column, with buttons the width of the screen.
   brings in the ones you ticked, review rows included. While it runs: "Importing (5 of 31)"; at
   the end: "31 imported · 4 arrived private", with **View**, which opens Untagged. Importing never
   asks "are you sure?".
-- **Release** asks first, and only there shows the title ([keeping a recording out](#keeping-a-recording-out)).
+- **Release** asks first, and only there shows the title; never for a possible re-keyed match,
+  whose question has none ([keeping a recording out](#keeping-a-recording-out)).
 - **Park**, on a row that "failed 3 times", stops it counting against "All here", and syncs leave
   it alone. **Unpark** puts it back; **Import selected** tries it again whenever you like.
 - **Sync everything:** [below](#sync-everything).
@@ -524,10 +525,18 @@ has the rest.
 - Release is refused, with the reason, while the title still starts with the word ("Release
   refused: its title still starts with `noarchive`": rename it in Plaud first), while the
   recording is on the consent list, and while the consent list can't be read.
+- While Plaud's IDs look changed (a held listing, or the last Compare, says so), no title can be
+  shown: **Release** on a "Was kept out by title" row and **Show title** are off, saying "No title
+  can be shown: titles hidden while Plaud's IDs look changed". Among the new IDs may be a recording
+  you kept out. Once the hold clears (see [Accept this listing](#when-the-sync-is-held-accept-this-listing)),
+  they work again.
 - Until the next sync fetches it, the row reads "Released · comes in at the next sync (14:40)",
   with **Undo**, which keeps it out again.
 - A row "May be a consent-listed or kept-out recording back under a new ID" that is really a
-  different recording: press **Release** too. Its question shows the title Plaud lists now.
+  different recording: press **Release** too. Its question shows **no title**: "Let this
+  recording (date, time, length) in?". The sync suspects it is one you kept out, so it never
+  fetches or shows its title; check the date and length against your own record first. **Let it
+  in** is still checked against the consent list and the keep-out word as they are then.
 - On the server, `rc exec worker recordings plaud release <Plaud ID>` does the same, showing only
   the ID, date and duration and asking y/N; `--undo` keeps it out again.
 
@@ -809,7 +818,7 @@ rebuilt, or restored from an older backup, it can't know what you kept out since
   on the Sync screen." No email: the sync goes on.
 - On the Sync screen's **Not here yet**, every Plaud recording made before the rebuild that isn't
   here reads "needs your review: the sync's records were rebuilt", by date, time and duration.
-  Its title shows only when you press **Show title**.
+  Its title shows only when you press **Show title** (never while Plaud's IDs look changed).
 - Recordings made after the rebuild arrive as usual. **Import all** and the scheduled syncs leave
   the review rows out ("Import all 31 · 6 more need your review").
 - A `private` tag you removed may come back once, with "the sync's record was rebuilt" in

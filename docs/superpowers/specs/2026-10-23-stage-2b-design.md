@@ -1534,7 +1534,11 @@ is a separate piece of work, and the thresholds are constants, not settings.
      current title, from its in-memory copy of the newest listing (or a fresh listing), through the
      cache (§9.5). The title is never written anywhere else, and the preview row is deleted once
      answered or after 10 minutes. The preview is refused, with no title fetched, if the ID is
-     consent-listed, during a consent stop, or while the gate is closed.
+     consent-listed, during a consent stop, or while the gate is closed; for a possible re-keyed
+     match (§11.4 step 6: its question shows no title, by ID, date and duration, and goes straight
+     to Let it in); and while a held listing, or the newest Compare, shows Plaud's IDs changed
+     (§11.4 step 3), a review row's **Show title** included ("No title shown while Plaud's IDs
+     look changed: see Status").
   2. The question shows it on screen: "Let 'Coffee chat about grant timelines' (2026-10-23 14:05,
      12 min) in? It downloads at the next sync (14:40), and then stays in the backups." Cancel, or
      Let it in.
@@ -3408,3 +3412,11 @@ None: every bullet of §20 is planned in a phase.
   still refuses every request. Release's question itself needs a request, so the public demo
   can't open it (`make demo-live` does). The user guide is finished, `docs/setup.md` is the setup
   page, and `CHANGELOG.md` starts. No decision or scenario's outcome changed.
+- 2026-11-02: §12.2 step 1, §11.4 steps 3 and 6 (the end-of-branch privacy review's High):
+  Release's preview is refused, with no title fetched or cached, for a possible re-keyed match
+  ("No title shown: it may be a consent-listed or kept-out recording back under a new ID"), whose
+  Release now asks by ID, date and duration and sends `release` at once, as step 6 already said;
+  and while a held listing or the newest Compare shows Plaud's IDs changed ("No title shown while
+  Plaud's IDs look changed: see Status"), which also turns the Sync screen's preview buttons off.
+  The web app drops a preview's title it reads after either became true. No decision or
+  scenario's outcome changed.

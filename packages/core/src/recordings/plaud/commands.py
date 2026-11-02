@@ -1030,7 +1030,7 @@ def cmd_release(args: argparse.Namespace) -> int:
         print(done)
         return EXIT_OK if done == release.UNDONE else EXIT_FAILED
     consent = read_consent(settings.consent_list)
-    early = release.may_preview(pid, consent, db, here=here, review_ok=False)
+    early = release.may_ask(pid, consent, db, here=here)
     if not early.ok:
         code = EXIT_CONFIG if early.message == release.REFUSED_STOP else EXIT_FAILED
         return _fail(early.message, False, code)

@@ -1444,21 +1444,33 @@ def release_preview(
         return None
     tz = settings.timezone_name
     next_sync = None
+    title = ""  # shown only once state.db says it may be (fail closed)
     try:
         db = PlaudDB(State.read_only(settings.state_path))
+        if not _preview_barred(db, preview.canonical_plaud_id):
+            title = preview.title
         stamps = [parse_stamp(db.get(k)) for k in (K_LAST_STARTED, K_LAST_ENDED)]
         last = max((t for t in stamps if t is not None), default=None)
         next_sync = _next_sync(settings, gate_now(db).open, last, now)
-    except Exception as exc:  # noqa: BLE001  the question still shows, without the time
+    except Exception as exc:  # noqa: BLE001  the question still shows, without the time or title
         log.warning("Release's next sync couldn't be read (%s)", type(exc).__name__)
     return {
         "plaud_id": preview.canonical_plaud_id,
-        "title": preview.title,
+        "title": title,
         "date": _date(preview.start_at, tz) or "",
         "time": _hm(preview.start_at, tz) or "",
         "duration": _minutes(preview.duration_ms),
         "next_sync": next_sync,
     }
+
+
+def _preview_barred(db: Any, plaud_id: str) -> bool:
+    """The worker's preview bar read again before a title leaves (CLAUDE.md's cache rule; the
+    end-of-branch privacy review, 2026-11-02): a re-keyed match (§11.4 step 6) or Plaud's IDs
+    looking changed (§11.4 step 3) since the preview was written. The question then has no title."""
+    from recordings.plaud.release import kept_by, titles_hidden
+
+    return titles_hidden(db) or kept_by(db.listing(plaud_id)) == "rekeyed"
 
 
 def _minutes(ms: int | None) -> str | None:

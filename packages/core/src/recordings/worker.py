@@ -1447,8 +1447,10 @@ def _plaud_failure(exc: BaseException) -> str:
 def _release_preview(worker: Worker, claimed: Claimed) -> requests.Reply:
     """§12.2 step 1: the recording's current title, written to the cache only, keyed by this
     request's own ID; the web app shows it once in Release's question. Refused, with no title
-    fetched, for a consent-listed ID or during a consent stop (the gate is the serve_request's);
-    and when the title still carries a keep-out word, which is never shown."""
+    fetched, for a consent-listed ID or during a consent stop (the gate is the serve_request's),
+    for a re-keyed match (§11.4 step 6) and while Plaud's IDs look changed (§11.4 step 3,
+    `release.may_preview`); and when the title still carries a keep-out word, which is never
+    shown."""
     from recordings.plaud import release
     from recordings.plaud.keepout import keep_out_match
 
@@ -1497,7 +1499,7 @@ def _release(worker: Worker, claimed: Claimed) -> requests.Reply:
         return _failed(claimed, release.ONE_ID)
     worker._watch_consent()
     here = worker._here(plaud_id)
-    early = release.may_preview(plaud_id, worker.consent, worker.db, here=here, review_ok=False)
+    early = release.may_ask(plaud_id, worker.consent, worker.db, here=here)
     if not early.ok:  # no listing is read for one that can't be released anyway
         return _failed(claimed, early.message)
     try:
