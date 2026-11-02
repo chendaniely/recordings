@@ -3365,3 +3365,12 @@ None: every bullet of §20 is planned in a phase.
   whether it is open and why. The runbook's section 8 runs the volatility check before `make
   plaud-catch-up`, and gains "When edit-sync pauses: the breaker". No decision or scenario's
   outcome changed.
+- 2026-11-02: §14.4, §15.1 to §15.3 (area B1): the views read what the checks write: the
+  breaker on the Sync screen and Status (its sentence, field names, Accept these changes or the
+  code fix, and a note: SyncBreaker gains an optional `note`), Status's condition while it is
+  open and its Needs attention line, a day's "closed by the release" line, the sweep's number
+  ("every recording checked within the last 21 hours (oldest …) · an edit in Plaud shows within
+  about 25 hours"), the details' changes per part and fields in 24 hours, Details' "checked …
+  · next by …", and Updated's "Nothing changed on Plaud this week." once a check ran that
+  week (SyncView gains `checked_week`; the phase-end list's row 21). The share of named
+  segments stays empty. No decision or scenario's outcome changed.

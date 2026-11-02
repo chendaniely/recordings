@@ -343,11 +343,23 @@ describe("the Sync screen (2b spec §15.1)", () => {
     expect($("[data-testid=flag-row]")!.textContent!.split(rid)).toHaveLength(2); // the ID once
   });
 
-  it("Updated is drawn only with rows: no sentence says nothing changed, which nothing measures yet", () => {
+  it("Updated says nothing changed only once a check ran this week, and never before", () => {
     const none = markup({ ...VIEW, updated: [] });
     expect(none).not.toContain('data-testid="sync-updated"');
     expect(none).not.toContain("Nothing changed on Plaud");
+    const quiet = markup({ ...VIEW, updated: [], checked_week: true });
+    expect(quiet).toContain('data-testid="sync-updated"');
+    expect(quiet).toContain("Nothing changed on Plaud this week.");
     expect(markup(VIEW)).toContain('data-testid="sync-updated"');
+    expect(markup({ ...VIEW, checked_week: true })).not.toContain("Nothing changed on Plaud");
+  });
+
+  it("a breaker's note says what to know meanwhile, beside its fields", () => {
+    const note = "New recordings still arrive.";
+    draw({ ...VIEW, breaker: { ...VIEW.breaker!, note } }, fake());
+    const line = $("[data-testid=sync-breaker]")!;
+    expect(line.textContent).toContain("folder_id");
+    expect($("[data-testid=sync-breaker-note]")!.textContent).toBe(note);
   });
 
   it("a hold and a breaker with one reason say it once, and both Accept buttons name it", () => {

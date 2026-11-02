@@ -136,8 +136,9 @@ export function CodeList({ items }: { items: string[] }) {
   return <>{items.map((f, i) => <span key={f}>{i > 0 && ", "}<code>{f}</code></span>)}</>;
 }
 
-/** A breaker trip (§14.4): its sentence, the field names (never values), and Accept these
- * changes, or why it needs a code fix. `why` and `whyId` are as for SyncHoldLine. */
+/** A breaker trip (§14.4): its sentence, the field names (never values), what to know meanwhile,
+ * and Accept these changes, or why it needs a code fix. `why` and `whyId` are as for
+ * SyncHoldLine. */
 export function SyncBreakerLine({ breaker, why, whyId, onAccept }: { breaker: SyncBreaker; why: string | null; whyId?: string; onAccept: () => void }) {
   return (
     <div className="sync-breaker" data-testid="sync-breaker">
@@ -145,6 +146,7 @@ export function SyncBreakerLine({ breaker, why, whyId, onAccept }: { breaker: Sy
         {breaker.sentence}
         {breaker.fields.length > 0 && <> (<CodeList items={breaker.fields} />)</>}
       </p>
+      {breaker.note && <p data-testid="sync-breaker-note">{breaker.note}</p>}
       {breaker.accept && (
         <Button data-request="accept-changes" disabled={why !== null} aria-describedby={why !== null ? whyId : undefined} onClick={onAccept}>
           Accept these changes

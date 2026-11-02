@@ -1058,3 +1058,92 @@ def test_the_schedule_off_before_the_first_catch_up_is_plain_and_after_it_is_a_p
     assert sync_view(s.settings, now=T0, can_request=None)["summary"]["kind"] == "problem"
     open_blocker(s.db, "consent", now=T0)  # a blocker comes before the schedule: a problem
     assert sync_view(s.settings, now=T0, can_request=None)["summary"]["kind"] == "problem"
+
+
+# ---- Phase 3's readers (area B1): the breaker, the sweep, Details' check lines ---------------
+def test_the_breaker_shows_on_both_screens_with_its_fields_and_accept(plaud_scene):
+    # why: §14.4, decision 11. Field names only; Accept on Status and the Sync screen; Status adds
+    # that the check stays down meanwhile, and Needs attention says so.
+    from recordings.plaud.breaker import CODE_FIX, OPEN_NOTE
+    from recordings.plaud.checks import K_BREAKER
+    from recordings_ui.plaud import BREAKER_OPEN_NOTE
+
+    assert BREAKER_OPEN_NOTE == OPEN_NOTE  # kept in plaud.py for Pyodide
+    s = plaud_scene
+    s.open_gate()
+    trip = {
+        "open": True,
+        "since": T0.isoformat(),
+        "recordings": 12,
+        "fields": ["folder_id"],
+        "parts": [],
+        "accept": True,
+        "normaliser": 1,
+    }
+    s.db.put(K_BREAKER, trip, now=T0)
+    view = sync_view(s.settings, now=T0, can_request=None)
+    panel = sync_panel(s.settings, now=T0)
+    for breaker in (view["breaker"], panel["breaker"]):
+        assert breaker["sentence"] == (
+            "Edit-sync paused since 14:20: Plaud started sending something new on 12 recordings"
+        )
+        assert breaker["fields"] == ["folder_id"] and breaker["accept"] is True
+        assert breaker["code_fix"] is None and breaker["note"].startswith("New recordings still")
+    assert BREAKER_OPEN_NOTE in panel["conditions"]
+    assert any(a.startswith("Edit-sync is paused since 14:20") for a in panel["attention"])
+    # A part that differs between two fetches: no Accept, a code fix, and no field names.
+    s.db.put(K_BREAKER, {**trip, "parts": ["transcript"], "accept": False}, now=T0)
+    breaker = sync_view(s.settings, now=T0, can_request=None)["breaker"]
+    assert breaker["sentence"] == (
+        "Edit-sync paused since 14:20: 12 recordings' transcripts change between two fetches a "
+        "moment apart"
+    )
+    assert (breaker["accept"], breaker["code_fix"], breaker["fields"]) == (False, CODE_FIX, [])
+    # Closed by a release: no breaker, and Status watches for a re-trip for a day.
+    closed = {**trip, "open": False, "closed": {"at": T0.isoformat(), "by": "release"}}
+    s.db.put(K_BREAKER, closed, now=T0)
+    panel = sync_panel(s.settings, now=T0 + timedelta(hours=1))
+    assert panel["breaker"] is None
+    assert any("closed by the release on 2026-10-23" in c for c in panel["conditions"])
+    assert not any(
+        "closed by the release" in c
+        for c in sync_panel(s.settings, now=T0 + timedelta(days=2))["conditions"]
+    )
+
+
+def test_status_says_how_old_the_oldest_check_is_and_what_changed_per_part(plaud_scene):
+    # why: §15.2's numbers ("every recording checked within the last 21 hours (oldest …)", with
+    # the estimate it implies) and details (changes per part in 24 hours, the fields' names).
+    s = plaud_scene
+    s.open_gate()
+    one, two = s.add(1, "Week 1"), s.add(2, "Week 2")
+    db = s.db
+    db.set_check(one, last_checked_at=T0 - timedelta(hours=21), next_check_at=T0)
+    db.set_check(two, last_checked_at=T0 - timedelta(hours=2), next_check_at=T0)
+    db.log_check(two, "updated", parts=["speakers", "other", "other:folder_id"], now=T0)
+    db.log_check(one, "updated", parts=["title"], now=T0 - timedelta(hours=30))
+    panel = sync_panel(s.settings, now=T0)
+    assert panel["numbers"]["sweep"] == (
+        "every recording checked within the last 21 hours (oldest 2026-10-22 17:20) · an edit "
+        "in Plaud shows within about 7 days"
+    )
+    assert panel["details"]["changes_24h"] == {"other": 1, "speakers": 1}
+    assert panel["details"]["fields"] == ["folder_id"]
+    assert sync_view(s.settings, now=T0, can_request=None)["checked_week"] is True
+    assert (
+        sync_view(s.settings, now=T0 + timedelta(days=8), can_request=None)["checked_week"] is False
+    )
+
+
+def test_details_says_when_it_was_checked_and_when_next(plaud_scene):
+    # why: §15.3's "Plaud: checked 2026-10-23 14:20 · next by 2026-10-24 14:20"; no next check for
+    # a recording the sweep leaves alone.
+    s = plaud_scene
+    s.open_gate()
+    rid = s.add(3, "Week 3")
+    s.db.set_check(rid, last_checked_at=T0, next_check_at=T0 + timedelta(days=1))
+    lines = recording_plaud(s.settings, rid, now=T0)
+    assert (lines["checked"], lines["next_by"]) == ("2026-10-23 14:20", "2026-10-24 14:20")
+    s.db.set_check(rid, parked_at=T0)
+    lines = recording_plaud(s.settings, rid, now=T0)
+    assert (lines["checked"], lines["next_by"]) == ("2026-10-23 14:20", None)

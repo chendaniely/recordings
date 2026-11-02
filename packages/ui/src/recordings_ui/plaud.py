@@ -38,6 +38,7 @@ import asyncio
 import builtins
 import json
 import logging
+import math
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -230,12 +231,13 @@ async def submit(
 # The views read state.db and the cache, read-only: the summary and what stops the sync
 # (sync_health), the blockers, the privacy flags, what the worker read from the consent list (a
 # count), the gate, the worker's heartbeat, the ping, the requests' last result, and Phase 2's
-# listing, compare, hold and sign-in (area A6). What Phase 3 writes (the breaker, checks, Sync
-# everything, held removals) is null or empty here until its reader comes, against types.ts and
-# the canned view (2b phase 1 plan, Task 19). Every reader is imported inside the function that
-# needs it, never at the top: the Pages demo runs this module on Pyodide, which has no sqlite3,
-# and draws only the canned view (decision 23). Times and dates are formatted here, in the default
-# zone; a title appears only in the Sync screen's Not here yet and Updated rows.
+# listing, compare, hold and sign-in (area A6), and Phase 3's checks, sweep and breaker (area B1).
+# What is still to come (Sync everything, held removals: area B2) is null or empty here until its
+# reader comes, against types.ts and the canned view (2b phase 1 plan, Task 19). Every reader is
+# imported inside the function that needs it, never at the top: the Pages demo runs this module
+# on Pyodide, which has no sqlite3, and draws only the canned view (decision 23). Times and
+# dates are formatted here, in the default zone; a title appears only in the Sync screen's Not
+# here yet and Updated rows.
 
 ALL_HERE_EXPLAIN = "Every recording on Plaud is in the archive or deliberately left out."
 # Sync now's and the imports' reason while a listing is held (A5's handoff: the worker refuses
@@ -278,6 +280,12 @@ CONSENT_UNREADABLE = "the consent list can't be read"  # keepout.STOP_UNREADABLE
 NO_WORKER_YET = "The Plaud worker hasn't reported yet: check that the worker container is running."
 WORKER_FAILED = "The Plaud worker couldn't start (`{}`): see `rc logs worker` (runbook)."
 PING_FAILING = "The sync's Healthchecks ping has failed for 2 hours."
+# §14.4: Status's line while the breaker is open (breaker.OPEN_NOTE, kept here: plaud.breaker
+# imports sqlite3, which the Pages demo's Pyodide has none of; a test pins the two).
+BREAKER_OPEN_NOTE = (
+    "While this is open, the sync's check stays down, so a new problem won't send another email: "
+    "glance at Status until it's fixed."
+)
 # A recording the patterns pass couldn't check is a private-unwritten flag of its own (`"owed":
 # "patterns"`), worded by flags.flag_sentence (PRIVATE_UNCHECKED), so its line follows the flag.
 # A late consent pass that failed as a whole (Task 13's private-unwritten blocker, with the class it
@@ -682,6 +690,12 @@ class _Read:
         self.rate_until = _rate_until(self.db, now)
         self.rekeyed = self.db.open_flags((REKEYED,))
         self.listing = self.db.listing_rows()
+        # Phase 3's data (area B1): the breaker, the check rows and the last week's check log.
+        from recordings.plaud import breaker
+
+        self.breaker = breaker.record(self.db)
+        self.checks = self.db.check_rows()
+        self.check_log = self.db.check_log_since(now - RECENT)
         self._cache: tuple[list, dict] | None = None
 
     def gate_reason(self) -> str | None:
@@ -888,6 +902,72 @@ class _Read:
             "refused": None if accept else _cap(refused or HOLD_FALLBACK_REFUSED),
         }
 
+    def breaker_view(self) -> dict | None:
+        """SyncBreaker from K_BREAKER (§14.4): its sentence, the field names, Accept these changes
+        or why it needs a code fix, and what to know meanwhile; None while it is closed."""
+        from recordings.plaud import breaker
+
+        return breaker.view(self.breaker, tz=ZoneInfo(self.tz))
+
+    def breaker_closed_line(self) -> str | None:
+        """Status's line for a day after a release closed the breaker (§14.4)."""
+        from recordings.plaud import breaker
+
+        return breaker.closed_line(self.breaker, now=self.now, tz=ZoneInfo(self.tz))
+
+    def sweep_line(self) -> str | None:
+        """§15.2's "every recording checked within the last 21 hours (oldest 2026-10-22 17:10)",
+        with the estimate it implies: when an edit in Plaud shows here. Over the recordings the
+        sweep checks (neither gone, parked nor kept here); None before any check row."""
+        from recordings.plaud.schedule import every
+
+        rows = [
+            c
+            for c in self.checks
+            if c.gone_since is None and c.parked_at is None and c.kept_here_at is None
+        ]
+        if not rows:
+            return None
+        checked = [c.last_checked_at for c in rows if c.last_checked_at is not None]
+        never = len(rows) - len(checked)
+        if not checked:
+            return f"{_plural(never, 'recording', 'recordings')} not checked yet"
+        oldest = min(checked)
+        age = max(self.now - oldest, timedelta(0))
+        within = _span(age)
+        cap = timedelta(days=max(self.settings.full_sweep_days, 1))
+        shows = _span(max(age, cap) + every(self.settings.schedule_minutes))
+        line = (
+            f"every recording checked within the last {within} (oldest "
+            f"{_stamp(oldest, self.tz)}) · an edit in Plaud shows within about {shows}"
+        )
+        if never:
+            line += f" · {_plural(never, 'recording', 'recordings')} not checked yet"
+        return line
+
+    def changes_24h(self) -> dict[str, int]:
+        """§15.2's details: changes per part in the last 24 hours (the check log's updated rows)."""
+        since = self.now - timedelta(hours=24)
+        counts: dict[str, int] = {}
+        for row in self.check_log:
+            if row.result == "updated" and row.at is not None and row.at >= since:
+                for part in row.named_parts:
+                    counts[part] = counts.get(part, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def fields_24h(self) -> list[str]:
+        """§15.2's details: the field names that changed in "other" in the last 24 hours, names
+        only (the check log's `other:<name>` entries)."""
+        since = self.now - timedelta(hours=24)
+        return sorted(
+            {
+                f
+                for row in self.check_log
+                if row.at is not None and row.at >= since
+                for f in row.fields
+            }
+        )
+
     def held_reason(self) -> str | None:
         """Why Sync now and the imports are off now, besides the gate and the app's own reasons:
         a hold (the worker answers "Held: see Status" anyway), or a rate limit's wait."""
@@ -918,6 +998,16 @@ class _Read:
         catch-up, while the gate kept every turn from running (§11.6). None: never ran."""
         stamps = (self.last_turn, self.health.catch_up_done)
         return max((t for t in stamps if t is not None), default=None)
+
+
+def _span(age: timedelta) -> str:
+    """A duration as Status says it: "the last hour", "21 hours", "3 days"."""
+    hours = math.ceil(age.total_seconds() / 3600)
+    if hours <= 1:
+        return "hour"
+    if hours <= 48:
+        return f"{hours} hours"
+    return f"{round(hours / 24)} days"
 
 
 def _summary_of(kind: str, sentence: str, *, explain: str | None = None, see_status: bool) -> dict:
@@ -971,6 +1061,7 @@ def _empty_sync(reason: str | None) -> dict:
         "flags": [],
         "hold": None,
         "breaker": None,
+        "checked_week": False,  # a check ran in the last 7 days: Updated may say nothing changed
         "buttons": {"sync": why, "compare": why, "full": why, "import": why},
         **_handled(),
         "gate": None,
@@ -1044,6 +1135,8 @@ def _sync_from(r: _Read, can_request: str | None) -> dict:
         "summary": r.summary_view(),
         "flags": r.flag_rows(),
         "hold": r.hold_view(),
+        "breaker": r.breaker_view(),
+        "checked_week": bool(r.check_log),
         # Each button's own reason; the UI puts not_yet first for a kind not handled yet (G7).
         "buttons": {
             "sync": held_back,
@@ -1505,6 +1598,11 @@ def _panel_from(r: _Read) -> dict:
     absent = r.small_shrink.get("absent")
     if r.hold is None and isinstance(absent, list) and absent:
         conditions.append(_shrink_line(len(absent)))  # hold.shrink_line (§11.4 step 5)
+    breaker_view = r.breaker_view()
+    if breaker_view is not None:
+        conditions.append(BREAKER_OPEN_NOTE)  # §14.4: the check stays down meanwhile
+    elif (closed := r.breaker_closed_line()) is not None:
+        conditions.append(closed)
 
     attention: list[str] = []
     if health.failing is not None and now - health.failing[0] > FAILING_FOR:
@@ -1516,6 +1614,13 @@ def _panel_from(r: _Read) -> dict:
         attention.append(
             f"Plaud sync is held{since}: see the Plaud sync panel to Accept this listing, "
             "or why it can't be."
+        )
+    if breaker_view is not None:
+        since = parse_stamp(r.breaker.get("since"))
+        at = f" since {r.when(since)}" if since else ""
+        attention.append(
+            f"Edit-sync is paused{at}: see the Plaud sync panel to Accept these changes, or why "
+            "it needs a code fix."
         )
     for ev in r.rekeyed:
         row = r.listing.get(ev.canonical_plaud_id or "")
@@ -1594,6 +1699,7 @@ def _panel_from(r: _Read) -> dict:
             "parked": r.parked_count() + len(r.db.parked_recordings()),
             "worker": report,
             "healthchecks": healthchecks,
+            "sweep": r.sweep_line(),
         }
     )
     census = _dict(r.last_good.get("census")) or _dict(r.compare.get("census"))
@@ -1611,6 +1717,8 @@ def _panel_from(r: _Read) -> dict:
             ),
             "malformed": _int(r.compare.get("malformed")),
             "runs": _runs(r),
+            "fields": r.fields_24h(),
+            "changes_24h": r.changes_24h(),
         }
     )
     panel.update(
@@ -1623,6 +1731,7 @@ def _panel_from(r: _Read) -> dict:
             "not_pinged": _not_pinged(r, cause),
             "conditions": conditions,
             "hold": r.hold_view(),
+            "breaker": breaker_view,
             "attention": attention,
         }
     )
@@ -1738,7 +1847,7 @@ def recording_plaud(
 ) -> dict | None:
     """Details' Plaud lines (§15.3), as RecordingPlaud; None for a recording with no Plaud
     source, and in the demos, whose canned view has no recordings of its own. When it was checked
-    and when next, and gone from Plaud, come with the checks (Phase 3): None until then."""
+    and when next come from its check row (area B1), None before its first."""
     if settings is None or settings.demo_view is not None:
         return None
     state = _open(settings)
@@ -1838,6 +1947,17 @@ def _recording_lines(
     flags = [_flag(db, ev) for ev in db.open_flags(FLAG_EVENTS) if ev.recording_id == recording_id]
     check = db.check_row(recording_id)
     gone = check.gone_since if check is not None else None
+    # §15.3's "Plaud: checked 2026-10-23 14:20 · next by 2026-10-24 14:20" (area B1's checks): no
+    # next check for one the sweep leaves alone (gone, parked, kept out or kept here).
+    checked = _stamp(check.last_checked_at, tz) if check is not None else None
+    swept = (
+        check is not None
+        and check.gone_since is None
+        and check.parked_at is None
+        and check.kept_here_at is None
+        and not kept_out
+    )
+    next_by = _stamp(check.next_check_at, tz) if swept and check.next_check_at else None
     gate = gate_now(db)
     if not gate.open:
         resync = gate.reason
@@ -1849,6 +1969,8 @@ def _recording_lines(
         resync = None
     return {
         "plaud_ids": plaud_ids,
+        "checked": checked,
+        "next_by": next_by,
         # §15.3's "Gone from Plaud since 2026-10-23 (kept)": the UI words it from the date.
         "gone_since": _date(gone, tz),
         "tagged_private": tagged,

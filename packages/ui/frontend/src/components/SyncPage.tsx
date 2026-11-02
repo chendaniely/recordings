@@ -296,20 +296,24 @@ export function SyncPage() {
         </Section>
       )}
 
-      {/* Drawn only with rows: nothing reads Plaud's edits until edit-sync (Phase 3), so "Nothing
-          changed on Plaud this week" would be a sentence nothing measured (P2). */}
-      {view.updated.length > 0 && (
+      {/* With rows, or once edit-sync's checks ran this week: only then is "Nothing changed on
+          Plaud this week" a sentence something measured (P2). */}
+      {(view.updated.length > 0 || view.checked_week) && (
         <Section id="sync-updated" title="Updated on Plaud (7 days)">
-          <ul className="sync-rows">
-            {view.updated.map((u, i) => (
-              <li key={`${u.recording_id}-${i}`} className="sync-row" data-testid="updated-row">
-                <span className="mono">{u.recording_id}</span>
-                {u.title && <span className="sync-title">{u.title}</span>}
-                <span>{u.parts.join(", ")}</span>
-                <span className="muted">{u.at}</span>
-              </li>
-            ))}
-          </ul>
+          {view.updated.length === 0 ? (
+            <p data-testid="updated-none">Nothing changed on Plaud this week.</p>
+          ) : (
+            <ul className="sync-rows">
+              {view.updated.map((u, i) => (
+                <li key={`${u.recording_id}-${i}`} className="sync-row" data-testid="updated-row">
+                  <span className="mono">{u.recording_id}</span>
+                  {u.title && <span className="sync-title">{u.title}</span>}
+                  <span>{u.parts.join(", ")}</span>
+                  <span className="muted">{u.at}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Section>
       )}
 

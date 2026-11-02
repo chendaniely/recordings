@@ -26,7 +26,9 @@ off, that runbook's "Tagging" section says why and what to do.
 Stage 2b (`docs/superpowers/specs/2026-10-23-stage-2b-design.md`) brings Plaud in and keeps it
 up: a `worker` container signs in (`make plaud-sign-in`, from the Mac), lists the account every 20
 minutes, imports what is new, tags `private` what your patterns say before any of its content
-lands, and never fetches what your consent list or the keep-out word keeps out. The **Add** tab is
+lands, and never fetches what your consent list or the keep-out word keeps out. Edits you make in
+Plaud (a title at the next sync; speaker names and notes within about a day) follow, and a breaker
+pauses that if Plaud starts sending something new on many recordings at once. The **Add** tab is
 the Sync screen (Compare, Sync now, Import, Release, Accept this listing), and Status reports. The
 first real import is a supervised catch-up on the server, dry run first (the runbook's sections 7
 and 8). `docs/user-guide.md` says what each screen shows and what to do.

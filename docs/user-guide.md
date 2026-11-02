@@ -256,6 +256,8 @@ The **Add** tab is the Sync screen: it acts, and Status reports. Open it from th
    it came in, a `private` the sync couldn't write, and a Plaud ID that "may be a consent-listed
    recording back under a new Plaud ID", with its date and duration. Never a title.
 3. **Held**, when a listing is held: its sentence, and **Accept this listing** or why it can't be.
+   **Edit-sync paused**, when the breaker tripped: its sentence with the fields' names, and
+   **Accept these changes** or why it needs a code fix ("When edit-sync pauses", below).
 4. **Sync**: **Sync now** and **Compare**, and under **More**, **Sync everything** (it comes with
    the next part of 2b). The newest result line stays here ("Sync now, 14:20: Synced: 2 imported
    (1 private) · All here"), and a running request shows its progress ("Importing (2 of 5)").
@@ -272,8 +274,10 @@ The **Add** tab is the Sync screen: it acts, and Status reports. Open it from th
    "may be … back under a new ID" (with **Release**, if it is a different recording). Each by Plaud
    ID, date, time and duration; never a title. A released row reads "Released · comes in at the
    next sync (14:40)" with **Undo**.
-8. **Updated on Plaud (7 days)**: recordings here that the sync re-tagged private, and (with the
-   next part of 2b) what changed on Plaud.
+8. **Updated on Plaud (7 days)**: recordings here that changed on Plaud, by title, with what
+   changed ("speakers", "title", "notes", "own notes", "other", "removal held") and when, and
+   those the sync re-tagged private. Once a check has run this week and found nothing: "Nothing
+   changed on Plaud this week."
 9. **Gone from Plaud**: recordings you have that Plaud no longer lists, newest first, with "gone
    since"; nothing is ever deleted from the archive. **Parked**: what you parked, with **Unpark**.
 10. **Import your own audio**: coming later.
@@ -297,14 +301,17 @@ Status reports; it never names a recording by its title, only by its ID.
   New recordings wait on Plaud: nothing is lost. At the Mac: `make plaud-sign-in`."), a sign-in
   that expires within 7 days, a hold, a possible re-keyed recording to confirm, a consent stop, a
   late keep-out or consent listing, a `private` the sync couldn't write, recordings waiting for your
-  review after a rebuild, the worker silent, a long-held sync "may be stuck", and a ping failing.
+  review after a rebuild, edit-sync paused (the breaker), the worker silent, a long-held sync
+  "may be stuck", and a ping failing.
 - **The numbers**: the equations and the consent list's line; the last good listing ("14:20 (120
-  listed)") and the next sync; the sign-in ("works (last used 14:20) · access token expires 15:20 ·
+  listed)") and the next sync; the sweep ("every recording checked within the last 21 hours
+  (oldest 2026-11-01 17:10) · an edit in Plaud shows within about 25 hours"); the sign-in ("works (last used 14:20) · access token expires 15:20 ·
   refresh token"); held, gone from Plaud, failing and parked; when the worker last reported; and
   Healthchecks' last ping.
-- **Details**, folded away: the normaliser's version, the ID forms Plaud uses (and when they last
-  changed form with nothing lost), the keep-out words in force, malformed listing rows, and the last
-  20 runs with their results.
+- **Details**, folded away: the normaliser's version, the fields outside the named parts that
+  changed in the last 24 hours (names only), the changes per part in 24 hours, the ID forms Plaud
+  uses (and when they last changed form with nothing lost), the keep-out words in force, malformed
+  listing rows, and the last 20 runs with their results.
 
 **What to do**
 
@@ -333,6 +340,78 @@ Each sync reads every title Plaud lists, and checks the ones that changed since 
   **Keep it here** to keep it. It stays private either way, and a later title with the word won't
   flag it again.
 - "Should be private …": on the server, `rc exec worker recordings reindex`. The next sync tags it.
+
+## Edits you make in Plaud: the checks
+
+Plaud tells the sync nothing when you edit a recording there, so the worker checks: it fetches a
+recording again, compares it with what the archive already holds, part by part, and keeps a new
+snapshot only when something changed. Your transcript, speaker names and notes then follow.
+
+**What you see**
+
+- **A title** you change in Plaud shows at the next sync (the listing says so at once).
+- **Speaker names, regenerated notes, your highlights and memos** show when the recording's next
+  check comes round: within `full_sweep_days` (1 in the template) plus one sync, so within about a
+  day. A recording you made in the last two days, still being transcribed, is checked every sync
+  for its first two hours, then hourly; one that just changed is checked again soon after.
+- **Updated on Plaud (7 days)**, on the Sync screen: each recording that changed, by its title,
+  with what changed ("speakers", "title", "notes", "own notes", "other", "removal held") and when.
+  With nothing changed it says "Nothing changed on Plaud this week."
+- **Details** of a recording: "Plaud: checked 2026-11-02 14:20 · next by 2026-11-03 14:20".
+- **Status's numbers**: "every recording checked within the last 21 hours (oldest 2026-11-01
+  17:10) · an edit in Plaud shows within about 25 hours". Its details add the changes per part in
+  the last 24 hours, and the names of any fields outside the named parts that changed.
+- **Never checked:** a recording kept out (by title, or by Keep it here) or on the consent list,
+  one gone from Plaud, and one you parked. Nothing more is ever fetched for those.
+- **A degraded check**: Plaud answered, but a note or the transcript behind one of its links
+  didn't arrive, twice. The sync keeps that answer once, builds nothing from it, and tries again at
+  the next check. One degraded recording is nothing to do; if every check is degraded, the sync
+  stops being pinged ("every fetch failed") and the runbook's alert table says what to look at.
+- **A recording that fails every check** (3 in a row) shows on Status's top lines: "1 recording
+  fails every check (since 2026-11-02)". The sync keeps trying it, less often each time, and checks
+  a healthy recording beside it, so one bad recording never stops the ping.
+
+**What to do**
+
+- Nothing: edits arrive by themselves.
+- A removal (a name going back to "Speaker 1", a note vanishing) is held for your review, never
+  applied: the review list comes with stage 3a.
+
+## When edit-sync pauses: the breaker, and Accept these changes
+
+If Plaud starts sending something new on many recordings at once (a new field, say, after an
+update of theirs), every check would keep a new snapshot of every recording. The breaker stops
+that: it trips when, within a day, at least 10 recordings (and more than 5% of those checked)
+changed only outside the parts you edit, or changed between two fetches a moment apart, which no
+edit does.
+
+**What you see**
+
+- On Status and the Sync screen: "Edit-sync paused since 14:20: Plaud started sending something
+  new on 12 recordings (`folder_id`)", or "…: 12 recordings' transcripts change between two
+  fetches a moment apart". Field names only, never their values. "New recordings still arrive."
+- On Status: "While this is open, the sync's check stays down, so a new problem won't send another
+  email: glance at Status until it's fixed." Needs attention says edit-sync is paused.
+- **Accept these changes**, when the new fields came back the same on both fetches, with "If
+  Plaud added a feature, accept it: each recording gets one new snapshot. If a name looks like a
+  link or a key, don't: it needs a code fix (a Claude session)."
+- "This keeps changing by itself: it needs a code fix", and no button, when a part differs
+  between two fetches, or when a field you accepted before trips it again.
+- Meanwhile everything else goes on: new recordings, title checks, `private` tags, and every
+  real edit you make.
+- After a release that changes how the app compares Plaud's answers, the breaker closes by
+  itself, and Status says "Edit-sync's breaker was closed by the release on 2026-11-02; watching
+  for a re-trip" for a day.
+
+**What to do**
+
+- Read the field names. If they look like a feature Plaud added (`folder_id`, `share_state`),
+  press **Accept these changes**: each recording gets one new snapshot over the next day, and the
+  breaker closes.
+- If a name looks like a link, a token or a key, or Status says it needs a code fix: open a Claude
+  session with Status's sentence. Don't accept.
+- On the server, `rc exec worker recordings plaud breaker` says the same as Status, and
+  `recordings plaud breaker reset` closes it by hand (no runbook step needs it).
 
 ## Keeping a recording out from your phone, and Release
 

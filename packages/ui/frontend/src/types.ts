@@ -116,7 +116,10 @@ export interface SyncFlag {
   sentence: string; keep_here: boolean; date: string | null; duration: string | null;
 }
 export interface SyncHold { sentence: string; accept: boolean; refused: string | null }
-export interface SyncBreaker { sentence: string; accept: boolean; code_fix: string | null; fields: string[] }
+/** A breaker trip (§14.4): its sentence, the field names (never values), Accept these changes or
+ * why it needs a code fix, and `note`, what to know meanwhile ("New recordings still arrive.", and
+ * when Accept is offered, when to press it). */
+export interface SyncBreaker { sentence: string; accept: boolean; code_fix: string | null; fields: string[]; note?: string | null }
 export interface SyncEquation { listed: number; here: number; waiting: number; excluded: number; missing: number; arrive_private: number; listing_at: string | null }
 export interface ArchiveEquation { from_plaud: number; here: number; gone: number; absent: number }
 export interface ConsentSummary { ids: number; on_plaud: number | null; file_changed: string | null; read_at: string | null; stop: string | null }
@@ -137,6 +140,9 @@ export interface SyncView extends Handled {
   not_here: NotHereRow[]; import_all: { count: number; review_more: number };
   kept_out: KeptOutRow[]; updated: UpdatedRow[]; gone: { rows: GoneRow[]; last_7_days: number }; parked: ParkedRow[];
   last_result: string | null; next_sync: string | null;
+  /** A check ran in the last 7 days (area B1): Updated says "Nothing changed on Plaud this week."
+   * when it has no rows, a sentence only edit-sync's checks can make true (P2). */
+  checked_week?: boolean;
 }
 /** A recording here that fails every check (§15.2; 3 failed checks in a row, §14.6), by archive
  * ID, with the date it began failing. */
