@@ -2,11 +2,11 @@ import asyncio
 import json
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from recordings.archive import Archive
+from recordings.archive import Archive, RawSource
 from recordings.index import Index
 from recordings.init import init_archive
 from recordings.models import TagRef
@@ -135,3 +135,94 @@ def run():
     """Runs a coroutine to its end: the tag tests drive the async service without an async
     plugin. A module helper, which can't take a fixture, calls asyncio.run itself."""
     return asyncio.run
+
+
+PLAUD_T0 = datetime(2026, 10, 23, 14, 20, tzinfo=UTC)
+
+
+@dataclass
+class PlaudScene:
+    """A synthetic archive with a state.db holding the 2b tables, and the views' settings for it
+    (2b phase 1, Task 19). Rows go in through PlaudDB and the flags module, as the worker writes
+    them; recordings through the Writer. Synthetic IDs and titles only."""
+
+    writer: Writer
+    tmp: Path
+    schedule_minutes: int = 20
+    auto_import: bool = True
+    keep_out_word_ok: bool = True
+    added: dict[int, str] = field(default_factory=dict)
+
+    @property
+    def db(self):
+        from recordings.plaud.checks import PlaudDB
+
+        return PlaudDB(self.writer.state)
+
+    @property
+    def settings(self):
+        from recordings_ui.plaud import PlaudViewSettings
+
+        return PlaudViewSettings(
+            state_path=self.writer.state.path,
+            timezone_name="UTC",
+            schedule_minutes=self.schedule_minutes,
+            full_sweep_days=7,
+            auto_import=self.auto_import,
+            keep_out_word_ok=self.keep_out_word_ok,
+            demo_view=None,
+        )
+
+    @staticmethod
+    def plaud_id(n: int) -> str:
+        return "of_" + f"{n:032x}"  # synthetic
+
+    def add(self, n: int, title: str, tags: tuple[TagRef, ...] = ()) -> str:
+        """A recording whose one source is Plaud ID `n`."""
+        media = self.tmp / f"plaud-{n}.mp3"
+        media.write_bytes(f"ID3 synthetic plaud audio {n}".encode())
+        rec = self.writer.add(
+            Incoming(
+                media=media,
+                recorded_at=PLAUD_T0 - timedelta(days=1, minutes=n),
+                timezone_name="UTC",
+                time_source="metadata",
+                title=title,
+                kind="audio",
+                sources=(
+                    RawSource(
+                        kind="plaud", ref=self.plaud_id(n), added_at=PLAUD_T0 - timedelta(days=1)
+                    ),
+                ),
+                tags=tags,
+            )
+        ).recording
+        self.added[n] = rec.id
+        return rec.id
+
+    def open_gate(self, at: datetime = PLAUD_T0 - timedelta(days=2)) -> None:
+        """As the first catch-up (Phase 2) leaves it: catch_up_done_at, which opens the gate."""
+        from recordings.plaud.checks import K_CATCH_UP_DONE
+
+        self.db.put(K_CATCH_UP_DONE, at.isoformat(), now=at)
+
+    def kept_out_late(self, n: int, at: datetime = PLAUD_T0) -> str:
+        """Recording `n`, kept out by title after it came in, as Tasks 8 and 9 leave it: its
+        listing row kept out, an open flag, and the marker's `retagged-private` note."""
+        from recordings.plaud.flags import record_late_keep_out
+
+        rid = self.added[n]
+        record_late_keep_out(self.db, rid, [self.plaud_id(n)], "noarchive", now=at)
+        self.db.add_event(
+            "retagged-private",
+            now=at,
+            recording_id=rid,
+            plaud_id=self.plaud_id(n),
+            detail={"why": "kept out by title"},
+        )
+        return rid
+
+
+@pytest.fixture
+def plaud_scene(writer, tmp_path) -> PlaudScene:
+    return PlaudScene(writer, tmp_path)

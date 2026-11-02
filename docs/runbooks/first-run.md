@@ -1,7 +1,9 @@
 # The first real run (stage 2a)
 
 Steps 1–4 of the spec's "order of the first real run" (§19), and how to restore for real. Steps
-5–7 belong to stage 2b. Each block says which machine it runs on. Nothing here prints a secret: a
+5–7 belong to stage 2b: section 6 deploys it, section 7 is the first catch-up's dry run, and
+section 8 the catch-up itself; `docs/setup.md` is the short path through them, and
+`docs/user-guide.md` says what the screens show. Each block says which machine it runs on. Nothing here prints a secret: a
 command that needs one reads it from a file, and secret files are written with an editor, never
 typed on a command line, where shell history would keep them.
 
@@ -14,7 +16,9 @@ On the homelab server, as the user who will run everything (not root):
 - `git`, `make`, `rsync`, `curl`, `nc`, `openssl` and `tailscale` (logged in to your tailnet; 1a.6
   checks it).
 - The repo: after 1a.4 has made `$RECORDINGS_HOME`, run `git clone <the repo's URL> "$REPO_DIR"`,
-  then `git checkout <the commit you will deploy>`.
+  then `git checkout <the commit you will deploy>`. Sections 2 to 5 deploy 2a's last commit,
+  before 2b: at a 2b commit, do section 6's setup (its steps 1, 2, 3 and 4) first, or their
+  `backup init` and `up -d` fail on the missing folders and `deadman_sync_url`.
 
 Every file in `$RECORDINGS_HOME`, secrets included, must be owned by the user whose UID goes in
 `docker/deploy.env`: the containers run as that UID and cannot read a root-owned 0600 file.
@@ -466,8 +470,160 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
 
 ### 1c. Before stage 2b (not needed for 2a)
 
-The token spike and the ID-form spike (§9.1, §19) both call Plaud. Stage 2a makes no Plaud
-calls, so they run before stage 2b's deploy, not now.
+**Skipped for now** (Dan, 2026-11-01, Phase 1's Q&A §8): stage 2b's Phases 2 and 3 were built
+without these sessions, from what `audio-router`'s code shows of Plaud, and every guess that
+stands in for a spike's result is a row in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`.
+Section 6's sign-in and section 7's dry run are where most of them would show. The sessions below
+stay for when a guess turns out wrong and needs measuring.
+
+Stage 2b's spikes (its spec's §18) are the first steps that call Plaud, so none of them runs for
+2a. Each is a supervised session with Dan, run with `scripts/plaud_spike.py`, before the stage 2b
+work that needs its result: **A**, the sign-in (s1, s2, s4, s3; about 45 minutes); **B**, the data
+(s5, s7, s8, s10, s12, s11; about an hour); **C**, an edit on a throwaway clip (s9; about 45
+minutes). Read the script before each session, at the commit the session will run. It prints only
+counts, yes or no, times, status codes, field names and 8-hex names: never a token, a title,
+transcript text or a whole Plaud ID. Before any call it reads the consent list fail-closed, checks
+that `[archive] path` is the archive and holds recordings, and gathers every keep-out word and
+private pattern it can find; it refuses any consent-listed or private recording, and any title
+those match, and checks the envelope's own title again before fetching anything behind it. It ends
+by saying how many it refused.
+
+**On the homelab server,** with uv installed for your user (see uv's own installation page,
+https://docs.astral.sh/uv/getting-started/installation/). The script runs from a clone of its own,
+at the commit you read, never from `$REPO_DIR`: that checkout is the deployment's, and the boot
+unit starts the containers from it. Use branch `stage-2b`'s commit until stage 2b's first phase is
+merged, then `main`'s.
+```bash
+SPIKE_SRC="$HOME/recordings-spike"           # the spikes' own clone
+SPIKE_COMMIT="<commit>"                       # the commit whose script you read
+git clone "$(git -C "$REPO_DIR" remote get-url origin)" "$SPIKE_SRC"
+git -C "$SPIKE_SRC" switch --detach "$SPIKE_COMMIT"
+cd "$SPIKE_SRC" && uv sync --frozen
+install -d -m 700 "$RECORDINGS_HOME/spike"
+${EDITOR:-vi} "$RECORDINGS_HOME/spike/config.toml"
+export RECORDINGS_CONFIG="$RECORDINGS_HOME/spike/config.toml"
+```
+Each session clones afresh, at the commit it runs. The session's own config uses this server's
+paths, because the containers' `/archive`, `/state` and `/consent` don't exist out here:
+`[archive] path` and `default_timezone`, `[state] path`, `[plaud] consent_list` (the list's path on
+this server), and `[backup]`'s `restore_scratch`, `cache_dir` and `extra_paths` as the deployment
+has them (the script keeps its spike folder out of those paths, and a copy that is missing one
+can't). It holds no secret. The script adds the deployment's own `[plaud] auto_private_patterns`
+and `keep_out_word` (from `$REPO_DIR/config.toml`, or `--production-config`) and every word the
+worker has enforced (from `state.db`) to whatever this file sets, so nothing there needs copying.
+
+**The session's sign-in,** on the Mac, under a temporary `HOME`, so the Mac's own Plaud sign-ins
+are untouched. The token file goes into the spike folder without being printed. `HOMELAB` and
+`SRV_HOME` are as section 3 sets them.
+```bash
+tmphome="$(mktemp -d)" && chmod 700 "$tmphome"
+HOME="$tmphome" plaud login
+ls -A "$tmphome" "$tmphome/.plaud"
+ssh "$HOMELAB" "umask 077 && mkdir -p '$SRV_HOME/spike/home/.plaud' \
+  && cat > '$SRV_HOME/spike/home/.plaud/tokens.json'" < "$tmphome/.plaud/tokens.json"
+rm -rf "$tmphome"
+```
+`ls -A` shows file names only. If the CLI wrote its sign-in somewhere else under `$tmphome`, copy
+that file instead, to the same place on the server. If it wrote none there at all (it keeps the
+sign-in elsewhere, such as the system keychain), stop: that is S1's result, and the token store's
+plan (stage 2b spec §10.3) needs a new decision before session A can go on.
+
+**Each spike,** on the homelab server, in that shell, in `$SPIKE_SRC`: `uv run python
+scripts/plaud_spike.py s1`, and so on. Exit 78 means "refused before any call": nothing was sent
+to Plaud, and the line says why. Exit 1 means it stopped; calls may have been made (a "stopped:"
+line, or an error named by its class). If a call says `PlaudAuthError` in the middle of a session,
+the sign-in has expired or was signed out: stop, make a fresh session sign-in (above), and rerun
+that spike from its start. Record the sign-out as a finding for S3.
+
+**Session A** (s1, s2, s4, s3):
+1. Before the session, find the token URL and how the vendor CLI refreshes: its own refresh
+   request names the URL, its grant type, whether it sends a `client_id`, its content type and its
+   headers. Read them in the CLI's installed code on the Mac, or in `audio-router`'s client (its
+   `src/` only), never in a token file. S1 doesn't print the URL.
+2. Make the session's sign-in (above), then `s1`. If it finds no refresh token, stop (spec §18).
+   If the key names include `client_id`, S2 and S4 send it with each refresh.
+3. `s2 --token-url <the token URL>`, then `s4 --token-url <the token URL>`. If S2 says "compare
+   this request with the vendor CLI's own refresh", don't read the refusal as the design failing
+   yet. Compare the script's request (`_refresh_fields` and `_post_form`: a form POST with
+   `grant_type=refresh_token`, the refresh token and any `client_id`,
+   `application/x-www-form-urlencoded`, `Accept: application/json` and the client's own
+   `User-Agent`, `recordings/<version>`) with what step 1 found:
+   - **They differ:** the script needs a new commit, which Dan reviews; then a fresh session
+     sign-in and S2 again. That is not a design failure.
+   - **They match:** sign in under a new temporary `HOME` on the Mac
+     (`cmphome="$(mktemp -d)" && chmod 700 "$cmphome" && echo "$cmphome"`, then
+     `HOME="$cmphome" plaud login`; write the path down) and let the
+     CLI refresh there (its own refresh, or any call once its access token has expired). If the
+     Mac refreshes while the server is still refused, that is S2's "refused from the server's
+     address": stop and ask Dan. If the Mac is refused too, stop and ask Dan.
+4. S3, the baseline first: `s3`, which must say "signed in: yes". S2 replays the old refresh
+   token, and a server that detects reuse may sign the session out for that; then make a fresh
+   session sign-in and run `s3` again until it says yes, so a sign-out below is the new sign-in's
+   doing.
+5. Then three sign-ins, each followed by `s3`: Plaud's web app; the Plaud MCP's `login` on the
+   Mac; the vendor CLI under another temporary `HOME`
+   (`otherhome="$(mktemp -d)" && chmod 700 "$otherhome" && echo "$otherhome"`, then
+   `HOME="$otherhome" plaud login`; write the path down). Record which one, if any, makes `s3` say
+   "signed in: no".
+
+**Session B** (s5, s7, s8, s10, s12, s11): a fresh session sign-in, then each spike in that
+order. S7, S8, S11 and S12 take one `--id` per recording you name for it (a Plaud ID or an
+archive recording ID): none private, none consent-listed. S7 comes first of those: if its "in the
+archive" count is 0, stop session B. The listing and the archive share no recording, so
+`[archive] path` is probably not this account's archive, and the guard could not tell which
+recordings are private or consent-listed.
+
+**Session C** (s9), on a short clip you title on the phone, before it uploads, starting with the
+keep-out word, and that isn't private. It is its own session: clone and sync at the commit you
+read, write the session config, and make a fresh session sign-in, all as above, before the clip
+is transferred. `--own-clip` accepts only a clip that isn't in the archive and was made in the
+last 24 hours, so start the steps below the day you make it.
+1. From the moment the phone transfers it, run `s9` with no `--id` every minute or so. Each row
+   it prints is the newest listed, by its 8-hex name, with whether its title starts with the
+   keep-out word and how old it is. When the clip shows (the word: yes, a few minutes old), its
+   name is the clip's `--id`. Record (a): the minutes from the transfer, and whether the word was
+   there in its first listing.
+2. `s9 --id <its name> --own-clip`: the baseline. The script keeps what it saw, and the clip's
+   ID, in the spike folder. `--own-clip` is refused for a recording that is in the archive.
+3. (b) Generate a transcript and a summary, then run it again: whether the title kept the word,
+   and how long until the transcript and notes appeared.
+4. (c) One edit at a time, each followed by the same `s9 --id <its name> --own-clip`: rename a
+   speaker; rename the title, keeping the word; regenerate a note (and run it once more while
+   the note is still in progress) and add an in-app note; edit a transcript line; move it to a
+   folder; delete it to the trash (the run then says whether it is listed, and what `files/{id}`
+   answers) and restore it. Each run prints which parts and listing fields changed, and the
+   seconds since the last run.
+5. At the end, delete the clip in Plaud.
+
+**At the end of each session,** delete the spike folder, the session's sign-in with it, and the
+clone:
+```bash
+rm -rf "$RECORDINGS_HOME/spike"
+rm -rf "$SPIKE_SRC"
+```
+After session A, on the Mac, also delete the temporary `HOME`s of steps 3 and 5, with the live
+sign-ins in them (the session's own was deleted once it was copied). `cmphome` and `otherhome`
+exist only in the shell that made them: in another shell, delete the paths you wrote down.
+```bash
+rm -rf "$cmphome" "$otherhome"
+```
+
+**Results.** After each session, fill in its date, the commit it ran and each outcome. Never a
+recording's date, time or duration, a token, a title or an ID.
+
+| Spike | Session, date, commit | Outcome |
+|---|---|---|
+| S1 the token's shape and lifetime | A, | |
+| S2 refresh and rotation | A, | |
+| S4 a refused refresh | A, | |
+| S3 a second sign-in elsewhere | A, | |
+| S5 the listing's shape and paging | B, | |
+| S7 the ID form | B, | |
+| S8 the envelope and volatility | B, | |
+| S10 pacing | B, | |
+| S12 time zones | B, | |
+| S11 a large download | B, | |
+| S9 what an edit looks like | C, | |
 
 ## 2. Deploy 2a against an empty, initialised archive
 
@@ -493,7 +649,9 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    `rc up -d`. A file an editor replaced is not seen by a running container until it restarts.
 
 2. **Alerts, and the last secret files.**
-   - **ntfy.sh:** generate a topic in your password manager: 20 or more random letters and
+   - **ntfy.sh, optional, for later** (stage 2b, decision 9: until it is set up, Status and the
+     Healthchecks checks carry every alert; "Setting up ntfy, later" below): generate a topic in
+     your password manager: 20 or more random letters and
      digits (only `A–Z`, `a–z`, `0–9`, `-` and `_`, at most 64; the app refuses a shorter one).
      Subscribe to it in the ntfy app on your phone, and copy the server the app shows into
      `[alerts] ntfy_server`. The topic is the only lock on your alerts: whoever has it can read
@@ -508,24 +666,24 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
      `?…`: the app adds `/start` and `/fail` to its end, and refuses a URL with a query.
      Healthchecks sees when each backup starts and ends, so how long it took, which grows with
      what was recorded since the one before; it never sees more than the fixed failure line.
-   - **A token, only if your ntfy server needs one** (a self-hosted server with access control;
-     ntfy.sh needs none): put it in a file `ntfy_token` beside the others, and name that file in
+   - **A token, optional, for later, and only if your ntfy server needs one** (a self-hosted
+     server with access control; ntfy.sh needs none): put it in a file `ntfy_token` beside the others, and name that file in
      `docker/deploy.env` as `RECORDINGS_NTFY_AUTH_HOST=$RECORDINGS_HOME/secrets/ntfy_token` (an
      absolute path). Left empty there, no token is mounted, which is right for ntfy.sh.
-   - **Keep both in your password manager,** the topic and the ping URL. Whoever holds them can
-     read your alerts or keep an outage quiet.
+   - **Keep the ping URL in your password manager,** and the topic too once ntfy is set up.
+     Whoever holds them can read your alerts or keep an outage quiet.
    ```bash
    cd "$RECORDINGS_HOME/secrets"
-   install -m 600 /dev/null ntfy_topic && ${EDITOR:-vi} ntfy_topic
    install -m 600 /dev/null deadman_url && ${EDITOR:-vi} deadman_url
-   # only if your ntfy server needs a token:
+   # optional, for later (ntfy): the topic, and a token only if your ntfy server needs one
+   # install -m 600 /dev/null ntfy_topic && ${EDITOR:-vi} ntfy_topic
    # install -m 600 /dev/null ntfy_token && ${EDITOR:-vi} ntfy_token
    ls -l
    cd -
    ```
    Expected: `deadman_url`, `nas_cacert` (empty over the tailnet), `nas_known_hosts`,
-   `nas_ssh_key`, `nas_ssh_key.pub`, `ntfy_topic`, `rest_password` and `restic_password`. Each is
-   `-rw-------`, except the `.pub`.
+   `nas_ssh_key`, `nas_ssh_key.pub`, `rest_password` and `restic_password`, and the ntfy topic, if
+   set up. Each is `-rw-------`, except the `.pub`.
 
 3. **The tailnet ACL, before anything listens** (spec §15: the app's port is for your devices
    only). First save the policy in Tailscale's admin console, under Access controls: Tailscale
@@ -590,6 +748,9 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
      recordings and the NAS's free space.
    - Both warn that retention is off here (`[backup] prune = false`). That is right for
      rest-server: retention runs on the NAS (1b.7).
+   - Until ntfy is set up (optional, for later: "Setting up ntfy, later"), `doctor --role backup`
+     also warns "alerts are off: set [alerts] ntfy_server and RECORDINGS_NTFY_TOPIC_FILE". That is
+     expected.
    - From your own device, `nc -vz -w 5 "$SERVER_TS" 8000` now connects. From the refused
      device it still times out.
    - If `backup init` or any later `backup` command sits silent for over a minute, the NAS or its
@@ -641,7 +802,8 @@ where the boot unit in 2.5 expects it: clone it there if it isn't.
    ```
    Expected:
    - `backup run`, `restore-test` and `mirror` each print `ok: True`.
-   - The phone gets the test push. Healthchecks shows the check up, with a log entry from
+   - The phone gets the test push, if ntfy is set up. Healthchecks shows the check up, with a log
+     entry from
      `alert-test`. No push although it printed `ntfy: True` means the alert went to another
      topic or server. If `ntfy_server` was mistyped, that server now has your topic (and any
      token): make new ones as well as fixing it.
@@ -704,7 +866,9 @@ rsync -a "$CONSENT_LIST" "$HOMELAB":"$SRV_HOME"/consent-list.md
 ```
 If the first rsync is interrupted, run the same line again: it carries on. Hidden files
 (`.DS_Store`) are left out of the checksums and the copy alike, so the checksums cover everything
-that is copied. `caffeinate -i` keeps the Mac awake for the copy.
+that is copied. `caffeinate -i` keeps the Mac awake for the copy. Once stage 2b is deployed
+(section 6), the consent list lives on the server, in `$RECORDINGS_HOME/consent/`, and that copy
+is the only one read: leave out the last line, and never copy the Mac's over it.
 
 **On the homelab server:** check the copy, make it read-only, and run the dry run. Work inside
 `tmux` (or `screen`), so a dropped ssh session doesn't kill an hours-long backup or import. Paste
@@ -713,8 +877,10 @@ the top block, `cd "$REPO_DIR"`, and export `RECORDINGS_IMAGE_TAG` as in 2.4.
 cd "$RECORDINGS_HOME/import" && sha256sum --check --quiet ../import.sha256 && echo "copy verified"
 cd -
 chmod -R a-w "$RECORDINGS_HOME/import"
-chmod 400 "$RECORDINGS_HOME/consent-list.md"
-IMPORT_MOUNTS=(-v "$RECORDINGS_HOME/import:/import:ro" -v "$RECORDINGS_HOME/consent-list.md:/consent/consent-list.md:ro")
+install -d -m 700 "$RECORDINGS_HOME/consent"
+[ ! -f "$RECORDINGS_HOME/consent-list.md" ] || mv -n "$RECORDINGS_HOME/consent-list.md" "$RECORDINGS_HOME/consent/consent-list.md"
+chmod 400 "$RECORDINGS_HOME/consent/consent-list.md"
+IMPORT_MOUNTS=(-v "$RECORDINGS_HOME/import:/import:ro" -v "$RECORDINGS_HOME/consent:/consent:ro")
 rc run --rm "${IMPORT_MOUNTS[@]}" web recordings import-audio-router /import --dry-run
 ```
 Expected: `copy verified`, then a report in which every catalog row has one disposition and
@@ -734,9 +900,12 @@ Expected: `copy verified`, then a report in which every catalog row has one disp
 
 In the server's shell from step 3 (the top block, `RECORDINGS_IMAGE_TAG` and `IMPORT_MOUNTS`),
 still inside `tmux` or `screen`. Stop the loop first, so no scheduled
-backup lands in the middle of the import. Pause the Healthchecks check first (its Pause button):
-no backup pings while the loop is stopped, and the import can outlast the grace.
+backup lands in the middle of the import, and from stage 2b on the worker too, so no sync does
+(before section 6 there is no `worker`: skip its two lines). Pause the backup's Healthchecks check
+first (its Pause button): no backup pings while the loop is stopped, and the import can outlast
+the grace. The sync's check stays as it is ("Planned work and the sync's check", below).
 ```bash
+rc stop worker
 rc stop backup
 rc run --rm backup recordings backup run --tag pre-import
 rc run --rm "${IMPORT_MOUNTS[@]}" web recordings import-audio-router /import
@@ -745,6 +914,7 @@ rc run --rm backup recordings backup run --tag post-import
 rc run --rm backup recordings backup restore-test
 rc run --rm backup recordings mirror
 rc start backup
+rc start worker
 ```
 Expected: the import reports no failures, `validate` reports no problems, and both backups, the
 restore test and the mirror print `ok: True`. The restore test now proves the imported data, not
@@ -777,15 +947,21 @@ rm -rf "$RECORDINGS_HOME/import" "$RECORDINGS_HOME/import.sha256"
 ```
 
 Before you tag anything in the real archive, read "Rolling back, until the first real tag" below:
-the first tag you apply ends the disposable window (spec §19). Dan decided on 2026-10-22 that the
-first real tag waits until stage 2b's import dry run is done, so a re-import stays free until then.
+the first tag you apply ends the disposable window (spec §19). Dan decided on 2026-10-23,
+refining 2026-10-22, that the first real tag waits until stage 2b's first real Plaud import
+(the import section, added in stage 2b's second phase) and the backup after it, so a re-import
+stays free until then.
 
 Then open the Library on one of your devices. It lists the imported recordings, with
 `audio-router`'s tags, and its first load takes under 2 seconds (your browser's network panel shows the
 time). If it takes longer, stop: the Library moves onto `index.db` before stage 2b (stage-2a
 plan, decision 6).
 
-**Rolling back, until the first real tag** (§19): the deployment is disposable.
+**Rolling back, until the first real tag** (§19): the deployment is disposable. Dan decided on
+2026-10-23, refining 2026-10-22, that the first real tag waits until stage 2b's first real Plaud
+import (the import section, added in stage 2b's second phase) and the backup after it. A
+rollback of that catch-up is then a restore from its `pre-import` backup, which loses no tags,
+because none exist yet.
 
 Tagging (part A of stage 3a) can ship before stage 2b's spikes and `sync --dry-run`. When to give
 the real archive its first tag is Dan's call. "The first real tag" means the first tag applied in
@@ -857,6 +1033,243 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
    - `MirrorError` alone: the rsync dry run printed a line the mirror can't read, perhaps from a
      new rsync on the NAS or in the image. Nothing was deleted.
 
+## 6. Deploy 2b
+
+Stage 2b adds a third container, `worker`, from the same image. Deployed, it stays idle and
+healthy until step 6's sign-in, it applies late consent listings within seconds of an edit, and it
+holds every scheduled sync until the first catch-up. Nothing in this section calls Plaud but step
+6's sign-in and its check, which read who is signed in and nothing else. On the homelab server, in
+`$REPO_DIR`, with the top block pasted, except step 6's first half, on the Mac.
+
+**First, the code.** Move the checkout to stage 2b's merge commit, as 2.8 does for a tag. The
+running containers keep their image until step 5's `make deploy`; the new `compose.yml` and
+template are what steps 3 and 5 read. Do steps 1 to 5 in one sitting: at boot, the unit reads this
+checkout's `compose.yml`, which needs step 3's settings.
+```bash
+cd "$REPO_DIR"
+git fetch
+git checkout <stage 2b's merge commit>
+git log -1 --oneline
+```
+Expected: the merge commit you mean to deploy.
+
+**Then, the Library's first load** (stage 2b spec §22): open the Library on one of your devices
+with the browser's network panel open. It must load in under 2 seconds. If it takes longer, stop:
+the Library moves onto `index.db` before 2b deploys.
+
+1. **The consent folder.** The worker reads the list from a folder, never a single-file mount: a
+   container would go on reading a file an editor has replaced. Move the list into it:
+   ```bash
+   install -d -m 700 "$RECORDINGS_HOME/consent"
+   [ ! -f "$RECORDINGS_HOME/consent-list.md" ] || mv -n "$RECORDINGS_HOME/consent-list.md" "$RECORDINGS_HOME/consent/consent-list.md"
+   ls -la "$RECORDINGS_HOME/consent"
+   ```
+   Expected: the folder is `drwx------` and holds `consent-list.md`. `[plaud] consent_list` in
+   `config.toml` stays `/consent/consent-list.md`.
+2. **The Plaud sign-in's folder,** empty until the sign-in:
+   ```bash
+   install -d -m 700 "$RECORDINGS_HOME/plaud"
+   ```
+3. **The settings.** In `docker/deploy.env`, set `RECORDINGS_CONSENT_HOST` to
+   `$RECORDINGS_HOME/consent` and `RECORDINGS_PLAUD_HOST` to `$RECORDINGS_HOME/plaud`, written out
+   as absolute paths (the template has both lines). ntfy's topic is now mounted only when
+   `deploy.env` names its file: if you set ntfy up already (an `ntfy_topic` file among the
+   secrets), set `RECORDINGS_ALERTS_TOPIC_HOST` to that file's absolute path too, or the backup's
+   pushes stop. In `config.toml`, add the consent folder and Sync everything's manifests folder to
+   the backups, so a restore never brings back an older list and keeps the DAN-15 manifests:
+   `[backup] extra_paths = ["/backup-extra/deploy.env", "/consent", "/state/manifests"]`. A
+   missing extra path refuses every backup, so make the manifests folder first (the worker also
+   makes it at its start, if it is missing):
+   ```bash
+   install -d -m 700 "$RECORDINGS_HOME/state/manifests"
+   ```
+4. **Required: the sync's own Healthchecks check** (Dan's decision 9). Create a second check with a
+   period of 20 minutes, a grace of 2 hours, emailing you, and "manual resume" off (the default).
+   Its email is the sync's only alert. Copy its ping URL as in 2.2 (no `/start`, `/fail` or `?…`)
+   into a secret file beside the others, and keep it in your password manager:
+   ```bash
+   cd "$RECORDINGS_HOME/secrets"
+   install -m 600 /dev/null deadman_sync_url && ${EDITOR:-vi} deadman_sync_url
+   cd -
+   ```
+   No pause is needed: a check never pinged stays silent, and nothing pings before the catch-up.
+   ntfy stays optional, for later.
+5. **Deploy.** Leave `[plaud] schedule_minutes` at 20: the gate holds every sync until the
+   catch-up. Then:
+   ```bash
+   cd "$REPO_DIR"
+   make deploy
+   export RECORDINGS_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
+   ```
+   `make deploy` waits for the worker's own health check (`recordings worker --alive`), as it
+   does for `web`'s, and fails if either doesn't pass within 3 minutes. Then roll back as "Rolling
+   back across 2b" says, not as 2.8: this checkout's `compose.yml` would start a `worker` the
+   older image can't run.
+6. **The Plaud sign-in** (stage 2b spec §10.5; "Plaud sign-in" below has the rest). On the Mac,
+   at this repo's top, write `local.mk` (git-ignored) with `SERVER`, your ssh name for the homelab
+   server, and `REPO_DIR`, this checkout's path there, if `make consent-add` hasn't already. Then:
+   ```bash
+   make plaud-sign-in
+   ```
+   A browser opens: sign in to Plaud. It ends with one line, "signed in: yes · access token
+   expires 2026-10-23 16:20 · refresh token: present · account 1a2b3c4d". On the server:
+   ```bash
+   rc exec worker recordings plaud check
+   ```
+   Expected: the same "signed in: yes" line, and exit 0. "refresh token: missing" means the server
+   would need a new sign-in every time the access token expires: stop and ask in a Claude session
+   (stage 2b spec §18, S1). Status still shows the gate's line, "Scheduled sync waits for the first
+   catch-up (runbook)": nothing syncs before section 8.
+7. **Check it.**
+   ```bash
+   rc ps
+   rc exec worker recordings doctor --role worker
+   rc exec worker recordings plaud consent
+   rc exec worker recordings alert-test
+   rc exec backup recordings alert-test
+   rc exec backup recordings doctor --role backup
+   ```
+   Expected:
+   - `rc ps` shows `web`, `backup` and `worker` up, and `worker` `(healthy)`.
+   - `doctor --role worker` reports no problem and exits 0, and shows the sign-in's expiry and
+     whether it has a refresh token, never the token. "sign-in needed: run `make plaud-sign-in`"
+     means step 6 didn't land: run it again. Any problem it reports is real: fix it (the consent
+     list's lines, `/plaud`'s mode, the keep-out word, or the sync's URL).
+   - `plaud consent` prints the ID count you expect; the lines it reads as kept, by number (each
+     must mean "keep"); and any recording 2a imported despite its exclusion, by archive ID, marked
+     as 2a's parser having missed it. The worker has already tagged those `private` and flagged
+     them: review each in the app, and take out by hand any that mustn't stay.
+   - `alert-test` in `worker` prints `deadman_sync: True`, and Healthchecks shows a log entry on
+     the sync's check, which still says new: `/log` proves the URL and leaves the check's state
+     alone, and the email channel is the account the backup's check already proved. In `backup`
+     it works as in 2.6.
+   - `doctor --role backup` no longer warns that the consent folder isn't backed up. Until ntfy is
+     set up it still warns that alerts are off, which is expected.
+8. **A day later,** look at the sync's check in Healthchecks again: it must still say new, never
+   down. A check never pinged never goes down (stage 2b spec §22 asks for this to be seen once),
+   and nothing pings it before the catch-up. If it went down, pause it and ask in a Claude session.
+
+## 7. The dry run
+
+Stage 2b spec §11.3, §17.5 (C1.02). It reads Plaud's whole list and classifies every recording on
+it, and imports nothing: no audio, no transcript, nothing in the archive. On the homelab server, in
+`$REPO_DIR`, with the top block pasted:
+```bash
+make plaud-dry-run
+```
+It runs `recordings plaud sync --dry-run --list` in the running `worker` container (the same as
+`rc exec worker recordings plaud sync --dry-run --list`), then `recordings plaud consent`. The
+Sync screen's **Compare** does the same listing and shows the same numbers. Nothing it prints is a
+title: rows are by Plaud ID, date, time and duration.
+
+Check, and **stop if anything doesn't fit**:
+- Both equations add up: "listed N = here + waiting + excluded + missing", and "in the archive from
+  Plaud M = here + gone from Plaud (+ absent from this listing)".
+- "here" equals the archive's Plaud recordings, and anything absent is a recording you deleted in
+  Plaud.
+- The missing ones say "waits for the first catch-up", and are about the recordings made since 2a's
+  import (about 30), plus the titles 2a held back. "Of the waiting and missing, N arrive private"
+  matches the held titles.
+- "consent list: N IDs, M on Plaud now" is what you expect, and no hold is printed. A line
+  "Plaud sync paused: …" is a hold: if it says only P% of the archive's Plaud IDs are listed,
+  Plaud's IDs differ from 2a's (spike S7's stop): stop, and ask in a Claude session.
+- `plaud consent`'s lines read as kept, by number: each one must mean "keep". Any recording 2a
+  imported whose exclusion 2a's parser missed (`of_` or upper-case IDs) is listed by archive ID:
+  the worker has already tagged it `private` and flagged it. Review each by its ID in the app, and
+  take out by hand ("Taking a recording out by hand") any that mustn't stay, **before section 8's
+  `pre-import` backup**.
+- Each `deferred-to-2b` ID in the 2a import's report is listed as missing (it comes in at the
+  catch-up); count any that aren't listed: their audio stays only in audio-router's archive.
+
+Exit codes: 0 the listing was complete and nothing holds it; 1 held, or a listing that couldn't
+be read; 69 Plaud unreachable or rate limited; 77 the sign-in is needed (section 6 step 6); 78
+the consent list stops imports (fix the lines it names, then run it again).
+
+## 8. The catch-up
+
+Stage 2b spec §11.6. The first real Plaud import, supervised. Before it, the gate holds every
+scheduled sync; at its end the schedule starts by itself. Inside `tmux` or `screen`, on the
+homelab server, in `$REPO_DIR`:
+
+1. If you edited the consent list since section 7, run `make plaud-dry-run` again, and check the
+   new IDs show as excluded.
+   Then the volatility check (spec §14.4): three recordings already here, none private, kept out
+   or consent-listed, each fetched twice a minute apart. It writes nothing:
+   ```bash
+   rc exec worker recordings plaud check --volatility
+   ```
+   Each line names a recording by its archive ID and says, for each part (title, transcript,
+   speakers, notes, own notes, other), "same" or "differs". **If any part differs (exit 1), stop:**
+   Plaud sends something that changes by itself, and the breaker would trip on it after the
+   catch-up. Open a Claude session with the output (field names only, never values); the fix is
+   a normaliser release. Exit 0 with "every part came back the same": go on.
+2. Then:
+   ```bash
+   make plaud-catch-up
+   ```
+   It stops the backup service (so no scheduled backup lands in the middle), then runs, each step
+   only if the one before it passed:
+   1. a backup tagged `pre-import` (`rc run --rm backup recordings backup run --tag pre-import`);
+   2. the baseline (`rc exec worker recordings plaud baseline`): every title of the archive's
+      Plaud recordings checked once, for privacy and the keep-out word, and each one's check
+      state seeded (its next check spread over `full_sweep_days`, excused from the breaker);
+   3. the catch-up (`rc exec worker recordings plaud sync --catch-up`): it holds `ops` and `plaud`
+      together, imports every recording waiting, with no cap, newest first, and prints one line
+      per recording ("importing 5 of 31"), by number only;
+   4. a deep validation (`rc run --rm web recordings validate /archive --deep`);
+   5. a backup tagged `post-import`;
+   and starts the backup service again, however it ends. Each failure names its step.
+
+   The catch-up's exit codes: 0 every recording came in; 2 the listing was good and the catch-up
+   is done, but some recordings failed (they are retried by the scheduled sync, and wait under
+   **Not here yet** as "failed 3 times · Park" if they keep failing: check each in Plaud's app);
+   1 held, or stopped by the archive (the disk, `state.db`); 69 Plaud unreachable; 77 sign-in
+   needed; 78 the consent list.
+3. **If it stops part-way** (Plaud down, the connection dropped, a deploy), Status says "The
+   first catch-up didn't finish: run `--catch-up` again (runbook)". Run `make plaud-catch-up`
+   again: it takes another `pre-import` backup, and imports only what isn't here yet. A deploy
+   refuses to start while the catch-up runs (the deploy guard); `make deploy FORCE=1` would stop
+   it, and you run it again here. To stop it yourself, don't rely on Ctrl-C (it stops `make`,
+   and may leave the catch-up running inside the container): `rc restart worker` stops it, and
+   running it again picks up.
+4. **If it stops held** ("Plaud sync paused: …", exit 1): check what the sentence says, as in
+   section 7. If it is right, accept that listing, then run the catch-up again:
+   ```bash
+   rc exec worker recordings plaud accept-listing
+   make plaud-catch-up
+   ```
+5. When it ends with "make plaud-catch-up: done", **You may start tagging now.** (Dan's decision
+   7: the first real tag waits for this import and the backup after it, so a rollback of it,
+   a restore from `pre-import`, loses no tags.)
+6. The schedule has started by itself: the worker's next tick runs a sync (one may run during the
+   validation and the `post-import` backup; it adds no tag, and what it imports is in the next
+   hourly backup). **Within 20 minutes, Healthchecks shows the sync's check up. If it doesn't,
+   stop: the ping isn't arriving.** Then open Status: "All here", or why not.
+
+A baseline that stops part-way is safe to run again too: `rc exec worker recordings plaud
+baseline`.
+
+## Setting up ntfy, later
+
+ntfy is optional (stage 2b, decision 9). Until it is set up, Status and the Healthchecks checks
+carry every alert: the backup's check, and from stage 2b the Plaud sync's.
+
+- **The backup's pushes** work as soon as section 2 step 2's ntfy parts are done: the server in
+  `[alerts] ntfy_server`, the topic in the `ntfy_topic` secret (and a token, only if your server
+  needs one). From stage 2b (section 6) the topic is mounted only when `docker/deploy.env` names
+  its file: set `RECORDINGS_ALERTS_TOPIC_HOST` to its absolute path, as
+  `RECORDINGS_NTFY_AUTH_HOST` names the token's. Then `make deploy`, which reads `deploy.env`
+  again (a restart doesn't), and `rc exec backup recordings alert-test`: the phone gets the test
+  push.
+- **Until then, doctor warns** "alerts are off: set [alerts] ntfy_server and
+  RECORDINGS_NTFY_TOPIC_FILE" for `backup` (and `all`, not `web`). That warning is expected, and it doesn't
+  fail doctor.
+- **The Plaud sync sends no push** in stage 2b: its alert is its own Healthchecks check, and its
+  pushes need a later change (stage 2b spec §16).
+- Until ntfy is set up, 2a's low-disk warning reaches no one. A full disk still reaches you,
+  through the sync's check: a run whose import the disk guard refuses isn't a good run (stage 2b
+  spec §11.7).
+
 ## Tagging
 
 Tagging (part A of stage 3a) is on when the Library shows **+** after a row's chips. When it is off,
@@ -890,6 +1303,265 @@ A single recording can also fail in a batch without stopping it: "edited outside
 again" ("1 recording busy…" for one), "the recording is gone", "not confirmed: would become
 visible". The toast groups them by reason, with counts, and stays until dismissed.
 
+## Taking a recording out by hand
+
+One section serves a late consent listing, a late keep-out, a recording gone from Plaud, and
+anything Dan must not keep (stage 2b spec §12.4):
+1. **Put its Plaud ID on the consent list** (`make consent-add`). From the worker's next tick, the
+   sync tags it `private`, never fetches it again, and can never bring it back. If it isn't flagged
+   already, it gets a flag, which is expected.
+2. `rc stop worker web`.
+3. **Delete its folder for good:** `rm -rf` on its folder under
+   `$RECORDINGS_HOME/archive/recordings/`. Never move it to `trash/`: `trash/` is inside the
+   archive, so it is backed up every hour and mirrored (`backup.py:244-247`, `mirror.py:155-160`
+   leave out only `.tmp/`).
+4. `rc run --rm worker recordings reindex --allow-missing`. Then `rc start web worker`.
+5. After the next mirror run, check that the NAS mirror and the Mac no longer have the folder.
+6. **What still holds it,** as Forget reports (main spec §7.6, step 6):
+   - the restic snapshots taken since it arrived, until retention ages them out (up to 12 months);
+     the `pre-import` and `post-import` snapshots never age out, and only a NAS-side
+     `restic rewrite`, with Forget's steps, removes it from them;
+   - the NAS mirror until its next run, and the Mac's copy of it;
+   - Synology Drive's versions and Time Machine on the Mac;
+   - Plaud's cloud, unless it is deleted there too.
+
+This is a by-hand, permanent exception to main spec §6.4's "Delete moves the folder to `trash/`",
+which describes the app's own Delete, like Forget.
+
+## When the Plaud alert comes
+
+Healthchecks: recordings-sync is down. Open Status: its line "The sync's Healthchecks check isn't
+being pinged since …" names the cause, and the tables below give the step. If Status says the
+worker is silent or may be stuck: `rc ps`, `rc logs worker`.
+
+The sync's check is pinged only after a scheduled sync that is good and that nothing holds up
+(stage 2b spec §16). Its 2-hour grace does the rest: any lasting stop, a dead or wedged worker
+included, brings one email about 2 hours in, and "up" at the next ping. Each of these holds it up
+until it clears:
+
+| Status says | It opens when | It clears when | Do |
+|---|---|---|---|
+| sign-in needed | Plaud refuses a refresh, or the sign-in is missing | a good run after the token file changes | At the Mac: `make plaud-sign-in` ("Plaud sign-in" below) |
+| imports stopped: consent list | the consent list is missing, empty, holds no IDs, or can't be read, or has a line that looks like an ID but can't be read | the worker reads the list cleanly | Fix the lines Status names by number, then `rc exec worker recordings plaud consent`. A missing or unreadable list: fix the file or its permissions, then the same command ("When imports stop: the consent list" below) |
+| held: see Status | the listing hold | Accept, or a later listing that no longer meets it | Status's check, then **Accept this listing** ("When the sync is held" below) |
+| paused: unexpected changes | the breaker trips | Accept these changes, a release that closes it, or a breaker reset | **Accept these changes**, or a code fix ("When edit-sync pauses: the breaker" below) |
+| should be private: run `recordings reindex` | a `private` the sync owes fails to land, or a recording wasn't checked against a new private pattern, or that check stopped | the tag lands, or the recording is checked (the worker tries again every few seconds; a check that stopped as a whole, once per sync interval) | `rc run --rm worker recordings reindex`, which also says what stops a recording that "wasn't checked against the private patterns". If Status says a recording's `recording.json` is missing, restore it from a backup. If Status says a file couldn't be written, or that late consent listings stopped, reindex can't help: check the archive disk and its permissions, then `rc logs worker`. If it says the private patterns check stopped, do the step it names for the class, then `rc logs worker` |
+
+And these stop it without a blocker:
+
+| Status says | Do |
+|---|---|
+| the sync is failing (since 12:00) | Status's "Plaud sync failing" line says why. Plaud unavailable, or offline: wait; it recovers at the next good run. Every fetch failed: `rc logs worker` names the error's class. If the log says "the scheduled sync failed (<Class>)", the sync itself raised an error: it needs a code fix (open a Claude session with that log); it clears at the first sync that brings a recording in. |
+| imports stopped: the disk is too full to import | Free space ("When the data disk fills"); the next run the disk guard doesn't refuse ends it. |
+| scheduled sync is off | Set `[plaud] schedule_minutes` back to 20, then `rc restart worker`. |
+| configuration: `keep_out_word` is invalid | Fix `[plaud] keep_out_word` (1 to 32 letters, digits, `-` or `_`, with at least one letter or digit), then `rc restart worker`. |
+| rate limited until 14:40 | Wait. |
+| error: `<Class>` | A turn raised an error and nothing was pinged. `rc logs worker` names the class. It needs a code fix: open a Claude session with that log. |
+| blocked: <name> | A blocker row the app doesn't know (a hand edit, or a downgrade). Check `rc exec worker recordings plaud consent`, then `rc logs worker`. |
+| skipped: busy (`plaud-full`) since 14:20 | A long run holds the sync's lock. Past 2 hours (12 for Sync everything and the catch-up) it may be stuck: `rc logs worker`. |
+
+Never a cause: late keep-outs and late consent listings (already `private`, and flagged once each),
+a rebuild's review list, a recording that fails or is parked on its own, a failed Sync everything, a
+small shrink, and auto-import off. (Spec §11.7's accepted limit: the first failures of one recording
+can still start "the sync is failing"; the next run with a success ends it.) Before the first catch-up no turn pings, and a check never pinged stays silent.
+
+Optional: Healthchecks › Account Settings › Email Reports sends a daily reminder while any check is
+down. It covers the backup's check too.
+
+## When the sync is held
+
+Stage 2b spec §11.4. A sync whose listing looks very different from the last good one imports
+nothing until you look: Status says "Plaud sync paused: …" (or "Plaud now lists 40 fewer of the
+recordings here …"), the summary says "Held: see Status", and on the Sync screen **Sync now** and
+the import buttons are off. Scheduled syncs go on listing; one that finds things normal again ends
+the hold by itself. While a hold shows Plaud's IDs changed, no title of a recording not here is
+stored or shown.
+
+1. **Read Status's sentence.** It names one of four reasons:
+   - "Plaud now lists N fewer of the recordings here (and M look new)": many recordings vanished
+     at once (more than 5, or 5% of the archive's, whichever is larger).
+   - "only P% of the IDs Plaud listed last time are listed now": Plaud's IDs may have changed.
+   - "Plaud's IDs changed form, and N recordings here vanished with them": a change of form (bare
+     hex and `of_…`) with something missing.
+   - "Plaud lists N IDs in a form the consent list can't name. It needs a code fix (runbook)":
+     Accept can't help (step 5).
+2. **Check in Plaud's app** that the recordings that vanished are ones you deleted. Status names
+   none by title; `rc exec worker recordings plaud sync --dry-run --list` lists every ID Plaud
+   lists now, with its date and duration, never a title.
+3. **If Plaud's IDs changed** (the second and third reasons), check every consent-list entry still
+   names its recording before you accept: for each line of `consent/consent-list.md`, find the
+   recording in Plaud's app by its date and duration, and if its ID there differs, add the new ID
+   with `make consent-add ID='…'` from the Mac (the old line stays). A possible re-keyed match the
+   sync already caught shows on the Sync screen as "may be … back under a new Plaud ID": confirm
+   those the same way.
+4. **Accept this listing** on Status or the Sync screen, or on the server:
+
+   ```bash
+   rc exec worker recordings plaud accept-listing
+   ```
+
+   It answers "Accepted this listing: imports resume": the vanished recordings show as gone from
+   Plaud (kept in the archive), and the next sync imports as usual.
+5. **If Accept is refused:**
+   - "Fix this first: N consent-listed or kept-out IDs vanished while Plaud's IDs changed
+     (runbook)": some recordings you kept out may be back under IDs your list can't name. Do step 3
+     for every consent-listed and kept-out recording (the Sync screen's Kept out rows, by date and
+     duration), then Accept again. Don't work around it.
+   - "the consent list can't be read: fix it first (runbook)": the list stopped imports too; mend
+     it ("When imports stop: the consent list", below), then Accept.
+   - "needs a code fix: the consent list can't name these IDs": stop, and open a Claude session with
+     `rc logs worker` and the dry run's `--list` output (IDs only, no titles).
+
+A small shrink (5 or fewer, and under 5%) never holds: Status says "Plaud now lists 3 fewer:
+waiting for the next listing to agree", and an hour later they show as gone from Plaud.
+
+## When imports stop: the consent list
+
+Stage 2b spec §12.1. The consent list fails closed: while the worker can't read it cleanly, nothing
+is imported, no title of a recording not here is stored or shown, and the sync's check isn't
+pinged. Status says "Plaud imports stopped: …" with the reason, and Needs attention says it too.
+
+1. **Read the reason.**
+   - "the consent list has 2 lines that look like IDs but can't be read (lines 14 and 22)": a typo
+     (an ID with 31 or 33 hex characters, a stray character). Fix those lines on the server, in
+     `consent/consent-list.md`, writing each as `` - `of_…` — note ``, the ID first.
+   - "the consent list can't be read", missing or empty: `[plaud] consent_list` names a file that
+     isn't there, can't be opened (check the folder's owner and mode: the runbook's section 6), or
+     holds no ID. Put the file back from the latest backup if it went missing; never start an empty
+     one.
+2. **Write the file by rename**, never in place: edit a copy beside it, then `mv` it over (`make
+   consent-add` does this for one ID). The worker reads a list again within a few seconds of a
+   change, and trusts it only once the file has stood still for a tick.
+3. **Check what the worker read:** `rc exec worker recordings plaud consent`. It prints the count
+   ("by the worker: N IDs") and any line it reads as kept rather than excluded, by number. The stop
+   lifts as soon as the worker reads the list cleanly; the next sync imports as usual.
+
+A line Status lists "for review" (an ID in a sentence, or `ID kept: …`) is not an exclusion and
+stops nothing: if you meant it as one, rewrite it in the list's own form.
+
+## When edit-sync pauses: the breaker
+
+Stage 2b spec §14.4. Status says "Edit-sync paused since 14:20: Plaud started sending something
+new on 12 recordings (`folder_id`)", or "…: 12 recordings' transcripts change between two fetches
+a moment apart". The sync's check stays down while it is open (the `breaker` blocker), so a new
+problem sends no second email: glance at Status until it is fixed. New recordings, title checks
+and `private` tags go on; only snapshots of what tripped it wait.
+
+1. Read what Status names, or on the server:
+   ```bash
+   rc exec worker recordings plaud breaker
+   ```
+   It prints the same sentence, the field names (never their values), and whether **Accept these
+   changes** is offered.
+2. **Fields that look like a feature Plaud added** (and came back the same on both fetches):
+   press **Accept these changes** on Status or the Sync screen. Every recording's next check is
+   excused and spread over `full_sweep_days`, so each gets one new snapshot over the next day, and
+   the breaker closes. The press is in `ops_runs` (`plaud-accept-changes`).
+3. **A name that looks like a link, a token or a key, a part that differs between two fetches, or
+   a field you accepted before** ("This keeps changing by itself: it needs a code fix"): don't
+   accept. Open a Claude session with Status's sentence: the normaliser needs to drop that field,
+   with a `NORMALISER_VERSION` bump. When that release is deployed, the worker closes the breaker
+   by itself at its start, and Status says "closed by the release on …; watching for a re-trip"
+   for a day. If it trips again, the release didn't drop the field.
+4. After a normaliser change you accept, a rebaseline excuses every recording's next check:
+   ```bash
+   rc exec worker recordings plaud baseline --all
+   ```
+5. `rc exec worker recordings plaud breaker reset` closes it by hand and excuses nothing: a tool
+   no step here needs.
+
+## When a recording fails every check: Re-sync and Park
+
+Stage 2b spec §14.6. Status says "2 recordings fail every check (since 2026-10-23) · Re-sync ·
+Park": each has failed 3 checks in a row. It never stops the sync's check (a failing recording
+isn't a blocker), but it stays on the list, and Sync everything exits 2 for it.
+
+1. Press **Re-sync** on that line (or **Re-sync from Plaud** in the recording's Details, or on the
+   server `rc exec worker recordings plaud resync <id>…`). If it answers "Up to date" or
+   "Updated: …", it was a passing fault, and the recording leaves the list.
+2. Still "Failed: …": open the recording in Plaud's own app. If it plays and shows its transcript
+   there, the fault may be ours: `rc logs worker` names the failure's class; open a Claude session
+   with it. If Plaud can't open it either, **Park** it: the sweep leaves it alone and it no longer
+   counts against Sync everything, and the Sync screen lists it under **Parked**.
+3. A parked recording is still tried by a Re-sync, and one that works unparks it. **Unpark** on the
+   Sync screen, or `rc exec worker recordings plaud park <id> --undo`, puts it back in the sweep.
+
+## Sync everything, and DAN-15's last run
+
+Stage 2b spec §14.6. **Sync everything** (the Sync screen's **More**, or `rc exec worker
+recordings plaud sync --full`) lists, imports what is waiting, checks every recording the sweep
+covers, oldest first, retries its failures once, and writes a manifest to
+`$RECORDINGS_HOME/state/manifests/plaud-<date>.json`: each Plaud ID with its archive ID, last
+snapshot, state and part hashes, never a title or a speaker's name. The worker runs it by itself
+every 30 days while the schedule is on; a press within an hour of the last one is refused, and one
+that stopped part-way (a restart) resumes. The CLI exits 0 when everything listed is here and
+checked (degraded counts), parked, flagged (consent-listed or kept out after it came in: named by
+archive ID) or kept out; 2 otherwise, with counts. Status's "Sync everything" number gives the last
+one's result. It never stops the sync's check.
+
+**DAN-15, before 2027-08-15,** when the Plaud account ends:
+1. Run the last Sync everything, in `tmux` or `screen` (it can take an hour or more):
+   ```bash
+   rc exec worker recordings plaud sync --full
+   ```
+   It must exit 0, or 2 only for recordings you then park after checking each in Plaud's app
+   (record each in your notes by its archive ID). A flagged recording is never a failure: take it
+   out by hand ("Taking a recording out by hand") or keep it. Keep the manifest it names; the
+   next backup carries it.
+2. Set `[plaud] schedule_minutes = 0` in `config.toml`, then retire the sync, so Status says
+   "retired" instead of "Scheduled sync is off" and nothing runs every 20 minutes or every month:
+   ```bash
+   rc restart worker
+   rc exec worker recordings plaud retire
+   ```
+   It records `retired_at` in `state.db`. `recordings plaud retire --undo` brings the sync back.
+3. Delete the sync's Healthchecks check ("Planned work and the sync's check").
+
+## Plaud sign-in
+
+Only the server's `worker` holds a Plaud sign-in: `tokens.json` in `$RECORDINGS_HOME/plaud`
+(`RECORDINGS_PLAUD_HOST`, mode 0700; the file 0600), never backed up or mirrored. The worker
+refreshes it by itself before it expires, under `tokens.lock`. It is a secret: never copy it by
+hand, print it, or put it in `config.toml`, and a Claude session never runs `make plaud-sign-in` or
+`token-import` (CLAUDE.md). Backups and the mirror refuse to run while `[plaud] token_store` lies
+inside the archive, or can't be read ("refusing to back up: [plaud] token_store …"), and doctor
+says so in every role: keep it at `/plaud/tokens.json`, outside the archive and every
+`[backup] extra_paths` entry.
+
+**When to sign in:** before the first catch-up (section 6 step 6); when Status says "sign-in
+needed" (Healthchecks' email about the sync's check comes about 2 hours after it starts); when
+doctor warns that the refresh token expires within 7 days; and after a restore, since the sign-in
+is never in a backup.
+
+**How:** on the Mac, at this repo's top, with `SERVER` and `REPO_DIR` in `local.mk`:
+```bash
+make plaud-sign-in
+```
+It makes a temporary `HOME` under `$TMPDIR` (mode 0700, removed by a `trap` whatever happens), so
+the Mac's own Plaud CLI and MCP sign-ins are untouched; runs the vendor CLI's `plaud login` there
+(`PLAUD_CLI=<path>` names another CLI); and pipes the CLI's token file over ssh into `recordings
+plaud token-import -` in the worker. That command keeps only the sign-in's own keys, makes one
+cheap call with it, and installs it atomically at 0600. It prints only "signed in: yes · access
+token expires … · refresh token: present · account 1a2b3c4d" (the account as 8 hex of a hash).
+
+| It says | It means | Do |
+|---|---|---|
+| step 2 failed | The browser sign-in failed, or the CLI left no `.plaud/tokens.json` in its `HOME` | Run it again. If the CLI keeps its sign-in elsewhere (the keychain, say), stop and ask in a Claude session |
+| step 3 failed (ssh exit 255) | The server couldn't be reached | Check the tailnet, then run it again |
+| step 4 failed: the token file or the sign-in was refused | `token-import` couldn't use the file, or Plaud refused the sign-in; nothing was installed | Run it again. A message naming a key (`access_token`, say) means the vendor's file isn't shaped as this build guessed: ask in a Claude session |
+| step 4 failed: Plaud could not be reached | An outage between the server and Plaud | Run it again later |
+| step 4 failed: the sign-in's folder or the settings | `/plaud` is missing or too open | Its message names the `install -d -m 700` or `chmod`; then run it again |
+
+**Then:** `rc exec worker recordings plaud check` makes one cheap signed-in read and prints the same
+line; it exits 0, or 77 for "sign-in needed", or 69 when Plaud can't be reached. A new sign-in
+ends the worker's pause at once (it watches the file), Status's "sign-in needed" clears at the next
+good run, and Healthchecks goes up at the next ping.
+
+**This build's guesses** (`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`): the vendor
+file's keys and the token endpoint (`[plaud] token_url`, by default the API's `/oauth/token`). If a
+sign-in that works stops with "sign-in needed" around when its access token expires, the refresh
+is what failed: `[plaud] token_url` may need the URL the vendor CLI refreshes at.
+
 ## When the data disk fills
 
 Status warns below 20% free and the import stops below 5% (spec §12.5); the restore test refuses
@@ -909,11 +1581,83 @@ disk recovers and fills again.
    job and since when. Restarting while the disk is still full sends the alert once more.
 3. If you must restart, do it after step 1, and expect that wait.
 
+## Keep a recording out for good
+
+Stage 2b's consent list says which Plaud recordings never enter the archive (spec §12.1). Add one:
+- **From the Mac:** `make consent-add ID='<id>'`, the ID in single quotes, with `SERVER` (your
+  ssh name for the homelab server) and `REPO_DIR` (this repo's checkout there) set in `local.mk`
+  at the repo's top (git-ignored). `ID` may be the bare ID, the `of_` form, or what the Sync
+  screen's Copy ID puts on the clipboard (`` - `of_…` — ``). Its backticks are why the quotes
+  matter: a shell runs backticks in an unquoted or double-quoted word, and make would get a broken
+  ID. It checks the ID on the Mac, appends `` - `<id>` — added <date> `` on the server (the 32 hex
+  digits, which the list matches in any form) by writing a new file and renaming it over the list,
+  and prints what the worker reads (`recordings plaud consent`).
+- **On the server:** edit `$RECORDINGS_HOME/consent/consent-list.md` with any editor. Section 3
+  made it read-only (mode 0400), so `chmod u+w` it first (or save with sudo), and `chmod 400` it
+  after. The worker watches the folder and compares the file's inode, size and time, so it sees an
+  edit whether the editor writes a new file and renames it or writes in place. Then run
+  `rc exec worker recordings plaud consent`.
+
+`make consent-add` only appends. It refuses a list that is missing, empty or only comments, because that is a
+consent stop that fails closed, and one added ID would lift it while the real list's other
+recordings stayed unlisted: put the real list back first (section 6 step 1, or "Restoring for
+real"). An ID already on the list is added again: harmless, and the count stays the same.
+
+Either way, `recordings plaud consent` must show the new count, and no line it can't read. The
+Mac's target prints it right after the add, which can be before the worker's next look (a few
+seconds): if the line `(by the worker: N IDs)` still shows the old count, run `rc exec worker recordings plaud consent` again.
+If it still isn't there after a minute, the worker didn't see the edit. If the recording is already
+in the archive, the worker tags it `private` within seconds and flags it; take it out by hand if it
+mustn't stay.
+
+A line that holds a valid ID but is read as a typo: write it as `` - `of_…` — note ``, the ID first
+(bare or in one pair of backticks, nothing else in them), then a dash. The list stops on a line
+that looks like an ID but can't be read: an ID split by a space or a line wrap (Dan's decision 12),
+a date of 8 digits before the dash (`- 20261023 — asked`), one in brackets or quotes (`(ID)`, `'ID'`), `of-` for `of_`, or a space inside the backticks.
+
+## Planned work and the sync's check
+
+Planned work doesn't pause the sync's Healthchecks check: re-imports, stopping the worker, or
+setting `[plaud] schedule_minutes = 0` for a while. If it lasts more than 2 hours, the check's
+email is the reminder to start the worker again or turn the schedule back on, and "up" follows at
+the first good sync. Only rolling back across 2b (below), and the final Sync everything when the
+Plaud account ends, pause or delete the check, because the sync is then meant to stay off.
+
+## Rolling back across 2b
+
+`make rollback` alone is not enough to go back to a release from before stage 2b: the checkout's
+`compose.yml` would start a `worker` whose command the older image lacks, and the older backup
+refuses every backup while `[backup] extra_paths` names a folder (its compose file mounts no
+`/consent` either). On the homelab server, with the top block pasted. A fresh shell has no
+`RECORDINGS_IMAGE_TAG`, so `rc` can't be used until it is exported: the commands below go through
+`docker/up-deployed.sh`, which reads the running tag back:
+1. Pause the sync's Healthchecks check (its Pause button): no sync runs until you deploy forward
+   again.
+2. In `config.toml`, take `"/consent"` and `"/state/manifests"` out of `[backup] extra_paths`,
+   so that it is `["/backup-extra/deploy.env"]` again.
+3. Then:
+   ```bash
+   cd "$REPO_DIR"
+   sh docker/up-deployed.sh stop worker && sh docker/up-deployed.sh rm -f worker
+   git checkout <the tag's commit>
+   make rollback TAG=<tag>
+   ```
+`state.db` only gained tables in 2b, and `recording.json` no field, so the older release opens
+both. A `compose.yml` from before 2b requires a non-empty `secrets/ntfy_topic` file, so if ntfy
+was never set up, this rollback also needs that file (any text); it was there when 2a was deployed.
+To go forward again: `git checkout` the newer commit and `make deploy`; once it has worked,
+put `"/consent"` and `"/state/manifests"` back in `[backup] extra_paths` (section 6, step 3),
+then, from `$REPO_DIR`, `sh docker/up-deployed.sh restart backup` (the loop reads `config.toml`
+when it starts) and `sh docker/up-deployed.sh exec backup recordings doctor --role backup`, which
+no longer warns about the consent or manifests folder. Resume the sync's check last.
+
 ## Restoring for real
 
 When the archive, `state.db`, or the whole server is lost. Each snapshot holds the container
-paths `/archive`, `/config/config.toml`, `/backup-extra/deploy.env` and `/state/backup/state.db`
-(a consistent SQLite copy). `index.db` is derived, so it isn't there; `reindex` rebuilds it.
+paths `/archive`, `/config/config.toml`, `/backup-extra/deploy.env`, `/state/backup/state.db`
+(a consistent SQLite copy) and, from stage 2b, `/consent` (the consent list's folder; the Plaud
+sign-in is never in it) and `/state/manifests` (Sync everything's manifests). `index.db` is
+derived, so it isn't there; `reindex` rebuilds it.
 
 On the homelab server, with the top block of this runbook pasted (it defines the variables and
 `rc`), inside `tmux` or `screen` because the restore takes hours. A new server first goes
@@ -924,6 +1668,11 @@ through 1a, then:
 - make a new mirror key and replace its `authorized_keys` line on the NAS (1b.8), because the
   `from=` address may change
 - set the tailnet ACL for it (2.3)
+- if the commit you deploy is a stage 2b one (section 6), its `compose.yml` also needs section 6's
+  setup before step 4's `rc up -d`: the Plaud sign-in's folder (step 2 there) and the sync's
+  `deadman_sync_url` file (step 4 there). Not the consent folder: step 3 below restores it from the
+  snapshot. After the restore, sign in to Plaud again (`make plaud-sign-in`, "Plaud sign-in"):
+  the sign-in is never backed up.
 
 1. **Find the snapshot.**
    ```bash
@@ -964,8 +1713,13 @@ through 1a, then:
    mv "$RECORDINGS_HOME/state" "$RECORDINGS_HOME/state.lost-$STAMP"
    mkdir -m 700 "$RECORDINGS_HOME/state"
    mv "$R/state/backup/state.db" "$RECORDINGS_HOME/state/state.db"
+   [ -d "$R/state/manifests" ] && mv "$R/state/manifests" "$RECORDINGS_HOME/state/manifests"
+   install -d -m 700 "$RECORDINGS_HOME/state/manifests"   # backups refuse while it is missing
    cp "$R/config/config.toml" config.toml
    cp "$R/backup-extra/deploy.env" docker/deploy.env
+   [ ! -e "$RECORDINGS_HOME/consent" ] || mv "$RECORDINGS_HOME/consent" "$RECORDINGS_HOME/consent.lost-$STAMP"
+   mv "$R/consent" "$RECORDINGS_HOME/consent"
+   chmod 700 "$RECORDINGS_HOME/consent"
    ```
    Run only the lines for what you lost. If your own `config.toml` or `deploy.env` survived,
    compare it with the restored one (`diff`) rather than overwrite it.
@@ -982,10 +1736,16 @@ through 1a, then:
    its docs, and an import exits 78 naming them (or, if `index.db` survived, stops with
    `IndexUnavailable` when it reaches one of them). Fix that first, and pass `--allow-missing`
    only for recordings you removed on purpose: it rebuilds, and `state.db` forgets them.
+   If you restored `state.db` (step 3) on a stage 2b commit, `recordings plaud review` then
+   records that the sync's records were rebuilt: an older `state.db` has forgotten what you kept
+   out since its backup, so every Plaud recording made before now that isn't here waits on the
+   Sync screen's **Not here yet**, "needs your review", until you import it or keep it out (stage
+   2b spec §11.6). Skip it when only the archive was lost.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex
    rc run --rm web recordings validate /archive --deep
+   rc run --rm worker recordings plaud review   # a restored state.db, on a stage 2b commit
    rc up -d
    rc exec web recordings doctor --role web
    rc exec backup recordings doctor --role backup
@@ -1014,6 +1774,7 @@ through 1a, then:
    rc down
    mv "$RECORDINGS_HOME/state" "$RECORDINGS_HOME/state.lost-$(date +%Y%m%d)"
    mkdir -m 700 "$RECORDINGS_HOME/state"
+   install -d -m 700 "$RECORDINGS_HOME/state/manifests"   # stage 2b: backups refuse without it
    rc run --rm web recordings init --adopt
    rc run --rm web recordings reindex
    rc up -d
@@ -1051,9 +1812,12 @@ through 1a, then:
 | NAS transport (1b) | rest-server / SFTP fallback, risk accepted |
 | The tailnet ACL refuses another device (2.3) | yes / no |
 | Dead-man's switch: Healthchecks.io, period 1 h, grace 3 h (2.2) | |
-| ntfy topic and ping URL in the password manager (2.2) | yes / no |
+| The ping URL, and the ntfy topic if set up, in the password manager (2.2) | yes / no |
 | `recordings.service` brings the app up after a reboot (2.5) | yes / no |
 | The killed backup raised the alert (2.7) | yes / no |
 | The restore test passed on the imported data; `import/` deleted (4) | yes / no |
 | The Library's first load (4) | under 2 s / slower |
 | The Mac reads the mirror and can't write it (5.2) | yes / no |
+| The dry run's equations add up, and the consent list's IDs are found on Plaud (7) | yes / no |
+| The catch-up ended (exit 0, or 2 with the failed IDs checked in Plaud's app) (8) | yes / no |
+| The sync's Healthchecks check up within 20 minutes of the catch-up (8) | yes / no |

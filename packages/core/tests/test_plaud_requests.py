@@ -1,0 +1,448 @@
+"""Requests from the UI (spec §9.3): the rows, and the worker's claims and handlers. The worker
+handles Keep it here and Accept this listing so far (Accept's own tests are in
+test_plaud_accept.py); every other kind comes with a later area. Synthetic IDs only;
+nothing here reaches Plaud."""
+
+import json
+import logging
+import os
+import sqlite3
+import subprocess
+import sys
+import threading
+from contextlib import closing, contextmanager
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+from recordings import worker as worker_module
+from recordings.archive import RawSource
+from recordings.config import load_config
+from recordings.init import init_archive
+from recordings.plaud import requests
+from recordings.plaud.checks import K_CATCH_UP_DONE
+from recordings.plaud.flags import KEPT_HERE, NOTHING_TO_KEEP, record_late_keep_out
+from recordings.plaud.gate import GATE_REFUSAL
+from recordings.plaud.requests import (
+    EXPIRED,
+    HANDLED,
+    INTERRUPTED,
+    KINDS,
+    NOT_YET,
+    QUEUED,
+    RUNNING,
+    UNREADABLE_ROW,
+    NotSaved,
+    PlaudRequest,
+    queued_after,
+    worker_down,
+)
+from recordings.plaud.runlock import plaud_run
+from recordings.state import State
+from recordings.worker import Progress, Worker, heartbeat_once
+from recordings.writer import Incoming, Writer
+
+T0 = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
+TZ = "America/Vancouver"  # 12:00 UTC is 05:00 there in October
+PLAUD_A = "of_" + f"{1:032x}"  # synthetic Plaud IDs
+PLAUD_C = "of_" + f"{3:032x}"
+R1, R2, R3 = (f"20261006T14000{n}-0700_{n:08x}" for n in (1, 2, 3))  # synthetic recording IDs
+
+
+def req(kind: str, n: int, **fields) -> PlaudRequest:
+    return PlaudRequest(request_id=f"request-{n:04d}", kind=kind, **fields)
+
+
+def up(state: State, now: datetime = T0) -> None:
+    """The worker reports in: a fresh heartbeat, as its thread writes one every 30 seconds."""
+    heartbeat_once(state, Progress("idle", 1, now), now=now)
+
+
+def insert(state: State, request: PlaudRequest, now: datetime = T0) -> requests.Reply:
+    return requests.insert(state, request, now=now, timezone_name=TZ)
+
+
+def rows(state: State) -> list[tuple]:
+    with state.db() as db:
+        return db.execute("SELECT kind, state FROM plaud_requests ORDER BY id").fetchall()
+
+
+@pytest.fixture
+def state(tmp_path) -> State:
+    init_archive(tmp_path / "archive", tmp_path / "state", writer_id="test")
+    return State.open(tmp_path / "state")
+
+
+@pytest.fixture
+def setup(tmp_path, ntfy):
+    """An archive whose consent list reads, a config.toml, and a worker's environment."""
+    root, state_dir = tmp_path / "archive", tmp_path / "state"
+    init_archive(root, state_dir, writer_id="test")
+    consent = tmp_path / "consent"
+    consent.mkdir()
+    (consent / "consent-list.md").write_text(f"- `{PLAUD_C}` — synthetic\n", encoding="utf-8")
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f'[archive]\npath = "{root}"\nwriter_id = "test"\n'
+        f'[state]\npath = "{state_dir}"\n[index]\npath = "{tmp_path / "index" / "index.db"}"\n'
+        f'[plaud]\nconsent_list = "{consent / "consent-list.md"}"\n',
+        encoding="utf-8",
+    )
+    environ = {"RECORDINGS_CONFIG": str(cfg_file), "RECORDINGS_DEADMAN_SYNC_URL": f"{ntfy.url}/s"}
+    return SimpleNamespace(root=root, tmp=tmp_path, environ=environ)
+
+
+@pytest.fixture
+def make_worker(setup):
+    made: list[Worker] = []
+
+    def make() -> Worker:
+        w = Worker(load_config(setup.environ), setup.environ, clock=lambda: T0, heartbeat=3600)
+        w.start()
+        up(w.state)
+        made.append(w)
+        return w
+
+    yield make
+    for w in made:
+        w.stopping.set()
+
+
+def add_recording(setup, plaud_id: str) -> str:
+    writer = Writer.open(load_config(setup.environ), docs=False)
+    media = setup.tmp / "in.mp3"
+    media.write_bytes(b"ID3 synthetic audio")
+    return writer.add(
+        Incoming(
+            media=media,
+            recorded_at=datetime.fromisoformat("2026-10-06T14:00:03-07:00"),
+            timezone_name="America/Vancouver",
+            time_source="plaud",
+            title="Week 4",
+            kind="audio",
+            sources=(RawSource(kind="plaud", ref=plaud_id, added_at=T0, payload=b'{"id": 1}'),),
+        )
+    ).recording.id
+
+
+def answer(state: State, n: int) -> tuple:
+    reply = requests.read(state, f"request-{n:04d}")
+    return reply.state, reply.message
+
+
+def test_the_worker_handles_what_each_area_has_built_so_far():
+    # why: decision 2. A button whose handler comes in a later area is disabled with NOT_YET,
+    # and a crafted request for it is refused before any row is inserted. Phase 1 handled Keep it
+    # here; Phase 2's area A3 adds Accept this listing, A4 Release's preview, Let it in and Undo,
+    # A5 Compare, Sync now, the imports, Park and Unpark, Phase 3's area B1 Accept these changes,
+    # and area B2 Re-sync and Sync everything: every kind. HANDLED and the handlers agree.
+    release = {"release-preview", "release", "unrelease"}
+    sync = {"compare", "sync", "import", "park", "unpark"}
+    handled = {"keep-here", "accept", "accept-changes", "resync", "full", *release, *sync}
+    assert HANDLED == handled == set(worker_module.HANDLERS)
+    assert set(KINDS) == HANDLED
+    assert NOT_YET == "Comes with the next part of stage 2b."
+
+
+def test_a_repeated_request_id_is_that_row(state):
+    up(state)
+    first = insert(state, req("keep-here", 1, recording_ids=(R1,)))
+    again = insert(state, req("keep-here", 1, recording_ids=(R2,)))
+    assert again == first == requests.Reply("request-0001", "keep-here", "queued", QUEUED)
+    with state.db() as db:
+        assert db.execute("SELECT recording_ids FROM plaud_requests").fetchall() == [
+            (json.dumps([R1]),)
+        ]
+
+
+SESSION = """
+import sys
+from datetime import datetime
+from recordings.plaud import requests
+from recordings.state import State
+state = State.open(sys.argv[1])
+sys.stdin.read()  # both are started; they insert together once stdin closes
+request = requests.PlaudRequest(sys.argv[2], "keep-here", recording_ids=(sys.argv[3],))
+now = datetime.fromisoformat(sys.argv[4])
+print(requests.insert(state, request, now=now, timezone_name="UTC").message, flush=True)
+"""
+
+
+def test_one_request_id_sent_by_two_sessions_at_once_is_one_row(state):
+    # why: spec §9.3. A browser that reconnects can send its request again while the first is
+    # being saved: BEGIN IMMEDIATE makes it one row, and both get that row's reply.
+    up(state)
+    sessions = [
+        subprocess.Popen(
+            [sys.executable, "-c", SESSION, str(state.path), "request-0007", rid, T0.isoformat()],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            env=os.environ,
+        )
+        for rid in (R1, R2)
+    ]
+    for session in sessions:
+        session.stdin.close()
+    replies = [session.communicate(timeout=30)[0].strip() for session in sessions]
+    assert [session.returncode for session in sessions] == [0, 0]
+    assert replies == [QUEUED, QUEUED]
+    assert rows(state) == [("keep-here", "queued")]
+
+
+def test_a_request_while_a_run_holds_plaud_says_it_waits_for_it(state):
+    up(state)
+    with plaud_run(state, "plaud-baseline", timeout=0, now=T0 - timedelta(minutes=40)):
+        reply = insert(state, req("keep-here", 1, recording_ids=(R1,)))
+    assert (reply.state, reply.message) == ("queued", queued_after("04:20"))
+
+
+def test_with_the_worker_down_the_reply_says_so_and_the_row_expires_after_an_hour(state):
+    assert insert(state, req("keep-here", 1, recording_ids=(R1,))).message == worker_down("never")
+    up(state, T0 - timedelta(minutes=5))  # its last heartbeat, at 04:55 in Vancouver
+    reply = insert(state, req("keep-here", 2, recording_ids=(R2,)))
+    assert (reply.state, reply.message) == ("queued", worker_down("04:55"))
+    assert requests.expire(state, now=T0 + timedelta(minutes=59)) == 0
+    assert requests.expire(state, now=T0 + timedelta(minutes=61)) == 2
+    assert answer(state, 2) == ("expired", EXPIRED)
+
+
+def test_at_start_running_rows_fail_as_interrupted_and_old_queued_rows_expire(state):
+    up(state)
+    insert(state, req("keep-here", 1, recording_ids=(R1,)))
+    requests.claim_next(state, now=T0)
+    insert(state, req("keep-here", 2, recording_ids=(R2,)))
+    soon = T0 + timedelta(minutes=50)
+    up(state, soon)
+    insert(state, req("keep-here", 3, recording_ids=(R3,)), now=soon)
+    assert requests.at_start(state, now=T0 + timedelta(minutes=70)) == (1, 1)
+    assert answer(state, 1) == ("failed", INTERRUPTED)
+    assert answer(state, 2)[0] == "expired"
+    assert answer(state, 3)[0] == "queued"
+
+
+def test_the_worker_claims_the_oldest_and_keeps_a_late_keep_out_here(setup, make_worker):
+    # C5.18 and C5.21's other half: before the first catch-up, Keep it here still runs (it writes
+    # no snapshot). It resolves the open late keep-out; with none open, there is nothing to keep.
+    rid = add_recording(setup, PLAUD_A)
+    w = make_worker()
+    assert not w.gate.open
+    record_late_keep_out(w.db, rid, [PLAUD_A], "noarchive", now=T0)
+    insert(w.state, req("keep-here", 1, recording_ids=(rid,)))
+    insert(w.state, req("keep-here", 2, recording_ids=(rid,)))
+    w.tick()
+    assert answer(w.state, 1) == ("done", KEPT_HERE)
+    assert answer(w.state, 2) == ("queued", QUEUED)  # one request per tick, the oldest first
+    w.tick()
+    assert answer(w.state, 2) == ("failed", NOTHING_TO_KEEP)
+    assert requests.read(w.state, "request-0001").result == {"kept": [rid], "nothing_to_keep": []}
+
+
+def test_a_kind_the_worker_cant_handle_yet_is_refused_never_run(setup, make_worker, monkeypatch):
+    # C5.18 and C5.21: web refuses these before inserting; a row that got in anyway (a hand-made
+    # row) is refused by the worker with the same phrase, and nothing runs, gate open or closed.
+    # No request ever answers "error: `NotImplementedError`". Since area B2 every kind has its
+    # handler, so a kind without one is made by taking Sync everything's away for the test.
+    monkeypatch.delitem(worker_module.HANDLERS, "full")
+    w = make_worker()
+    insert(w.state, req("full", 10))
+    w.tick()
+    assert answer(w.state, 10) == ("refused", NOT_YET)
+    w.db.put(K_CATCH_UP_DONE, T0.isoformat(), now=T0)  # the gate opens
+    insert(w.state, req("full", 99))
+    w.tick()
+    assert answer(w.state, 99) == ("refused", NOT_YET)
+
+
+def test_the_worker_checks_the_gate_again_before_a_handler_runs(setup, make_worker, monkeypatch):
+    # C5.21: every kind that could write a snapshot waits for the first catch-up, whatever the
+    # browser sent. Phase 1 handles none of them, so a stand-in handler for `import` shows the
+    # check Phase 2's handlers rely on.
+    ran = []
+
+    def stand_in(worker, claimed):
+        ran.append(claimed.request.request_id)
+        return requests.Reply(claimed.request.request_id, "import", "done", "Imported: 1")
+
+    monkeypatch.setitem(worker_module.HANDLERS, "import", stand_in)
+    w = make_worker()
+    insert(w.state, req("import", 1, plaud_ids=(PLAUD_A,)))
+    w.tick()
+    assert answer(w.state, 1) == ("refused", GATE_REFUSAL) and ran == []
+    w.db.put(K_CATCH_UP_DONE, T0.isoformat(), now=T0)
+    insert(w.state, req("import", 2, plaud_ids=(PLAUD_A,)))
+    w.tick()
+    assert answer(w.state, 2) == ("done", "Imported: 1") and ran == ["request-0002"]
+
+
+def test_finished_and_refused_rows_are_pruned_after_7_days(state):
+    up(state)
+    for n in (1, 2):
+        insert(state, req("keep-here", n, recording_ids=(R1,)))
+    requests.finish(state, "request-0001", ok=True, message=KEPT_HERE, now=T0)
+    requests.refuse(state, "request-0002", message=NOT_YET, now=T0)
+    assert requests.prune(state, now=T0 + timedelta(days=6)) == 0
+    assert requests.prune(state, now=T0 + timedelta(days=8)) == 2
+    assert rows(state) == []
+
+
+@contextmanager
+def exclusive(state: State, release_after: float):
+    """Another connection holding state.db with locking_mode=EXCLUSIVE (every reader and writer
+    waits), released by a timer after `release_after` seconds, or at the end of the block."""
+    other = sqlite3.connect(state.db_path, isolation_level=None, check_same_thread=False)
+    other.execute("PRAGMA locking_mode=EXCLUSIVE")
+    other.execute("SELECT COUNT(*) FROM meta").fetchone()
+    probe = sqlite3.connect(state.db_path, timeout=0)
+    with closing(probe), pytest.raises(sqlite3.OperationalError):  # the hold works
+        probe.execute("SELECT COUNT(*) FROM meta").fetchone()
+    timer = threading.Timer(release_after, other.close)
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.join()  # it frees the lock after the block, as a slow writer would
+
+
+def test_an_insert_that_runs_out_of_time_saves_no_row_even_when_the_lock_frees_later(state):
+    # why: spec P6 and §15.1. "The request couldn't be saved" must mean no row: a reader stuck
+    # behind a lock (the heartbeat read) used to go on and insert after the answer was given.
+    up(state)
+    with exclusive(state, release_after=0.8):
+        started = requests.monotonic()
+        with pytest.raises((sqlite3.Error, NotSaved)):
+            requests.insert(
+                state,
+                req("keep-here", 1, recording_ids=(R1,)),
+                now=T0,
+                timezone_name=TZ,
+                deadline=started + 0.3,
+            )
+        assert requests.monotonic() - started < 0.7
+    assert rows(state) == []
+
+
+def test_a_deadline_that_passes_before_the_insert_rolls_it_back(state, monkeypatch):
+    # why: the same promise when every wait was short but their sum was not (a 0.8 s read, then a
+    # lock freed at 1.1 s): the deadline is checked again right before the INSERT.
+    up(state)
+    clock = [0.0]
+    monkeypatch.setattr(requests, "monotonic", lambda: clock[0])
+
+    def slow_probe(state):
+        clock[0] = 5.0  # the lock probe and the reads took longer than the time left
+        return None
+
+    monkeypatch.setattr("recordings.plaud.runlock.plaud_holder", slow_probe)
+    with pytest.raises(NotSaved):
+        requests.insert(
+            state, req("keep-here", 1, recording_ids=(R1,)), now=T0, timezone_name=TZ, deadline=1.0
+        )
+    assert rows(state) == []
+
+
+def test_a_deadline_that_passes_during_the_insert_rolls_it_back_before_the_commit(
+    state, monkeypatch
+):
+    # why: the phase-end list's Task 14 row. The deadline is checked once more after the INSERT,
+    # right before the commit: an INSERT that took the rest of the time is rolled back, no row.
+    up(state)
+    clock = [0.0]
+    monkeypatch.setattr(requests, "monotonic", lambda: clock[0])
+    real = requests.utc_iso
+
+    def slow_stamp(when):
+        clock[0] = 5.0  # the INSERT's own values took longer than the time left
+        return real(when)
+
+    monkeypatch.setattr(requests, "utc_iso", slow_stamp)
+    with pytest.raises(NotSaved):
+        requests.insert(
+            state, req("keep-here", 1, recording_ids=(R1,)), now=T0, timezone_name=TZ, deadline=1.0
+        )
+    assert rows(state) == []
+
+
+def test_a_follower_takes_its_leaders_end_and_an_orphan_expires(state):
+    # §9.3's coalescing at the row level: a follower is never claimed; it runs and ends with its
+    # leader; one whose leader ended without it (a crash between the two writes) expires.
+    up(state)
+    assert insert(state, req("sync", 1)).message == QUEUED
+    assert insert(state, req("compare", 2)).message == requests.ALREADY_QUEUED
+    claimed = requests.claim_next(state, now=T0)
+    assert claimed.request.request_id == "request-0001"
+    assert requests.claim_next(state, now=T0) is None  # the follower is never claimed
+    assert rows(state) == [("sync", "running"), ("compare", "running")]
+    requests.progress(state, "request-0001", done=1, total=2, message="Importing")
+    assert requests.read(state, "request-0002").progress == {"done": 1, "total": 2}
+    requests.finish(state, "request-0001", ok=True, message="Synced: done", now=T0)
+    assert answer(state, 2) == ("done", "Synced: done")
+    # An orphan: its leader ended, it didn't (written by hand, as a crash would leave it).
+    insert(state, req("sync", 3))
+    insert(state, req("sync", 4))
+    with state.db() as db:
+        db.execute("UPDATE plaud_requests SET state = 'done' WHERE request_id = 'request-0003'")
+    assert requests.expire(state, now=T0) == 1
+    assert answer(state, 4) == ("expired", EXPIRED)
+
+
+def test_the_worker_claims_nothing_it_is_told_to_skip(state):
+    # §9.4: a request waits its turn while another run holds `plaud`; the others are served.
+    up(state)
+    insert(state, req("sync", 1))
+    insert(state, req("keep-here", 2, recording_ids=(R1,)))
+    claimed = requests.claim_next(state, now=T0, skip=frozenset({"sync"}))
+    assert claimed.request.request_id == "request-0002"
+    assert answer(state, 1)[0] == "queued"
+    assert requests.claim_next(state, now=T0).request.request_id == "request-0001"
+
+
+def test_a_handler_that_raises_fails_the_request_and_logs_no_text(
+    setup, make_worker, monkeypatch, caplog
+):
+    def broken(worker, claimed):
+        raise RuntimeError("Week 4 private title")
+
+    monkeypatch.setitem(worker_module.HANDLERS, "keep-here", broken)
+    w = make_worker()
+    insert(w.state, req("keep-here", 1, recording_ids=(R1,)))
+    with caplog.at_level(logging.INFO):
+        w.tick()
+    assert answer(w.state, 1) == ("failed", "error: `RuntimeError`")
+    assert "private title" not in caplog.text and "RuntimeError" in caplog.text
+
+
+def test_a_row_that_cant_be_read_is_failed_not_retried(state):
+    up(state)
+    for n, (ids, queued) in enumerate(
+        [("not json", T0.isoformat()), ("[]", "last Tuesday")], start=1
+    ):
+        insert(state, req("keep-here", n, recording_ids=(R1,)))
+        with state.db() as db:
+            db.execute(
+                "UPDATE plaud_requests SET recording_ids = ?, queued_at = ? WHERE request_id = ?",
+                (ids, queued, f"request-{n:04d}"),
+            )
+        assert requests.claim_next(state, now=T0) is None
+        assert answer(state, n) == ("failed", UNREADABLE_ROW)
+
+
+def test_a_claim_writes_running_and_an_expiry_writes_its_phrase(state):
+    # why: the row is what every reader shows (any session, the CLI): a claim or an expiry that
+    # changed only `state` left the insert's "Queued" or "worker isn't running" on a running or
+    # an expired reply.
+    up(state)
+    insert(state, req("keep-here", 1, recording_ids=(R1,)))
+    insert(state, req("keep-here", 2, recording_ids=(R2,)))
+    assert requests.claim_next(state, now=T0) is not None
+    assert answer(state, 1) == ("running", RUNNING)
+    assert requests.expire(state, now=T0 + timedelta(minutes=61)) == 1
+    assert answer(state, 2) == ("expired", EXPIRED)
+
+
+def test_worker_notice_follows_the_heartbeat_read_only(state):
+    up(state)
+    insert(state, req("keep-here", 1, recording_ids=(R1,)))
+    assert requests.worker_notice(state, now=T0, timezone_name=TZ) is None
+    later = T0 + timedelta(minutes=5)  # its heartbeat is five minutes old
+    assert requests.worker_notice(state, now=later, timezone_name=TZ) == worker_down("05:00")

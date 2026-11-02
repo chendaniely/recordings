@@ -9,7 +9,8 @@ import type { LibraryRow, LibraryView, TagCount, TagRequest } from "../types";
 
 const toasts = vi.hoisted(() => ({ showCannotTag: vi.fn(), showSelectFirst: vi.fn() }));
 vi.mock("../tagging/toasts", () => toasts);
-vi.mock("../sr", () => ({})); // useTagging's Shiny side: the grid only reads the context
+// useTagging's Shiny side: the grid only reads the context, and the header the arrivals cue.
+vi.mock("../sr", () => ({ useShinyOutputValue: () => undefined }));
 
 import { GRID_HINT, SELECT_ROWS, TagsPage } from "./TagsPage";
 
@@ -35,7 +36,7 @@ const fake = (v: LibraryView, over: Partial<Tagging> = {}): Tagging => {
     lastTagged: null, lastUndone: null, sessionTags: [], refused: null, drag: { current: null }, canTag: true, opening: false, reason: null,
     saves: true, isPrivate: (t) => flags.has(t), tag: vi.fn(), undo: vi.fn(), undoLast: vi.fn(), refresh: vi.fn(),
     answerConfirm: vi.fn(), picker: null, openPicker: vi.fn(), closePicker: vi.fn(), snippet: () => undefined,
-    wantSnippets: vi.fn(), ...over,
+    wantSnippets: vi.fn(), mergeRows: vi.fn(), ...over,
   };
 };
 

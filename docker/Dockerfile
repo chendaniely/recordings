@@ -74,6 +74,7 @@ RUN set -eu; \
 WORKDIR /app
 COPY --from=build /app/.venv .venv
 COPY demo/archive demo/archive
+COPY demo/plaud-sync.json demo/plaud-sync.json
 USER ${APP_UID}:${APP_GID}
 ENV PATH=/app/.venv/bin:$PATH RECORDINGS_DEMO_ARCHIVE=/app/demo/archive
 EXPOSE 8000

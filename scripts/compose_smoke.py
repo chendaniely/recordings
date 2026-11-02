@@ -8,17 +8,21 @@ It proves, in the hardened containers and as this machine's user:
 - the image's user has this machine's UID and GID and a passwd entry, so ssh runs
   (`ssh -G nas` exits 255, "No user exists for uid", without one)
 - `recordings init` works in `web`
-- in `backup`, restic initialises a repository, backs up and passes the restore test, and rsync
-  mirrors the archive, all for real
+- in `backup`, restic initialises a repository, backs up (the consent folder included, a folder in
+  [backup] extra_paths) and passes the restore test, and rsync mirrors the archive, all for real
 - `recordings doctor --role backup` finds no problem there: it sees the read-only archive mount,
   and the uid's passwd entry
 - the web app answers /healthz, and passes the image's health check in the hardened container,
   which `make deploy`'s `--wait` relies on
+- the worker (stage 2b), with no Plaud sign-in, no consent list and an empty `deadman_sync_url`,
+  passes its own health check (`recordings worker --alive`) and stays up, idle; and `recordings
+  doctor --role worker` reports all three as problems (C8.03, C10.02)
 
-The repository and the mirror are folders under the restore mount, so nothing contacts a NAS, and
-the secret files are placeholders. It never touches docker/deploy.env or a real archive. The
-network transports (rest-server, SFTP, rsync over ssh) are proven against the NAS itself by the
-runbook's spike (docs/runbooks/first-run.md, step 1b).
+It runs without ntfy, as a deployment may (stage 2b spec, Dan's decision 9): deploy.env names no
+topic file, so none is mounted. The repository and the mirror are folders under the restore
+mount, so nothing contacts a NAS, and the secret files are placeholders. It never touches
+docker/deploy.env or a real archive. The network transports (rest-server, SFTP, rsync over ssh) are
+proven against the NAS itself by the runbook's spike (docs/runbooks/first-run.md, step 1b).
 """
 
 from __future__ import annotations
@@ -40,22 +44,33 @@ SECRETS = (
     "nas_cacert",
     "nas_ssh_key",
     "nas_known_hosts",
-    "ntfy_topic",
     "deadman_url",
+    "deadman_sync_url",
 )
+EMPTY_SECRETS = ("deadman_sync_url",)  # the worker must stay healthy without it; doctor says so
 CONFIG = """\
 [archive]
 writer_id = "smoke"
 
 [backup]
 repository = "/restore/smoke-repo"
-extra_paths = ["/backup-extra/deploy.env"]
+extra_paths = ["/backup-extra/deploy.env", "/consent"]
 restore_scratch = "/restore"
 cache_dir = "/state/cache/restic"
 
 [mirror]
 target = "/restore/smoke-mirror/"
+
+[plaud]
+consent_list = "/consent/consent-list.md"
 """
+# What `doctor --role worker` must report in the smoke's worker, each as a problem: no list, no
+# ping URL, and no sign-in (spec §17.2: a note only while Phase 1 had no `make plaud-sign-in`).
+WORKER_PROBLEMS = (
+    "the consent list is missing",
+    "RECORDINGS_DEADMAN_SYNC_URL_FILE",
+    "sign-in needed: run `make plaud-sign-in`",
+)
 BACKUP_COMMANDS = (
     ("backup", "init"),
     ("backup", "run"),
@@ -79,6 +94,29 @@ def compose_run(compose: list[str], env: dict[str, str], *args: str, quiet: bool
         raise SmokeFailed(f"`docker compose {' '.join(args)}` exited {proc.returncode}")
 
 
+def worker_doctor(compose: list[str], env: dict[str, str]) -> None:
+    """`doctor --role worker` exits 78 here, by design, and must name each of WORKER_PROBLEMS
+    among its problems."""
+    proc = subprocess.run(
+        [*compose, "exec", "-T", "worker", "recordings", "doctor", "--role", "worker", "--json"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )  # exit code read below
+    try:
+        report = json.loads(proc.stdout)
+        problems = report["problems"]
+    except (ValueError, KeyError, TypeError):
+        print(proc.stderr, file=sys.stderr)
+        raise SmokeFailed(
+            f"`doctor --role worker` printed no report (exit {proc.returncode})"
+        ) from None
+    missing = [p for p in WORKER_PROBLEMS if not any(p in found for found in problems)]
+    if proc.returncode != 78 or missing:
+        raise SmokeFailed(f"`doctor --role worker` exited {proc.returncode}, missing {missing}")
+
+
 def wait_for_healthz(compose: list[str], env: dict[str, str]) -> None:
     deadline = time.monotonic() + 90
     while True:
@@ -99,6 +137,9 @@ def main() -> int:
         base = Path(tmp)
         for name in ("archive", "state", "restore", "restore/smoke-mirror", "secrets"):
             (base / name).mkdir()
+        for name in ("consent", "plaud"):  # empty: no consent list, no sign-in
+            (base / name).mkdir(mode=0o700)
+            (base / name).chmod(0o700)
         for name in SECRETS:
             # Mode 600, as the runbook makes them. The ping URL has the form alerts and doctor check
             # (https): a closed port on the container's own loopback, so a ping fails at once and
@@ -107,7 +148,7 @@ def main() -> int:
                 "https://127.0.0.1:9/smoke" if name == "deadman_url" else "smoke-test-placeholder"
             )
             path = base / "secrets" / name
-            path.write_text(value + "\n", encoding="utf-8")
+            path.write_text("" if name in EMPTY_SECRETS else value + "\n", encoding="utf-8")
             path.chmod(0o600)
         (base / "config.toml").write_text(CONFIG, encoding="utf-8")
         deploy = base / "deploy.env"
@@ -120,6 +161,8 @@ def main() -> int:
                     f"RECORDINGS_SECRETS_HOST={base / 'secrets'}",
                     f"RECORDINGS_CONFIG_HOST={base / 'config.toml'}",
                     f"RECORDINGS_DEPLOY_ENV_HOST={deploy}",
+                    f"RECORDINGS_CONSENT_HOST={base / 'consent'}",
+                    f"RECORDINGS_PLAUD_HOST={base / 'plaud'}",
                     "RECORDINGS_BIND=127.0.0.1",
                     f"RECORDINGS_PORT={PORT}",
                     f"RECORDINGS_UID={os.getuid()}",
@@ -153,8 +196,12 @@ def main() -> int:
             compose_run(compose, env, "run", "--rm", "backup", "ssh", "-G", "nas", quiet=True)
             for command in BACKUP_COMMANDS:
                 compose_run(compose, env, "run", "--rm", "backup", "recordings", *command, "--json")
-            compose_run(compose, env, "up", "-d", "--wait", "--wait-timeout", "120", "web")
+            compose_run(
+                compose, env, "up", "-d", "--wait", "--wait-timeout", "120", "web", "worker"
+            )
             wait_for_healthz(compose, env)
+            compose_run(compose, env, "exec", "-T", "worker", "recordings", "worker", "--alive")
+            worker_doctor(compose, env)
             for path, what in (
                 (base / "archive" / "archive.json", "recordings init wrote no sentinel"),
                 (base / "restore" / "smoke-repo" / "config", "restic made no repository"),
@@ -174,8 +221,9 @@ def main() -> int:
                 [*compose, "down", "-v", "--rmi", "all"], env=env, check=False
             )  # cleanup
         print(
-            "compose smoke: init, ssh, backup, restore test and mirror ran, and web answered "
-            "/healthz, as this machine's user"
+            "compose smoke: init, ssh, backup, restore test and mirror ran, web answered "
+            "/healthz, and the worker stayed healthy with no sign-in and no consent list, as "
+            "this machine's user"
         )
         return 0
 

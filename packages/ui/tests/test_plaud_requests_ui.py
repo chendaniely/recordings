@@ -1,0 +1,322 @@
+"""The web app's side of Plaud requests (stage 2b spec §9.3): the checks, the reasons it can't
+ask, and the insert off the event loop. Synthetic IDs only."""
+
+import asyncio
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+from contextlib import closing
+from datetime import UTC, datetime
+
+import pytest
+from recordings.config import load_config
+from recordings.init import init_archive
+from recordings.plaud import requests
+from recordings.plaud.requests import (
+    HANDLED,
+    KINDS,
+    MAX_PLAUD_IDS,
+    MAX_RESYNC_IDS,
+    NOT_YET,
+    UNREADABLE_ROW,
+    PlaudRequest,
+)
+from recordings.sentinel import MIRROR
+from recordings.state import State
+from recordings_ui.app import NO_CONFIG
+from recordings_ui.plaud import (
+    BAD_ID,
+    DEMO_REASON,
+    MIRROR_REASON,
+    NO_CONFIG_REASON,
+    NO_STATE_REASON,
+    NOT_SAVED,
+    TOO_MANY_PLAUD,
+    TOO_MANY_RESYNC,
+    UNKNOWN_KIND,
+    UNREADABLE,
+    Refusal,
+    cannot_request_reason,
+    check_request,
+    submit,
+)
+from recordings_ui.settings import Settings
+
+T0 = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
+RID = "20261006T140003-0700_3fa91c2e"  # synthetic
+PLAUD_A = "of_" + f"{1:032x}"
+
+
+def raw(**over) -> dict:
+    return {
+        "request_id": "abcdef12",
+        "kind": "keep-here",
+        "plaud_ids": [],
+        "recording_ids": [RID],
+        "all": False,
+        **over,
+    }
+
+
+def count(state: State) -> int:
+    with state.db() as db:
+        return db.execute("SELECT COUNT(*) FROM plaud_requests").fetchone()[0]
+
+
+@pytest.fixture
+def archive(tmp_path):
+    root, state = tmp_path / "archive", tmp_path / "state"
+    init_archive(root, state, writer_id="test")
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f'[archive]\npath = "{root}"\nwriter_id = "test"\n[state]\npath = "{state}"\n',
+        encoding="utf-8",
+    )
+    return root, State.open(state), load_config({"RECORDINGS_CONFIG": str(cfg_file)})
+
+
+def test_check_request_refuses_unknown_kinds_bad_ids_caps_and_extra_keys():
+    assert check_request(raw(recording_ids=[RID, RID])) == (
+        PlaudRequest("abcdef12", "keep-here", (), (RID,), False)
+    )
+    assert check_request(raw(kind="delete")) == Refusal("abcdef12", UNKNOWN_KIND)
+    assert check_request(raw(kind=["sync"])) == Refusal("abcdef12", UNKNOWN_KIND)
+    assert check_request(raw(title="Week 4")) == Refusal("abcdef12", UNREADABLE)  # never a title
+    assert check_request(raw(request_id="short")) == Refusal(None, UNREADABLE)
+    assert check_request("not a request") == Refusal(None, UNREADABLE)
+    assert check_request(raw(all="yes")) == Refusal("abcdef12", UNREADABLE)
+    # a Plaud ID is opaque: visible ASCII and no space, so a title never fits in one
+    for bad in ([""], ["x" * 129], [7], ["of_\n1"], ["Week 4: private"], ["of_é1"]):
+        assert check_request(raw(plaud_ids=bad)) == Refusal("abcdef12", BAD_ID), bad
+    for bad in (["not-an-id"], [None]):
+        assert check_request(raw(recording_ids=bad)) == Refusal("abcdef12", BAD_ID)
+    many = [f"of_{n:032x}" for n in range(MAX_PLAUD_IDS + 1)]
+    assert check_request(raw(kind="import", plaud_ids=many)) == Refusal("abcdef12", TOO_MANY_PLAUD)
+    resync = raw(kind="resync", recording_ids=[RID] * (MAX_RESYNC_IDS + 1))
+    assert check_request(resync) == Refusal("abcdef12", TOO_MANY_RESYNC)
+
+
+def test_id_lists_shiny_hands_over_as_tuples_are_read():
+    # why: Shiny hands an array inside an input value over as a tuple (its lists_to_tuples), so a
+    # real browser's request holds tuples where the tests above send lists. A lone string isn't a
+    # list of IDs.
+    sent = raw(recording_ids=(RID, RID))
+    assert check_request(sent) == PlaudRequest("abcdef12", "keep-here", (), (RID,), False)
+    assert check_request(raw(recording_ids=RID)) == Refusal("abcdef12", UNREADABLE)
+    assert check_request(raw(plaud_ids=PLAUD_A)) == Refusal("abcdef12", UNREADABLE)
+
+
+def test_accept_names_nothing_and_is_inserted(archive, run):
+    # §11.4 step 4: Accept this listing accepts the held listing, which the worker reads from
+    # state.db; a request naming IDs or "all" is not one the page sends.
+    _, state, _ = archive
+    plain = raw(kind="accept", recording_ids=[])
+    assert check_request(plain) == PlaudRequest("abcdef12", "accept", (), (), False)
+    for over in ({"recording_ids": [RID]}, {"plaud_ids": ["a" * 32]}, {"all": True}):
+        assert check_request(raw(kind="accept", **{"recording_ids": [], **over})) == Refusal(
+            "abcdef12", UNREADABLE
+        )
+    reply = run(submit(state, plain, now=T0, timezone_name="UTC", reason=None))
+    assert (reply["state"], reply["kind"]) == ("queued", "accept") and count(state) == 1
+
+
+def test_a_kind_with_no_handler_yet_is_refused_before_any_row(archive, run, monkeypatch):
+    # C5.18: a kind the worker has no handler for waits for a later area, so web refuses it with
+    # NOT_YET and inserts nothing. Since area B2 every kind is handled, so one is taken away for
+    # the test. (The import's refusal before the first catch-up is the worker's gate.)
+    import recordings_ui.plaud as plaud_ui
+
+    assert [k for k in KINDS if k not in HANDLED] == []
+    monkeypatch.setattr(plaud_ui, "HANDLED", HANDLED - {"full"})
+    _, state, _ = archive
+    full = raw(kind="full", recording_ids=[])
+    assert check_request(full) == Refusal("abcdef12", NOT_YET)
+    reply = run(submit(state, full, now=T0, timezone_name="UTC", reason=None))
+    assert (reply["state"], reply["message"]) == ("refused", NOT_YET)
+    assert count(state) == 0
+
+
+def test_no_writable_state_refuses_with_a_reason(archive, run):
+    root, state, cfg = archive
+    real = Settings(archive=root, demo=False, config=cfg)
+    assert cannot_request_reason(Settings(archive=root, demo=True), state) == DEMO_REASON
+    assert cannot_request_reason(Settings(archive=root, demo=False), state) == NO_CONFIG_REASON
+    assert cannot_request_reason(real, None) == NO_STATE_REASON
+    assert cannot_request_reason(real, state) is None
+    (root / MIRROR).write_text("synthetic: this folder is the mirror's copy\n", encoding="utf-8")
+    assert cannot_request_reason(real, state) == MIRROR_REASON
+    reply = run(submit(state, raw(), now=T0, timezone_name="UTC", reason=DEMO_REASON))
+    assert (reply["state"], reply["message"]) == ("refused", DEMO_REASON)
+    reply = run(submit(None, raw(), now=T0, timezone_name="UTC", reason=None))
+    assert (reply["state"], reply["message"]) == ("refused", NO_STATE_REASON)
+    # the demo's reason comes before NOT_YET, as the buttons show it
+    compare = raw(kind="compare", recording_ids=[])
+    reply = run(submit(state, compare, now=T0, timezone_name="UTC", reason=DEMO_REASON))
+    assert (reply["state"], reply["message"]) == ("refused", DEMO_REASON)
+    assert count(state) == 0
+
+
+def test_a_request_that_cant_be_saved_answers_at_once(tmp_path, run):
+    # Review Focus 5: a lost mount or a full disk answers within a second (spec P6), with a fixed
+    # phrase: never a spinner or a traceback.
+    gone = State(tmp_path / "unmounted")
+    reply = run(
+        asyncio.wait_for(submit(gone, raw(), now=T0, timezone_name="UTC", reason=None), 1.0)
+    )
+    assert reply == {
+        "request_id": "abcdef12",
+        "kind": "keep-here",
+        "state": "refused",
+        "message": NOT_SAVED,
+        "progress": None,
+        "result": None,
+    }
+
+
+def test_a_busy_state_db_answers_within_a_second_and_saves_nothing(archive, run):
+    # why: spec P6. Another writer holding state.db's lock (the worker, a migration) would make
+    # the insert wait 30 seconds; it gives up within the second instead, and no row lands later.
+    _, state, _ = archive
+    with closing(sqlite3.connect(state.db_path, isolation_level=None)) as other:
+        other.execute("BEGIN IMMEDIATE")
+        started = time.monotonic()
+        reply = run(submit(state, raw(), now=T0, timezone_name="UTC", reason=None))
+        took = time.monotonic() - started
+        other.execute("ROLLBACK")
+    assert (reply["state"], reply["message"]) == ("refused", NOT_SAVED)
+    assert took < 1.5
+    assert count(state) == 0
+
+
+def test_an_insert_that_hangs_answers_within_a_second(archive, run, monkeypatch):
+    # why: spec P6. Whatever holds the insert up (a stalled disk), the press is answered.
+    _, state, _ = archive
+    release = threading.Event()
+
+    def stalled(*args, **kwargs):
+        release.wait(10)
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(requests, "insert", stalled)
+
+    async def press():
+        started = time.monotonic()
+        reply = await submit(state, raw(), now=T0, timezone_name="UTC", reason=None)
+        took = time.monotonic() - started
+        release.set()  # the stalled thread may end now (asyncio.run waits for it)
+        return reply, took
+
+    reply, took = run(press())
+    assert (reply["state"], reply["message"]) == ("refused", NOT_SAVED)
+    assert took < 1.5
+
+
+def test_submit_inserts_off_the_event_loop_never_on_the_tag_threads(archive, run, monkeypatch):
+    _, state, _ = archive
+    seen = {}
+    real_insert = requests.insert
+
+    def spy(state, request, **kwargs):
+        seen["thread"] = threading.current_thread()
+        return real_insert(state, request, **kwargs)
+
+    monkeypatch.setattr(requests, "insert", spy)
+    reply = run(submit(state, raw(), now=T0, timezone_name="UTC", reason=None))
+    assert reply["state"] == "queued"
+    assert seen["thread"] is not threading.main_thread()
+    assert not seen["thread"].name.startswith("recordings-")  # the tag service's threads
+    assert requests.read(state, "abcdef12").kind == "keep-here"
+
+
+def test_the_request_checks_import_without_sqlite3():
+    # why: the Pages demo's Pyodide has no sqlite3, fcntl or threads (stage-2a decision 6), and
+    # its shiny_app imports this module. (CPython's own asyncio imports fcntl, so the check names
+    # our modules that would bring it: recordings.locks, and the worker.)
+    code = (
+        "import sys, recordings_ui.plaud\n"
+        "names = ('sqlite3', 'recordings.state', 'recordings.locks', 'recordings.worker')\n"
+        "print([m for m in names if m in sys.modules])\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert done.stdout.strip() == "[]"
+
+
+def test_a_plaud_id_is_under_128_characters():
+    # why: spec §9.3, "under 128 characters".
+    ok = check_request(raw(kind="import", plaud_ids=["x" * 127], recording_ids=[]))
+    assert isinstance(ok, PlaudRequest) and ok.plaud_ids == ("x" * 127,)
+    too_long = raw(kind="import", plaud_ids=["x" * 128], recording_ids=[])
+    assert check_request(too_long) == Refusal("abcdef12", BAD_ID)
+
+
+def test_the_sync_kinds_carry_only_what_they_use():
+    # why: spec §9.3, a request never carries a title, and the worker takes nothing on trust.
+    # Compare, Sync now and Sync everything name nothing; an import names Plaud IDs, or all; Park
+    # and Unpark name Plaud IDs not here, or recordings here (area B2), never both; Re-sync names
+    # recordings here only.
+    for kind in ("compare", "sync", "full"):
+        assert isinstance(check_request(raw(kind=kind, recording_ids=[])), PlaudRequest)
+        assert check_request(raw(kind=kind)) == Refusal("abcdef12", UNREADABLE)
+        assert check_request(raw(kind=kind, recording_ids=[], all=True)).message == UNREADABLE
+    assert check_request(raw(kind="import", recording_ids=[])).message == UNREADABLE
+    assert check_request(raw(kind="import")).message == UNREADABLE
+    assert isinstance(check_request(raw(kind="import", recording_ids=[], all=True)), PlaudRequest)
+    pid = "of_" + "0" * 31 + "1"
+    for kind in ("park", "unpark"):
+        assert isinstance(
+            check_request(raw(kind=kind, recording_ids=[], plaud_ids=[pid])), PlaudRequest
+        )
+        assert check_request(raw(kind=kind)) == PlaudRequest("abcdef12", kind, (), (RID,), False)
+        assert check_request(raw(kind=kind, recording_ids=[])).message == UNREADABLE
+        assert check_request(raw(kind=kind, plaud_ids=[pid])).message == UNREADABLE  # both
+    assert check_request(raw(kind="resync")) == PlaudRequest(
+        "abcdef12", "resync", (), (RID,), False
+    )
+    for over in ({"recording_ids": []}, {"plaud_ids": [pid]}, {"all": True}):
+        assert check_request(raw(kind="resync", **over)).message == UNREADABLE, over
+
+
+def test_keep_it_here_never_carries_what_it_doesnt_use():
+    # why: spec §9.3, a request never carries a title. A title with no space fits a Plaud ID's
+    # shape, so Keep it here, which uses recording IDs alone, refuses Plaud IDs and `all`.
+    titled = raw(plaud_ids=["Coffee-chat-about-grant-timelines"])
+    assert check_request(titled) == Refusal("abcdef12", UNREADABLE)
+    assert check_request(raw(all=True)) == Refusal("abcdef12", UNREADABLE)
+
+
+def test_names_that_repeat_another_module_are_that_modules():
+    # why: app.py's phrase and the row's are shown beside these; nothing else pins them equal.
+    assert NO_CONFIG_REASON == NO_CONFIG
+    assert UNREADABLE == UNREADABLE_ROW
+
+
+def test_a_read_only_state_db_answers_not_saved_at_once(archive, run):
+    # Review Focus 5: a state.db this process may not write.
+    _, state, _ = archive
+    read_only = State.read_only(state.path)
+    started = time.monotonic()
+    reply = run(submit(read_only, raw(), now=T0, timezone_name="UTC", reason=None))
+    assert (reply["state"], reply["message"]) == ("refused", NOT_SAVED)
+    assert time.monotonic() - started < 1.0
+    assert count(state) == 0
+
+
+def test_a_lock_freed_after_the_answer_saves_no_row(archive, run):
+    # why: spec P6. NOT_SAVED means no row: with every reader and writer held up by another
+    # connection (locking_mode=EXCLUSIVE) for 1.5 s, the press is answered within the second, and
+    # when the lock frees the request is not inserted behind that answer.
+    _, state, _ = archive
+    other = sqlite3.connect(state.db_path, isolation_level=None, check_same_thread=False)
+    other.execute("PRAGMA locking_mode=EXCLUSIVE")
+    other.execute("SELECT COUNT(*) FROM meta").fetchone()
+    timer = threading.Timer(1.5, other.close)
+    timer.start()
+    started = time.monotonic()
+    reply = run(submit(state, raw(), now=T0, timezone_name="UTC", reason=None))
+    took = time.monotonic() - started
+    timer.join()
+    assert (reply["state"], reply["message"]) == ("refused", NOT_SAVED)
+    assert took < 1.3
+    assert count(state) == 0

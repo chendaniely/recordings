@@ -2,7 +2,10 @@
 The browser smoke test is tests/pages/ (`make pages-test`)."""
 
 import importlib.util
+import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -144,6 +147,10 @@ def test_the_pages_entry_is_demo_only_and_links_media_files(tmp_path, monkeypatc
         assert (root / "README.md").is_file() and root.resolve() != real.resolve()
         assert root.resolve() != (REPO / "demo" / "archive").resolve()
         assert runtime.media_base() == "../media/"
+        # The canned Plaud view beside the copy (decision 23), and no way to make a request.
+        views = runtime.plaud_settings()
+        assert views.demo_view == root.parent / "plaud-sync.json" and views.demo_view.is_file()
+        assert runtime.plaud_state() is None and runtime.plaud_reason()
         from recordings_ui.shiny_app import app
 
         assert entry.app is app
@@ -154,3 +161,84 @@ def test_the_pages_entry_is_demo_only_and_links_media_files(tmp_path, monkeypatc
         assert isinstance(store, MemoryStore) and store.saves is False
     finally:
         runtime.configure(None)
+
+
+# What the Pages demo must never load (§15.5): the Plaud client, the token store, the sync, and
+# sqlite3, which Pyodide lacks. Phase 2 adds tokens, sync and sources/plaud; a test of a module
+# that doesn't exist yet passes trivially, and starts to count the day it does.
+NEVER_ON_PAGES = (
+    "recordings.plaud.client",
+    "recordings.plaud.tokens",
+    "recordings.plaud.sync",
+    "recordings.sources.plaud",
+    "sqlite3",
+)
+PROBE = """
+import json, runpy, sys
+from datetime import UTC, datetime
+
+app = sys.argv[1]
+sys.path.insert(0, app)  # the vendored packages, never the installed ones
+import recordings_ui.tagging as tagging
+
+tagging.under_pyodide = lambda: True  # pages_store runs only under Pyodide
+runpy.run_path(f"{app}/app.py", run_name="pages_app")
+import recordings, recordings_ui
+from recordings_ui import plaud, runtime
+
+now = datetime.now(UTC)
+views = runtime.plaud_settings()
+sync = plaud.sync_view(views, now=now, can_request=runtime.plaud_reason())
+plaud.sync_panel(views, now=now)
+plaud.arrivals(views, since=now, now=now)
+print(json.dumps({
+    "vendored": [m.__file__.startswith(app) for m in (recordings, recordings_ui)],
+    "rows": len(sync["not_here"]),
+    "loaded": sorted(m for m in json.loads(sys.argv[2]) if m in sys.modules),
+}))
+"""
+
+
+def test_the_canned_view_is_vendored(build_pages, tmp_path):
+    # Decision 23: beside the vendored demo/archive, where from_env(demo=True) finds it.
+    app = tmp_path / "app"
+    app.mkdir()
+    build_pages.assemble(app, build_pages.demo_media(), ui=_built_ui(tmp_path))
+    vendored = app / "demo" / "plaud-sync.json"
+    assert vendored.read_bytes() == (REPO / "demo" / "plaud-sync.json").read_bytes()
+
+
+def test_it_refuses_to_run_without_the_canned_view(build_pages, tmp_path):
+    (tmp_path / "ui.js").write_text("", encoding="utf-8")
+    (tmp_path / "ui.css").write_text("", encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"plaud-sync\.json is missing"):
+        build_pages.check_inputs(www=tmp_path, view=tmp_path / "plaud-sync.json")
+
+
+def test_it_refuses_a_symlinked_canned_view(build_pages, tmp_path):
+    link = tmp_path / "plaud-sync.json"
+    link.symlink_to(REPO / "demo" / "plaud-sync.json")
+    app = tmp_path / "app"
+    app.mkdir()
+    with pytest.raises(SystemExit, match="symlink"):
+        build_pages.assemble(app, {}, ui=_built_ui(tmp_path), view=link)
+
+
+def test_pyodide_never_imports_the_client_the_token_store_or_the_sync(build_pages, tmp_path):
+    # why: §15.5. Pyodide runs the vendored app from pages/app.py: from that entry, through every
+    # Plaud view it draws, nothing may load what reads Plaud or state.db.
+    app = tmp_path / "app"
+    app.mkdir()
+    build_pages.assemble(app, build_pages.demo_media(), ui=_built_ui(tmp_path))
+    probe = tmp_path / "probe.py"
+    probe.write_text(PROBE, encoding="utf-8")
+    out = subprocess.run(
+        [sys.executable, "-I", str(probe), str(app), json.dumps(NEVER_ON_PAGES)],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=tmp_path,
+        timeout=60,
+    )
+    found = json.loads(out.stdout.strip().splitlines()[-1])
+    assert found == {"vendored": [True, True], "rows": 5, "loaded": []}

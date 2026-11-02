@@ -289,7 +289,20 @@ def part_hashes(envelope: dict) -> dict[str, str]:
     Every field lands in a part. A segment row's text and timing go to "transcript", its names
     to "speakers", and any other row field to "other", with the rest of its block. A segment
     block that doesn't parse goes to "other" whole."""
-    env = normalise(envelope)
+    parts, rest = _split(normalise(envelope))
+    parts["other"] = sha256_of(rest)
+    return parts
+
+
+def other_part(envelope: dict) -> Any:
+    """What `part_hashes` hashes as "other", before hashing: everything outside the named parts.
+    The check (stage 2b §14.1) compares two of these to name the fields that changed, never their
+    values."""
+    return _split(normalise(envelope))[1]
+
+
+def _split(env: dict) -> tuple[dict[str, str], Any]:
+    """A normalised envelope's named parts, hashed, and the rest ("other"), unhashed."""
     parts = {"title": sha256_of(env.get("name"))}
     sources = env.get("source_list")
     text, names, residue = [], [], []
@@ -324,5 +337,4 @@ def part_hashes(envelope: dict) -> dict[str, str]:
         rest["note_list"] = [[b for b in env["note_list"] if not isinstance(b, dict)], unknown]
     elif unknown:
         rest["note_unknown"] = unknown  # an outline can carry unknown fields with no note_list
-    parts["other"] = sha256_of(rest)
-    return parts
+    return parts, rest

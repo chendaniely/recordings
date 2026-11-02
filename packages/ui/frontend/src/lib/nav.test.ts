@@ -33,6 +33,22 @@ describe("routeFromHash", () => {
   });
 });
 
+describe("the Sync screen's route (2b spec §15.1)", () => {
+  it("#/add routes to the Sync screen", () => {
+    expect(routeFromHash("#/add")).toEqual({ page: "add", open: null });
+    expect(routeFromHash("#add")).toEqual({ page: "add", open: null });
+    expect(hashFor("add")).toBe("#/add");
+    expect(pageFromHash(hashFor("add"))).toBe("add");
+  });
+  it("leaves the other pages' addresses as they were", () => {
+    expect([hashFor("library"), hashFor("tags"), hashFor("status")]).toEqual(["#/", "#/tags", "#/status"]);
+  });
+  it("is the Sync screen on a phone too", () => {
+    const add = routeFromHash("#/add");
+    expect(phoneRoute(add, true)).toBe(add);
+  });
+});
+
 describe("phoneRoute (Dan, 2026-10-22: a phone's Tags tab is the Library's Untagged)", () => {
   const tags = routeFromHash("#/tags");
   it("sends the Tags route to the Library on a phone, whichever way it was reached", () => {

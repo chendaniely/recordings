@@ -107,9 +107,13 @@ def restore_like_restic(writer, bc, cmd, *, state_copy=None) -> tuple[Path, Path
     target = Path(cmd[cmd.index("--target") + 1])
     copy = target / writer.root.relative_to(writer.root.anchor)
     shutil.copytree(writer.root, copy)
-    for path in bc.paths:
-        (target / path.relative_to(path.anchor)).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target / path.relative_to(path.anchor))
+    for path in bc.paths:  # a folder (the consent folder) comes back whole
+        dest = target / path.relative_to(path.anchor)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_dir():
+            shutil.copytree(path, dest)
+        else:
+            shutil.copy2(path, dest)
     dest = target / backup.state_copy_path(bc).relative_to(bc.state.anchor)
     if state_copy is None:
         writer.state.backup_to(dest)
@@ -715,7 +719,10 @@ def test_sigterm_still_reaches_the_handler_that_was_there_before():
 def test_with_a_real_restic_backup_check_forget_and_restore(tmp_path, writer, make_incoming):
     exe = restic_or_skip()
     writer.add(make_incoming())
-    cfg, environ = config(tmp_path, writer, restic=exe)
+    folder = consent_folder(tmp_path)  # the real restic must bring a folder back as a folder
+    (folder / "empty").mkdir()
+    extra = [str(tmp_path / "deploy.env"), str(folder)]
+    cfg, environ = config(tmp_path, writer, restic=exe, extra_paths=extra)
     bc = replace(backup.from_config(cfg, environ), retry_lock="1m")  # as the CLI runs it
     backup.run_init(bc, environ)
     first = backup.run_backup(bc, writer.state, environ, tags=("pre-import",))
@@ -1029,7 +1036,7 @@ def test_a_direct_ssh_key_value_is_refused_and_a_stray_variable_never_reaches_re
             "RESTIC_PASSWORD_COMMAND": "echo hunter2",
             "RESTIC_PROGRESS_FPS": "1",
             "RESTIC_REPOSITORY_FILE": "/elsewhere",
-            "RECORDINGS_PLAUD_TOKEN": "token",
+            "RECORDINGS_SPARK_API_KEY": "token",
             "AWS_SECRET_ACCESS_KEY": "aws",
         },
     )
@@ -1152,3 +1159,261 @@ def test_fetch_restic_checks_the_binary_it_has_not_just_its_version(tmp_path, mo
     name = next(iter(fetch.BINARY_SHA256))
     assert not fetch.installed(fetch.BINARY_SHA256[name])  # it prints the version, but isn't restic
     assert fetch.installed(hashlib.sha256(fake.read_bytes()).hexdigest())  # the hash is what counts
+
+
+def consent_folder(tmp_path) -> Path:
+    """A synthetic consent folder, as the worker and backup services mount it at /consent."""
+    folder = tmp_path / "consent"
+    folder.mkdir(exist_ok=True)
+    (folder / "consent-list.md").write_text(f"- `of_{1:032x}` — synthetic\n", encoding="utf-8")
+    return folder
+
+
+def tree_bytes(root: Path) -> int:
+    return sum(
+        (Path(folder) / name).lstat().st_size
+        for folder, _, names in os.walk(root)
+        for name in names
+    )
+
+
+def test_a_folder_in_extra_paths_is_backed_up(tmp_path, writer, make_incoming):
+    # why: stage 2b spec §12.1. The consent folder is backed up through extra_paths, so a restore
+    # never brings back an older list (2b phase 1 plan, decision 9).
+    writer.add(make_incoming())
+    folder = consent_folder(tmp_path)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    bc = backup.from_config(cfg, environ)
+    fake = FakeRestic(stdout=SUMMARY + "\n")
+    backup.run_backup(bc, writer.state, environ, runner=fake)
+    (_, _), (cmd, _) = fake.calls
+    assert cmd[-3:] == [str(tmp_path / "deploy.env"), str(folder), str(backup.state_copy_path(bc))]
+    assert backup.missing_paths(bc) == []
+
+
+def test_a_missing_extra_folder_still_refuses_the_backup(tmp_path, writer):
+    # why: an unmounted consent folder backed up hourly would age the real list out of the
+    # snapshots, as an unmounted archive would.
+    gone = tmp_path / "consent-not-mounted"
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(gone)])
+    bc = backup.from_config(cfg, environ)
+    assert backup.missing_paths(bc) == [gone]
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(backup.BackupRefused, match="consent-not-mounted is missing"):
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert fake.calls == []
+
+
+def test_the_free_space_estimate_counts_a_folders_files(
+    tmp_path, writer, make_incoming, monkeypatch
+):
+    writer.add(make_incoming())
+    folder = consent_folder(tmp_path)
+    (folder / "consent-list.md.bak").write_bytes(b"synthetic " * 1000)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    bc = backup.from_config(cfg, environ)
+    files = sum(p.stat().st_size for p in bc.paths if p.is_file())
+    needed = tree_bytes(writer.root) + files + tree_bytes(folder)
+
+    def free(nbytes):
+        return lambda path: SimpleNamespace(total=10**15, used=10**15 - nbytes, free=nbytes)
+
+    monkeypatch.setattr(backup.shutil, "disk_usage", free(needed - 1))
+    with pytest.raises(backup.ScratchTooSmall, match="past full"):
+        backup.run_restore_test(
+            bc,
+            environ,
+            expected_uuid=writer.identity.uuid,
+            now=NOW,
+            keep_free_percents=(),
+            runner=FakeRestic(),
+        )
+    monkeypatch.setattr(backup.shutil, "disk_usage", free(needed + 1))
+
+    def restore(cmd):
+        if "restore" in cmd:
+            restore_like_restic(writer, bc, cmd)
+
+    result = backup.run_restore_test(
+        bc,
+        environ,
+        expected_uuid=writer.identity.uuid,
+        now=NOW,
+        keep_free_percents=(),
+        runner=FakeRestic(on_call=restore),
+    )
+    assert result.ok
+
+
+def test_the_restore_test_checks_a_folder_came_back(tmp_path, writer, make_incoming):
+    writer.add(make_incoming())
+    folder = consent_folder(tmp_path)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    bc = backup.from_config(cfg, environ)
+    restored = Path()  # set by each run: where the snapshot's copy of the folder lands
+
+    def run(change):
+        def restore(cmd):
+            nonlocal restored
+            if "restore" in cmd:
+                target, _ = restore_like_restic(writer, bc, cmd)
+                restored = target / folder.relative_to(folder.anchor)
+                change(restored)
+
+        return backup.run_restore_test(
+            bc,
+            environ,
+            expected_uuid=writer.identity.uuid,
+            now=NOW,
+            runner=FakeRestic(on_call=restore),
+        )
+
+    assert run(lambda copy: None).ok
+    assert run(shutil.rmtree).problems == (
+        {"path": str(folder), "message": "is not in the snapshot"},
+    )
+
+    def a_file_in_its_place(copy):
+        shutil.rmtree(copy)
+        copy.write_text("not a folder\n", encoding="utf-8")
+
+    assert run(a_file_in_its_place).problems == (
+        {"path": str(folder), "message": "is not in the snapshot"},
+    )
+
+
+def test_a_folder_gone_at_the_restore_test_is_still_found_in_the_snapshot(
+    tmp_path, writer, make_incoming
+):
+    # why: the live folder is gone when the test runs; the snapshot's copy is what counts, of
+    # either kind, so the message is not "is not in the snapshot" for a snapshot that holds it.
+    writer.add(make_incoming())
+    folder = consent_folder(tmp_path)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    bc = backup.from_config(cfg, environ)
+
+    def restore(cmd):
+        if "restore" in cmd:
+            restore_like_restic(writer, bc, cmd)
+            shutil.rmtree(folder)  # unmounted since the restore began
+
+    result = backup.run_restore_test(
+        bc,
+        environ,
+        expected_uuid=writer.identity.uuid,
+        now=NOW,
+        runner=FakeRestic(on_call=restore),
+    )
+    assert result.ok
+
+
+@pytest.mark.parametrize(
+    ("entry", "why"),
+    [
+        ("/state", "the whole state folder"),
+        ("{state}", "the whole state folder"),  # the configured state folder
+        ("{plaud}", "would carry the Plaud sign-in"),  # the configured token store's folder
+        ("{plaud}/tokens.json", "would carry the Plaud sign-in"),
+        ("/plaud", "would carry the Plaud sign-in"),
+        ("/run/secrets", "would carry Docker's secrets"),
+        ("/run/secrets/nas_ssh_key", "would carry Docker's secrets"),
+        # Stage 2b §9.5: the Plaud cache holds titles of recordings not yet here.
+        ("/state/plaud-cache.db", "the Plaud cache"),
+        ("{state}/plaud-cache.db", "the Plaud cache"),
+    ],
+)
+def test_an_extra_path_doctor_reports_refuses_the_backup(tmp_path, writer, entry, why):
+    # why: the council's S4. Folders are allowed in extra_paths (Task 16), so `/state` would back
+    # up voice.db and Phase 2's cache, and `/run/secrets` the restic password and the NAS key.
+    # Doctor's problem alone isn't enough: the backup refuses what doctor reports, by one check,
+    # as it refuses a symbolic link, with a fixed reason and before restic runs.
+    plaud = tmp_path / "plaud"
+    plaud.mkdir()
+    (plaud / "tokens.json").write_text("{}\n", encoding="utf-8")  # synthetic: never a token
+    entry = entry.format(state=writer.state.path, plaud=plaud)
+    _, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), entry])
+    cfg_file = Path(environ["RECORDINGS_CONFIG"])
+    cfg_file.write_text(
+        cfg_file.read_text(encoding="utf-8")
+        + f'[plaud]\ntoken_store = "{plaud / "tokens.json"}"\n',
+        encoding="utf-8",
+    )
+    bc = backup.from_config(load_config(environ), environ)
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(
+        backup.BackupRefused, match=f"refusing to back up: {re.escape(entry)}, "
+    ) as e:
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert why in str(e.value)
+    assert fake.calls == []
+
+
+def with_plaud(environ, lines: str) -> None:
+    cfg_file = Path(environ["RECORDINGS_CONFIG"])
+    cfg_file.write_text(
+        cfg_file.read_text(encoding="utf-8") + f"[plaud]\n{lines}\n", encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    ("plaud", "why"),
+    [
+        # The sign-in inside the archive, which every backup and the mirror copy whole.
+        ('token_store = "{archive}/.signin/tokens.json"', "TOKEN_IN_ARCHIVE"),
+        ('token_store = "{archive}/tokens.json"', "TOKEN_IN_ARCHIVE"),
+        # [plaud] token_store can't be read: where the sign-in lies can't be told.
+        ("token_store = 5", "TOKEN_UNKNOWN"),
+        ('token_store = "relative/tokens.json"', "TOKEN_UNKNOWN"),
+    ],
+)
+def test_a_sign_in_the_backup_would_carry_or_cant_place_refuses_it(tmp_path, writer, plaud, why):
+    # The end-of-branch privacy review (2026-11-02): the token is never backed up (§17.2), and a
+    # setting that can't be read fails closed rather than assuming /plaud. Fixed text, naming the
+    # setting and never the token.
+    _, environ = config(tmp_path, writer)
+    with_plaud(environ, plaud.format(archive=writer.root))
+    bc = backup.from_config(load_config(environ), environ)
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(backup.BackupRefused) as e:
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert str(e.value) == f"refusing to back up: {getattr(backup, why)}"
+    assert "tokens.json" not in str(e.value)
+    assert fake.calls == []
+
+
+def test_another_bad_plaud_setting_never_moves_the_sign_ins_folder(tmp_path, writer):
+    # Fail-open (b): a bad `schedule_minutes` made the whole of [plaud] unreadable, and the guard
+    # then assumed /plaud, so an extra path holding the configured sign-in's folder passed.
+    folder = tmp_path / "srv" / "plaud"
+    folder.mkdir(parents=True)
+    _, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    with_plaud(environ, f'schedule_minutes = "20"\ntoken_store = "{folder / "tokens.json"}"')
+    bc = backup.from_config(load_config(environ), environ)
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(backup.BackupRefused, match="would carry the Plaud sign-in"):
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert fake.calls == []
+
+
+def test_the_consent_folder_and_the_manifests_folder_are_never_refused():
+    # why: §17.2. The consent folder and `/state/manifests` are what extra_paths is for.
+    for entry in ("/consent", "/state/manifests", "/state/backup/state.db", "/run/other"):
+        assert (
+            backup.never_backed_up(Path(entry), token_folder=Path("/plaud"), state=Path("/state"))
+            is None
+        ), entry
+
+
+def test_a_symlink_in_extra_paths_refuses_the_backup(tmp_path, writer):
+    # why: restic backs up a link as a link; its target is never backed up, so the snapshot
+    # would hold nothing of the consent folder.
+    folder = consent_folder(tmp_path)
+    link = tmp_path / "consent-link"
+    link.symlink_to(folder)
+    cfg, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(link)])
+    bc = backup.from_config(cfg, environ)
+    assert backup.missing_paths(bc) == [link]
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(backup.BackupRefused, match="consent-link is a symbolic link"):
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert fake.calls == []

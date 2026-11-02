@@ -1,0 +1,394 @@
+"""`recordings plaud …` (stage 2b spec §9.6). Every archive and Plaud ID here is synthetic."""
+
+import json
+import shutil
+import sqlite3
+import subprocess
+import sys
+import time
+from datetime import UTC, datetime
+
+import pytest
+from recordings.archive import RawSource
+from recordings.cli import main
+from recordings.plaud.keepout import typo_phrase
+
+T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
+
+
+TITLE = "Synthetic 042: a title no command may print"
+
+
+def pid(n: int) -> str:
+    return f"{n:032x}"
+
+
+def configure(tmp_path, monkeypatch, writer, *, consent=None, plaud: str = "") -> None:
+    """config.toml for `writer`'s archive, with [plaud] consent_list naming `consent`."""
+    lines = [
+        f'[archive]\npath = "{writer.root}"\nwriter_id = "test"\n',
+        f'[state]\npath = "{writer.state.path}"\n[index]\npath = "{writer.index.path}"\n',
+        "[plaud]\n",
+        f'consent_list = "{consent}"\n' if consent is not None else "",
+        plaud,
+    ]
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("".join(lines), encoding="utf-8")
+    monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
+    for name in ("RECORDINGS_ARCHIVE", "RECORDINGS_STATE", "RECORDINGS_INDEX"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def plaud_rec(writer, make_incoming, ref: str):
+    source = RawSource(kind="plaud", ref=ref, added_at=T0, payload=b'{"id": 1}')
+    return writer.add(make_incoming(title=TITLE, sources=(source,))).recording
+
+
+def test_plaud_consent_lists_kept_lines_by_number_and_2a_misses_by_archive_id(
+    writer, make_incoming, tmp_path, monkeypatch, capsys
+):
+    # why: C5.10, §12.1. A kept line is listed for Dan by number, never read as an exclusion; a
+    # recording 2a imported despite an `of_` exclusion is named by archive ID, marked.
+    missed = plaud_rec(writer, make_incoming, f"of_{pid(0xA1)}")
+    read_by_2a = plaud_rec(writer, make_incoming, pid(0xA2))
+    kept = plaud_rec(writer, make_incoming, pid(0xA3))
+    consent = tmp_path / "consent" / "consent-list.md"
+    consent.parent.mkdir()
+    consent.write_text(
+        "# consent list (synthetic)\n"
+        f"- `of_{pid(0xA1)}` — asked not to keep\n"
+        f"- `{pid(0xA2)}` — asked not to keep\n"
+        f"{pid(0xA3)} kept: she agreed later\n",
+        encoding="utf-8",
+    )
+    configure(tmp_path, monkeypatch, writer, consent=consent)
+    assert main(["plaud", "consent", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ids"] == 2 and out["stop"] is None
+    assert out["review_lines"] == [4] and out["typo_lines"] == []
+    assert out["on_plaud"] is None and out["on_plaud_note"] == "unknown until the first listing"
+    assert out["in_archive_note"] is None
+    assert (out["read_by"], out["read_ids"]) == ("this command", 2)
+    assert out["in_archive"] == sorted(
+        [
+            {"recording_id": missed.id, "missed_by_2a": True},
+            {"recording_id": read_by_2a.id, "missed_by_2a": False},
+        ],
+        key=lambda r: r["recording_id"],
+    )
+    assert kept.id not in json.dumps(out)
+    assert main(["plaud", "consent"]) == 0
+    text = capsys.readouterr().out
+    assert "lines read as kept, not excluded (check each meant keep): 4" in text
+    assert f"in the archive: {missed.id} (2a's parser missed it)" in text
+
+
+def test_plaud_consent_exits_78_on_a_typo_and_names_line_numbers_only(
+    writer, tmp_path, monkeypatch, capsys
+):
+    # why: §12.1, P8. A typo fails closed; Status, doctor and this command name the line numbers,
+    # never the text.
+    consent = tmp_path / "consent-list.md"
+    typo = f"- `{pid(0xB1)[:31]}` — asked not to keep\n"
+    consent.write_text(f"# synthetic\n- `{pid(0xB2)}` — asked not to keep\n{typo}", "utf-8")
+    configure(tmp_path, monkeypatch, writer, consent=consent)
+    assert main(["plaud", "consent", "--json"]) == 78
+    raw = capsys.readouterr().out
+    out = json.loads(raw)
+    assert out["stop"] == typo_phrase([3]) and out["typo_lines"] == [3]
+    assert pid(0xB1)[:31] not in raw
+
+
+def test_plaud_consent_names_a_missing_list_and_exits_78(writer, tmp_path, monkeypatch, capsys):
+    configure(tmp_path, monkeypatch, writer)  # no consent_list: a consent stop
+    assert main(["plaud", "consent", "--json"]) == 78
+    assert json.loads(capsys.readouterr().out)["stop"] == "the consent list is missing"
+
+
+def test_plaud_consent_says_when_the_worker_last_read_it_and_how_many_ids(
+    writer, tmp_path, monkeypatch, capsys
+):
+    # why: §12.1, "If Dan's edit doesn't show, the worker didn't see it": the worker's count (Task
+    # 13's K_CONSENT holds the count, never the IDs) beside what the file holds now.
+    from recordings.plaud.checks import K_CONSENT, PlaudDB
+
+    consent = tmp_path / "consent-list.md"
+    consent.write_text(f"- `{pid(0xC1)}` — asked not to keep\n", encoding="utf-8")
+    seen = {"read_at": "2026-10-23T21:20:00+00:00", "count": 3}
+    PlaudDB(writer.state).put(K_CONSENT, seen, now=datetime.now(UTC))
+    configure(tmp_path, monkeypatch, writer, consent=consent)
+    assert main(["plaud", "consent", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert (out["read_at"], out["read_by"]) == ("2026-10-23 14:20", "the worker")  # Vancouver
+    assert (out["ids"], out["read_ids"]) == (1, 3)  # the file changed since the worker read it
+    assert main(["plaud", "consent"]) == 0
+    assert "read: 2026-10-23 14:20 (by the worker: 3 IDs)" in capsys.readouterr().out
+
+
+def test_no_printed_line_carries_a_title(writer, make_incoming, tmp_path, monkeypatch, capsys):
+    plaud_rec(writer, make_incoming, pid(0xD1))
+    consent = tmp_path / "consent-list.md"
+    consent.write_text(f"- `{pid(0xD1)}` — asked not to keep\n", encoding="utf-8")
+    configure(tmp_path, monkeypatch, writer, consent=consent)
+    for argv in (["plaud", "consent"], ["plaud", "consent", "--json"]):
+        main(argv)
+        assert "Synthetic 042" not in capsys.readouterr().out
+
+
+def test_plaud_consent_sees_pending_index_updates_as_the_worker_does(
+    writer, make_incoming, tmp_path, monkeypatch, capsys
+):
+    # why: §12.1, §17.5. The dry run reads this list: a recording the worker would tag is on it.
+    rec = plaud_rec(writer, make_incoming, pid(0xE1))
+    with writer.locks.hold("index"), writer.index._db() as conn:
+        conn.execute("DELETE FROM source_refs WHERE recording_id = ?", (rec.id,))
+    writer.state.mark_index_pending(rec.id)
+    consent = tmp_path / "consent-list.md"
+    consent.write_text(f"- `{pid(0xE1)}` — asked not to keep\n", encoding="utf-8")
+    configure(tmp_path, monkeypatch, writer, consent=consent)
+    assert main(["plaud", "consent", "--json"]) == 0
+    assert [r["recording_id"] for r in json.loads(capsys.readouterr().out)["in_archive"]] == [
+        rec.id
+    ]
+
+
+def test_plaud_consent_creates_nothing(tmp_path, monkeypatch, capsys):
+    # why: a reader (§9.6, "holds no lock"): State.read_only, never State.open.
+    from recordings.init import init_archive
+
+    root, state = tmp_path / "archive", tmp_path / "state"
+    init_archive(root, state, writer_id="test")
+    shutil.rmtree(state / "locks", ignore_errors=True)  # State.open would make it again
+    consent = tmp_path / "consent-list.md"
+    consent.write_text(f"- `{pid(0xE2)}` — asked not to keep\n", encoding="utf-8")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        f'[archive]\npath = "{root}"\nwriter_id = "test"\n[state]\npath = "{state}"\n'
+        f'[plaud]\nconsent_list = "{consent}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RECORDINGS_CONFIG", str(cfg))
+
+    def names():  # a reader makes WAL's -wal and -shm (State.read_only says so), nothing else
+        return sorted(p.name for p in state.rglob("*") if not p.name.endswith(("-wal", "-shm")))
+
+    before = names()
+    assert main(["plaud", "consent", "--json"]) == 0
+    capsys.readouterr()
+    assert names() == before
+    assert not (state / "locks").exists()
+
+
+def plaud_lock_held(locks_dir, job: str):
+    """Another process holds `plaud`, announcing `job`, until its stdin closes."""
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib, sys\n"
+                "from datetime import UTC, datetime\n"
+                "from recordings.locks import PLAUD_LOCK, Locks, announce\n"
+                "folder = pathlib.Path(sys.argv[1])\n"
+                "with Locks(folder, timeout=0).hold(PLAUD_LOCK):\n"
+                "    with announce(folder, sys.argv[2], datetime.now(UTC), PLAUD_LOCK):\n"
+                "        print('held', flush=True)\n"
+                "        sys.stdin.read()\n"
+            ),
+            str(locks_dir),
+            job,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout.readline() == "held\n"
+    return holder
+
+
+def test_the_baseline_prints_counts_and_no_title(
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
+    payload = json.dumps(plaud_env(pid(0xE1), name=f"Interview: {TITLE}")).encode()
+    source = RawSource(kind="plaud", ref=pid(0xE1), added_at=T0, fetched_at=T0, payload=payload)
+    writer.add(make_incoming(title=TITLE, sources=(source,)))
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline", "--json"]) == 0
+    raw = capsys.readouterr().out
+    assert json.loads(raw) == {
+        "titles_checked": 1,
+        "private_added": 1,
+        "kept_out_late": 0,
+        "already_seen": 0,
+        "unwritten": [],
+        "busy": [],
+        "causes": {},
+        "seeded": 1,  # §14.5: its check state, seeded once
+        "already_seeded": 0,
+    }
+    assert main(["plaud", "baseline"]) == 0
+    raw += capsys.readouterr().out
+    assert "already seen: 1" in raw and "Synthetic 042" not in raw
+    assert "check state seeded: 0" in raw and "already seeded: 1" in raw
+
+
+def test_the_baseline_waits_for_a_held_plaud_lock_then_exits_75(
+    writer, tmp_path, monkeypatch, capsys
+):
+    # why: §9.4. The CLI waits up to 60 seconds for a held `plaud`, then exits 75.
+    from recordings.plaud import runlock
+
+    monkeypatch.setattr(runlock, "CLI_WAIT", 0.2)
+    configure(tmp_path, monkeypatch, writer)
+    holder = plaud_lock_held(writer.state.locks_dir, "plaud-sync")
+    started = time.monotonic()
+    try:
+        assert main(["plaud", "baseline", "--json"]) == 75
+    finally:
+        holder.communicate("")
+    assert time.monotonic() - started >= 0.2  # it waited the patched CLI_WAIT, not zero
+    assert json.loads(capsys.readouterr().out) == {"error": "skipped: busy (`plaud-sync`)"}
+    assert main(["plaud", "baseline", "--json"]) == 0  # free again
+
+
+def test_plaud_keep_out_words_lists_and_drops(writer, tmp_path, monkeypatch, capsys):
+    from recordings.plaud.baseline import enforce_word
+    from recordings.plaud.checks import PlaudDB
+
+    db = PlaudDB(writer.state)
+    for word in ("skipme", "noarchive"):
+        enforce_word(db, word, now=datetime.now(UTC))
+    configure(tmp_path, monkeypatch, writer, plaud='keep_out_word = "noarchive"\n')
+    assert main(["plaud", "keep-out-words", "--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed == {
+        "configured": "noarchive",
+        "configured_ok": True,
+        "enforced": ["skipme", "noarchive"],
+    }
+    assert main(["plaud", "keep-out-words", "--drop", "noarchive", "--json"]) == 1
+    refused = json.loads(capsys.readouterr().out)
+    assert refused["result"].startswith("that is the configured keep_out_word")
+    assert main(["plaud", "keep-out-words", "--drop", "skipme", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["enforced"] == ["noarchive"]
+
+
+def test_the_baseline_names_an_invalid_file_and_the_fix_for_its_cause(
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
+    payload = json.dumps(plaud_env(pid(0xE2), name="Week 9")).encode()
+    source = RawSource(kind="plaud", ref=pid(0xE2), added_at=T0, fetched_at=T0, payload=payload)
+    rid = writer.add(make_incoming(title=TITLE, sources=(source,))).recording.id
+    (writer.archive.path_for(rid) / "recording.json").write_text("{not json", "utf-8")
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline"]) == 1
+    out = capsys.readouterr().out
+    assert f"not written (1): {rid}; run `recordings reindex`" in out and TITLE not in out
+
+
+def test_the_baseline_exits_75_when_only_busy_recordings_were_left(
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
+    from recordings.locks import LockTimeout
+    from recordings.plaud.checks import PlaudDB
+
+    payload = json.dumps(plaud_env(pid(0xE3), name="Week 9")).encode()
+    source = RawSource(kind="plaud", ref=pid(0xE3), added_at=T0, fetched_at=T0, payload=payload)
+    rid = writer.add(make_incoming(title=TITLE, sources=(source,))).recording.id
+
+    def busy(self, recording_id, markers, *, now):
+        raise LockTimeout("busy")
+
+    monkeypatch.setattr(PlaudDB, "set_markers", busy)
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline"]) == 75
+    assert f"busy (1): {rid}" in capsys.readouterr().out
+
+
+def test_keep_out_words_never_prints_an_invalid_word_and_refuses_a_row_that_is_not_a_list(
+    writer, tmp_path, monkeypatch, capsys
+):
+    from recordings.plaud.checks import K_KEEP_OUT_WORDS, PlaudDB
+    from recordings.plaud.settings import BAD_WORD
+
+    configure(tmp_path, monkeypatch, writer, plaud='keep_out_word = "no archive!"\n')
+    assert main(["plaud", "keep-out-words"]) == 0
+    out = capsys.readouterr().out
+    assert BAD_WORD in out and "no archive!" not in out
+    assert main(["plaud", "keep-out-words", "--json"]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    assert listed["configured"] is None and listed["configured_ok"] is False
+    PlaudDB(writer.state).put(K_KEEP_OUT_WORDS, "skipme", now=datetime.now(UTC))
+    assert main(["plaud", "keep-out-words", "--json"]) == 1
+    assert "keep_out_words" in json.loads(capsys.readouterr().out)["error"]
+    assert main(["plaud", "keep-out-words", "--drop", "skipme", "--json"]) == 1
+    capsys.readouterr()
+    assert PlaudDB(writer.state).get(K_KEEP_OUT_WORDS) == "skipme"
+
+
+def test_the_baseline_refuses_a_keep_out_words_row_that_is_not_a_list(
+    writer, make_incoming, plaud_env, tmp_path, monkeypatch, capsys
+):
+    # why: P8. A row that isn't a list never reads as "no keep-out words": the baseline checks
+    # nothing and says why, by its fixed phrase, rather than listing every recording.
+    from recordings.plaud.baseline import NOT_A_LIST
+    from recordings.plaud.checks import K_KEEP_OUT_WORDS, PlaudDB
+
+    payload = json.dumps(plaud_env(pid(0xE4), name="Week 9")).encode()
+    source = RawSource(kind="plaud", ref=pid(0xE4), added_at=T0, fetched_at=T0, payload=payload)
+    writer.add(make_incoming(title=TITLE, sources=(source,)))
+    PlaudDB(writer.state).put(K_KEEP_OUT_WORDS, "skipme", now=datetime.now(UTC))
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": NOT_A_LIST}
+    assert main(["plaud", "baseline"]) == 1
+    assert capsys.readouterr().err == f"recordings: {NOT_A_LIST}\n"
+
+
+@pytest.mark.parametrize("fault", [OSError, sqlite3.OperationalError], ids=["OSError", "sqlite3"])
+def test_a_baseline_that_stops_prints_its_class_and_never_the_exception_text(
+    writer, tmp_path, monkeypatch, capsys, fault
+):
+    # why: the phase-end list (the final re-review), §9.6. An OSError or a sqlite3 error outside
+    # the per-recording loop (state.db refusing, the archive unreadable) escaped `main` with its
+    # text in a traceback, and `--json` printed no object. A fixed phrase, the class, exit 1.
+    from recordings.plaud import commands
+
+    secret = f"/Volumes/archive/recordings/2026/10/{TITLE}/recording.json"
+
+    def stops(*args, **kwargs):
+        raise fault(secret)
+
+    monkeypatch.setattr(commands, "baseline_privacy", stops)
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline", "--json"]) == commands.EXIT_FAILED
+    out = json.loads(capsys.readouterr().out)
+    assert set(out) == {"error"} and f"({fault.__name__})" in out["error"]
+    assert main(["plaud", "baseline"]) == commands.EXIT_FAILED
+    seen = capsys.readouterr()
+    shown = json.dumps(out) + seen.out + seen.err
+    assert f"({fault.__name__})" in seen.err
+    assert secret not in shown and "Synthetic 042" not in shown and "/Volumes" not in shown
+
+
+@pytest.mark.parametrize("fault", [OSError, sqlite3.OperationalError], ids=["OSError", "sqlite3"])
+def test_a_writer_that_cant_open_prints_its_class_and_never_the_exception_text(
+    writer, tmp_path, monkeypatch, capsys, fault
+):
+    # why: CLAUDE.md's logs rule and the exit codes: fixed phrases, IDs, counts and class names
+    # only. An OSError's text carries a path; a sqlite3 error's, a table or a title.
+    from recordings.plaud import commands
+    from recordings.writer import Writer
+
+    secret = f"/Volumes/archive/{TITLE}/recording.json"
+
+    def refuse(*args, **kwargs):
+        raise fault(secret)
+
+    monkeypatch.setattr(Writer, "open", refuse)
+    configure(tmp_path, monkeypatch, writer)
+    assert main(["plaud", "baseline", "--json"]) == commands.EXIT_CONFIG
+    seen = capsys.readouterr()
+    shown = seen.out + seen.err
+    assert fault.__name__ in shown
+    assert secret not in shown and "Synthetic 042" not in shown and "/Volumes" not in shown

@@ -1,10 +1,14 @@
 """Backups with restic (spec §15.1): encrypted, deduplicated and versioned, to the NAS.
 
-What is backed up is an explicit list: the archive, config.toml, docker/deploy.env (as
-[backup] extra_paths), and a consistent copy of state.db taken with SQLite's own backup command.
-Nothing else in the state folder is named, so voice.db and the Plaud token store are left out by
-construction. The archive must carry its sentinel, with the UUID state.db expects, before anything
-is backed up: an empty mount point backed up hourly would age the real snapshots out (§6.7).
+What is backed up is an explicit list: the archive, config.toml, [backup] extra_paths (in Docker,
+deploy.env and the consent folder: an extra path may be a file or a folder, which is backed up
+whole), and a consistent copy of state.db taken with SQLite's own backup command. Nothing else in
+the state folder is named, so voice.db is left out by construction, and so is the Plaud token
+store, in a folder of its own. An extra path that would carry the token's folder, the whole state
+folder or Docker's secrets is refused by `never_backed_up`: doctor reports it, and `run_backup`
+refuses to run, as it does for a symbolic link. The archive must carry its sentinel, with the
+UUID state.db expects, before anything is backed up: an empty mount point backed up hourly would
+age the real snapshots out (§6.7).
 
 restic is run through its CLI, with --json where it has it
 (https://restic.readthedocs.io/en/stable/075_scripting.html). The repository's password reaches
@@ -38,6 +42,8 @@ from pathlib import Path
 from recordings.archive import Archive, utc_stamp
 from recordings.config import Config, ConfigError, secret
 from recordings.disk import STOP_FREE_PERCENT, WARN_FREE_PERCENT
+from recordings.plaud.cache import CACHE_NAME
+from recordings.plaud.settings import DEFAULT_TOKEN_STORE
 from recordings.selfdoc import validate
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.ssh import Nas, nas_free_bytes, nas_from_config, require_known_hosts
@@ -48,6 +54,33 @@ TAG = "recordings"
 MILESTONE_TAGS = ("pre-import", "post-import")
 _USERINFO = re.compile(r"(\w+://)[^/@\s]+@")
 _PASSWORD_IN_URL = re.compile(r"://[^/@\s]*:[^/@\s]*@")
+PLAUD_MOUNT = DEFAULT_TOKEN_STORE.parent  # the sign-in's folder, mounted in `worker` only
+STATE_MOUNT = Path("/state")  # the state folder, in every container
+SECRETS_DIR = Path("/run/secrets")  # where Docker mounts a service's secrets, by name
+# never_backed_up's reasons: fixed phrases, after the entry's path (doctor and run_backup).
+CARRIES_SIGN_IN = "which would carry the Plaud sign-in: it is never backed up (stage 2b spec §17.2)"
+WHOLE_STATE = (
+    "the whole state folder: state.db is backed up on its own, as a consistent copy (stage 2b "
+    "spec §17.2)"
+)
+CARRIES_SECRETS = (
+    "which would carry Docker's secrets (the restic password, the NAS key): a secret is never "
+    "backed up (stage 2b spec §17.2)"
+)
+CARRIES_CACHE = (
+    "the Plaud cache, which holds titles of recordings not yet here: it is derived, and never "
+    "backed up (stage 2b spec §9.5)"
+)
+# sign_in_refusal's reasons: fixed phrases naming the setting, never the token (a backup, the
+# mirror and doctor; the end-of-branch privacy review, 2026-11-02).
+TOKEN_IN_ARCHIVE = (
+    "[plaud] token_store lies inside the archive, which every backup and the mirror copy whole: "
+    "move the Plaud sign-in out of it (stage 2b spec §17.2)"
+)
+TOKEN_UNKNOWN = (
+    "[plaud] token_store can't be read, so where the Plaud sign-in lies can't be told: fix it in "
+    "config.toml (stage 2b spec §17.2)"
+)
 
 
 class BackupError(RuntimeError):
@@ -61,7 +94,8 @@ class BackupError(RuntimeError):
 
 
 class BackupRefused(BackupError):
-    """Refused before restic ran: no sentinel, another archive, a missing file or password."""
+    """Refused before restic ran: no sentinel, another archive, a missing file or folder (or a
+    symbolic link in its place), or a missing password."""
 
 
 class NasLowOnSpace(BackupRefused):
@@ -107,6 +141,10 @@ class BackupConfig:
     rest_username: str | None = None  # rest-server's user, with a rest: repository
     cacert: Path | None = None  # rest-server's self-signed certificate, for an https: repository
     retry_lock: str | None = None  # restic --retry-lock: set by ops.backup_config for the CLI
+    extra_paths: tuple[Path, ...] = ()  # [backup] extra_paths, as given (also in `paths`)
+    # The Plaud sign-in's, never backed up; None when `[plaud] token_store` can't be read, and
+    # then every backup refuses (`sign_in_refusal`).
+    token_folder: Path | None = DEFAULT_TOKEN_STORE.parent
 
 
 def _positive_int(section: dict, key: str, default: int) -> int:
@@ -188,6 +226,8 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> BackupConfig:
         min_nas_free_bytes=int(min_free_gb * 1024**3),
         rest_username=section.get("rest_username") or None,
         cacert=cacert_path,
+        extra_paths=tuple(Path(p) for p in extra),
+        token_folder=token_folder(cfg),
     )
 
 
@@ -350,6 +390,91 @@ def _check_archive(bc: BackupConfig, state: State) -> str:
     return identity.uuid
 
 
+def normal_path(path: Path) -> Path:
+    """Absolute and normalised (`//plaud`, `a/../b`, a relative path from the working folder), so
+    two spellings of one folder compare equal. Links are not followed."""
+    absolute = os.path.normpath(os.path.abspath(path))
+    return Path("/" + absolute.lstrip("/"))  # POSIX keeps a leading `//` as its own spelling
+
+
+def holds(entry: Path, path: Path) -> bool:
+    """`entry`, backed up, would carry `path`: it is the path or one of its folders."""
+    return entry == path or entry in path.parents
+
+
+def token_folder(cfg: Config) -> Path | None:
+    """The Plaud sign-in's folder, from `[plaud] token_store` alone, so a bad other `[plaud]` key
+    never moves it: the default (`/plaud`) when `[plaud]` or the key is absent; None when either
+    can't be read (`[plaud]` not a table, the key not an absolute path in quotes), so a backup and
+    the mirror refuse rather than assume the default (the end-of-branch privacy review,
+    2026-11-02)."""
+    section = cfg.data.get("plaud", {})
+    if not isinstance(section, dict):
+        return None
+    value = section.get("token_store", str(DEFAULT_TOKEN_STORE))
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        path = Path(value).expanduser()
+    except RuntimeError:  # `~someone` with no such user
+        return None
+    return path.parent if path.is_absolute() else None
+
+
+def sign_in_refusal(token_folder: Path | None, archive: Path | None) -> str | None:
+    """Why no backup or mirror may run while the Plaud sign-in is configured so, as a fixed reason
+    naming the setting (never the token), or None: a `token_store` that can't be read (where the
+    sign-in lies can't be told), or one inside the archive, which every backup and the mirror copy
+    whole. An extra path that would carry it is `never_backed_up`'s."""
+    if token_folder is None:
+        return TOKEN_UNKNOWN
+    if archive is not None and holds(normal_path(archive), normal_path(token_folder)):
+        return TOKEN_IN_ARCHIVE
+    return None
+
+
+def never_backed_up(entry: Path, *, token_folder: Path | None, state: Path | None) -> str | None:
+    """Why `[backup] extra_paths`' `entry` must never be backed up, as a fixed reason, or None.
+    The one check (the phase-end council's S4): doctor reports it as a problem in every role, and
+    `run_backup` refuses it. An entry that holds the Plaud sign-in's folder (as configured, or the
+    `/plaud` mount) or lies inside it, since the token is never backed up; one that holds the
+    whole state folder (`/state`, or as configured), since state.db is backed up on its own, as a
+    consistent copy, and the folder also holds voice.db and the Plaud cache; the Plaud cache
+    itself (`plaud-cache.db` in the state folder, stage 2b spec §9.5), which holds titles of
+    recordings not yet here; and one that holds Docker's secrets folder or lies inside it, since
+    the restic password and the NAS key are never backed up. A folder inside the state folder
+    (`/state/manifests`) is fine."""
+    held = normal_path(entry)
+    folders = (PLAUD_MOUNT, *([normal_path(token_folder)] if token_folder is not None else []))
+    if any(holds(held, f) or holds(f, held) for f in folders):
+        return CARRIES_SIGN_IN
+    states = [STATE_MOUNT, *([normal_path(state)] if state is not None else [])]
+    if any(holds(held, s) for s in states):
+        return WHOLE_STATE
+    if any(holds(held, s / CACHE_NAME) for s in states):
+        return CARRIES_CACHE
+    if holds(held, SECRETS_DIR) or holds(SECRETS_DIR, held):
+        return CARRIES_SECRETS
+    return None
+
+
+def refused_paths(bc: BackupConfig) -> list[tuple[Path, str]]:
+    """The extra paths `never_backed_up` refuses, each with its reason."""
+    found = []
+    for path in bc.extra_paths:
+        why = never_backed_up(path, token_folder=bc.token_folder, state=bc.state)
+        if why is not None:
+            found.append((path, why))
+    return found
+
+
+def missing_paths(bc: BackupConfig) -> list[Path]:
+    """config.toml and the extra paths that aren't there now, as a file or a folder (2b phase 1
+    plan, decision 9). A backup refuses while any is missing, as before. A symbolic link counts
+    as missing: restic backs it up as a link, and its target never."""
+    return [p for p in bc.paths if p.is_symlink() or not (p.is_file() or p.is_dir())]
+
+
 @dataclass(frozen=True)
 class BackupResult:
     snapshot_id: str
@@ -372,9 +497,14 @@ def run_backup(
     runner=subprocess.run,
 ) -> BackupResult:
     _check_archive(bc, state)
-    for path in bc.paths:
-        if not path.is_file():
-            raise BackupRefused(f"refusing to back up: {path} is missing")
+    if (why := sign_in_refusal(bc.token_folder, bc.archive)) is not None:
+        raise BackupRefused(f"refusing to back up: {why}")
+    if refused := refused_paths(bc):
+        path, why = refused[0]
+        raise BackupRefused(f"refusing to back up: {path}, {why}")
+    if missing := missing_paths(bc):
+        why = "is a symbolic link" if missing[0].is_symlink() else "is missing"
+        raise BackupRefused(f"refusing to back up: {missing[0]} {why}")
     free = None
     if bc.nas_repo_path and bc.nas.ssh:
         free = nas_free_bytes(bc.nas, bc.nas_repo_path, runner=runner)
@@ -448,7 +578,11 @@ def _check_scratch_space(bc: BackupConfig, keep_free_percents: Sequence[float]) 
     """The restore fits, and doesn't take its disk below a threshold it is above now. The scratch
     folder sits on the archive's disk, where 20% free raises a warning and 5% stops imports
     (Task 9's [disk]); a disk already below one isn't made to fail the test for it."""
-    needed = _tree_bytes(bc.archive) + sum(p.stat().st_size for p in bc.paths if p.is_file())
+    needed = _tree_bytes(bc.archive) + sum(
+        _tree_bytes(p) if p.is_dir() else p.stat().st_size
+        for p in bc.paths
+        if p.is_dir() or p.is_file()
+    )
     usage = shutil.disk_usage(bc.restore_scratch)
     after = usage.free - needed
     crossed = [
@@ -469,17 +603,28 @@ def _in_restore(target: Path, path: Path) -> Path:
     return target / path.relative_to(path.anchor)
 
 
+def _came_back(target: Path, path: Path) -> bool:
+    """A backed-up folder must come back as a folder, and a file as a file. When the live path is
+    gone by now, the snapshot's copy may be either kind."""
+    restored = _in_restore(target, path)
+    if path.is_dir():
+        return restored.is_dir()
+    if path.is_file():
+        return restored.is_file()
+    return restored.is_dir() or restored.is_file()
+
+
 def _not_in_snapshot(bc: BackupConfig, target: Path, restored: Path) -> list[dict]:
     """What the snapshot should hold and doesn't. --verify and the hashes prove what was restored,
     not that everything was: a snapshot missing whole recording folders passes both. Its own
     state.db copy was taken before restic read the archive, so every recording.json that copy has
     committed must be in the snapshot; recordings added since are allowed. config.toml, the extra
-    paths and the copy itself must be there too."""
+    paths (a folder as a folder) and the copy itself must be there too."""
     copy = state_copy_path(bc)
     problems = [
         {"path": str(p), "message": "is not in the snapshot"}
         for p in (*bc.paths, copy)
-        if not _in_restore(target, p).is_file()
+        if not _came_back(target, p)
     ]
     if not _in_restore(target, copy).is_file():
         return problems

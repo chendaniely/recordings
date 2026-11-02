@@ -1,23 +1,32 @@
+import hashlib
 import json
+import socket
 import sqlite3
 import subprocess
-from datetime import UTC
+import urllib.request
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 from recordings import doctor as doctor_module
 from recordings.archive import Archive
 from recordings.cli import main
 from recordings.config import SECRETS
-from recordings.doctor import JOB_SECRETS, doctor, read_only_mount
+from recordings.doctor import ALERT_SECRETS, BACKUP_SECRETS, doctor, read_only_mount
 from recordings.index import Index
 from recordings.init import init_archive
+from recordings.plaud import signin
+from recordings.plaud.keepout import typo_phrase
+from recordings.plaud.settings import BAD_WORD
 from recordings.sentinel import MIRROR, SENTINEL, read_sentinel
 from recordings.ssh import nas_free_bytes
-from recordings.state import SCHEMA_VERSION
+from recordings.state import SCHEMA_VERSION, State
 
 NAS_FREE = 500 * 1024**3
+ZONE = ZoneInfo(
+    "America/Vancouver"
+)  # config.py's default_timezone, which these configs leave unset
 
 SENTINELS = (
     "pw-do-not-print",
@@ -36,6 +45,10 @@ SECRET_ENV = (
     "RECORDINGS_NTFY_TOKEN_FILE",
     "RECORDINGS_DEADMAN_URL_FILE",
 )
+
+# As the runbook's section 6 has Dan do: deploy.env, which the template lists, and the consent
+# and manifests folders, which only the template's comment names.
+EXTRA_PATHS = 'extra_paths = ["/backup-extra/deploy.env", "/consent", "/state/manifests"]\n'
 
 
 def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings", backup_extra=""):
@@ -60,7 +73,7 @@ def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings"
         f'[nas]\nssh = "backup@nas"\n'
         f'[backup]\nrepository = "{repository}"\nrestore_scratch = "{tmp_path / "scratch"}"\n'
         f'nas_repo_path = "/volume1/backups/recordings"\n'
-        f'extra_paths = ["/backup-extra/deploy.env"]\n'
+        f"{EXTRA_PATHS}"
         f'cache_dir = "{tmp_path / "cache"}"\n{backup_extra}'
         f'[mirror]\ntarget = "backup@nas:/volume1/recordings-mirror/"\n'
         f'[alerts]\nntfy_server = "https://ntfy.sh"\n',
@@ -95,6 +108,56 @@ def no_docker_secrets(monkeypatch, tmp_path):
 def nas_answers_df(monkeypatch):
     # No test reaches a real NAS: the free-space check answers from here.
     monkeypatch.setattr(doctor_module, "nas_free_bytes", lambda nas, path: NAS_FREE)
+
+
+@pytest.fixture(autouse=True)
+def no_plaud_mount(monkeypatch, tmp_path):
+    # This machine's own /plaud, if it had one, never decides a test: the mount is a tmp folder,
+    # absent unless a test makes it.
+    monkeypatch.setattr(doctor_module, "PLAUD_MOUNT", tmp_path / "plaud-mount")
+
+
+SYNC_PING = "https://hc.example/sync-ping-do-not-print"
+TOKEN = json.dumps(  # synthetic, in the token store's own format (stage 2b spec §10.3)
+    {
+        "version": 1,
+        "access_token": "token-do-not-print",
+        "refresh_token": "refresh-do-not-print",
+        "expires_at": None,
+        "refresh_expires_at": None,
+        "obtained_at": "2026-10-23T12:00:00+00:00",
+        "refreshed_at": None,
+    }
+)
+LISTED = "of_" + f"{1:032x}"  # synthetic Plaud IDs
+KEPT = "of_" + f"{2:032x}"
+
+
+def worker(tmp_path, *, consent=f"- `{LISTED}` — synthetic\n", token=True, plaud_extra=""):
+    """What the worker service has: the shared config with a [plaud] section, its consent list,
+    its sign-in's folder (0700, the token 0600), and the sync's ping URL as its only secret."""
+    environ = web_only(server(tmp_path))
+    plaud = tmp_path / "plaud"
+    plaud.mkdir()
+    plaud.chmod(0o700)
+    if token:
+        (plaud / "tokens.json").write_text(TOKEN + "\n", encoding="utf-8")
+        (plaud / "tokens.json").chmod(0o600)
+    folder = tmp_path / "consent"
+    folder.mkdir()
+    if consent is not None:
+        (folder / "consent-list.md").write_text(consent, encoding="utf-8")
+    ping = tmp_path / "secrets" / "deadman_sync_url"
+    ping.write_text(SYNC_PING + "\n", encoding="utf-8")
+    ping.chmod(0o600)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8")
+        + f'[plaud]\nconsent_list = "{folder / "consent-list.md"}"\n'
+        + f'token_store = "{plaud / "tokens.json"}"\n{plaud_extra}',
+        encoding="utf-8",
+    )
+    return environ | {"RECORDINGS_DEADMAN_SYNC_URL_FILE": str(ping)}
 
 
 def test_a_fully_configured_writer_has_no_problems(tmp_path):
@@ -292,7 +355,7 @@ def test_the_backup_role_warns_when_deploy_env_is_not_backed_up(tmp_path):
     assert not any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
     cfg = Path(environ["RECORDINGS_CONFIG"])
     cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace('extra_paths = ["/backup-extra/deploy.env"]\n', ""),
+        cfg.read_text(encoding="utf-8").replace(EXTRA_PATHS, 'extra_paths = ["/consent"]\n'),
         encoding="utf-8",
     )
     assert any("deploy.env" in w for w in doctor(environ, role="backup")["warnings"])
@@ -484,7 +547,7 @@ def test_the_web_role_needs_no_secrets_and_refuses_any(tmp_path):
     )
     assert any("restic_password" in p and "web" in p for p in report["problems"])
     assert "pw-do-not-print" not in json.dumps(report)
-    for name in JOB_SECRETS:  # the optional ntfy_token included
+    for name in (*BACKUP_SECRETS, *ALERT_SECRETS):  # the optional ntfy_token included
         held = web_only(full) | {f"{SECRETS[name].env}_FILE": full["RESTIC_PASSWORD_FILE"]}
         assert any(name in p for p in doctor(held, role="web")["problems"]), name
     (tmp_path / "run-secrets").mkdir()  # a secret Compose mounted into web by mistake
@@ -492,8 +555,8 @@ def test_the_web_role_needs_no_secrets_and_refuses_any(tmp_path):
     assert any("nas_ssh_key" in p for p in doctor(web_only(full), role="web")["problems"])
 
 
-def test_every_job_secret_is_a_known_secret():
-    assert set(JOB_SECRETS) <= set(SECRETS)
+def test_every_secret_a_role_forbids_is_a_known_secret():
+    assert {*BACKUP_SECRETS, *ALERT_SECRETS, "deadman_sync_url"} <= set(SECRETS)
 
 
 def test_the_backup_role_skips_the_hard_link_probe_on_a_read_only_archive(tmp_path, monkeypatch):
@@ -531,7 +594,8 @@ def test_a_user_without_a_passwd_entry_is_a_problem(tmp_path, monkeypatch):
 def test_the_role_comes_from_the_environment_and_an_unknown_one_checks_all(tmp_path):
     environ = server(tmp_path)
     assert doctor(environ | {"RECORDINGS_ROLE": "backup"})["role"] == "backup"
-    report = doctor(environ | {"RECORDINGS_ROLE": "worker"})
+    assert doctor(environ | {"RECORDINGS_ROLE": "worker"})["role"] == "worker"
+    report = doctor(environ | {"RECORDINGS_ROLE": "builder"})
     assert report["role"] == "all" and any("RECORDINGS_ROLE" in p for p in report["problems"])
 
 
@@ -843,3 +907,448 @@ def test_only_an_empty_mount_is_ignored_as_a_job_secret_in_web(tmp_path):
     (run_secrets / "ntfy_token").unlink()
     (run_secrets / "ntfy_token").symlink_to("/dev/zero")
     assert any("ntfy_token" in p for p in doctor(environ, role="web")["problems"])
+
+
+def test_the_worker_role_skips_backup_mirror_ssh_and_restic(tmp_path, monkeypatch):
+    # why: stage 2b spec §17.2. The worker holds no restic, NAS or ssh secret, and runs none of
+    # those jobs: their checks would be noise, or demand secrets it must not hold.
+    monkeypatch.setattr(
+        doctor_module.shutil,
+        "which",
+        lambda name: None if name in ("restic", "rsync", "ssh") else f"/usr/bin/{name}",
+    )
+    report = doctor(worker(tmp_path), role="worker")
+    assert report["problems"] == [], report["problems"]
+    assert report["backup"] is None and report["mirror"] is None
+    assert report["user"]["passwd_entry"] is True
+    assert report["plaud"] == {
+        "consent_ids": 1,
+        "consent_stop": None,
+        "review_lines": [],
+        "token_store": True,
+        "token_expires": None,
+        "refresh_token": True,
+        "refresh_expires": None,
+        "keep_out_words": [],
+        "deadman_sync_set": True,
+    }
+    assert report["alerts"]["deadman_set"] is True
+    assert not any(word in " ".join(report["warnings"]) for word in ("restic", "ssh", "rsync"))
+
+
+def test_the_worker_has_no_alerts_off_warning(tmp_path):
+    # why: decision 10. The worker sends no push by design; its Healthchecks check is its alert.
+    report = doctor(worker(tmp_path), role="worker")
+    assert report["warnings"] == []
+    assert report["alerts"] == {"ntfy_server_set": True, "topic_set": False, "deadman_set": True}
+
+
+def test_a_worker_consent_stop_names_line_numbers_and_kept_lines_are_a_note(tmp_path):
+    typo = "a" * 31
+    consent = f"# synthetic\n- `{typo}` — one digit short\n{KEPT} kept: she agreed later\n"
+    report = doctor(worker(tmp_path, consent=consent), role="worker")
+    assert report["problems"] == [
+        f"{typo_phrase([2])}: nothing is imported until it reads (stage 2b spec §12.1)"
+    ]
+    assert report["plaud"]["consent_stop"] == typo_phrase([2])
+    assert report["plaud"]["consent_ids"] is None and report["plaud"]["review_lines"] == [3]
+    # the same sentence `recordings plaud consent` prints (one keepout helper)
+    assert "lines read as kept, not excluded (check each meant keep): 3" in report["notes"]
+    text = json.dumps(report)
+    assert typo not in text and KEPT not in text  # line numbers, never the text
+
+
+def test_a_worker_with_no_consent_list_reports_it(tmp_path):
+    report = doctor(worker(tmp_path, consent=None), role="worker")
+    assert report["problems"] == [
+        "the consent list is missing: nothing is imported until it reads (stage 2b spec §12.1)"
+    ]
+
+
+def test_a_worker_with_no_token_store_is_a_problem_naming_make_plaud_sign_in(
+    tmp_path, monkeypatch, capsys
+):
+    # why: spec §17.2. While Phase 1 had no way to sign in it was a note (Dan, Q&A §7); with
+    # `make plaud-sign-in` it is a problem again, and doctor exits 78 for it.
+    environ = worker(tmp_path, token=False)
+    report = doctor(environ, role="worker")
+    assert report["problems"] == [doctor_module.SIGN_IN_NEEDED]
+    assert doctor_module.SIGN_IN_NEEDED.startswith("sign-in needed: run `make plaud-sign-in`")
+    assert report["plaud"]["token_store"] is False
+    assert not any("sign-in" in note for note in report["notes"])
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("RECORDINGS_ROLE", raising=False)
+    assert main(["doctor", "--role", "worker", "--json"]) == 78
+    assert json.loads(capsys.readouterr().out)["problems"] == [doctor_module.SIGN_IN_NEEDED]
+
+
+def _sign_in(tmp_path, **fields) -> None:
+    """Rewrite the worker's synthetic sign-in with these fields."""
+    path = tmp_path / "plaud" / "tokens.json"
+    path.write_text(json.dumps(json.loads(TOKEN) | fields), encoding="utf-8")
+
+
+def test_doctor_reports_the_sign_ins_expiries_never_a_value(tmp_path):
+    # why: spec §17.2, "It also reports the token's expiry, whether a refresh token is present".
+    environ = worker(tmp_path)
+    later = (datetime.now(UTC) + timedelta(days=30)).replace(microsecond=0)
+    _sign_in(tmp_path, expires_at="2026-10-23T13:00:00+00:00", refresh_expires_at=later.isoformat())
+    report = doctor(environ, role="worker")
+    assert report["problems"] == [] and report["warnings"] == []
+    plaud = report["plaud"]
+    assert plaud["token_expires"] == "2026-10-23 06:00"  # in [archive] default_timezone
+    assert plaud["refresh_token"] is True
+    assert plaud["refresh_expires"].startswith(f"{later.astimezone(ZONE):%Y-%m-%d}")
+    assert "do-not-print" not in json.dumps(report)
+
+
+def test_a_refresh_token_expiring_within_7_days_is_a_warning_and_one_expired_a_problem(tmp_path):
+    environ = worker(tmp_path)
+    soon = datetime.now(UTC) + timedelta(days=3)
+    _sign_in(tmp_path, refresh_expires_at=soon.isoformat())
+    report = doctor(environ, role="worker")
+    (warning,) = report["warnings"]
+    assert "refresh token expires" in warning and "make plaud-sign-in" in warning
+    _sign_in(tmp_path, refresh_expires_at=(datetime.now(UTC) - timedelta(hours=1)).isoformat())
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert problem.startswith("sign-in needed") and "refresh token has expired" in problem
+
+
+def test_a_sign_in_with_no_refresh_token_is_a_warning_until_it_expires(tmp_path):
+    environ = worker(tmp_path)
+    ahead = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _sign_in(tmp_path, refresh_token=None, expires_at=ahead)
+    report = doctor(environ, role="worker")
+    assert report["plaud"]["refresh_token"] is False and report["problems"] == []
+    assert "no refresh token" in report["warnings"][0]
+    _sign_in(tmp_path, refresh_token=None, expires_at="2026-10-23T13:00:00+00:00")
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert problem.startswith("sign-in needed") and "no refresh token" in problem
+
+
+def test_a_token_file_the_store_cant_use_is_a_sign_in_problem(tmp_path):
+    environ = worker(tmp_path)
+    (tmp_path / "plaud" / "tokens.json").write_text('{"access_token": "x"}', encoding="utf-8")
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert problem.startswith("sign-in needed") and "can't be used" in problem
+    assert "make plaud-sign-in" in problem
+
+
+def test_a_plaud_folder_wider_than_0700_is_a_problem(tmp_path):
+    environ = worker(tmp_path)
+    (tmp_path / "plaud").chmod(0o750)
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert str(tmp_path / "plaud") in problem and "mode 750" in problem and "chmod 700" in problem
+
+
+def test_a_token_wider_than_0600_is_a_problem(tmp_path):
+    environ = worker(tmp_path)
+    (tmp_path / "plaud" / "tokens.json").chmod(0o640)
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert "tokens.json" in problem and "mode 640" in problem and "chmod 600" in problem
+
+
+def test_a_sign_in_that_isnt_this_users_is_a_problem(tmp_path, monkeypatch):
+    environ = worker(tmp_path)
+    monkeypatch.setattr(signin, "_owner", lambda: 4242)
+    problems = doctor(environ, role="worker")["problems"]
+    assert len(problems) == 2 and all("not this user (4242)" in p for p in problems)
+
+
+def test_a_bad_keep_out_word_is_a_worker_problem(tmp_path):
+    environ = worker(tmp_path, plaud_extra='keep_out_word = "no archive!"\n')
+    assert doctor(environ, role="worker")["problems"] == [BAD_WORD]
+
+
+def test_a_missing_sync_ping_url_is_a_worker_problem(tmp_path):
+    environ = worker(tmp_path)
+    del environ["RECORDINGS_DEADMAN_SYNC_URL_FILE"]
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert "RECORDINGS_DEADMAN_SYNC_URL_FILE" in problem
+    assert doctor(environ, role="worker")["plaud"]["deadman_sync_set"] is False
+
+
+def test_a_bad_or_empty_sync_ping_url_is_a_worker_problem(tmp_path):
+    environ = worker(tmp_path)
+    ping = Path(environ["RECORDINGS_DEADMAN_SYNC_URL_FILE"])
+    for content in ("http://hc.example/sync-ping-do-not-print\n", ""):
+        ping.write_text(content, encoding="utf-8")
+        report = doctor(environ, role="worker")
+        (problem,) = report["problems"]
+        assert "RECORDINGS_DEADMAN_SYNC_URL" in problem
+        assert "do-not-print" not in json.dumps(report)
+
+
+def test_web_forbids_both_secret_sets_and_the_sync_url(tmp_path):
+    environ = web_only(server(tmp_path))
+    held = tmp_path / "secrets" / "pw"
+    for name in (*BACKUP_SECRETS, *ALERT_SECRETS, "deadman_sync_url"):
+        with_one = environ | {f"{SECRETS[name].env}_FILE": str(held)}
+        assert any(name in p and "web" in p for p in doctor(with_one, role="web")["problems"]), name
+
+
+def test_worker_forbids_the_backup_set(tmp_path):
+    environ = worker(tmp_path)
+    held = tmp_path / "secrets" / "pw"
+    for name in BACKUP_SECRETS:
+        with_one = environ | {f"{SECRETS[name].env}_FILE": str(held)}
+        problems = doctor(with_one, role="worker")["problems"]
+        assert any(name in p and "worker" in p for p in problems), name
+    # the alert set stays allowed: the later ntfy change mounts it in `worker` (spec §16)
+    topic = environ | {"RECORDINGS_NTFY_TOPIC_FILE": str(tmp_path / "secrets" / "topic")}
+    assert not any("ntfy_topic" in p for p in doctor(topic, role="worker")["problems"])
+
+
+def test_backup_forbids_the_sync_url(tmp_path):
+    environ = server(tmp_path)
+    assert not any("deadman_sync_url" in p for p in doctor(environ, role="backup")["problems"])
+    environ["RECORDINGS_DEADMAN_SYNC_URL_FILE"] = str(tmp_path / "secrets" / "ping")
+    problems = doctor(environ, role="backup")["problems"]
+    assert any("deadman_sync_url" in p and "backup" in p for p in problems)
+
+
+def test_web_and_backup_report_a_mounted_plaud_or_a_plaud_token(tmp_path):
+    full = server(tmp_path)
+    for role, environ in (("web", web_only(full)), ("backup", full)):
+        assert not any("plaud" in p.lower() for p in doctor(environ, role=role)["problems"]), role
+    (tmp_path / "plaud-mount").mkdir()
+    for role, environ in (("web", web_only(full)), ("backup", full)):
+        problems = doctor(environ, role=role)["problems"]
+        assert any("plaud-mount is mounted here" in p for p in problems), role
+    (tmp_path / "plaud-mount").rmdir()
+    for role, environ in (("web", web_only(full)), ("backup", full)):
+        report = doctor(environ | {"RECORDINGS_PLAUD_TOKEN": "token-do-not-print"}, role=role)
+        assert any("RECORDINGS_PLAUD_TOKEN is set here" in p for p in report["problems"]), role
+        assert "token-do-not-print" not in json.dumps(report)
+
+
+def test_the_token_file_variable_is_a_problem_in_web_and_backup_too(tmp_path):
+    full = server(tmp_path)
+    for role, environ in (("web", web_only(full)), ("backup", full)):
+        report = doctor(environ | {"RECORDINGS_PLAUD_TOKEN_FILE": "/x/not-read"}, role=role)
+        assert any("RECORDINGS_PLAUD_TOKEN_FILE is set here" in p for p in report["problems"]), role
+
+
+def test_web_and_backup_check_the_folder_token_store_names(tmp_path):
+    full = server(tmp_path)
+    other = tmp_path / "other-plaud"
+    other.mkdir()
+    cfg = Path(full["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + f'[plaud]\ntoken_store = "{other / "tokens.json"}"\n',
+        encoding="utf-8",
+    )
+    for role, environ in (("web", web_only(full)), ("backup", full)):
+        problems = doctor(environ, role=role)["problems"]
+        assert any(f"{other} is mounted here" in p for p in problems), role
+
+
+def test_the_workers_consent_notes_are_true_for_the_worker(tmp_path):
+    # why: the worker stays up and needs the list; the 2a notes ("the services that stay up don't
+    # need it", "not mounted here") were written for the other services.
+    environ = worker(tmp_path, consent=None)
+    for role in ("worker",):
+        report = doctor(environ, role=role)
+        assert not any("stay up" in n or "not mounted" in n for n in report["notes"])
+        assert (report["consent_list"] or {}).get("note") is None
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        "".join(
+            line
+            for line in cfg.read_text(encoding="utf-8").splitlines(keepends=True)
+            if not line.startswith("consent_list")
+        ),
+        encoding="utf-8",
+    )
+    report = doctor(environ, role="worker")
+    assert not any("stay up" in n or "not mounted" in n for n in report["notes"])
+    assert any("consent list" in p for p in report["problems"])
+
+
+def _store_words(tmp_path, value):
+    from datetime import datetime
+
+    from recordings.plaud.checks import K_KEEP_OUT_WORDS, PlaudDB
+
+    state = State.open(tmp_path / "state")
+    PlaudDB(state).put(K_KEEP_OUT_WORDS, value, now=datetime(2026, 10, 1, tzinfo=UTC))
+
+
+def test_doctor_lists_the_enforced_keep_out_words(tmp_path):
+    # why: stage 2b spec §12.2: doctor lists the words the worker enforces.
+    environ = worker(tmp_path)
+    _store_words(tmp_path, ["noarchive", "hush"])
+    report = doctor(environ, role="worker")
+    assert report["problems"] == []
+    assert report["plaud"]["keep_out_words"] == ["noarchive", "hush"]
+
+
+def test_a_keep_out_words_row_that_isnt_a_list_is_a_worker_problem(tmp_path):
+    environ = worker(tmp_path)
+    _store_words(tmp_path, {"not": "a list"})
+    report = doctor(environ, role="worker")
+    (problem,) = report["problems"]
+    assert "keep-out words" in problem or "keep_out" in problem
+    assert report["plaud"]["keep_out_words"] is None
+
+
+def test_an_unreadable_state_db_reports_no_words_not_an_empty_list(tmp_path):
+    environ = worker(tmp_path)
+    (tmp_path / "state" / "state.db").write_bytes(b"not a database" * 100)
+    report = doctor(environ, role="worker")
+    assert report["problems"]  # _state says so
+    assert report["plaud"]["keep_out_words"] is None
+
+
+def test_the_sync_url_hint_only_names_the_sync_url_when_it_is_the_cause(tmp_path):
+    environ = worker(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace(
+            'ntfy_server = "https://ntfy.sh"', 'ntfy_server = "http://plain.example"'
+        ),
+        encoding="utf-8",
+    )
+    problems = doctor(environ, role="worker")["problems"]
+    assert any("ntfy_server" in p for p in problems)
+    assert not any("ntfy_server" in p and "DEADMAN_SYNC_URL_FILE" in p for p in problems)
+
+
+def test_doctor_never_calls_plaud(tmp_path, monkeypatch):
+    # why: stage 2b spec §17.2. `recordings plaud check` reaches Plaud; doctor never does.
+    def refuse(*args, **kwargs):
+        raise AssertionError("doctor made a network call")
+
+    environ = worker(tmp_path)
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    assert doctor(environ, role="worker")["problems"] == []
+
+
+def test_doctor_prints_no_value_or_hash(tmp_path):
+    environ = worker(tmp_path, consent=f"- `{LISTED}` — synthetic\n{KEPT} kept: later\n")
+    text = json.dumps(doctor(environ, role="worker"), ensure_ascii=False)
+    for value in (SYNC_PING, TOKEN, "token-do-not-print", "refresh-do-not-print", LISTED, KEPT):
+        assert value not in text
+        assert hashlib.sha256(value.encode()).hexdigest() not in text
+    token_bytes = (tmp_path / "plaud" / "tokens.json").read_bytes()
+    assert hashlib.sha256(token_bytes).hexdigest() not in text
+
+
+def with_extra_paths(environ, *entries: str) -> None:
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    text = cfg.read_text(encoding="utf-8")
+    start = text.index("extra_paths = ")
+    end = text.index("\n", start) + 1
+    listed = ", ".join(f'"{e}"' for e in entries)
+    cfg.write_text(text[:start] + f"extra_paths = [{listed}]\n" + text[end:], encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "entry, what",
+    [
+        ("/plaud", "Plaud sign-in"),
+        ("/plaud/tokens.json", "Plaud sign-in"),
+        ("/", "Plaud sign-in"),
+        ("/state", "whole state folder"),
+        ("{state}", "whole state folder"),
+        ("plaud", "Plaud sign-in"),
+        ("//plaud", "Plaud sign-in"),
+        ("/plaud/../plaud/tokens.json", "Plaud sign-in"),
+        ("/run/secrets", "Docker's secrets"),  # the council's S4: one check with run_backup
+        ("/run", "Docker's secrets"),
+        ("/run/secrets/restic_password", "Docker's secrets"),
+        ("/state/plaud-cache.db", "Plaud cache"),  # stage 2b §9.5: titles of recordings not here
+        ("{state}/plaud-cache.db", "Plaud cache"),
+    ],
+)
+def test_extra_paths_holding_the_token_folder_or_the_whole_state_is_a_problem(
+    tmp_path, monkeypatch, entry, what
+):
+    monkeypatch.chdir("/")  # a relative entry is read from the working folder, as restic would
+    # why: stage 2b spec §17.2. The token is never backed up, and state.db is backed up on its
+    # own, as a consistent copy. Every role reads the one config.toml, so each says so.
+    environ = server(tmp_path)
+    entry = entry.format(state=tmp_path / "state")
+    with_extra_paths(environ, "/backup-extra/deploy.env", "/consent", entry)
+    for role, env in (
+        ("web", web_only(environ)),
+        ("worker", environ),
+        ("backup", environ),
+        ("all", environ),
+    ):
+        problems = doctor(env, role=role)["problems"]
+        assert any(f"names {entry}," in p and what in p for p in problems), role
+
+
+@pytest.mark.parametrize(
+    ("token_store", "why"),
+    [('"{archive}/.signin/tokens.json"', "TOKEN_IN_ARCHIVE"), ("5", "TOKEN_UNKNOWN")],
+)
+def test_a_sign_in_inside_the_archive_or_one_doctor_cant_place_is_a_problem(
+    tmp_path, token_store, why
+):
+    # The end-of-branch privacy review (2026-11-02): doctor says what the backup and the mirror
+    # refuse, in every role, naming the setting and never the token; it never assumes /plaud.
+    from recordings import backup
+
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8")
+        + f"[plaud]\ntoken_store = {token_store.format(archive=tmp_path / 'archive')}\n",
+        encoding="utf-8",
+    )
+    for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
+        assert getattr(backup, why) in doctor(env, role=role)["problems"], role
+
+
+def test_the_manifests_folder_and_the_state_copy_are_not_problems(tmp_path):
+    environ = server(tmp_path)
+    with_extra_paths(
+        environ,
+        "/backup-extra/deploy.env",
+        "/consent",
+        "/state/manifests",
+        "/state/backup/state.db",
+    )
+    assert doctor(environ, role="backup")["problems"] == []
+
+
+def test_backup_without_the_manifests_folder_is_a_warning(tmp_path):
+    # why: stage 2b spec §17.2 and decision 9: Sync everything's DAN-15 manifest is backed up
+    # through extra_paths; without the folder there, no backup carries it.
+    environ = server(tmp_path)
+    with_extra_paths(environ, "/backup-extra/deploy.env", "/consent")
+    warnings = doctor(environ, role="backup")["warnings"]
+    assert any("manifests folder" in w and 'add "/state/manifests"' in w for w in warnings)
+    for role, env in (("web", web_only(environ)), ("worker", environ)):
+        assert not any("manifests folder" in w for w in doctor(env, role=role)["warnings"]), role
+    with_extra_paths(environ, "/backup-extra/deploy.env", "/consent", "/state/manifests")
+    assert not any("manifests" in w for w in doctor(environ, role="backup")["warnings"])
+    # the state folder as configured counts too
+    with_extra_paths(
+        environ, "/backup-extra/deploy.env", "/consent", str(tmp_path / "state" / "manifests")
+    )
+    assert not any("manifests" in w for w in doctor(environ, role="backup")["warnings"])
+
+
+def test_backup_without_the_consent_folder_is_a_warning(tmp_path):
+    environ = server(tmp_path)
+    assert not any("consent folder" in w for w in doctor(environ, role="backup")["warnings"])
+    with_extra_paths(environ, "/backup-extra/deploy.env")
+    warnings = doctor(environ, role="backup")["warnings"]
+    assert any("consent folder" in w and 'add "/consent"' in w for w in warnings)
+    for role, env in (("web", web_only(environ)), ("all", environ)):
+        assert not any("consent folder" in w for w in doctor(env, role=role)["warnings"]), role
+    # a consent list configured somewhere else: its own folder counts
+    folder = tmp_path / "elsewhere"
+    with_extra_paths(environ, "/backup-extra/deploy.env", str(folder))
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + f'[plaud]\nconsent_list = "{folder / "c.md"}"\n',
+        encoding="utf-8",
+    )
+    assert not any("consent folder" in w for w in doctor(environ, role="backup")["warnings"])

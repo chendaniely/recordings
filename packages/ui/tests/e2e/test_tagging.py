@@ -22,9 +22,18 @@ def wait_until(check, timeout: float = 10.0, seen=None) -> None:
         time.sleep(0.05)
 
 
+def tagging_on(page: Page) -> None:
+    """Waits out the writer's first open. The Library is drawn before it ends, without tagging
+    (spec §5), and tagging comes on with a second library push: until then no × or + is drawn,
+    and T says "Opening the archive…" instead of opening the picker."""
+    expect(page.get_by_test_id("key-hint")).to_be_attached()  # the list's or the grid's head
+    expect(page.locator("[data-testid=cannot-tag].opening")).to_have_count(0)
+
+
 def open_library(page: Page, url: str) -> None:
     page.goto(url)
     expect(page.get_by_test_id("recording-row")).to_have_count(4)
+    tagging_on(page)
 
 
 def open_row(page: Page, text: str) -> None:
@@ -690,6 +699,7 @@ def test_refresh_hands_focus_on_when_the_focused_row_goes(page: Page, big_server
     # why: Refresh drops a row just tagged from the Untagged filter; with focus on it, focus fell
     # to <body>, so the keys stopped working until a click or Tab (spec §6, keyboard triage).
     page.goto(big_server.url)
+    tagging_on(page)
     page.get_by_test_id("filter-untagged").click()
     grid = page.get_by_test_id("recording-list")
     expect(grid).to_have_attribute("aria-rowcount", "201")
@@ -747,6 +757,7 @@ def test_refresh_keeps_the_focused_row_in_view_when_rows_above_it_go(
     # why: rows above the focused row left on Refresh, the row moved up, and the list stayed where
     # it was, with the focused row off-screen.
     page.goto(big_server.url)
+    tagging_on(page)
     page.get_by_test_id("filter-untagged").click()
     grid = page.get_by_test_id("recording-list")
     expect(grid).to_have_attribute("aria-rowcount", "201")
@@ -771,6 +782,7 @@ def test_refresh_moves_focus_to_the_row_that_followed_a_tagged_one(page: Page, b
     # why: when the focused row itself left on Refresh (T, tag, R), focus went back to the first
     # row and the list to the top, losing the user's place (ruled: the row that followed it).
     page.goto(big_server.url)
+    tagging_on(page)
     page.get_by_test_id("filter-untagged").click()
     grid = page.get_by_test_id("recording-list")
     expect(grid).to_have_attribute("aria-rowcount", "201")
@@ -1079,7 +1091,8 @@ def test_just_tagged_stays_through_a_refresh_that_keeps_the_selection(
     refresh = page.get_by_test_id("refresh")
     expect(refresh).to_contain_text("2 changed")
     page.keyboard.press("r")  # focus is back on the row T was pressed on
-    expect(refresh).to_have_text("Refresh")  # the new library has come: the marks are gone
+    # The new library has come: the marks are gone (the demo's canned arrivals cue stays).
+    expect(refresh).not_to_contain_text("changed")
     bar = page.get_by_test_id("selection-bar")
     expect(bar).to_contain_text("2 selected")
     expect(bar).to_contain_text("just tagged review")
@@ -1443,6 +1456,7 @@ def test_a_header_adds_to_the_selection_and_digits_toggle_the_first_columns(
 ):
     apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("untagged-only").uncheck()
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(4)
@@ -1480,6 +1494,7 @@ def test_enter_on_a_column_header_adds_its_tag_to_the_selection(
     # keys leave a header's buttons alone, so its sort menu opens by keyboard too.
     apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("untagged-only").uncheck()
     rows = page.get_by_test_id("grid-row")
     rows.filter(has_text="Apollo 13").locator(".tg-title").click()
@@ -1638,6 +1653,7 @@ def test_the_grid_is_one_tab_stop_and_its_keys_reach_cells_headers_and_the_picke
     # toggles; T opens the picker for the focused row, and Esc gives focus back to the cell.
     apollo13 = demo_ids["apollo13-problem"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(1)
     page.get_by_test_id("grid-refresh").focus()
@@ -1675,6 +1691,7 @@ def test_refresh_hands_the_grids_focus_to_the_row_that_followed(page: Page, big_
     # why: as in the list (Task 12): the row just tagged leaves Untagged only on Refresh; focus
     # goes to the same column of the row that followed it, in view, so the keys go on working.
     page.goto(f"{big_server.url}/#/tags")
+    tagging_on(page)
     grid = page.get_by_test_id("tags-grid")
     expect(grid).to_have_attribute("aria-rowcount", "201")
     page.get_by_test_id("grid-row").first.locator(".tg-title").click()
@@ -1892,6 +1909,7 @@ def test_tagging_rows_one_by_one_keeps_one_running_toast(page: Page, big_server,
     # why: item 2. In Untagged only, every row's first tag makes it visible to external agents,
     # and each such change had a toast of its own: 20 rows left 21 toasts, each read out.
     page.goto(f"{big_server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("grid-row").first.locator(".tg-title").click()
     for i in range(5):
         if i:
@@ -1946,6 +1964,7 @@ def test_cmd_home_keeps_the_selection_so_a_header_adds_to_every_selected_row(
     # reached from the top row, went to one row (spec §6: Cmd/Ctrl moves focus only).
     jfk, fdr = demo_ids["jfk-rice"], demo_ids["fdr-fireside-1"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("untagged-only").uncheck()
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(4)  # Apollo 13, Apollo 11, JFK, Fireside
@@ -1996,6 +2015,7 @@ def test_a_focused_pending_cell_shows_its_ring_and_its_pending_outline(page: Pag
     # user never saw a change in flight (spec §6).
     held = hold_tag_results(page)
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(1)
     rows.first.locator(".tg-title").click()
@@ -2037,6 +2057,7 @@ def test_a_key_on_a_cell_scrolled_away_sideways_brings_it_back(page: Page, big_s
     # pinned columns.
     page.set_viewport_size({"width": 1000, "height": 700})
     page.goto(f"{big_server.url}/#/tags")
+    tagging_on(page)
     grid = page.get_by_test_id("tags-grid")
     first = page.get_by_test_id("grid-row").first
     first.locator(".tg-title").click()
@@ -2063,6 +2084,7 @@ def test_a_held_enter_on_a_header_adds_once(page: Page, server, console, demo_id
     # "Add … to 2 selected" sent the add four times.
     apollo13, jfk = demo_ids["apollo13-problem"], demo_ids["jfk-rice"]
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     page.get_by_test_id("untagged-only").uncheck()
     rows = page.get_by_test_id("grid-row")
     rows.filter(has_text="Apollo 13").locator(".tg-title").click()
@@ -2106,6 +2128,7 @@ def test_a_focused_cell_keeps_its_ring_and_pending_marker_in_forced_colours(
     page.emulate_media(forced_colors="active")
     held = hold_tag_results(page)
     page.goto(f"{server.url}/#/tags")
+    tagging_on(page)
     rows = page.get_by_test_id("grid-row")
     expect(rows).to_have_count(1)
     rows.first.locator(".tg-title").click()
@@ -2528,6 +2551,7 @@ def on_screen(page: Page, locator) -> bool:
 def test_on_a_phone_the_selection_bar_stays_on_screen(page: Page, big_server, console):
     # The Tags tab on a phone: the Library's Untagged, with its bar at the bottom of the screen.
     page.goto(f"{big_server.url}/#/tags")
+    tagging_on(page)
     rows = page.get_by_test_id("recording-row")
     bar = page.get_by_test_id("selection-bar")
     expect(page.get_by_test_id("tags-grid")).to_have_count(0)
@@ -2563,16 +2587,19 @@ WHOLE = """el => {
 }"""
 
 
-@pytest.mark.parametrize("height", [250, 170])
+@pytest.mark.parametrize("height", [250, 200, 170, 140, 125])
 @pytest.mark.browser_context_args(is_mobile=True, has_touch=True)
 def test_on_a_short_phone_screen_the_librarys_bar_stays_whole(
     page: Page, big_server, console, height
 ):
-    # Task 15 fix round 1, item 12. On a phone the panes' grid squeezes its rows to fit the screen.
-    # At 250 px it squeezed the list (min-height: 0) below its header and bar: the bar was cut off
-    # or, sticky in a list that hides its overflow, covered the header. A list that clips (not a
-    # scroll container) keeps its content's height as its minimum. At 170 px even that doesn't fit,
-    # the panes scroll, and only the sticky bar stays on screen.
+    # Task 15 fix round 1, item 12; Task 21 fix round 1. On a phone the panes' grid squeezes its
+    # rows to fit the screen, and the lists are capped at 40dvh. Squeezed, the list (min-height: 0)
+    # cut its header and bar off or, sticky in a list that hides its overflow, covered the header.
+    # A list that clips (not a scroll container) keeps its content's height as its minimum, and the
+    # cap has a floor (92 px: head 45 + bar 43 + borders), because under about 215 px the cap alone
+    # left the list shorter than its bar, whose cut-off part showed the pane behind it (200 px was
+    # the worst case). On a screen too short even for that the panes scroll, and the sticky bar
+    # stays on screen. Whole at every height here, scrolling or not.
     page.set_viewport_size({"width": 360, "height": height})
     page.goto(big_server.url)
     rows = page.get_by_test_id("recording-row")
@@ -2583,10 +2610,10 @@ def test_on_a_short_phone_screen_the_librarys_bar_stays_whole(
     panes = page.locator(".panes")
     panes.evaluate("el => { el.scrollTop = 0; }")  # a tap scrolls its checkbox into view
     scrolls = panes.evaluate("el => el.scrollHeight - el.clientHeight > 1")  # beyond rounding
-    assert scrolls == (height == 170)
+    print("SCAN", height, scrolls)
     assert bar.evaluate(WHOLE)
-    if height == 170:
-        return  # 80 px of panes can't show both the list's 45 px header and the 43 px bar
+    if scrolls:
+        return  # the panes scroll: only the sticky bar is promised, not the list's header
     # ...and covers none of the list's header, its Refresh included: in a list that hides its
     # overflow, the sticky bar sticks to the list's own bottom, up over the header.
     head = page.locator(".list-head").bounding_box()
@@ -3268,6 +3295,7 @@ def test_the_built_bundle_portals_toasts_dialogs_and_scrolls(page: Page, big_ser
 
 def test_a_large_batch_shows_progress_then_its_result(page: Page, big_server, console):
     page.goto(big_server.url)
+    tagging_on(page)
     page.get_by_test_id("recording-row").first.click()
     page.keyboard.press("ControlOrMeta+a")
     page.keyboard.press("t")
@@ -3307,3 +3335,128 @@ def test_an_undo_after_a_refresh_brings_the_row_back_to_the_library_and_the_grid
     page.get_by_test_id("filter-untagged").click()
     expect(page.get_by_test_id("recording-row")).to_have_count(1)
     expect(page.get_by_test_id("recording-row")).to_contain_text("Apollo 13")
+
+
+@pytest.mark.browser_context_args(
+    is_mobile=True, has_touch=True, viewport={"width": 320, "height": 700}
+)
+def test_the_top_bar_at_320_px_is_one_row_of_44_px_targets(page: Page, server, console):
+    # Task 21 fix round 2 (J7, 2b spec 15.4): the logo's mark, the four tabs and the theme icon on
+    # one row, each tab and the icon at least 44 x 44, and no horizontal scroll.
+    open_library(page, server.url)
+    bar = page.locator(".topbar")
+    tabs = bar.locator("button.nav")
+    assert tabs.count() == 4
+    boxes = [tabs.nth(i).bounding_box() for i in range(4)]
+    icon = bar.get_by_test_id("theme-cycle").bounding_box()
+    mark = bar.locator(".logo i").bounding_box()
+    seen = (
+        f"tabs {[(round(b['x'], 1), round(b['width'], 1), round(b['height'], 1)) for b in boxes]}"
+        f", icon {icon}, bar {bar.bounding_box()}"
+    )
+    for b in [*boxes, icon]:
+        assert b["width"] >= 44 and b["height"] >= 44, seen
+    row = [*boxes, icon, mark]
+    assert (
+        max(b["y"] + b["height"] / 2 for b in row) - min(b["y"] + b["height"] / 2 for b in row) < 1
+    ), seen
+    assert max(b["x"] + b["width"] for b in row) <= 320 + 0.5, seen
+    assert bar.bounding_box()["height"] < 60, seen  # one row
+    assert page.evaluate("() => document.documentElement.scrollWidth") <= 320, seen
+    # At this text size the tabs fit, so their row has nothing to scroll (Q&A §5's guard is idle).
+    assert bar.locator("nav").evaluate("el => el.scrollWidth - el.clientWidth") == 0, seen
+
+
+# The phone's own text size turned up, as its text zoom does it: the text, set in pixels, scaled
+# about 1.4 times. Added through the page; the product's CSS is untouched.
+LARGER_TEXT = "html, body { font-size: 20px; }"
+
+
+@pytest.mark.browser_context_args(
+    is_mobile=True, has_touch=True, viewport={"width": 320, "height": 700}
+)
+def test_at_320_px_a_larger_text_size_scrolls_the_tab_row_never_the_page(
+    page: Page, server, console
+):
+    # Dan, phase-end Q&A §5 ("Tabs scroll"): with the text size turned up, the logo's mark, the
+    # four tabs and the theme icon no longer fit at 320 px. The tab row scrolls within itself:
+    # the page never scrolls sideways, the bar stays one row, and every tab can be reached.
+    open_library(page, server.url)
+    page.add_style_tag(content=LARGER_TEXT)
+    page.evaluate(TWO_FRAMES)
+    bar = page.locator(".topbar")
+    nav = bar.locator("nav")
+    sideways = "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+    assert page.evaluate(sideways) == 0
+    assert bar.bounding_box()["height"] < 60  # one row
+    # The larger text really doesn't fit: the row has something to scroll.
+    assert nav.evaluate("el => el.scrollWidth - el.clientWidth") > 0
+    icon = bar.get_by_test_id("theme-cycle").bounding_box()
+    assert icon["x"] + icon["width"] <= 320 + 0.5 and icon["width"] >= 44  # still whole
+    for name in ("Status", "Add", "Tags", "Library"):  # the last tab first: it starts out of view
+        tab = nav.get_by_role("button", name=name, exact=True)
+        tab.scroll_into_view_if_needed()
+        box, row = tab.bounding_box(), nav.bounding_box()
+        seen = f"{name}: {box}, row {row}"
+        assert box["width"] >= 44 and box["height"] >= 44, seen
+        assert row["x"] - 0.5 <= box["x"], seen  # inside the row's visible part
+        assert box["x"] + box["width"] <= row["x"] + row["width"] + 0.5, seen
+        assert box["x"] + box["width"] <= 320 + 0.5, seen
+        tab.click()
+        assert page.evaluate(sideways) == 0, seen
+    # From the keyboard too: the last tab, cut off at the row's edge, comes fully into the row
+    # when it takes focus, with room for its focus ring.
+    nav.evaluate("el => { el.scrollLeft = 0; }")
+    nav.get_by_role("button", name="Library", exact=True).focus()
+    for _ in range(3):
+        page.keyboard.press("Tab")
+    status = nav.get_by_role("button", name="Status", exact=True)
+    expect(status).to_be_focused()
+    page.evaluate(TWO_FRAMES)
+    box, row = status.bounding_box(), nav.bounding_box()
+    seen = f"Status focused: {box}, row {row}"
+    assert box["x"] + box["width"] <= row["x"] + row["width"] - 4 + 0.5, seen  # inside the padding
+    # Each press went where it says: Status and the Sync screen open, and on a phone Tags is the
+    # Library with the Untagged filter (CLAUDE.md), which Library then leaves.
+    nav.get_by_role("button", name="Status", exact=True).click()
+    expect(page.get_by_test_id("sync-panel")).to_be_visible()
+    nav.get_by_role("button", name="Add", exact=True).click()
+    expect(page.get_by_test_id("sync-page")).to_be_visible()
+    nav.get_by_role("button", name="Library", exact=True).click()
+    expect(nav.get_by_role("button", name="Library", exact=True)).to_have_attribute(
+        "aria-current", "page"
+    )
+
+
+@pytest.mark.browser_context_args(
+    is_mobile=True, has_touch=True, viewport={"width": 320, "height": 700}
+)
+def test_the_library_and_details_at_320_px_with_re_sync_drawn(page: Page, server, console):
+    # 2b's phase-end list, row 23 and the council's G5 (J7, 2b spec §15.4): the Library's Refresh
+    # is a 44 px target with its header as tall as it was; the selection bar, with Re-sync drawn
+    # now that the worker handles it (off in the demo, with the demo's reason), stays one line
+    # ("Re-sync", its "from Plaud" dropped); and Details' tab row scrolls within itself, so the
+    # panes never scroll sideways.
+    open_library(page, server.url)
+    refresh = page.get_by_test_id("refresh").bounding_box()
+    assert refresh["height"] >= 44 and refresh["width"] >= 44, refresh
+    assert page.locator(".list-head").bounding_box()["height"] <= 46
+    rows = page.get_by_test_id("recording-row")
+    rows.nth(0).locator(".check").click()
+    rows.nth(1).locator(".check").click()
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    resync = bar.locator("[data-request=resync]")
+    assert resync.inner_text().strip() == "Re-sync"  # the phone's short label
+    expect(resync).to_be_disabled()
+    assert bar.bounding_box()["height"] <= 44, bar.bounding_box()  # one line
+    bar.get_by_role("button", name="Clear").click()
+    open_row(page, "JFK")
+    tabs = page.locator(".tabs-list")
+    box = tabs.bounding_box()
+    assert box["x"] + box["width"] <= 320 + 0.5 and box["height"] >= 30, box  # never squeezed
+    for tab in page.get_by_role("tab").all():
+        assert tab.bounding_box()["height"] >= 24, tab.bounding_box()
+    panes = page.locator(".panes")
+    assert panes.evaluate("el => el.scrollWidth - el.clientWidth") <= 1
+    assert page.evaluate("() => document.documentElement.scrollWidth") <= 320

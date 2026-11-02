@@ -1,7 +1,10 @@
 import { useShinyOutputError, useShinyOutputValue } from "../sr";
 import type { StatusView } from "../types";
+import { SyncPanel } from "./SyncPanel";
 
-/** Status's backup and disk panels (spec §12.5), read-only. Alerts are the push view (§14). */
+/** Status's sync, backup and disk panels (spec §12.5; 2b spec §15.2), read-only but for the sync
+ * panel's two Accept buttons. Needs attention holds every panel's lines. Alerts are the push view
+ * (§14). */
 export function StatusPage() {
   const status = useShinyOutputValue<StatusView>("status");
   const error = useShinyOutputError("status");  // without it, a server error is "Loading…" for ever
@@ -23,6 +26,7 @@ export function StatusPage() {
           <ul>{status.attention.map((a) => <li key={a}>{a}</li>)}</ul>
         </div>
       )}
+      {status.sync && <SyncPanel panel={status.sync} />}
       <section className="card" aria-labelledby="status-backups">
         <h2 id="status-backups">Backups</h2>
         {status.configured ? (

@@ -10,7 +10,8 @@ import type { LibraryRow } from "../types";
 
 const toasts = vi.hoisted(() => ({ showCannotTag: vi.fn(), showSelectFirst: vi.fn() }));
 vi.mock("../tagging/toasts", () => toasts);
-vi.mock("../sr", () => ({})); // useTagging's Shiny side: the list only reads the context
+// useTagging's Shiny side: the list only reads the context, and the header the arrivals cue.
+vi.mock("../sr", () => ({ useShinyOutputValue: () => undefined }));
 
 import { Announcer, KEY_HINT, RecordingList, dragImage, openNewTag, openPickerFor } from "./RecordingList";
 
@@ -25,7 +26,7 @@ const fake = (over: Partial<Tagging> = {}): Tagging => ({
   view: null, loadKey: 1, marks: {}, pending: [], confirm: null, revealed: { key: 0, ids: [] }, touched: 0,
   lastTagged: null, lastUndone: null, sessionTags: [], refused: null, drag: { current: null }, canTag: true, opening: false, reason: null, saves: true,
   isPrivate: () => false, tag: vi.fn(), undo: vi.fn(), undoLast: vi.fn(), refresh: vi.fn(), answerConfirm: vi.fn(),
-  picker: null, openPicker: vi.fn(), closePicker: vi.fn(), snippet: () => undefined, wantSnippets: vi.fn(),
+  picker: null, openPicker: vi.fn(), closePicker: vi.fn(), snippet: () => undefined, wantSnippets: vi.fn(), mergeRows: vi.fn(),
   ...over,
 });
 

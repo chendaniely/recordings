@@ -7,7 +7,10 @@ from recordings.archive import RawSource
 from recordings.config import Config, ConfigError
 from recordings.models import MediaInfo, PlaudState, Recording, TagRef, is_private
 from recordings.plaud.blocks import render_note
+from recordings.plaud.checks import Marker
+from recordings.plaud.privacy import PatternSet, PrivacyInputs, title_sha256
 from recordings.plaud.reconcile import (
+    DEFAULT_AUTO_PRIVATE,
     PLAUD_VERSION,
     Snapshot,
     matches_auto_private,
@@ -286,30 +289,43 @@ def test_a_difference_a_notes_output_cant_show_writes_no_new_output(plaud_env):
     assert reconcile(rec(), [s1, s2], first.outputs).outputs == ()
 
 
+def judged(*titles_by_id: tuple[str, str]) -> PrivacyInputs:
+    """Privacy inputs whose markers say each (Plaud ID, title) was judged under version 1."""
+    first = DEFAULT_AUTO_PRIVATE
+    return PrivacyInputs(
+        markers={pid: Marker(pid, title_sha256(title), 1) for pid, title in titles_by_id},
+        patterns=PatternSet(1, first, {1: first}),
+        words=(),
+    )
+
+
 def test_a_private_tag_dan_removed_stays_removed_until_plauds_title_changes(plaud_env):
-    # why: §7.4. The patterns run on the first reconcile and again when Plaud's title changes,
+    # why: stage 2b §13. The patterns run once per new Plaud title, as the marker records it,
     # never on every reindex, which would undo Dan's decision each time.
     removed = rec(title="Interview: Ada", plaud=PlaudState(title_seen="Interview: Ada"))
-    assert reconcile(removed, [snap(plaud_env(name="Interview: Ada"))], []).add_private is False
+    seen = judged((HEX, "Interview: Ada"))
+    same = [snap(plaud_env(name="Interview: Ada"))]
+    assert reconcile(removed, same, [], privacy=seen).add_private is False
     renamed = [
         snap(plaud_env(name="Interview: Ada")),
         snap(plaud_env(name="Interview: Ada, part 2"), 1),
     ]
-    assert reconcile(removed, renamed, []).add_private is True
+    assert reconcile(removed, renamed, [], privacy=seen).add_private is True
     assert reconcile(rec(), [snap(plaud_env(name="Interview: Ada"))], []).add_private is True
 
 
 def test_a_new_title_under_either_id_or_in_a_degraded_snapshot_runs_the_patterns_again(plaud_env):
-    # why: privacy still errs towards private once Dan has removed a tag: a new title under the
-    # other Plaud ID, or in a snapshot nothing is built from, is a title change.
+    # why: privacy still errs towards private once Dan has removed a tag: a title under a Plaud ID
+    # the marker never saw, or a new one in a snapshot nothing is built from, is checked.
     removed = rec(title="Week 4", plaud=PlaudState(title_seen="Week 4"))
+    seen = judged((HEX, "Week 4"))
     other = [
         snap(plaud_env(name="Week 4")),
         snap(plaud_env(OTHER, name="Interview: Ada"), 1, ref=OTHER),
     ]
-    assert reconcile(removed, other, []).add_private is True
+    assert reconcile(removed, other, [], privacy=seen).add_private is True
     degraded = [snap(plaud_env(name="Week 4")), snap(plaud_env(name="Private", link_error=True), 1)]
-    assert reconcile(removed, degraded, []).add_private is True
+    assert reconcile(removed, degraded, [], privacy=seen).add_private is True
 
 
 def test_accepting_a_later_removal_never_rewrites_a_slot_that_came_back_as_it_was(plaud_env):

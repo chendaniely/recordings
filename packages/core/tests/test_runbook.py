@@ -165,6 +165,16 @@ def test_restoring_for_real_puts_every_piece_back():
         "state.db",
     ):
         assert needed in code, needed
+    # stage 2b: the consent list comes back from the snapshot, and a new server gets section 6's
+    # folders and the sync's URL file before `rc up -d` (compose.yml needs them)
+    text = " ".join(_section("## Restoring for real").split())
+    assert '"$R/consent" "$RECORDINGS_HOME/consent"' in code
+    assert "/consent" in text.split("1. **Find the snapshot.**")[0]
+    assert "section 6" in text.split("1. **Find the snapshot.**")[0]
+    assert code.index("$R/consent") < code.index("rc up -d")
+    assert "Sections 2 to 5 deploy 2a's last commit" in " ".join(
+        _section("## 0. Before you start").split()
+    )
 
 
 def test_every_recordings_command_the_runbook_names_parses():
@@ -190,7 +200,7 @@ def test_every_recordings_command_the_runbook_names_parses():
             # The command itself: first on the line, or after a service name, `run` or `exec`.
             # Not `--tag recordings` or a path.
             if token != "recordings" or (
-                i and tokens[i - 1] not in ("web", "backup", "run", "exec")
+                i and tokens[i - 1] not in ("web", "backup", "worker", "run", "exec")
             ):
                 continue
             command = []
@@ -219,9 +229,10 @@ def test_every_recordings_command_the_runbook_names_parses():
         "alert-test",
     } <= named, sorted(named)
     assert any(c[0] == "init" and "--adopt" in c for c in commands)
-    assert {"web", "backup"} <= {
+    assert {"web", "backup", "worker"} <= {
         c[c.index("--role") + 1] for c in commands if c[0] == "doctor" and "--role" in c[:-1]
     }
+    assert ["plaud", "consent"] in commands and ["worker", "--alive"] in commands
     assert any(c[:2] == ["backup", "restore-test"] for c in commands)
     # Two commands the runbook names only in prose, where the parse used to skip them.
     assert ["mirror", "--max-delete", "1"] in commands and ["mirror", "--debug"] in commands
@@ -236,3 +247,245 @@ def test_the_runbook_says_the_first_real_tag_ends_the_disposable_window():
     # The definition, so "the first real tag" can't be read as the imported ones.
     assert "applied in the app, not the ones imported" in " ".join(text.split())
     assert "loses every tag applied in the app" in " ".join(text.split())
+
+
+def test_the_runbook_says_how_to_take_a_recording_out_by_hand():
+    # why: stage 2b spec §12.4. trash/ is inside the archive, so it is backed up and mirrored: a
+    # recording that must not be kept is deleted for good, after its ID is on the consent list.
+    text = _section("## Taking a recording out by hand")
+    flat = " ".join(text.split())
+    for needed in ("make consent-add", "rm -rf", "reindex --allow-missing", "Plaud's cloud"):
+        assert needed in flat, needed
+    assert "Never move it to `trash/`" in flat
+    assert not re.search(r"\bmv\b[^\n]*trash", text)
+    assert flat.index("make consent-add") < flat.index("rm -rf") < flat.index("--allow-missing")
+
+
+def test_the_runbook_says_what_to_do_when_the_plaud_alert_comes():
+    # why: stage 2b spec §17.5, §16. The email carries no reason: Status's line names it, and the
+    # runbook must know every phrase Status can show there, as the code spells it.
+    from recordings.plaud.health import BLOCKER_PHRASES, DISK, OFF
+    from recordings.plaud.settings import BAD_WORD
+
+    text = " ".join(_section("## When the Plaud alert comes").split())
+    for needed in ("isn't being pinged since", "`rc ps`", "`rc logs worker`", "Email Reports"):
+        assert needed in text, needed
+    for phrase in (*BLOCKER_PHRASES.values(), DISK, OFF, BAD_WORD):
+        assert phrase in text, phrase
+    # The two phrases cause() builds from a name: an error's class and a blocker the app lacks.
+    assert "error: `<Class>`" in text and "blocked: <name>" in text
+    assert "`make plaud-sign-in`" in text and "recordings reindex" in text
+    # A private the disk or a folder's owner stopped (Task 8's PRIVATE_UNWRITTEN_IO, Task 19's
+    # "Late consent listings stopped") isn't mended by reindex.
+    assert "check the archive disk and its permissions" in text
+
+
+def test_the_runbook_has_a_deploy_2b_section():
+    # why: stage 2b spec §17.5, and 2b phase 1 plan, decision 10: Phase 1 deploys, with the
+    # folders, the sync's own check, the sign-in (Phase 2's `make plaud-sign-in`) and the
+    # worker's checks.
+    headings = [line for line in _text().splitlines() if line.startswith("## ")]
+    six = headings.index("## 6. Deploy 2b")
+    assert headings[six - 1 : six + 4] == [
+        "## 5. The mirror on the Mac",
+        "## 6. Deploy 2b",
+        "## 7. The dry run",
+        "## 8. The catch-up",
+        "## Setting up ntfy, later",
+    ]
+    text = _section("## 6. Deploy 2b")
+    code = "\n".join(_code_lines(text))
+    for needed in (
+        'install -d -m 700 "$RECORDINGS_HOME/consent"',
+        'install -d -m 700 "$RECORDINGS_HOME/plaud"',
+        "install -m 600 /dev/null deadman_sync_url",
+        "make deploy",
+        "rc exec worker recordings doctor --role worker",
+        "rc exec worker recordings plaud consent",
+        "rc exec worker recordings alert-test",
+        "make plaud-sign-in",
+        "rc exec worker recordings plaud check",
+    ):
+        assert needed in code, needed
+    flat = " ".join(text.split())
+    for needed in (
+        "under 2 seconds",
+        "a period of 20 minutes, a grace of 2 hours",
+        # spec §17.2: after step 6's sign-in, doctor reports no problem; without it, the problem
+        "sign-in needed: run `make plaud-sign-in`",
+        "local.mk",
+        "reports no problem and exits 0",
+        "Scheduled sync waits for the first catch-up (runbook)",
+        '"/consent"',
+        "RECORDINGS_CONSENT_HOST",
+        "RECORDINGS_PLAUD_HOST",
+        "RECORDINGS_ALERTS_TOPIC_HOST",
+        'as "Rolling back across 2b" says, not as 2.8',
+        "never goes down",
+    ):
+        assert needed in flat, needed
+    # decision 9: Sync everything (area B2) writes its manifests there, made before it is listed
+    assert (
+        '"/state/manifests"]' in flat
+        and 'install -d -m 700 "$RECORDINGS_HOME/state/manifests"' in code
+    )
+    lines = [line.strip() for line in _code_lines(text)]  # the code first, as 2.8 does for a tag
+    checkout = lines.index("git checkout <stage 2b's merge commit>")
+    assert lines.index("git fetch") < checkout < lines.index("make deploy")
+    ntfy = " ".join(_section("## Setting up ntfy, later").split())
+    assert "RECORDINGS_ALERTS_TOPIC_HOST" in ntfy and "`make deploy`" in ntfy
+
+
+def test_the_runbook_has_the_dry_run_and_the_catch_up():
+    # why: stage 2b spec §17.5's sections 7 and 8 (C1.02, C4.06, decision 7): the make targets
+    # that run them, what to check, what to do when the catch-up stops or is held (the deploy
+    # guard's "run it again by hand (the runbook)" points here), and "You may start tagging now."
+    # after the post-import backup, then the sync's check up within 20 minutes.
+    seven = _section("## 7. The dry run")
+    assert "make plaud-dry-run" in "\n".join(_code_lines(seven))
+    flat = " ".join(seven.split())
+    for needed in (
+        "recordings plaud sync --dry-run --list",
+        "Both equations add up",
+        "waits for the first catch-up",
+        "consent list: N IDs, M on Plaud now",
+        "before section 8's `pre-import` backup",
+        "stop if anything doesn't fit",
+    ):
+        assert needed in flat, needed
+    eight = _section("## 8. The catch-up")
+    code = "\n".join(_code_lines(eight))
+    assert "make plaud-catch-up" in code
+    assert "rc exec worker recordings plaud accept-listing" in code
+    flat = " ".join(eight.split())
+    for needed in (
+        "a backup tagged `pre-import`",
+        "recordings plaud sync --catch-up",
+        "a backup tagged `post-import`",
+        "The first catch-up didn't finish: run `--catch-up` again (runbook)",
+        "**You may start tagging now.**",
+        "Within 20 minutes, Healthchecks shows the sync's check up",
+    ):
+        assert needed in flat, needed
+    assert flat.index("`post-import`") < flat.index("**You may start tagging now.**")
+    targets = Path(REPO / "Makefile").read_text(encoding="utf-8")
+    assert "\nplaud-dry-run:" in targets and "\nplaud-catch-up:" in targets
+
+
+def test_the_runbook_says_how_to_sign_in_to_plaud():
+    # why: stage 2b spec §17.5's "Plaud sign-in" section: when, `make plaud-sign-in`, what it
+    # prints, and `plaud check`; and CLAUDE.md's rule that a Claude session never runs either.
+    text = " ".join(_section("## Plaud sign-in").split())
+    for needed in (
+        "make plaud-sign-in",
+        "rc exec worker recordings plaud check",
+        "signed in: yes · access token expires",
+        "refresh token: present · account 1a2b3c4d",
+        "a Claude session never runs `make plaud-sign-in` or `token-import`",
+        "never backed up",
+        "step 2 failed",
+        "step 3 failed",
+        "step 4 failed",
+        "`[plaud] token_url`",
+        "2026-11-01-stage-2b-guesses.md",
+    ):
+        assert needed in text, needed
+
+
+def test_the_runbook_rolls_back_across_2b():
+    # why: stage 2b spec §17.3. The checkout's compose file would start a worker whose command an
+    # older image lacks, so it goes before `make rollback`; and the older backup refuses every
+    # backup while [backup] extra_paths names a folder (decision 9), so "/consent" comes out
+    # first and goes back only once the deploy forward has worked.
+    text = _section("## Rolling back across 2b")
+    back = _code_lines(text)
+
+    def first(pattern: str) -> int:
+        return next(i for i, line in enumerate(back) if re.search(pattern, line))
+
+    assert (
+        first(r"sh docker/up-deployed.sh stop worker && sh docker/up-deployed.sh rm -f worker")
+        < first(r"^\s*git checkout ")
+        < first(r"make rollback TAG=")
+    )
+    flat = " ".join(text.split())
+    assert "Pause the sync's Healthchecks check" in flat
+    out = 'take `"/consent"` and `"/state/manifests"` out of `[backup] extra_paths`'
+    back_in = 'put `"/consent"` and `"/state/manifests"` back'
+    assert flat.index(out) < flat.index("make rollback TAG=")
+    assert not any(re.match(r"\s*rc ", line) for line in back), "rc needs the image tag exported"
+    assert "secrets/ntfy_topic" in flat  # a pre-2b compose.yml requires the file
+    assert flat.index("`make deploy`") < flat.index(back_in)
+    assert flat.index(back_in) < flat.index("sh docker/up-deployed.sh restart backup")
+
+
+def test_the_runbook_keeps_a_recording_out_for_good():
+    # why: stage 2b spec §12.1 and §17.5. The ID goes in single quotes: the Copy ID form's
+    # backticks would run in the shell otherwise. Planned work never pauses the sync's check.
+    keep = " ".join(_section("## Keep a recording out for good").split())
+    for needed in (
+        "make consent-add ID='<id>'",
+        "single quotes",
+        "local.mk",
+        "Copy ID",
+        "recordings plaud consent",
+        "the ID first",
+    ):
+        assert needed in keep, needed
+    assert "2 hours" in _section("## Planned work and the sync's check")
+    headings = [line for line in _text().splitlines() if line.startswith("## ")]
+    keep_at = headings.index("## Keep a recording out for good")
+    assert headings[keep_at + 1 : keep_at + 3] == [
+        "## Planned work and the sync's check",
+        "## Rolling back across 2b",
+    ]
+
+
+def test_re_imports_stop_the_worker_and_mount_the_consent_folder():
+    # why: stage 2b spec §17.5. A re-import stops the worker as it stops the backup service, and
+    # mounts the consent folder: the old file path no longer exists once the list has moved.
+    importing = _code_lines(_section("## 4. Import"))
+    stop, start = importing.index("rc stop worker"), importing.index("rc start worker")
+    run = next(i for i, line in enumerate(importing) if "import-audio-router /import" in line)
+    assert stop < run < start
+    (mounts,) = [line for line in _code_lines() if line.startswith("IMPORT_MOUNTS=(")]
+    assert '-v "$RECORDINGS_HOME/consent:/consent:ro"' in mounts
+    assert "consent-list.md:/consent" not in mounts
+
+
+def test_keep_a_recording_out_says_what_consent_add_refuses_and_when_the_count_shows():
+    # why: consent-add never makes or extends a list (spec §12.1); its readback can precede the
+    # worker's next look; decision 12's date example; the list is 0400, and a watcher sees any edit.
+    keep = " ".join(_section("## Keep a recording out for good").split())
+    for needed in (
+        "missing, empty or only comments",
+        "section 6 step 1",
+        "is added again",
+        "run `rc exec worker recordings plaud consent` again",
+        "- 20261023 — asked",
+        "mode 0400",
+        "in place",
+    ):
+        assert needed in keep, needed
+    assert "any editor, which writes a new file" not in keep
+
+
+def test_the_runbook_says_how_to_recover_from_a_hold_and_a_consent_stop():
+    # why: stage 2b area A6's list (the runbook's hold and consent-stop recovery): every sentence
+    # a hold's Accept can be refused with, as the code spells it, has its step; and the consent
+    # stop says how to mend the list and check what the worker read.
+    from recordings.plaud.hold import CODE_FIX, CONSENT_FIRST
+
+    held = " ".join(_section("## When the sync is held").split())
+    for needed in (
+        "rc exec worker recordings plaud accept-listing",
+        "make consent-add",
+        "Fix this first",
+        CONSENT_FIRST.split(":")[0],
+        CODE_FIX.split(":")[0],
+        "sync --dry-run --list",
+    ):
+        assert needed in held, needed
+    stop = " ".join(_section("## When imports stop: the consent list").split())
+    for needed in ("rc exec worker recordings plaud consent", "by rename", "lines 14 and 22"):
+        assert needed in stop, needed

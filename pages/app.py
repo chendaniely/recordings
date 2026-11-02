@@ -1,8 +1,9 @@
 """The static GitHub Pages demo's entry (spec §17.1): Shiny on Pyodide, through Shinylive.
 
 `make pages` copies this file to the top of the app it exports, beside vendored copies of
-`recordings`, `recordings_ui` (without its FastAPI app) and `shinyreact`, and `demo/archive/`
-without its media. Pages serves the media itself, at `<site>/media/<id>.<ext>`.
+`recordings`, `recordings_ui` (without its FastAPI app) and `shinyreact`, `demo/archive/`
+without its media, and `demo/plaud-sync.json`, the canned Plaud view. Pages serves the media
+itself, at `<site>/media/<id>.<ext>`.
 
 Demo only, always: an empty environment, never os.environ, so nothing can point it at
 config.toml, RECORDINGS_ARCHIVE or a secret. There is no FastAPI or uvicorn here, because
@@ -16,6 +17,7 @@ import markdown_it  # noqa: F401
 import pydantic  # noqa: F401
 from recordings.archive import Archive
 from recordings_ui import runtime
+from recordings_ui.plaud import cannot_request_reason, demo_view_settings
 from recordings_ui.settings import from_env
 from recordings_ui.tagging import TagService, pages_store
 
@@ -25,8 +27,16 @@ archive = Archive(settings.archive)
 # Tags are kept in memory and lost on reload: nothing is written, not even to Pyodide's own file
 # system, and the UI says "Demo: changes aren't saved" (tagging spec §5). pages_store refuses to
 # run anywhere but Pyodide.
-# The app runs at <site>/app_<id>/, so the site's media/ folder is one level up.
-runtime.configure(archive, media_base="../media/", tagging=TagService(pages_store(archive)))
+# The app runs at <site>/app_<id>/, so the site's media/ folder is one level up. The Sync screen
+# and Status's sync panel draw the canned view from_env copied beside the archive (2b phase 1
+# plan, decision 23), with every button off: there is no state.db, so no request is ever made.
+runtime.configure(
+    archive,
+    media_base="../media/",
+    tagging=TagService(pages_store(archive)),
+    plaud=demo_view_settings(settings.archive),
+    plaud_reason=cannot_request_reason(settings, None),
+)
 
 from recordings_ui.shiny_app import app  # noqa: E402  after configure()
 

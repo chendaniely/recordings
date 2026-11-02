@@ -296,3 +296,60 @@ def test_on_a_phone_the_tags_tab_is_the_untagged_library_and_toasts_sit_at_the_t
     top = toaster.bounding_box()["y"]
     assert top < 370, top  # the top half of the screen
     watch.assert_clean()
+
+
+# Every input name the page sends from now on (shinyreact calls window.Shiny.setInputValue).
+SPY_INPUTS = """() => {
+    window.__sent = [];
+    const set = window.Shiny.setInputValue;
+    window.Shiny.setInputValue = (name, value, opts) => {
+        window.__sent.push(name);
+        return set.call(window.Shiny, name, value, opts);
+    };
+}"""
+
+
+def test_the_canned_sync_screen_on_pyodide_sends_no_request_and_logs_nothing(
+    page: Page, site_url, watch
+):
+    # why: C9.07, spec §15.5. Pages has no worker, no Plaud code and no network: its Sync screen
+    # and Status's panel draw the canned view, every request button is off, and pressing one
+    # sends nothing.
+    app, frame = open_demo(page, site_url)
+    frame.evaluate(SPY_INPUTS)
+    nav = app.get_by_role("navigation", name="Pages")
+    nav.get_by_role("button", name="Add").click()
+    expect(app.get_by_test_id("sync-page")).to_be_visible(timeout=RENDER_TIMEOUT)
+    expect(app.get_by_test_id("sync-summary")).to_contain_text(
+        "Demo: nothing is synced", timeout=RENDER_TIMEOUT
+    )
+    expect(app.get_by_test_id("not-here-row")).to_have_count(5, timeout=RENDER_TIMEOUT)
+    # Stage 2b's states, invented (area B3): a hold, the breaker, a released row, Parked.
+    expect(app.get_by_test_id("sync-hold")).to_contain_text("Plaud now lists 6 fewer")
+    expect(app.get_by_test_id("sync-breaker")).to_contain_text("share_state")
+    expect(app.get_by_test_id("sync-kept-out")).to_contain_text("Released · comes in")
+    expect(app.get_by_test_id("parked-row")).to_have_count(2)
+    app.locator("details.sync-more > summary").click()
+    asks = app.locator("[data-request]")
+    expect(asks.first).to_be_visible(timeout=RENDER_TIMEOUT)
+    for i in range(asks.count()):
+        expect(asks.nth(i)).to_be_disabled()
+        asks.nth(i).click(force=True)  # a disabled button takes no click
+    nav.get_by_role("button", name="Status").click()
+    expect(app.get_by_test_id("sync-panel")).to_contain_text(
+        "Demo: Plaud sync isn't part of the demo.", timeout=RENDER_TIMEOUT
+    )
+    # A positive control: the spy does see an input when the page sends one (choosing a recording
+    # sends selected_id), so "no request sent" isn't vacuous.
+    nav.get_by_role("button", name="Library").click()
+    # The arrivals cue, from the canned view (2b spec §15.3).
+    expect(app.get_by_test_id("refresh")).to_contain_text(
+        "2 new · 1 private · 2 updated from Plaud", timeout=RENDER_TIMEOUT
+    )
+    app.get_by_test_id("recording-row").first.click()
+    frame.wait_for_function(
+        "() => window.__sent.some((n) => n.startsWith('selected_id'))", timeout=RENDER_TIMEOUT
+    )
+    sent = frame.evaluate("() => window.__sent")
+    assert not [name for name in sent if name.startswith("plaud_request")], sent
+    watch.assert_clean()

@@ -11,6 +11,7 @@ only a file whose header says it is an index (APPLICATION_ID) is ever moved.
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from collections.abc import Iterator
@@ -23,6 +24,7 @@ from recordings.ids import relative_dir
 from recordings.models import Recording
 from recordings.refs import canonical_ref
 
+log = logging.getLogger(__name__)
 INDEX_VERSION = 1
 # In the file's header (offset 68), so a file says it is an index before SQLite reads a page of it.
 # Only a file that says so is ever renamed aside.
@@ -149,7 +151,30 @@ class Index:
             )
             for rec in recordings:
                 _insert(db, rec)
+        self.wal()
         return len(recordings)
+
+    def wal(self, *, timeout: float = 5.0) -> bool:
+        """Switch the file to WAL mode (2b spec §9.5): web and the worker each hold a Writer, so one
+        can upsert or rebuild while the other reads. The file keeps the mode, so once it is WAL this
+        is a no-op. Called only on a file known to be this index (a rebuild just committed it, or a
+        Writer found it this archive's), outside a transaction, where SQLite can change it.
+
+        The switch needs the file to itself. While another process has it open (web reading as the
+        worker starts), SQLite raises a DatabaseError (usually an OperationalError) or answers with
+        another mode. WAL only speeds things up, so either way it is logged in a fixed phrase (the
+        error's class, or ModeRefused), False is returned, and the next rebuild or Writer tries
+        again."""
+        try:
+            with closing(sqlite3.connect(self.path, timeout=timeout)) as conn:
+                mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        except sqlite3.DatabaseError as exc:
+            log.warning("index.db stays in rollback-journal mode for now (%s)", type(exc).__name__)
+            return False
+        if mode != "wal":
+            log.warning("index.db stays in rollback-journal mode for now (ModeRefused)")
+            return False
+        return True
 
     def _readable(self) -> bool:
         """False only when SQLite can't read the file at all; a busy file is still an error."""
@@ -265,6 +290,17 @@ class Index:
         return self._one(
             "SELECT sha256 FROM recordings WHERE id = ?", (recording_id,), strict=strict
         )
+
+    def refs_of(self, kind: str, *, strict: bool = False) -> list[tuple[str, str]]:
+        """Every (recording ID, canonical ref) of `kind`: one read for a whole listing's compare
+        (stage 2b spec §11.3). strict: an index that can't answer now raises, never says none."""
+        rows = self._rows(
+            "SELECT recording_id, canonical FROM source_refs WHERE kind = ? "
+            "ORDER BY recording_id, canonical",
+            (kind,),
+            strict=strict,
+        )
+        return [(row[0], row[1]) for row in rows]
 
     def find_by_source(self, kind: str, ref: str, *, strict: bool = False) -> list[str]:
         """strict: an index that can't answer now (busy, an I/O error) raises, never says none."""

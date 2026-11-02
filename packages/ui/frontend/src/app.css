@@ -233,7 +233,10 @@ tr.attn td { color: var(--destructive); }
 .failed-label { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--foreground); overflow-wrap: anywhere; }
 .failed-label svg { flex: none; color: var(--destructive); }
 .selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--card); }
-.selection-bar button { min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; cursor: pointer; }
+/* Its buttons' line is a whole 20 px, so the bar is a whole number of pixels tall on one line (43)
+   or, with Re-sync from Plaud in a narrow list, two (75): a fractional height left the focused row
+   a fraction of a pixel under it once scrolled into view (useRovingFocus). */
+.selection-bar button { min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; line-height: 20px; cursor: pointer; }
 .selection-bar code { unicode-bidi: isolate; direction: ltr; overflow-wrap: anywhere; }
 kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-size: 11px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; }
 /* Devices that can't hover (spec §6): the checkbox always shows; list rows show no ×, so tags are
@@ -337,6 +340,56 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 .columns-picker legend { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
 .column-choice { display: flex; align-items: center; gap: 6px; min-height: 24px; overflow-wrap: anywhere; }
 
+/* The Sync screen, #/add (2b spec §15.1): its sections as cards, in §15.1's order, one column.
+   Rows wrap rather than scroll sideways, and a long ID breaks anywhere (Task 24 checks 320 px). */
+.sync-page { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.sync-page h1 { margin: 0; font-size: 19px; font-weight: 700; }
+.sync-section h2 { margin: 0 0 8px; font-size: 15px; }
+.sync-summary p { margin: 0 0 4px; }
+.sync-summary .sync-sentence { font-weight: 700; }
+.sync-summary.problem .sync-sentence { color: var(--destructive); }
+.sync-summary a { color: var(--primary); text-decoration: underline; }
+.sync-rows { list-style: none; margin: 0; padding: 0; }
+.sync-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.sync-row:last-child { border-bottom: 0; }
+.sync-row > * { min-width: 0; }
+.sync-row .mono, .sync-title, .sync-flag { overflow-wrap: anywhere; }
+.sync-title { font-weight: 700; }
+.sync-when { font-variant-numeric: tabular-nums; }
+.sync-state, .sync-by { color: var(--muted-foreground); }
+.sync-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.sync-why { margin: 6px 0 0; color: var(--muted-foreground); font-size: 12.5px; overflow-wrap: anywhere; }
+.sync-more { margin-top: 8px; }
+.sync-more > summary, .sync-details > summary { cursor: pointer; min-height: 24px; }
+.sync-jump { padding: 0; border: 0; background: none; color: var(--primary); font: inherit; text-decoration: underline; cursor: pointer; }
+.sync-copy { min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; font-size: 12px; cursor: pointer; }
+/* Copy ID where nothing could copy: the text, which one tap selects whole, to copy by hand. */
+.sync-copy-failed { font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.sync-copy-text { user-select: all; -webkit-user-select: all; color: var(--foreground); }
+.sync-check { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; cursor: pointer; }
+.sync-hold, .sync-breaker, .sync-failing-checks { margin-top: 8px; }
+.sync-hold p, .sync-breaker p, .sync-failing-checks p { margin: 0 0 6px; }
+.sync-last, .sync-pending { margin: 8px 0 0; }
+/* The theme switch as one icon, which the phone block shows in place of the three choices. */
+.theme-icon { display: none; place-items: center; margin-left: auto; min-width: 44px; min-height: 44px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); cursor: pointer; }
+.theme-icon svg { width: 16px; height: 16px; }
+/* Status's sync panel (2b spec §15.2): across the whole grid, its numbers a two-column list. */
+.status .sync-panel { grid-column: 1 / -1; }
+.sync-conditions, .sync-runs { margin: 8px 0 0; padding-left: 1.2em; list-style: disc; }
+.sync-numbers { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 12px 0 0; font-size: 12.5px; }
+.sync-numbers dt { color: var(--muted-foreground); }
+.sync-numbers dd { margin: 0; overflow-wrap: anywhere; }
+.sync-details { margin-top: 12px; }
+.sync-details h3 { font-size: 13px; }
+.sync-panel .warn { margin: 6px 0 0; }
+/* Details' Plaud lines, and the header's privacy flags by count (2b spec §15.3). */
+.plaud-details { margin-bottom: 12px; }
+.plaud-details p { margin: 4px 0; }
+.plaud-ids { list-style: none; margin: 4px 0; padding: 0; }
+.plaud-ids li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; overflow-wrap: anywhere; }
+.plaud-flags { width: 100%; font-size: 12.5px; color: var(--destructive); }
+.plaud-flags a { color: inherit; text-decoration: underline; }
+.selection-bar button:disabled { cursor: not-allowed; color: var(--muted-foreground); }
 /* The picker's dialog on a touch screen or a phone (tagging spec §6). Toasts come in at the top there
    (App.tsx), so the dialog keeps below their band: Sonner's 16 px offset and a two-line toast, or
    less on a screen too short to spare it (Task 15 fix round 1, item 1). It sits on what the screen
@@ -382,7 +435,69 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
      height is its minimum. On a screen too short even for that the panes scroll, and the bar
      sticks to their bottom (Task 15 fix round 1, item 12). */
   .list { overflow: clip; min-height: auto; }
+  /* The cap (40dvh, above) gets a floor: a list with a selection must be tall enough for its head
+     (45 px) and the selection bar (43 px) and their borders, 92 px. Below that the clip cut the
+     bar off and the pane behind it showed through, on any phone shorter than about 215 px. */
+  .list { max-height: max(40dvh, 92px); }
   .selection-bar { position: sticky; bottom: 0; z-index: 3; }
+  /* The top bar at 320 pixels: four short tabs on one row, the logo's mark without its name, and
+     the theme switch as one icon (2b spec §15.1). `.topbar button.nav` outranks the plain
+     `button.nav` rule by specificity, wherever it comes. The tabs are 44 px targets (J7), and the
+     negative block margin keeps the bar as tall as it was, like the icon's. */
+  .topbar { gap: 12px; padding: 6px 12px; }
+  /* With the phone's text size turned up the row no longer fits: the tabs then scroll within it,
+     and the page never scrolls sideways (Dan, phase-end Q&A §5). min-width: 0 lets the row be
+     narrower than its tabs, which never shrink (flex: none), so their words stay whole. A row
+     that scrolls clips what overflows it, so the tabs and their focus rings sit inside its 4 px
+     padding, and its negative margins keep the bar as tall and as wide as it was. A tab scrolled
+     into view (TopBar's onFocus) stops 4 px inside the edge too: scroll-padding. */
+  .topbar nav { display: flex; gap: 12px; overflow-x: auto; min-width: 0; padding: 4px; margin: -10px -4px; scroll-padding-inline: 4px; }
+  .topbar button.nav { flex: none; margin-right: 0; min-width: 44px; min-height: 44px; }
+  .logo-name, .theme-full { display: none; }
+  /* Its 44 px target overhangs the bar's padding, so the bar stays as tall as it was. */
+  .theme-icon { display: inline-grid; margin-block: -6px; }
+  /* On a phone the panel's numbers stack, each label above its value (2b spec §15.4). */
+  .sync-numbers { grid-template-columns: minmax(0, 1fr); }
+  /* Its Details summary and Accept buttons are 44 px targets (J7). */
+  .sync-panel .sync-details > summary, .sync-page .sync-more > summary { padding-block: 12px; }  /* display stays list-item: the marker */
+  .sync-panel button { min-height: 44px; }
+  /* The selection bar's Re-sync is "Re-sync" on a phone, so the bar stays one line (spec §6's
+     phone bar, whose height the short-screen tests measure). */
+  .resync-long { display: none; }
+  /* Details' Plaud buttons (Re-sync, Copy ID, Keep it here) are 44 px targets (J7). */
+  .plaud-details button { min-height: 44px; min-width: 44px; }
+  /* The Library's Refresh and its header's "See Status" are 44 px targets too (J7; the phase-end
+     list's row 23). Their negative block margins keep the header as tall as it was (45 px), as the
+     top bar's tabs do, so the list's floor below (head and selection bar, 92 px) still holds.
+     Details' tab row scrolls within itself, never the panes sideways (G5), as the top bar's does:
+     its tabs keep their width and the row clips them to its own. */
+  .refresh { min-height: 44px; margin-block: -9px; }
+  /* With Plaud's arrivals cue in Refresh ("5 from Plaud · Refresh", 2b spec §15.3) the header's
+     count and Refresh no longer fit one 320 px line, and the header grew to two (area B3, found by
+     the demo's canned arrivals): the order goes, the count stays. */
+  .list-order { display: none; }
+  .plaud-flags a { display: inline-flex; align-items: center; min-height: 44px; margin-block: -14px; }
+  /* flex: none: a box that scrolls loses a flex item's automatic minimum height, and the pane's
+     column squeezed the row to a few pixels. */
+  .tabs-list { flex: none; max-width: calc(100% - 36px); overflow-x: auto; justify-content: flex-start; }
+  .tabs-list > button { flex: none; }
+  /* The Sync screen on a phone (2b spec §15.4): the summary first (it is first in the page),
+     full-width buttons, targets of at least 44 pixels, rows stacked. The shadcn Button sets its
+     height with a layered utility (h-8); these rules are unlayered, and min-height beats height.
+     Status's panel already has its 44 px buttons and Details summary (Task 22), so it only gets
+     the width here. */
+  .sync-page { padding: 12px; gap: 12px; }
+  .sync-buttons { flex-direction: column; align-items: stretch; }
+  .sync-page [data-slot=button] { width: 100%; min-height: 44px; }
+  .sync-panel [data-slot=button] { width: 100%; }
+  /* Scoped to the Sync screen: Details' Plaud section has its own Copy ID and rows (Task 23).
+     The equation's numbers (.sync-jump) sit inside a sentence: WCAG 2.5.8's inline exception, so
+     they keep their text size. */
+  .sync-page .sync-copy { display: inline-flex; align-items: center; min-height: 44px; }
+  .sync-check { min-width: 44px; min-height: 44px; }
+  /* Rows stacked (§15.4): the box and the date with its duration on one line, the title below on
+     a line of its own. */
+  .sync-page .sync-row .sync-title { flex-basis: 100%; }
 }
 
 /* Reduced motion (tagging spec §9): no toast, chip or overlay animations. Sonner already stills its

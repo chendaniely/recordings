@@ -18,7 +18,7 @@ import threading
 import time
 import urllib.request
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -308,6 +308,8 @@ def test_demo_mode_reads_no_real_paths_secrets_or_network(tmp_path, demo_ids, mo
         for p in (
             settings.archive.parent,
             find_demo_archive({}),
+            # The canned Plaud view beside it, which from_env copies (2b phase 1 plan, decision 23).
+            find_demo_archive({}).parent / "plaud-sync.json",
             sys.prefix,
             sys.base_prefix,
             Path(views.__file__).parent,
@@ -388,3 +390,146 @@ def test_demo_mode_removes_its_temporary_copy_on_sigterm(tmp_path):
         proc.wait(timeout=30)
     assert proc.returncode == 128 + signal.SIGTERM
     assert list(scratch.glob("recordings-demo-*")) == []
+
+
+def _plaud_request(client: TestClient, request: dict) -> list[dict]:
+    """A plaud_request crafted on the demo's websocket, as a page's devtools could send it, and
+    the plaud_result replies to it. It waits for the Library first, so the session is running."""
+    replies: list[dict] = []
+    with client.websocket_connect(
+        "ws://localhost/websocket/", headers={"Origin": "http://localhost"}
+    ) as ws:
+        ws.send_text(
+            json.dumps({"method": "init", "data": {".clientdata_output_library_hidden": False}})
+        )
+
+        def read() -> None:
+            seen: set[str] = set()
+            while "library" not in seen:
+                seen.update(json.loads(ws.receive_text()).get("values", {}))
+            update = {"plaud_request:shinyreact.default": request}
+            ws.send_text(json.dumps({"method": "update", "data": update}))
+            while not replies:
+                custom = json.loads(ws.receive_text()).get("custom", {})
+                message = custom.get("shinyReactMessage", {})
+                if message.get("id") == "plaud_result":
+                    replies.append(message["data"])
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        reader.join(20)  # receive_text has no timeout: a missing reply must not hang
+    return replies
+
+
+CRAFTED = {
+    "request_id": "guard0002demo",
+    "kind": "import",
+    "plaud_ids": [],
+    "recording_ids": [],
+    "all": True,
+}
+
+
+def test_the_demo_refuses_a_crafted_plaud_request():
+    # why: §15.5. The demo has no writable state.db for requests (§9.3): its buttons are off, and
+    # a request crafted anyway is refused with the reason, never queued.
+    from recordings_ui.plaud import cannot_request_reason
+
+    settings = from_env({}, demo=True)
+    try:
+        with TestClient(create_app(settings), base_url="http://localhost") as client:
+            replies = _plaud_request(client, CRAFTED)
+    finally:
+        runtime.configure(None)
+    (reply,) = replies
+    assert (reply["request_id"], reply["state"]) == ("guard0002demo", "refused")
+    assert reply["message"] == cannot_request_reason(settings, None)
+
+
+def _request_rows(demo_ids, *, lift_guard: bool) -> int:
+    """How many rows a crafted Keep it here (a kind the worker handles in Phase 1, so only the
+    demo's own guard can refuse it; an Import is refused as not-yet before any insert) leaves in the
+    demo's temporary state.db. With `lift_guard`, the demo's reason and its missing State are
+    taken away first, as a control: it shows the guard is what stops the row."""
+    from recordings.state import State
+
+    settings = from_env({}, demo=True)
+    request = {
+        "request_id": "guard0003demo",
+        "kind": "keep-here",
+        "plaud_ids": [],
+        "recording_ids": [next(iter(demo_ids.values()))],
+        "all": False,
+    }
+    state = State(settings.archive.parent / "state")
+    try:
+        with TestClient(create_app(settings), base_url="http://localhost") as client:
+            # The demo's own Writer creates its temporary state.db, and State opens it `rw`, never
+            # creating it: wait for the Writer first, so only the guard can stop the row.
+            assert runtime.tagging().store.wait_open(30) == (True, None)
+            if lift_guard:
+                runtime._plaud_state, runtime._plaud_reason = state, None
+            assert _plaud_request(client, request)
+    finally:
+        runtime.configure(None)
+    with closing(sqlite3.connect(f"file:{state.db_path}?mode=ro", uri=True)) as conn:
+        return conn.execute("SELECT COUNT(*) FROM plaud_requests").fetchone()[0]
+
+
+def test_the_demos_state_db_never_gets_a_request_row(demo_ids):
+    assert _request_rows(demo_ids, lift_guard=False) == 0
+
+
+def test_the_request_row_test_can_fail_when_the_guard_is_lifted(demo_ids):
+    # The control for the test above: the same request lands a row once the demo's guard is gone.
+    assert _request_rows(demo_ids, lift_guard=True) == 1
+
+
+def test_the_demo_starts_no_worker(tmp_path):
+    # why: §15.5, "no worker, no Plaud code, no network". In a process of its own, so another
+    # test's import can't hide one: the demo serves its Sync screen, Status and arrivals cue, and
+    # never imports the worker, the client or the token store, nor reports a heartbeat.
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        """
+import json, sys, threading
+from fastapi.testclient import TestClient
+from recordings_ui import runtime
+from recordings_ui.app import create_app
+from recordings_ui.settings import from_env
+
+settings = from_env({}, demo=True)
+wanted = {"plaud_sync", "plaud_arrivals", "status"}
+with TestClient(create_app(settings), base_url="http://localhost") as client:
+    with client.websocket_connect(
+        "ws://localhost/websocket/", headers={"Origin": "http://localhost"}
+    ) as ws:
+        hidden = {f".clientdata_output_{name}_hidden": False for name in wanted}
+        ws.send_text(json.dumps({"method": "init", "data": hidden}))
+        seen = set()
+
+        def read():
+            while not wanted <= seen:
+                seen.update(json.loads(ws.receive_text()).get("values", {}))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        reader.join(20)
+    assert runtime.tagging().store.wait_open(30) == (True, None)
+loaded = [m for m in ("recordings.worker", "recordings.plaud.client", "recordings.plaud.tokens")
+          if m in sys.modules]
+from recordings.state import State
+beat = State.read_only(settings.archive.parent / "state").meta("worker_heartbeat")
+print(json.dumps({"seen": sorted(seen), "loaded": loaded, "heartbeat": beat}))
+""",
+        encoding="utf-8",
+    )
+    out = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, text=True, check=True, timeout=90
+    )
+    found = json.loads(out.stdout.strip().splitlines()[-1])
+    assert found == {
+        "seen": ["plaud_arrivals", "plaud_sync", "status"],
+        "loaded": [],
+        "heartbeat": None,
+    }

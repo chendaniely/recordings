@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from recordings import config
+from recordings import config, doctor
 
 REPO = Path(__file__).resolve().parents[3]
 COMPOSE = REPO / "docker" / "compose.yml"
@@ -75,7 +76,7 @@ def test_every_bind_is_long_syntax_and_never_creates_its_host_path():
 
 def test_the_state_and_the_index_have_mounts_of_their_own():
     doc = compose()
-    web = {v["target"]: v for v in doc["services"]["web"]["volumes"]}
+    web = mounts("web")
     assert web["/state"]["type"] == "bind" and web["/index"]["type"] == "volume"
     assert "index" in doc["volumes"]
     # why: Status opens state.db mode=ro in `web` while `backup` writes it in WAL mode. A reader
@@ -90,11 +91,7 @@ def test_web_reads_the_state_folder_the_backup_service_writes():
     # why: Status (web) reads the state.db and the ops lock that the loop (backup) writes. Two
     # folders would show, for ever, the last runs Status saw before they split.
     doc = compose()
-    mounts = {
-        name: {v["target"]: v for v in service["volumes"]}
-        for name, service in doc["services"].items()
-    }
-    assert mounts["web"]["/state"]["source"] == mounts["backup"]["/state"]["source"]
+    assert mounts("web")["/state"]["source"] == mounts("backup")["/state"]["source"]
     for name in ("web", "backup"):
         assert doc["services"][name]["environment"]["RECORDINGS_STATE"] == "/state", name
 
@@ -175,19 +172,27 @@ def test_a_rollback_starts_an_old_image_and_never_builds_one():
 
 def test_the_smoke_script_parses_and_creates_every_compose_secret():
     # why: nothing else without Docker reads scripts/compose_smoke.py; a stray line once made it a
-    # SyntaxError that only `make deploy-smoke` would have found. ntfy_token is the optional one:
-    # its source is /dev/null, so the script makes no file for it.
+    # SyntaxError that only `make deploy-smoke` would have found. ntfy_token and ntfy_topic are the
+    # optional ones: their source is /dev/null, and the smoke runs without ntfy, as a deployment
+    # may (stage 2b spec, Dan's decision 9).
     path = REPO / "scripts" / "compose_smoke.py"
     spec = importlib.util.spec_from_file_location("compose_smoke", path)
     smoke = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(smoke)
-    assert set(smoke.SECRETS) | {"ntfy_token"} == set(compose()["secrets"])
+    assert set(smoke.SECRETS) | {"ntfy_token", "ntfy_topic"} == set(compose()["secrets"])
+    assert "ntfy_topic" not in smoke.SECRETS
     assert not os.access(path, os.X_OK), "no shebang, so no exec bit"
+    # Spec §17.2: the missing sign-in is one of doctor's problems again, now that `make
+    # plaud-sign-in` exists, and the smoke looks for it there (CI alone runs the smoke).
+    (sign_in,) = [p for p in smoke.WORKER_PROBLEMS if "sign-in" in p]
+    assert doctor.SIGN_IN_NEEDED.startswith(sign_in)
+    assert not hasattr(smoke, "WORKER_NOTES")
 
 
 def test_the_boot_unit_waits_for_docker_the_disk_and_tailscale():
     unit = UNIT.read_text(encoding="utf-8")
     for line in (
+        "Description=recordings: the web, backup and worker containers",
         "Requires=docker.service",
         "After=docker.service tailscaled.service",
         "RequiresMountsFor=/srv/recordings",
@@ -251,24 +256,25 @@ def test_at_boot_the_containers_start_on_the_tag_they_last_ran(tmp_path):
 
 
 @contextmanager
-def ops_lock_held(folder: Path, announced: str):
-    """Another process holds the ops lock, as the loop's run_job does, with `announced` in the lock
-    file, as Task 15's announce writes it."""
+def ops_lock_held(folder: Path, announced: str, key: str = "ops"):
+    """Another process holds a lock (`ops` by default, as the loop's run_job does; `plaud` as a
+    Plaud run does), with `announced` in the lock file, as Task 15's announce writes it."""
     holder = subprocess.Popen(
         [
             sys.executable,
             "-c",
             (
                 "import pathlib, sys\n"
-                "from recordings.locks import OPS_LOCK, Locks\n"
-                "folder = pathlib.Path(sys.argv[1])\n"
-                "with Locks(folder, timeout=0).hold(OPS_LOCK):\n"
-                "    (folder / f'{OPS_LOCK}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
+                "from recordings.locks import Locks\n"
+                "folder, key = pathlib.Path(sys.argv[1]), sys.argv[3]\n"
+                "with Locks(folder, timeout=0).hold(key):\n"
+                "    (folder / f'{key}.lock').write_text(sys.argv[2], encoding='utf-8')\n"
                 "    print('held', flush=True)\n"
                 "    sys.stdin.read()\n"
             ),
             str(folder),
             announced,
+            key,
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -284,7 +290,7 @@ def ops_lock_held(folder: Path, announced: str):
 def test_the_ops_probe_sees_a_held_lock_and_what_it_announced(tmp_path):
     # why: deploy-guard.sh asks the backup container with this file. flock is per host, so a hold
     # by the loop, or by a one-off `rc run` in another container, shows the same.
-    probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks")]
+    probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks"), "ops"]
     assert subprocess.run(probe, check=False).returncode == 0  # never taken: no lock file yet
     with ops_lock_held(tmp_path / "locks", '{"job": "restore-test"}'):
         busy = subprocess.run(probe, capture_output=True, text=True, check=False)
@@ -292,27 +298,33 @@ def test_the_ops_probe_sees_a_held_lock_and_what_it_announced(tmp_path):
     assert subprocess.run(probe, check=False).returncode == 0  # let go: free again
 
 
-def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
-    # why: recreating backup stops the job it runs (restic and rsync stop cleanly), and the job
-    # starts again from the beginning: hours for a restore test or a check (ops council, Task 14).
+def fake_running_backup(tmp_path) -> dict[str, str]:
+    """The environment for deploy-guard.sh against a fake docker whose running backup container is
+    this machine. `ps -q` lists the container ($FAKE_ID; $FAKE_DOWN makes docker fail), and the
+    probe the guard pipes into its python runs here instead, on the test's own lock folder, with
+    the guard's arguments."""
     fake = tmp_path / "docker"
-    # `ps -q` lists the running backup container. The guard pipes docker/ops-busy.py into that
-    # container's python; the fake runs it here instead, on the test's own lock folder.
     fake.write_text(
         '#!/bin/sh\nif [ "$FAKE_DOWN" ]; then echo "Cannot connect to the Docker daemon" >&2; '
         "exit 1; fi\n"
         'if [ "$1" = ps ]; then [ "$FAKE_ID" ] && echo "$FAKE_ID"; exit 0; fi\n'
-        'if [ "$*" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
-        '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
+        'if [ "$1 $2 $3 $4 $5 $6" = "exec -i $FAKE_ID python - /state/locks" ]; then\n'
+        '  shift 6; exec "$FAKE_PYTHON" - "$FAKE_LOCKS" "$@"\nfi\nexit 99\n',
         encoding="utf-8",
     )
     fake.chmod(0o755)
-    env = {
+    return {
         "PATH": f"{tmp_path}:/usr/bin:/bin",
         "FAKE_ID": "abc123",
         "FAKE_PYTHON": sys.executable,
         "FAKE_LOCKS": str(tmp_path / "locks"),
     }
+
+
+def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
+    # why: recreating backup stops the job it runs (restic and rsync stop cleanly), and the job
+    # starts again from the beginning: hours for a restore test or a check (ops council, Task 14).
+    env = fake_running_backup(tmp_path)
 
     def guard(**extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -341,7 +353,7 @@ def test_a_deploy_waits_while_a_job_runs_unless_forced(tmp_path):
     # smoke test proves passes in the hardened container
     assert deploy[up].endswith(" up -d --build --wait --wait-timeout 180")
     smoke = (REPO / "scripts" / "compose_smoke.py").read_text(encoding="utf-8")
-    assert '"up", "-d", "--wait", "--wait-timeout", "120", "web"' in smoke
+    assert '"up", "-d", "--wait", "--wait-timeout", "120", "web", "worker"' in smoke
     forced = make_dry_run("deploy", "IMAGE_TAG=0123456789ab", "FORCE=1").stdout
     assert "FORCE=1 sh docker/deploy-guard.sh" in forced
 
@@ -360,9 +372,9 @@ def test_a_deploy_asks_a_one_off_backup_container_while_the_service_is_stopped(t
         'if [ "$1 $2" = "ps -a" ]; then [ "$FAKE_STOPPED" ] && echo "$FAKE_STOPPED"; exit 0; fi\n'
         'if [ "$1" = ps ]; then exit 0; fi\n'
         'if [ "$1" = inspect ]; then echo "$FAKE_IMAGE"; exit 0; fi\n'
-        'if [ "$RECORDINGS_IMAGE_TAG $*" = "0123456789ab compose --env-file docker/deploy.env '
-        '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks" ]; then\n'
-        '  exec "$FAKE_PYTHON" - "$FAKE_LOCKS"\nfi\nexit 99\n',
+        'case "$RECORDINGS_IMAGE_TAG $*" in "0123456789ab compose --env-file docker/deploy.env '
+        '-f docker/compose.yml run --rm --no-deps -T -i backup python - /state/locks "*)\n'
+        '  shift 14; exec "$FAKE_PYTHON" - "$FAKE_LOCKS" "$@" ;;\nesac\nexit 99\n',
         encoding="utf-8",
     )
     fake.chmod(0o755)
@@ -508,15 +520,15 @@ def test_the_runtime_image_has_the_time_zone_database():
 
 def test_the_backup_service_reads_the_archive_and_takes_secrets_only_from_files():
     service = compose()["services"]["backup"]
-    archive = next(v for v in service["volumes"] if v["target"] == "/archive")
+    archive = mounts("backup")["/archive"]
     assert archive["read_only"] is True
     env = service["environment"]
     for key, value in env.items():
         if key.endswith("_FILE"):
-            # the optional ntfy token's path appears only when deploy.env sets its host file
-            assert value.removeprefix("${RECORDINGS_NTFY_AUTH_HOST:+").startswith(
-                "/run/secrets/"
-            ), key
+            # the optional ntfy topic's and token's paths appear only when deploy.env sets their
+            # host files
+            optional = re.sub(r"^\$\{RECORDINGS_(ALERTS_TOPIC|NTFY_AUTH)_HOST:\+", "", value)
+            assert optional.startswith("/run/secrets/"), key
     for leaked in (
         "RESTIC_PASSWORD",
         "RECORDINGS_NTFY_TOPIC",
@@ -575,29 +587,199 @@ def test_the_readme_names_every_secret_and_environment_setting():
     assert "`RECORDINGS_ALLOWED_HOSTS`" in table
 
 
-def test_the_ntfy_token_is_an_optional_secret_in_backup_only():
-    # why: a token-protected ntfy server needs it (Task 13), but the app reads an EMPTY token file
-    # as an error, which _alert_config logs and treats as "alerts are not configured". So the
-    # secret is mounted and named only when deploy.env sets RECORDINGS_NTFY_AUTH_HOST.
-    doc = compose()
-    env = doc["services"]["backup"]["environment"]
-    assert (
-        env["RECORDINGS_NTFY_TOKEN_FILE"] == "${RECORDINGS_NTFY_AUTH_HOST:+/run/secrets/ntfy_token}"
-    )
-    assert "ntfy_token" in doc["services"]["backup"]["secrets"]
-    assert doc["secrets"]["ntfy_token"]["file"] == "${RECORDINGS_NTFY_AUTH_HOST:-/dev/null}"
-    template = TEMPLATE.read_text(encoding="utf-8")
-    assert re.search(r"^RECORDINGS_NTFY_AUTH_HOST=$", template, re.MULTILINE), "unset by default"
-
-
 def test_the_example_config_backs_up_the_deploy_file_where_compose_mounts_it():
     # why: [backup] extra_paths defaults to [], so a config.toml written without this line would
     # silently leave deploy.env (the UID, the paths: what a restore needs) out of every backup.
     import tomllib
 
     example = tomllib.loads((REPO / "config.example.toml").read_text(encoding="utf-8"))
-    mounts = {v["source"]: v["target"] for v in compose()["services"]["backup"]["volumes"]}
-    target = mounts[
+    targets = {m["source"]: t for t, m in mounts("backup").items()}
+    target = targets[
         "${RECORDINGS_DEPLOY_ENV_HOST:?set RECORDINGS_DEPLOY_ENV_HOST in docker/deploy.env}"
     ]
     assert target in example["backup"]["extra_paths"]
+
+
+def mounts(service: str) -> dict[str, dict]:
+    return {v["target"]: v for v in compose()["services"][service]["volumes"]}
+
+
+def test_the_worker_is_hardened_named_with_a_role_and_its_own_health_check():
+    # why: stage 2b spec §17.1. The image's :8000/healthz probe would mark the worker unhealthy
+    # for ever (it serves nothing), and `make deploy --wait` would fail.
+    worker = compose()["services"]["worker"]
+    assert worker["image"] == compose()["services"]["backup"]["image"]
+    assert worker["pull_policy"] == "never" and worker["hostname"] == "recordings-worker"
+    assert worker["command"] == ["recordings", "worker"]
+    assert worker["environment"]["RECORDINGS_ROLE"] == "worker"
+    assert worker["init"] is True and worker["restart"] == "unless-stopped"
+    assert worker["stop_grace_period"] == "30s"
+    services = compose()["services"]
+    assert services["backup"]["cpu_shares"] < worker["cpu_shares"] < 1024  # web's default
+    assert services["backup"]["oom_score_adj"] > worker["oom_score_adj"] > 0
+    assert worker["healthcheck"] == {
+        "test": ["CMD", "recordings", "worker", "--alive"],
+        "interval": "30s",
+        # `--alive` starts the whole CLI: the image's inherited 3 s was sized for a urllib probe
+        "timeout": "10s",
+        "start_period": "60s",
+    }
+    assert "8000" not in json.dumps(worker["healthcheck"])
+    for target in ("/config/config.toml", "/archive", "/state", "/index", "/consent", "/plaud"):
+        assert target in mounts("worker"), target
+    assert mounts("worker")["/config/config.toml"]["read_only"] is True
+    assert not mounts("worker")["/archive"].get("read_only")  # it writes the archive
+    assert mounts("worker")["/state"]["source"] == mounts("web")["/state"]["source"]
+    assert mounts("worker")["/index"] == mounts("web")["/index"]
+
+
+def test_the_consent_folder_is_a_read_only_folder_bind_in_worker_and_backup():
+    # why: a single-file bind follows the file's inode, so after an editor replaces the list the
+    # container would read the old one (stage 2b spec §12.1).
+    source = "${RECORDINGS_CONSENT_HOST:?set RECORDINGS_CONSENT_HOST in docker/deploy.env}"
+    for service in ("worker", "backup"):
+        consent = mounts(service)["/consent"]
+        assert consent["type"] == "bind" and consent["source"] == source, service
+        assert consent["read_only"] is True, service
+    assert "/consent" not in mounts("web")
+    template = TEMPLATE.read_text(encoding="utf-8")
+    (value,) = re.findall(r"^RECORDINGS_CONSENT_HOST=(.*)$", template, re.MULTILINE)
+    assert not value.endswith(".md"), "a folder, never the file"
+
+
+def test_each_dead_man_url_is_mounted_in_one_service():
+    # C10.04: the backup's check and the sync's check never share a URL or a service.
+    services = compose()["services"]
+    assert services["worker"]["secrets"] == ["deadman_sync_url"]
+    assert "deadman_sync_url" not in services["backup"]["secrets"]
+    assert "deadman_url" in services["backup"]["secrets"]
+    for name, service in services.items():
+        env = service.get("environment", {})
+        assert ("RECORDINGS_DEADMAN_SYNC_URL_FILE" in env) == (name == "worker"), name
+        assert ("RECORDINGS_DEADMAN_URL_FILE" in env) == (name == "backup"), name
+    assert services["worker"]["environment"]["RECORDINGS_DEADMAN_SYNC_URL_FILE"] == (
+        "/run/secrets/deadman_sync_url"
+    )
+
+
+def test_plaud_is_mounted_in_worker_only():
+    # why: only the worker holds the Plaud sign-in (stage 2b spec §10.4); doctor's web and backup
+    # roles report a /plaud mount as a problem.
+    plaud = mounts("worker")["/plaud"]
+    assert (
+        plaud["source"]
+        == "${RECORDINGS_PLAUD_HOST:?set RECORDINGS_PLAUD_HOST in docker/deploy.env}"
+    )
+    assert not plaud.get("read_only")  # Phase 2's refreshes write tokens.json
+    for name in ("web", "backup"):
+        assert "/plaud" not in mounts(name), name
+
+
+def test_the_worker_publishes_no_port():
+    assert "ports" not in compose()["services"]["worker"]
+    assert "expose" not in compose()["services"]["worker"]
+
+
+def test_make_deploy_waits_for_every_health_check():
+    # C10.01: --wait fails the deploy when a service doesn't pass its health check, the worker's
+    # included. Only backup, watched by its dead-man's switch, has none.
+    deploy = make_dry_run("deploy", "IMAGE_TAG=0123456789ab").stdout
+    assert " up -d --build --wait --wait-timeout 180" in deploy
+    for name, service in compose()["services"].items():
+        disabled = service.get("healthcheck", {}).get("disable", False)
+        assert disabled == (name == "backup"), name
+
+
+@pytest.mark.parametrize(
+    ("name", "host", "other_services"),
+    [
+        ("TOKEN", "NTFY_AUTH", ("web", "worker")),
+        ("TOPIC", "ALERTS_TOPIC", ("web", "worker")),
+    ],
+)
+def test_the_ntfy_topic_and_token_are_optional_secrets_in_backup_only(name, host, other_services):
+    # why: the app reads an EMPTY secret file as an error, which _alert_config logs and treats as
+    # "alerts are not configured", silencing the backup's dead-man pings too. And ntfy is optional
+    # (stage 2b spec, Dan's decision 9). So each is mounted and named only when deploy.env sets its
+    # host variable (RECORDINGS_NTFY_AUTH_HOST, RECORDINGS_ALERTS_TOPIC_HOST), else /dev/null.
+    doc = compose()
+    secret = f"ntfy_{name.lower()}"
+    env = doc["services"]["backup"]["environment"]
+    assert (
+        env[f"RECORDINGS_NTFY_{name}_FILE"] == f"${{RECORDINGS_{host}_HOST:+/run/secrets/{secret}}}"
+    )
+    assert secret in doc["services"]["backup"]["secrets"]
+    assert doc["secrets"][secret]["file"] == f"${{RECORDINGS_{host}_HOST:-/dev/null}}"
+    template = TEMPLATE.read_text(encoding="utf-8")
+    assert re.search(rf"^RECORDINGS_{host}_HOST=$", template, re.MULTILINE), "unset by default"
+    for service in other_services:
+        assert f"RECORDINGS_NTFY_{name}_FILE" not in doc["services"][service]["environment"]
+        assert secret not in doc["services"][service].get("secrets", [])
+
+
+def running_backup_guard(tmp_path):
+    """deploy-guard.sh against a running backup container (see fake_running_backup)."""
+    env = fake_running_backup(tmp_path)
+
+    def guard() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["sh", str(REPO / "docker" / "deploy-guard.sh")],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return guard
+
+
+def announced(job: str) -> str:
+    return json.dumps({"job": job, "since": "2026-10-23T12:00:00+00:00"})
+
+
+def test_the_probe_takes_a_lock_name_and_jobs(tmp_path):
+    # why: stage 2b spec §17.3. With jobs given, only a holder that announced one of them counts.
+    probe = [sys.executable, str(REPO / "docker" / "ops-busy.py"), str(tmp_path / "locks")]
+
+    def ask(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([*probe, *args], capture_output=True, text=True, check=False)
+
+    assert ask().returncode == 2  # a lock name is needed
+    assert ask("plaud", "plaud-full").returncode == 0  # never taken
+    with ops_lock_held(tmp_path / "locks", announced("plaud-sync"), key="plaud"):
+        assert ask("plaud").returncode == 3  # no jobs: any holder counts
+        assert ask("plaud", "plaud-full", "plaud-catch-up").returncode == 0  # a routine sync
+        assert ask("ops").returncode == 0  # another lock
+    with ops_lock_held(tmp_path / "locks", announced("plaud-full"), key="plaud"):
+        busy = ask("plaud", "plaud-full", "plaud-catch-up")
+        assert busy.returncode == 3 and busy.stdout == announced("plaud-full") + "\n"
+
+
+def test_the_guard_refuses_for_plaud_full_and_catch_up_and_lets_plaud_sync_through(tmp_path):
+    # why: Sync everything, the first catch-up and the baseline run for hours, and a deploy
+    # recreates the worker; a routine sync is safe to interrupt (stage 2b spec §17.3).
+    guard = running_backup_guard(tmp_path)
+    assert guard().returncode == 0
+    for job, refused in (
+        ("plaud-full", True),
+        ("plaud-catch-up", True),
+        ("plaud-baseline", True),
+        ("plaud-sync", False),
+    ):
+        with ops_lock_held(tmp_path / "locks", announced(job), key="plaud"):
+            done = guard()
+            assert (done.returncode != 0) == refused, job
+            assert (job in done.stderr and "FORCE=1" in done.stderr) == refused, job
+    # the catch-up holds ops too, and announces itself there: the ops question finds it first
+    with ops_lock_held(tmp_path / "locks", announced("plaud-catch-up")):
+        assert guard().returncode != 0
+
+
+def test_a_held_plaud_lock_that_cant_be_read_still_refuses(tmp_path):
+    # why: a holder between its hold and its announcement, or one whose text is damaged, might be
+    # any job: the guard refuses rather than guess.
+    guard = running_backup_guard(tmp_path)
+    for text in ("", "not json", '["plaud-full"]'):
+        with ops_lock_held(tmp_path / "locks", text, key="plaud"):
+            done = guard()
+            assert done.returncode != 0 and "FORCE=1" in done.stderr, text

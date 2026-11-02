@@ -2,13 +2,30 @@
 
 Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing behaviour.
 
+Dan's own docs are `docs/user-guide.md` (every screen and task, and what each Status line means),
+`docs/setup.md` (the Plaud sync from a deploy to the first real sync) and `CHANGELOG.md`. A change
+to what a screen says, a Status line or a setup step changes them in the same commit.
+
 ## Toolchain
 
 - **Python only through uv.** `uv sync`, `uv run …`. Never pip, never the system Python.
 - **Node 22 from `packages/ui/frontend/.nvmrc`.** Use `nvm use`, then `npm ci`. No global
   installs.
+- **`make help`** lists every target. **`make check`** is what every commit runs first: `make
+  lint`, `make test`, `make test-utc` (pytest again under `TZ=UTC`) and `make leaks` (gitleaks
+  over the whole history, as CI's `leaks` job runs it).
 - **`make test`** runs pytest and Vitest. **`make e2e`** runs the Playwright tests against
-  demo mode.
+  demo mode. **`make e2e-live`** (marker `e2e_live`, CI's `e2e-live` job) runs
+  `packages/ui/tests/e2e_live/` against `make demo-live`'s script, `scripts/demo_live.py`: the
+  web app and the real worker on the fake Plaud server, pacing one call a second, so it takes
+  minutes. Its demo's logs are in `<tmp>/recordings-demo-live-*/logs/` (kept with `--keep`).
+- **`make demo-live`** runs that script for a person: a synthetic account, a scratch archive
+  under `$TMPDIR` (never a real archive, state folder or sign-in: it refuses to start otherwise),
+  and typed commands (`help`). The fake server it imports (`packages/core/tests/fake_plaud.py`)
+  must stay importable outside pytest.
+- **Commit messages are checked by hand,** because the repo has no commit hooks: write the message
+  to a file, run `uv run --script scripts/commitmsg.py <file>` (copied from Dan's
+  plan-driven-development skill), then `git commit -F <file>`.
 - **`make e2e`'s writing tests** (`packages/ui/tests/e2e/test_tagging.py`) get a server each,
   started with `TMPDIR=<tmp_path>/server`, and read what the app wrote through `Archive`. axe-core runs
   from `packages/ui/frontend/node_modules`, so run `npm ci` first.
@@ -19,7 +36,7 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
 - **`make lint`** runs ruff (check and format --check). CI runs it too. The rule set is pinned in
   pyproject.toml.
 - **`make pages`** builds the static GitHub Pages demo into `_site/` (spec §17.1). Only the demo
-  archive is ever exported.
+  archive and its hand-written canned Plaud view (`demo/plaud-sync.json`) are ever exported.
 
 ## Check the docs, never write from memory
 
@@ -51,10 +68,12 @@ The rules the code depends on:
 - **`ReactApp(server)` in `shiny_app.py`** finds `www/` next to that file.
 - **Every output is subscribed in `App`.** shinyreact 0.1.0 leaves an output bound to a removed
   element once its last component unmounts (`docs/upstream-issues.md`). A new output gets a
-  `useShinyOutputStatus` line in `App.tsx`, even if only one page uses it.
-- **Every message handler and input lives in `App`** (through `useTagging`), mounted once:
-  shinyreact drops a message that has no handler. Tag requests are only ever sent by a person's
-  action: never on load, from a URL or its hash, or from storage. List state (`useListState` for
+  `useShinyOutputStatus` line in `App.tsx`, even if only one page uses it, as the Sync screen's
+  `plaud_sync` and the header's `plaud_arrivals` have.
+- **Every message handler and input lives in `App`** (through `useTagging`, and `usePlaud` for
+  `plaud_request` and its `plaud_result` replies), mounted once: shinyreact drops a message that
+  has no handler. Tag and Plaud requests are only ever sent by a person's action: never on load,
+  from a URL or its hash, or from storage. List state (`useListState` for
   the Library, `useGridState` for the Tags grid) is held in `App` too, so it survives route
   switches and the switch from tablet to phone width. On a phone, `#/tags` is the Library with the
   Untagged filter (`App` replaces the hash and sets the filter); there is no phone Tags page.
@@ -118,16 +137,60 @@ smoke test on purpose until someone does the steps below:
   `my-notes.md`, only appended to, under the recording's lock; and `tags.yaml`, by atomic
   replace. The archive's docs (`README.md`, `AGENTS.md`, `FORMAT.md`, `recordings/README.md`,
   `catalog/README.md` and `schemas/`) are replaced from `packages/core/src/recordings/format/`,
-  by atomic replace, whenever a Writer opens or the web app starts against an archive it may
-  write (`selfdoc.write_docs`). Media, `source/` and `renditions/` are published write-once and
-  never overwritten. Never write archive files any other way, in code or in tests.
+  by atomic replace, whenever the web app's or the CLI's Writer opens, or the web app starts
+  against an archive it may write (`selfdoc.write_docs`). Three Writers write no docs: the
+  worker's, `recordings reindex`'s and `recordings plaud …`'s (`docs=False`). Media, `source/`
+  and `renditions/` are published write-once and never overwritten. A check's new Plaud snapshot
+  goes through `Writer.add_snapshot` (the snapshot mark, then the file under the recording's
+  lock, then its reference through `mutate`; a crash between leaves a file `recordings validate`
+  warns about, `selfdoc.orphan_snapshots`). Never write archive files any other way, in code or
+  in tests. The worker's downloads in `.tmp/plaud-dl/` are scratch,
+  not archive data; they enter the archive only through `Writer.add` (`plaud/importer.py`,
+  `plaud/scratch.py`, swept at the worker's start).
 - **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
   make archives with `recordings.init.init_archive` (or the `writer` fixture).
 - **Privacy:** a recording is private if a tag is `private` or under `private/`, in any
   capitalisation, read after NFKC and without invisible characters, a fullwidth `／`
   counting as `/` (`recordings.models.is_private_tag`). The private tag lands before any source or
-  output does. Don't read a private recording's transcript or notes. No report, alert or log
-  carries a title.
+  output does, judged on every title the app has seen at that moment. One deliberate exception
+  (stage 2b, Dan, 2026-10-23): a Plaud recording renamed to a private title, or to the keep-out
+  word, after it came in is tagged `private` at the next sync, so its source and outputs landed
+  first. Until then it carries whatever tags Dan gave it; with none, external agents already
+  treat it as private. Don't read a private recording's transcript or notes. No report, alert or
+  log carries a title.
+- **The Plaud client is read-only and runs only in the worker.** `recordings_ui` never imports
+  the client, the token store or the sync (`packages/ui/tests/test_plaud_imports.py`), not even
+  at runtime: what reads settings takes `API_BASE` and `check_api_base` from the network-free
+  `plaud/endpoint.py`, never from the client. No test reaches Plaud: the root `conftest.py`
+  refuses every `plaud.ai` host and drops every `*_proxy` variable, for the whole run of pytest's
+  own process (not for a subprocess a test starts), and the client's tests use
+  the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture; its
+  `signed_in()` turns on the sign-in, `fault()` injects §21's errors, `account()` is the
+  synthetic account behind the paged listing, with its listing-shaped faults, and serves each
+  recording's `files/{id}` envelope, its note and its audio on the storage host, with Dan's edits
+  and Plaud's own changes for edit-sync (`rename_speaker`, `regenerate_notes`, `send_field`,
+  `make_volatile`), and `link()` serves a `FakeLink` that honours `Range`, drops, expires or
+  trickles). Every request the client sends
+  goes through its `Throttle` (pacing, the budget, backoff, `Range` resume: spec §10.2), one per
+  process. No test really waits on it: `packages/core/tests/conftest.py` skips the waits of a
+  `Throttle` given no `sleep`, and a test of the waits injects its clocks and sleep
+  (`test_plaud_throughput.py`).
+- **The Plaud cache, `<state>/plaud-cache.db`** (`plaud/cache.py`, spec §9.5), is the one place a
+  title of a recording not yet here is stored: never one consent-listed, kept out or under review,
+  none during a consent stop or while a held listing shows Plaud's IDs changed
+  (`plaud/compare.py` decides), and the worker's tick nulls any the consent list or a keep-out word
+  catches later. It is derived (the next listing rebuilds it) and never backed up
+  (`backup.never_backed_up` refuses it in `extra_paths`). Only the Sync screen reads it, through
+  `Cache.read_only`, and a reader applies `cache.title_allowed` again before a title leaves it.
+  The one other title in it is Release's preview (§12.2): written by the worker under the
+  `release-preview` request's own ID, read and deleted at once by the web app for the session
+  that asked (`cache.take_preview`, writable but never creating the file), gone after 10 minutes
+  or as soon as the consent list or a word catches it.
+- **`tokens.json` is a secret** (the Plaud sign-in, `plaud/tokens.py`): used by reference, never
+  read or printed, and a Claude session never runs `make plaud-sign-in` or `token-import`. Its
+  tests use invented tokens against the fake, and a fake `plaud` and `ssh` on `PATH`. The sign-in's
+  state (the pause, the `sign-in` blocker, its expiries) is in the network-free `plaud/signin.py`,
+  which the worker's tick and doctor import; the store itself only the worker's run and the CLI.
 - **Tag changes from the app go through `recordings.tagops`** (`AddTags`, `RemoveTags`, `RestoreTags`),
   applied by `Writer.mutate` on the tag service's one writer thread
   (`recordings_ui/tagging.py`, `writing.py`). The privacy gate is inside the operations: a
@@ -136,8 +199,11 @@ smoke test on purpose until someone does the steps below:
   rebuilds a record with `model_dump` and `model_validate`, never `dump_json`, because of
   Pyodide's pydantic. The other paths that set tags are the import's: `Writer.add` and
   `MergeIncoming` (`writer.py`, via `_append_tags`), and `SetPlaudFields`, which adds the automatic
-  `private` tag through `AddTags` in `Writer.reconcile_plaud` (from `Writer.reindex` and the
-  audio-router import). All run inside the Writer.
+  `private` tag through `AddTags` in `Writer.reconcile_plaud` (from `Writer.reindex`, the
+  audio-router import, `recordings plaud baseline` and the patterns pass the worker runs at start
+  and retries at each tick while the last attempt left recordings unchecked or raised, both in
+  `plaud/baseline.py`) and in the worker's late consent listings (`plaud/flags.py`,
+  `apply_late_consent`). All run inside the Writer.
 - **To add a tag operation or rule:** write the operation in `tagops.py` (its `apply`, and the
   `Effect` it records so `RestoreTags` can undo it), put it behind the privacy gate, then teach the
   service in `recordings_ui/tagging.py` (`classify` for any new refusal, the request checks, the
@@ -145,9 +211,29 @@ smoke test on purpose until someone does the steps below:
   and Pages' `MemoryStore` (spec §4–§5). The fake-failure tests (busy, full disk, read-only, a
   failed open, a stopped thread) are in `packages/ui/tests/test_tag_stores.py` and
   `test_tag_service.py`: copy one.
+- **To add a Plaud request kind** (spec §9.3; the phase-end council's Simplicity 1): its handler
+  in `worker.py` (`HANDLERS`, a `requests.Reply` with a §15.6 phrase, counts and IDs, never a
+  title), and the kind in `requests.HANDLED` in the same commit, never before (the UI disables
+  every kind not in it, and web refuses one before inserting it); `gate.GATE_ALLOWED` only if it
+  writes no snapshot; `check_request` in `recordings_ui/plaud.py` for what the kind may carry,
+  with `KIND_LABELS`; `PlaudKind` in `types.ts` and `kindReason` in `usePlaud.tsx` for the
+  button; a run that holds `plaud` gets its job in `runlock.JOBS` and `JOB_LABELS`, and its kind
+  in `worker.PLAUD_KINDS` (it then waits, queued, while another run holds `plaud`); a kind whose
+  second press while one is queued should follow it goes in `requests.COALESCED`, with its rule in
+  `requests._coalesce`. A sync-shaped kind runs `plaud.sync.run_sync` through
+  `worker._sync_request` (Compare, Sync now and the imports are the examples). Then the pins:
+  `test_plaud_requests.py`'s HANDLED test, `test_plaud_requests_ui.py`'s refused kinds and
+  `test_plaud_views.py`'s `handled` lists. Accept this listing (`accept`) is the worked example.
+  A handler that may run inside a long run takes `plaud` through `Worker._hold`, which takes
+  nothing while a long run of the same process holds it; a long run passes
+  `Worker.long_between` as its `between`, which serves the light turn and a Compare or a
+  one-recording Re-sync between two recordings (spec §9.2; Sync everything and `resync` are the
+  examples, and `Worker.for_cli` gives the CLI's long runs the same).
 - **Tagging's logs carry fixed phrases,** IDs, counts and exception class names: never a tag
   name, a title or `str(exc)`. So do replies' `message` and failure reasons. Replies also carry
-  `rows` (with titles) and `tags` by design, for the one person using the app. The one text that
+  `rows` (with titles) and `tags` by design, for the one person using the app, and so does a
+  Re-sync's final `plaud_result` (`rows`: the Library rows it updated, read again in
+  `shiny_app`), never its `result`. The one text that
   comes from an exception is `cannot_tag_reason` (and the "Stopped: …" that repeats it): the
   Writer's own refusal, written for display, which names paths and IDs, never a title. A log never
   carries even that.

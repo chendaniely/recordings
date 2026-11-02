@@ -6,6 +6,7 @@ import { RecordingList, openNewTag } from "./components/RecordingList";
 import { RecordingPane } from "./components/RecordingPane";
 import { Sidebar, useListedFilter } from "./components/Sidebar";
 import { StatusPage } from "./components/StatusPage";
+import { SyncPage } from "./components/SyncPage";
 import { TagPickerDialog } from "./components/TagPicker";
 import { TagsPage } from "./components/TagsPage";
 import { TopBar } from "./components/TopBar";
@@ -13,10 +14,11 @@ import { hashFor, phoneRoute, routeFromHash } from "./lib/nav";
 import { useGridState } from "./lib/useGridState";
 import { UNTAGGED, useListState } from "./lib/useListState";
 import { PHONE, useMediaQuery } from "./lib/useMediaQuery";
+import { PlaudContext, usePlaud } from "./plaud/usePlaud";
 import { useShinyInitialized, useShinyInput, useShinyOutputStatus, useShinyOutputValue } from "./sr";
 import { ConfirmDialog } from "./tagging/ConfirmDialog";
 import { TaggingContext, useTagging } from "./tagging/useTagging";
-import type { Filter, LibraryView, Page, Route } from "./types";
+import type { Filter, LibraryView, Page, Route, SyncView } from "./types";
 
 /** Sonner's offsets take a CSS length: the toaster and the pickers' band read the same variable. */
 const TOAST_OFFSET = "var(--toast-offset)";
@@ -31,6 +33,8 @@ export default function App() {
   // shinyreact drops a message that has no handler.
   useShinyOutputStatus("recording");
   useShinyOutputStatus("status");
+  useShinyOutputStatus("plaud_sync");
+  useShinyOutputStatus("plaud_arrivals");
   const tagging = useTagging(library);
   const [selectedId, setSelectedId] = useShinyInput<string | null>("selected_id", null);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
@@ -82,28 +86,38 @@ export default function App() {
     setRoute({ page: next, open: null });
   };
 
+  // The Plaud requests' input and their replies' handler, mounted once here too (2b spec §9.3).
+  // An import's toast offers View, which opens the Library on Untagged (§11.5); a Re-sync's rows,
+  // read again, merge into the open list in place (§14.6).
+  const plaud = usePlaud(useShinyOutputValue<SyncView>("plaud_sync"), () => {
+    setFilter(UNTAGGED);
+    go("library");
+  }, tagging.mergeRows);
+
   if (!initialized) return null; // no flash of empty defaults during connection
   return (
-    <TaggingContext.Provider value={tagging}>
-      <div className="app">
-        <TopBar page={route.page} onPage={go} />
-        {/* The Tags grid reads the same merged library, with its own order and selection (spec §7). */}
-        {route.page === "status" ? <StatusPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} /> : (
-          <main className="panes">
-            {/* + New tag…: a drop opens the picker for the dragged recordings, a click for the
-                selection (spec §6). */}
-            <Sidebar library={view} filter={filter} onFilter={setFilter} lastListed={lastListed}
-              onNewTag={(ids) => openNewTag(ids, sel, order.ids, rows, tagging)} />
-            <RecordingList rows={rows} sel={sel} act={act} openId={selectedId} onOpen={setSelectedId} announce={announce} fitted={fitted} />
-            <RecordingPane selectedId={selectedId} row={openRow} />
-          </main>
-        )}
-        <TagPickerDialog />
-        <ConfirmDialog />
-        {/* One offset at every width, from app.css, where the pickers keep clear of the toasts' band;
-            Sonner's own are 24 px, and 16 px only up to 600 px wide (Task 15 fix round 2, item 2). */}
-        <Toaster position={topToasts ? "top-center" : "bottom-right"} offset={TOAST_OFFSET} mobileOffset={TOAST_OFFSET} />
-      </div>
-    </TaggingContext.Provider>
+    <PlaudContext.Provider value={plaud}>
+      <TaggingContext.Provider value={tagging}>
+        <div className="app">
+          <TopBar page={route.page} onPage={go} />
+          {/* The Tags grid reads the same merged library, with its own order and selection (spec §7). */}
+          {route.page === "status" ? <StatusPage /> : route.page === "add" ? <SyncPage /> : !view ? <p className="empty">Loading…</p> : route.page === "tags" ? <TagsPage grid={grid} /> : (
+            <main className="panes">
+              {/* + New tag…: a drop opens the picker for the dragged recordings, a click for the
+                  selection (spec §6). */}
+              <Sidebar library={view} filter={filter} onFilter={setFilter} lastListed={lastListed}
+                onNewTag={(ids) => openNewTag(ids, sel, order.ids, rows, tagging)} />
+              <RecordingList rows={rows} sel={sel} act={act} openId={selectedId} onOpen={setSelectedId} announce={announce} fitted={fitted} />
+              <RecordingPane selectedId={selectedId} row={openRow} />
+            </main>
+          )}
+          <TagPickerDialog />
+          <ConfirmDialog />
+          {/* One offset at every width, from app.css, where the pickers keep clear of the toasts' band;
+              Sonner's own are 24 px, and 16 px only up to 600 px wide (Task 15 fix round 2, item 2). */}
+          <Toaster position={topToasts ? "top-center" : "bottom-right"} offset={TOAST_OFFSET} mobileOffset={TOAST_OFFSET} />
+        </div>
+      </TaggingContext.Provider>
+    </PlaudContext.Provider>
   );
 }

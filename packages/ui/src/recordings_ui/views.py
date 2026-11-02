@@ -9,8 +9,9 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from markdown_it import MarkdownIt
@@ -20,6 +21,9 @@ from recordings.models import Recording, Rendition, is_private, is_private_tag, 
 
 from recordings_ui.status import StatusSettings
 from recordings_ui.status import status_view as _status_view
+
+if TYPE_CHECKING:
+    from recordings_ui.plaud import PlaudViewSettings
 
 # html=False: any HTML in model-written notes is escaped, never rendered (review focus #4).
 # No images: an image would make the browser fetch it, and the app makes no external requests.
@@ -156,9 +160,12 @@ def recording_view(
     *,
     media_base: str | None = None,
     read: Callable[[str], Recording] | None = None,
+    plaud: PlaudViewSettings | None = None,
+    now: datetime | None = None,
 ) -> dict | None:
     """`read` is the Pages demo's store, whose in-memory tags the files don't have (tagging spec
-    §5); without it the record is read from the files."""
+    §5); without it the record is read from the files. `plaud`: what Details' Plaud lines read
+    (2b spec §15.3); they are None for a recording with no Plaud source."""
     if not ID_RE.fullmatch(rid or ""):
         return None
     try:
@@ -238,11 +245,26 @@ def recording_view(
             for path, r in outputs
         ],
         "problems": [{"path": str(p.path), "message": p.message} for p in problems],
+        "plaud": _plaud_lines(plaud, rec, now),
     }
 
 
-def status_view(archive: Archive, settings: StatusSettings | None) -> dict:
-    return _status_view(archive.root, settings)
+def _plaud_lines(
+    settings: PlaudViewSettings | None, rec: Recording, now: datetime | None
+) -> dict | None:
+    if settings is None or not any(s.kind == "plaud" for s in rec.sources):
+        return None
+    from recordings_ui.plaud import (
+        recording_plaud,
+    )  # here: only a recording with a Plaud source needs it
+
+    return recording_plaud(settings, rec.id, now=now or datetime.now(UTC))
+
+
+def status_view(
+    archive: Archive, settings: StatusSettings | None, plaud: PlaudViewSettings | None = None
+) -> dict:
+    return _status_view(archive.root, settings, plaud=plaud)
 
 
 SNIPPET_CHARS = 160  # spec §5

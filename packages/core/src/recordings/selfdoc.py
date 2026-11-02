@@ -95,6 +95,34 @@ def validate(root: Path, *, deep: bool = False) -> list[dict]:
     return problems
 
 
+ORPHAN_SNAPSHOT = (
+    "not named in recording.json: a snapshot whose write stopped before it was recorded "
+    "(harmless: the next check writes its own)"
+)
+
+
+def orphan_snapshots(root: Path) -> list[dict]:
+    """Warnings, never problems: each file in a recording's `source/` that its `recording.json`
+    doesn't name (stage 2b §14.1). A check publishes a snapshot, then records it through `mutate`;
+    a crash between the two leaves the file behind, which nothing reads. `validate` still passes,
+    and `recordings validate` prints these under `warnings`. Only recordings whose
+    `recording.json` reads are looked at: a broken one is already a problem."""
+    root = Path(root)
+    if not (root / "recordings").is_dir():
+        return []
+    archive = Archive(root)
+    warnings = []
+    for rec in archive.iter_recordings():
+        folder = archive.path_for(rec.id)
+        named = {s.raw for s in rec.sources if s.raw}
+        warnings.extend(
+            {"path": str(path), "message": ORPHAN_SNAPSHOT}
+            for path in sorted((folder / "source").glob("*"))
+            if path.is_file() and path.relative_to(folder).as_posix() not in named
+        )
+    return warnings
+
+
 def _recording_problems(archive: Archive, rec, *, deep: bool = False) -> list[dict]:
     folder = archive.path_for(rec.id)
     here = str(folder / "recording.json")

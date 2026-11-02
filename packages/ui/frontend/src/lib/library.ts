@@ -138,7 +138,7 @@ export function filterIsShown(filter: Filter, view: Pick<LibraryView, "tags" | "
  * writing.OPENING): the Library is drawn at once without tagging, then again when the open ends
  * (spec §5). A moment, not tagging off. */
 export const OPENING = "the archive is being opened";
-const LOST = "Lost the connection. Reload to keep working.";
+export const LOST = "Lost the connection. Reload to keep working.";
 
 const MIRROR_ADVICE = "Open the archive's own app to tag.";
 

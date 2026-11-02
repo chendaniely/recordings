@@ -8,19 +8,21 @@ never need it: the Mac's read-only mirror has none.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from recordings.files import fsync_dir, temp_name
+from recordings.refs import canonical_plaud_id
 
 SCHEMA_VERSION = 1
-# The version-1 tables. Later tasks in stage 2a append theirs here. Every statement is
-# CREATE ... IF NOT EXISTS, so opening a state.db made earlier in 2a adds what is missing.
+# The version-1 tables: stage 2a's, then stage 2b's. Every statement is CREATE ... IF NOT EXISTS,
+# so opening a state.db made by an earlier release adds what is missing.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS revisions (
@@ -38,6 +40,66 @@ CREATE TABLE IF NOT EXISTS ops_runs (
 CREATE INDEX IF NOT EXISTS ops_runs_by_job ON ops_runs (job, id);
 CREATE TABLE IF NOT EXISTS alerts (
   key TEXT PRIMARY KEY, failing INTEGER NOT NULL, last_sent_at TEXT);
+-- Stage 2b's tables (its spec §9.5; recordings.plaud.checks reads and writes them). Tables only,
+-- every column from the start and SCHEMA_VERSION still 1, so an older release's open ignores them
+-- and `make rollback` keeps working (2b phase 1 plan, decision 3). Plaud IDs are canonical.
+CREATE TABLE IF NOT EXISTS plaud_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
+  plaud_ids TEXT NOT NULL DEFAULT '[]', recording_ids TEXT NOT NULL DEFAULT '[]',
+  select_all INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL,                     -- queued | running | done | failed | expired | refused
+  queued_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+  progress TEXT,                           -- JSON {"done", "total"}
+  message TEXT,                            -- a §15.6 reply phrase
+  result TEXT);                            -- JSON: counts and IDs, never a title
+CREATE INDEX IF NOT EXISTS plaud_requests_by_state ON plaud_requests (state, id);
+CREATE TABLE IF NOT EXISTS plaud_listing (
+  canonical_plaud_id TEXT PRIMARY KEY, listed_id TEXT NOT NULL,
+  first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, absent_since TEXT,
+  kept_out_at TEXT, kept_out_word TEXT,    -- by a word (§12.2); a late keep-out's too
+  rekey_of TEXT,                           -- §11.4 step 6: the absent ID it matched; '*': several
+  released_at TEXT,                        -- §12.2
+  needs_review INTEGER NOT NULL DEFAULT 0, -- §11.6
+  import_failures INTEGER NOT NULL DEFAULT 0, next_import_at TEXT, parked_at TEXT,
+  title_sha256 TEXT, duration_ms INTEGER, change_marker TEXT);   -- only while its recording is here
+-- No "flagged" column in plaud_checks: the spec's flag is an open plaud_events row (decision 16).
+CREATE TABLE IF NOT EXISTS plaud_checks (
+  recording_id TEXT PRIMARY KEY, last_checked_at TEXT, last_changed_at TEXT, next_check_at TEXT,
+  interval_seconds INTEGER, fast_checks_left INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0, failing_since TEXT,
+  settled INTEGER NOT NULL DEFAULT 0, baseline_pending INTEGER NOT NULL DEFAULT 0,
+  held_removals TEXT NOT NULL DEFAULT '[]', parked_at TEXT, degraded INTEGER NOT NULL DEFAULT 0,
+  gone_since TEXT, kept_here_at TEXT);
+CREATE TABLE IF NOT EXISTS plaud_check_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, recording_id TEXT NOT NULL,
+  result TEXT NOT NULL, parts_changed TEXT NOT NULL DEFAULT '[]',
+  parts_volatile TEXT NOT NULL DEFAULT '[]', counted INTEGER NOT NULL DEFAULT 0,
+  failure_class TEXT);
+CREATE INDEX IF NOT EXISTS plaud_check_log_by_at ON plaud_check_log (at);
+CREATE TABLE IF NOT EXISTS plaud_private_checked (
+  recording_id TEXT NOT NULL, canonical_plaud_id TEXT NOT NULL, title_sha256 TEXT NOT NULL,
+  patterns_version INTEGER NOT NULL, checked_at TEXT NOT NULL,
+  PRIMARY KEY (recording_id, canonical_plaud_id));
+CREATE TABLE IF NOT EXISTS plaud_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, kind TEXT NOT NULL,
+  recording_id TEXT, canonical_plaud_id TEXT,
+  detail TEXT NOT NULL DEFAULT '{}',       -- JSON: parts, a fixed "why"; never a title
+  open INTEGER NOT NULL DEFAULT 0, resolved_at TEXT);
+CREATE INDEX IF NOT EXISTS plaud_events_by_at ON plaud_events (at);
+CREATE UNIQUE INDEX IF NOT EXISTS plaud_events_one_flag ON plaud_events (recording_id)
+  WHERE open = 1 AND kind IN ('kept-out-late', 'consent-late');
+CREATE UNIQUE INDEX IF NOT EXISTS plaud_events_one_unwritten ON plaud_events (recording_id)
+  WHERE open = 1 AND kind = 'private-unwritten';
+CREATE TABLE IF NOT EXISTS plaud_state (
+  key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+-- The IDs of the last good listing and of a held one (§11.4), each with its form (of_ | hex |
+-- other), so a hold measures what vanished and what changed form, and Accept can make the held
+-- listing the last good one. Added in Phase 2 (area A3): a table, never a column, so SCHEMA_VERSION
+-- stays 1.
+CREATE TABLE IF NOT EXISTS plaud_listed (
+  listing TEXT NOT NULL,                   -- 'good' | 'held'
+  canonical_plaud_id TEXT NOT NULL, form TEXT NOT NULL,
+  PRIMARY KEY (listing, canonical_plaud_id));
 """
 # Every change after version 1, keyed by the version it makes: MIGRATIONS[2] takes a state.db
 # from version 1 to 2. CREATE TABLE IF NOT EXISTS can't add a column, so a later stage that changes
@@ -113,6 +175,20 @@ class Run:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _plaud_refs(body: bytes | None) -> set[str]:
+    """The canonical Plaud IDs a recording.json body's `sources` name; none for a body that
+    doesn't decode (forget then has the markers' IDs alone)."""
+    try:
+        sources = json.loads(body).get("sources") if body else None
+    except (ValueError, AttributeError):
+        return set()
+    return {
+        canonical_plaud_id(s["ref"])
+        for s in (sources if isinstance(sources, list) else [])
+        if isinstance(s, dict) and s.get("kind") == "plaud" and isinstance(s.get("ref"), str)
+    }
 
 
 class State:
@@ -202,18 +278,19 @@ class State:
         state._read_only = True
         return state
 
-    def _connect(self, mode: str) -> sqlite3.Connection:
+    def _connect(self, mode: str, timeout: float = 30) -> sqlite3.Connection:
         """A URI with an explicit mode: `rw` never creates a missing file, as a plain path would."""
         uri = f"{self.db_path.absolute().as_uri()}?mode={mode}"
-        return sqlite3.connect(uri, uri=True, timeout=30)
+        return sqlite3.connect(uri, uri=True, timeout=timeout)
 
     @contextmanager
-    def db(self) -> Iterator[sqlite3.Connection]:
+    def db(self, *, timeout: float = 30) -> Iterator[sqlite3.Connection]:
         """One connection per use: committed on success, rolled back on error, always closed.
+        `timeout` is how many seconds it waits for a lock another connection holds.
 
         It opens an existing state.db only: a missing one is an error, never a new, empty file.
         """
-        with closing(self._connect(self._mode)) as conn:
+        with closing(self._connect(self._mode, timeout)) as conn:
             conn.execute("PRAGMA synchronous=FULL")
             with conn:
                 yield conn
@@ -313,6 +390,11 @@ class State:
     # ---- flags: files that need attention (until stage 3's UI shows them) -----------------
     def flag(self, file: str, kind: str, message: str) -> None:
         with self.db() as db:
+            row = db.execute(
+                "SELECT message FROM flags WHERE file = ? AND kind = ?", (file, kind)
+            ).fetchone()
+            if row is not None and row[0] == message:
+                return  # flagged so already: a retry writes nothing and keeps the first time
             db.execute(
                 "INSERT OR REPLACE INTO flags (file, kind, message, at) VALUES (?, ?, ?, ?)",
                 (file, kind, message, _now()),
@@ -340,10 +422,39 @@ class State:
             ]
 
     def forget(self, file: str) -> None:
-        """Drop everything state.db remembers about a file that was removed on purpose."""
+        """Drop everything state.db remembers about a file that was removed on purpose: its
+        revisions and flags, and its recording's Plaud rows (2b spec §9.5): its checks, markers
+        and events, and the title hash, duration and change marker on the listing rows of its
+        Plaud IDs, which are kept only while it is here. Its other listing state (kept out,
+        released, parked) stays, keyed by the Plaud ID. Its Plaud IDs are those its markers name
+        and those its last committed revision's `sources` name, read before the revisions go: the
+        listing writes a title hash for a recording here that no reconcile has marked yet."""
+        recording_id = PurePosixPath(file).parent.name
         with self.db() as db:
+            plaud_ids = {
+                row[0]
+                for row in db.execute(
+                    "SELECT canonical_plaud_id FROM plaud_private_checked WHERE recording_id = ?",
+                    (recording_id,),
+                )
+            }
+            last = db.execute(
+                "SELECT body FROM revisions WHERE file = ? AND committed = 1 "
+                "ORDER BY id DESC LIMIT 1",
+                (file,),
+            ).fetchone()
+            plaud_ids |= _plaud_refs(last[0] if last else None)
             db.execute("DELETE FROM revisions WHERE file = ?", (file,))
             db.execute("DELETE FROM flags WHERE file = ?", (file,))
+            db.executemany(
+                "UPDATE plaud_listing SET title_sha256 = NULL, duration_ms = NULL, "
+                "change_marker = NULL WHERE canonical_plaud_id = ?",
+                [(pid,) for pid in sorted(plaud_ids)],
+            )
+            for table in ("plaud_checks", "plaud_private_checked", "plaud_events"):
+                db.execute(f"DELETE FROM {table} WHERE recording_id = ?", (recording_id,))
+            # The snapshots its markers judged (plaud_state, `judged:<recording_id>`, §13.2).
+            db.execute("DELETE FROM plaud_state WHERE key = ?", (f"judged:{recording_id}",))
 
     # ---- index updates not yet made: a crash between a write and its index update ---------
     def mark_index_pending(self, recording_id: str) -> None:

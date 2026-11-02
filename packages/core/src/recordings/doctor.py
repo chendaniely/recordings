@@ -10,10 +10,16 @@ warning: `recordings reindex` rebuilds it.
 
 Each Compose service runs it in its own role (`--role`, else RECORDINGS_ROLE, else `all`):
 - `web` serves the Library and runs the import. It must hold no backup, mirror or alert secret,
-  and doctor checks that none is there.
+  nor the Plaud sync's ping URL, nor `/plaud`, and doctor checks that none is there.
 - `backup` runs the backups, the mirror and the alerts. Its archive mount is read-only, so the
-  hard-link probe is skipped there, and ssh needs this user's passwd entry.
-- `all`, the default outside Docker, checks everything.
+  hard-link probe is skipped there, and ssh needs this user's passwd entry. It holds neither the
+  sync's ping URL nor `/plaud`.
+- `worker` (stage 2b spec §17.2) runs the Plaud sync. Its backup, mirror, ssh and restic checks
+  are skipped, and so is the "alerts are off" warning: it sends no push by design. Its own: the
+  consent list, the sign-in (its presence, modes and expiries, never a token), the keep-out
+  word, and the sync's dead-man URL, whose check is its only alert. It must hold no backup
+  secret. Doctor never calls Plaud; `recordings plaud check` does.
+- `all`, the default outside Docker, checks everything but the worker's own.
 Every role warns when retention is off here, and reports where the consent list is, as
 information (or, when it is unset, as a note in `notes`): the import reads it and fails closed
 by itself. Every role also checks that
@@ -29,7 +35,8 @@ import shutil
 import sqlite3
 import stat
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -39,26 +46,49 @@ from recordings.config import SECRETS, Config, ConfigError, load_config, secret,
 from recordings.disk import disk_thresholds
 from recordings.index import Index
 from recordings.locks import running
+from recordings.plaud import signin
+from recordings.plaud.baseline import KeepOutWordsError, enforced_words
+from recordings.plaud.checks import NoSyncYet, PlaudDB
 from recordings.plaud.consent import ConsentListError, consent_list_path
+from recordings.plaud.keepout import kept_lines_note, read_consent
+from recordings.plaud.settings import BAD_WORD, DEFAULT_TOKEN_STORE, plaud_settings
 from recordings.sentinel import MIRROR, SentinelError, is_mirror, read_sentinel
 from recordings.ssh import nas_free_bytes
 from recordings.state import State, StateError, unreadable
 
 TOOLS = ("restic", "rsync", "ssh", "ffprobe", "ffmpeg")
-ROLES = ("web", "backup", "all")
-# The backup service's secrets: docker/compose.yml gives them to it alone. The web service faces
-# the browser and never backs up, mirrors or alerts, so it must hold none of them.
-JOB_SECRETS = (
+ROLES = ("web", "backup", "worker", "all")
+# docker/compose.yml gives each set to one service: the backup set to `backup`, the alert set to
+# `backup` too (and to `worker` with the later ntfy change, stage 2b spec §16), and the sync's ping
+# URL, deadman_sync_url, to `worker` alone. `web` faces the browser and holds none of them.
+BACKUP_SECRETS = (
     "restic_password",
     "rest_password",
     "nas_ssh_key",
     "nas_known_hosts",
-    "ntfy_topic",
-    "ntfy_token",
     "deadman_url",
 )
-SECRETS_DIR = Path("/run/secrets")  # where Docker mounts a service's secrets, by name
+ALERT_SECRETS = ("ntfy_topic", "ntfy_token")
+SECRETS_DIR = backup.SECRETS_DIR  # where Docker mounts a service's secrets, by name
+# What each role must not hold (see the comment above): the table `doctor()` reads.
+FORBIDDEN = {
+    "web": (*BACKUP_SECRETS, *ALERT_SECRETS, "deadman_sync_url"),
+    "worker": BACKUP_SECRETS,
+    "backup": ("deadman_sync_url",),
+}
+PLAUD_MOUNT = backup.PLAUD_MOUNT  # the sign-in's folder, mounted in `worker` only
+CONSENT_MOUNT = Path("/consent")  # the consent folder, in `worker` and `backup` (read-only)
+# Sync everything's manifests (stage 2b spec §14.6, decision 9), in the state folder every
+# container mounts; the worker makes it at its start.
+MANIFESTS_MOUNT = Path("/state/manifests")
 OPEN_TO_OTHERS = 0o077  # ssh refuses a key with any of these bits set; doctor warns for any secret
+# The worker's missing sign-in (spec §17.2). While Phase 1 ran, with no way to sign in, it was a
+# note (Dan, phase-end Q&A §7); with `make plaud-sign-in` it is a problem again.
+SIGN_IN_NEEDED = "sign-in needed: run `make plaud-sign-in` at the Mac (runbook, Plaud sign-in)"
+SIGN_IN_UNUSABLE = (
+    "sign-in needed: the Plaud sign-in in {} can't be used: run `make plaud-sign-in` at the Mac"
+)
+REFRESH_WARNING = timedelta(days=7)  # Needs attention's "sign-in expiring within 7 days" (§15.2)
 
 
 def _secrets(environ: Mapping[str, str], problems: list[str], warnings: list[str]) -> dict:
@@ -88,20 +118,54 @@ def _secrets(environ: Mapping[str, str], problems: list[str], warnings: list[str
     return out
 
 
-def _no_job_secrets(environ: Mapping[str, str], problems: list[str]) -> None:
+def _forbid(
+    environ: Mapping[str, str], names: Sequence[str], role: str, problems: list[str]
+) -> None:
+    """A secret this role must not hold, by its variable, its _FILE variable, or a Compose mount."""
     held = [
         name
-        for name in JOB_SECRETS
+        for name in names
         if environ.get(SECRETS[name].env)
         or environ.get(f"{SECRETS[name].env}_FILE")
         or _mounted(SECRETS_DIR / name)
     ]
     if held:
         problems.append(
-            "the web service must hold no backup, mirror or alert secret, but it "
-            "has " + ", ".join(held) + ": docker/compose.yml gives them to `backup` "
-            "only"
+            f"the {role} service must not hold " + ", ".join(held) + ": docker/compose.yml "
+            "gives each secret only to the service that uses it"
         )
+
+
+def _no_plaud_here(environ: Mapping[str, str], problems: list[str]) -> None:
+    """`web` and `backup` never hold the Plaud sign-in (stage 2b spec §10.4, §17.2). The old static
+    token's variable is read by name: it is no longer one of SECRETS."""
+    _plaud_folder_here(PLAUD_MOUNT, problems)
+    held = [n for n in ("RECORDINGS_PLAUD_TOKEN", "RECORDINGS_PLAUD_TOKEN_FILE") if environ.get(n)]
+    if held:
+        problems.append(
+            ", ".join(held) + " is set here, but only the worker holds the Plaud sign-in, in "
+            f"{DEFAULT_TOKEN_STORE}: remove it"
+        )
+
+
+def _plaud_folder_here(folder: Path, problems: list[str]) -> None:
+    if folder.exists():
+        problems.append(
+            f"{folder} is mounted here, and it holds the Plaud sign-in: docker/compose.yml "
+            "mounts it in `worker` only"
+        )
+
+
+def _no_plaud_folder_named(cfg: Config, problems: list[str]) -> None:
+    """The folder `[plaud] token_store` names, when config names one other than the default, read
+    from that key alone (`backup.token_folder`): a bad other `[plaud]` key never hides it. One that
+    can't be read is `_extra_paths`' problem (TOKEN_UNKNOWN), in every role."""
+    section = cfg.data.get("plaud", {})
+    if not isinstance(section, dict) or not section.get("token_store"):
+        return
+    folder = backup.token_folder(cfg)
+    if folder is not None and folder != PLAUD_MOUNT:
+        _plaud_folder_here(folder, problems)
 
 
 def _mounted(path: Path) -> bool:
@@ -212,8 +276,9 @@ def _state(
     problems: list[str],
     warnings: list[str],
 ) -> None:
-    # Without state.db, `ops --loop` exits 78 and the backup service crash-loops.
-    missing = problems if role == "backup" else warnings
+    # Without state.db, `ops --loop` exits 78 and the backup service crash-loops; the worker
+    # can't start either.
+    missing = problems if role in ("backup", "worker") else warnings
     if cfg.writer_id is None:
         warnings.append("no [archive] writer_id: this machine can't write the archive")
     if cfg.state_path is None:
@@ -458,23 +523,27 @@ def _retention(cfg: Config, warnings: list[str]) -> None:
         )
 
 
-def _consent(cfg: Config, report: dict) -> None:
+def _consent(cfg: Config, role: str, report: dict) -> None:
     """[plaud] consent_list, as information only. In 2a it is mounted just for import runs, and
-    the import reads it and fails closed by itself. Its IDs are never read here."""
+    the import reads it and fails closed by itself. Its IDs are never read here. The worker stays
+    up and needs the list, and `_worker` reports it as a problem, so those notes stay off it."""
     try:
         resolved = consent_list_path(cfg.data)  # as the import reads it: blank is unset
     except ConsentListError:
-        report["notes"].append(
-            "[plaud] consent_list is not set, so the import refuses to run "
-            "(spec §9.1); the services that stay up don't need it"
-        )
+        if role != "worker":
+            report["notes"].append(
+                "[plaud] consent_list is not set, so the import refuses to run "
+                "(spec §9.1); the services that stay up don't need it"
+            )
         return
     path = cfg.data["plaud"]["consent_list"]  # shown as configured, not expanded
     here = resolved.is_file()
     report["consent_list"] = {
         "path": path,
         "here": here,
-        "note": None if here else "not mounted here; the import reads it and fails closed",
+        "note": None
+        if here or role == "worker"
+        else "not mounted here; the import reads it and fails closed",
     }
 
 
@@ -501,25 +570,43 @@ def _disk(cfg: Config, problems: list[str]) -> None:
         problems.append(str(exc))
 
 
-def _alerts(
-    cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str], warnings: list[str]
-) -> None:
+def _alert_config(
+    cfg: Config,
+    environ: Mapping[str, str],
+    report: dict,
+    problems: list[str],
+    warnings: list[str],
+    deadman: str,
+) -> tuple[alerts.AlertConfig | None, str]:
+    """The alert config, for `_alerts` (`deadman` is `deadman_url`) and `_worker`
+    (`deadman_sync_url`). When it can't be read: None and the refusal's text (a setting's name,
+    never a value), which `_secrets` may have listed already, so it is removed from both lists. When
+    it can: `report["alerts"]` is set, with `deadman_set` from the named field."""
     try:
         ac = alerts.from_config(cfg, environ)
     except ConfigError as exc:
-        # The loop reads any failure as "alerts off": no alert and no dead-man ping is sent. So
-        # each is a problem (a bad URL, topic or secret file, never its value), whether or not
-        # _secrets listed the same text as a warning.
         for found in (problems, warnings):
             if str(exc) in found:
                 found.remove(str(exc))
-        problems.append(f"alerts and dead-man pings are off: {exc}")
-        return
+        return None, str(exc)
     report["alerts"] = {
         "ntfy_server_set": bool(ac.ntfy_server),
         "topic_set": bool(ac.topic),
-        "deadman_set": bool(ac.deadman_url),
+        "deadman_set": bool(getattr(ac, deadman)),
     }
+    return ac, ""
+
+
+def _alerts(
+    cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str], warnings: list[str]
+) -> None:
+    ac, refusal = _alert_config(cfg, environ, report, problems, warnings, "deadman_url")
+    if ac is None:
+        # The loop reads any failure as "alerts off": no alert and no dead-man ping is sent. So
+        # each is a problem (a bad URL, topic or secret file, never its value), whether or not
+        # _secrets listed the same text as a warning.
+        problems.append(f"alerts and dead-man pings are off: {refusal}")
+        return
     if ac.topic and not ac.ntfy_server:  # the template presets ntfy_server, so a deleted line
         warnings.append(
             "RECORDINGS_NTFY_TOPIC_FILE is set but [alerts] ntfy_server is not, so no "
@@ -547,17 +634,194 @@ def _ssh(report: dict, problems: list[str]) -> None:
         )
 
 
-def _extra_paths(cfg: Config, warnings: list[str]) -> None:
-    """In Docker, deploy.env is backed up only if [backup] extra_paths names its mount
-    (config.example.toml has the line); the default is no extra path at all."""
+def _shown(when: datetime | None, cfg: Config) -> str | None:
+    """A time as doctor prints it: the local date and time in `[archive] default_timezone`."""
+    if when is None:
+        return None
+    try:
+        zone: tzinfo = ZoneInfo(cfg.default_timezone)
+    except (ZoneInfoNotFoundError, ValueError, OSError, TypeError):
+        zone = UTC  # `_timezone` reports the zone
+    return when.astimezone(zone).strftime("%Y-%m-%d %H:%M")
+
+
+def _sign_in(
+    cfg: Config,
+    token_store: Path,
+    info: dict[str, Any],
+    problems: list[str],
+    warnings: list[str],
+) -> None:
+    """The sign-in (spec §17.2): its presence, its folder's and file's modes and owner, and its
+    expiries and whether it can refresh, read from the file's times alone: never a token, a value
+    or a hash. Never a call to Plaud: `recordings plaud check` makes one."""
+    from recordings.plaud import tokens  # the token store: loaded for the worker's role alone
+    from recordings.plaud.client import PlaudAuthError
+
+    info["token_store"] = token_store.is_file()
+    problems.extend(signin.unsafe_modes(token_store))
+    if not info["token_store"]:
+        problems.append(SIGN_IN_NEEDED)
+        return
+    try:
+        facts = tokens.read_tokens(token_store).facts()
+    except PlaudAuthError:
+        problems.append(SIGN_IN_UNUSABLE.format(token_store))
+        return
+    except OSError as exc:  # its class only: the text names the path again
+        problems.append(f"{token_store} can't be read ({type(exc).__name__}): check its owner")
+        return
+    now = datetime.now(UTC)
+    info["token_expires"] = _shown(facts.expires_at, cfg)
+    info["refresh_token"] = facts.refresh_token
+    info["refresh_expires"] = _shown(facts.refresh_expires_at, cfg)
+    refresh_ends = facts.refresh_expires_at
+    if not facts.refresh_token:
+        if facts.expires_at is not None and facts.expires_at <= now:
+            problems.append(
+                f"{SIGN_IN_NEEDED}: the access token has expired, with no refresh token"
+            )
+        else:
+            warnings.append(
+                "the Plaud sign-in has no refresh token: the worker needs a new sign-in when its "
+                "access token expires"
+            )
+    elif refresh_ends is not None and refresh_ends <= now:
+        problems.append(f"{SIGN_IN_NEEDED}: its refresh token has expired")
+    elif refresh_ends is not None and refresh_ends - now <= REFRESH_WARNING:
+        warnings.append(
+            f"the Plaud sign-in's refresh token expires {_shown(refresh_ends, cfg)}: sign in "
+            "again before then (`make plaud-sign-in`)"
+        )
+
+
+def _enforced_words(cfg: Config, problems: list[str]) -> list[str] | None:
+    """The keep-out words the worker enforces (stage 2b spec §12.2), from plaud_state, read-only,
+    through the worker's own reader. None when they can't be read: no state.db or a damaged one
+    (`_state` says so), or a row that isn't a list (a problem here). `[]` means none enforced."""
+    state = State.read_only(cfg.state_path) if cfg.state_path is not None else None
+    if state is None:
+        return None
+    try:
+        return list(enforced_words(PlaudDB(state)))
+    except NoSyncYet:
+        return []  # a state.db from before the sync's tables: no word has been enforced
+    except KeepOutWordsError as exc:
+        problems.append(str(exc))
+    except sqlite3.Error:
+        pass  # `_state` reports the damaged state.db
+    return None
+
+
+def _worker(
+    cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str], warnings: list[str]
+) -> None:
+    """The worker's own checks (stage 2b spec §17.2): the sync's dead-man URL, the keep-out word,
+    the consent list, and the sign-in: its presence, modes, expiries and whether it can refresh
+    (`_sign_in`). Never a value or a hash, and never a call to Plaud."""
+    info: dict[str, Any] = {
+        "consent_ids": None,
+        "consent_stop": None,
+        "review_lines": [],
+        "token_store": False,
+        "token_expires": None,
+        "refresh_token": None,
+        "refresh_expires": None,
+        "keep_out_words": [],
+        "deadman_sync_set": False,
+    }
+    report["plaud"] = info
+    ac, refusal = _alert_config(cfg, environ, report, problems, warnings, "deadman_sync_url")
+    if ac is None:  # its text names a setting, never a value
+        hint = (
+            " (RECORDINGS_DEADMAN_SYNC_URL_FILE names its URL's file)"
+            if "DEADMAN_SYNC_URL" in refusal
+            else ""
+        )
+        problems.append(f"the Plaud sync's check is never pinged: {refusal}{hint}")
+    else:
+        info["deadman_sync_set"] = bool(ac.deadman_sync_url)
+        if not ac.deadman_sync_url:
+            problems.append(
+                "the Plaud sync has no dead-man URL, and its Healthchecks check is its only "
+                "alert: set RECORDINGS_DEADMAN_SYNC_URL_FILE"
+            )
+    try:
+        settings = plaud_settings(cfg)
+    except ConfigError as exc:
+        problems.append(str(exc))
+        return
+    if not settings.keep_out_word_ok:
+        problems.append(BAD_WORD)
+    consent = read_consent(settings.consent_list)
+    info["consent_stop"] = consent.stop
+    info["review_lines"] = list(consent.review_lines)
+    if consent.stop is not None:
+        problems.append(f"{consent.stop}: nothing is imported until it reads (stage 2b spec §12.1)")
+    else:
+        info["consent_ids"] = len(consent.ids)
+    if consent.review_lines:
+        report["notes"].append(kept_lines_note(consent.review_lines))
+    _sign_in(cfg, settings.token_store, info, problems, warnings)
+    info["keep_out_words"] = _enforced_words(cfg, problems)
+
+
+def _consent_folder(cfg: Config) -> Path | None:
+    """The consent list's folder, as configured; None when [plaud] can't be read (its own problem
+    is reported elsewhere)."""
+    if not isinstance(cfg.data.get("plaud", {}), dict):  # a crash line from _consent says so
+        return None
+    try:
+        settings = plaud_settings(cfg)
+    except ConfigError:
+        return None
+    return settings.consent_list.parent if settings.consent_list is not None else None
+
+
+def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str]) -> None:
+    """[backup] extra_paths (stage 2b spec §17.2), in every role, which all read one config.toml.
+    An entry `backup.never_backed_up` refuses is a problem, with its reason: one that would carry
+    the Plaud sign-in, the whole state folder or Docker's secrets. `run_backup` refuses the same
+    entries by the same check (the phase-end council's S4). So is a `[plaud] token_store` inside
+    the archive, or one that can't be read, which the backup and the mirror refuse too
+    (`backup.sign_in_refusal`). For `backup`, with a repository set,
+    deploy.env, the consent folder and the manifests folder (`/state/manifests`, decision 9)
+    missing from it are warnings (a restore would bring back no list, or an older one, and no
+    Sync everything manifest)."""
     section = cfg.data.get("backup", {})
-    paths = section.get("extra_paths", [])
-    if section.get("repository") and not any(
-        isinstance(p, str) and Path(p).name == "deploy.env" for p in paths
-    ):
+    found = section.get("extra_paths", [])
+    paths = [p for p in found if isinstance(p, str)] if isinstance(found, list) else []
+    token = backup.token_folder(cfg)
+    # What the backup and the mirror refuse (the end-of-branch privacy review, 2026-11-02): the
+    # sign-in inside the archive, or a `token_store` that can't be read.
+    if (why := backup.sign_in_refusal(token, cfg.archive_path)) is not None:
+        problems.append(why)
+    for entry in paths:
+        why = backup.never_backed_up(Path(entry), token_folder=token, state=cfg.state_path)
+        if why is not None:
+            problems.append(f"[backup] extra_paths names {entry}, {why}")
+    if role != "backup" or not section.get("repository"):
+        return
+    if not any(Path(p).name == "deploy.env" for p in paths):
         warnings.append(
             "deploy.env is not in [backup] extra_paths, so no backup carries it "
             "(config.example.toml has the line)"
+        )
+    consent_folder = _consent_folder(cfg)
+    normal = backup.normal_path
+    wanted = {CONSENT_MOUNT, *([normal(consent_folder)] if consent_folder is not None else [])}
+    if not any(normal(Path(p)) in wanted for p in paths):
+        warnings.append(
+            f"the consent folder is not in [backup] extra_paths, so no backup carries the consent "
+            f'list: add "{CONSENT_MOUNT}" (runbook section 6)'
+        )
+    manifests = {MANIFESTS_MOUNT}
+    if cfg.state_path is not None:
+        manifests.add(normal(cfg.state_path / "manifests"))
+    if not any(normal(Path(p)) in manifests for p in paths):
+        warnings.append(
+            "the manifests folder is not in [backup] extra_paths, so no backup carries Sync "
+            f'everything\'s manifests (DAN-15): add "{MANIFESTS_MOUNT}" (runbook section 6)'
         )
 
 
@@ -580,37 +844,42 @@ def doctor(environ: Mapping[str, str], *, role: str | None = None) -> dict[str, 
         "mirror": None,
         "alerts": None,
         "consent_list": None,
+        "plaud": None,
         "notes": [],
         "tools": {tool: shutil.which(tool) is not None for tool in TOOLS},
         "secrets": _secrets(environ, problems, warnings),
         "problems": problems,
         "warnings": warnings,
     }
-    if role == "web":
-        _no_job_secrets(environ, problems)
-    else:
+    if role != "web":
         report["user"] = _user(problems)
+    _forbid(environ, FORBIDDEN.get(role, ()), role, problems)
+    if role in ("web", "backup"):
+        _no_plaud_here(environ, problems)
     try:
         cfg = load_config(environ)
     except ConfigError as exc:
         problems.append(str(exc))
         return report
     report["config"] = str(cfg.path) if cfg.path else None
+    if role in ("web", "backup"):
+        _no_plaud_folder_named(cfg, problems)
     _timezone(cfg, problems)
     _disk(cfg, problems)
     archive_uuid = _archive(cfg, role, report, problems)
     _state(cfg, archive_uuid, role, report, problems, warnings)
     if role != "backup":  # the backup service has no index
         _index(cfg, archive_uuid, report, warnings)
-    if role != "web":
+    if role in ("backup", "all"):
         _backup(cfg, environ, role, report, problems, warnings)
         _mirror(cfg, environ, role, report, problems, warnings)
         _alerts(cfg, environ, report, problems, warnings)
         _ssh(report, problems)
-    if role == "backup":
-        _extra_paths(cfg, warnings)
+    if role == "worker":
+        _worker(cfg, environ, report, problems, warnings)
+    _extra_paths(cfg, role, problems, warnings)
     _retention(cfg, warnings)
-    _consent(cfg, report)
+    _consent(cfg, role, report)
     missing = [tool for tool in ("ffprobe", "ffmpeg") if not report["tools"][tool]]
     if role != "backup" and missing:  # web runs the import, which decodes media to measure it
         warnings.append(

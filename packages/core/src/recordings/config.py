@@ -30,7 +30,6 @@ class SecretSpec:
 
 
 SECRETS: dict[str, SecretSpec] = {
-    "plaud_token": SecretSpec("RECORDINGS_PLAUD_TOKEN", "Plaud API token (Plaud sync)", 2),
     "spark_api_key": SecretSpec(
         "RECORDINGS_SPARK_API_KEY", "this app's llama-swap key on the Spark", 4
     ),
@@ -59,6 +58,11 @@ SECRETS: dict[str, SecretSpec] = {
     ),
     "deadman_url": SecretSpec(
         "RECORDINGS_DEADMAN_URL", "the Healthchecks.io ping URL (it carries its own token)", 2
+    ),
+    # Stage 2b: the Plaud sync's own check, apart from the backup's (Dan's decision 4), worker only.
+    # The Plaud sign-in is a file the worker owns (`[plaud] token_store`), never a secret here.
+    "deadman_sync_url": SecretSpec(
+        "RECORDINGS_DEADMAN_SYNC_URL", "the Plaud sync's own Healthchecks ping URL", 2
     ),
     "ntfy_token": SecretSpec(
         "RECORDINGS_NTFY_TOKEN",
@@ -179,9 +183,9 @@ def _path(environ: Mapping[str, str], env: str, name: str, data: dict[str, Any])
 
 
 def _index_apart(index: Path | None, state: Path | None) -> None:
-    """The index never lies inside the state folder (spec §6.8). state.db, its backup copy, voice.db
-    and the Plaud token live there, and their writers don't take the index lock: a typo that points
-    the index there is refused before rebuild opens any of them."""
+    """The index never lies inside the state folder (spec §6.8). state.db, its backup copy and
+    voice.db live there, and their writers don't take the index lock: a typo that points the index
+    there is refused before rebuild opens any of them."""
     if index is not None and state is not None and index.resolve().is_relative_to(state.resolve()):
         raise ConfigError(
             f"[index] path (or RECORDINGS_INDEX) {index} lies inside [state] path {state}, beside "

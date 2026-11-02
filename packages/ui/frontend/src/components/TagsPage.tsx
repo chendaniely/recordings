@@ -1,7 +1,7 @@
 import type { VirtualItem } from "@tanstack/react-virtual";
 import { Check, ChevronDown, Columns3, Lock, MoreHorizontal, TriangleAlert } from "lucide-react";
 import {
-  useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent,
+  useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent,
 } from "react";
 
 import {
@@ -20,11 +20,12 @@ import { useListShortcuts } from "../lib/useListShortcuts";
 import { tabStopIndex, useRovingFocus } from "../lib/useRovingFocus";
 import type { Announcement } from "../lib/useSelection";
 import { useVirtualRows } from "../lib/useVirtualRows";
+import { PlaudContext } from "../plaud/usePlaud";
 import { useTaggingContext } from "../tagging/useTagging";
 import type { LibraryRow, LibraryView } from "../types";
 import { HeadNotes, RefreshButton } from "./HeadNotes";
 import { KEY_HINT, openPickerFor, useJustTagged } from "./RecordingList";
-import { SelectionBar } from "./SelectionBar";
+import { SelectionBar, resyncProps } from "./SelectionBar";
 
 const ROW_ESTIMATE = 84; // with a two-line snippet; rows are measured as drawn
 const HEAD = 56; // the pinned header row: a column's digit, then its tag on up to two lines
@@ -153,6 +154,7 @@ function ColumnPicker({ tags, visible, isPrivate, onToggle }: {
  * (useRovingFocus). Keys, clicks and focus from a portal (a header's menu) are never the grid's. */
 function TagsGrid({ grid }: { grid: GridState }) {
   const tagging = useTaggingContext();
+  const plaud = useContext(PlaudContext); // Re-sync from Plaud on the selection (2b spec §14.6)
   const view = tagging.view as LibraryView; // App draws this page only once the library is in
   const { untaggedOnly, title, sort, rows, sel, act, announce, fitted, col, columns, cols, isPrivateCol } = grid;
   const ids = useId();
@@ -596,7 +598,8 @@ function TagsGrid({ grid }: { grid: GridState }) {
           {virtualizer.getVirtualItems().map(drawRow)}
         </div>
       </div>
-      <SelectionBar count={selectedCount} lastTagged={justTagged} onTag={openPicker} onClear={clear} />
+      <SelectionBar count={selectedCount} lastTagged={justTagged} onTag={openPicker} onClear={clear}
+        {...resyncProps(plaud, targetsOf(sel, rowIds))} />
     </main>
   );
 }

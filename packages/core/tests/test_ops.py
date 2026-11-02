@@ -1080,9 +1080,9 @@ def test_a_read_only_state_makes_every_connection_read_only(writer, tmp_path, mo
     modes = []
     real = State._connect
 
-    def spy(self, mode):
+    def spy(self, mode, *rest):
         modes.append(mode)
-        return real(self, mode)
+        return real(self, mode, *rest)
 
     monkeypatch.setattr(State, "_connect", spy)
     state.backup_to(tmp_path / "copy" / "state.db")
@@ -1182,3 +1182,40 @@ def test_a_full_state_disk_logs_each_jobs_unrecorded_run_once_an_hour(
     for r in unrecorded:
         per_job[r.getMessage().split(":")[0]] = per_job.get(r.getMessage().split(":")[0], 0) + 1
     assert max(per_job.values()) <= 2, per_job  # minute 0 and 60, never more
+
+
+def test_alert_test_in_the_worker_logs_the_syncs_own_check(
+    tmp_path, writer, ntfy, monkeypatch, capsys
+):
+    # why: stage 2b spec §16, and the runbook's section 6, step 7. In `worker`, alert-test pings
+    # the sync's own check with /log: it proves the URL and leaves the check's state alone.
+    ctx = context(tmp_path, writer, ntfy)
+    own_environment(ctx, monkeypatch)
+    for name in ("RECORDINGS_NTFY_TOPIC", "RECORDINGS_DEADMAN_URL"):  # what the worker lacks
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("RECORDINGS_DEADMAN_SYNC_URL", f"{ntfy.url}/sync")
+    assert main(["alert-test", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "ntfy": None,
+        "deadman": None,
+        "deadman_sync": True,
+    }
+    assert [r["path"] for r in ntfy.requests] == ["/sync/log"]
+    ntfy.status = 404
+    assert main(["alert-test", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["deadman_sync"] is False
+
+
+def test_a_backup_with_no_ntfy_topic_still_pings_its_dead_mans_switch(
+    tmp_path, writer, make_incoming, ntfy
+):
+    # why: ntfy is optional (stage 2b spec, Dan's decision 9). With no topic file named in
+    # deploy.env, compose sets RECORDINGS_NTFY_TOPIC_FILE to an empty value: no push, and the
+    # backup's own check is still pinged. (A pin: an empty _FILE already reads as unset.)
+    writer.add(make_incoming())
+    ctx = context(tmp_path, writer, ntfy)
+    ctx.environ = {k: v for k, v in ctx.environ.items() if k != "RECORDINGS_NTFY_TOPIC"} | {
+        "RECORDINGS_NTFY_TOPIC_FILE": ""
+    }
+    assert run_job(ctx, "backup").ok
+    assert pings(ntfy) == ["/ping/start", "/ping"] and pushes(ntfy) == []

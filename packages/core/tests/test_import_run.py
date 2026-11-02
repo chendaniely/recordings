@@ -29,6 +29,7 @@ B = "b" * 32
 C = "c" * 32
 J = "9" * 32  # a recording whose title is outside ASCII
 X = "7" * 32  # on the consent list
+OF = "e0" * 16  # on the consent list in the of_ form, upper case: 2a's parser missed it
 UUID = "11111111-1111-4111-8111-111111111111"
 NOW = datetime(2026, 10, 9, 8, 0, tzinfo=UTC)
 JA = "会議メモ / Q&A"  # Review Focus 4: a title outside ASCII
@@ -522,6 +523,40 @@ def test_privacy_is_in_place_when_a_recording_is_created(
     assert seen == {A: [("private", "you")], B: [("private", "auto")]}
 
 
+@pytest.mark.parametrize(
+    ("title", "tags"),
+    [
+        ("10-06 Ｐrivate catch-up", [("private", "auto")]),  # a fullwidth P
+        ("10-06 Pri\u200bvate catch-up", [("private", "auto")]),  # a zero-width space
+        ("10-06 PRI\u00advate catch-up", [("private", "auto")]),  # a soft hyphen
+        ("10-06 Catch-up", []),  # no pattern matches: untagged
+    ],
+)
+def test_a_title_is_tried_folded_when_the_recording_is_created(
+    ar_archive, plaud_env, writer, monkeypatch, title, tags
+):
+    # why: S1, stage 2b spec §13.1 case 1, "every title the app has seen at that moment". The
+    # import's create-time check folds the title (NFKC, without invisible characters), as the
+    # marker's judge does, so `private` is in Incoming.tags, never left to the reconcile after it.
+    ar_archive.plaud(B, envelopes=[plaud_env(B, name=title)])
+    ar_archive.write_catalog()
+    seen = {}
+    real_add = Writer.add
+
+    def add(self, incoming):
+        seen[incoming.sources[0].ref] = [(t.tag, t.by) for t in incoming.tags]
+        return real_add(self, incoming)
+
+    monkeypatch.setattr(Writer, "add", add)
+    report = run(
+        plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver"),
+        writer,
+        now=NOW,
+    )
+    assert report.failed == []
+    assert seen == {B: tags}
+
+
 def test_privacy_covers_every_copy_of_the_audio_before_the_first_is_created(
     ar_archive, plaud_env, writer, monkeypatch
 ):
@@ -613,12 +648,14 @@ def test_an_archive_that_reads_as_empty_stops_the_import(
     assert titles and all(title not in text and "canary" not in text for title in titles)
 
 
-def test_the_import_holds_the_ops_lock(ar_archive, plaud_env, writer):
+@pytest.mark.parametrize("held", ["ops", "plaud"])
+def test_the_import_holds_the_ops_and_plaud_locks(ar_archive, plaud_env, writer, held):
     # why: the backup loop and the CLI's jobs share the "ops" lock (Task 11), so no snapshot or
-    # mirror run lands half-way through an import.
+    # mirror run lands half-way through an import; and from stage 2b the Plaud sync's "plaud" lock
+    # too (2b spec §9.4), so no sync imports beside it.
     build(ar_archive, plaud_env)
     the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
-    with Locks(writer.state.locks_dir, timeout=0).hold("ops"), pytest.raises(LockTimeout):
+    with Locks(writer.state.locks_dir, timeout=0).hold(held), pytest.raises(LockTimeout):
         run(the_plan, writer, now=NOW, lock_timeout=0.1)
     assert list(writer.archive.iter_recordings()) == []
 
@@ -785,6 +822,28 @@ def test_the_consent_list_is_read_as_audio_router_reads_it(tmp_path):
     )
     assert load_consent_list(path) == {X, "6" * 32}
     assert consent_list_path({"plaud": {"consent_list": str(path)}}) == path
+
+
+def test_the_2a_import_now_reads_of_and_upper_case_exclusions(
+    ar_archive, plaud_env, writer, tmp_path
+):
+    # why: 2b spec §12.1. 2a's parser read only bare lower-case IDs, so an `of_` or upper-case
+    # exclusion was skipped and its recording imported. The import now reads the list through
+    # keepout.parse_consent, so both forms keep the recording out.
+    ar_archive.plaud(OF, envelopes=[plaud_env(OF)], recorded_at="2026-08-05T09:00:00-07:00")
+    ar_archive.plaud(A, envelopes=[plaud_env(A)])
+    ar_archive.write_catalog()
+    path = tmp_path / "consent.md"
+    path.write_text(f"# Never mirror\n- `OF_{OF.upper()}` — asked not to keep\n", encoding="utf-8")
+    consent = load_consent_list(path)
+    assert consent == {OF}
+    the_plan = plan(
+        ar_archive.root, writer.index, consent=consent, default_timezone="America/Vancouver"
+    )
+    assert the_plan.counts()["consent-excluded"] == 1
+    run(the_plan, writer, now=NOW)
+    refs = {s.ref for r in writer.archive.iter_recordings() for s in r.sources}
+    assert refs == {A, f"plaud/{A}"}
 
 
 @pytest.mark.parametrize("content", [None, "", "No IDs here.\n"])
@@ -1439,6 +1498,7 @@ def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer
 
     def disk():  # the run asks before each recording, inside its hold of the ops lock
         seen.append(running(writer.state.locks_dir))
+        seen.append(running(writer.state.locks_dir, "plaud"))  # 2b §9.4: on plaud too
         return roomy
 
     run(
@@ -1449,3 +1509,4 @@ def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer
     )
     assert seen and set(seen) == {("import", NOW)}
     assert running(writer.state.locks_dir) is None
+    assert running(writer.state.locks_dir, "plaud") is None

@@ -2,9 +2,11 @@
 
 import csv
 import hashlib
+import importlib.util
 import io
 import itertools
 import json
+import sys
 import threading
 import wave
 from datetime import UTC, datetime
@@ -20,6 +22,21 @@ from recordings.writer import Incoming, Writer
 
 T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 LOCAL = datetime.fromisoformat("2026-10-06T14:00:03-07:00")
+
+
+def _helper(name: str):
+    """A helper module beside this file, importable by its name from every test here: pytest's
+    importlib mode (pyproject.toml) puts no test folder on sys.path."""
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+fake_plaud = _helper("fake_plaud")
+plaud_scene = _helper("plaud_scene")  # imports fake_plaud's neighbours only: after it
+plaud_live = _helper("plaud_live")
 
 
 @pytest.fixture
@@ -535,5 +552,41 @@ def ntfy():
 def other_ntfy():
     """A second FakeNtfy, on another port: where a redirect would lead."""
     server = FakeNtfy()
+    yield server
+    server.close()
+
+
+@pytest.fixture(autouse=True)
+def plaud_waits_skipped(monkeypatch):
+    """No test really waits on the Plaud client's pacing or backoff (stage 2b spec §10.2): a
+    Throttle given no `sleep` skips its waits here, as if they had passed. Production keeps
+    `time.sleep`; the tests of the waits inject their own sleep and clocks
+    (test_plaud_throughput.py). A test run in a subprocess paces for real."""
+    from recordings.plaud import client
+
+    monkeypatch.setattr(client, "_sleep", lambda _seconds: None)
+
+
+@pytest.fixture
+def scene(plaud_server, tmp_path):
+    """A synthetic Plaud scene (plaud_scene.py): an archive, its Writer, state.db with the gate
+    open, the fake account, a consent list and an Importer, as a run after the catch-up has them."""
+    return plaud_scene.Scene(plaud_server, tmp_path)
+
+
+@pytest.fixture
+def live(plaud_server, ntfy, tmp_path, monkeypatch):
+    """A worker against the fake (plaud_live.py): an archive, a config.toml on the fake's API, a
+    consent list, a sign-in, the sync's ping on a fake Healthchecks, a fake clock and the fake's
+    account. The gate is closed until `live.catch_up_done()`."""
+    made = plaud_live.Live(tmp_path, plaud_server, ntfy, monkeypatch)
+    yield made
+    made.close()
+
+
+@pytest.fixture
+def plaud_server():
+    """The fake Plaud server (fake_plaud.py): its API and storage ports, and its request log."""
+    server = fake_plaud.FakePlaud()
     yield server
     server.close()
