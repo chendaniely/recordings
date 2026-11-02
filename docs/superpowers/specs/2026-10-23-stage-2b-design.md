@@ -3034,7 +3034,9 @@ Most serious first. §7 is Dan's short list.
 One row per testable bullet of §20, by criterion (`C<criterion>.<nn>`; the spikes own S1 to S14).
 Where a bullet has a part Phase 1 can prove without Plaud, that part has its own row. "Fake" is the
 fake Plaud server (§10.6); a "real" bullet is proved by a runbook step, in the phase that runs it.
-Rows for Phases 2 and 3 name the phase only: their plans assign tasks and tests.
+Rows for Phases 2 and 3 name the phase only: their plans assign tasks and tests. A Phase 1 row says
+`built` once its proof passes (Phase 1's phase end); C8.03 and C10.02 are proven in CI's compose
+smoke.
 
 | ID | Situation | Expected | Phase and task | Proof | Status |
 |---|---|---|---|---|---|
@@ -3061,24 +3063,24 @@ Rows for Phases 2 and 3 name the phase only: their plans assign tasks and tests.
 | C5.01 | Fake: a placeholder-titled recording, later renamed to a private title | It arrives at the next run, untagged; renamed, it is tagged at the next run even when its fetch fails | Phase 2 | Phase 2's plan | planned |
 | C5.02 | Fake: a keep-out title | It is never requested (the request log) | Phase 2 | Phase 2's plan | planned |
 | C5.03 | Fake: the keep-out word added after the recording came in | `private` and one flag; nothing of it is fetched again, even when its transcript appears | Phase 2 | Phase 2's plan | planned |
-| C5.04 | **Keep it here** on a late keep-out | The flag clears and no archive file changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | planned |
+| C5.04 | **Keep it here** on a late keep-out | The flag clears and no archive file changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | built |
 | C5.05 | A kept-out title that later loses the word | It stays kept out until **Release** | Phase 2 | Phase 2's plan | planned |
-| C5.06 | **Release** on a row kept out by title | It asks first, with the title in its question only | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | planned |
+| C5.06 | **Release** on a row kept out by title | It asks first, with the title in its question only | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
 | C5.07 | **Release** while the title carries the word, or the ID is consent-listed | Refused, saying why | Phase 2 | Phase 2's plan | planned |
-| C5.08 | A consent-list typo | The `consent` blocker opens and the sync's check isn't pinged | Phase 1, Tasks 11 and 13 | `packages/core/tests/test_plaud_health.py`, `packages/core/tests/test_worker.py` | planned |
+| C5.08 | A consent-list typo | The `consent` blocker opens and the sync's check isn't pinged | Phase 1, Tasks 11 and 13 | `packages/core/tests/test_plaud_health.py`, `packages/core/tests/test_worker.py` | built |
 | C5.09 | A consent-list typo during syncs | Every import stops | Phase 2 | Phase 2's plan | planned |
-| C5.10 | A bare `ID kept: …` line | Not an exclusion; listed for review by line number | Phase 1, Tasks 3 and 8 | `packages/core/tests/test_keepout.py`, `packages/core/tests/test_plaud_cli.py` | planned |
-| C5.11 | An ID added to the consent list after its recording came in, with the sign-in dead | Tagged `private` at the worker's next tick, and flagged | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | planned |
+| C5.10 | A bare `ID kept: …` line | Not an exclusion; listed for review by line number | Phase 1, Tasks 3 and 8 | `packages/core/tests/test_keepout.py`, `packages/core/tests/test_plaud_cli.py` | built |
+| C5.11 | An ID added to the consent list after its recording came in, with the sign-in dead | Tagged `private` at the worker's next tick, and flagged | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
 | C5.12 | A late consent listing while syncs run | Never fetched again, and the run goes on | Phase 2 | Phase 2's plan | planned |
-| C5.13 | An already-flagged recording added to the consent list | No second flag: its flag changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | planned |
-| C5.14 | The consent list replaced by a rename | Read at the next tick | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | planned |
+| C5.13 | An already-flagged recording added to the consent list | No second flag: its flag changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | built |
+| C5.14 | The consent list replaced by a rename | Read at the next tick | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
 | C5.15 | A consent stop, or a hold with an ID change | The cache and the Sync screen hold no title of a recording not here | Phase 2 | Phase 2's plan | planned |
-| C5.16 | A removed `private`, then a `reindex` in a `web`-role process | It stays removed, and comes back only when the title changes to one that matches, with its note | Phase 1, Task 9 | `packages/core/tests/test_plaud_marker.py` | planned |
+| C5.16 | A removed `private`, then a `reindex` in a `web`-role process | It stays removed, and comes back only when the title changes to one that matches, with its note | Phase 1, Task 9 | `packages/core/tests/test_plaud_marker.py` | built |
 | C5.17 | A removed `private` through 100 sync runs | It stays removed | Phase 2 | Phase 2's plan | planned |
-| C5.18 | `schedule_minutes` 20 from deploy, before the first catch-up | A scheduled turn makes no Plaud call, and an import request is refused | Phase 1, Tasks 13 and 14 | `packages/core/tests/test_worker.py`, `packages/core/tests/test_plaud_requests.py` | planned |
+| C5.18 | `schedule_minutes` 20 from deploy, before the first catch-up | A scheduled turn makes no Plaud call, and an import request is refused | Phase 1, Tasks 13 and 14 | `packages/core/tests/test_worker.py`, `packages/core/tests/test_plaud_requests.py` | built |
 | C5.19 | An interrupted first catch-up (marks, no `catch_up_done_at`) | The gate stays closed, and Status says so | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
 | C5.20 | The interrupted catch-up run again, then ending | It picks up where it stopped, and the turn after it runs a sync | Phase 2 | Phase 2's plan | planned |
-| C5.21 | The gate closed | Every request that would write a snapshot is refused | Phase 1, Task 14 | `packages/core/tests/test_plaud_requests.py` | planned |
+| C5.21 | The gate closed | Every request that would write a snapshot is refused | Phase 1, Task 14 | `packages/core/tests/test_plaud_requests.py` | built |
 | C5.22 | A SIGTERM mid-run; a catch-up, then a restart | Neither reads as "rebuilt" | Phase 2 | Phase 2's plan | planned |
 | C5.23 | A Re-sync, then a restart | Doesn't read as "rebuilt" | Phase 3 | Phase 3's plan | planned |
 | C5.24 | A restart after a rebuild was recorded | The rebuild isn't found again | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
@@ -3090,39 +3092,39 @@ Rows for Phases 2 and 3 name the phase only: their plans assign tasks and tests.
 | C5.30 | Fake: 10% of IDs re-keyed | A large shrink; Accept then imports none of the matched IDs | Phase 2 | Phase 2's plan | planned |
 | C5.31 | Fake: a kept-out ID re-keyed | Likewise | Phase 2 | Phase 2's plan | planned |
 | C5.32 | Fake: two candidates for a re-keyed ID | The new ID is held | Phase 2 | Phase 2's plan | planned |
-| C5.33 | A Plaud ID's form flips between `of_` and bare | Its kept-out state, review mark and flag stay, keyed by canonical ID | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | planned |
+| C5.33 | A Plaud ID's form flips between `of_` and bare | Its kept-out state, review mark and flag stay, keyed by canonical ID | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | built |
 | C5.34 | Fake: a form flip with nothing absent, through syncs | Every kept-out ID stays out; every review mark and consent exclusion holds | Phase 2 | Phase 2's plan | planned |
-| C6.01 | The ping rule as a table: good or not, a streak or not, each blocker, busy, the gate, a sign-in pause, a rate-limit wait | Each case pings or doesn't, against a fake Healthchecks | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | planned |
-| C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 (the rebuild's review list in Phase 2: decision 44) | `packages/core/tests/test_plaud_health.py` | planned |
-| C6.03 | Runs with attempts and no success, failing-list recordings counted | Never good; the pings resume only after a run with a success | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | planned |
+| C6.01 | The ping rule as a table: good or not, a streak or not, each blocker, busy, the gate, a sign-in pause, a rate-limit wait | Each case pings or doesn't, against a fake Healthchecks | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
+| C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 (the rebuild's review list in Phase 2: decision 44) | `packages/core/tests/test_plaud_health.py` | built |
+| C6.03 | Runs with attempts and no success, failing-list recordings counted | Never good; the pings resume only after a run with a success | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.04 | Fake: every fetch failing while the listing works, or every link 403ing | No pings; once every recording is on the failing list, runs that retry only them stay not good | Phase 2 | Phase 2's plan | planned |
 | C6.05 | Fake: an outage of 1 hour | The pings stop, then resume | Phase 2 | Phase 2's plan | planned |
-| C6.06 | A failed run | Status shows it from the first failed run, with "isn't being pinged since …: <cause>" | Phase 1, Tasks 19 and 22 | `packages/ui/tests/test_plaud_views.py`, `packages/ui/frontend/src/components/SyncPanel.test.ts` | planned |
+| C6.06 | A failed run | Status shows it from the first failed run, with "isn't being pinged since …: <cause>" | Phase 1, Tasks 19 and 22 | `packages/ui/tests/test_plaud_views.py`, `packages/ui/frontend/src/components/SyncPanel.test.ts` | built |
 | C6.07 | A hold; **Accept this listing**; a change of form with nothing absent; a small shrink | Accept clears the hold, refused only when consent-listed or kept-out IDs vanish while Plaud's IDs look changed; the change of form holds nothing; the small shrink settles when the next listing an hour later is missing the same recordings | Phase 2 | Phase 2's plan | planned |
-| C6.08 | A wedged `plaud` holder | No pings | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | planned |
-| C6.09 | A ping that fails | Status shows "last ping failed", with its time and HTTP status | Phase 1, Tasks 11 and 22 | `packages/core/tests/test_plaud_health.py`, `packages/ui/frontend/src/components/SyncPanel.test.ts` | planned |
-| C6.10 | A run whose import the disk guard refused | Not good, so no ping; the streak clears at the first run the guard doesn't refuse | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | planned |
+| C6.08 | A wedged `plaud` holder | No pings | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
+| C6.09 | A ping that fails | Status shows "last ping failed", with its time and HTTP status | Phase 1, Tasks 11 and 22 | `packages/core/tests/test_plaud_health.py`, `packages/ui/frontend/src/components/SyncPanel.test.ts` | built |
+| C6.10 | A run whose import the disk guard refused | Not good, so no ping; the streak clears at the first run the guard doesn't refuse | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.11 | Fake: the disk guard refusing an import | Status says "the disk is too full to import", and the pings resume at the first run it doesn't refuse | Phase 2 | Phase 2's plan | planned |
-| C6.12 | The schedule off, a bad `keep_out_word`, a long rate-limit wait, each blocker | "Isn't being pinged" names the cause | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | planned |
-| C6.13 | An idle worker with no sign-in, for 20 minutes on a fake clock | `--alive` stays 0 | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | planned |
-| C6.14 | The schedule off for 24 hours after the catch-up | It shows in Needs attention | Phase 1, Task 19 | `packages/ui/tests/test_plaud_views.py` | planned |
+| C6.12 | The schedule off, a bad `keep_out_word`, a long rate-limit wait, each blocker | "Isn't being pinged" names the cause | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
+| C6.13 | An idle worker with no sign-in, for 20 minutes on a fake clock | `--alive` stays 0 | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
+| C6.14 | The schedule off for 24 hours after the catch-up | It shows in Needs attention | Phase 1, Task 19 | `packages/ui/tests/test_plaud_views.py` | built |
 | C7.01 | Fake: a whole sync at DEBUG, with §21's faults | No token, `X-Amz-` query or title in any log, alert, Status view, `ops_runs` row or request result | Phase 2 | `test_flow_2b.py` (Phase 2's plan) | planned |
-| C7.02 | A link with a control character or an unknown scheme | The client raises its own error, with no URL | Phase 1, Task 4 | `packages/core/tests/test_plaud_client.py` | planned |
-| C8.01 | `state.db` with the 2b tables | `SCHEMA_VERSION` is 1 and `MIGRATIONS` empty | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | planned |
+| C7.02 | A link with a control character or an unknown scheme | The client raises its own error, with no URL | Phase 1, Task 4 | `packages/core/tests/test_plaud_client.py` | built |
+| C8.01 | `state.db` with the 2b tables | `SCHEMA_VERSION` is 1 and `MIGRATIONS` empty | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | built |
 | C8.02 | A recording written by the 2b import | It validates against 2a's model and schema | Phase 2 | Phase 2's plan | planned |
-| C8.03 | `make deploy-smoke` | It passes | Phase 1, Task 17 | `scripts/compose_smoke.py` (CI's compose-smoke job) | planned |
-| C9.01 | The Sync screen and Status | Drawn at 1,280 and 320 pixels | Phase 1, Task 24 | `packages/ui/tests/e2e/test_sync.py` | planned |
-| C9.02 | Kept out and Flags rows | No title | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | planned |
-| C9.03 | **Release** | Its question, then Let it in | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | planned |
-| C9.04 | **Park** | It sends `park`, and **Unpark** undoes it | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | planned |
-| C9.05 | **Re-sync from Plaud** on a selection | One request for the selection, with its progress and end line (the worker's handling: Phase 3) | Phase 1, Task 23 | `packages/ui/frontend/src/components/SelectionBar.test.ts` | planned |
-| C9.06 | The arrivals cue | It counts what came in since the page loaded, shortened at 320 pixels | Phase 1, Task 23 | `packages/ui/frontend/src/components/HeadNotes.test.ts` | planned |
-| C9.07 | Demo and Pages | The canned view, with no network and no request | Phase 1, Task 24 | `packages/ui/tests/test_demo_guard.py`, `packages/ui/tests/pages/test_pages_site.py` | planned |
-| C10.01 | `make deploy` | It waits for the worker's health check | Phase 1, Task 17 | `packages/core/tests/test_deploy_template.py` | planned |
-| C10.02 | The worker with no sign-in and no consent list | It stays healthy | Phase 1, Task 17 | `scripts/compose_smoke.py` | planned |
+| C8.03 | `make deploy-smoke` | It passes | Phase 1, Task 17 | `scripts/compose_smoke.py` (CI's compose-smoke job) | built |
+| C9.01 | The Sync screen and Status | Drawn at 1,280 and 320 pixels | Phase 1, Task 24 | `packages/ui/tests/e2e/test_sync.py` | built |
+| C9.02 | Kept out and Flags rows | No title | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
+| C9.03 | **Release** | Its question, then Let it in | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
+| C9.04 | **Park** | It sends `park`, and **Unpark** undoes it | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
+| C9.05 | **Re-sync from Plaud** on a selection | One request for the selection, with its progress and end line (the worker's handling: Phase 3) | Phase 1, Task 23 | `packages/ui/frontend/src/components/SelectionBar.test.ts` | built |
+| C9.06 | The arrivals cue | It counts what came in since the page loaded, shortened at 320 pixels | Phase 1, Task 23 | `packages/ui/frontend/src/components/HeadNotes.test.ts` | built |
+| C9.07 | Demo and Pages | The canned view, with no network and no request | Phase 1, Task 24 | `packages/ui/tests/test_demo_guard.py`, `packages/ui/tests/pages/test_pages_site.py` | built |
+| C10.01 | `make deploy` | It waits for the worker's health check | Phase 1, Task 17 | `packages/core/tests/test_deploy_template.py` | built |
+| C10.02 | The worker with no sign-in and no consent list | It stays healthy | Phase 1, Task 17 | `scripts/compose_smoke.py` | built |
 | C10.03 | Real: `doctor --role worker` on the server, after the sign-in | It passes | Phase 2 | runbook section 6 | planned |
-| C10.04 | The two dead-man URLs | `deadman_sync_url` is mounted in `worker` only, and `deadman_url` in `backup` only | Phase 1, Task 17 | `packages/core/tests/test_deploy_template.py` | planned |
-| C11.01 | The README, the runbook and the tagging part A spec | A doc test fails if the old sentence ("until stage 2b's import dry run is done") is in any of them, or the new one ("refining 2026-10-22") is missing from any | Phase 1, Task 2 | `packages/core/tests/test_docs.py` | planned |
+| C10.04 | The two dead-man URLs | `deadman_sync_url` is mounted in `worker` only, and `deadman_url` in `backup` only | Phase 1, Task 17 | `packages/core/tests/test_deploy_template.py` | built |
+| C11.01 | The README, the runbook and the tagging part A spec | A doc test fails if the old sentence ("until stage 2b's import dry run is done") is in any of them, or the new one ("refining 2026-10-22") is missing from any | Phase 1, Task 2 | `packages/core/tests/test_docs.py` | built |
 
 ### Later
 
