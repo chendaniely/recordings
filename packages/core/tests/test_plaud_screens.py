@@ -200,6 +200,26 @@ def test_a_re_keyed_consent_listed_recording_is_a_flag_a_kept_out_row_and_needs_
     no_title_in((view["flags"], view["kept_out"], panel), consented.name)
 
 
+def test_a_re_keyed_match_kept_out_by_a_title_since_still_asks_with_no_title(live):
+    # A security review of the fix that made a re-keyed match's Release ask with no title: one
+    # whose title took the keep-out word and then lost it reads "was kept out by title" in the
+    # compare, but it may still be a consent-listed recording, so its row is the re-keyed one,
+    # whose Release asks with no title (SyncPage draws that question from `by`).
+    w, _, consented, _ = scene(live)
+    new_id = live.account.rekey(consented.plaud_id)
+    turn(w, live)
+    live.account.rename(new_id, f"{WORD} synthetic, renamed")
+    turn(w, live)
+    live.account.rename(new_id, "Synthetic, renamed again")
+    turn(w, live)
+    listed = live.db().listing(new_id)
+    assert listed.kept_out_at is not None and listed.rekey_of is not None
+    view, _ = views(live)
+    row = next(r for r in view["kept_out"] if r["plaud_id"].endswith(new_id))
+    assert (row["by"], row["release"]) == ("rekeyed", True)
+    no_title_in(view["kept_out"], "Synthetic, renamed again", consented.name)
+
+
 def test_after_plaud_review_the_rows_need_review_without_titles_and_status_says_how_many(live):
     # §11.6, §15.2: "The sync's records were rebuilt: 2 recordings wait for your review".
     w, *_ = scene(live)

@@ -71,6 +71,13 @@ def released_line(next_sync: str | None) -> str:
     return f"Released · comes in at the next sync{when} · Undo"
 
 
+def rekeyed(row: ListingRow | None) -> bool:
+    """A possible re-keyed match not released (§11.4 step 6): its title is never fetched, stored
+    or shown. Read from `rekey_of` itself, never from `kept_by`, which reads "was-title" first: a
+    re-keyed match whose title later took the keep-out word, then lost it, carries both."""
+    return row is not None and row.rekey_of is not None and not _released(row)
+
+
 def kept_by(row: ListingRow | None) -> str | None:
     """What keeps this ID out that Release can lift: "was-title", "rekeyed", or None."""
     if row is None or _released(row):
@@ -134,7 +141,7 @@ def may_preview(
     verdict = may_ask(pid, consent, db, here=here)
     if not verdict.ok and not (review and verdict.message == NOTHING):
         return verdict
-    if kept_by(row) == "rekeyed":
+    if rekeyed(row):  # its field, whatever else keeps it out
         return Verdict(False, NO_TITLE_REKEYED)
     if titles_hidden(db):
         return Verdict(False, NO_TITLE_HELD)

@@ -398,3 +398,20 @@ def test_a_large_shrink_hold_still_previews(setup, worker):
     setup.db.put(K_HOLD, {"ids_changed": False, "sentence": "held"}, now=T0)
     reply = ask(worker, "release-preview", rec, 1)
     assert (reply.state, reply.message) == ("done", ASK)
+
+
+def test_a_re_keyed_match_kept_out_by_a_title_since_gets_no_preview(setup, worker):
+    # A security review of the fix above: a re-keyed match whose title later took the keep-out
+    # word, then lost it, carries both `kept_out_at` and `rekey_of`, and `kept_by` reads
+    # "was-title" first. The bar is on the field itself. Its Release still works, untitled.
+    rec = rekeyed(setup)
+    record_kept_out(setup.db, f"of_{rec.plaud_id}", "noarchive", now=T0)
+    row = setup.db.listing(rec.plaud_id)
+    assert row.kept_out_at is not None and row.rekey_of is not None
+    before = len(setup.server.requests)
+    reply = ask(worker, "release-preview", rec, 1)
+    assert (reply.state, reply.message) == ("failed", NO_TITLE_REKEYED)
+    assert len(setup.server.requests) == before and previews(setup) == 0
+    reply = ask(worker, "release", rec, 2)
+    assert reply.state == "done" and "Synthetic" not in json.dumps(reply.to_dict())
+    assert previews(setup) == 0

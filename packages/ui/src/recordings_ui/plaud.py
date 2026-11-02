@@ -1278,6 +1278,10 @@ def _kept_out(r: _Read, next_sync: str | None) -> list[dict]:
         listed = r.listing.get(row.canonical_plaud_id)
         released = listed is not None and _released(listed) and row.excluded_by in RELEASE_BY
         by = row.excluded_by if row.excluded_by in ("consent", "title", *RELEASE_BY) else "title"
+        if by == "was-title" and listed is not None and listed.rekey_of is not None:
+            # A re-keyed match that a title kept out since (both fields set): it may still be a
+            # consent-listed recording, so its row, and its Release's question, carry no title.
+            by = "rekeyed"
         rows.append(
             {
                 "plaud_id": row.listed_id,
@@ -1468,9 +1472,9 @@ def _preview_barred(db: Any, plaud_id: str) -> bool:
     """The worker's preview bar read again before a title leaves (CLAUDE.md's cache rule; the
     end-of-branch privacy review, 2026-11-02): a re-keyed match (§11.4 step 6) or Plaud's IDs
     looking changed (§11.4 step 3) since the preview was written. The question then has no title."""
-    from recordings.plaud.release import kept_by, titles_hidden
+    from recordings.plaud.release import rekeyed, titles_hidden
 
-    return titles_hidden(db) or kept_by(db.listing(plaud_id)) == "rekeyed"
+    return titles_hidden(db) or rekeyed(db.listing(plaud_id))
 
 
 def _minutes(ms: int | None) -> str | None:

@@ -535,7 +535,8 @@ has the rest.
 - A row "May be a consent-listed or kept-out recording back under a new ID" that is really a
   different recording: press **Release** too. Its question shows **no title**: "Let this
   recording (date, time, length) in?". The sync suspects it is one you kept out, so it never
-  fetches or shows its title; check the date and length against your own record first. **Let it
+  fetches or shows its title, even if a keep-out word in its title kept it out as well; check the
+  date and length against your own record first. **Let it
   in** is still checked against the consent list and the keep-out word as they are then.
 - On the server, `rc exec worker recordings plaud release <Plaud ID>` does the same, showing only
   the ID, date and duration and asking y/N; `--undo` keeps it out again.

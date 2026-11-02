@@ -1545,7 +1545,8 @@ is a separate piece of work, and the thresholds are constants, not settings.
      answered or after 10 minutes. The preview is refused, with no title fetched, if the ID is
      consent-listed, during a consent stop, or while the gate is closed; for a possible re-keyed
      match (§11.4 step 6: its question shows no title, by ID, date and duration, and goes straight
-     to Let it in); and while a held listing, or the newest Compare, shows Plaud's IDs changed
+     to Let it in), read from its `rekey_of` itself, so one whose title kept it out since is barred
+     too and its Kept out row reads as the re-keyed one; and while a held listing, or the newest Compare, shows Plaud's IDs changed
      (§11.4 step 3), a review row's **Show title** included ("No title shown while Plaud's IDs
      look changed: see Status").
   2. The question shows it on screen: "Let 'Coffee chat about grant timelines' (2026-10-23 14:05,
@@ -3435,3 +3436,8 @@ None: every bullet of §20 is planned in a phase.
   a run whose check raises lists nothing; it is recorded once even when two runs check at once,
   and listing rows written before it and not recorded as here wait for review. A catch-up that
   finds the rebuild is refused as not needed. No decision or scenario's outcome changed.
+- 2026-11-02: §12.2 step 1 (a security review of the High's fix): the re-keyed bar reads
+  `plaud_listing.rekey_of` itself, not "what keeps it out", which reads "was kept out by title"
+  first; so a re-keyed match whose title took the keep-out word and then lost it gets no preview
+  either, the web app drops such a preview's title, and its Kept out row is the re-keyed one,
+  whose Release asks with no title. No decision or scenario's outcome changed.

@@ -79,13 +79,16 @@ def test_the_question_reads_its_title_once_by_the_requests_own_id(settings):
     assert release_preview(settings, "request-0001", now=T0) is None  # shown once
 
 
-@pytest.mark.parametrize("why", ["rekeyed", "hold", "compare"])
+@pytest.mark.parametrize("why", ["rekeyed", "rekeyed-and-kept-out", "hold", "compare"])
 def test_a_preview_taken_since_its_title_was_barred_shows_no_title(settings, why):
     # The worker refuses these previews (the end-of-branch privacy review, 2026-11-02); a preview
     # written before the bar (a re-key matched or a hold recorded since) still leaves no title.
+    # A re-keyed match kept out by a title since (both fields set) is barred too.
     db = PlaudDB(State.open(settings.state_path))
     if why == "rekeyed":
         db.set_listing(f"of_{PID}", rekey_of="a" * 32, first_seen=T0)
+    elif why == "rekeyed-and-kept-out":
+        db.set_listing(f"of_{PID}", rekey_of="a" * 32, kept_out_at=T0, kept_out_word="noarchive")
     elif why == "hold":
         db.put(K_HOLD, {"ids_changed": True}, now=T0)
     else:
