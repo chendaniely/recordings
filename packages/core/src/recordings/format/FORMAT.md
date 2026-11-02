@@ -33,8 +33,9 @@ renditions/<name>-<utc-stamp>.json
 - `<id>.<ext>`: the original media, never modified.
 - `<id>.audio.<ext>`: the audio track extracted from a video.
 - `my-notes.md`: your own notes.
-- `source/`: raw payloads exactly as each source returned them. Write-once. A `.json` file is a
-  JSON payload (a Plaud snapshot, a Pocket payload, or speaker names typed in `audio-router`). A
+- `source/`: raw payloads exactly as each source returned them, plus the fetcher's `_meta` stamp
+  and its own `_`-prefixed fields, which are dropped before hashing. Write-once. A `.json` file is
+  a JSON payload (a Plaud snapshot, a Pocket payload, or speaker names typed in `audio-router`). A
   `.txt` file is a prose transcript kept as the source gave it (a Google Recorder export). Both
   hold what was said, so the privacy rule below covers them.
 - `renditions/`: outputs (transcripts, speakers, note-type picks, notes). Write-once.

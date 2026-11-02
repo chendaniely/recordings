@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
-from recordings.plaud.checks import K_CATCH_UP_DONE, PlaudDB
+from recordings.plaud.checks import K_CATCH_UP_DONE, K_SNAPSHOT_MARK, PlaudDB
 from recordings.plaud.when import parse_stamp
 
 GATE_FIRST = "Scheduled sync waits for the first catch-up (runbook)"
@@ -32,6 +33,27 @@ GATE_ALLOWED: frozenset[str] = frozenset({"compare", "keep-here"})
 class Gate:
     open: bool
     reason: str | None  # GATE_FIRST while closed; None when open
+
+
+def mark_snapshot(db: PlaudDB, *, now: datetime, by: str) -> None:
+    """The snapshot mark (§11.6), committed in its own transaction before a 2b snapshot is
+    published, by every path (an import's `Writer.add`, a check's `add_snapshot`), and when a
+    rebuild is recorded. One row, counted: a crash after it and before the snapshot leaves a mark
+    with no snapshot, which is harmless. Mark rows with no `catch_up_done_at` say the first
+    catch-up was interrupted; 2b snapshots with no mark row say `state.db` was rebuilt."""
+    stamp = now.isoformat()
+
+    def bump(old: object) -> dict:
+        old = old if isinstance(old, dict) else {}
+        count = old.get("count")
+        return {
+            "first_at": old.get("first_at") or stamp,
+            "last_at": stamp,
+            "count": (count if isinstance(count, int) and not isinstance(count, bool) else 0) + 1,
+            "by": by,
+        }
+
+    db.update(K_SNAPSHOT_MARK, bump, now=now)
 
 
 def gate_now(db: PlaudDB) -> Gate:

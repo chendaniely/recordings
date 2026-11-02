@@ -57,6 +57,61 @@ minutes: whatever is left comes at the next one. Nothing is lost when a sync sto
   few times, then gives up until the next sync) is worth a note in a Claude session: the server's
   download rules were set without measuring Plaud's.
 
+## How a recording comes in
+
+Every sync brings in what is waiting, by itself. You never confirm an import.
+
+**What you see**
+
+- A new recording in the Library's **Untagged** list, with Plaud's title (even a placeholder such
+  as "2026-11-02 14:05:31"), Plaud's transcript and notes if it had them yet, and its time in your
+  default time zone.
+- A title that matches your private patterns ("Private: …", "interview: …") arrives already
+  tagged `private`: the tag lands before any of its content does.
+- A recording comes in whole or not at all. One that fails is tried again at the next sync; after
+  3 failures in a row it waits under **Not here yet** as "failed 3 times · Park".
+
+**What the sync checks first, every time**
+
+- The consent list, read again just before each recording: an ID you added a moment ago is never
+  fetched. If the list can't be read, nothing is imported until it can.
+- The keep-out word, on the title Plaud lists and again on the title Plaud gives when the sync
+  asks for the recording: a match fetches nothing more of it, and keeps it out.
+- The disk: if the recording would leave less than the stop margin free, imports stop for that
+  sync, and Status says "the disk is too full to import". Free some space; the next sync goes on.
+- The same audio as a recording you have kept out (consent-listed, or kept out by its title) is
+  never added: it is kept out too, and flagged "may be a … recording back under a new ID".
+
+**What to do**
+
+- Nothing, usually. To bring something in sooner, press **Sync now** on the Sync screen.
+- A recording that keeps failing: check it plays in Plaud's app, then **Park** it so it stops
+  counting against "All here".
+
+## Renaming a recording in Plaud after it came in
+
+Each sync reads every title Plaud lists, and checks the ones that changed since it last looked.
+
+**What you see**
+
+- Renamed to a private title ("Private: …", or anything your patterns match): it is tagged
+  `private` at the next sync, even if Plaud won't hand over its transcript. Details says "Tagged
+  private by the sync: its Plaud title changed".
+- Renamed to start with your keep-out word: too late to keep it out, so it is tagged `private`
+  at once, nothing more is ever fetched for it, and it is flagged on Status, the Sync screen and
+  the Library's header ("1 kept out too late"), by its archive ID.
+- A `private` you removed stays removed. It comes back only if the Plaud title changes again to
+  one that matches.
+- "Should be private, but its file was edited outside the app: run `recordings reindex`": the tag
+  couldn't be written. The sync's check stops being pinged until it lands.
+
+**What to do**
+
+- A late keep-out: take it out by hand (the runbook's "Taking a recording out by hand"), or press
+  **Keep it here** to keep it. It stays private either way, and a later title with the word won't
+  flag it again.
+- "Should be private …": on the server, `rc exec worker recordings reindex`. The next sync tags it.
+
 ## What the sync compares, and the equations
 
 Each sync, and each **Compare**, reads Plaud's whole list of recordings and puts every recording

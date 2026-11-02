@@ -234,6 +234,9 @@ class Incoming:
     my_notes: str | None = None
     excluded_note_types: tuple[str, ...] = ()
     sha256: str | None = None  # what the caller hashed (the import's plan); add refuses others
+    # The revision's origin in state.db: "create" for a new recording, "merge-duplicate" for a
+    # merge, unless the caller names its run (the Plaud import's `plaud-import:<run ID>`, 2b §11.5).
+    origin: str | None = None
 
 
 @dataclass(frozen=True)
@@ -625,6 +628,15 @@ class Writer:
                 return self._merge(existing, sha, incoming)
             return self._create(rid, sha, incoming)
 
+    def holding(self, media: Path, recorded_at: datetime) -> str | None:
+        """The recording that already holds this file's bytes, as `add` would find it (which would
+        merge into it), or None. The Plaud import asks before it adds, so a download whose bytes a
+        consent-listed or kept-out recording holds is discarded, never merged (2b spec §11.5).
+        Raises IndexUnavailable as `add` does: never "none" from an index that can't answer."""
+        self._catch_up_index()
+        sha = sha256_file(media)
+        return self._holding(sha, make_id(recorded_at, sha))
+
     def _holding(self, sha: str, rid: str) -> str | None:
         """The recording that already holds these bytes, if any."""
         # Read the marks before the first index query: a mark is cleared only after its upsert
@@ -725,7 +737,7 @@ class Writer:
                 write_bytes_atomic(tmp / "recording.json", data)
                 rel = self._rel(rid)
                 self.state.mark_index_pending(rid)
-                revision = self.state.begin(rel, 1, _sha(data), data, "create")
+                revision = self.state.begin(rel, 1, _sha(data), data, incoming.origin or "create")
                 self._check_sentinel()  # the mount may have dropped while the media was hashed
                 final.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(tmp, final)
@@ -770,12 +782,14 @@ class Writer:
                 self._write_rendition_locked(folder, r) is not None for r in incoming.renditions
             )
             self._merge_notes(folder, incoming.my_notes)
-            merged = self.mutate(
-                rid,
-                MergeIncoming(
-                    tuple(new_sources), tuple(incoming.tags), tuple(incoming.excluded_note_types)
-                ),
+            merge = MergeIncoming(
+                tuple(new_sources), tuple(incoming.tags), tuple(incoming.excluded_note_types)
             )
+            if incoming.origin is not None:
+                merge = MergeIncoming(
+                    merge.sources, merge.tags, merge.excluded_note_types, name=incoming.origin
+                )
+            merged = self.mutate(rid, merge)
             return Added(
                 merged, created=False, sources_added=len(new_sources), renditions_added=written
             )

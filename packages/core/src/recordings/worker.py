@@ -85,6 +85,7 @@ from recordings.plaud.hold import accept as accept_listing
 from recordings.plaud.keepout import ConsentList, FileSignature
 from recordings.plaud.requests import Claimed
 from recordings.plaud.runlock import plaud_holder, plaud_run
+from recordings.plaud.scratch import sweep_downloads
 from recordings.plaud.settings import (
     BAD_WORD,
     DEFAULT_SCHEDULE_MINUTES,
@@ -444,20 +445,33 @@ class Worker:
 
     # ---- start (spec §9.2's order) ------------------------------------------------------------
     def start(self) -> None:
-        """1. the heartbeat thread, phase `starting`; 2. (Task 14) the requests left over; 3. the
-        Writer; 4. the gate. (§9.2's sweep of `.tmp/plaud-dl/` comes with Phase 2's downloads.)
-        5. the configured keep-out word recorded as enforced (decision 26), and a new pattern's
-        pass (decision 27), under the phase `checking`, which SIGTERM stops between recordings.
-        The pass is part of the start: a crash during it keeps the first start's time, as a crash
-        before it does. The start is then done, phase `idle`, written to the heartbeat at once (a
-        start that follows failed ones must not read STUCK until the next beat)."""
+        """1. the heartbeat thread, phase `starting`; 2. the leftovers of a download stopped with
+        the worker, in `.tmp/plaud-dl/` (area A4), under a non-blocking try of `plaud`; 3. (Task
+        14) the requests left over; 4. the Writer; 5. the gate. 6. the configured keep-out word
+        recorded as enforced (decision 26), and a new pattern's pass (decision 27), under the
+        phase `checking`, which SIGTERM stops between recordings. The pass is part of the start:
+        a crash during it keeps the first start's time, as a crash before it does. The start is
+        then done, phase `idle`, written to the heartbeat at once (a start that follows failed
+        ones must not read STUCK until the next beat)."""
         self._start_heartbeat()
+        self._step("downloads", self._sweep_downloads)
         self._requests_at_start()
         self.writer = self._open_writer()
         self.gate = self._open_gate()
         self._enforce()
         self.progress.bump(self.clock(), "idle")
         self._beat()
+
+    def _sweep_downloads(self) -> None:
+        """§9.2 step 2: a download in flight when the worker stopped is abandoned; its scratch
+        file goes here. A CLI run holding `plaud` owns what is there, and keeps it."""
+        if self.cfg.archive_path is None:
+            return
+        swept = sweep_downloads(self.cfg.archive_path, self.state)
+        if swept is None:
+            log.info("downloads: a run holds the sync, so its scratch files stay")
+        elif swept:
+            log.info("downloads: %d left by a stopped download removed", swept)
 
     def _start_heartbeat(self) -> None:
         self._beat()  # at once, so `--alive` passes from the first second

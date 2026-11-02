@@ -827,15 +827,23 @@ class PlaudClient:
             )
         return Page(rows=tuple(rows), malformed=malformed)
 
-    def envelope(self, listed_id: str) -> dict:
+    def envelope(self, listed_id: str, *, enrich: bool = True) -> dict:
         """The whole files/{id} answer, for the ID exactly as listed, with block bodies behind a
-        `data_link` fetched at once (their links expire within 300 seconds). A block that fails
-        records its error's class name in place, so one unreachable block costs only itself; an
-        error that ends the run (Plaud unavailable after its retries, offline, rate limited) is
-        raised instead. The budget never stops the blocks of an envelope already fetched."""
+        `data_link` fetched at once (their links expire within 300 seconds) unless `enrich` is
+        False. The import fetches it bare, checks its title and ID, and only then calls `enrich`
+        (§11.5 step 2: no block or audio of a recording whose envelope title is kept out; Phase 1
+        plan, decision 37)."""
         env = self.get_json(FILE_PATH.format(quote(listed_id, safe="")))
         if not isinstance(env, dict):
             raise PlaudBadResponse()
+        return self.enrich(env) if enrich else env
+
+    def enrich(self, env: dict) -> dict:
+        """Fetch the block bodies behind each `data_link` into `data_content`, in place. A block
+        that fails records its error's class name in place (`_data_link_error`), so one
+        unreachable block costs only itself; an error that ends the run (Plaud unavailable after
+        its retries, offline, rate limited) is raised instead. The budget never stops the blocks
+        of an envelope already fetched."""
         enriched: list[str] = []
         for section in ("source_list", "note_list"):
             blocks = env.get(section)

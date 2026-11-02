@@ -35,6 +35,7 @@ def _helper(name: str):
 
 
 fake_plaud = _helper("fake_plaud")
+plaud_scene = _helper("plaud_scene")  # imports fake_plaud's neighbours only: after it
 
 
 @pytest.fixture
@@ -563,6 +564,13 @@ def plaud_waits_skipped(monkeypatch):
     from recordings.plaud import client
 
     monkeypatch.setattr(client, "_sleep", lambda _seconds: None)
+
+
+@pytest.fixture
+def scene(plaud_server, tmp_path):
+    """A synthetic Plaud scene (plaud_scene.py): an archive, its Writer, state.db with the gate
+    open, the fake account, a consent list and an Importer, as a run after the catch-up has them."""
+    return plaud_scene.Scene(plaud_server, tmp_path)
 
 
 @pytest.fixture

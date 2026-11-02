@@ -152,11 +152,20 @@ def judge(
             # Every title after the last one the marker names, all of them if none does: a
             # reconcile that stopped part way leaves the marker behind more than one new title.
             due: set[int] = set()
+            shas = snapshot_shas.get(pid, ()) if snapshot_shas else ()
+
+            def judged(i: int, shas=shas, marker=marker) -> bool:
+                return i < len(shas) and shas[i] is not None and shas[i] in marker.judged
+
             if hashes[-1] != marker.title_sha256:  # case 2
                 named = [i for i, h in enumerate(hashes) if h == marker.title_sha256]
-                due.update(range(named[-1] + 1 if named else 0, len(titles)))
+                # A title whose snapshot the marker has judged was checked then. So a marker the
+                # listing moved to a title no snapshot carries yet (§13.1 case 2, from the listing
+                # alone: `plaud.listing_privacy`) never makes them due again, and a `private` Dan
+                # removed stays removed (decision 3).
+                start = named[-1] + 1 if named else 0
+                due.update(i for i in range(start, len(titles)) if not judged(i))
             # And every other title of a snapshot the marker hasn't judged (A, P, A).
-            shas = snapshot_shas.get(pid, ()) if snapshot_shas else ()
             due.update(
                 i
                 for i, h in enumerate(hashes)

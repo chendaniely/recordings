@@ -217,7 +217,13 @@ def beat_of(setup) -> dict:
 def test_start_runs_in_the_spec_order(setup, make_worker, monkeypatch):
     w = make_worker(Clock())
     calls = []
-    for name in ("_start_heartbeat", "_requests_at_start", "_open_writer", "_open_gate"):
+    for name in (
+        "_start_heartbeat",
+        "_sweep_downloads",
+        "_requests_at_start",
+        "_open_writer",
+        "_open_gate",
+    ):
         original = getattr(w, name)
 
         def spy(_name=name, _original=original):
@@ -230,6 +236,7 @@ def test_start_runs_in_the_spec_order(setup, make_worker, monkeypatch):
     w.start()
     assert calls == [
         "_start_heartbeat",
+        "_sweep_downloads",
         "_requests_at_start",
         "_open_writer",
         "starting",
@@ -237,6 +244,17 @@ def test_start_runs_in_the_spec_order(setup, make_worker, monkeypatch):
     ]
     assert w.writer is not None and w.gate is not None and not w.gate.open
     assert w.progress.read()[0] == "idle"  # the start is done
+
+
+def test_the_start_sweeps_a_stopped_downloads_scratch_file(setup, make_worker):
+    # §9.2 step 2 (area A4): a download in flight when the worker stopped is abandoned.
+    from recordings.plaud.scratch import DOWNLOADS
+
+    folder = setup.root / DOWNLOADS
+    folder.mkdir(parents=True)
+    (folder / "1a2b3c4d-left.mp3.part").write_bytes(b"half a synthetic download")
+    make_worker(Clock()).start()
+    assert not folder.exists()
 
 
 def test_a_scheduled_turn_before_the_catch_up_makes_no_plaud_call(

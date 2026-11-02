@@ -81,6 +81,13 @@ K_RATE_LIMIT = "rate_limit"
 K_COMPARE = "compare"
 # A small shrink waiting to settle (§11.4 step 5; plaud.hold): {"absent": [recording IDs], "since"}.
 K_SMALL_SHRINK = "small_shrink"
+# The snapshot mark (§11.6): committed in its own transaction before every 2b snapshot is
+# published, by every path (an import's `Writer.add` included), and when a rebuild is recorded.
+# {"first_at", "last_at", "count", "by"}: one row, so "mark rows exist" is "this key exists".
+K_SNAPSHOT_MARK = "snapshot_mark"
+# A rebuilt or restored state.db (§11.6): {"at": iso, "by": "detected" | "plaud review"}. Every
+# listed ID not here nor excluded, made before `at`, needs Dan's review when it is first listed.
+K_REBUILT = "rebuilt_at"
 # plaud_listed's two listings (§11.4): the last good one, and a held one.
 LISTED_GOOD = "good"
 LISTED_HELD = "held"

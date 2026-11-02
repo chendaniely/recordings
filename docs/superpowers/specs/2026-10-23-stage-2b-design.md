@@ -1669,7 +1669,9 @@ recording arrives untagged, and Dan's rename is checked at the next sync.
   list, written in the same transaction as the markers. So A, "Private: x", A merged between two
   reconciles judges the middle title though the newest is A again, once: a `private` Dan then
   removes stays removed. A marker with no such record reads as an empty set (judged once, erring
-  private); forgetting a recording drops it.
+  private); forgetting a recording drops it. A title whose snapshot the marker has judged is never
+  due again, so a marker the listing moved (§13.1 case 2) to a title no snapshot carries yet
+  doesn't make the older snapshots' titles due at the next reconcile (built, area A4).
 - **It moves only once the result is written:** no match, or `private` committed. If the `mutate`
   fails (a file edited outside the app, a lock timeout, the sentinel), the marker stays, the next run
   tries again, and Needs attention shows it at once, by ID: "Should be private, but its file was
@@ -3090,23 +3092,23 @@ smoke.
 | C4.04 | Fake: a 429 from the token endpoint | An outage, not `sign-in` | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
 | C4.05 | Fake: a 401 after a good refresh | It goes through the current-user read | Phase 2, area A1 | `packages/core/tests/test_plaud_tokens.py`, `test_plaud_client.py` | built |
 | C4.06 | Real: the catch-up ends | The sync's check goes green within 20 minutes | Phase 2 | runbook section 8 | planned |
-| C5.01 | Fake: a placeholder-titled recording, later renamed to a private title | It arrives at the next run, untagged; renamed, it is tagged at the next run even when its fetch fails | Phase 2 | Phase 2's plan | planned |
-| C5.02 | Fake: a keep-out title | It is never requested (the request log) | Phase 2 | Phase 2's plan | planned |
-| C5.03 | Fake: the keep-out word added after the recording came in | `private` and one flag; nothing of it is fetched again, even when its transcript appears | Phase 2 | Phase 2's plan | planned |
+| C5.01 | Fake: a placeholder-titled recording, later renamed to a private title | It arrives at the next run, untagged; renamed, it is tagged at the next run even when its fetch fails | Phase 2, area A4 (A6's flow test re-proves it with the run) | `packages/core/tests/test_plaud_import.py` (`test_a_placeholder_title_arrives_untagged`) and `packages/core/tests/test_plaud_listing_privacy.py` (renamed private: tagged from the listing alone, with every fetch failing) | built |
+| C5.02 | Fake: a keep-out title | It is never requested (the request log) | Phase 2, area A4 | `packages/core/tests/test_plaud_import.py` (the request log: never requested; a word only in the envelope's title stops before any block or audio) | built |
+| C5.03 | Fake: the keep-out word added after the recording came in | `private` and one flag; nothing of it is fetched again, even when its transcript appears | Phase 2, area A4 (the checks' skip: Phase 3, area B1) | `packages/core/tests/test_plaud_listing_privacy.py` (`test_a_keep_out_word_after_it_came_in_tags_and_flags_it_once`: `private`, one flag, its ID kept out, the import fetching nothing again) | built (the sweep's skip: B1) |
 | C5.04 | **Keep it here** on a late keep-out | The flag clears and no archive file changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | built |
 | C5.05 | A kept-out title that later loses the word | It stays kept out until **Release** | Phase 2 | Phase 2's plan | planned |
 | C5.06 | **Release** on a row kept out by title | It asks first, with the title in its question only | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
 | C5.07 | **Release** while the title carries the word, or the ID is consent-listed | Refused, saying why | Phase 2 | Phase 2's plan | planned |
 | C5.08 | A consent-list typo | The `consent` blocker opens and the sync's check isn't pinged | Phase 1, Tasks 11 and 13 | `packages/core/tests/test_plaud_health.py`, `packages/core/tests/test_worker.py` | built |
-| C5.09 | A consent-list typo during syncs | Every import stops | Phase 2 | Phase 2's plan | planned |
+| C5.09 | A consent-list typo during syncs | Every import stops | Phase 2, areas A4 (the import) and A5 (the run) | the import: `packages/core/tests/test_plaud_import.py` (`test_a_consent_stop_stops_every_import_before_any_request`); the run: A5 | import built; run planned |
 | C5.10 | A bare `ID kept: …` line | Not an exclusion; listed for review by line number | Phase 1, Tasks 3 and 8 | `packages/core/tests/test_keepout.py`, `packages/core/tests/test_plaud_cli.py` | built |
 | C5.11 | An ID added to the consent list after its recording came in, with the sign-in dead | Tagged `private` at the worker's next tick, and flagged | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
-| C5.12 | A late consent listing while syncs run | Never fetched again, and the run goes on | Phase 2 | Phase 2's plan | planned |
+| C5.12 | A late consent listing while syncs run | Never fetched again, and the run goes on | Phase 2, areas A4 (the import) and A5 (the run) | the import: `packages/core/tests/test_plaud_import.py` (the list read again before each recording; an ID added mid-run is never requested); the run going on: A5 | import built; run planned |
 | C5.13 | An already-flagged recording added to the consent list | No second flag: its flag changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | built |
 | C5.14 | The consent list replaced by a rename | Read at the next tick | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
 | C5.15 | A consent stop, or a hold with an ID change | The cache and the Sync screen hold no title of a recording not here | Phase 2, areas A3 (the cache) and A6 (the Sync screen) | the cache: `packages/core/tests/test_plaud_compare.py`, `test_plaud_hold.py`, `test_plaud_accept.py` (the tick's purge); the screen: A6 | cache built; screen planned |
 | C5.16 | A removed `private`, then a `reindex` in a `web`-role process | It stays removed, and comes back only when the title changes to one that matches, with its note | Phase 1, Task 9 | `packages/core/tests/test_plaud_marker.py` | built |
-| C5.17 | A removed `private` through 100 sync runs | It stays removed | Phase 2 | Phase 2's plan | planned |
+| C5.17 | A removed `private` through 100 sync runs | It stays removed | Phase 2, area A4 | `packages/core/tests/test_plaud_listing_privacy.py` (`test_a_removed_private_stays_removed_through_runs_and_reconciles`: 100 runs, with reconciles of the old snapshot between them) | built |
 | C5.18 | `schedule_minutes` 20 from deploy, before the first catch-up | A scheduled turn makes no Plaud call, and an import request is refused | Phase 1, Tasks 13 and 14 | `packages/core/tests/test_worker.py`, `packages/core/tests/test_plaud_requests.py` | built |
 | C5.19 | An interrupted first catch-up (marks, no `catch_up_done_at`) | The gate stays closed, and Status says so | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
 | C5.20 | The interrupted catch-up run again, then ending | It picks up where it stopped, and the turn after it runs a sync | Phase 2 | Phase 2's plan | planned |
@@ -3118,7 +3120,7 @@ smoke.
 | C5.26 | A rebuilt `state.db`, then Sync everything | It leaves out what needs review | Phase 3 | Phase 3's plan | planned |
 | C5.27 | `recordings plaud review` after a restore | `rebuilt_at` is recorded as now, holding `plaud` | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
 | C5.28 | Syncs after `plaud review` | Everything made before it that isn't here waits for review | Phase 2 | Phase 2's plan | planned |
-| C5.29 | Fake: one consent-listed ID listed again under new hex, with no hold | Never requested, and no title shown | Phase 2, areas A3 (the match) and A4/A5 (never requested, by the import) | the match and no title: `packages/core/tests/test_plaud_compare.py`; never requested: the import's | match built; import planned |
+| C5.29 | Fake: one consent-listed ID listed again under new hex, with no hold | Never requested, and no title shown | Phase 2, areas A3 (the match) and A4 (never requested, by the import) | the match and no title: `packages/core/tests/test_plaud_compare.py`; never requested: `packages/core/tests/test_plaud_import.py` (a re-keyed or flagged ID fetches nothing) | built |
 | C5.30 | Fake: 10% of IDs re-keyed | A large shrink; Accept then imports none of the matched IDs | Phase 2, area A3 | `packages/core/tests/test_plaud_hold.py` (the matched IDs stay excluded after Accept) | built |
 | C5.31 | Fake: a kept-out ID re-keyed | Likewise | Phase 2, area A3 | `packages/core/tests/test_plaud_compare.py`, `test_plaud_hold.py` | built |
 | C5.32 | Fake: two candidates for a re-keyed ID | The new ID is held | Phase 2, area A3 | `packages/core/tests/test_plaud_compare.py` | built |
@@ -3142,7 +3144,7 @@ smoke.
 | C7.01 | Fake: a whole sync at DEBUG, with §21's faults | No token, `X-Amz-` query or title in any log, alert, Status view, `ops_runs` row or request result | Phase 2 | `test_flow_2b.py` (Phase 2's plan) | planned |
 | C7.02 | A link with a control character or an unknown scheme | The client raises its own error, with no URL | Phase 1, Task 4 | `packages/core/tests/test_plaud_client.py` | built |
 | C8.01 | `state.db` with the 2b tables | `SCHEMA_VERSION` is 1 and `MIGRATIONS` empty | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | built |
-| C8.02 | A recording written by the 2b import | It validates against 2a's model and schema | Phase 2 | Phase 2's plan | planned |
+| C8.02 | A recording written by the 2b import | It validates against 2a's model and schema | Phase 2, area A4 | `packages/core/tests/test_plaud_import.py` (`test_a_waiting_recording_arrives_whole_with_its_snapshot_and_outputs`: `selfdoc.validate`, deep) | built |
 | C8.03 | `make deploy-smoke` | It passes | Phase 1, Task 17 | `scripts/compose_smoke.py` (CI's compose-smoke job) | built |
 | C9.01 | The Sync screen and Status | Drawn at 1,280 and 320 pixels | Phase 1, Task 24 | `packages/ui/tests/e2e/test_sync.py` | built |
 | C9.02 | Kept out and Flags rows | No title | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
@@ -3246,3 +3248,19 @@ None: every bullet of §20 is planned in a phase.
   vanished. §20's re-key bullet and C5.35 pin
   it. The change fails closed (a false match keeps a recording out and flags it for Dan); no
   decision or scenario's outcome changed.
+- 2026-11-02: area A4 built §11.5, importing one recording, as `plaud/importer.py`
+  (`Importer.import_one`, which A5's run calls per waiting recording; §9.6's `plaud/sync.py` is
+  the run's). Where the spikes were skipped it takes audio-router's shapes (the envelope's
+  `presigned_url`, `.mp3`, the listing's `start_at`) and the guesses file says so. Two readings
+  past the letter, both failing closed: the consent list read before each recording is trusted
+  only once its file is a tick old (Phase 1's phase-end list, Task 13), and a download whose bytes
+  a consent-listed or kept-out recording already holds records its new ID as a possible re-keyed
+  copy of it (excluded and flagged, as §11.4 step 6's match is). The snapshot mark is one counted
+  `plaud_state` row (`snapshot_mark`). No decision or scenario's outcome changed.
+- 2026-11-02: area A4 built §13.1 cases 2 and 3 from the listing alone (`plaud/listing_privacy.py`,
+  which A5's run calls with every listing, complete or partial). §13.2 gains one sentence: a title
+  whose snapshot the marker has judged is never due again, so a marker the listing moved to a
+  title no snapshot carries yet doesn't put back a `private` Dan removed at the next reconcile
+  (decision 3; without it, every rename in Plaud would re-check the older titles). A `private` the
+  listing owes but can't write opens its `private-unwritten` flag at once (detail `owed: title`).
+  No decision or scenario's outcome changed.

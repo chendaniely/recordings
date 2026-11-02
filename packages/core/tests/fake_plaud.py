@@ -18,8 +18,12 @@ Step 1 (area A3): the account and the paged listing (`account`, a `FakeAccount`)
 form, with §21's listing-shaped faults: a clamped page size, an empty listing, a shrink, a row
 served twice across pages, drift while paging (a recording added through `after`), malformed rows,
 the ID form flipping between bare and `of_`, an ID in a form the consent list can't name, and the
-hex changing with the audio unchanged (a re-key). Envelopes and storage (step 2) and Dan's edits
-(step 6) grow with later areas.
+hex changing with the audio unchanged (a re-key). Step 2's envelopes (area A4): `files/{id}` for
+each recording on the account, in either form, with an inline transcript, a note behind a
+`data_link` and the audio behind `presigned_url`, both on the storage host (`FakeAccount.envelope`);
+Dan's edits so far: a rename (`FakeRecording.name`), and an envelope whose title differs from the
+listing's (`envelope_name`: a rename between the listing and the fetch). The rest of step 6 grows
+with later areas.
 
 Importable from outside tests (the live demo reuses it): no pytest at module level. Every title,
 name, token and text it serves is invented.
@@ -39,9 +43,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
-from recordings.plaud.client import LIST_PATH, USER_PATH
+from recordings.plaud.client import FILE_PATH, LIST_PATH, USER_PATH
 from recordings.plaud.endpoint import TOKEN_PATH
 
 
@@ -250,6 +254,11 @@ class FakeRecording:
     created_at: datetime | None = None
     serial: str = "TEST0001"
     other_id: str | None = None
+    # The envelope's title when it differs from the listing's (renamed between the two); None: the
+    # listing's. `envelope_untitled`: the envelope has no `name` at all.
+    envelope_name: str | None = None
+    envelope_untitled: bool = False
+    note_link: bool = True  # the summary note comes behind a data_link (False: inline)
 
     def listed_id(self, form: str) -> str:
         if self.other_id is not None:
@@ -259,6 +268,52 @@ class FakeRecording:
     @property
     def audio(self) -> bytes:
         return tiny_wav(self.seed)
+
+    def envelope(self, form: str, owner: FakePlaud) -> dict:
+        """Its `files/{id}` answer, shaped like audio-router's raw snapshots (conftest's
+        `plaud_env`): an inline transcript, a summary note behind a `data_link` and the audio behind
+        `presigned_url`, both served by `owner`'s storage host (`audio/<id>.wav`,
+        `notes/<id>.md`). Every word in it is invented."""
+        rows = [
+            {
+                "content": f"Synthetic words {self.seed}.",
+                "start_time": 0,
+                "end_time": 500,
+                "speaker": "Speaker 1",
+                "original_speaker": "Speaker 1",
+            }
+        ]
+        note = f"# Summary\n\nSynthetic summary {self.seed}."
+        note_block = {
+            "data_type": "auto_sum_note",
+            "data_id": f"n-{self.seed}",
+            "data_tab_name": "Summary",
+            "data_content": note,
+        }
+        if self.note_link:
+            link = owner.link(f"notes/{self.plaud_id}.md", note.encode("utf-8"))
+            note_block = {**note_block, "data_content": "", "data_link": link}
+        env = {
+            "id": self.listed_id(form),
+            "duration": self.duration_ms,
+            "start_at": _stamp(self.start_at),
+            "created_at": _stamp(self.created_at or self.start_at),
+            "serial_number": self.serial,
+            "presigned_url": owner.link(f"audio/{self.plaud_id}.wav", self.audio),
+            "source_list": [
+                {
+                    "data_type": "transaction",
+                    "data_id": f"t-{self.seed}",
+                    "data_tab_name": None,
+                    "data_content": json.dumps(rows),
+                }
+            ],
+            "note_list": [note_block],
+        }
+        name = self.envelope_name if self.envelope_name is not None else self.name
+        if name is not None and not self.envelope_untitled:
+            env["name"] = name
+        return env
 
     def row(self, form: str) -> dict:
         row = {
@@ -285,8 +340,9 @@ class FakeAccount:
       in the same form; `add(...)`, through `FakePlaud.after`, is drift while paging.
     Every title is invented."""
 
-    def __init__(self, *, form: str = "of_") -> None:
+    def __init__(self, *, form: str = "of_", owner: FakePlaud | None = None) -> None:
         self.form = form
+        self.owner = owner  # serves the envelopes' links (`FakePlaud.account` sets it)
         self.recordings: list[FakeRecording] = []
         self.clamp: int | None = None
         self.malformed = 0
@@ -326,6 +382,12 @@ class FakeAccount:
     def find(self, plaud_id: str) -> FakeRecording:
         return next(r for r in self.recordings if r.plaud_id == plaud_id)
 
+    def rename(self, plaud_id: str, name: str | None) -> None:
+        """Dan renames it in Plaud's app (§10.6 step 6): the listing and the envelope follow."""
+        rec = self.find(plaud_id)
+        with self._lock:
+            rec.name, rec.envelope_name = name, None
+
     def remove(self, plaud_id: str) -> None:
         with self._lock:
             self.recordings = [r for r in self.recordings if r.plaud_id != plaud_id]
@@ -349,6 +411,19 @@ class FakeAccount:
         rows += [r.row(form) for r in recordings if r.plaud_id in twice]
         rows += [{"name": f"Synthetic row with no id {i}"} for i in range(malformed)]
         return rows
+
+    def envelope(self, listed_id: str) -> Response:
+        """`GET files/{id}`, for an ID in either form; 404 for one the account doesn't hold."""
+        value = listed_id.strip().lower().removeprefix("of_")
+        with self._lock:
+            found = next(
+                (r for r in self.recordings if r.plaud_id == value or r.other_id == listed_id),
+                None,
+            )
+            form = self.form
+        if found is None or self.owner is None:
+            return NOT_FOUND
+        return json_response(found.envelope(form, self.owner))
 
     def listing(self, query: dict[str, list[str]]) -> Response:
         try:
@@ -551,7 +626,7 @@ class FakePlaud:
 
     def account(self, *, form: str = "of_") -> FakeAccount:
         """The synthetic account and its listing route (§10.6 step 1): `GET LIST_PATH`."""
-        self.plaud_account = FakeAccount(form=form)
+        self.plaud_account = FakeAccount(form=form, owner=self)
         self.route("GET", LIST_PATH, self.plaud_account.listing)
         return self.plaud_account
 
@@ -642,7 +717,19 @@ class FakePlaud:
     def _route(self, host: str, method: str, parts) -> Response:
         with self._lock:
             route = self._routes.get((host, method, parts.path))
-        return route(parse_qs(parts.query)) if route else NOT_FOUND
+            account = self.plaud_account
+        if route is not None:
+            return route(parse_qs(parts.query))
+        prefix = FILE_PATH.format("")
+        if (
+            host == "api"
+            and method == "GET"
+            and account is not None
+            and parts.path.startswith(prefix)
+            and len(parts.path) > len(prefix)
+        ):
+            return account.envelope(unquote(parts.path[len(prefix) :]))
+        return NOT_FOUND
 
     def route(self, method: str, path: str, handler: Route) -> None:
         """Answer `method path` on the API host; `handler` gets the parsed query."""
