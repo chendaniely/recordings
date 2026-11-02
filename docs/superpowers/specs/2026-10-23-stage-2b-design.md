@@ -2951,8 +2951,8 @@ and S8: field names only, with invented values.
 - **e2e, live** (`make e2e-live`, a new module with its own servers): `web` and `worker` against the
   fake and a synthetic archive. Built (area A6) on `make demo-live`'s own script,
   `scripts/demo_live.py`, which the tests start and type commands into, as Dan does; in
-  `packages/ui/tests/e2e_live/`, and CI's `e2e-live` job. The breaker and Re-sync items wait for
-  Phase 3's handlers (areas B1 and B2).
+  `packages/ui/tests/e2e_live/`, and CI's `e2e-live` job. The breaker's item is built (area B1:
+  the script's `breaker` command); Re-sync's waits for area B2's handler.
   - Before the catch-up, only Compare is enabled.
   - Compare shows the equations; Import selected imports with progress and a toast.
   - Kept out and Flags show no title; Release opens its question with the title, and lets the
@@ -3374,3 +3374,9 @@ None: every bullet of §20 is planned in a phase.
   · next by …", and Updated's "Nothing changed on Plaud this week." once a check ran that
   week (SyncView gains `checked_week`; the phase-end list's row 21). The share of named
   segments stays empty. No decision or scenario's outcome changed.
+- 2026-11-02: §21 (area B1): `make demo-live` gains `breaker` (Plaud sends a new field on
+  every recording here, each due for a check at the next sync), and `make e2e-live` its
+  breaker item (Status names the field and offers Accept these changes, which clears it); the
+  flow test gains a check pass (a speaker rename and a new field, neither the name nor the
+  field's value in any log, view or table, `plaud_check_log` scanned too). No decision or
+  scenario's outcome changed.

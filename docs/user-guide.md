@@ -33,6 +33,7 @@ Type a command and Enter in the terminal, then look at the app:
 | `late` | A recording here gets `noarchive` in its title | **Sync now**: a late keep-out flag, with **Keep it here** |
 | `signout`, `signin` | Plaud refuses the sign-in; a new one | `tick`, then Status |
 | `tick` | The scheduled sync runs now, as if 20 minutes had passed | the Library's header counts what came in |
+| `breaker` | Plaud starts sending a new field on every recording here (it needs 10: `new` and **Sync now** first if it says so) | `tick`, then Status: edit-sync paused, with the field's name and **Accept these changes** |
 | `catch-up` | With `ARGS=--before-catch-up`: the first catch-up | before it, only **Compare** works |
 | `dump` | Writes the screens' data as JSON (start with `ARGS=--keep` to keep it) | |
 

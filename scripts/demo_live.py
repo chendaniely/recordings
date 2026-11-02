@@ -25,7 +25,9 @@ Plaud), `hold` (Plaud stops listing six recordings that are here: the next sync 
 (they come back), `rename` (the kept-out recording's title loses the keep-out word, so Release
 is offered), `late` (a recording here gets the keep-out word in its title: a late keep-out),
 `signout` and `signin` (Plaud refuses the sign-in; a new one), `tick` (the scheduled sync runs at
-the worker's next tick, as if its interval had passed). Ctrl-C, or `quit`, stops everything.
+the worker's next tick, as if its interval had passed), and `breaker` (Plaud starts sending a new
+field on every recording, and each is due for a check: the next sync trips edit-sync's breaker,
+which offers Accept these changes). Ctrl-C, or `quit`, stops everything.
 
 The e2e-live tests (`make e2e-live`, packages/ui/tests/e2e_live/) start this script the same way
 and type the same commands.
@@ -56,6 +58,7 @@ sys.path.insert(0, str(TESTS))  # fake_plaud.py: importable from outside tests, 
 from fake_plaud import FakePlaud, FakeRecording  # noqa: E402
 from recordings.config import load_config  # noqa: E402
 from recordings.init import init_archive  # noqa: E402
+from recordings.plaud.breaker import TRIP_AT  # noqa: E402
 from recordings.plaud.checks import K_LAST_ENDED, K_LAST_STARTED, PlaudDB  # noqa: E402
 from recordings.plaud.endpoint import is_loopback  # noqa: E402
 from recordings.plaud.settings import plaud_settings  # noqa: E402
@@ -92,8 +95,10 @@ What to try (spec §15.1, J6):
     you first, with its title; Let it in, then Sync now.
   - Type `late`, then Sync now: a recording here is kept out late (a flag, Keep it here).
   - Type `signout`, then `tick`: Status says the sign-in is needed. `signin` mends it.
-Commands: new, hold, back, rename, late, signout, signin, tick, catch-up, dump, help, quit (or
-Ctrl-C). `dump` writes the screens' data as JSON (start with --keep to keep it)."""
+  - Type `breaker`, then `tick`: Plaud sends a new field on every recording, edit-sync's breaker
+    trips, and Status names the field with Accept these changes; pressed, it closes.
+Commands: new, hold, back, rename, late, signout, signin, tick, breaker, catch-up, dump, help,
+quit (or Ctrl-C). `dump` writes the screens' data as JSON (start with --keep to keep it)."""
 
 
 def say(text: str) -> None:
@@ -484,6 +489,16 @@ class Demo:
         elif word == "tick":
             self.make_due()
             say("ok: the scheduled sync runs at the worker's next tick")
+        elif word == "breaker":
+            here = self.due_for_checks()
+            if here < TRIP_AT:
+                say(
+                    f"ok: only {here} recordings here; the breaker needs {TRIP_AT}: `new`, Sync now"
+                )
+                return True
+            self.made += 1
+            self.account.send_field("synthetic_feature", f"on-{self.made}")
+            say("ok: Plaud sends a new field on every recording: `tick`, then see Status")
         elif word == "catch-up":
             self.catch_up()
             say("ok: the first catch-up is done: the scheduled sync starts by itself")
@@ -509,6 +524,22 @@ class Demo:
         path = self.scratch / "plaud-sync.json"
         path.write_text(json.dumps(view, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return path
+
+    def due_for_checks(self) -> int:
+        """Every recording here due for a check at the next sync, its import's own baseline
+        spent: what a day of scheduled syncs would bring, now. They are marked unsettled too, so
+        the sweep checks them all in one sync rather than one a sync (§14.2's cap). Returns how
+        many there are."""
+        db = PlaudDB(State.open(self.state))
+        due = datetime.now(UTC) - timedelta(minutes=1)
+        rows = [r for r in db.check_rows() if r.gone_since is None and r.parked_at is None]
+        db.set_checks(
+            {
+                r.recording_id: {"next_check_at": due, "baseline_pending": False, "settled": False}
+                for r in rows
+            }
+        )
+        return len(rows)
 
     def make_due(self) -> None:
         """As if the schedule's interval had passed: the last turn's times moved back by it."""

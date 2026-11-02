@@ -2,10 +2,11 @@
 2b spec §21's "e2e, live"; area A6): `scripts/demo_live.py`, as `make demo-live` runs it, after
 its first catch-up. In order, sharing one demo (its start paces one call a second): Compare lists
 what waits; Kept out and the flags show no title; Import selected imports with its toast; the
-arrivals cue after a scheduled tick; Release's question, Let it in and Undo; a hold that turns
-Sync now and the imports off, cleared by Accept this listing; a refused sign-in on Status; the
-worker killed; then Ctrl-C stops everything, with no stray process. The breaker and Re-sync on a
-selection come with Phase 3's handlers (areas B1 and B2). Run with `make e2e-live`."""
+arrivals cue after a scheduled tick; Release's question, Let it in and Undo; a breaker trip that
+offers Accept these changes, which clears it (area B1); a hold that turns Sync now and the imports
+off, cleared by Accept this listing; a refused sign-in on Status; the worker killed; then Ctrl-C
+stops everything, with no stray process. Re-sync on a selection comes with area B2's handler. Run
+with `make e2e-live`."""
 
 from __future__ import annotations
 
@@ -107,6 +108,29 @@ def test_release_asks_with_the_title_lets_it_in_and_undo_works_until_the_next_sy
     expect(last_result(page)).to_contain_text("Synced: 1 imported", timeout=RUN)
     expect(page.get_by_test_id("kept-out-row")).to_have_count(1, timeout=RUN)
     assert RENAMED not in page.get_by_test_id("sync-kept-out").inner_text()
+
+
+def test_a_breaker_trip_offers_accept_these_changes_which_clears_it(page: Page, demo, console):
+    # §14.4, decision 11: Plaud sends a new field, the same on every fetch, on every recording;
+    # the next sync's checks trip the breaker; Status names the field (never its value) and offers
+    # Accept these changes, which closes it.
+    assert demo.send("breaker").startswith("ok: Plaud sends a new field")
+    demo.send("tick")
+    deadline = time.monotonic() + 150
+    while True:
+        page.goto(f"{demo.url}#/status")
+        expect(page.get_by_test_id("sync-panel")).to_be_visible()
+        breaker = page.get_by_test_id("sync-breaker")
+        if breaker.count():
+            break
+        assert time.monotonic() < deadline, "the breaker never tripped"
+        time.sleep(3)
+    expect(breaker).to_contain_text("Plaud started sending something new on")
+    expect(breaker).to_contain_text("synthetic_feature")
+    assert "on-" not in breaker.inner_text()  # the field's value, never shown
+    expect(page.get_by_test_id("status-attention")).to_contain_text("Edit-sync is paused")
+    breaker.get_by_role("button", name="Accept these changes").click()
+    expect(page.get_by_test_id("sync-breaker")).to_have_count(0, timeout=RUN)
 
 
 def test_a_hold_turns_sync_now_and_the_imports_off_and_accept_clears_it(page: Page, demo, console):

@@ -2,8 +2,8 @@
 archive with an `audio-router` fixture imported as 2a imports it, then against the fake Plaud
 server, through the CLI and the worker's real turn: `plaud baseline`, `sync --dry-run`, `sync
 --catch-up`, then the worker's loop on a fake clock (scheduled syncs, requests from the Sync
-screen, a late keep-out, Release, a refused sign-in and a new one), with §21's faults injected and
-every log captured at DEBUG.
+screen, a late keep-out, Release, a refused sign-in and a new one, then edit-sync's checks of a
+speaker rename and a new field), with §21's faults injected and every log captured at DEBUG.
 
 - **C4 with the real turn** (A1 proved it through a stand-in): an expired access token that
   refreshes keeps the pings going; a 401 and a refused refresh stop them from that turn on, with
@@ -47,6 +47,8 @@ TZ = "America/Vancouver"
 A, B = "a1" * 16, "b2" * 16  # synthetic Plaud IDs the 2a import brings in
 TITLES_2A = {A: "Synthetic 2a seminar", B: "Synthetic 2a office hours"}
 WORD = "noarchive"
+SPEAKER = "Synthetic Speaker Ada"  # Dan's name for a speaker (edit-sync, area B1)
+FIELD_VALUE = "synthetic-feature-value-never-shown"  # a new field's value, never shown
 TOKEN_MARKS = ("fake-access-", "fake-refresh-", "Bearer ")
 LINK_MARKS = ("X-Amz-", "X-Amz-Signature", "synthetic&X-Amz")
 TABLES = (
@@ -55,6 +57,7 @@ TABLES = (
     "plaud_requests",
     "plaud_listing",
     "plaud_checks",
+    "plaud_check_log",
     "plaud_listed",
     "ops_runs",
     "meta",
@@ -247,9 +250,26 @@ def test_stage_2b_end_to_end_on_the_fake_leaks_nothing(
     assert len(live.pings()) == pings + 3
     flow.look()
 
+    # Edit-sync (area B1): Dan names a speaker on one recording, and Plaud starts sending a new
+    # field on every one; the scheduled turns' sweep checks each, writes the rename (stable: never
+    # counted), and neither the name nor the field's value reaches a log, a view or state.db.
+    acct.rename_speaker(meetings[0].plaud_id, SPEAKER)
+    acct.send_field("synthetic_feature", FIELD_VALUE)
+    named = live.here()[meetings[0].plaud_id]
+    for _ in range(3 * 72):
+        flow.turn(w, minutes=20)
+        found = live.db().check_log_since(T0 - timedelta(days=1))
+        if any(r.recording_id == named and "speakers" in r.named_parts for r in found):
+            break
+    flow.look()
+    updated = [r for r in found if r.recording_id == named and "speakers" in r.named_parts]
+    assert updated and not any(r.counted for r in updated)
+    assert any("synthetic_feature" in r.fields for r in found)
+
     # C7.01: the leak scan, over everything the flow produced.
     titles = {r.name for r in acct.recordings if r.name} | set(TITLES_2A.values())
     titles |= {late.name, f"{WORD} {late.name}", f"{WORD} synthetic appointment"}
+    titles |= {SPEAKER, FIELD_VALUE}  # a speaker's name and a field's value: never logged
     logs = "\n".join(r.getMessage() for r in caplog.records)
     pinged = "\n".join(json.dumps(p) for p in live.ntfy.requests)
     scanned = {
