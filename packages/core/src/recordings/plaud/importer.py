@@ -232,25 +232,36 @@ class ConsentGuard:
         self._key: tuple[keepout.FileSignature, int] | None = None
 
     def current(self) -> ConsentList:
+        reading = self.read()
+        if reading.stop == CONSENT_UNSETTLED:
+            raise ImportStopped(STOPPED_CONSENT, CONSENT_UNSETTLED)
+        if reading.stop is not None:
+            raise ImportStopped(STOPPED_CONSENT)
+        return reading
+
+    def read(self) -> ConsentList:
+        """The list by the same guard as `current`, a stop returned rather than raised: a run's
+        own read at its start (§12.1; the end-of-branch privacy review, 2026-11-02), during which
+        the listing, privacy from it and late consent listings still run. A file that can't be
+        stat'ed reads as missing; one still changing after `tries` looks is a stop of its own
+        (CONSENT_UNSETTLED), with no IDs. A reading it keeps is reused while the file is the same,
+        so the import's first per-recording check costs no second read."""
         for _ in range(self.tries):
             key = _consent_key(self.path)
-            if key is None:
-                raise ImportStopped(STOPPED_CONSENT)  # missing, or can't be stat'ed: a stop
+            if key is None:  # missing, or can't be stat'ed: a stop
+                return ConsentList(ids=frozenset(), lines=(), stop=keepout.STOP_MISSING)
             age = (self.clock_ns() - max(key[0].mtime_ns, key[1])) / 1e9
             if age < self.settle:
                 self.sleep(self.settle - max(age, 0.0))
                 continue
             if self._list is not None and key == self._key:
-                reading = self._list
-            else:
-                reading = keepout.read_consent(self.path)
-                if _consent_key(self.path) != key:
-                    continue  # written while it was read: read it again
-                self._list, self._key = reading, key
-            if reading.stop is not None:
-                raise ImportStopped(STOPPED_CONSENT)
+                return self._list
+            reading = keepout.read_consent(self.path)
+            if _consent_key(self.path) != key:
+                continue  # written while it was read: read it again
+            self._list, self._key = reading, key
             return reading
-        raise ImportStopped(STOPPED_CONSENT, CONSENT_UNSETTLED)
+        return ConsentList(ids=frozenset(), lines=(), stop=CONSENT_UNSETTLED)
 
 
 def _suffix(url: object) -> str:

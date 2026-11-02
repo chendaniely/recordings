@@ -1476,7 +1476,10 @@ is a separate piece of work, and the thresholds are constants, not settings.
   - Status, doctor and `recordings plaud consent` name the line numbers, never the text: "the consent
     list has 2 lines that look like IDs but can't be read (lines 14 and 22)".
 - **Read** at every tick when the file has changed (by inode, size and time, §9.2), at the start of
-  every run, and before each recording's first byte (§11.5).
+  every run, and before each recording's first byte (§11.5). Every read is guarded the same way: a
+  file changed within the last 2 seconds isn't trusted yet, and a read counts only when the file
+  is the same before and after it; one that never settles is a consent stop (at a run's start, for
+  that run: the end-of-branch privacy review, 2026-11-02).
 - **A late consent listing** (an exclusion whose recording is already here, by any of its Plaud IDs):
   - **It is applied at the worker's next tick** (§9.2), from the consent list and the index alone,
     with no Plaud call: whatever the sign-in, the listing, the schedule or the gate. It is an
@@ -3450,3 +3453,7 @@ None: every bullet of §20 is planned in a phase.
   CLI's `release` refuses too, and the Sync screen's Compare, Release and Show title and every
   Re-sync button are off with the phrase (SyncView gains `word`). No decision or scenario's
   outcome changed.
+- 2026-11-02: §12.1 (the end-of-branch privacy review, item 5): the run's own read of the consent
+  list at its start is guarded as the tick's and the import's are; a list caught mid-write that
+  never settles is a consent stop for that run ("the consent list keeps changing"). No decision
+  or scenario's outcome changed.

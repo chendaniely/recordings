@@ -4,6 +4,7 @@ late consent listing mid-run, every fetch failing, an outage, the disk guard, a 
 SIGTERM between recordings, and what each leaves for the ping. Every account, title, token and
 byte is synthetic (plaud_live.py), and nothing reaches Plaud."""
 
+import itertools
 from datetime import timedelta
 
 import pytest
@@ -283,3 +284,31 @@ def test_after_a_rebuild_a_scheduled_run_leaves_what_needs_review_out(live):
     assert set(live.here()) == {after.plaud_id}
     assert live.fetched(before.plaud_id) == []
     assert live.db().listing(before.plaud_id).needs_review
+
+
+def test_a_consent_list_caught_mid_write_at_the_runs_start_is_a_stop_for_the_run(live, monkeypatch):
+    # The end-of-branch privacy review (2026-11-02): the run's own read of the consent list at
+    # its start uses the guarded read, as the worker's and the import's do (§12.1). A list being
+    # written in place (it changes at every look) is a consent stop for the run: nothing fetched,
+    # no title of a recording not here stored, and the run says why.
+    from recordings.plaud import importer
+    from recordings.plaud.cache import Cache
+    from recordings.plaud.checks import K_COMPARE
+    from recordings.plaud.compare import TITLES_HIDDEN_CONSENT
+
+    live.account.add_many(2)
+    live.catch_up_done()
+    w = live.started()
+    changes = itertools.count(1)
+    real = importer._consent_key
+
+    def writing(path):
+        key = real(path)
+        return None if key is None else (key[0], key[1] + next(changes))
+
+    monkeypatch.setattr(importer, "_consent_key", writing)
+    w.tick()
+    assert live.here() == {} and envelope_requests(live) == []
+    assert live.db().get(K_COMPARE)["titles_hidden"] == TITLES_HIDDEN_CONSENT
+    assert [r.title for r in Cache(live.state_path).compare_rows()] == [None, None]
+    assert last_turn(live)["detail"] == {"result": STOPPED_CONSENT}

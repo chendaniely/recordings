@@ -10,11 +10,13 @@ selected and Import all, and the CLI's `sync`, `sync --dry-run` and `sync --catc
    here, a scheduled turn too); the catch-up runs only while it is closed. A person's sync or import
    is refused while a hold is on ("Held: see Status", §11.4 step 3), and while a rate limit's wait
    runs ("rate limited until 14:40", §10.2): either would only meet the same answer again.
-2. The consent list, read afresh, failing closed. During a consent stop the listing, privacy from
-   the listing and the compare still run, but nothing is fetched or imported, no title of a
-   recording not here is stored (the compare's own rule), and the listing never becomes the last
-   good one (a guess, failing closed: a listing the consent list couldn't be checked against is
-   never a baseline).
+2. The consent list, read afresh, failing closed, through the run's own guard (`ConsentGuard.read`:
+   a file changed within `settle` seconds isn't trusted, a read counts only when the file is the
+   same before and after it, and one that never settles is a stop). During a consent stop the
+   listing, privacy from the listing and the compare still run, but nothing is fetched or
+   imported, no title of a recording not here is stored (the compare's own rule), and the
+   listing never becomes the last good one (a guess, failing closed: a listing the consent list
+   couldn't be checked against is never a baseline).
 3. Late consent listings, in the CLI's syncs (the worker's tick applies them, and again between
    two recordings of a long run).
 4. The sign-in (`tokens.check_sign_in`): refreshed if due; a refusal is recorded (the pause and
@@ -117,7 +119,6 @@ from recordings.plaud.importer import (
     ImportStopped,
     ListingStale,
 )
-from recordings.plaud.keepout import read_consent
 from recordings.plaud.listing_privacy import ListingPrivacy, privacy_from_listing
 from recordings.plaud.settings import BAD_WORD, PlaudSettings
 from recordings.plaud.when import local_hhmm
@@ -517,9 +518,11 @@ def run_sync(
     if person and (until := health.rate_limit_wait(db, now=started)) is not None:
         return report.end(rate_limited(until, run.timezone_name), EXIT_UNREACHABLE)
 
-    # 2. the consent list, failing closed; 3. late consent listings (the CLI's syncs: a Compare
-    # writes nothing to the archive, §11.1)
-    consent = read_consent(run.settings.consent_list)
+    # 2. the consent list, failing closed, through the run's own guard (the import's: a file
+    # caught mid-write is never trusted, and one that never settles is a stop for this run);
+    # 3. late consent listings (the CLI's syncs: a Compare writes nothing to the archive, §11.1)
+    importer_ = run.importer(catch_up=mode == "catch-up")
+    consent = importer_.consent.read()
     stop = consent.stop is not None
     report.kept_lines = tuple(consent.review_lines)
     if run.late_consent and mode != "compare":
@@ -534,7 +537,6 @@ def run_sync(
 
     done: set[str] = set()
     limits_before = run.client.throttle.rate_limits
-    importer_ = run.importer(catch_up=mode == "catch-up")
     # Import all, and the catch-up (which retries what an interrupted one left failing), take
     # recordings that failed 3 times too; Sync now and a scheduled run don't.
     every = import_all if mode == "import" else mode == "catch-up"
