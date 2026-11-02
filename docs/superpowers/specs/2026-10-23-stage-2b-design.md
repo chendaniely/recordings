@@ -2067,8 +2067,11 @@ exception class names. Never a title, a token, a URL from Plaud, or exception te
   reindex`." (decision 58).
   One the new-pattern pass opened (§13.1 case 5) says "Recording `<id>` wasn't checked against the
   private patterns: run `recordings reindex`, which says what stops it." A pass that raised as a
-  whole says "Checking titles against the private patterns stopped (`<ExceptionClass>`): check the
-  archive disk, then the worker's log."
+  whole says "Checking titles against the private patterns stopped (`<ExceptionClass>`): <step>.",
+  the step following the class: "check the archive disk and its permissions, then the worker's
+  log" for an `OSError` or one of its kinds, "check state.db's disk, then the worker's log" for a
+  `sqlite3` error, "the stored keep-out words aren't a list: `recordings plaud keep-out-words`
+  says so" for `KeepOutWordsError`, and "check the worker's log" for anything else.
 - **A recording:** "up to date", "updated: speakers, title", "degraded", "suppressed", "busy",
   "failed: Plaud unavailable", "not checked: kept out", "not checked: on the consent list", "gone from
   Plaud", "parked", "re-tagged private: title changed", "re-tagged private: the sync's record was
@@ -3161,3 +3164,5 @@ None: every bullet of §20 is planned in a phase.
   the flags stay while the pattern pass is failing; a whole-archive retry runs at most once per
   turn, as `rechecking` ("checking titles again"), which `alive` reads by its ordinary rules
   (step 4's reviews of the phase end). No decision or scenario changed.
+- 2026-11-01: §15.6's sentence for a patterns pass that stopped gives the step its class needs
+  (step 4's reviews of the phase end).

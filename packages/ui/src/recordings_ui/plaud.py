@@ -22,6 +22,7 @@ never at the top, because the Pages demo imports this module on Pyodide, which h
 from __future__ import annotations
 
 import asyncio
+import builtins
 import json
 import logging
 import time
@@ -232,11 +233,32 @@ PING_FAILING = "The sync's Healthchecks ping has failed for 2 hours."
 UNWRITTEN_STOPPED = (
     "late consent listings stopped ({}): check the archive disk, then the worker's log"
 )
-# A patterns pass that raised as a whole (the blocker's `patterns_error`): the worker tries it again
-# at each tick, so what lasts is a disk or state.db fault, or a bug its log names by class.
-PATTERNS_STOPPED = (
-    "checking titles against the private patterns stopped ({}): check the archive disk, then "
-    "the worker's log"
+# A patterns pass that raised as a whole (the blocker's `patterns_error`), with the step its class
+# needs, as flags.flag_sentence words a flag (§15.6). The worker tries it again, so what lasts is
+# the archive disk, state.db, the stored keep-out words, or a bug its log names by class.
+PATTERNS_STOPPED = "checking titles against the private patterns stopped ({}): {}"
+PATTERNS_STOPPED_STEPS = {
+    "disk": "check the archive disk and its permissions, then the worker's log",
+    "state": "check state.db's disk, then the worker's log",
+    "words": "the stored keep-out words aren't a list: `recordings plaud keep-out-words` says so",
+    "other": "check the worker's log",
+}
+# By name only: the views import no sqlite3 at module level. OSError's kinds are Python's own.
+_DISK_ERRORS = frozenset(
+    name for name, v in vars(builtins).items() if isinstance(v, type) and issubclass(v, OSError)
+)
+_STATE_ERRORS = frozenset(
+    {
+        "DatabaseError",
+        "OperationalError",
+        "IntegrityError",
+        "InternalError",
+        "InterfaceError",
+        "ProgrammingError",
+        "NotSupportedError",
+        "DataError",
+        "StateError",
+    }
 )
 # Spec §22's numbers.
 PING_GRACE = timedelta(minutes=10)  # "one schedule interval plus 10 minutes"
@@ -420,6 +442,19 @@ def _class_name(value: object) -> str | None:
     return value if isinstance(value, str) and value.isidentifier() else None
 
 
+def _patterns_stopped(error: str) -> str:
+    """PATTERNS_STOPPED for a pass that raised `error` (a class name), with the step it needs."""
+    if error == "KeepOutWordsError":
+        step = PATTERNS_STOPPED_STEPS["words"]
+    elif error in _DISK_ERRORS:
+        step = PATTERNS_STOPPED_STEPS["disk"]
+    elif error in _STATE_ERRORS:
+        step = PATTERNS_STOPPED_STEPS["state"]
+    else:
+        step = PATTERNS_STOPPED_STEPS["other"]
+    return PATTERNS_STOPPED.format(error, step)
+
+
 def _sentence(ev: Event) -> str:
     """A flag's fixed sentence (Task 8's flag_sentence): a `private` that couldn't be written for
     a reason `recordings reindex` can't mend (a full or read-only disk, a folder it can't enter, a
@@ -581,7 +616,7 @@ class _Read:
         if self.unwritten_error:
             return UNWRITTEN_STOPPED.format(self.unwritten_error)
         if self.patterns_error:
-            return PATTERNS_STOPPED.format(self.patterns_error)
+            return _patterns_stopped(self.patterns_error)
         for ev in self.flags:
             said = _sentence(ev)
             if ev.kind == PRIVATE_UNWRITTEN and said != SENTENCES[PRIVATE_UNWRITTEN]:
@@ -1039,7 +1074,7 @@ def _panel_from(r: _Read) -> dict:
     if r.unwritten_error:
         attention.append(_cap(UNWRITTEN_STOPPED.format(r.unwritten_error)) + ".")
     if r.patterns_error:
-        attention.append(_cap(PATTERNS_STOPPED.format(r.patterns_error)) + ".")
+        attention.append(_cap(_patterns_stopped(r.patterns_error)) + ".")
     attention += flag_lines
     if worker_line:
         attention.append(worker_line)

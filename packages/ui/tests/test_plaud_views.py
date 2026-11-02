@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from recordings.models import TagRef
 from recordings.plaud.checks import (
     K_CATCH_UP_DONE,
@@ -448,15 +449,28 @@ def test_a_recording_the_patterns_pass_couldnt_check_needs_attention_by_id_while
     assert not [a for a in sync_panel(s.settings, now=T0)["attention"] if "patterns" in a]
 
 
-def test_a_patterns_pass_that_stopped_names_its_class_and_a_remedy_that_helps(plaud_scene):
-    # why: the council's S2. A pass that raised as a whole opens the private-unwritten blocker
-    # with its class (`patterns_error`); the summary and Needs attention say so, by class only.
+@pytest.mark.parametrize(
+    ("error", "step"),
+    [
+        ("OSError", "check the archive disk and its permissions, then the worker's log"),
+        ("PermissionError", "check the archive disk and its permissions, then the worker's log"),
+        ("OperationalError", "check state.db's disk, then the worker's log"),
+        (
+            "KeepOutWordsError",
+            "the stored keep-out words aren't a list: `recordings plaud keep-out-words` says so",
+        ),
+        ("TypeError", "check the worker's log"),
+    ],
+)
+def test_a_patterns_pass_that_stopped_names_its_class_and_a_remedy_that_helps(
+    plaud_scene, error, step
+):
+    # why: the council's S2, and step 4's reviews: the step follows the cause, as flag_sentence
+    # does (§15.6). A pass that raised as a whole opens the private-unwritten blocker with its
+    # class (`patterns_error`); the summary and Needs attention say so, by class only.
     s = plaud_scene
-    stopped = (
-        "Checking titles against the private patterns stopped (OperationalError): check the "
-        "archive disk, then the worker's log."
-    )
-    open_blocker(s.db, "private-unwritten", now=T0, detail={"patterns_error": "OperationalError"})
+    stopped = f"Checking titles against the private patterns stopped ({error}): {step}."
+    open_blocker(s.db, "private-unwritten", now=T0, detail={"patterns_error": error})
     panel = sync_panel(s.settings, now=T0)
     assert panel["summary"]["sentence"] == stopped.removesuffix(".")
     assert stopped in panel["attention"]
