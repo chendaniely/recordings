@@ -463,6 +463,7 @@ class Worker:
         self._pass: PatternsPass | None = None  # the last patterns pass that ended; None: none due
         self._pass_failed: str | None = None  # the class it last raised as a whole, if it did
         self._whole_due = False  # no attempt of this pattern version has ended (WholePassDue)
+        self._rebuild_owed = False  # the start's check for a rebuilt state.db raised: try again
         self._whole_at: datetime | None = None  # when the last whole-archive attempt began
         minutes = self.settings.schedule_minutes
         self._whole_every = timedelta(minutes=minutes if minutes > 0 else WHOLE_RETRY_MINUTES_OFF)
@@ -513,7 +514,9 @@ class Worker:
         self._requests_at_start()
         self.writer = self._open_writer()
         self.gate = self._open_gate()
-        if self._step("rebuild", self._detect_rebuild):
+        found = self._step("rebuild", self._detect_rebuild)
+        self._rebuild_owed = found is None  # it raised: each tick tries again (§11.6)
+        if found:
             self.gate = self._open_gate()
         self._step("breaker", self._close_on_release)
         self._step("manifests", self._manifests)
@@ -576,7 +579,8 @@ class Worker:
 
     def _detect_rebuild(self) -> bool:
         """§11.6: a rebuilt `state.db` (2b snapshots, no mark row) is recorded and passed at once:
-        `rebuilt_at`, the gate open, a mark. Nothing stops."""
+        `rebuilt_at`, the gate open, a mark. Nothing stops. Every run that lists looks again
+        first, under its own hold (`plaud.sync.rebuild_check`)."""
         found = detect_rebuild(self.db, self.writer.archive, now=self.clock())
         if found:
             log.warning(
@@ -584,6 +588,17 @@ class Worker:
                 "for review"
             )
         return found
+
+    def _rebuild_again(self) -> None:
+        """The start's check for a rebuilt `state.db` raised: tried again at each tick until it
+        answers (the end-of-branch privacy review, 2026-11-02), so the gate doesn't stay closed
+        on a rebuild nothing found. A failure here is `_step`'s, logged once by its class."""
+        if not self._rebuild_owed or self.writer is None:
+            return
+        found = self._detect_rebuild()
+        self._rebuild_owed = False
+        if found:
+            self.gate = self._open_gate()
 
     def _close_on_release(self) -> bool:
         """§14.4: a release that bumps NORMALISER_VERSION closes the breaker by itself, at start
@@ -768,6 +783,7 @@ class Worker:
         self.progress.bump(now, "idle")
         self._step("consent list", self._watch_consent)
         self._step("consent blocker", self._consent_blocker)
+        self._step("rebuild", self._rebuild_again)
         self._step("cache titles", self._purge_cache)
         self._step("release previews", self._expire_previews)
         self._step("late consent", self._late_consent)

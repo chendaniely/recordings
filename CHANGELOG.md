@@ -70,6 +70,9 @@ spike sessions were skipped), each listed with how you would notice it's wrong i
   (date, time and length only), and no title is fetched for it. While Plaud's IDs look changed,
   no title can be shown: **Release** on a title row and **Show title** are off until the hold
   clears.
+- After a lost `state.db`, whatever lists Plaud first (the worker, or a dry run or catch-up on the
+  server) finds the rebuild, so recordings you had kept out wait for your review instead of
+  coming in; a run that can't tell lists nothing.
 
 ## Before stage 2b
 

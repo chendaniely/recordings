@@ -262,6 +262,22 @@ def test_the_cli_resync_waits_for_the_catch_up(live, cli):
     assert code == 1 and f"result: {GATE_REFUSAL}" in out, err
 
 
+def test_a_resync_on_a_rebuilt_state_db_records_the_rebuild_before_it_checks(live, cli):
+    # The end-of-branch privacy review (2026-11-02): every run that lists finds a rebuilt
+    # state.db first, under its own hold, so its snapshot's mark never hides the rebuild.
+    _w, here, recs = ready(live, 1)
+    rid = here[recs[0].plaud_id]
+    with live.db().state.db() as conn:
+        conn.execute("DELETE FROM plaud_state")
+        conn.execute("DELETE FROM plaud_listing")
+    live.account.rename_speaker(recs[0].plaud_id, "Synthetic Ada")
+    code, out, err = cli("resync", rid)
+    assert code == 0, out + err
+    assert "result: Updated: speakers" in out
+    assert live.db().get(K_REBUILT)["by"] == "detected"
+    no_title(live, out)
+
+
 def test_failure_phrases_are_fixed():
     assert resync.failure_phrase("PlaudUnavailable") == "Plaud unavailable"
     assert resync.failure_phrase("WriterError") == "error: `WriterError`"

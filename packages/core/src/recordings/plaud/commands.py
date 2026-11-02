@@ -1094,13 +1094,15 @@ def cmd_sync(args: argparse.Namespace) -> int:
       failure, and the schedule starts by itself.
     - plain `sync`: a sync now, with no cap, refused before the first catch-up or while a hold
       is on. Holds `plaud` (`plaud-sync`).
+    Each first looks for a rebuilt state.db under its hold (§11.6, `sync.rebuild_check`), and only
+    then reads the gate: a rebuild found opens it, so a catch-up then isn't needed; a check that
+    raises lists nothing (exit 1).
     Exit codes (§9.6): 0 ok; 1 failure (a hold, a bad listing, a refusal); 2 partial (the listing
     was good, but some recordings failed or aren't here); 69 Plaud unreachable or rate limited;
     75 busy; 77 sign-in needed; 78 configuration or the consent list."""
     from recordings.disk import disk_thresholds
     from recordings.plaud import sync
     from recordings.plaud.client import PlaudClient
-    from recordings.plaud.gate import gate_now
     from recordings.plaud.tokens import TokenStore
 
     if args.list and not args.dry_run:
@@ -1123,21 +1125,6 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return _sync_full(args, cfg, settings, state, stop_free)
     mode = "compare" if args.dry_run else "catch-up" if args.catch_up else "sync"
     job = {"compare": "plaud-compare", "catch-up": "plaud-catch-up", "sync": "plaud-sync"}[mode]
-    db = PlaudDB(state)
-    try:
-        gate = gate_now(db)
-        done_at = parse_stamp(db.get(K_CATCH_UP_DONE))
-    except (NoSyncYet, sqlite3.Error) as exc:
-        return _fail(f"can't read state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
-    if mode == "catch-up" and gate.open:
-        when = _shown(done_at, tz) or "an earlier run"
-        return _fail(
-            f"the first catch-up is already done ({when}): use `recordings plaud sync`",
-            args.json,
-            EXIT_FAILED,
-        )
-    if mode == "sync" and not gate.open:
-        return _fail(sync.NOT_DONE, args.json, EXIT_FAILED)
     now = datetime.now(UTC)
     printer = None if args.json or mode == "compare" else _progress_printer()
     try:
@@ -1147,6 +1134,13 @@ def cmd_sync(args: argparse.Namespace) -> int:
             writer = _writer(cfg, args.json)
             if isinstance(writer, int):
                 return writer
+            # §11.6: a rebuilt state.db is found before the gate is read, under this hold
+            found, failed = sync.rebuild_check(writer, now=datetime.now(UTC))
+            if failed is not None:
+                return _fail(_rebuild_check_failed(failed), args.json, EXIT_FAILED)
+            refused = _gate_refusal(PlaudDB(state), mode, tz, rebuilt=found)
+            if refused is not None:
+                return _fail(refused, args.json, EXIT_FAILED)
             store = TokenStore(settings.token_store, token_url=settings.token_url)
             client = PlaudClient(store, api_base=settings.api_base)
             # A long plain sync serves the light turn and single-recording requests between two
@@ -1168,6 +1162,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
                 between=between,
             )
             report = sync.run_sync(run, mode=mode)
+            if found:
+                report.notes.insert(0, sync.REBUILT)
             if mode != "compare":
                 sync.record_ops_run(state, job, report, finished=datetime.now(UTC))
     except LockTimeout:
@@ -1182,6 +1178,36 @@ def cmd_sync(args: argparse.Namespace) -> int:
     lines = _sync_lines(report, tz, listed=args.list, mode=mode)
     _emit(_sync_payload(report, tz, listed=args.list), lines, args.json)
     return report.exit_code
+
+
+def _rebuild_check_failed(cause: str) -> str:
+    """The CLI's line when the check for a rebuilt state.db raised: the run listed nothing."""
+    return (
+        f"the check for a rebuilt state.db stopped (`{cause}`): nothing was listed; check "
+        "state.db's disk and the archive's, then run it again"
+    )
+
+
+def _gate_refusal(db: PlaudDB, mode: str, tz: tzinfo, *, rebuilt: bool) -> str | None:
+    """Why the CLI's sync can't run past the gate (§11.6), read after the rebuild check: a
+    catch-up once the gate is open (a rebuild just found opens it, and then none is needed); a
+    plain sync, or Sync everything, before the first catch-up. None when it may run."""
+    from recordings.plaud import sync
+    from recordings.plaud.gate import gate_now
+
+    try:
+        gate = gate_now(db)
+        done_at = parse_stamp(db.get(K_CATCH_UP_DONE))
+    except (NoSyncYet, sqlite3.Error) as exc:
+        return f"can't read state.db now ({type(exc).__name__})"
+    if mode == "catch-up" and gate.open:
+        if rebuilt:
+            return f"{sync.REBUILT}; the first catch-up isn't needed: use `recordings plaud sync`"
+        when = _shown(done_at, tz) or "an earlier run"
+        return f"the first catch-up is already done ({when}): use `recordings plaud sync`"
+    if mode in ("sync", "full") and not gate.open:
+        return sync.NOT_DONE
+    return None
 
 
 def _long_run(cfg: config.Config, *, writer: Writer, client):
@@ -1218,20 +1244,21 @@ def _sync_full(args: argparse.Namespace, cfg, settings, state: State, stop_free:
     and every listed recording is excluded, parked, flagged or here and checked; 2 otherwise,
     with counts (the flagged named by archive ID); a run-level failure exits as a sync's would."""
     from recordings.plaud import full, sync
-    from recordings.plaud.gate import gate_now
     from recordings.worker import record_full
 
-    try:
-        if not gate_now(PlaudDB(state)).open:
-            return _fail(sync.NOT_DONE, args.json, EXIT_FAILED)
-    except (NoSyncYet, sqlite3.Error) as exc:
-        return _fail(f"can't read state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
     now = datetime.now(UTC)
     try:
         with runlock.plaud_run(state, "plaud-full", timeout=runlock.CLI_WAIT, now=now):
             writer = _writer(cfg, args.json)
             if isinstance(writer, int):
                 return writer
+            # §11.6: a rebuilt state.db is found before the gate is read, under this hold
+            found, failed = sync.rebuild_check(writer, now=datetime.now(UTC))
+            if failed is not None:
+                return _fail(_rebuild_check_failed(failed), args.json, EXIT_FAILED)
+            refused = _gate_refusal(PlaudDB(state), "full", _zone(cfg), rebuilt=found)
+            if refused is not None:
+                return _fail(refused, args.json, EXIT_FAILED)
             run = _cli_run(cfg, settings, stop_free, writer=writer)
             report = full.run_full(run, by="cli")
             record_full(state, report, finished=datetime.now(UTC))
@@ -1245,6 +1272,8 @@ def _sync_full(args: argparse.Namespace, cfg, settings, state: State, stop_free:
             EXIT_FAILED,
         )
     lines = [f"result: {report.line()}"]
+    if found:
+        lines.insert(0, sync.REBUILT)
     if report.resumed:
         lines.append(f"resumed the run started {_shown(report.started, _zone(cfg))}")
     counts = report.counts()

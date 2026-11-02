@@ -6,7 +6,8 @@
 checked as the sweep checks it (`editsync.Checker`, B1's), with one difference: a parked recording
 is tried too (`parked_ok`), and a success unparks it.
 
-Before any Plaud call, like a person's sync (`plaud.sync`, §11.1): the gate (a Re-sync writes
+Before any Plaud call, like a person's sync (`plaud.sync`, §11.1): a rebuilt `state.db` looked
+for first (`sync.rebuild_check`, §11.6; a check that raises ends it), the gate (a Re-sync writes
 snapshots, so it waits for the first catch-up, §9.3), a hold ("Held: see Status": the newest
 listing is suspect while one is on, so nothing is checked against it; a guess, failing closed),
 a rate limit's wait, the consent list read afresh (a stop checks nothing), and the sign-in. Then
@@ -264,6 +265,10 @@ def resync(
     now = run.clock()
     if not named:
         return report.end(NOTHING_NAMED, EXIT_FAILED)
+    _found, failed = sync.rebuild_check(run.writer, now=now)  # §11.6: before anything is listed
+    if failed is not None:
+        report.ended_by = failed
+        return report.end(f"error: `{failed}`", EXIT_FAILED)
     if not gate_now(db).open:
         return report.end(GATE_REFUSAL, EXIT_FAILED)
     if db.get(K_HOLD) is not None:

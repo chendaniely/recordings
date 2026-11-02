@@ -3,6 +3,9 @@
 selected and Import all, and the CLI's `sync`, `sync --dry-run` and `sync --catch-up`.
 
 **One run, step by step** (§11.1):
+0. A rebuilt `state.db` (§11.6, `rebuild_check`), looked for before anything is listed, under
+   the run's own hold: found, it is recorded (the gate opens, and what was made before it waits
+   for review); a check that raises ends the run before it lists ("error: `OSError`").
 1. The gate: a sync or an import waits for the first catch-up (a request is refused before it gets
    here, a scheduled turn too); the catch-up runs only while it is closed. A person's sync or import
    is refused while a hold is on ("Held: see Status", §11.4 step 3), and while a rate limit's wait
@@ -103,7 +106,7 @@ from recordings.plaud.compare import (
 )
 from recordings.plaud.editsync import UPDATED, Checker, CheckResult, CheckStopped
 from recordings.plaud.flags import apply_late_consent
-from recordings.plaud.gate import GATE_REFUSAL, gate_now
+from recordings.plaud.gate import GATE_REFUSAL, detect_rebuild, gate_now
 from recordings.plaud.importer import (
     STOPPED_CONSENT,
     STOPPED_DISK,
@@ -141,6 +144,10 @@ ALREADY_DONE = "the first catch-up is already done"
 NOT_DONE = "the first catch-up hasn't run: `recordings plaud sync --catch-up` (runbook)"
 STALE_AGAIN = "the listing kept going stale: the rest at the next sync"
 LATE_CONSENT_FAILED = "late consent listings: not applied ({})"
+REBUILT = (
+    "the sync's records were rebuilt: what was made before now and isn't here waits for your "
+    "review (the Sync screen's Not here yet)"
+)
 BREAKER_PHRASE = breaker.PHRASE  # "paused: unexpected changes", while the breaker is open
 
 # Exit codes (§9.6), the CLI's and the report's
@@ -409,6 +416,28 @@ def _check_sign_in(run: Run, report: SyncReport, *, now: datetime) -> bool:
     return True
 
 
+def rebuild_check(writer: Writer, *, now: datetime) -> tuple[bool, str | None]:
+    """§11.6's rebuilt `state.db` (`gate.detect_rebuild`), looked for first by every run that
+    lists, under that run's own hold: `run_sync` (the worker's turns and requests, the CLI's
+    syncs, Sync everything), `resync`, and the CLI's `sync` and `--full` before their gate checks
+    (the end-of-branch privacy review, 2026-11-02). So no listing on a rebuilt `state.db` writes
+    `plaud_listing` rows, or imports, before `rebuilt_at` is recorded and the review marks apply.
+    Returns (found, None), or (False, the exception's class) when the check raised: the run then
+    lists nothing (fail closed)."""
+    try:
+        found = detect_rebuild(PlaudDB(writer.state), writer.archive, now=now)
+    except Exception as exc:  # noqa: BLE001  its class only: the run ends before it lists
+        cause = type(exc).__name__
+        log.warning("the check for a rebuilt state.db failed (%s): nothing listed", cause)
+        return False, cause
+    if found:
+        log.warning(
+            "the sync's records were rebuilt: what was made before now and isn't here waits for "
+            "review"
+        )
+    return found, None
+
+
 def _importable(
     rows: Collection[Classified],
     *,
@@ -465,6 +494,14 @@ def run_sync(
     db = run.db
     named_ids = frozenset(canonical_plaud_id(p) for p in named)
     person = not scheduled
+
+    # 0. a rebuilt state.db, found before anything is listed (§11.6): it opens the gate
+    found, failed = rebuild_check(run.writer, now=started)
+    if failed is not None:
+        report.ended_by = failed
+        return report.end(f"error: `{failed}`", EXIT_FAILED)
+    if found:
+        report.notes.append(REBUILT)
 
     # 1. the gate, a hold, a rate limit's wait
     gate_open = gate_now(db).open

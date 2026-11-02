@@ -12,7 +12,8 @@
 - **The snapshot mark** (area A4): `mark_snapshot`, before every 2b snapshot, by every path.
 - **An interrupted first catch-up:** mark rows, and no `catch_up_done_at`. The gate stays closed,
   and its reason says so (GATE_INTERRUPTED): `--catch-up` is run again.
-- **A rebuilt `state.db`** (`detect_rebuild`, at the worker's start): the archive holds 2b
+- **A rebuilt `state.db`** (`detect_rebuild`, at the worker's start, tried again at its ticks
+  while it fails, and before every run's first listing, the CLI's included): the archive holds 2b
   snapshots (`_meta.tool` "recordings") but `plaud_state` has no mark row. `rebuilt_at`, the
   gate's opening and a mark are recorded in one transaction, so a restart doesn't find it again;
   every listed ID made before `rebuilt_at` that isn't here then needs Dan's review
@@ -103,17 +104,22 @@ def has_2b_snapshot(archive: Archive) -> bool:
 
 
 def detect_rebuild(db: PlaudDB, archive: Archive, *, now: datetime) -> bool:
-    """§11.6's rebuilt `state.db`, at the worker's start: 2b snapshots in the archive and no
-    mark row. Records `rebuilt_at`, opens the gate and commits a mark, in one transaction; True
-    when it did. Nothing stops: new recordings flow, and what was made before waits for review."""
+    """§11.6's rebuilt `state.db`: 2b snapshots in the archive and no mark row. Looked for at the
+    worker's start and before every run's first listing, under that run's hold (`plaud.sync.
+    rebuild_check`; the end-of-branch privacy review, 2026-11-02). Records `rebuilt_at`, opens
+    the gate and commits a mark, in one transaction that reads the mark again first, so it is
+    found once; listing rows written before it and not recorded as here are marked for review in
+    the same transaction. True when it did. Nothing stops: new recordings flow, and what was made
+    before waits for review. Raises what a read raises: the caller lists nothing then."""
     if db.get(K_SNAPSHOT_MARK) is not None or not has_2b_snapshot(archive):
         return False
     stamp = now.isoformat()
-    db.record_rebuilt(
+    return db.record_rebuilt(
         at=now,
         by="detected",
         catch_up=not gate_now(db).open,
         mark={"first_at": stamp, "last_at": stamp, "count": 1, "by": "rebuild"},
+        unless_marked=True,
+        review_unhashed=True,
         now=now,
     )
-    return True

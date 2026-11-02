@@ -1312,7 +1312,16 @@ is a separate piece of work, and the thresholds are constants, not settings.
   - **Rebuilt `state.db`** (controller's call): the archive holds 2b-stamped snapshots, but
     `plaud_state` has **no mark rows** at all. The worker records `rebuilt_at`, sets
     `catch_up_done_at` and commits a mark row, in one transaction, so a restart doesn't find the
-    rebuild again. Nothing stops. **Needs your review** applies to every listed ID that isn't here
+    rebuild again. Nothing stops. **It is looked for before every run's first listing** (the
+    end-of-branch privacy review, 2026-11-02), under that run's own hold: the worker's start
+    (tried again at each tick while it fails) and its turns and requests, the CLI's `sync` in all
+    its forms (`--dry-run` and `--catch-up` included, so neither can list or import on a rebuilt
+    `state.db` first), `resync` and `--full`. A run whose check fails (raises) lists nothing and
+    ends with its failure phrase and a non-zero exit. The check for a mark is inside the
+    transaction that records the rebuild, so two runs never both record it; a listing row written
+    before it and not recorded as here is marked for review, as `recordings plaud review` marks
+    them. A `--catch-up` that finds the rebuild is then refused, since the gate is open: "the
+    first catch-up isn't needed: use `recordings plaud sync`". **Needs your review** applies to every listed ID that isn't here
     or excluded and whose Plaud creation time is earlier than `rebuilt_at`, whenever it is first
     listed: in the first listing after the rebuild, or later (restored from Plaud's trash, or missed
     through page drift or a malformed row). It is marked in `plaud_listing`. A scheduled run, **Sync
@@ -3420,3 +3429,9 @@ None: every bullet of §20 is planned in a phase.
   Plaud's IDs look changed: see Status"), which also turns the Sync screen's preview buttons off.
   The web app drops a preview's title it reads after either became true. No decision or
   scenario's outcome changed.
+- 2026-11-02: §11.6 (the end-of-branch privacy review's Medium): a rebuilt `state.db` is looked
+  for before every run's first listing, under that run's hold (the CLI's dry run and catch-up
+  included), not only at the worker's start, whose failed check is now tried again at each tick;
+  a run whose check raises lists nothing; it is recorded once even when two runs check at once,
+  and listing rows written before it and not recorded as here wait for review. A catch-up that
+  finds the rebuild is refused as not needed. No decision or scenario's outcome changed.

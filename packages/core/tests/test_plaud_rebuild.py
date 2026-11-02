@@ -187,6 +187,77 @@ def test_the_worker_finds_a_rebuild_at_its_start(scene, tmp_path):
         w.stopping.set()
 
 
+def test_a_rebuild_check_that_fails_at_the_workers_start_is_tried_again_at_its_ticks(
+    scene, tmp_path, monkeypatch
+):
+    # The end-of-branch privacy review (2026-11-02): the start's check raised once and was never
+    # tried again, so the gate stayed closed. The tick tries again until it answers.
+    from recordings import worker as worker_module
+    from recordings.config import load_config
+    from recordings.worker import Worker
+
+    scene.import_(scene.account.add())
+    lose_the_sync_records(scene)
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        f'[archive]\npath = "{scene.root}"\nwriter_id = "test"\n'
+        f'[state]\npath = "{scene.state_path}"\n'
+        f'[index]\npath = "{tmp_path / "index" / "index.db"}"\n'
+        f'[plaud]\nconsent_list = "{scene.consent_path}"\n',
+        encoding="utf-8",
+    )
+    calls: list[int] = []
+
+    def once_broken(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("synthetic")
+        return detect_rebuild(*args, **kwargs)
+
+    monkeypatch.setattr(worker_module, "detect_rebuild", once_broken)
+    environ = {"RECORDINGS_CONFIG": str(cfg_file)}
+    w = Worker(load_config(environ), environ, clock=lambda: T0, heartbeat=3600)
+    try:
+        w.start()
+        assert not w.gate.open and PlaudDB(w.state).get(K_REBUILT) is None
+        w.tick()
+        assert w.gate.open and PlaudDB(w.state).get(K_REBUILT)["by"] == "detected"
+        w.tick()
+        assert len(calls) == 2  # answered: not tried again
+    finally:
+        w.stopping.set()
+
+
+def test_a_rebuild_is_recorded_once_even_when_two_runs_check_at_once(scene):
+    # "Recording the rebuild stays one transaction, so it is found once": the check for a mark
+    # is inside the transaction that records it, so a second check that had read "no mark"
+    # before the first committed records nothing.
+    scene.import_(scene.account.add())
+    lose_the_sync_records(scene)
+    assert scene.db.record_rebuilt(
+        at=scene.now, by="detected", mark={"count": 1}, unless_marked=True, now=scene.now
+    )
+    later = scene.now + timedelta(minutes=1)
+    assert not scene.db.record_rebuilt(
+        at=later, by="detected", mark={"count": 1}, unless_marked=True, now=later
+    )
+    assert scene.db.get(K_REBUILT)["at"] == scene.now.isoformat()
+
+
+def test_a_rebuild_marks_listing_rows_written_before_it_for_review(scene):
+    # Defence in depth: a row a listing wrote before the rebuild was recorded (no run lists
+    # first now, but an older release's might have) is marked as `plaud review` marks it, so the
+    # review marks never skip it.
+    scene.import_(scene.account.add())
+    lose_the_sync_records(scene)
+    waiting = scene.account.add("Synthetic, listed before the rebuild was found")
+    scene.db.set_listing(f"of_{waiting.plaud_id}", first_seen=scene.now)
+    assert detect_rebuild(scene.db, scene.writer.archive, now=scene.now)
+    assert scene.db.listing(waiting.plaud_id).needs_review
+    rows, _ = sync(scene)
+    assert rows[waiting.plaud_id].state == REVIEW
+
+
 def run_review(scene, tmp_path, monkeypatch) -> tuple[int, str]:
     import contextlib
 

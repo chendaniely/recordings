@@ -517,13 +517,27 @@ class PlaudDB:
         review: Iterable[str] = (),
         catch_up: bool = False,
         mark: Mapping[str, Any] | None = None,
+        unless_marked: bool = False,
+        review_unhashed: bool = False,
         now: datetime,
-    ) -> None:
+    ) -> bool:
         """A rebuilt or restored state.db (§11.6), in one transaction: `rebuilt_at` (K_REBUILT),
         the gate opened when `catch_up` (a detected rebuild), a snapshot mark when given (so a
-        restart doesn't find the rebuild again), and `review`'s IDs marked as needing review."""
+        restart doesn't find the rebuild again), and `review`'s IDs marked as needing review.
+        `unless_marked` (a detected rebuild): nothing is written, and False returned, when a mark
+        row is there, read inside the same transaction, so two runs that check at once record it
+        once. `review_unhashed`: every listing row with no title hash (none recorded as here) is
+        marked for review too, as `recordings plaud review` marks what isn't here. True when it
+        recorded the rebuild."""
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            if (
+                unless_marked
+                and db.execute(
+                    "SELECT 1 FROM plaud_state WHERE key = ?", (K_SNAPSHOT_MARK,)
+                ).fetchone()
+            ):
+                return False
             self._put(db, K_REBUILT, {"at": utc_iso(at), "by": by}, now)
             if catch_up:
                 self._put(db, K_CATCH_UP_DONE, at.isoformat(), now)
@@ -533,6 +547,9 @@ class PlaudDB:
                 "UPDATE plaud_listing SET needs_review = 1 WHERE canonical_plaud_id = ?",
                 [(canonical_plaud_id(pid),) for pid in review],
             )
+            if review_unhashed:
+                db.execute("UPDATE plaud_listing SET needs_review = 1 WHERE title_sha256 IS NULL")
+        return True
 
     # ---- plaud_listed: the last good listing, and a held one (§11.4) ----------------------------
     def listed(self, which: str) -> dict[str, str]:

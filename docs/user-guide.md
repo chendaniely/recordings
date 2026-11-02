@@ -823,6 +823,12 @@ rebuilt, or restored from an older backup, it can't know what you kept out since
   the review rows out ("Import all 31 · 6 more need your review").
 - A `private` tag you removed may come back once, with "the sync's record was rebuilt" in
   Details. That errs private.
+- Whatever lists Plaud first after the rebuild finds it: the worker, or a command you run on the
+  server (`sync --dry-run`, `sync`, `--catch-up`, `resync`, `--full`). The command then says "the
+  sync's records were rebuilt: what was made before now and isn't here waits for your review", and
+  `--catch-up` adds "the first catch-up isn't needed: use `recordings plaud sync`". If it can't
+  tell (state.db or the archive can't be read), it lists nothing and says "the check for a rebuilt
+  state.db stopped (`OSError`)": fix what it names, then run it again.
 
 **What to do**
 

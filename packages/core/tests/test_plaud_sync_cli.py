@@ -16,7 +16,7 @@ from recordings.config import load_config
 from recordings.locks import OPS_LOCK, Locks, LockTimeout
 from recordings.plaud import runlock
 from recordings.plaud import sync as sync_module
-from recordings.plaud.checks import K_HOLD, K_LAST_GOOD_LISTING
+from recordings.plaud.checks import K_HOLD, K_LAST_GOOD_LISTING, K_REBUILT
 from recordings.plaud.client import FILE_PATH, LIST_PATH
 from recordings.plaud.gate import GATE_INTERRUPTED, gate_now
 from recordings.plaud.runlock import plaud_holder, plaud_run
@@ -215,3 +215,72 @@ def test_the_exit_codes(live, cli):
     live.fake.refuse_refresh()
     code, out, _ = cli("sync")
     assert code == 77 and "sign-in needed" in out
+
+
+# ---- the end-of-branch privacy review (2026-11-02): a rebuilt state.db, found by every run ----
+def rebuilt_with_one_kept_out(live, cli):
+    """A rebuilt state.db (§11.6): the archive holds the catch-up's 2b snapshot, the sync's
+    records are gone, and Plaud lists a recording kept out by an earlier title, the word since
+    gone from it, which only the lost records kept out."""
+    live.account.add("Synthetic, came in")
+    code, out, err = cli("sync", "--catch-up")
+    assert code == 0, out + err
+    kept = live.account.add("noarchive synthetic aside")
+    code, out, err = cli("sync")
+    assert code == 0 and kept.plaud_id not in live.here(), out + err
+    live.account.rename(kept.plaud_id, "Synthetic aside")
+    with live.db().state.db() as conn:
+        conn.execute("DELETE FROM plaud_state")
+        conn.execute("DELETE FROM plaud_listing")
+        conn.execute("DELETE FROM plaud_private_checked")
+    return kept
+
+
+def test_a_dry_run_first_on_a_rebuilt_state_db_records_it_and_marks_for_review(live, cli):
+    # The review's Medium, order A: a dry run before the worker's first start used to write
+    # plaud_listing rows with no review mark, so the worker's start then found the rebuild and
+    # its marks skipped every ID already there. Now the dry run finds it first, under its hold.
+    kept = rebuilt_with_one_kept_out(live, cli)
+    code, out, err = cli("sync", "--dry-run")
+    assert code == 0, out + err
+    db = live.db()
+    assert (db.get(K_REBUILT) or {}).get("by") == "detected"
+    assert db.listing(kept.plaud_id).needs_review
+    assert sync_module.REBUILT in out
+    w = live.started()  # the worker's start finds nothing more; its first sync leaves it out
+    w.tick()
+    assert kept.plaud_id not in live.here()
+    assert db.listing(kept.plaud_id).needs_review
+    no_title(live, out, err)
+
+
+def test_a_catch_up_first_on_a_rebuilt_state_db_imports_nothing_kept_out(live, cli):
+    # Order B: `--catch-up` before the worker's start used to run with no rebuild recorded and
+    # import what only the lost records kept out. Now it finds the rebuild first, which opens the
+    # gate (§11.6), so the catch-up is refused; the sync after it leaves the recording to review.
+    kept = rebuilt_with_one_kept_out(live, cli)
+    code, out, err = cli("sync", "--catch-up")
+    assert kept.plaud_id not in live.here()
+    assert code == 1 and "the first catch-up isn't needed" in err, out + err
+    assert live.db().get(K_REBUILT)["by"] == "detected"
+    code, out, err = cli("sync")
+    assert code in (0, 2), out + err
+    assert kept.plaud_id not in live.here()
+    assert live.db().listing(kept.plaud_id).needs_review
+    no_title(live, out, err)
+
+
+@pytest.mark.parametrize("args", [("sync", "--dry-run"), ("sync", "--catch-up")])
+def test_a_run_whose_rebuild_check_fails_lists_nothing(live, cli, monkeypatch, args):
+    # Fail closed: a run that can't tell whether state.db was rebuilt never lists.
+    def broken(*_a, **_k):
+        raise OSError("synthetic detail")
+
+    live.account.add()
+    monkeypatch.setattr(sync_module, "detect_rebuild", broken)
+    before = len(live.server.requests)
+    code, out, err = cli(*args)
+    assert code == 1 and "OSError" in out + err, out + err
+    assert "synthetic detail" not in out + err
+    assert not any(r.path == LIST_PATH for r in live.server.requests[before:])
+    assert live.db().listing_rows() == {}
