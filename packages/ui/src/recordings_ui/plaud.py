@@ -17,6 +17,11 @@ The views (Task 19; 2b spec §15, §22): the Sync screen's SyncView, Status's Sy
 Library's Arrivals and Details' RecordingPlaud, read-only from state.db, or from
 demo/plaud-sync.json in the demos. They import what reads state.db inside each function,
 never at the top, because the Pages demo imports this module on Pyodide, which has no sqlite3.
+SyncPanel's `failing_checks` (Status's "N recordings fail every check · Re-sync · Park", §15.2;
+Dan, Phase 1's Q&A §6) reads `plaud_checks` through PlaudDB.failing_checks: a recording with
+FAILING_AFTER (3) or more failed checks in a row (`failures`), neither parked (`parked_at`) nor
+gone (`gone_since`), dated by `failing_since`. Phase 3's checks write those columns; until then
+the list is empty, and the panel draws no line.
 """
 
 from __future__ import annotations
@@ -592,6 +597,7 @@ class _Read:
         unwritten = _dict(_dict(get(checks.BLOCKER_PREFIX + "private-unwritten")).get("detail"))
         self.unwritten_error = _class_name(unwritten.get("error"))
         self.patterns_error = _class_name(unwritten.get("patterns_error"))
+        self.failing_checks = _failing_checks(self.db, self.tz)
 
     def gate_reason(self) -> str | None:
         return None if self.gate.open else self.gate.reason
@@ -684,6 +690,21 @@ class _Read:
         catch-up, while the gate kept every turn from running (§11.6). None: never ran."""
         stamps = (self.last_turn, self.health.catch_up_done)
         return max((t for t in stamps if t is not None), default=None)
+
+
+def _failing_checks(db: Any, tz: str) -> list[dict]:
+    """The recordings here on the failing list (PlaudDB.failing_checks), oldest first, as
+    FailingCheck rows: the archive ID and the date it began failing, never a title (P13). A row
+    whose recording ID isn't an archive ID raises ValueError, so every view says its records
+    can't be read (_guarded), never a shorter list (P8)."""
+    from recordings.ids import ID_RE
+
+    rows = []
+    for row in db.failing_checks():
+        if not isinstance(row.recording_id, str) or not ID_RE.fullmatch(row.recording_id):
+            raise ValueError("a plaud_checks row's recording_id isn't an archive ID")
+        rows.append({"recording_id": row.recording_id, "since": _date(row.failing_since, tz)})
+    return rows
 
 
 # ---- The Sync screen ----------------------------------------------------------------------------
@@ -891,6 +912,7 @@ def _empty_panel() -> dict:
         "no_sync_yet": True,
         "summary": _summary("no-sync", NO_SYNC),
         "failing": None,
+        "failing_checks": [],  # Status's "fails every check" line (Phase 3's checks fill it)
         "not_pinged": None,
         "conditions": [],
         "hold": None,
@@ -930,7 +952,9 @@ def _empty_panel() -> dict:
 
 def sync_panel(settings: PlaudViewSettings | None, *, now: datetime) -> dict:
     """Status's sync panel (§15.2), as SyncPanel: true sentences first, then the numbers, then
-    the details. No title anywhere: recordings are named by ID (P13)."""
+    the details. No title anywhere: recordings are named by ID (P13). `failing_checks` lists the
+    recordings that fail every check, from plaud_checks (the module's docstring), and is empty
+    when there are none, before any sync, and when the records can't be read."""
     if settings is not None and settings.demo_view is not None:
         return demo_view(settings.demo_view)["panel"]
     state = _open(settings)
@@ -1134,6 +1158,7 @@ def _panel_from(r: _Read) -> dict:
             "no_sync_yet": False,
             "summary": summary,
             "failing": failing,
+            "failing_checks": r.failing_checks,
             "not_pinged": _not_pinged(r, cause),
             "conditions": conditions,
             "attention": attention,
@@ -1363,6 +1388,7 @@ def demo_view(path: Path) -> dict:
             "no_sync_yet": False,
             "summary": _summary("demo", DEMO_STATUS),
             **_handled(),
+            "failing_checks": [_dict(row) for row in panel["failing_checks"] or []],
             "hold": {**panel["hold"], "accept": False, "refused": DEMO_NOTE}
             if isinstance(panel["hold"], dict)
             else None,

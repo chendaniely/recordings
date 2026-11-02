@@ -364,8 +364,8 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
 .sync-copy-failed { font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .sync-copy-text { user-select: all; -webkit-user-select: all; color: var(--foreground); }
 .sync-check { display: inline-grid; place-items: center; min-width: 24px; min-height: 24px; cursor: pointer; }
-.sync-hold, .sync-breaker { margin-top: 8px; }
-.sync-hold p, .sync-breaker p { margin: 0 0 6px; }
+.sync-hold, .sync-breaker, .sync-failing-checks { margin-top: 8px; }
+.sync-hold p, .sync-breaker p, .sync-failing-checks p { margin: 0 0 6px; }
 .sync-last, .sync-pending { margin: 8px 0 0; }
 /* The theme switch as one icon, which the phone block shows in place of the three choices. */
 .theme-icon { display: none; place-items: center; margin-left: auto; min-width: 44px; min-height: 44px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); cursor: pointer; }

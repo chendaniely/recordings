@@ -88,7 +88,7 @@ describe("StatusPage", () => {
     const sync: StatusView["sync"] = {
       demo: false, no_sync_yet: false,
       summary: { kind: "problem", sentence: "Imports stopped: consent list", explain: null, see_status: true },
-      failing: null, not_pinged: null, conditions: [], hold: null, breaker: null, // Needs attention holds it
+      failing: null, failing_checks: [], not_pinged: null, conditions: [], hold: null, breaker: null, // Needs attention holds it
       handled: ["keep-here"], not_yet: "Comes with the next part of stage 2b.", listed: false,
       numbers: {
         equation: null, archive: null, consent: null, last_good_listing: null, next_sync: null, sweep: null,

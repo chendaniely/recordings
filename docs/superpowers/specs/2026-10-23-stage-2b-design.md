@@ -406,7 +406,7 @@ screen, from any browser, or nothing.
 |---|---|---|
 | P1 | **No silent failure.** Every way the flow can stop reaches Dan as the sync's Healthchecks email, or shows on Status. | §16 |
 | P2 | **Honest status.** Each sentence is true now or absent. Counts add up. Figures carry their time. | §11.3, §15.2 |
-| P3 | **One place to look.** The email gives no reason; Status is complete, and says why the check isn't being pinged. The Sync screen acts. | §15 |
+| P3 | **One place to look.** The email gives no reason; Status is complete, and says why the check isn't being pinged. The Sync screen acts; Status acts only on a hold or the breaker (Accept) and on recordings that fail every check (Re-sync, Park). | §15 |
 | P4 | **Calm alerts.** One email when the sync has been stopped for about 2 hours, whatever the cause; one "up" when it works again. A blip, a one-time flag or a single recording never emails. | §16 |
 | P5 | **Every alert has a next step,** in the runbook. | §16, §17.5 |
 | P6 | **Every press gets an answer** within a second. | §9.3, §15.1 |
@@ -1880,7 +1880,8 @@ Main spec §9.1.1 and §19 name the baseline without defining it.
 ## 15. The interface
 
 **The Sync screen acts, and Status reports** (P3). Both show the same summary line, from one
-component, and link to each other.
+component, and link to each other. Status makes two exceptions: Accept on a hold or the breaker
+(decision 11), and Re-sync and Park on its "fails every check" line (Dan, Phase 1's Q&A §6).
 
 **Build order,** each its own task:
 1. **The view model** (§22): what each view reads from which table, and the reply shapes. Every UI
@@ -1949,7 +1950,13 @@ component, and link to each other.
     the archive or deliberately left out." It shows when the last good listing is under two schedule
     intervals old and nothing is waiting or missing (parked recordings aside). Recordings that keep
     failing get their own line beside it, never hiding it: "2 recordings fail every check (since
-    2026-10-23) · Re-sync · Park".
+    2026-10-23) · Re-sync · Park". Its data is SyncPanel's `failing_checks`, read from
+    `plaud_checks`: each recording with 3 or more failed checks in a row (`failures`), neither
+    parked (`parked_at`) nor gone (`gone_since`), oldest `failing_since` first, by archive ID and
+    the date it began failing. Re-sync and Park send `resync` and `park` with those recordings'
+    IDs, off with the reason until the worker handles them (Phase 3) and while the gate is closed.
+    The list is empty when none fails, and when the records can't be read; a row that can't be
+    read makes the panel say so, never a shorter list.
   - An error shows from the first failed run, though Healthchecks emails only after about 2 hours.
   - From `sync_health()` (§16), whenever the last ping is older than one schedule interval plus 10
     minutes: "The sync's Healthchecks check isn't being pinged since 14:20: sign-in needed. It
@@ -3174,3 +3181,6 @@ None: every bullet of §20 is planned in a phase.
   again once Phase 2 adds `make plaud-sign-in` (Dan, Phase 1's Q&A §7: "A note, exit 0").
 - 2026-11-01: §15.1: at 320 pixels with a larger text size, the tab row scrolls within itself,
   never the page (Dan, Phase 1's Q&A §5: "Tabs scroll").
+- 2026-11-01: P3, §15 and §15.2: Status keeps the "fails every check" line with Re-sync and Park,
+  one more exception to P3 beside Accept, and the line's data reads `plaud_checks` (Dan, Phase 1's
+  Q&A §6: "Line + buttons").

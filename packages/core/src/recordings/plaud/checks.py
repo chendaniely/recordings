@@ -52,6 +52,9 @@ FLAG_KINDS = (KEPT_OUT_LATE, CONSENT_LATE)
 BLOCKERS = ("sign-in", "consent", "hold", "breaker", PRIVATE_UNWRITTEN)
 BLOCKER_PREFIX = "blocker:"
 CHECK_LOG_KEPT = timedelta(days=7)
+# Failed checks in a row that put a recording on the failing list (§10.2, §14.6): Status's "fails
+# every check" line (§15.2), and where Park appears.
+FAILING_AFTER = 3
 EVENTS_KEPT = timedelta(days=90)  # open flags are kept until resolved
 
 # plaud_state keys (decision 17)
@@ -348,6 +351,20 @@ class PlaudDB:
                 (recording_id,),
             ).fetchone()
         return _row(CheckRow, _CHECKS, row) if row else None
+
+    def failing_checks(self) -> list[CheckRow]:
+        """The recordings here on the failing list (§10.2, §14.6): FAILING_AFTER or more failed
+        checks in a row (`failures`), neither parked nor gone from Plaud, the oldest
+        `failing_since` first and a row without one last. Phase 3's checks write these columns;
+        Status's "fails every check" line reads them (§15.2; Dan, Phase 1's Q&A §6)."""
+        with self._db() as db:
+            rows = db.execute(
+                f"SELECT {', '.join(_CHECKS)} FROM plaud_checks "
+                "WHERE failures >= ? AND parked_at IS NULL AND gone_since IS NULL "
+                "ORDER BY failing_since IS NULL, failing_since, recording_id",
+                (FAILING_AFTER,),
+            ).fetchall()
+        return [_row(CheckRow, _CHECKS, row) for row in rows]
 
     def set_check(self, recording_id: str, **fields: Any) -> None:
         """Set plaud_checks columns (their names only), making the row if it is missing."""

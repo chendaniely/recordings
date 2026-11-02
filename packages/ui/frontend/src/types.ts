@@ -138,10 +138,17 @@ export interface SyncView extends Handled {
   kept_out: KeptOutRow[]; updated: UpdatedRow[]; gone: { rows: GoneRow[]; last_7_days: number }; parked: ParkedRow[];
   last_result: string | null; next_sync: string | null;
 }
+/** A recording here that fails every check (§15.2; 3 failed checks in a row, §14.6), by archive
+ * ID, with the date it began failing. */
+export interface FailingCheck { recording_id: string; since: string | null }
 export interface SyncPanel extends Handled {
   demo: boolean; no_sync_yet: boolean;
   listed: boolean; // false until Phase 2 writes a listing: Status then shows no zero counts
   summary: SyncSummaryView; failing: string | null; not_pinged: string | null; conditions: string[];
+  /** "2 recordings fail every check (since 2026-10-23) · Re-sync · Park" (Dan, Phase 1's Q&A §6):
+   * oldest first, empty when none does, before Phase 3's checks run, or when the records can't be
+   * read. Re-sync and Park send `resync` and `park` with these recordings' IDs. */
+  failing_checks: FailingCheck[];
   hold: SyncHold | null; breaker: SyncBreaker | null;
   numbers: {
     equation: SyncEquation | null; archive: ArchiveEquation | null; consent: ConsentSummary | null;

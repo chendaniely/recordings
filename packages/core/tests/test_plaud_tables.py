@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from recordings.init import init_archive
 from recordings.plaud.checks import (
+    FAILING_AFTER,
     NO_SYNC_YET,
     Marker,
     NoSyncYet,
@@ -106,6 +107,27 @@ def test_listing_rows_follow_the_canonical_id_across_a_form_flip(state):
     assert (open_flag.id, open_flag.canonical_plaud_id) == (flag, HEX)
     with state.db() as conn:
         assert conn.execute("SELECT count(*) FROM plaud_listing").fetchone()[0] == 1
+
+
+def test_the_failing_list_is_three_failed_checks_in_a_row_not_parked_not_gone(state):
+    # why: §10.2 and §14.6 (3 failures in a row), and Dan's Q&A §6: Status's "fails every check"
+    # line reads plaud_checks, which Phase 3's checks write. Parked and gone recordings aren't on
+    # it; the oldest first, so the line's "since" is the first row's.
+    db = PlaudDB(state)
+    assert db.failing_checks() == []
+    ids = [f"2026100{d}T090000-0700_0000000{d}" for d in range(1, 7)]
+    db.set_check(ids[0], failures=FAILING_AFTER, failing_since=NOW - timedelta(days=1))
+    db.set_check(ids[1], failures=FAILING_AFTER + 4, failing_since=NOW - timedelta(days=3))
+    db.set_check(ids[2], failures=FAILING_AFTER - 1, failing_since=NOW - timedelta(days=5))
+    db.set_check(ids[3], failures=9, failing_since=NOW - timedelta(days=6), parked_at=NOW)
+    db.set_check(ids[4], failures=9, failing_since=NOW - timedelta(days=6), gone_since=NOW)
+    db.set_check(ids[5], failures=FAILING_AFTER)  # no failing_since: last
+    rows = db.failing_checks()
+    assert [r.recording_id for r in rows] == [ids[1], ids[0], ids[5]]
+    assert rows[0].failing_since == NOW - timedelta(days=3)
+    _as_2a(state)
+    with pytest.raises(NoSyncYet):
+        db.failing_checks()
 
 
 def test_set_listing_and_set_check_take_column_names_only(state):

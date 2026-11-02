@@ -824,6 +824,36 @@ def test_a_keep_out_words_row_that_is_not_a_list_is_unreadable(plaud_scene):
     _assert_unreadable(s, "KeepOutWordsError")
 
 
+def test_status_lists_the_recordings_that_fail_every_check_from_plaud_checks(plaud_scene):
+    # why: Dan, Phase 1's Q&A §6: Status's "fails every check · Re-sync · Park" line (§15.2,
+    # J4, J5). Its contract reads plaud_checks, which Phase 3's checks write: 3 failed checks in a
+    # row, not parked, not gone, oldest first, by ID and date, never a title (P13).
+    s = plaud_scene
+    assert sync_panel(s.settings, now=T0)["failing_checks"] == []  # all of Phase 1
+    old, new, parked = s.add(51, "Week 51"), s.add(52, "Week 52"), s.add(53, "Week 53")
+    s.db.set_check(new, failures=3, failing_since=T0 - timedelta(days=1))
+    s.db.set_check(old, failures=5, failing_since=T0 - timedelta(days=2))
+    s.db.set_check(parked, failures=5, failing_since=T0 - timedelta(days=3), parked_at=T0)
+    s.db.set_check(s.add(54, "Week 54"), failures=2, failing_since=T0)
+    panel = sync_panel(s.settings, now=T0)
+    assert panel["failing_checks"] == [
+        {"recording_id": old, "since": "2026-10-21"},
+        {"recording_id": new, "since": "2026-10-22"},
+    ]
+    assert "Week 5" not in json.dumps(panel)
+    # Status's own view carries it, as the panel's other fields
+    assert status_view(s.writer.root, None, now=T0, plaud=s.settings)["sync"] == panel
+
+
+def test_a_failing_check_whose_recording_id_is_not_one_is_unreadable(plaud_scene):
+    # why: P8. A row the view can't name would otherwise drop out of the line, so the sync part
+    # says its records can't be read, by class only, as for any corrupt row.
+    s = plaud_scene
+    s.add(55, "Week 55")
+    _corrupt(s, "INSERT INTO plaud_checks (recording_id, failures) VALUES ('Week 55 notes', 3)")
+    _assert_unreadable(s, "ValueError")
+
+
 def test_bad_json_in_an_events_detail_is_unreadable(plaud_scene):
     s = plaud_scene
     rid = s.add(42, "Week 42")

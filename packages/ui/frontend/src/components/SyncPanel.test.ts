@@ -20,6 +20,7 @@ const PANEL: Panel = {
   demo: false, no_sync_yet: false, handled: EVERY, not_yet: NOT_YET, listed: true,
   summary: { kind: "problem", sentence: "Sign-in needed", explain: null, see_status: true },
   failing: "Plaud sync failing since 14:40 (sign-in needed). Last good listing 14:20.",
+  failing_checks: [],
   not_pinged: NOT_PINGED,
   conditions: ["Plaud sign-in needed since 14:40. New recordings wait on Plaud: nothing is lost. At the Mac: `make plaud-sign-in`."],
   hold: null, breaker: null,
@@ -164,6 +165,57 @@ describe("Status's sync panel (2b spec §15.2)", () => {
       summary: { kind: "demo", sentence: "Demo: Plaud sync isn't part of the demo.", explain: null, see_status: false } });
     expect(html).toContain("Demo: Plaud sync isn't part of the demo.");
     expect(html).not.toContain("Open the Sync screen");
+  });
+  it("recordings that fail every check get their own line, with Re-sync and Park", () => {
+    // Dan, Phase 1's Q&A §6 (§15.2, J4, J5): beside the summary and never hiding it, before the
+    // other sentences; a count and the oldest date, never a title (P13).
+    const failing_checks = [
+      { recording_id: "20261020T090000-0700_0000beef", since: "2026-10-20" },
+      { recording_id: "20261021T090000-0700_0000cafe", since: "2026-10-21" },
+    ];
+    const ids = failing_checks.map((f) => f.recording_id);
+    const sent: { kind: PlaudKind; ids: string[] | undefined }[] = [];
+    draw({ ...PANEL, failing_checks }, fake({ send: (kind, opts) => (sent.push({ kind, ids: opts?.recording_ids }), "rid") }));
+    const line = host.querySelector('[data-testid="sync-failing-checks"]');
+    expect(line?.querySelector("p")?.textContent).toBe("2 recordings fail every check (since 2026-10-20)");
+    const buttons = [...(line?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    expect(buttons.map((b) => b.textContent)).toEqual(["Re-sync", "Park"]);
+    buttons.forEach((b) => flushSync(() => b.click()));
+    expect(sent).toEqual([{ kind: "resync", ids }, { kind: "park", ids }]);
+    const html = markup({ ...PANEL, failing_checks });
+    const at = ["sync-summary", "sync-failing-checks", "sync-failing", "sync-not-pinged"].map((t) => html.indexOf(`data-testid="${t}"`));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(markup({ ...PANEL, failing_checks: [failing_checks[1]] })).toContain("<p>1 recording fails every check (since 2026-10-21)</p>");
+    expect(markup({ ...PANEL, failing_checks: [{ ...failing_checks[0], since: null }] })).toContain("<p>1 recording fails every check</p>");
+  });
+  it("draws no such line when no recording fails every check", () => {
+    // All of Phase 1, and Phase 3 once every check passes.
+    const html = markup(PANEL);
+    expect(html).not.toContain("sync-failing-checks");
+    expect(html).not.toContain("every check");
+  });
+  it("Re-sync and Park are off with the reason until the worker handles them, and wait for the gate", () => {
+    const failing_checks = [{ recording_id: "20261020T090000-0700_0000beef", since: "2026-10-20" }];
+    const line = () => host.querySelector('[data-testid="sync-failing-checks"]');
+    const buttons = () => [...(line()?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const reasons = () => [...(line()?.querySelectorAll(".sync-why") ?? [])].map((p) => p.textContent);
+    draw({ ...PANEL, failing_checks, handled: ["keep-here"] }, fake());
+    expect(buttons().length).toBe(2);
+    expect(buttons().every((b) => b.hasAttribute("disabled"))).toBe(true);
+    expect(reasons()).toEqual([NOT_YET]); // said once, named by each button's aria-describedby
+    const described = buttons().map((b) => b.getAttribute("aria-describedby"));
+    expect(described.every((id) => id !== null && host.querySelector(`#${id}`)?.textContent === NOT_YET)).toBe(true);
+    const closed = "Waiting for the first catch-up";
+    draw({ ...PANEL, failing_checks }, fake({ gate: closed }));
+    expect(buttons().every((b) => b.hasAttribute("disabled"))).toBe(true);
+    expect(reasons()).toEqual([closed]);
+    draw({ ...PANEL, failing_checks }, fake({ available: false, reason: "Demo: nothing is synced" }));
+    expect(buttons().every((b) => b.hasAttribute("disabled"))).toBe(true);
+    expect(reasons()).toEqual(["Demo: nothing is synced"]);
+    draw({ ...PANEL, failing_checks }, fake());
+    expect(buttons().some((b) => b.hasAttribute("disabled"))).toBe(false);
+    expect(reasons()).toEqual([]);
   });
   it("no title is drawn", () => {
     // P13. A title smuggled into a field the server never fills with one is still not drawn.
