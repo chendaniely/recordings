@@ -176,3 +176,22 @@ def test_a_request_waits_its_turn_while_another_run_holds_the_sync(live):
         assert requests.read(w.state, "request-0001").state == "queued"
     w.tick()
     assert requests.read(w.state, "request-0001").state == "done"
+
+
+def test_compare_writes_nothing_to_the_archive(live):
+    # §11.1: "A Compare stops after classify … It writes nothing to the archive": privacy from
+    # the listing is a sync's step, so a rename to a private title waits for the next sync.
+    from recordings.archive import Archive
+    from recordings.models import is_private
+
+    rec = live.account.add()
+    live.catch_up_done()
+    w = live.started()
+    w.tick()  # the scheduled turn imports it
+    rid = live.here()[rec.plaud_id]
+    live.account.rename(rec.plaud_id, "Private: synthetic rename")
+    assert ask(live, w, "compare", 1).state == "done"
+    assert not is_private(Archive(live.root).load(rid))
+    live.clock.advance(minutes=20)
+    w.tick()  # the next scheduled sync checks the listed title
+    assert is_private(Archive(live.root).load(rid))

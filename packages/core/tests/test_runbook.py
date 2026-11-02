@@ -286,9 +286,11 @@ def test_the_runbook_has_a_deploy_2b_section():
     # worker's checks.
     headings = [line for line in _text().splitlines() if line.startswith("## ")]
     six = headings.index("## 6. Deploy 2b")
-    assert headings[six - 1 : six + 2] == [
+    assert headings[six - 1 : six + 4] == [
         "## 5. The mirror on the Mac",
         "## 6. Deploy 2b",
+        "## 7. The dry run",
+        "## 8. The catch-up",
         "## Setting up ntfy, later",
     ]
     text = _section("## 6. Deploy 2b")
@@ -328,6 +330,42 @@ def test_the_runbook_has_a_deploy_2b_section():
     assert lines.index("git fetch") < checkout < lines.index("make deploy")
     ntfy = " ".join(_section("## Setting up ntfy, later").split())
     assert "RECORDINGS_ALERTS_TOPIC_HOST" in ntfy and "`make deploy`" in ntfy
+
+
+def test_the_runbook_has_the_dry_run_and_the_catch_up():
+    # why: stage 2b spec §17.5's sections 7 and 8 (C1.02, C4.06, decision 7): the make targets
+    # that run them, what to check, what to do when the catch-up stops or is held (the deploy
+    # guard's "run it again by hand (the runbook)" points here), and "You may start tagging now."
+    # after the post-import backup, then the sync's check up within 20 minutes.
+    seven = _section("## 7. The dry run")
+    assert "make plaud-dry-run" in "\n".join(_code_lines(seven))
+    flat = " ".join(seven.split())
+    for needed in (
+        "recordings plaud sync --dry-run --list",
+        "Both equations add up",
+        "waits for the first catch-up",
+        "consent list: N IDs, M on Plaud now",
+        "before section 8's `pre-import` backup",
+        "stop if anything doesn't fit",
+    ):
+        assert needed in flat, needed
+    eight = _section("## 8. The catch-up")
+    code = "\n".join(_code_lines(eight))
+    assert "make plaud-catch-up" in code
+    assert "rc exec worker recordings plaud accept-listing" in code
+    flat = " ".join(eight.split())
+    for needed in (
+        "a backup tagged `pre-import`",
+        "recordings plaud sync --catch-up",
+        "a backup tagged `post-import`",
+        "The first catch-up didn't finish: run `--catch-up` again (runbook)",
+        "**You may start tagging now.**",
+        "Within 20 minutes, Healthchecks shows the sync's check up",
+    ):
+        assert needed in flat, needed
+    assert flat.index("`post-import`") < flat.index("**You may start tagging now.**")
+    targets = Path(REPO / "Makefile").read_text(encoding="utf-8")
+    assert "\nplaud-dry-run:" in targets and "\nplaud-catch-up:" in targets
 
 
 def test_the_runbook_says_how_to_sign_in_to_plaud():

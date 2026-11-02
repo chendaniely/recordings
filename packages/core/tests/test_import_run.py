@@ -648,12 +648,14 @@ def test_an_archive_that_reads_as_empty_stops_the_import(
     assert titles and all(title not in text and "canary" not in text for title in titles)
 
 
-def test_the_import_holds_the_ops_lock(ar_archive, plaud_env, writer):
+@pytest.mark.parametrize("held", ["ops", "plaud"])
+def test_the_import_holds_the_ops_and_plaud_locks(ar_archive, plaud_env, writer, held):
     # why: the backup loop and the CLI's jobs share the "ops" lock (Task 11), so no snapshot or
-    # mirror run lands half-way through an import.
+    # mirror run lands half-way through an import; and from stage 2b the Plaud sync's "plaud" lock
+    # too (2b spec §9.4), so no sync imports beside it.
     build(ar_archive, plaud_env)
     the_plan = plan(ar_archive.root, writer.index, consent=(), default_timezone="America/Vancouver")
-    with Locks(writer.state.locks_dir, timeout=0).hold("ops"), pytest.raises(LockTimeout):
+    with Locks(writer.state.locks_dir, timeout=0).hold(held), pytest.raises(LockTimeout):
         run(the_plan, writer, now=NOW, lock_timeout=0.1)
     assert list(writer.archive.iter_recordings()) == []
 
@@ -1496,6 +1498,7 @@ def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer
 
     def disk():  # the run asks before each recording, inside its hold of the ops lock
         seen.append(running(writer.state.locks_dir))
+        seen.append(running(writer.state.locks_dir, "plaud"))  # 2b §9.4: on plaud too
         return roomy
 
     run(
@@ -1506,3 +1509,4 @@ def test_the_import_announces_itself_while_it_runs(ar_archive, plaud_env, writer
     )
     assert seen and set(seen) == {("import", NOW)}
     assert running(writer.state.locks_dir) is None
+    assert running(writer.state.locks_dir, "plaud") is None

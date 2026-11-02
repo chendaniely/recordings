@@ -17,7 +17,7 @@ from recordings.disk import disk_status, disk_thresholds
 from recordings.doctor import ROLES, doctor
 from recordings.index import Index, IndexRefused
 from recordings.init import InitError, adopt_archive, init_archive
-from recordings.locks import OPS_LOCK, Locks, LockTimeout
+from recordings.locks import OPS_LOCK, PLAUD_LOCK, Locks, LockTimeout
 from recordings.plaud import commands as plaud_commands
 from recordings.plaud.consent import ConsentListError, consent_list_path, load_consent_list
 from recordings.sentinel import SentinelError, read_sentinel
@@ -334,8 +334,8 @@ def _matching_index(cfg: config.Config) -> Index | None:
 
 
 OPS_BUSY = (
-    "another job holds the ops lock (a backup, the mirror or a check): run the import "
-    "again when it finishes"
+    "another job holds the ops lock (a backup, the mirror or a check) or the Plaud sync's: run "
+    "the import again when it finishes"
 )
 
 
@@ -367,9 +367,9 @@ def cmd_import_audio_router(args: argparse.Namespace) -> int:
     writer = _writer(args.json)
     if isinstance(writer, int):
         return writer
-    try:  # a peek, never a hold: plan() can take hours, and run() takes the lock itself (a
+    try:  # a peek, never a hold: plan() can take hours, and run() takes the locks itself (a
         # Locks is re-entrant only within one instance). A job that starts in between is run()'s.
-        with Locks(writer.state.locks_dir, timeout=0).hold(OPS_LOCK):
+        with Locks(writer.state.locks_dir, timeout=0).hold(OPS_LOCK, PLAUD_LOCK):
             pass
     except LockTimeout:
         return _fail(OPS_BUSY, args.json, 75)

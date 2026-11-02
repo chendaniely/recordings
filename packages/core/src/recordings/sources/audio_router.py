@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from recordings.archive import RawSource, sha256_file
 from recordings.disk import STOP_FREE_PERCENT, DiskStatus
 from recordings.index import Index, IndexRefused
-from recordings.locks import OPS_LOCK, Locks, LockTimeout, announce
+from recordings.locks import OPS_LOCK, PLAUD_LOCK, Locks, LockTimeout, announce
 from recordings.media import MEDIA_SUFFIXES, MediaProbe, media_kind, probe
 from recordings.models import Rendition, TagRef, is_private_tag
 from recordings.plaud.normalise import link_errors, meta_fetched_at
@@ -1279,7 +1279,8 @@ def run(
 ) -> RunReport:
     """Import every placeable row. Re-runnable: what is already there is matched and skipped.
 
-    It holds the ops lock throughout, so a backup or the mirror never runs half-way through it.
+    It holds the ops lock throughout, so a backup or the mirror never runs half-way through it, and
+    the Plaud sync's `plaud` lock beside it (stage 2b spec §9.4), so no sync imports beside it.
     Before it takes the lock or writes anything it refuses a plan with problems (§9.1: that
     includes the rows the consent list can't be applied to) and any recording whose media can't
     be measured (§9.1.1). One recording's failure is reported and the run goes on. It raises
@@ -1313,9 +1314,12 @@ def run(
             report,
         )
     counted: set[tuple] = set()
+    # `ops` and, from stage 2b, `plaud` too (2b spec §9.4), in one hold, announced on both: no
+    # Plaud sync imports beside it, and Status names it whichever lock it asks about.
     with (
-        Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK),
+        Locks(writer.state.locks_dir, timeout=lock_timeout).hold(OPS_LOCK, PLAUD_LOCK),
         announce(writer.state.locks_dir, "import", now),
+        announce(writer.state.locks_dir, "import", now, PLAUD_LOCK),
     ):
         for item in todo:
             if disk is not None:

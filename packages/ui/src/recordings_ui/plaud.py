@@ -344,6 +344,7 @@ JOB_LABELS = {
     "plaud-catch-up": "The catch-up",
     "plaud-accept": "Accept this listing",
     "plaud-review": "Marking for review",
+    "import": "The audio-router import",  # it holds `plaud` beside `ops` (2b spec §9.4)
 }
 
 

@@ -33,6 +33,58 @@ nothing was installed. The runbook's "Plaud sign-in" has every message.
 The sign-in is a secret. Never copy its file by hand or paste it anywhere, and don't ask a Claude
 session to run `make plaud-sign-in` for you: you sign in yourself, in the browser.
 
+## The first catch-up: dry run first
+
+Until the first catch-up has run, the server syncs nothing by itself: Status says "Scheduled sync
+waits for the first catch-up (runbook)", and only **Compare** works on the Sync screen. The
+catch-up is the first real import from Plaud, and you run it yourself, on the server, after a dry
+run. The runbook's sections 7 and 8 have every step; this is what they come to.
+
+**What to do**
+
+1. **The dry run.** On the server, in the repo's checkout: `make plaud-dry-run`. It reads Plaud's
+   whole list and classifies every recording on it, and imports nothing. It prints both
+   equations, why each missing recording is missing ("waits for the first catch-up"), the consent
+   list's count and how many of its IDs Plaud lists, the consent list's lines read as kept, and
+   any hold, then every listed recording by Plaud ID, date, time and duration (never a title).
+   Check that the numbers make sense: the missing ones are the recordings made since the 2a
+   import, and "here" is the archive's Plaud recordings. If anything doesn't fit, stop.
+2. **Review what the consent list caught.** Any recording 2a imported that the consent list
+   names is already tagged `private` and flagged: review each in the app, and take out by hand any
+   that mustn't stay, before the next step.
+3. **The catch-up.** Inside `tmux` on the server: `make plaud-catch-up`. It takes a backup tagged
+   `pre-import`, checks every title once (the baseline), imports everything waiting, with one line
+   per recording ("importing 5 of 31"), validates the archive, and takes a `post-import` backup.
+4. When it says "done", **you may start tagging**. The schedule starts by itself: within 20
+   minutes the sync's Healthchecks check shows up, and Status shows "All here", or why not.
+
+**What you see if it goes wrong**
+
+- "Plaud sync paused: …" (held): Plaud's list looks very different from the archive's. Read the
+  runbook's section 8, step 4: check, then `rc exec worker recordings plaud accept-listing`, and
+  run `make plaud-catch-up` again.
+- Stopped part-way (Plaud down, the connection dropped, Ctrl-C): Status says "The first catch-up
+  didn't finish: run `--catch-up` again (runbook)". Run `make plaud-catch-up` again: it imports
+  only what isn't here yet.
+- "some recordings failed": the catch-up is done anyway. The scheduled sync tries them again;
+  any that keep failing wait under **Not here yet** as "failed 3 times · Park".
+
+## What the sync commands' exit codes mean
+
+`recordings plaud sync` (and `--dry-run`, `--catch-up`), run on the server as `rc exec worker
+recordings plaud …` or through the make targets, end with a number that says how it went. The
+make targets turn each into a sentence.
+
+| Code | Meaning | What to do |
+|---|---|---|
+| 0 | Done: the listing was complete, and everything that should have come in did | Nothing |
+| 1 | It didn't run, or stopped: a hold, a listing that couldn't be read, the first catch-up not run yet (or already done), or the archive's disk or `state.db` | Read the line above it; the runbook's section 8 has each |
+| 2 | Partly: the listing was good, but some recordings failed or didn't come in | Nothing at once: the scheduled sync retries them. Check any that keep failing in Plaud's app, then Park them |
+| 69 | Plaud couldn't be reached, or asked the server to slow down | Run it again later |
+| 75 | Another Plaud run holds the sync (Status says which) | Run it again when that one ends |
+| 77 | The Plaud sign-in is needed | At the Mac: `make plaud-sign-in` |
+| 78 | The consent list stops imports, or a setting is wrong | Fix the lines or the setting it names |
+
 ## When Plaud is slow, busy or down
 
 The server asks Plaud for one thing a second at most, and a scheduled sync stops asking after 10

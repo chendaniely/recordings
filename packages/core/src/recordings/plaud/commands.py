@@ -32,7 +32,13 @@ from recordings.plaud.baseline import (
     drop_word,
     enforced_words,
 )
-from recordings.plaud.checks import K_CONSENT, K_LAST_GOOD_LISTING, NoSyncYet, PlaudDB
+from recordings.plaud.checks import (
+    K_CATCH_UP_DONE,
+    K_CONSENT,
+    K_LAST_GOOD_LISTING,
+    NoSyncYet,
+    PlaudDB,
+)
 from recordings.plaud.flags import listed_here, missed_by_2a
 from recordings.plaud.keepout import kept_lines_note, read_consent, read_consent_text, signature
 from recordings.plaud.settings import BAD_WORD, plaud_settings
@@ -106,6 +112,26 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     )
     c.add_argument("plaud_id", help="the Plaud ID, as the Sync screen's Copy ID gives it")
     c.add_argument("--undo", action="store_true", help="keep it out again (before the next sync)")
+
+    c = plaud.add_parser(
+        "sync",
+        help="a sync now, with no import cap; --dry-run lists and classifies and imports nothing "
+        "(the first catch-up's dry run); --catch-up runs the first import, supervised (runbook, "
+        "sections 7 and 8)",
+    )
+    which = c.add_mutually_exclusive_group()
+    which.add_argument(
+        "--dry-run", action="store_true", help="list and classify, and import nothing (a Compare)"
+    )
+    which.add_argument(
+        "--catch-up", action="store_true", help="the first import, once: holds ops and plaud"
+    )
+    c.add_argument(
+        "--list",
+        action="store_true",
+        help="with --dry-run: every listed ID by bucket, date and duration, never a title",
+    )
+    c.add_argument("--json", action="store_true")
 
     c = plaud.add_parser(
         "token-import",
@@ -776,6 +802,216 @@ def signin_fix() -> str:
     return signin.SIGN_IN_FIX
 
 
+def cmd_sync(args: argparse.Namespace) -> int:
+    """§9.6's three syncs, each in the worker container, never by a request row:
+    - `--dry-run [--list]`: lists and classifies (a Compare: it imports nothing and never moves
+      the last good listing), and prints both equations, the consent-list match, why the missing
+      ones are missing, the census, and any hold and why; `--list` adds each listed ID by bucket,
+      date and duration, never a title. Holds `plaud` (`plaud-compare`).
+    - `--catch-up`: the first import, supervised (§11.6): `ops` and `plaud` in one hold
+      (`plaud-catch-up`), no import cap; a held listing stops it (then `accept-listing` and run
+      it again); refused once done. It sets `catch_up_done_at` when it ends without a run-level
+      failure, and the schedule starts by itself.
+    - plain `sync`: a sync now, with no cap, refused before the first catch-up or while a hold
+      is on. Holds `plaud` (`plaud-sync`).
+    Exit codes (§9.6): 0 ok; 1 failure (a hold, a bad listing, a refusal); 2 partial (the listing
+    was good, but some recordings failed or aren't here); 69 Plaud unreachable or rate limited;
+    75 busy; 77 sign-in needed; 78 configuration or the consent list."""
+    from recordings.disk import disk_thresholds
+    from recordings.plaud import sync
+    from recordings.plaud.client import PlaudClient
+    from recordings.plaud.gate import gate_now
+    from recordings.plaud.tokens import TokenStore
+
+    if args.list and not args.dry_run:
+        return _fail("--list goes with --dry-run", args.json, EXIT_FAILED)
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        settings = plaud_settings(cfg)
+        stop_free = disk_thresholds(cfg)["stop"]
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, EXIT_CONFIG)
+    if not settings.keep_out_word_ok:
+        return _fail(BAD_WORD, args.json, EXIT_CONFIG)
+    state = _write_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    tz = _zone(cfg)
+    mode = "compare" if args.dry_run else "catch-up" if args.catch_up else "sync"
+    job = {"compare": "plaud-compare", "catch-up": "plaud-catch-up", "sync": "plaud-sync"}[mode]
+    db = PlaudDB(state)
+    try:
+        gate = gate_now(db)
+        done_at = parse_stamp(db.get(K_CATCH_UP_DONE))
+    except (NoSyncYet, sqlite3.Error) as exc:
+        return _fail(f"can't read state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
+    if mode == "catch-up" and gate.open:
+        when = _shown(done_at, tz) or "an earlier run"
+        return _fail(
+            f"the first catch-up is already done ({when}): use `recordings plaud sync`",
+            args.json,
+            EXIT_FAILED,
+        )
+    if mode == "sync" and not gate.open:
+        return _fail(sync.NOT_DONE, args.json, EXIT_FAILED)
+    now = datetime.now(UTC)
+    printer = None if args.json or mode == "compare" else _progress_printer()
+    try:
+        with runlock.plaud_run(
+            state, job, timeout=runlock.CLI_WAIT, now=now, with_ops=mode == "catch-up"
+        ):
+            writer = _writer(cfg, args.json)
+            if isinstance(writer, int):
+                return writer
+            store = TokenStore(settings.token_store, token_url=settings.token_url)
+            client = PlaudClient(store, api_base=settings.api_base)
+            run = sync.Run(
+                writer=writer,
+                client=client,
+                settings=settings,
+                timezone_name=cfg.default_timezone,
+                stop_free_percent=stop_free,
+                late_consent=True,
+                progress=printer,
+            )
+            report = sync.run_sync(run, mode=mode)
+            if mode != "compare":
+                sync.record_ops_run(state, job, report, finished=datetime.now(UTC))
+    except LockTimeout:
+        return _fail(_busy(state), args.json, EXIT_BUSY)
+    except (OSError, sqlite3.Error) as exc:  # never the exception's text: it names paths or rows
+        return _fail(
+            f"the sync stopped ({type(exc).__name__}): check the archive disk and state.db, then "
+            "run it again",
+            args.json,
+            EXIT_FAILED,
+        )
+    lines = _sync_lines(report, tz, listed=args.list, mode=mode)
+    _emit(_sync_payload(report, tz, listed=args.list), lines, args.json)
+    return report.exit_code
+
+
+def _progress_printer() -> Callable[[int, int], None]:
+    """A sync's or the catch-up's progress on stderr, by number only: "importing 5 of 31"."""
+
+    def show(done: int, total: int) -> None:
+        if done < total:
+            print(f"importing {done + 1} of {total}", file=sys.stderr, flush=True)
+
+    return show
+
+
+_BUCKET_ORDER = ("here", "waiting", "missing", "excluded")
+
+
+def _missing_by_state(report) -> dict[str, int]:
+    from collections import Counter
+
+    if report.compare is None:
+        return {}
+    counted = Counter(r.state for r in report.compare.rows if r.bucket == "missing")
+    return dict(sorted(counted.items(), key=lambda kv: (-kv[1], kv[0] or "")))
+
+
+def _rows(report, tz: tzinfo) -> list[dict]:
+    """Every listed ID, by bucket then time: its ID as listed, date, time and duration, and its
+    state, why it is excluded or the recordings holding it. Never a title."""
+    if report.compare is None:
+        return []
+    order = {b: n for n, b in enumerate(_BUCKET_ORDER)}
+    rows = sorted(
+        report.compare.rows,
+        key=lambda r: (
+            order.get(r.bucket, 9),
+            r.listed.recorded_at or datetime.min.replace(tzinfo=UTC),
+        ),
+    )
+    return [
+        {
+            "bucket": r.bucket,
+            "plaud_id": r.listed.listed_id,
+            "at": _shown(r.listed.recorded_at, tz),
+            "duration": _duration(r.listed.duration_ms),
+            "why": r.state if r.bucket in ("waiting", "missing") else r.excluded_by,
+            "recording_ids": list(r.recording_ids),
+            "arrives_private": r.arrives_private,
+        }
+        for r in rows
+    ]
+
+
+def _sync_payload(report, tz: tzinfo, *, listed: bool) -> dict:
+    payload = report.to_dict()
+    if report.compare is not None:
+        payload["missing_by_state"] = _missing_by_state(report)
+        payload["census"] = dict(report.compare.census)
+        payload["repeats"], payload["malformed"] = report.compare.repeats, report.compare.malformed
+    payload["kept_lines"] = list(report.kept_lines)
+    if report.measured is not None and report.measured.held:
+        payload["accept_refused"] = report.measured.refused
+    if listed:
+        payload["rows"] = _rows(report, tz)
+    return payload
+
+
+def _sync_lines(report, tz: tzinfo, *, listed: bool, mode: str) -> list[str]:
+    from recordings.plaud import compare
+
+    lines: list[str] = []
+    if report.compare is not None:
+        c = report.compare
+        lines += compare.lines(c)
+        for state, n in _missing_by_state(report).items():
+            lines.append(f"missing {n:,}: {state}")
+        if c.census:
+            lines.append("ID forms: " + ", ".join(f"{form} {n:,}" for form, n in c.census.items()))
+        if c.repeats or c.malformed:
+            lines.append(f"repeats {c.repeats:,} · malformed rows {c.malformed:,}")
+    if report.kept_lines:
+        lines.append(kept_lines_note(report.kept_lines))
+    m = report.measured
+    if m is not None and m.held:
+        lines.append(m.sentence())
+        if m.refused:
+            lines.append(f"Accept refused: {m.refused}")
+    if mode != "compare":
+        lines.append(f"result: {report.phrase}")
+        lines.append(
+            f"imported {report.imported:,} ({report.private:,} arrived private) · failed "
+            f"{report.failed:,} · busy {report.busy:,} · not tried {report.left:,}"
+        )
+        failed = [r.plaud_id for r in report.results if r.outcome == "failed"]
+        if failed:
+            lines.append(f"failed: {', '.join(failed)}")
+    else:
+        lines.append(f"result: {report.phrase}")
+        if report.compare is not None:
+            first = sum(1 for r in report.compare.rows if r.state == compare.GATE_WAIT)
+            if first:
+                lines.append(f"the first catch-up would import {first:,}")
+            else:
+                lines.append(f"the next sync would import {report.compare.equation['waiting']:,}")
+    lines += report.notes
+    if mode == "catch-up":
+        lines.append(
+            "the first catch-up is done: the schedule starts by itself"
+            if report.catch_up_done
+            else "the first catch-up didn't finish: run `recordings plaud sync --catch-up` again "
+            "(runbook, section 8)"
+        )
+    if listed:
+        for row in _rows(report, tz):
+            held_by = ", ".join(row["recording_ids"]) or row["why"] or ""
+            lock = " · arrives private" if row["arrives_private"] else ""
+            lines.append(
+                f"{row['bucket']:<8} {row['plaud_id']} · {row['at'] or 'time unknown'} · "
+                f"{row['duration']} · {held_by}{lock}"
+            )
+    return lines
+
+
 COMMANDS = {
     "consent": cmd_consent,
     "baseline": cmd_baseline,
@@ -785,6 +1021,7 @@ COMMANDS = {
     "accept-listing": cmd_accept_listing,
     "release": cmd_release,
     "review": cmd_review,
+    "sync": cmd_sync,
 }
 
 

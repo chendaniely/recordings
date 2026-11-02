@@ -1,8 +1,8 @@
 # The first real run (stage 2a)
 
 Steps 1–4 of the spec's "order of the first real run" (§19), and how to restore for real. Steps
-5–7 belong to stage 2b: section 6 deploys its first phase, and its dry run and first catch-up
-come with later phases. Each block says which machine it runs on. Nothing here prints a secret: a
+5–7 belong to stage 2b: section 6 deploys it, section 7 is the first catch-up's dry run, and
+section 8 the catch-up itself. Each block says which machine it runs on. Nothing here prints a secret: a
 command that needs one reads it from a file, and secret files are written with an editor, never
 typed on a command line, where shell history would keep them.
 
@@ -1138,6 +1138,95 @@ the Library moves onto `index.db` before 2b deploys.
    down. A check never pinged never goes down (stage 2b spec §22 asks for this to be seen once),
    and nothing pings it before the catch-up. If it went down, pause it and ask in a Claude session.
 
+## 7. The dry run
+
+Stage 2b spec §11.3, §17.5 (C1.02). It reads Plaud's whole list and classifies every recording on
+it, and imports nothing: no audio, no transcript, nothing in the archive. On the homelab server, in
+`$REPO_DIR`, with the top block pasted:
+```bash
+make plaud-dry-run
+```
+It runs `recordings plaud sync --dry-run --list` in the running `worker` container (the same as
+`rc exec worker recordings plaud sync --dry-run --list`), then `recordings plaud consent`. The
+Sync screen's **Compare** does the same listing and shows the same numbers. Nothing it prints is a
+title: rows are by Plaud ID, date, time and duration.
+
+Check, and **stop if anything doesn't fit**:
+- Both equations add up: "listed N = here + waiting + excluded + missing", and "in the archive from
+  Plaud M = here + gone from Plaud (+ absent from this listing)".
+- "here" equals the archive's Plaud recordings, and anything absent is a recording you deleted in
+  Plaud.
+- The missing ones say "waits for the first catch-up", and are about the recordings made since 2a's
+  import (about 30), plus the titles 2a held back. "Of the waiting and missing, N arrive private"
+  matches the held titles.
+- "consent list: N IDs, M on Plaud now" is what you expect, and no hold is printed. A line
+  "Plaud sync paused: …" is a hold: if it says only P% of the archive's Plaud IDs are listed,
+  Plaud's IDs differ from 2a's (spike S7's stop): stop, and ask in a Claude session.
+- `plaud consent`'s lines read as kept, by number: each one must mean "keep". Any recording 2a
+  imported whose exclusion 2a's parser missed (`of_` or upper-case IDs) is listed by archive ID:
+  the worker has already tagged it `private` and flagged it. Review each by its ID in the app, and
+  take out by hand ("Taking a recording out by hand") any that mustn't stay, **before section 8's
+  `pre-import` backup**.
+- Each `deferred-to-2b` ID in the 2a import's report is listed as missing (it comes in at the
+  catch-up); count any that aren't listed: their audio stays only in audio-router's archive.
+
+Exit codes: 0 the listing was complete and nothing holds it; 1 held, or a listing that couldn't
+be read; 69 Plaud unreachable or rate limited; 77 the sign-in is needed (section 6 step 6); 78
+the consent list stops imports (fix the lines it names, then run it again).
+
+## 8. The catch-up
+
+Stage 2b spec §11.6. The first real Plaud import, supervised. Before it, the gate holds every
+scheduled sync; at its end the schedule starts by itself. Inside `tmux` or `screen`, on the
+homelab server, in `$REPO_DIR`:
+
+1. If you edited the consent list since section 7, run `make plaud-dry-run` again, and check the
+   new IDs show as excluded.
+2. Then:
+   ```bash
+   make plaud-catch-up
+   ```
+   It stops the backup service (so no scheduled backup lands in the middle), then runs, each step
+   only if the one before it passed:
+   1. a backup tagged `pre-import` (`rc run --rm backup recordings backup run --tag pre-import`);
+   2. the baseline (`rc exec worker recordings plaud baseline`): every title of the archive's
+      Plaud recordings checked once, for privacy and the keep-out word;
+   3. the catch-up (`rc exec worker recordings plaud sync --catch-up`): it holds `ops` and `plaud`
+      together, imports every recording waiting, with no cap, newest first, and prints one line
+      per recording ("importing 5 of 31"), by number only;
+   4. a deep validation (`rc run --rm web recordings validate /archive --deep`);
+   5. a backup tagged `post-import`;
+   and starts the backup service again, however it ends. Each failure names its step.
+
+   The catch-up's exit codes: 0 every recording came in; 2 the listing was good and the catch-up
+   is done, but some recordings failed (they are retried by the scheduled sync, and wait under
+   **Not here yet** as "failed 3 times · Park" if they keep failing: check each in Plaud's app);
+   1 held, or stopped by the archive (the disk, `state.db`); 69 Plaud unreachable; 77 sign-in
+   needed; 78 the consent list.
+3. **If it stops part-way** (Plaud down, the connection dropped, a deploy), Status says "The
+   first catch-up didn't finish: run `--catch-up` again (runbook)". Run `make plaud-catch-up`
+   again: it takes another `pre-import` backup, and imports only what isn't here yet. A deploy
+   refuses to start while the catch-up runs (the deploy guard); `make deploy FORCE=1` would stop
+   it, and you run it again here. To stop it yourself, don't rely on Ctrl-C (it stops `make`,
+   and may leave the catch-up running inside the container): `rc restart worker` stops it, and
+   running it again picks up.
+4. **If it stops held** ("Plaud sync paused: …", exit 1): check what the sentence says, as in
+   section 7. If it is right, accept that listing, then run the catch-up again:
+   ```bash
+   rc exec worker recordings plaud accept-listing
+   make plaud-catch-up
+   ```
+5. When it ends with "make plaud-catch-up: done", **You may start tagging now.** (Dan's decision
+   7: the first real tag waits for this import and the backup after it, so a rollback of it,
+   a restore from `pre-import`, loses no tags.)
+6. The schedule has started by itself: the worker's next tick runs a sync (one may run during the
+   validation and the `post-import` backup; it adds no tag, and what it imports is in the next
+   hourly backup). **Within 20 minutes, Healthchecks shows the sync's check up. If it doesn't,
+   stop: the ping isn't arriving.** Then open Status: "All here", or why not.
+
+A baseline that stops part-way is safe to run again too: `rc exec worker recordings plaud
+baseline`.
+
 ## Setting up ntfy, later
 
 ntfy is optional (stage 2b, decision 9). Until it is set up, Status and the Healthchecks checks
@@ -1240,7 +1329,7 @@ And these stop it without a blocker:
 
 | Status says | Do |
 |---|---|
-| the sync is failing (since 12:00) | Status's "Plaud sync failing" line says why. Plaud unavailable, or offline: wait; it recovers at the next good run. Every fetch failed: `rc logs worker` names the error's class. |
+| the sync is failing (since 12:00) | Status's "Plaud sync failing" line says why. Plaud unavailable, or offline: wait; it recovers at the next good run. Every fetch failed: `rc logs worker` names the error's class. If the log says "the scheduled sync failed (<Class>)", the sync itself raised an error: it needs a code fix (open a Claude session with that log); it clears at the first sync that brings a recording in. |
 | imports stopped: the disk is too full to import | Free space ("When the data disk fills"); the next run the disk guard doesn't refuse ends it. |
 | scheduled sync is off | Set `[plaud] schedule_minutes` back to 20, then `rc restart worker`. |
 | configuration: `keep_out_word` is invalid | Fix `[plaud] keep_out_word` (1 to 32 letters, digits, `-` or `_`, with at least one letter or digit), then `rc restart worker`. |
@@ -1551,3 +1640,6 @@ through 1a, then:
 | The restore test passed on the imported data; `import/` deleted (4) | yes / no |
 | The Library's first load (4) | under 2 s / slower |
 | The Mac reads the mirror and can't write it (5.2) | yes / no |
+| The dry run's equations add up, and the consent list's IDs are found on Plaud (7) | yes / no |
+| The catch-up ended (exit 0, or 2 with the failed IDs checked in Plaud's app) (8) | yes / no |
+| The sync's Healthchecks check up within 20 minutes of the catch-up (8) | yes / no |

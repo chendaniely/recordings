@@ -20,7 +20,7 @@ endif
 
 .PHONY: help check setup skills build lint test test-py test-js test-utc leaks e2e demo
 .PHONY: demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke
-.PHONY: rollback prune-images restic consent-add plaud-sign-in
+.PHONY: rollback prune-images restic consent-add plaud-sign-in plaud-dry-run plaud-catch-up
 
 # The first target, so a bare `make` lists the targets rather than installing anything. GNU make
 # 3.81 (macOS) is enough: the list is a grep of each target's `## ` comment.
@@ -173,6 +173,51 @@ plaud-sign-in: ## sign in to Plaud for the server, from the Mac: make plaud-sign
 	esac; \
 	[ $$rc = 0 ] || exit 1; \
 	echo "make plaud-sign-in: done. The worker's next sync uses it; to check now, on the server: rc exec worker recordings plaud check"
+
+# Run on the server, in the checkout ($REPO_DIR in the runbook; stage 2b spec §11.6 and §17.5, and
+# the runbook's sections 7 and 8):
+# the first catch-up's dry run, then the catch-up itself, in the containers `make deploy` started
+# (docker/up-deployed.sh, as `rc` in the runbook). Neither ever runs from the Mac or in CI.
+UP_DEPLOYED = sh docker/up-deployed.sh
+plaud-dry-run: ## on the server: the first catch-up's dry run (lists and classifies, imports nothing)
+	@$(UP_DEPLOYED) exec -T worker recordings plaud sync --dry-run --list; rc=$$?; \
+	case $$rc in \
+	  0) ;; \
+	  1) echo "make plaud-dry-run: the listing is held or couldn't be read (above): check it as the runbook's section 7 says" >&2 ;; \
+	  69) echo "make plaud-dry-run: Plaud could not be reached (above): run it again later" >&2 ;; \
+	  75) echo "make plaud-dry-run: another Plaud run holds the sync (above): run it again when it ends" >&2 ;; \
+	  77) echo "make plaud-dry-run: the Plaud sign-in is needed: at the Mac, make plaud-sign-in" >&2 ;; \
+	  78) echo "make plaud-dry-run: the consent list or the settings stop it (above): fix the lines it names" >&2 ;; \
+	  *) echo "make plaud-dry-run: exited $$rc (above)" >&2 ;; \
+	esac; \
+	$(UP_DEPLOYED) exec -T worker recordings plaud consent || true; \
+	[ $$rc = 0 ]
+
+# The catch-up, in §11.6's order: the backup service stopped (no scheduled backup in the middle,
+# and started again by a trap however it ends), a `pre-import` backup, the baseline, `sync
+# --catch-up`, a deep validation, a `post-import` backup. Each step runs only if the one before it
+# passed; the catch-up's exit 2 (some recordings failed, the catch-up done) goes on. Run it again
+# after any failure: every step is safe to repeat.
+plaud-catch-up: ## on the server: the first catch-up, supervised (backups, baseline, sync --catch-up, validate)
+	@up="$(UP_DEPLOYED)"; \
+	$$up stop backup || { echo "make plaud-catch-up: step 1 failed: stopping the backup service" >&2; exit 1; }; \
+	trap '$$up start backup >/dev/null 2>&1 || echo "make plaud-catch-up: start the backup service again: rc start backup" >&2' EXIT; \
+	trap 'exit 1' HUP INT TERM; \
+	$$up run --rm backup recordings backup run --tag pre-import \
+	  || { echo "make plaud-catch-up: step 2 failed: the pre-import backup (above); nothing was imported" >&2; exit 1; }; \
+	$$up exec -T worker recordings plaud baseline \
+	  || { echo "make plaud-catch-up: step 3 failed: the baseline (above); nothing was imported: run make plaud-catch-up again once it is fixed" >&2; exit 1; }; \
+	$$up exec -T worker recordings plaud sync --catch-up; rc=$$?; \
+	case $$rc in \
+	  0) ;; \
+	  2) echo "make plaud-catch-up: the catch-up is done, but some recordings failed (above): the scheduled sync retries them" >&2 ;; \
+	  *) echo "make plaud-catch-up: step 4 failed: the catch-up exited $$rc (above): see the runbook's section 8, then run make plaud-catch-up again" >&2; exit 1 ;; \
+	esac; \
+	$$up run --rm web recordings validate /archive --deep \
+	  || { echo "make plaud-catch-up: step 5 failed: validate (above): stop, and ask in a Claude session before tagging" >&2; exit 1; }; \
+	$$up run --rm backup recordings backup run --tag post-import \
+	  || { echo "make plaud-catch-up: step 6 failed: the post-import backup (above): run it again: rc run --rm backup recordings backup run --tag post-import" >&2; exit 1; }; \
+	echo "make plaud-catch-up: done. You may start tagging now. Within 20 minutes the sync's Healthchecks check should show up."
 
 restic: ## fetch the pinned restic into .cache/bin
 	uv run python scripts/fetch_restic.py

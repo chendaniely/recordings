@@ -61,8 +61,8 @@ case "$status" in
        "the backup service in its way. What a stop costs: a backup, restore test or check starts" \
        "again from the beginning (hours); Sync everything carries on with the recordings not yet" \
        "checked, but a stop loses the one in progress; the first catch-up or the baseline stops" \
-       "part-way, and you run it again by hand (the runbook). Wait for it (Status shows it), or" \
-       "deploy anyway: make deploy FORCE=1" >&2 ;;
+       "part-way, and you run it again by hand (the runbook, section 8). Wait for it (Status shows" \
+       "it), or deploy anyway: make deploy FORCE=1" >&2 ;;
   *) cannot_ask "exit $status" ;;
 esac
 exit 1

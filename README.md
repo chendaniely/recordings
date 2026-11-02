@@ -71,6 +71,8 @@ make prune-images                                   # removes old images, keepin
 make deploy-smoke                                   # the real compose file, once, against temporary folders
 make consent-add ID='<id>'                          # from the Mac: adds a Plaud ID to the server's consent list
 make plaud-sign-in                                  # from the Mac: signs the server's worker in to Plaud
+make plaud-dry-run                                  # on the server: the first catch-up's dry run (imports nothing)
+make plaud-catch-up                                 # on the server: the first catch-up, supervised
 ```
 
 - **First time: initialise before you deploy.** Do not run `make deploy` on a new archive. `recordings init`
@@ -110,6 +112,11 @@ make plaud-sign-in                                  # from the Mac: signs the se
   -`, which makes one cheap call and installs it. It prints one line, never the token. The worker
   refreshes the sign-in by itself; when Plaud refuses a refresh, Status says "sign-in needed" and
   this is the way back. The runbook's "Plaud sign-in" has the rest.
+- **`make plaud-dry-run`, then `make plaud-catch-up`,** run on the server in its checkout, are
+  stage 2b's first real Plaud import (the runbook's sections 7 and 8): the dry run lists and
+  classifies everything on Plaud and imports nothing; the catch-up takes a `pre-import` backup,
+  checks every title once, imports what is waiting (`recordings plaud sync --catch-up`), validates
+  the archive and takes a `post-import` backup. After it the scheduled sync starts by itself.
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
   always allowed; the app refuses any other name. Give each name alone, with no port or

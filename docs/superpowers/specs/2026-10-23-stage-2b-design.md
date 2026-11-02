@@ -3112,7 +3112,7 @@ smoke.
 | C5.17 | A removed `private` through 100 sync runs | It stays removed | Phase 2, area A4 | `packages/core/tests/test_plaud_listing_privacy.py` (`test_a_removed_private_stays_removed_through_runs_and_reconciles`: 100 runs, with reconciles of the old snapshot between them) | built |
 | C5.18 | `schedule_minutes` 20 from deploy, before the first catch-up | A scheduled turn makes no Plaud call, and an import request is refused | Phase 1, Tasks 13 and 14 | `packages/core/tests/test_worker.py`, `packages/core/tests/test_plaud_requests.py` | built |
 | C5.19 | An interrupted first catch-up (marks, no `catch_up_done_at`) | The gate stays closed, and Status says so | Phase 2, area A4 (the gate's state; A5's catch-up runs it) | `packages/core/tests/test_plaud_rebuild.py` (`test_an_interrupted_first_catch_up_keeps_the_gate_closed_and_says_so`: the gate's reason, which a turn's record and Status carry) | built |
-| C5.20 | The interrupted catch-up run again, then ending | It picks up where it stopped, and the turn after it runs a sync | Phase 2 | Phase 2's plan | planned |
+| C5.20 | The interrupted catch-up run again, then ending | It picks up where it stopped, and the turn after it runs a sync | Phase 2, area A5 | `packages/core/tests/test_plaud_sync_cli.py` (`test_an_interrupted_catch_up_says_so_and_run_again_finishes_then_the_schedule_starts`: Plaud down after the first recording, the gate's reason, the catch-up run again, then the worker's first tick importing and pinging) | built |
 | C5.21 | The gate closed | Every request that would write a snapshot is refused | Phase 1, Task 14 | `packages/core/tests/test_plaud_requests.py` | built |
 | C5.22 | A SIGTERM mid-run; a catch-up, then a restart | Neither reads as "rebuilt" | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (the mark is committed before every 2b snapshot, so neither a stopped run nor a catch-up then a restart reads as rebuilt) | built |
 | C5.23 | A Re-sync, then a restart | Doesn't read as "rebuilt" | Phase 3 | Phase 3's plan | planned |
@@ -3307,3 +3307,10 @@ None: every bullet of §20 is planned in a phase.
   phase-end list's Task 14 row (the deadline test, `MAX_PLAUD_ID_LEN`'s comment, `claim_next` by
   column name) and the council's R1 (a request's end written again if `state.db` is busy). No
   decision or scenario's outcome changed.
+- 2026-11-02: §11.6, §9.6, §9.4, §17.5: the first catch-up (area A5): `recordings plaud sync
+  --dry-run [--list]`, `--catch-up` and `sync`, their exit codes, `ops` and `plaud` in one hold, the
+  audio-router import taking `plaud` too, and `make plaud-dry-run` and `make plaud-catch-up` (run
+  on the server, through `docker/up-deployed.sh`), with the runbook's sections 7 and 8. A Compare,
+  the dry run included, now writes nothing to the archive, as §11.1 says (the run had checked
+  titles from the listing in a Compare too). C5.20 built. No decision or scenario's outcome
+  changed.

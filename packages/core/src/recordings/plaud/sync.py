@@ -12,14 +12,16 @@ selected and Import all, and the CLI's `sync`, `sync --dry-run` and `sync --catc
    recording not here is stored (the compare's own rule), and the listing never becomes the last
    good one (a guess, failing closed: a listing the consent list couldn't be checked against is
    never a baseline).
-3. Late consent listings, in the CLI's runs (the worker's tick applies them, and again between two
-   recordings of a long run).
+3. Late consent listings, in the CLI's syncs (the worker's tick applies them, and again between
+   two recordings of a long run).
 4. The sign-in (`tokens.check_sign_in`): refreshed if due; a refusal is recorded (the pause and
    the `sign-in` blocker) and ends the run, "sign-in needed".
 5. The listing (`PlaudSource.list_all`). A partial one feeds privacy only; a bad or partial one
    ends the run with its error's phrase, recording a refused sign-in (`signin.record_refused`) or
    a rate limit's wait (`health.record_rate_limit`).
-6. Privacy from the listing alone (§13.1 cases 2 and 3), for a complete or partial listing.
+6. Privacy from the listing alone (§13.1 cases 2 and 3), for a complete or partial listing, in
+   every run but a Compare: §11.1's Compare "stops after classify" and writes nothing to the
+   archive, so neither this nor step 3 runs in one (the dry run is a Compare).
 7. The compare (`compare.take_listing`): the buckets, the cache, the re-key match, and for a sync
    the hold's verdict (the last good listing, a hold, a small shrink). A Compare stops here.
 8. The hold: a held listing imports nothing ("held: Plaud's IDs changed", "held: many gone from
@@ -233,6 +235,7 @@ class SyncReport:
     stopped: str | None = None  # why imports stopped, a §15.6 phrase
     ended_by: str | None = None  # the run-ending error's class
     notes: list[str] = field(default_factory=list)
+    kept_lines: tuple[int, ...] = ()  # the consent list's lines read as kept, by number (§12.1)
     catch_up_done: bool = False
 
     # ---- counts ------------------------------------------------------------------------------
@@ -363,7 +366,9 @@ def _check_sign_in(run: Run, report: SyncReport, *, now: datetime) -> bool:
         report.end(SIGN_IN, EXIT_SIGN_IN)
         return False
     except TokenStoreUnsafe:
-        report.end("configuration: the Plaud sign-in's folder or file is open to others", 78)
+        report.end(
+            "configuration: the Plaud sign-in's folder or file is open to others", EXIT_CONFIG
+        )
         return False
     except LockTimeout:
         report.end("skipped: busy (`tokens.lock`)", EXIT_BUSY)
@@ -442,10 +447,12 @@ def run_sync(
     if person and (until := health.rate_limit_wait(db, now=started)) is not None:
         return report.end(rate_limited(until, run.timezone_name), EXIT_UNREACHABLE)
 
-    # 2. the consent list, failing closed; 3. late consent listings (the CLI's runs)
+    # 2. the consent list, failing closed; 3. late consent listings (the CLI's syncs: a Compare
+    # writes nothing to the archive, §11.1)
     consent = read_consent(run.settings.consent_list)
     stop = consent.stop is not None
-    if run.late_consent:
+    report.kept_lines = tuple(consent.review_lines)
+    if run.late_consent and mode != "compare":
         try:
             apply_late_consent(run.writer, db, consent, now=started)
         except Exception as exc:  # noqa: BLE001  noted; the import checks the list again anyway
@@ -526,8 +533,9 @@ def _one_listing(
         report.end(f"error: `{IndexUnavailable.__name__}`", EXIT_FAILED)
         return False
 
-    # 6. privacy from the listing alone, complete or partial
-    if listing.rows:
+    # 6. privacy from the listing alone, complete or partial; a Compare stops after classifying and
+    # writes nothing to the archive (§11.1), so it leaves this to the next sync
+    if listing.rows and mode != "compare":
         try:
             report.privacy = privacy_from_listing(run.writer, db, listing.rows, here, now=now)
         except KeepOutWordsError:
