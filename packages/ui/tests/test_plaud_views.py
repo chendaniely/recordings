@@ -231,6 +231,19 @@ def test_the_gate_after_the_workers_first_gated_turn_is_still_no_sync_not_a_prob
     assert sync_view(s.settings, now=T0, can_request=None)["summary"]["kind"] == "problem"
 
 
+def test_once_the_catch_up_opens_the_gate_its_last_gated_turn_says_nothing(plaud_scene):
+    # why: the worker's recorded `gate` turn stays until its next turn ends, which after the
+    # catch-up is the first sync, seconds of pacing later: meanwhile the screens must not still
+    # say the sync waits for the catch-up (found by make e2e-live).
+    s = plaud_scene
+    record_turn(s.db, "gate", now=T0, detail={"reason": GATE_FIRST})
+    s.open_gate(at=T0)
+    view = sync_view(s.settings, now=T0, can_request=None)
+    assert view["summary"]["sentence"] != GATE_FIRST and view["gate"] is None
+    assert view["buttons"]["sync"] is None
+    assert sync_panel(s.settings, now=T0)["not_pinged"] is None
+
+
 def test_status_says_a_line_needs_attention_holds_once(plaud_scene):
     # why: P12. The consent stop, a late flag's line and the disk line are in Needs attention
     # (Status draws it first): the panel's conditions don't repeat them.

@@ -696,10 +696,15 @@ class _Read:
         """What stops the sync, from sync_health (§16). A `private` that can't be written names
         the remedy that can help, never `recordings reindex` for a disk fault: a late consent pass
         or a patterns pass that failed as a whole says its class; otherwise the first open flag
-        whose cause needs its own remedy says what its own sentence says (§15.6)."""
+        whose cause needs its own remedy says what its own sentence says (§15.6). The worker's
+        last `gate` turn says nothing once the gate is open: the catch-up has opened it since, and
+        the worker's next turn, a few seconds on, runs the first sync (area A6, found by
+        `make e2e-live`)."""
         from recordings.plaud.flags import PRIVATE_UNWRITTEN, SENTENCES
         from recordings.plaud.health import BLOCKER_PHRASES
 
+        if self.gate.open and self.held_by_gate():
+            return None
         found = self.health.cause(tz=ZoneInfo(self.tz))
         if found != BLOCKER_PHRASES["private-unwritten"]:
             return found

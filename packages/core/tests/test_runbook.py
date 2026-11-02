@@ -463,3 +463,24 @@ def test_keep_a_recording_out_says_what_consent_add_refuses_and_when_the_count_s
     ):
         assert needed in keep, needed
     assert "any editor, which writes a new file" not in keep
+
+
+def test_the_runbook_says_how_to_recover_from_a_hold_and_a_consent_stop():
+    # why: stage 2b area A6's list (the runbook's hold and consent-stop recovery): every sentence
+    # a hold's Accept can be refused with, as the code spells it, has its step; and the consent
+    # stop says how to mend the list and check what the worker read.
+    from recordings.plaud.hold import CODE_FIX, CONSENT_FIRST
+
+    held = " ".join(_section("## When the sync is held").split())
+    for needed in (
+        "rc exec worker recordings plaud accept-listing",
+        "make consent-add",
+        "Fix this first",
+        CONSENT_FIRST.split(":")[0],
+        CODE_FIX.split(":")[0],
+        "sync --dry-run --list",
+    ):
+        assert needed in held, needed
+    stop = " ".join(_section("## When imports stop: the consent list").split())
+    for needed in ("rc exec worker recordings plaud consent", "by rename", "lines 14 and 22"):
+        assert needed in stop, needed

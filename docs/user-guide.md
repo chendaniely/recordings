@@ -4,6 +4,40 @@ A plain how-to: one section per screen or task, with what you see and what to do
 (`docs/runbooks/first-run.md`) has the server-side detail; this guide links to it rather than
 copying it. Stage 2b's sections are added as each part is built, and finished at its end.
 
+## Trying the Plaud sync on the Mac: `make demo-live`
+
+Before the server's first real sync, or any time you want to try the screens without touching
+Plaud or the archive, run the real web app and worker on the Mac against a fake Plaud server.
+
+**What you see**
+
+- `make demo-live` builds the UI, runs a first catch-up of seven invented recordings (about 25
+  seconds: it paces one call a second, as the real sync does), then prints "Open
+  http://127.0.0.1:8000/#/add" and what to try. `make demo-live PORT=8001` moves it.
+- The fake account: six ordinary recordings and one private one, already here; one on the consent
+  list and one whose title starts with `noarchive`, both kept out; and three new ones waiting
+  (one private).
+- Everything lives in one folder under `$TMPDIR`, removed when you stop it. It never reads your
+  `config.toml`, your settings or a sign-in, and refuses to start if anything points elsewhere.
+
+**What to do**
+
+Type a command and Enter in the terminal, then look at the app:
+
+| Command | What happens | Then |
+|---|---|---|
+| (none) | Three recordings wait on Plaud | **Sync now**, or tick some and **Import selected** |
+| `new` | Two more arrive (one private) | **Compare**, or **Sync now** |
+| `hold` | Plaud stops listing six recordings that are here | **Sync now**: the sync holds; **Accept this listing**; `back` undoes it |
+| `rename` | The kept-out recording's title loses `noarchive` | **Compare**, then **Release** on its row |
+| `late` | A recording here gets `noarchive` in its title | **Sync now**: a late keep-out flag, with **Keep it here** |
+| `signout`, `signin` | Plaud refuses the sign-in; a new one | `tick`, then Status |
+| `tick` | The scheduled sync runs now, as if 20 minutes had passed | the Library's header counts what came in |
+| `catch-up` | With `ARGS=--before-catch-up`: the first catch-up | before it, only **Compare** works |
+| `dump` | Writes the screens' data as JSON (start with `ARGS=--keep` to keep it) | |
+
+Ctrl-C (or `quit`) stops the web app, the worker and the fake server, and removes the folder.
+
 ## Signing in to Plaud
 
 The server's sync reads your recordings from Plaud with a sign-in that only the server's `worker`

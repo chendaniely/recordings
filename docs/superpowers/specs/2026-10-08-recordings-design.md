@@ -1357,7 +1357,9 @@ before any other source. It reuses `audio-router`'s Plaud client, copied in (§1
   - **The buckets** (stage 2b §11.3): every listed ID is **here**, **excluded** (consent-listed
     or kept out by title), **waiting** (the next scheduled run brings it in) or **missing**
     (it won't come without Dan), and listed = here + waiting + excluded + missing. **Import
-    selected** and **Import all** bring in the waiting and missing.
+    selected** and **Import all** bring in the waiting and missing. The Sync screen and Status
+    show the equation from the newest listing, updated by each sync's imports, and "All here"
+    while nothing waits (stage 2b §15.1, §15.2; built in its second phase).
   - **Updated on Plaud:** the title changed, or Plaud's transcript or AI notes arrived
     after the recording first came in, or Dan added in-app notes later. A new
     `source/plaud-<stamp>.json` snapshot is saved, and nothing is overwritten. Every
@@ -1442,7 +1444,12 @@ before any other source. It reuses `audio-router`'s Plaud client, copied in (§1
     ping (§14), and signing in again with `make plaud-sign-in` is the way back.
   - **The spikes settle the unknowns** (stage 2b design, 2026-10-23): stage 2b's §18 lists
     them, S1 to S12, with what each prints: counts, yes or no, expiry times, status codes,
-    field names and hash prefixes, never a token, a title or a whole Plaud ID.
+    field names and hash prefixes, never a token, a title or a whole Plaud ID. Stage 2b's
+    second phase was built without them (Dan, 2026-11-01): where a spike would have decided, the
+    build took `audio-router`'s behaviour or the spec's default, failing closed, and listed each
+    guess in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md` for the first real run to
+    confirm. Status shows the sign-in's state and expiries, and Needs attention warns 7 days
+    before it expires (stage 2b §15.2).
 
 #### 9.1.1 Keeping up with edits made in Plaud (added 2026-10-08, revised after the design council)
 
@@ -1664,7 +1671,7 @@ later" until its build stage (§20):
   | rows with no audio | reported by the dry run and not imported. A Plaud one arrives later through the sync. |
   | the `media/private/` tier | imported, tagged `private`. Its files are matched by SHA-256 (a 64-hex ID is the audio's hash), and a Recorder export's `.txt` comes too |
   | the catalog's `tags` (Dan, 2026-10-09) | every label is carried as a tag; privacy labels become private tags, one per meaning (`therapy` and both spellings of counselling → `private/therapy`; `journal`, `medical` and `students` → `private/journal`, `private/medical` and `private/students`; `personal`, `private` and `voiceprints` → `private`; a catalog label is a lowercase slug, and a row with any other label is unplaced). A privacy label or a non-empty `access` makes the recording private. |
-  | Plaud rows with audio but no snapshot and no time | deferred to 2b's sync, which matches them by Plaud ID and imports them from Plaud; one Plaud no longer lists stays in `audio-router`'s frozen archive, because the 2a runbook deleted the import copy (stage 2b design, 2026-10-23; stage 2b §11.3) |
+  | Plaud rows with audio but no snapshot and no time | deferred to 2b's sync, which matches them by Plaud ID and imports them from Plaud (built in stage 2b's second phase: the first catch-up brings them); one Plaud no longer lists stays in `audio-router`'s frozen archive, because the 2a runbook deleted the import copy (stage 2b design, 2026-10-23; stage 2b §11.3) |
   | an ID on the consent list (§9.1), and every row that is the same recording: a `dup_of` link either way, the same catalog audio SHA-256, a private-tier file with that SHA-256 or named by the ID | not imported, and reported only as a count. If either ID of the byte-identical Plaud pair is listed, both go. Removing the ID from the list brings the whole group in on the next run. |
   | turns or segments with no time, and speaker names Dan typed | kept: untimed segments as reconcile keeps them, typed names verbatim in `source/` |
   | several raw snapshots for one recording | all kept, in `source/` |

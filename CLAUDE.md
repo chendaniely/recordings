@@ -11,7 +11,14 @@ Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing be
   lint`, `make test`, `make test-utc` (pytest again under `TZ=UTC`) and `make leaks` (gitleaks
   over the whole history, as CI's `leaks` job runs it).
 - **`make test`** runs pytest and Vitest. **`make e2e`** runs the Playwright tests against
-  demo mode.
+  demo mode. **`make e2e-live`** (marker `e2e_live`, CI's `e2e-live` job) runs
+  `packages/ui/tests/e2e_live/` against `make demo-live`'s script, `scripts/demo_live.py`: the
+  web app and the real worker on the fake Plaud server, pacing one call a second, so it takes
+  minutes. Its demo's logs are in `<tmp>/recordings-demo-live-*/logs/` (kept with `--keep`).
+- **`make demo-live`** runs that script for a person: a synthetic account, a scratch archive
+  under `$TMPDIR` (never a real archive, state folder or sign-in: it refuses to start otherwise),
+  and typed commands (`help`). The fake server it imports (`packages/core/tests/fake_plaud.py`)
+  must stay importable outside pytest.
 - **Commit messages are checked by hand,** because the repo has no commit hooks: write the message
   to a file, run `uv run --script scripts/commitmsg.py <file>` (copied from Dan's
   plan-driven-development skill), then `git commit -F <file>`.

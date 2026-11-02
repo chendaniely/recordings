@@ -23,6 +23,14 @@ refining 2026-10-22: the first real tag waits until stage 2b's first real Plaud 
 backup after it (the runbook's import section, added in stage 2b's second phase). If tagging is
 off, that runbook's "Tagging" section says why and what to do.
 
+Stage 2b (`docs/superpowers/specs/2026-10-23-stage-2b-design.md`) brings Plaud in and keeps it
+up: a `worker` container signs in (`make plaud-sign-in`, from the Mac), lists the account every 20
+minutes, imports what is new, tags `private` what your patterns say before any of its content
+lands, and never fetches what your consent list or the keep-out word keeps out. The **Add** tab is
+the Sync screen (Compare, Sync now, Import, Release, Accept this listing), and Status reports. The
+first real import is a supervised catch-up on the server, dry run first (the runbook's sections 7
+and 8). `docs/user-guide.md` says what each screen shows and what to do.
+
 ## Live demo
 
 <https://chendaniely.github.io/recordings/> runs the bundled public-domain demo entirely in
@@ -37,6 +45,16 @@ make demo    # builds the UI and serves the demo archive at http://127.0.0.1:800
 ```
 
 The demo uses four public-domain recordings (see `demo/CREDITS.md`) and never touches real data.
+
+To try the Plaud sync (stage 2b) on the Mac, with the real web app and worker against a fake Plaud
+server and a synthetic account:
+
+```bash
+make demo-live   # prints the URL and the commands to type; Ctrl-C stops everything
+```
+
+It works in a scratch folder under `$TMPDIR`, removed when it stops, and refuses to start if any
+setting points at a real archive, a real sign-in or Plaud itself.
 
 ## Layout
 
@@ -53,6 +71,7 @@ MIT licensed.
 make lint         # ruff check and ruff format --check
 make test         # pytest and Vitest
 make e2e          # Playwright tests against `make demo`
+make e2e-live     # Playwright tests against `make demo-live` (a few minutes)
 make pages        # the static GitHub Pages demo, in _site/ (only demo/archive/ and demo/plaud-sync.json)
 make pages-serve  # serve _site/ like Pages, at http://127.0.0.1:8008/recordings/
 make pages-test   # Playwright smoke test of _site/, after `make pages`

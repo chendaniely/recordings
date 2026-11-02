@@ -21,6 +21,7 @@ endif
 .PHONY: help check setup skills build lint test test-py test-js test-utc leaks e2e demo
 .PHONY: demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke
 .PHONY: rollback prune-images restic consent-add plaud-sign-in plaud-dry-run plaud-catch-up
+.PHONY: demo-live e2e-live
 
 # The first target, so a bare `make` lists the targets rather than installing anything. GNU make
 # 3.81 (macOS) is enough: the list is a grep of each target's `## ` comment.
@@ -68,6 +69,20 @@ e2e: build ## Playwright against demo mode (builds first)
 
 demo: build ## run the app in demo mode
 	uv run recordings-ui --demo
+
+# Stage 2b's live demo (Dan's answer, Phase 1's Q&A §8): the web app and the Plaud worker on this
+# machine, against the fake Plaud server (packages/core/tests/fake_plaud.py), with a synthetic
+# account and a scratch archive under $TMPDIR, never a real one: it refuses to start if any setting
+# points elsewhere. It prints the URL and the commands to type; Ctrl-C stops everything. PORT
+# (default 8000) moves the web app; ARGS passes more (--schedule, --before-catch-up, --keep).
+demo-live: build ## web app and Plaud worker against a fake Plaud, scratch archive; Ctrl-C stops
+	uv run python scripts/demo_live.py $(if $(PORT),--port $(PORT)) $(ARGS)
+
+# The Sync screen and Status against the live demo's web app and worker (stage 2b spec §21's "e2e,
+# live"): packages/ui/tests/e2e_live/, which starts scripts/demo_live.py as make demo-live does.
+e2e-live: build ## Playwright against make demo-live (the web app and worker on the fake Plaud)
+	uv run playwright install chromium
+	uv run pytest -m e2e_live
 
 demo-archive: ## rebuild demo/archive from the cached media
 	uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force

@@ -1320,8 +1320,8 @@ until it clears:
 | Status says | It opens when | It clears when | Do |
 |---|---|---|---|
 | sign-in needed | Plaud refuses a refresh, or the sign-in is missing | a good run after the token file changes | At the Mac: `make plaud-sign-in` ("Plaud sign-in" below) |
-| imports stopped: consent list | the consent list is missing, empty, holds no IDs, or can't be read, or has a line that looks like an ID but can't be read | the worker reads the list cleanly | Fix the lines Status names by number, then `rc exec worker recordings plaud consent`. A missing or unreadable list: fix the file or its permissions, then the same command |
-| held: see Status | the listing hold | Accept, or a later listing that no longer meets it | Status's check, then **Accept this listing** |
+| imports stopped: consent list | the consent list is missing, empty, holds no IDs, or can't be read, or has a line that looks like an ID but can't be read | the worker reads the list cleanly | Fix the lines Status names by number, then `rc exec worker recordings plaud consent`. A missing or unreadable list: fix the file or its permissions, then the same command ("When imports stop: the consent list" below) |
+| held: see Status | the listing hold | Accept, or a later listing that no longer meets it | Status's check, then **Accept this listing** ("When the sync is held" below) |
 | paused: unexpected changes | the breaker trips | Accept these changes, a release that closes it, or a breaker reset | **Accept these changes**, or a code fix (a breaker reset comes in stage 2b's third phase) |
 | should be private: run `recordings reindex` | a `private` the sync owes fails to land, or a recording wasn't checked against a new private pattern, or that check stopped | the tag lands, or the recording is checked (the worker tries again every few seconds; a check that stopped as a whole, once per sync interval) | `rc run --rm worker recordings reindex`, which also says what stops a recording that "wasn't checked against the private patterns". If Status says a recording's `recording.json` is missing, restore it from a backup. If Status says a file couldn't be written, or that late consent listings stopped, reindex can't help: check the archive disk and its permissions, then `rc logs worker`. If it says the private patterns check stopped, do the step it names for the class, then `rc logs worker` |
 
@@ -1345,6 +1345,77 @@ can still start "the sync is failing"; the next run with a success ends it.) Bef
 
 Optional: Healthchecks › Account Settings › Email Reports sends a daily reminder while any check is
 down. It covers the backup's check too.
+
+## When the sync is held
+
+Stage 2b spec §11.4. A sync whose listing looks very different from the last good one imports
+nothing until you look: Status says "Plaud sync paused: …" (or "Plaud now lists 40 fewer of the
+recordings here …"), the summary says "Held: see Status", and on the Sync screen **Sync now** and
+the import buttons are off. Scheduled syncs go on listing; one that finds things normal again ends
+the hold by itself. While a hold shows Plaud's IDs changed, no title of a recording not here is
+stored or shown.
+
+1. **Read Status's sentence.** It names one of four reasons:
+   - "Plaud now lists N fewer of the recordings here (and M look new)": many recordings vanished
+     at once (more than 5, or 5% of the archive's, whichever is larger).
+   - "only P% of the IDs Plaud listed last time are listed now": Plaud's IDs may have changed.
+   - "Plaud's IDs changed form, and N recordings here vanished with them": a change of form (bare
+     hex and `of_…`) with something missing.
+   - "Plaud lists N IDs in a form the consent list can't name. It needs a code fix (runbook)":
+     Accept can't help (step 5).
+2. **Check in Plaud's app** that the recordings that vanished are ones you deleted. Status names
+   none by title; `rc exec worker recordings plaud sync --dry-run --list` lists every ID Plaud
+   lists now, with its date and duration, never a title.
+3. **If Plaud's IDs changed** (the second and third reasons), check every consent-list entry still
+   names its recording before you accept: for each line of `consent/consent-list.md`, find the
+   recording in Plaud's app by its date and duration, and if its ID there differs, add the new ID
+   with `make consent-add ID='…'` from the Mac (the old line stays). A possible re-keyed match the
+   sync already caught shows on the Sync screen as "may be … back under a new Plaud ID": confirm
+   those the same way.
+4. **Accept this listing** on Status or the Sync screen, or on the server:
+
+   ```bash
+   rc exec worker recordings plaud accept-listing
+   ```
+
+   It answers "Accepted this listing: imports resume": the vanished recordings show as gone from
+   Plaud (kept in the archive), and the next sync imports as usual.
+5. **If Accept is refused:**
+   - "Fix this first: N consent-listed or kept-out IDs vanished while Plaud's IDs changed
+     (runbook)": some recordings you kept out may be back under IDs your list can't name. Do step 3
+     for every consent-listed and kept-out recording (the Sync screen's Kept out rows, by date and
+     duration), then Accept again. Don't work around it.
+   - "the consent list can't be read: fix it first (runbook)": the list stopped imports too; mend
+     it ("When imports stop: the consent list", below), then Accept.
+   - "needs a code fix: the consent list can't name these IDs": stop, and open a Claude session with
+     `rc logs worker` and the dry run's `--list` output (IDs only, no titles).
+
+A small shrink (5 or fewer, and under 5%) never holds: Status says "Plaud now lists 3 fewer:
+waiting for the next listing to agree", and an hour later they show as gone from Plaud.
+
+## When imports stop: the consent list
+
+Stage 2b spec §12.1. The consent list fails closed: while the worker can't read it cleanly, nothing
+is imported, no title of a recording not here is stored or shown, and the sync's check isn't
+pinged. Status says "Plaud imports stopped: …" with the reason, and Needs attention says it too.
+
+1. **Read the reason.**
+   - "the consent list has 2 lines that look like IDs but can't be read (lines 14 and 22)": a typo
+     (an ID with 31 or 33 hex characters, a stray character). Fix those lines on the server, in
+     `consent/consent-list.md`, writing each as `` - `of_…` — note ``, the ID first.
+   - "the consent list can't be read", missing or empty: `[plaud] consent_list` names a file that
+     isn't there, can't be opened (check the folder's owner and mode: the runbook's section 6), or
+     holds no ID. Put the file back from the latest backup if it went missing; never start an empty
+     one.
+2. **Write the file by rename**, never in place: edit a copy beside it, then `mv` it over (`make
+   consent-add` does this for one ID). The worker reads a list again within a few seconds of a
+   change, and trusts it only once the file has stood still for a tick.
+3. **Check what the worker read:** `rc exec worker recordings plaud consent`. It prints the count
+   ("by the worker: N IDs") and any line it reads as kept rather than excluded, by number. The stop
+   lifts as soon as the worker reads the list cleanly; the next sync imports as usual.
+
+A line Status lists "for review" (an ID in a sentence, or `ID kept: …`) is not an exclusion and
+stops nothing: if you meant it as one, rewrite it in the list's own form.
 
 ## Plaud sign-in
 

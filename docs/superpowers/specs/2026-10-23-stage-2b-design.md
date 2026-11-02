@@ -2945,7 +2945,10 @@ and S8: field names only, with invented values.
   at 1,280 and 320 pixels (four tabs on one row); the buttons are disabled with the demo's note; axe
   in light and dark; a clean console.
 - **e2e, live** (`make e2e-live`, a new module with its own servers): `web` and `worker` against the
-  fake and a synthetic archive.
+  fake and a synthetic archive. Built (area A6) on `make demo-live`'s own script,
+  `scripts/demo_live.py`, which the tests start and type commands into, as Dan does; in
+  `packages/ui/tests/e2e_live/`, and CI's `e2e-live` job. The breaker and Re-sync items wait for
+  Phase 3's handlers (areas B1 and B2).
   - Before the catch-up, only Compare is enabled.
   - Compare shows the equations; Import selected imports with progress and a toast.
   - Kept out and Flags show no title; Release opens its question with the title, and lets the
@@ -3330,3 +3333,11 @@ None: every bullet of §20 is planned in a phase.
   everything it produced for tokens, `X-Amz-` and titles. C4.01 to C4.04 now also pass with the
   worker's real turn; C7.01 built. `--full` joins the flow with area B2. No decision or scenario's
   outcome changed.
+- 2026-11-02: §21, §15.5 (area A6): `make demo-live` (Dan's answer, Phase 1's Q&A §8) runs the web
+  app and the worker on the Mac against the fake Plaud server, with a synthetic account and a
+  scratch archive under `$TMPDIR`, refusing to start if any setting points elsewhere, with typed
+  commands for a hold, a rename, a late keep-out, a refused sign-in and a scheduled tick; `make
+  e2e-live` and CI's `e2e-live` job drive the same script with Playwright. `make e2e-live` found
+  that the worker's last `gate` turn kept the summary on "waits for the first catch-up" until
+  the first sync after the catch-up ended: the views now drop it once the gate is open. No
+  decision or scenario's outcome changed.

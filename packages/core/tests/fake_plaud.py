@@ -392,6 +392,13 @@ class FakeAccount:
         with self._lock:
             self.recordings = [r for r in self.recordings if r.plaud_id != plaud_id]
 
+    def restore(self, recordings: list[FakeRecording]) -> None:
+        """Dan restores recordings he deleted (§10.6 step 6, §21's "a restore"): Plaud lists them
+        again, as they were. One already listed is left as it is."""
+        with self._lock:
+            listed = {r.plaud_id for r in self.recordings}
+            self.recordings += [r for r in recordings if r.plaud_id not in listed]
+
     def rekey(self, plaud_id: str, new_id: str | None = None) -> str:
         """The same recording, audio and times unchanged, listed under new hex (§21)."""
         rec = self.find(plaud_id)
