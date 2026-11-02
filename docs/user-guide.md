@@ -678,6 +678,9 @@ check before the Plaud account ends.
 - Other presses meanwhile wait and say "Waiting for Sync everything (412 of 1,234)". A Re-sync of
   one recording, a Compare and the scheduled sync still run between two of its recordings.
 - If the worker restarts in the middle, it picks up where it left off ("Resuming (started 14:20)").
+- If the sync is held while it runs ([a held sync](#when-the-sync-is-held-accept-this-listing)),
+  it stops checking at once and answers "Sync everything: failed (held: see Status)"; it picks up
+  where it left off by itself once the hold clears. It doesn't start while a hold is on.
 - It also runs by itself every 30 days while the schedule is on.
 - Status's numbers show the last one: "2026-10-01: all 1,234 checked (2 parked, 1 degraded)".
 

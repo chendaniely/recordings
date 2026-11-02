@@ -67,6 +67,7 @@ from recordings.models import Recording
 from recordings.plaud import schedule
 from recordings.plaud.checks import (
     CONSENT_LATE,
+    K_HOLD,
     KEPT_OUT_LATE,
     CheckRow,
     PlaudDB,
@@ -81,6 +82,7 @@ from recordings.plaud.client import (
     stamp_meta,
 )
 from recordings.plaud.compare import Here, _kept_out
+from recordings.plaud.importer import STOPPED_HELD, ImportStopped
 from recordings.plaud.normalise import (
     OWN_NOTE_TYPES,
     envelope_sha256,
@@ -347,7 +349,8 @@ class Checker:
     ) -> CheckResult:
         """Check one recording (the module's notes). `listed`: the newest listing's rows, by
         canonical Plaud ID. Raises a run-ending PlaudError, CheckStopped, the importer's
-        ImportStopped (a consent stop), KeepOutWordsError; returns everything else."""
+        ImportStopped (a consent stop, or a hold recorded since the run listed: "held: see
+        Status"), KeepOutWordsError; returns everything else."""
         now = self.clock()
         row = self.db.check_row(recording_id)
         try:
@@ -392,6 +395,11 @@ class Checker:
         *,
         parked_ok: bool,
     ) -> tuple[Recording, Listed]:
+        if self.db.get(K_HOLD) is not None:
+            # §14.2: the sweep pauses under any hold. One recorded mid-run (a light turn between
+            # two recordings) stops the run's checks before another fetch: its listing's IDs are
+            # suspect (the end-of-branch privacy review, 2026-11-02).
+            raise ImportStopped(STOPPED_HELD)
         try:
             rec = self.writer.archive.load(recording_id)
         except (KeyError, OSError, ValueError):

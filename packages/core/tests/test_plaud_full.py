@@ -14,7 +14,13 @@ from fake_plaud import expired_link
 from plaud_live import T0
 from recordings.cli import main
 from recordings.plaud import editsync, full, requests, runlock
-from recordings.plaud.checks import FAILING_AFTER, K_FULL, K_LAST_STARTED, K_SNAPSHOT_MARK
+from recordings.plaud.checks import (
+    FAILING_AFTER,
+    K_FULL,
+    K_HOLD,
+    K_LAST_STARTED,
+    K_SNAPSHOT_MARK,
+)
 from recordings.plaud.requests import PlaudRequest
 from recordings.plaud.tokens import from_vendor
 
@@ -167,6 +173,46 @@ def test_c3_05_killed_part_way_it_resumes(live, monkeypatch):
     last = full.last(live.db())
     assert last["exit_code"] == 0 and last["line"] == "all 4 checked"
     assert not set(first_two) & set(checked[2:])  # what was checked since it started isn't again
+    assert sorted(checked) == sorted(here.values())
+
+
+def test_a_hold_recorded_mid_run_stops_its_checks_and_it_resumes_once_the_hold_clears(
+    live, monkeypatch
+):
+    # The end-of-branch privacy review (2026-11-02): a hold recorded mid-run (a light turn between
+    # two recordings found Plaud's IDs changed) stops further checks and fetches in that run
+    # (§14.2: "The sweep pauses under any hold"); it is left unfinished, the tick doesn't resume it
+    # while the hold is on, and it resumes once the hold clears.
+    w, here, _recs = ready(live, 4)
+    checked: list[str] = []
+    fetched: list[int] = []
+    real = editsync.Checker.check
+
+    def holding(self, rid, listed, **kw):
+        result = real(self, rid, listed, **kw)
+        checked.append(rid)
+        if len(checked) == 2:
+            live.db().put(K_HOLD, {"since": live.clock().isoformat(), "ids_changed": True}, now=T0)
+            fetched.append(len(live.server.requests))
+        return result
+
+    monkeypatch.setattr(editsync.Checker, "check", holding)
+    reply = ask(live, w, "full", 1)
+    assert (reply.state, reply.message) == (
+        "failed",
+        "Sync everything: failed (held: see Status) · See Status",
+    )
+    assert len(checked) == 2 and len(live.server.requests) == fetched[0]
+    assert full.running(live.db()) is not None and full.last(live.db()) is None
+    live.clock.advance(minutes=1)
+    w.tick()  # still held: nothing resumes
+    assert len(checked) == 2 and full.running(live.db()) is not None
+    live.db().delete(K_HOLD)
+    live.clock.advance(minutes=1)
+    w.tick()  # the hold cleared: it resumes, and checks only what it hadn't
+    assert full.running(live.db()) is None
+    last = full.last(live.db())
+    assert last["exit_code"] == 0 and last["line"] == "all 4 checked"
     assert sorted(checked) == sorted(here.values())
 
 

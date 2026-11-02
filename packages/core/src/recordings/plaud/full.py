@@ -11,7 +11,9 @@ days.
 2. **Every recording the sweep covers** (`sweep.covered`: here, not gone, parked, flagged, kept out
    or consent-listed), oldest check first, through the check (`editsync.Checker`, B1's), then its
    failures once more. A resumed run skips what was checked since it started. A run-ending
-   Plaud error ends it, failed; SIGTERM leaves it unfinished, to resume.
+   Plaud error ends it, failed; SIGTERM leaves it unfinished, to resume. So does a hold, which
+   stops its checks the moment one is recorded (the checker reads `K_HOLD` before each): the
+   worker's tick resumes it once the hold clears (`run_full`'s notes).
 3. **The verdict:** exit 0 when the listing was good and every listed recording is excluded,
    parked, flagged (here, but consent-listed or kept out late, so never fetched; named by archive
    ID) or here and checked (degraded counts as checked); exit 2 otherwise, with counts. A
@@ -51,7 +53,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from recordings.plaud import breaker, sweep
-from recordings.plaud.checks import CONSENT_LATE, K_FULL, KEPT_OUT_LATE, PlaudDB
+from recordings.plaud.checks import CONSENT_LATE, K_FULL, K_HOLD, KEPT_OUT_LATE, PlaudDB
 from recordings.plaud.client import PlaudError
 from recordings.plaud.compare import EXCLUDED, HERE, MISSING, PARKED, REVIEW, WAITING, _kept_out
 from recordings.plaud.editsync import (
@@ -76,7 +78,7 @@ from recordings.plaud.fullstate import (  # the network-free readers, re-exporte
     running,
     running_line,
 )
-from recordings.plaud.importer import ImportStopped
+from recordings.plaud.importer import STOPPED_HELD, ImportStopped
 from recordings.plaud.normalise import part_hashes
 from recordings.plaud.when import parse_stamp
 from recordings.refs import canonical_plaud_id
@@ -231,7 +233,14 @@ def run_full(run: Any, *, by: str) -> FullReport:
     holds. `run` is a `plaud.sync.Run`; its `between` serves the light turn and single-recording
     requests in the worker's long runs (§9.2). Raises `worker.Stopping` on SIGTERM, leaving the
     run unfinished; any other error that isn't Plaud's or the archive's finishes it, failed, and
-    is raised."""
+    is raised.
+
+    **A hold** (§14.2: "The sweep pauses under any hold"; the end-of-branch privacy review,
+    2026-11-02): while one is on it doesn't start, and an unfinished one is left as it was; one
+    recorded mid-run (by a light turn between two recordings, or by its own listing) stops its
+    checks and fetches at once, and leaves it unfinished: no manifest, no finished record. The
+    worker's tick resumes it once the hold clears. Either way it answers "failed (held: see
+    Status)"."""
     from recordings.worker import Stopping
 
     db: PlaudDB = run.db
@@ -239,6 +248,9 @@ def run_full(run: Any, *, by: str) -> FullReport:
     unfinished = running(db)
     started = parse_stamp(unfinished.get("started")) if unfinished else None
     report = FullReport(run_id=run.run_id, started=started or now, resumed=started is not None)
+    if db.get(K_HOLD) is not None:
+        log.info("Sync everything waits for the hold to clear")
+        return _held(report, unfinished=report.resumed)
     record = {"started": report.started.isoformat(), "by": by, "done": 0, "total": None}
     _progress(db, record, now=now)
     t0 = run.clock()
@@ -253,6 +265,9 @@ def run_full(run: Any, *, by: str) -> FullReport:
         report.exit_code = EXIT_FAILED
         _finish(db, report, now=run.clock(), pace=None)
         raise
+    if report.unfinished:
+        log.info("Sync everything stopped under a hold: it resumes once the hold clears")
+        return report
     ended = run.clock()
     if pace is None and report.checked and ended > t0:
         pace = (ended - t0).total_seconds() / report.checked
@@ -262,8 +277,16 @@ def run_full(run: Any, *, by: str) -> FullReport:
     return report
 
 
+def _held(report: FullReport, *, unfinished: bool = True) -> FullReport:
+    """A hold stops it: "failed (held: see Status)", left `unfinished` to resume once it clears."""
+    report.run_failed, report.unfinished = True, unfinished
+    report.phrase, report.exit_code = STOPPED_HELD, EXIT_FAILED
+    return report
+
+
 def _run(run: Any, report: FullReport, record: dict) -> float | None:
-    """Steps 1 to 3. Returns the measured pace (seconds a check), or None."""
+    """Steps 1 to 3. Returns the measured pace (seconds a check), or None. A hold recorded
+    meanwhile leaves the report `unfinished` (`_held`), and the caller finishes nothing."""
     from recordings.plaud import sync
     from recordings.plaud.baseline import KeepOutWordsError
     from recordings.plaud.compare import here_from_archive
@@ -283,6 +306,9 @@ def _run(run: Any, report: FullReport, record: dict) -> float | None:
     finally:
         run.newest = keep
     report.sync = first
+    if first.listing == "held" or STOPPED_HELD in (first.stopped, first.phrase):
+        _held(report)  # its own listing held, or a hold came while it imported: resume later
+        return None
     if (
         first.listing not in ("good", "small-shrink")
         or first.stopped is not None
@@ -359,6 +385,9 @@ def _run(run: Any, report: FullReport, record: dict) -> float | None:
         try:
             result = checker.check(rid, listed)
         except ImportStopped as exc:
+            if exc.phrase == STOPPED_HELD:  # a hold recorded mid-run: no more checks or fetches
+                _held(report)
+                return False
             report.run_failed, report.phrase, report.exit_code = True, exc.phrase, EXIT_FAILED
             return False
         except CheckStopped as exc:
@@ -384,6 +413,8 @@ def _run(run: Any, report: FullReport, record: dict) -> float | None:
             break
         record["done"] = record.get("done", 0) + 1
         _progress(db, record, now=run.clock())
+    if report.unfinished:
+        return None  # held: what it checked stays checked, and the rest waits for the resume
     if not report.run_failed:
         for rid in [rid for rid, r in results.items() if r.result == FAILED]:
             if not one(rid):  # §14.6: its failures once more

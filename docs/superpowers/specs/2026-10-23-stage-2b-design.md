@@ -1914,7 +1914,12 @@ Main spec §9.1.1 and §19 name the baseline without defining it.
   - **It resumes** after a restart: `plaud_state` keeps its start, and it continues with what isn't
     checked since. It runs by itself every 30 days while the schedule is on. A failed one runs again
     next month, or when Dan presses it, never sooner: it doesn't inherit the ops loop's 15-minute
-    retry (`ops.py:390`).
+    retry (`ops.py:390`). **A hold** (the end-of-branch privacy review, 2026-11-02): one recorded
+    while it runs (by a light turn between two recordings, or its own listing) stops its checks and
+    fetches at once, and leaves it unfinished; the tick doesn't resume it while the hold is on, and
+    does once it clears. A press while a hold is on is refused, leaving an unfinished one as it was
+    ("Sync everything: failed (held: see Status)"). Every check stops the same way under a hold
+    recorded mid-run (§14.2), a long Re-sync's and the CLI sync's sweep included.
   - **Its estimate** ("about 40 minutes") comes from the last run's measured pace, and says "unknown
     until the first run" before then.
   - **It writes the DAN-15 manifest** to `/state/manifests/plaud-<date>.json`, listed in `[backup]
@@ -3457,3 +3462,7 @@ None: every bullet of §20 is planned in a phase.
   list at its start is guarded as the tick's and the import's are; a list caught mid-write that
   never settles is a consent stop for that run ("the consent list keeps changing"). No decision
   or scenario's outcome changed.
+- 2026-11-02: §14.2 and §14.6 (the end-of-branch privacy review, item 6): a check reads the hold
+  before each fetch, so a hold recorded mid-run stops Sync everything's checks (and any long
+  run's) at once; Sync everything is left unfinished and resumes once the hold clears, and
+  doesn't start while one is on. No decision or scenario's outcome changed.

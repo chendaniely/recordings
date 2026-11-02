@@ -76,6 +76,8 @@ spike sessions were skipped), each listed with how you would notice it's wrong i
 - An invalid `keep_out_word` stops everything that lists or fetches from Plaud, not only the
   scheduled syncs: Compare, Sync now, the imports, Re-sync, Sync everything and Release are off
   with "configuration: `keep_out_word` is invalid".
+- A hold that comes while Sync everything runs stops its checks at once; it carries on by itself
+  once the hold clears.
 
 ## Before stage 2b
 

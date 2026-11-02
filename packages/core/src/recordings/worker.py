@@ -55,6 +55,7 @@ from recordings.plaud.baseline import (
 from recordings.plaud.cache import PREVIEW_KEPT, Cache, Preview, cache_path
 from recordings.plaud.checks import (
     K_CONSENT,
+    K_HOLD,
     K_LAST_ENDED,
     K_LAST_STARTED,
     K_RETIRED,
@@ -978,7 +979,8 @@ class Worker:
         """Sync everything from the tick (§14.6): an unfinished one resumes; otherwise one runs 30
         days after the last finished one while the schedule is on (`fullstate.due`). Never while
         another run holds `plaud`, the gate is closed, the sign-in is paused, a rate limit's wait
-        runs or the keep-out word is bad: no Plaud call then, and the next tick asks again."""
+        runs, the keep-out word is bad or a hold is on (an unfinished one resumes once it
+        clears): no Plaud call then, and the next tick asks again."""
         from recordings.plaud import fullstate  # network-free: the run itself loads the client
 
         now = self.clock()
@@ -990,6 +992,7 @@ class Worker:
             or not gate_now(self.db).open
             or signin.paused(self.db, self.settings.token_store) is not None
             or rate_limit_wait(self.db, now=now) is not None
+            or self.db.get(K_HOLD) is not None  # §14.2: it resumes once the hold clears
         ):
             return
         try:
