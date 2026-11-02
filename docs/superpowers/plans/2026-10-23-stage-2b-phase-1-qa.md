@@ -66,6 +66,26 @@ codes and a note line spelled only with a–f letters were shown, he chose **"So
 option A, the recommended one, on 2026-10-30, with no further reason given. Decision 12's rule now
 counts only an unbroken run of 8 or more hex characters (spec §12.1 rule 4); Task 3 builds it.
 
+## 5. The 320 px top bar under a larger text size (asked 2026-11-01, phase end)
+
+The phase end asked three questions, one at a time: the 320 px top bar; §15.2's "fails every check ·
+Re-sync · Park" line on Status; doctor's "sign-in needed" during Phase 1.
+
+Scenario: on a phone 320 px wide, with the text size turned up in the phone's settings, the top bar's
+logo, four tabs and theme icon no longer fit on one row. Before asking: Task 21's bar has 12 px to
+spare at 320 px, a larger default font or a failed webfont still fits (the council's goal-fit lens
+measured both), and only the phone's own text zoom is left; wrapping is what the old two-row bar did,
+and it pushed the short-phone Library's selection bar off.
+
+- **A. The tab row scrolls within itself (Recommended):** the rest of the page stays still; a
+  one-line guard, nothing changed at normal text size.
+- B. The bar wraps onto two rows and gets taller.
+- C. Leave it: the whole page scrolls sideways a little if it happens.
+
+Dan chose **"Tabs scroll"**, option A, the recommended one, on 2026-11-01, with no further reason
+given. The phase end's step 4 gives the tab row `overflow-x: auto` (and `min-width: 0`) at 320 px,
+with an e2e test under a larger root font size.
+
 ## Calls made for Dan
 
 - **Mode: attended.** Phase PRs wait for Dan's merge, and a change to the spec, one of his decisions
