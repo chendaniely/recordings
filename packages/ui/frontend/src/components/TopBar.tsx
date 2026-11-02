@@ -9,7 +9,9 @@ const PAGES: { page: Page; label: string }[] = [
 
 /** At 320 pixels the four tabs stay one row: the logo keeps its mark but not its name, and the
  * theme switch is one icon (app.css, the phone block). With the phone's text size turned up the
- * tabs scroll sideways within their row, never the page (Dan, phase-end Q&A §5). */
+ * tabs scroll sideways within their row, never the page (Dan, phase-end Q&A §5). A tab that takes
+ * focus scrolls fully into the row: Chromium left a focused tab that was partly showing cut off at
+ * the row's edge, its focus ring with it (measured at 320 px with 20 px text). */
 export function TopBar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
   return (
     <header className="topbar">
@@ -17,7 +19,8 @@ export function TopBar({ page, onPage }: { page: Page; onPage: (p: Page) => void
       <nav aria-label="Pages">
         {PAGES.map((p) => (
           <button key={p.page} type="button" className={`nav${page === p.page ? " on" : ""}`}
-            aria-current={page === p.page ? "page" : undefined} onClick={() => onPage(p.page)}>
+            aria-current={page === p.page ? "page" : undefined} onClick={() => onPage(p.page)}
+            onFocus={(e) => e.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}>
             {p.label}
           </button>
         ))}

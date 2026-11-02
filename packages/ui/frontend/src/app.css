@@ -446,8 +446,9 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
      and the page never scrolls sideways (Dan, phase-end Q&A §5). min-width: 0 lets the row be
      narrower than its tabs, which never shrink (flex: none), so their words stay whole. A row
      that scrolls clips what overflows it, so the tabs and their focus rings sit inside its 4 px
-     padding, and its negative margins keep the bar as tall and as wide as it was. */
-  .topbar nav { display: flex; gap: 12px; overflow-x: auto; min-width: 0; padding: 4px; margin: -10px -4px; }
+     padding, and its negative margins keep the bar as tall and as wide as it was. A tab scrolled
+     into view (TopBar's onFocus) stops 4 px inside the edge too: scroll-padding. */
+  .topbar nav { display: flex; gap: 12px; overflow-x: auto; min-width: 0; padding: 4px; margin: -10px -4px; scroll-padding-inline: 4px; }
   .topbar button.nav { flex: none; margin-right: 0; min-width: 44px; min-height: 44px; }
   .logo-name, .theme-full { display: none; }
   /* Its 44 px target overhangs the bar's padding, so the bar stays as tall as it was. */

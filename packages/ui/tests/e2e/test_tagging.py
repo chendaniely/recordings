@@ -3403,6 +3403,18 @@ def test_at_320_px_a_larger_text_size_scrolls_the_tab_row_never_the_page(
         assert box["x"] + box["width"] <= 320 + 0.5, seen
         tab.click()
         assert page.evaluate(sideways) == 0, seen
+    # From the keyboard too: the last tab, cut off at the row's edge, comes fully into the row
+    # when it takes focus, with room for its focus ring.
+    nav.evaluate("el => { el.scrollLeft = 0; }")
+    nav.get_by_role("button", name="Library", exact=True).focus()
+    for _ in range(3):
+        page.keyboard.press("Tab")
+    status = nav.get_by_role("button", name="Status", exact=True)
+    expect(status).to_be_focused()
+    page.evaluate(TWO_FRAMES)
+    box, row = status.bounding_box(), nav.bounding_box()
+    seen = f"Status focused: {box}, row {row}"
+    assert box["x"] + box["width"] <= row["x"] + row["width"] - 4 + 0.5, seen  # inside the padding
     # Each press went where it says: Status and the Sync screen open, and on a phone Tags is the
     # Library with the Untagged filter (CLAUDE.md), which Library then leaves.
     nav.get_by_role("button", name="Status", exact=True).click()
