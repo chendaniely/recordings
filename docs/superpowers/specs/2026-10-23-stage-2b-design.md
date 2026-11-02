@@ -1676,8 +1676,9 @@ recording arrives untagged, and Dan's rename is checked at the next sync.
   fails (a file edited outside the app, a lock timeout, the sentinel), the marker stays, the next run
   tries again, and Needs attention shows it at once, by ID: "Should be private, but its file was
   edited outside the app: run `recordings reindex`". It opens the `private-unwritten` blocker (§16)
-  until the tag lands. A lock timeout alone is retried at the next run, well within the check's
-  grace.
+  until the tag lands, or until a later title of the listing's, checked, matches nothing (then no
+  `private` is owed; built, area A4). A lock timeout alone is retried at the next run, well within
+  the check's grace.
 - **A→B→A** re-checks A, because the marker holds only the newest title. That errs private.
 - **Who judges:** every `Writer` that reconciles, in any container. `Writer.reconcile_plaud` passes
   reconcile the recording's markers from `state.db` and records the new ones, so a `reindex` in `web`
@@ -3285,3 +3286,7 @@ None: every bullet of §20 is planned in a phase.
   "the sync's record was rebuilt" for case 4 once `rebuilt_at` is set. Two readings that fail
   closed: a listed ID with no creation or start time needs review, and so does every one while
   the rebuild record can't be read. No decision or scenario's outcome changed.
+- 2026-11-02: §13.2: a `private` the listing owed but couldn't write is owed no more once a later
+  listed title, checked, matches nothing, so its `private-unwritten` flag resolves instead of
+  holding the sync's ping until the recording were private (area A4). No decision or scenario's
+  outcome changed.

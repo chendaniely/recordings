@@ -22,7 +22,8 @@ listing alone"); the import never needs it, since it judges every title it has s
   reconcile still checks every title its snapshots carry). A `mutate` that fails leaves the title
   due: a lock timeout is "busy" and retried at the next run; anything else is reported
   (`unwritten`, with its class in `causes`) and opens the `private-unwritten` flag at once, which
-  holds the sync's ping until the tag lands (§16).
+  holds the sync's ping until the tag lands (§16), or until a later listed title, checked,
+  matches nothing: then no `private` is owed, and the flag resolves.
 
 No title is stored, logged or returned: hashes go to the marker, recording IDs and classes to the
 report. A consent-listed recording here is the late consent pass's (`flags.apply_late_consent`);
@@ -124,6 +125,8 @@ def privacy_from_listing(
                     ids = _plaud_ids(writer, rid) or [listed.listed_id]
                     if record_late_keep_out(db, rid, ids, word, now=now):
                         flagged.append(rid)
+            else:
+                _owed_no_more(db, rid, now=now)  # a later title that doesn't match: none owed
             moved = Marker(
                 pid,
                 digest,
@@ -186,6 +189,16 @@ def _add_private(writer: Writer, db: PlaudDB, recording_id: str, why: Why, *, no
         "retagged-private", now=now, recording_id=recording_id, detail={"why": why_phrase(why)}
     )
     return "tagged"
+
+
+def _owed_no_more(db: PlaudDB, recording_id: str, *, now: datetime) -> None:
+    """The listing's own `private-unwritten` flag (detail `owed: title`) resolves once the
+    recording's newest listed title, checked, matches nothing: the `private` it owed is owed no
+    more (Dan renamed it back before the tag could land). Without this, the flag would hold the
+    sync's ping until the recording were private, which nothing would make it."""
+    for event in db.open_flags((PRIVATE_UNWRITTEN,), recording_id=recording_id):
+        if event.detail.get("owed") == OWED_TITLE:
+            db.resolve(event.id, now=now)
 
 
 def _flag_unwritten(db: PlaudDB, recording_id: str, cause: str, *, now: datetime) -> None:

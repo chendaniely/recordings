@@ -130,6 +130,26 @@ def test_a_private_that_cant_be_written_is_flagged_at_once_and_lands_after_a_rei
     assert run(scene).tagged == (rid,) and tags(scene, rid) == ["private"]
 
 
+def test_a_title_owed_private_that_changes_back_resolves_its_flag(scene):
+    # The flag holds the sync's ping while the `private` is owed (§16); renamed back before the
+    # tag could land, nothing is owed, and the flag goes at the next run.
+    import json
+
+    rec = scene.account.add("Synthetic standup")
+    rid = scene.import_(rec).recording_id
+    path = scene.writer.archive.path_for(rid) / "recording.json"
+    edited = json.loads(path.read_text(encoding="utf-8"))
+    edited["title"] = "Synthetic standup, edited by hand"
+    path.write_text(json.dumps(edited), encoding="utf-8")
+    scene.account.rename(rec.plaud_id, "Private: synthetic standup")
+    assert run(scene).unwritten == (rid,)
+    scene.account.rename(rec.plaud_id, "Synthetic standup, renamed back")
+    report = run(scene)
+    assert report.unwritten == () and report.checked == 1
+    assert scene.db.open_flags((PRIVATE_UNWRITTEN,)) == []
+    assert tags(scene, rid) == []
+
+
 def test_a_title_that_doesnt_match_moves_the_marker_and_is_never_checked_again(scene):
     rec = scene.account.add("Synthetic planning")
     rid = scene.import_(rec).recording_id
