@@ -3117,7 +3117,7 @@ smoke.
 | C5.22 | A SIGTERM mid-run; a catch-up, then a restart | Neither reads as "rebuilt" | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (the mark is committed before every 2b snapshot, so neither a stopped run nor a catch-up then a restart reads as rebuilt) | built |
 | C5.23 | A Re-sync, then a restart | Doesn't read as "rebuilt" | Phase 3 | Phase 3's plan | planned |
 | C5.24 | A restart after a rebuild was recorded | The rebuild isn't found again | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (`test_a_rebuilt_state_db_is_recorded_once_and_passed`, and the worker's start) | built |
-| C5.25 | A rebuilt `state.db` (2b snapshots, no marks) | Recordings created after it keep importing; one created before it that isn't here needs review, in the first listing or later; scheduled runs, Sync now, the CLI's `sync` and Import all leave it out; Import selected brings it in; its ID on the consent list keeps it out | Phase 2, areas A4 (the marks, the import) and A5 (the run's Import all) | `packages/core/tests/test_plaud_rebuild.py` (`test_after_a_rebuild_what_was_made_before_waits_for_review`: made after imports; made before waits, first listed or later; the import refuses it unless named; consent-listed stays out) | built (A5's run passes `review_ok` only for named IDs) |
+| C5.25 | A rebuilt `state.db` (2b snapshots, no marks) | Recordings created after it keep importing; one created before it that isn't here needs review, in the first listing or later; scheduled runs, Sync now, the CLI's `sync` and Import all leave it out; Import selected brings it in; its ID on the consent list keeps it out | Phase 2, areas A4 (the marks, the import) and A5 (the run's Import all) | `packages/core/tests/test_plaud_rebuild.py` (`test_after_a_rebuild_what_was_made_before_waits_for_review`: made after imports; made before waits, first listed or later; the import refuses it unless named; consent-listed stays out); the run's half: `packages/core/tests/test_plaud_sync.py` (`test_after_a_rebuild_a_scheduled_run_leaves_what_needs_review_out`) and `test_plaud_sync_requests.py` (`test_import_all_leaves_review_rows_out_and_import_selected_brings_one_in`); the CLI's `sync` is the same run | built |
 | C5.26 | A rebuilt `state.db`, then Sync everything | It leaves out what needs review | Phase 3 | Phase 3's plan | planned |
 | C5.27 | `recordings plaud review` after a restore | `rebuilt_at` is recorded as now, holding `plaud` | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (`test_plaud_review_after_a_restore_marks_what_isnt_here`, and busy while `plaud` is held) | built |
 | C5.28 | Syncs after `plaud review` | Everything made before it that isn't here waits for review | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (a sync after `plaud review`: the rows not here, and one first listed later, need review) | built |
@@ -3298,3 +3298,12 @@ None: every bullet of §20 is planned in a phase.
   SIGTERM between recordings stops a run without recording it; between two recordings the worker
   runs its tick's privacy steps (the consent list, late consent listings, the cache's titles).
   C5.09, C5.12, C6.04, C6.05 and C6.11 built. No decision or scenario's outcome changed.
+- 2026-11-02: §9.3, §9.4: the Compare, Sync now, import, Park and Unpark handlers (area A5).
+  Coalescing as §9.3 says, built as rows that follow a queued one (each press sees the one run's
+  end), plus imports queued together merging; a request needing `plaud` waits, queued, while
+  another run holds it (§9.4's "a request waits its turn", Accept included, where A3 answered
+  busy); a person's run is refused during a hold or a rate limit's wait, with no Plaud call.
+  Park and Unpark act on a Plaud ID that failed to import; a recording's parking is area B2's. The
+  phase-end list's Task 14 row (the deadline test, `MAX_PLAUD_ID_LEN`'s comment, `claim_next` by
+  column name) and the council's R1 (a request's end written again if `state.db` is busy). No
+  decision or scenario's outcome changed.

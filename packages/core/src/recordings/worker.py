@@ -33,6 +33,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -182,6 +183,10 @@ WRITER_LOCK_WAIT = 10.0  # spec §9.2: Writer.open(cfg, docs=False, lock_timeout
 # A scheduled turn waits about a second for the `plaud` lock, so a probe at that instant (Status, a
 # request's insert, the deploy guard) never makes it "busy" for a whole interval.
 TURN_LOCK_WAIT = 1.0
+# The request kinds whose run holds `plaud`: while another run holds it, they stay queued and wait
+# their turn (§9.4), and the worker serves the other kinds meanwhile.
+PLAUD_KINDS: frozenset[str] = frozenset({"compare", "sync", "import", "accept"})
+FINISH_TRIES = 3  # a request's end, written again a moment apart if state.db is busy
 # An index that can't answer is retried at every tick; for this long it stops every late consent
 # listing, and is shown as a pass that failed.
 INDEX_PATIENCE = timedelta(seconds=60)
@@ -1130,9 +1135,12 @@ class Worker:
             log.info("requests at start: %d interrupted, %d expired", interrupted, expired)
 
     def _serve_one(self) -> None:
+        """The oldest queued request. While another run holds `plaud` (the CLI's catch-up, say),
+        the kinds that need it stay queued, and wait their turn (§9.4); the others are served."""
         now = self.clock()
         requests.expire(self.state, now=now)
-        claimed = requests.claim_next(self.state, now=now)
+        skip = PLAUD_KINDS if plaud_holder(self.state) is not None else frozenset()
+        claimed = requests.claim_next(self.state, now=now, skip=skip)
         if claimed is not None:
             self.serve_request(claimed)
 
@@ -1151,15 +1159,21 @@ class Worker:
                 refused = GATE_REFUSAL
             else:
                 reply = handler(self, claimed)
+        except Stopping:  # SIGTERM between two recordings: what came in stays, the rest waits
+            log.info("a %s request stopped between recordings: the worker is stopping", req.kind)
+            reply = requests.Reply(req.request_id, req.kind, "failed", requests.INTERRUPTED)
         except Exception as exc:  # noqa: BLE001  a failed request is answered, never the loop's end
             log.warning("a %s request failed (%s)", req.kind, type(exc).__name__)
             reply = requests.Reply(
                 req.request_id, req.kind, "failed", f"error: `{type(exc).__name__}`"
             )
         if refused is not None:
-            requests.refuse(self.state, req.request_id, message=refused, now=self.clock())
+            end = partial(
+                requests.refuse, self.state, req.request_id, message=refused, now=self.clock()
+            )
         else:
-            requests.finish(
+            end = partial(
+                requests.finish,
                 self.state,
                 req.request_id,
                 ok=reply.state == "done",
@@ -1167,7 +1181,23 @@ class Worker:
                 result=reply.result,
                 now=self.clock(),
             )
+        self._answer(req.kind, end)
         self.progress.bump(self.clock(), "idle")
+
+    def _answer(self, kind: str, end: Callable[[], None]) -> None:
+        """Write a request's end, tried FINISH_TRIES times a moment apart (the phase-end council's
+        R1): a row left `running` would be followed by its session until the next start."""
+        for attempt in range(FINISH_TRIES):
+            try:
+                end()
+                return
+            except (StateError, sqlite3.Error, OSError) as exc:
+                if attempt == FINISH_TRIES - 1:
+                    log.warning(
+                        "a %s request's end couldn't be written (%s)", kind, type(exc).__name__
+                    )
+                    return
+                self.stopping.wait(TICK / 4)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1379,6 +1409,125 @@ def _unrelease(worker: Worker, claimed: Claimed) -> requests.Reply:
     return requests.Reply(claimed.request.request_id, claimed.request.kind, state, done)
 
 
+# ---- the sync's requests (area A5, §9.3, §15.1): Compare, Sync now, the imports, Park ---------
+IMPORTING = "Importing"  # a running import's words: the screen adds "(5 of 31)" (§11.5)
+NOTHING_NAMED = "Name the recordings to import, or press Import all"
+PARKED = "Parked: it no longer counts against All here, and syncs leave it alone"
+UNPARKED = "Unparked"
+NOTHING_TO_PARK = "Nothing to park: the sync hasn't listed it, or it is parked already"
+NOTHING_TO_UNPARK = "Nothing to unpark"
+
+
+def _sync_request(
+    worker: Worker,
+    claimed: Claimed,
+    *,
+    mode: str,
+    job: str,
+    line: Callable[[Any], str],
+    named: tuple[str, ...] = (),
+    import_all: bool = False,
+) -> requests.Reply:
+    """A person's run (§9.3), under `plaud` for its whole length: `plaud.sync.run_sync` checks the
+    gate, a hold, a rate limit's wait, the consent list and every recording again itself. Its
+    progress goes to the row ("Importing", done and total); its reply is `line`'s, its result
+    the run's counts and IDs, never a title. It records no turn and pings nothing (§16)."""
+    from recordings.plaud import sync
+
+    req, now = claimed.request, worker.clock()
+
+    def progress(done: int, total: int) -> None:
+        requests.progress(worker.state, req.request_id, done=done, total=total, message=IMPORTING)
+
+    run = sync.worker_run(worker, progress=progress if mode != "compare" else None)
+    try:
+        with plaud_run(worker.state, job, timeout=TURN_LOCK_WAIT, now=now):
+            report = sync.run_sync(run, mode=mode, named=named, import_all=import_all)
+    except LockTimeout:
+        holder = plaud_holder(worker.state)
+        busy = f"skipped: busy (`{holder[0]}`)" if holder is not None else "skipped: busy"
+        return requests.Reply(req.request_id, req.kind, "failed", busy)
+    log.info("a %s request: %s", req.kind, sync.summary(report))
+    ran = report.listing in ("good", "small-shrink") and report.exit_code in (
+        sync.EXIT_OK,
+        sync.EXIT_PARTIAL,
+    )
+    return requests.Reply(
+        req.request_id, req.kind, "done" if ran else "failed", line(report), result=report.to_dict()
+    )
+
+
+def _compare(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """Compare (§11.1): the listing and the buckets, nothing imported. It runs while the gate is
+    closed, and never moves the last good listing or a hold."""
+    from recordings.plaud import sync
+
+    return _sync_request(
+        worker, claimed, mode="compare", job="plaud-compare", line=sync.compared_line
+    )
+
+
+def _sync(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """Sync now (§15.1): the scheduled sync's run, now, with no cap, budget or backoff."""
+    from recordings.plaud import sync
+
+    return _sync_request(worker, claimed, mode="sync", job="plaud-sync", line=sync.synced_line)
+
+
+def _import(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """Import selected (named Plaud IDs, which may bring in one that needs review, §11.6) and
+    Import all (`all`: every recording not here that can come in, review rows left out), §11.5."""
+    from recordings.plaud import sync
+
+    req = claimed.request
+    if not req.plaud_ids and not req.select_all:
+        return _failed(claimed, NOTHING_NAMED)
+    return _sync_request(
+        worker,
+        claimed,
+        mode="import",
+        job="plaud-import",
+        line=sync.imported_line,
+        named=req.plaud_ids,
+        import_all=req.select_all,
+    )
+
+
+def _parking(worker: Worker, claimed: Claimed, *, park: bool) -> requests.Reply:
+    """Park and Unpark a Plaud ID that failed to import (§14.6, §15.1): parked, syncs and Import
+    all leave it alone, and it no longer counts against "All here"; unparked, it is as it was
+    (one that failed 3 times waits for Import selected). A recording's parking (its checks) is
+    area B2's: web refuses it with NOT_YET, and so does this."""
+    req, now = claimed.request, worker.clock()
+    if req.recording_ids:
+        return _failed(claimed, requests.NOT_YET)
+    done, nothing = [], []
+    for pid in req.plaud_ids:
+        row = worker.db.listing(pid)
+        if row is None or (row.parked_at is not None) == park:
+            nothing.append(pid)
+            continue
+        worker.db.set_listing(pid, parked_at=now if park else None)
+        done.append(pid)
+    if done:
+        log.info("%s %d Plaud IDs", "parked" if park else "unparked", len(done))
+    message = (
+        (PARKED if done else NOTHING_TO_PARK) if park else (UNPARKED if done else NOTHING_TO_UNPARK)
+    )
+    result = {"parked" if park else "unparked": done, "nothing": nothing}
+    return requests.Reply(
+        req.request_id, req.kind, "done" if done else "failed", message, result=result
+    )
+
+
+def _park(worker: Worker, claimed: Claimed) -> requests.Reply:
+    return _parking(worker, claimed, park=True)
+
+
+def _unpark(worker: Worker, claimed: Claimed) -> requests.Reply:
+    return _parking(worker, claimed, park=False)
+
+
 # What the worker serves. requests.HANDLED names the same kinds for web, which refuses the others
 # before inserting; each later area adds its handlers here and its kinds there.
 HANDLERS: dict[str, Handler] = {
@@ -1387,4 +1536,9 @@ HANDLERS: dict[str, Handler] = {
     "release-preview": _release_preview,
     "release": _release,
     "unrelease": _unrelease,
+    "compare": _compare,
+    "sync": _sync,
+    "import": _import,
+    "park": _park,
+    "unpark": _unpark,
 }

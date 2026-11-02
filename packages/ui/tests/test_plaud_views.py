@@ -90,13 +90,25 @@ def test_before_the_catch_up_the_summary_is_the_gate_said_once(plaud_scene):
 
 
 def test_the_views_carry_what_the_worker_handles_and_each_button_its_own_reason(plaud_scene):
-    # why: the worker handles Keep it here, Accept this listing and Release so far. Every view
+    # why: the worker handles Keep it here, Accept, Release, Compare, Sync now, the imports and
+    # Park so far (Phase 3 adds Re-sync, Sync everything and Accept these changes). Every view
     # says so, and the UI disables every other button with not_yet, so no press comes back
     # "error: NotImplementedError".
     s = plaud_scene
     rid = s.add(1, "Week 1")
     view = sync_view(s.settings, now=T0, can_request=None)
-    handled = ["accept", "keep-here", "release", "release-preview", "unrelease"]
+    handled = [
+        "accept",
+        "compare",
+        "import",
+        "keep-here",
+        "park",
+        "release",
+        "release-preview",
+        "sync",
+        "unpark",
+        "unrelease",
+    ]
     for shown in (view, sync_panel(s.settings, now=T0), recording_plaud(s.settings, rid, now=T0)):
         assert (shown["handled"], shown["not_yet"]) == (handled, NOT_YET)
     assert view["available"] is True and view["reason"] is None
@@ -557,7 +569,18 @@ def test_the_demo_view_is_the_hand_written_fixture_with_the_demo_notes(tmp_path)
     assert sync["summary"]["kind"] == "demo" and sync["summary"]["sentence"] == DEMO_NOTE
     assert set(sync["buttons"].values()) == {DEMO_NOTE}
     assert (sync["handled"], sync["not_yet"], sync["gate"]) == (
-        ["accept", "keep-here", "release", "release-preview", "unrelease"],
+        [
+            "accept",
+            "compare",
+            "import",
+            "keep-here",
+            "park",
+            "release",
+            "release-preview",
+            "sync",
+            "unpark",
+            "unrelease",
+        ],
         NOT_YET,
         None,
     )

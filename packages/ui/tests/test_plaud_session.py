@@ -158,11 +158,11 @@ async def test_a_pending_row_is_read_every_two_seconds_and_its_replies_sent(wire
 
 @pytest.mark.anyio
 async def test_a_kind_the_worker_cant_handle_yet_is_refused_at_once_and_writes_nothing(wired):
-    # why: Phase 1's worker handles Keep it here alone. Any other kind, crafted past the
-    # disabled buttons, is answered "Comes with the next part of stage 2b." at once, and no
-    # row is inserted, so nothing comes back later as an error.
+    # why: a kind the worker has no handler for yet (Sync everything, until Phase 3), crafted
+    # past the disabled buttons, is answered "Comes with the next part of stage 2b." at once, and
+    # no row is inserted, so nothing comes back later as an error.
     async with test_server_async(SHINY_APP, timeout_secs=10) as s:
-        await s.set_inputs(plaud_request=request("not00001test", "compare"))
+        await s.set_inputs(plaud_request=request("not00001test", "full"))
         await until(lambda: replies(wired.sent, "not00001test"), "a reply")
         await asyncio.sleep(0.1)
     (reply,) = replies(wired.sent, "not00001test")

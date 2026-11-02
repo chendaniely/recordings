@@ -5,10 +5,20 @@ and `worker` run on them (2b phase 1 plan, decision 20).
   `BEGIN IMMEDIATE` transaction: a repeated `request_id` is that row, never a second one. Only the
   kinds in HANDLED reach it: recordings_ui.plaud refuses the others with NOT_YET before anything
   is inserted. Each later phase widens HANDLED as it adds a kind's handler, and §9.3's coalescing
-  for that kind (a sync taking over a compare, a resync merge, Sync everything's cooldown).
-- **the worker claims** the oldest queued row (`claim_next`), checks it again against fresh facts
-  (worker.Worker.serve_request), and `finish`es or `refuse`s it. At start it fails rows left
-  `running` ("interrupted") and expires rows queued more than an hour ago.
+  for that kind (a resync merge and Sync everything's cooldown are area B2's).
+- **Coalescing** (§9.3; area A5), in the same transaction: a press that a queued request already
+  covers gets a row of its own that *follows* that one (`result` {"follows": its request_id}):
+  the worker never claims it, and it takes its leader's state, progress, message and result, so
+  every press sees how the one run ended. A `compare` or `sync` while a `sync` is queued, or a
+  `compare` while a `compare` is, answers "Already queued"; a `sync` while a `compare` is queued
+  upgrades that row to a sync ("Queued"); an `import` while an `import` is queued merges into it
+  (its Plaud IDs added, `all` kept), "Already queued" when it adds nothing.
+- **the worker claims** the oldest queued row that follows none (`claim_next`), leaving the kinds
+  it is told to skip queued (those needing `plaud` while another run holds it: a request waits
+  its turn, §9.4), checks it again against fresh facts (worker.Worker.serve_request), and
+  `finish`es or `refuse`s it, its followers with it. At start it fails rows left `running`
+  ("interrupted") and expires rows queued more than an hour ago, and any follower whose leader
+  has ended.
 - Rows hold counts, IDs and fixed phrases (§15.6), never a title.
 
 It imports no Plaud client, token store or sync module. It must also import on the Pages demo's
@@ -50,15 +60,30 @@ KINDS = (
     "keep-here",
 )
 # The kinds the worker has a handler for (worker.HANDLERS names the same): Phase 1's Keep it here,
-# Accept this listing (Phase 2, area A3), and Release's preview, Let it in and Undo (area A4).
-# Each later area adds its kinds with their handlers, never before (CLAUDE.md, "To add a Plaud
-# request kind").
+# Accept this listing (Phase 2, area A3), Release's preview, Let it in and Undo (area A4), and
+# Compare, Sync now, the imports, Park and Unpark (area A5). Each later area adds its kinds with
+# their handlers, never before (CLAUDE.md, "To add a Plaud request kind").
 HANDLED: frozenset[str] = frozenset(
-    {"keep-here", "accept", "release-preview", "release", "unrelease"}
+    {
+        "keep-here",
+        "accept",
+        "release-preview",
+        "release",
+        "unrelease",
+        "compare",
+        "sync",
+        "import",
+        "park",
+        "unpark",
+    }
 )
+# The kinds a second press coalesces with while one is queued (§9.3): see `_coalesce`.
+COALESCED: frozenset[str] = frozenset({"compare", "sync", "import"})
 NOT_YET = "Comes with the next part of stage 2b."
 MAX_PLAUD_IDS = 20_000
 MAX_RESYNC_IDS = 1_000
+# §9.3's "under 128 characters": this is the first length refused (recordings_ui.plaud's check
+# takes `len(plaud_id) < MAX_PLAUD_ID_LEN`).
 MAX_PLAUD_ID_LEN = 128
 EXPIRE_AFTER = timedelta(hours=1)
 KEEP_FINISHED = timedelta(days=7)
@@ -67,6 +92,7 @@ KEEP_FINISHED = timedelta(days=7)
 SAVE_WAIT = 0.8
 REQUEST_ID_RE = re.compile(r"[A-Za-z0-9_-]{8,64}")
 QUEUED = "Queued"
+ALREADY_QUEUED = "Already queued"
 RUNNING = "Running"
 EXPIRED = "Expired: the Plaud worker didn't run it within the hour. Press again once it's back."
 INTERRUPTED = "interrupted"
@@ -196,6 +222,52 @@ def _notice(conn: sqlite3.Connection, state: State, *, now: datetime, timezone_n
     return QUEUED
 
 
+# A row that follows another (the module's notes on coalescing): its `result` names its leader
+# while it waits. CASE, not OR: SQLite needn't short-circuit, and json_extract raises on text
+# that isn't JSON.
+_FOLLOWS = "(CASE WHEN json_valid(result) THEN json_extract(result, '$.follows') END)"
+_LEADS = f"{_FOLLOWS} IS NULL"
+
+
+def _coalesce(conn: sqlite3.Connection, req: PlaudRequest) -> tuple[str | None, bool]:
+    """§9.3's coalescing, inside the insert's transaction: (the queued row this request follows,
+    whether it adds nothing to it), or (None, False) for a row of its own (the module's notes)."""
+    if req.kind not in COALESCED:
+        return None, False
+    kinds = ("compare", "sync") if req.kind in ("compare", "sync") else ("import",)
+    marks = ", ".join("?" for _ in kinds)
+    found = conn.execute(
+        "SELECT request_id, kind, plaud_ids, select_all FROM plaud_requests "
+        f"WHERE state = 'queued' AND kind IN ({marks}) AND {_LEADS} ORDER BY id",
+        kinds,
+    ).fetchall()
+    if not found:
+        return None, False
+    if req.kind == "import":
+        leader, _, raw_ids, select_all = found[0]
+        try:
+            ids = [str(p) for p in json.loads(raw_ids)]
+        except (ValueError, TypeError):
+            return None, False  # a row that can't be read: this one stands on its own
+        merged = list(dict.fromkeys([*ids, *req.plaud_ids]))
+        every = bool(select_all) or req.select_all
+        if merged == ids and every == bool(select_all):
+            return leader, True
+        conn.execute(
+            "UPDATE plaud_requests SET plaud_ids = ?, select_all = ? WHERE request_id = ?",
+            (json.dumps(merged), int(every), leader),
+        )
+        return leader, False
+    syncs = [row[0] for row in found if row[1] == "sync"]
+    if syncs:
+        return syncs[0], True
+    leader = found[0][0]
+    if req.kind == "sync":  # the queued compare becomes this sync (the sync lists too)
+        conn.execute("UPDATE plaud_requests SET kind = 'sync' WHERE request_id = ?", (leader,))
+        return leader, False
+    return leader, True
+
+
 def insert(
     state: State,
     req: PlaudRequest,
@@ -230,10 +302,13 @@ def insert(
         if row is not None:
             return _reply(row)  # a repeated request_id is that row
         notice = _notice(conn, state, now=now, timezone_name=timezone_name)
+        leader, nothing_new = _coalesce(conn, req)
+        if nothing_new and not is_worker_down(notice):
+            notice = ALREADY_QUEUED
         left()  # right before the INSERT
         conn.execute(
             "INSERT INTO plaud_requests (request_id, kind, plaud_ids, recording_ids, select_all, "
-            "state, queued_at, message) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)",
+            "state, queued_at, message, result) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
             (
                 req.request_id,
                 req.kind,
@@ -242,6 +317,7 @@ def insert(
                 int(req.select_all),
                 utc_iso(now),
                 notice,
+                json.dumps({"follows": leader}) if leader is not None else None,
             ),
         )
         left()  # and before the commit
@@ -256,39 +332,54 @@ def read(state: State, request_id: str) -> Reply | None:
     return None if row is None else _reply(row)
 
 
-def claim_next(state: State, *, now: datetime) -> Claimed | None:
-    """The oldest queued row, now `running`. A row that can't be read is failed, not retried."""
+_CLAIM = ("id", "request_id", "kind", "plaud_ids", "recording_ids", "select_all", "queued_at")
+
+
+def claim_next(
+    state: State, *, now: datetime, skip: frozenset[str] = frozenset()
+) -> Claimed | None:
+    """The oldest queued row that follows none and isn't of a kind in `skip`, now `running`, its
+    followers with it. A row that can't be read is failed, not retried."""
     with state.db() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT id, request_id, kind, plaud_ids, recording_ids, select_all, queued_at "
-            "FROM plaud_requests WHERE state = 'queued' ORDER BY id LIMIT 1"
-        ).fetchone()
-        if row is None:
+        skipped = sorted(skip)
+        unless = f" AND kind NOT IN ({', '.join('?' for _ in skipped)})" if skipped else ""
+        cursor = conn.execute(
+            f"SELECT {', '.join(_CLAIM)} FROM plaud_requests "
+            f"WHERE state = 'queued' AND {_LEADS}{unless} ORDER BY id LIMIT 1",
+            skipped,
+        )
+        found = cursor.fetchone()
+        if found is None:
             return None
+        row = dict(zip((d[0] for d in cursor.description), found, strict=True))
         try:
-            plaud_ids, recording_ids = json.loads(row[3]), json.loads(row[4])
+            plaud_ids, recording_ids = (
+                json.loads(row["plaud_ids"]),
+                json.loads(row["recording_ids"]),
+            )
             claimed = Claimed(
-                id=row[0],
+                id=row["id"],
                 request=PlaudRequest(
-                    request_id=row[1],
-                    kind=row[2],
+                    request_id=row["request_id"],
+                    kind=row["kind"],
                     plaud_ids=tuple(str(p) for p in plaud_ids),
                     recording_ids=tuple(str(r) for r in recording_ids),
-                    select_all=bool(row[5]),
+                    select_all=bool(row["select_all"]),
                 ),
-                queued_at=_stamp(row[6]),
+                queued_at=_stamp(row["queued_at"]),
             )
         except (ValueError, TypeError):  # an unreadable column or time
             conn.execute(
                 "UPDATE plaud_requests SET state = 'failed', finished_at = ?, message = ? "
-                "WHERE id = ?",
-                (utc_iso(now), UNREADABLE_ROW, row[0]),
+                f"WHERE id = ? OR (state = 'queued' AND {_FOLLOWS} = ?)",
+                (utc_iso(now), UNREADABLE_ROW, row["id"], row["request_id"]),
             )
             return None
         conn.execute(
-            "UPDATE plaud_requests SET state = 'running', started_at = ?, message = ? WHERE id = ?",
-            (utc_iso(now), RUNNING, row[0]),
+            "UPDATE plaud_requests SET state = 'running', started_at = ?, message = ? "
+            f"WHERE id = ? OR (state = 'queued' AND {_FOLLOWS} = ?)",
+            (utc_iso(now), RUNNING, row["id"], row["request_id"]),
         )
     return claimed
 
@@ -300,11 +391,16 @@ def _stamp(raw: object) -> datetime:
     return when
 
 
-def progress(state: State, request_id: str, *, done: int, total: int) -> None:
+def progress(
+    state: State, request_id: str, *, done: int, total: int, message: str | None = None
+) -> None:
+    """A running request's progress ({"done", "total"}), and its followers'; with `message`, its
+    words too ("Importing": the screen adds "(5 of 31)")."""
     with state.db() as conn:
         conn.execute(
-            "UPDATE plaud_requests SET progress = ? WHERE request_id = ? AND state = 'running'",
-            (json.dumps({"done": done, "total": total}), request_id),
+            "UPDATE plaud_requests SET progress = ?, message = COALESCE(?, message) "
+            f"WHERE state = 'running' AND (request_id = ? OR {_FOLLOWS} = ?)",
+            (json.dumps({"done": done, "total": total}), message, request_id, request_id),
         )
 
 
@@ -316,15 +412,17 @@ def _end(
     result: Mapping[str, Any] | None,
     now: datetime,
 ) -> None:
+    """The row's end, and its followers' (still queued or running): the same answer for each."""
     with state.db() as conn:
         conn.execute(
             "UPDATE plaud_requests SET state = ?, finished_at = ?, message = ?, result = ? "
-            "WHERE request_id = ?",
+            f"WHERE request_id = ? OR (state IN ('queued', 'running') AND {_FOLLOWS} = ?)",
             (
                 ended,
                 utc_iso(now),
                 message,
                 json.dumps(dict(result)) if result else None,
+                request_id,
                 request_id,
             ),
         )
@@ -360,12 +458,21 @@ def at_start(state: State, *, now: datetime) -> tuple[int, int]:
 
 
 def expire(state: State, *, now: datetime) -> int:
+    """Rows queued more than an hour ago expire; so does a follower whose leader has ended, or
+    is gone, without taking it along (a crash between the two writes, a pruned row)."""
     with state.db() as conn:
-        return conn.execute(
+        expired = conn.execute(
             "UPDATE plaud_requests SET state = 'expired', finished_at = ?, message = ? "
             "WHERE state = 'queued' AND datetime(queued_at) < datetime(?)",
             (utc_iso(now), EXPIRED, utc_iso(now - EXPIRE_AFTER)),
         ).rowcount
+        orphans = conn.execute(
+            "UPDATE plaud_requests SET state = 'expired', finished_at = ?, message = ? "
+            f"WHERE state = 'queued' AND {_FOLLOWS} IS NOT NULL AND {_FOLLOWS} NOT IN "
+            "(SELECT request_id FROM plaud_requests WHERE state IN ('queued', 'running'))",
+            (utc_iso(now), EXPIRED),
+        ).rowcount
+        return expired + orphans
 
 
 def prune(state: State, *, now: datetime) -> int:

@@ -201,7 +201,11 @@ smoke test on purpose until someone does the steps below:
   every kind not in it, and web refuses one before inserting it); `gate.GATE_ALLOWED` only if it
   writes no snapshot; `check_request` in `recordings_ui/plaud.py` for what the kind may carry,
   with `KIND_LABELS`; `PlaudKind` in `types.ts` and `kindReason` in `usePlaud.tsx` for the
-  button; a run that holds `plaud` gets its job in `runlock.JOBS` and `JOB_LABELS`. Then the pins:
+  button; a run that holds `plaud` gets its job in `runlock.JOBS` and `JOB_LABELS`, and its kind
+  in `worker.PLAUD_KINDS` (it then waits, queued, while another run holds `plaud`); a kind whose
+  second press while one is queued should follow it goes in `requests.COALESCED`, with its rule in
+  `requests._coalesce`. A sync-shaped kind runs `plaud.sync.run_sync` through
+  `worker._sync_request` (Compare, Sync now and the imports are the examples). Then the pins:
   `test_plaud_requests.py`'s HANDLED test, `test_plaud_requests_ui.py`'s refused kinds and
   `test_plaud_views.py`'s `handled` lists. Accept this listing (`accept`) is the worked example.
 - **Tagging's logs carry fixed phrases,** IDs, counts and exception class names: never a tag

@@ -118,6 +118,40 @@ word, compares, and brings in what is waiting.
 - To turn the schedule off for a while (maintenance), set `[plaud] schedule_minutes = 0` and
   restart the worker; set it back to 20 afterwards. While it is off, the check emails after 2 hours.
 
+## The Sync screen's buttons: Compare, Sync now, Import, Park
+
+The Sync screen (**Add**) asks the server's worker to do something now. Every press is answered
+within a second ("Queued"), and the screen follows it until it ends; the newest result line stays
+on the screen, so a phone that slept through the toast still sees it.
+
+**What you see**
+
+- **Compare** reads Plaud's whole list and fills in the equations and **Not here yet**. It imports
+  nothing and changes nothing in the archive. It is the one button that works before the first
+  catch-up. It answers "Compared: listed 120 = here 98 + waiting 3 + excluded 14 + missing 5".
+- **Sync now** is the scheduled sync, now, with no limit on how many come in. It answers "Synced: 2
+  imported (1 private) · All here", "Synced: nothing new · All here", "Synced: 1 imported (0
+  private) · 1 failed · See Status", or why it couldn't run: "Held: see Status", "Rate limited
+  until 14:40 · See Status", "Sign-in needed · See Status".
+- **Import all** brings in every recording not here yet that can come in, those that failed 3
+  times included, but not the ones that need your review after a rebuild. **Import selected**
+  brings in the ones you ticked, review rows included. While it runs: "Importing (5 of 31)"; at
+  the end: "31 imported · 4 arrived private", with **View**, which opens Untagged.
+- Pressing **Sync now** or **Compare** again while one is still queued answers "Already queued":
+  one sync answers all the presses. **Sync now** pressed while a Compare is queued turns that
+  Compare into the sync. Imports queued together run as one.
+- While a long run holds the sync on the server (the first catch-up, say), a press waits its turn
+  ("Queued after the current sync (started 14:20)"). If nothing runs it within the hour (the
+  worker is down, or the long run takes longer), it expires and says so: press it again then.
+- **Park**, on a row that "failed 3 times", stops it counting against "All here", and syncs leave
+  it alone. **Unpark**, under Parked, puts it back as it was; **Import selected** tries it again
+  whenever you like.
+
+**What to do**
+
+- Nothing, usually: the scheduled sync does all of this every 20 minutes.
+- A recording that keeps failing: check it plays in Plaud's app, then **Park** it.
+
 ## Renaming a recording in Plaud after it came in
 
 Each sync reads every title Plaud lists, and checks the ones that changed since it last looked.

@@ -130,14 +130,17 @@ def answer(state: State, n: int) -> tuple:
     return reply.state, reply.message
 
 
-def test_the_worker_handles_keep_it_here_accept_and_release_so_far():
+def test_the_worker_handles_what_each_area_has_built_so_far():
     # why: decision 2. A button whose handler comes in a later area is disabled with NOT_YET,
     # and a crafted request for it is refused before any row is inserted. Phase 1 handled Keep it
-    # here; Phase 2's area A3 adds Accept this listing, and A4 Release's preview, Let it in and
-    # Undo. HANDLED and the worker's handlers agree.
+    # here; Phase 2's area A3 adds Accept this listing, A4 Release's preview, Let it in and Undo,
+    # and A5 Compare, Sync now, the imports, Park and Unpark. HANDLED and the worker's handlers
+    # agree; Re-sync, Sync everything and Accept these changes are Phase 3's.
     release = {"release-preview", "release", "unrelease"}
-    assert HANDLED == {"keep-here", "accept", *release} == set(worker_module.HANDLERS)
+    sync = {"compare", "sync", "import", "park", "unpark"}
+    assert HANDLED == {"keep-here", "accept", *release, *sync} == set(worker_module.HANDLERS)
     assert HANDLED.issubset(KINDS)
+    assert set(KINDS) - HANDLED == {"resync", "full", "accept-changes"}
     assert NOT_YET == "Comes with the next part of stage 2b."
 
 
@@ -246,7 +249,7 @@ def test_a_kind_the_worker_cant_handle_yet_is_refused_never_run(setup, make_work
         w.tick()
         assert answer(w.state, n) == ("refused", NOT_YET), kind
     w.db.put(K_CATCH_UP_DONE, T0.isoformat(), now=T0)  # the gate opens
-    insert(w.state, req("import", 99, plaud_ids=(PLAUD_A,)))
+    insert(w.state, req("full", 99))
     w.tick()
     assert answer(w.state, 99) == ("refused", NOT_YET)
 
@@ -336,6 +339,62 @@ def test_a_deadline_that_passes_before_the_insert_rolls_it_back(state, monkeypat
             state, req("keep-here", 1, recording_ids=(R1,)), now=T0, timezone_name=TZ, deadline=1.0
         )
     assert rows(state) == []
+
+
+def test_a_deadline_that_passes_during_the_insert_rolls_it_back_before_the_commit(
+    state, monkeypatch
+):
+    # why: the phase-end list's Task 14 row. The deadline is checked once more after the INSERT,
+    # right before the commit: an INSERT that took the rest of the time is rolled back, no row.
+    up(state)
+    clock = [0.0]
+    monkeypatch.setattr(requests, "monotonic", lambda: clock[0])
+    real = requests.utc_iso
+
+    def slow_stamp(when):
+        clock[0] = 5.0  # the INSERT's own values took longer than the time left
+        return real(when)
+
+    monkeypatch.setattr(requests, "utc_iso", slow_stamp)
+    with pytest.raises(NotSaved):
+        requests.insert(
+            state, req("keep-here", 1, recording_ids=(R1,)), now=T0, timezone_name=TZ, deadline=1.0
+        )
+    assert rows(state) == []
+
+
+def test_a_follower_takes_its_leaders_end_and_an_orphan_expires(state):
+    # §9.3's coalescing at the row level: a follower is never claimed; it runs and ends with its
+    # leader; one whose leader ended without it (a crash between the two writes) expires.
+    up(state)
+    assert insert(state, req("sync", 1)).message == QUEUED
+    assert insert(state, req("compare", 2)).message == requests.ALREADY_QUEUED
+    claimed = requests.claim_next(state, now=T0)
+    assert claimed.request.request_id == "request-0001"
+    assert requests.claim_next(state, now=T0) is None  # the follower is never claimed
+    assert rows(state) == [("sync", "running"), ("compare", "running")]
+    requests.progress(state, "request-0001", done=1, total=2, message="Importing")
+    assert requests.read(state, "request-0002").progress == {"done": 1, "total": 2}
+    requests.finish(state, "request-0001", ok=True, message="Synced: done", now=T0)
+    assert answer(state, 2) == ("done", "Synced: done")
+    # An orphan: its leader ended, it didn't (written by hand, as a crash would leave it).
+    insert(state, req("sync", 3))
+    insert(state, req("sync", 4))
+    with state.db() as db:
+        db.execute("UPDATE plaud_requests SET state = 'done' WHERE request_id = 'request-0003'")
+    assert requests.expire(state, now=T0) == 1
+    assert answer(state, 4) == ("expired", EXPIRED)
+
+
+def test_the_worker_claims_nothing_it_is_told_to_skip(state):
+    # §9.4: a request waits its turn while another run holds `plaud`; the others are served.
+    up(state)
+    insert(state, req("sync", 1))
+    insert(state, req("keep-here", 2, recording_ids=(R1,)))
+    claimed = requests.claim_next(state, now=T0, skip=frozenset({"sync"}))
+    assert claimed.request.request_id == "request-0002"
+    assert answer(state, 1)[0] == "queued"
+    assert requests.claim_next(state, now=T0).request.request_id == "request-0001"
 
 
 def test_a_handler_that_raises_fails_the_request_and_logs_no_text(

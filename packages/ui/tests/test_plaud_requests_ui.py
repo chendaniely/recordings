@@ -123,12 +123,12 @@ def test_accept_names_nothing_and_is_inserted(archive, run):
 
 
 def test_a_kind_with_no_handler_yet_is_refused_before_any_row(archive, run):
-    # C5.18: before the first catch-up an import request is refused; every kind the worker has no
-    # handler for yet (all but Keep it here, Accept and Release's three) waits for a later area,
-    # so web refuses it with NOT_YET and inserts nothing.
+    # C5.18: every kind the worker has no handler for yet (Re-sync, Sync everything and Accept
+    # these changes, Phase 3's) waits for a later area, so web refuses it with NOT_YET and
+    # inserts nothing. (The import's refusal before the first catch-up is the worker's gate.)
     _, state, _ = archive
     later = [k for k in KINDS if k not in HANDLED]
-    assert "import" in later and len(later) == 8
+    assert later == ["resync", "full", "accept-changes"]
     for kind in later:
         assert check_request(raw(kind=kind)) == Refusal("abcdef12", NOT_YET), kind
         reply = run(submit(state, raw(kind=kind), now=T0, timezone_name="UTC", reason=None))
@@ -150,7 +150,8 @@ def test_no_writable_state_refuses_with_a_reason(archive, run):
     reply = run(submit(None, raw(), now=T0, timezone_name="UTC", reason=None))
     assert (reply["state"], reply["message"]) == ("refused", NO_STATE_REASON)
     # the demo's reason comes before NOT_YET, as the buttons show it
-    reply = run(submit(state, raw(kind="compare"), now=T0, timezone_name="UTC", reason=DEMO_REASON))
+    compare = raw(kind="compare", recording_ids=[])
+    reply = run(submit(state, compare, now=T0, timezone_name="UTC", reason=DEMO_REASON))
     assert (reply["state"], reply["message"]) == ("refused", DEMO_REASON)
     assert count(state) == 0
 
@@ -242,9 +243,30 @@ def test_the_request_checks_import_without_sqlite3():
 
 def test_a_plaud_id_is_under_128_characters():
     # why: spec §9.3, "under 128 characters".
-    ok = check_request(raw(kind="import", plaud_ids=["x" * 127]))
-    assert ok == Refusal("abcdef12", NOT_YET)  # it passes the checks; its handler comes later
-    assert check_request(raw(kind="import", plaud_ids=["x" * 128])) == Refusal("abcdef12", BAD_ID)
+    ok = check_request(raw(kind="import", plaud_ids=["x" * 127], recording_ids=[]))
+    assert isinstance(ok, PlaudRequest) and ok.plaud_ids == ("x" * 127,)
+    too_long = raw(kind="import", plaud_ids=["x" * 128], recording_ids=[])
+    assert check_request(too_long) == Refusal("abcdef12", BAD_ID)
+
+
+def test_the_sync_kinds_carry_only_what_they_use():
+    # why: spec §9.3, a request never carries a title, and the worker takes nothing on trust.
+    # Compare and Sync now name nothing; an import names Plaud IDs, or all; Park and Unpark name
+    # Plaud IDs (a recording's parking, its checks, is area B2's: NOT_YET).
+    for kind in ("compare", "sync"):
+        assert isinstance(check_request(raw(kind=kind, recording_ids=[])), PlaudRequest)
+        assert check_request(raw(kind=kind)) == Refusal("abcdef12", UNREADABLE)
+        assert check_request(raw(kind=kind, recording_ids=[], all=True)).message == UNREADABLE
+    assert check_request(raw(kind="import", recording_ids=[])).message == UNREADABLE
+    assert check_request(raw(kind="import")).message == UNREADABLE
+    assert isinstance(check_request(raw(kind="import", recording_ids=[], all=True)), PlaudRequest)
+    pid = "of_" + "0" * 31 + "1"
+    for kind in ("park", "unpark"):
+        assert isinstance(
+            check_request(raw(kind=kind, recording_ids=[], plaud_ids=[pid])), PlaudRequest
+        )
+        assert check_request(raw(kind=kind)) == Refusal("abcdef12", NOT_YET)
+        assert check_request(raw(kind=kind, recording_ids=[])).message == UNREADABLE
 
 
 def test_keep_it_here_never_carries_what_it_doesnt_use():

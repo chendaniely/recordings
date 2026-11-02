@@ -128,13 +128,18 @@ def test_accept_is_refused_when_a_consent_listed_id_vanished_with_an_id_change(s
     assert setup.db.get(K_HOLD) is not None
 
 
-def test_accept_answers_busy_while_another_run_holds_plaud(setup, worker):
+def test_accept_waits_its_turn_while_another_run_holds_plaud(setup, worker):
+    # §9.4: "A request waits its turn" (area A5): it stays queued while the run holds the sync,
+    # and is served at the first tick after.
     setup.db.put(K_CATCH_UP_DONE, T0.isoformat(), now=T0)
     hold_a_listing(setup.db)
     with plaud_run(worker.state, "plaud-catch-up", timeout=0, now=T0):
         reply = ask(worker)
-    assert (reply.state, reply.message) == ("failed", "skipped: busy (`plaud-catch-up`)")
+    assert reply.state == "queued" and reply.message.startswith("Queued after the current sync")
     assert setup.db.get(K_HOLD) is not None
+    worker.tick()
+    reply = requests.read(worker.state, "request-0001")
+    assert reply.state == "done" and setup.db.get(K_HOLD) is None
 
 
 def test_the_cli_accepts_the_catch_ups_held_listing(setup, monkeypatch, capsys):

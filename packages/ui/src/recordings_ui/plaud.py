@@ -5,8 +5,9 @@ The browser's `plaud_request` input is checked here, then inserted as a row in s
 `plaud_requests` (recordings.plaud.requests.insert) on `asyncio.to_thread`: never on the event
 loop, and never on the tag service's writer or reader thread, where it would wait behind a tag
 batch. The worker claims the row and checks it again; nothing in it is taken on trust, and a
-request never carries a title. A kind the worker has no handler for yet (anything but Keep it
-here, in Phase 1) is refused here with NOT_YET, so no row is ever inserted for it.
+request never carries a title. A kind the worker has no handler for yet (not in
+`requests.HANDLED`: Re-sync, Sync everything and Accept these changes until Phase 3) is refused
+here with NOT_YET, so no row is ever inserted for it.
 
 It imports no Plaud client, token store or sync module (test_plaud_imports.py asserts it). It
 also imports on the Pages demo's Pyodide (Python 3.12, no sqlite3, fcntl or threads): state.db is
@@ -130,10 +131,16 @@ def check_request(raw: object) -> PlaudRequest | Refusal:
             return Refusal(request_id, BAD_ID)
     if kind == "keep-here" and (plaud_ids or select_all):
         return Refusal(request_id, UNREADABLE)  # it uses recording IDs alone, and carries no more
-    if kind == "accept" and (plaud_ids or recording_ids or select_all):
-        return Refusal(request_id, UNREADABLE)  # it accepts the held listing, and names nothing
+    if kind in ("accept", "compare", "sync") and (plaud_ids or recording_ids or select_all):
+        return Refusal(request_id, UNREADABLE)  # they act on the listing, and name nothing
     if kind in RELEASE_KINDS and (len(plaud_ids) != 1 or recording_ids or select_all):
         return Refusal(request_id, UNREADABLE)  # Release names one Plaud ID, and nothing else
+    if kind == "import" and (recording_ids or not (plaud_ids or select_all)):
+        return Refusal(request_id, UNREADABLE)  # Plaud IDs not here, or all of them
+    if kind in ("park", "unpark") and (select_all or not (plaud_ids or recording_ids)):
+        return Refusal(request_id, UNREADABLE)
+    if kind in ("park", "unpark") and recording_ids:
+        return Refusal(request_id, NOT_YET)  # a recording's parking (its checks) is area B2's
     if kind not in HANDLED:
         return Refusal(request_id, NOT_YET)  # its handler comes with a later phase
     return PlaudRequest(
