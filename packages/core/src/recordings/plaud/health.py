@@ -36,10 +36,11 @@ from recordings.plaud.checks import (
     K_FAILING,
     K_LAST_PING,
     K_LAST_TURN,
+    K_RATE_LIMIT,
     PlaudDB,
 )
 from recordings.plaud.settings import BAD_WORD
-from recordings.plaud.when import local_hhmm, parse_stamp
+from recordings.plaud.when import local_hhmm, parse_stamp, utc_iso
 from recordings.state import State
 
 Cause = Literal["listing", "disk", "work"]
@@ -156,6 +157,20 @@ def clear_blocker(db: PlaudDB, name: str) -> None:
     if name not in BLOCKERS:
         raise ValueError(f"{name!r} is not a blocker")
     db.delete(BLOCKER_PREFIX + name)
+
+
+def record_rate_limit(db: PlaudDB, until: datetime, *, now: datetime) -> None:
+    """A run ended "rate limited until 14:40" (§10.2): the client's `PlaudRateLimited.until`.
+    Scheduled turns make no Plaud call before it (§9.7 case 2); `at` tells the sweep a 429 came."""
+    db.put(K_RATE_LIMIT, {"until": utc_iso(until), "at": utc_iso(now)}, now=now)
+
+
+def rate_limit_wait(db: PlaudDB, *, now: datetime) -> datetime | None:
+    """When the rate limit's wait ends, while it is still running at `now`; else None. A value
+    nobody can read is no wait: at worst one more call meets the 429 and records it again."""
+    value = db.get(K_RATE_LIMIT)
+    until = parse_stamp(value.get("until")) if isinstance(value, dict) else None
+    return until if until is not None and until > now else None
 
 
 def record_turn(

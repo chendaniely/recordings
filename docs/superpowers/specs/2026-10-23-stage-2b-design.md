@@ -928,7 +928,14 @@ grace unless the runbook paused it because the sync is meant to stay off (§17.5
 - **stdlib `urllib`,** like `alerts.py`: no new dependency, nothing that logs URLs.
 - **Timeouts:** 10 seconds to connect, 60 to read. A download has a stall rule instead: no bytes for
   60 seconds, or under 50 KB/s on average after its first minute, or longer than a ceiling scaled
-  from `Content-Length`.
+  from `Content-Length`. The average is counted from the first answer, across resumes, and holding
+  it bounds the download by `Content-Length` / 50 KB/s, which is that ceiling.
+- **Resume** (S11's rule, §18; S11 skipped, so a guess): a download whose connection drops resumes
+  from the bytes it has with `Range`, and `If-Range` against a strong ETag, up to 3 times. A server
+  that answers the whole body instead (Range not honoured, or the object changed) restarts it from
+  zero, once; another length is refused. An expired link is swapped, once, for the caller's fresh
+  one (the envelope fetched again, with its checks). `Content-Length` is handed to the disk guard
+  (§11.5 step 5) before any byte is written.
 - **Nothing secret or personal in logs.** No token, header, refresh reply, presigned query
   (`X-Amz-…`), body or title. A Plaud ID appears as the first 8 hex characters of the SHA-256 of its
   canonical form. Every error the client raises is its own class with a fixed message, raised `from
@@ -940,20 +947,30 @@ grace unless the runbook paused it because the sync is meant to stay off (§17.5
 
 ### 10.2 Errors, pacing and budgets
 
-- **Pacing:** one call at a time, at most one a second on average. S10 may change it.
+- **Pacing:** one call at a time, at most one a second on average. S10 may change it. Every request
+  counts, API calls and presigned links alike (§14.2's 600-call budget counts both): each starts at
+  least a second after the one before, through one throttle per process.
 - **A scheduled run's budget** is 10 minutes of calls. Imports from the CLI and the Sync screen have
-  no budget; a download under way finishes under its stall rule.
+  no budget; a download under way finishes under its stall rule. Once it is spent no API call
+  starts, and the run ends; the blocks of an envelope already fetched still come, as a download
+  under way does.
 - **429:** a `Retry-After` within the budget is waited out, in 5-second slices (the heartbeat thread
   keeps writing). A longer one ends the run, "rate limited until 14:40", and the next run waits. The
-  sweep's cap halves, then grows back by one per good run.
+  sweep's cap halves, then grows back by one per good run. A 429 with no `Retry-After` in seconds,
+  or a third in a row on one call, ends the run too; with no budget, a wait of up to 10 minutes is
+  waited out. The run records the wait (`plaud_state.rate_limit`), and scheduled turns make no
+  Plaud call until it ends (§9.7 case 2).
 - **5xx and timeouts:** retried with backoff (30 seconds, doubling, with jitter). Three in a row of
-  one kind end the run: "Plaud unavailable".
+  one kind end the run: "Plaud unavailable". On one call, 5xx, 408 and timeouts are one kind; the
+  jitter only lengthens a wait, and a wait that would pass the budget's end ends the run at once.
+  A storage host down three times in a row ends the run as the API does.
 - **Connection failures** end the run: "offline".
 - **One recording failing** is retried once, then counted. Its next attempt backs off. After 3
   failures in a row it joins Status's failing list (§15.2) and stops counting as an attempt (§11.7).
 - **A link that answers 403 or has expired:** the envelope is fetched again, once. If its blocks
   still fail, the check is **degraded** (§14.1). Links are never stored. Both lifetimes the sources
-  give (300 seconds for content, 24 hours for audio) work with this; S8 measures them.
+  give (300 seconds for content, 24 hours for audio) work with this; S8 measures them. A storage
+  host's 400, 401, 403 or 410 is an expired link (`PlaudLinkExpired`), never the API's 403.
 - **A short body or broken JSON** fails that fetch, and nothing is written.
 - **A 403 from the API itself** ends the run: "Plaud refused access (403)". It may mean the
   subscription lapsed.
@@ -3198,4 +3215,10 @@ None: every bullet of §20 is planned in a phase.
   changed.
 - 2026-11-01: §10.5's `token-import` exits 69, not 77, when Plaud can't be reached (77 stays for
   a refused token), as area A1 built it: the two failures need different fixes. No decision or
+  scenario changed.
+- 2026-11-02: §10.1 and §10.2 say what area A2 built where the spikes were skipped: pacing counts
+  links too; the budget stops API calls only; a 429 with no `Retry-After`, or a third in a row,
+  ends the run; the rate limit's wait is recorded for the scheduled turns; a link's 4xx is an
+  expired link; a dropped download resumes with `Range` (S11's rule) up to 3 times. The numbers
+  are the spec's own (`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`). No decision or
   scenario changed.

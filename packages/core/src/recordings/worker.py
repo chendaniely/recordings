@@ -70,6 +70,7 @@ from recordings.plaud.health import (
     TurnOutcome,
     clear_blocker,
     open_blocker,
+    rate_limit_wait,
     record_ping,
     record_run,
     record_turn,
@@ -861,12 +862,15 @@ class Worker:
 
     def scheduled_turn(self) -> None:
         """Spec §9.7: a bad keep_out_word, the gate closed, the sign-in paused (no token file, or
-        the one Plaud refused, §10.3) or `plaud` held: each is recorded and pings nothing, with no
-        Plaud call. Otherwise the turn runs under `plaud` (`plaud-sync`), and conclude_turn
-        decides the ping. (The rate-limit wait comes with the client's pacing.)"""
+        the one Plaud refused, §10.3), a rate limit's wait still running (§10.2: a run ended
+        "rate limited until 14:40", `record_rate_limit`) or `plaud` held: each is recorded and
+        pings nothing, with no Plaud call. A rate limit's turn comes back when its wait ends, or
+        an interval later if that is sooner. Otherwise the turn runs under `plaud`
+        (`plaud-sync`), and conclude_turn decides the ping."""
         now = self.clock()
         outcome: TurnOutcome | None = None
         detail: Mapping[str, Any] | None = None
+        until: datetime | None = None
         self.gate = gate_now(self.db)
         if not self.settings.keep_out_word_ok:
             outcome = "idle-config"
@@ -874,6 +878,8 @@ class Worker:
             outcome, detail = "gate", {"reason": self.gate.reason}
         elif (why := signin.paused(self.db, self.settings.token_store)) is not None:
             outcome, detail = "paused", {"why": why}
+        elif (until := rate_limit_wait(self.db, now=now)) is not None:
+            outcome, detail = "rate-limited", {"until": until.isoformat()}
         if outcome is None:
             try:
                 with plaud_run(self.state, "plaud-sync", timeout=TURN_LOCK_WAIT, now=now):
@@ -891,6 +897,8 @@ class Worker:
         self._held_by_gate = outcome == "gate"
         self._held_by_pause = outcome == "paused"
         self._not_before = now + timedelta(minutes=self.settings.schedule_minutes)
+        if outcome == "rate-limited" and until is not None:
+            self._not_before = min(self._not_before, until)
         conclude_turn(self._ctx, None)  # no sync ran: no ping
 
     def _run_turn(self, now: datetime) -> RunOutcome | None:

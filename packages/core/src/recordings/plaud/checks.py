@@ -73,6 +73,9 @@ K_PATTERNS = "patterns"
 K_PATTERNS_PASS = "patterns_pass"
 K_CONSENT = "consent"  # {"read_at": iso, "count": int, ...}: the IDs' count, never the IDs
 K_FULL = "full_sync"
+# {"until": iso, "at": iso}: a 429 whose wait passed the run's budget ended the run at `at`, and
+# scheduled turns make no Plaud call before `until` (§9.7 case 2, §10.2).
+K_RATE_LIMIT = "rate_limit"
 
 
 def judged_key(recording_id: str) -> str:

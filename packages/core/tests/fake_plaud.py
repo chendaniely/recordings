@@ -1,13 +1,21 @@
-"""A fake Plaud server for tests (stage 2b spec §10.6): its transport, its request log and its
-sign-in.
+"""A fake Plaud server for tests (stage 2b spec §10.6): its transport, its request log, its
+sign-in and its faults.
 
 Built like `FakeNtfy` (conftest.py): stdlib `ThreadingHTTPServer`s on 127.0.0.1, each in a daemon
 thread. `api_url` stands in for Plaud's API host and `storage_url` for the storage host that
-presigned links point at. This is §10.6's step 2 (links on a second port, with presigned-style
-queries), step 3 (the sign-in: `FakeSignIn`, the token endpoint and the current user, with token
-expiry read from the same injectable clock as the store) and step 4 (the request log: method,
-path, host and header names, never a value or a body), with routes each test sets. Steps 1, 5 and
-6 (the account, the listing, the faults and Dan's edits) grow with later areas.
+presigned links point at. This is §10.6's
+- step 2's transport (links on a second port, with presigned-style queries: `link`, a `FakeLink`
+  that serves its body whole or by `Range`);
+- step 3 (the sign-in: `FakeSignIn`, the token endpoint and the current user, with token expiry
+  read from the same injectable clock as the store);
+- step 4 (the request log: method, path, host and header names, never a value or a body);
+- step 5 at the transport (§21's faults on the API and on fetches): `fault` answers matching
+  requests with any `Response` (a 5xx, a 429 with its Retry-After, a 401, a 403, an HTML 200, a
+  short body, a timeout, a dropped connection), and a `FakeLink` drops its connection part-way,
+  expires after its first answers, ignores `Range`, or trickles;
+- and step 6's hook (`after`): a change to the account after request number K.
+Steps 1 and 6's account, listing and edits (and §21's listing- and content-shaped faults on top of
+`fault`) grow with later areas.
 
 Importable from outside tests (the live demo reuses it): no pytest at module level. Every title,
 name, token and text it serves is invented.
@@ -15,7 +23,9 @@ name, token and text it serves is invented.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import secrets
 import threading
 import time
@@ -36,6 +46,9 @@ class Response:
     headers: dict[str, str] = field(default_factory=dict)
     hold: float = 0.0  # seconds to keep the connection open, sending nothing, after the body
     delay: float = 0.0  # seconds to wait, sending nothing, before the answer (a timeout)
+    cut: int | None = None  # send only this many bytes of the body, then close (a dropped link)
+    trickle: tuple[int, float] | None = None  # (bytes, seconds): the body in pieces, this slowly
+    reset: bool = False  # close the connection without answering at all
 
 
 @dataclass(frozen=True)
@@ -53,6 +66,142 @@ UNAUTHORIZED = Response(401, b'{"detail": "unauthorized"}', {"Content-Type": "ap
 
 def json_response(payload: object, status: int = 200) -> Response:
     return Response(status, json.dumps(payload).encode(), {"Content-Type": "application/json"})
+
+
+# ---- §21's faults, as answers ---------------------------------------------------------------
+def server_error(status: int = 500) -> Response:
+    return json_response({"detail": "synthetic outage"}, status)
+
+
+def rate_limited(retry_after: int | str | None = None) -> Response:
+    """A 429, with `Retry-After` when given (seconds, or any text a test wants to try)."""
+    headers = {"Content-Type": "application/json"}
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+    return Response(429, b'{"detail": "too many requests"}', headers)
+
+
+def html_page(status: int = 200) -> Response:
+    """An HTML page where JSON was expected (a sign-in wall, a proxy's error page)."""
+    body = b"<html><body>Synthetic page</body></html>"
+    return Response(status, body, {"Content-Type": "text/html"})
+
+
+def short_body(payload: object, *, missing: int = 100) -> Response:
+    """JSON whose Content-Length promises `missing` more bytes than are sent."""
+    answer = json_response(payload)
+    answer.headers["Content-Length"] = str(len(answer.body) + missing)
+    return answer
+
+
+def timeout(seconds: float) -> Response:
+    """No answer for `seconds`: a timeout once the client's read timeout is shorter."""
+    return Response(delay=seconds)
+
+
+def dropped() -> Response:
+    """The connection closes with no answer at all."""
+    return Response(reset=True)
+
+
+# What a storage host answers for a presigned link whose signature has expired.
+EXPIRED_BODY = b"<Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>"
+
+
+def expired_link() -> Response:
+    return Response(403, EXPIRED_BODY, {"Content-Type": "application/xml"})
+
+
+Match = Callable[[str, dict[str, list[str]]], bool]
+
+
+@dataclass
+class Fault:
+    """One injected fault (§10.6 step 5): each request on `host` that `match` (path, query)
+    accepts takes the next of `responses`, the last repeating, `times` answers in all (None: every
+    matching request); then requests are answered as before. `answered` counts them."""
+
+    host: str
+    match: Match
+    responses: tuple[Response, ...]
+    times: int | None
+    answered: int = 0
+
+    def take(self, host: str, path: str, query: dict[str, list[str]]) -> Response | None:
+        spent = self.times is not None and self.answered >= self.times
+        if spent or host != self.host or not self.match(path, query):
+            return None
+        answer = self.responses[min(self.answered, len(self.responses) - 1)]
+        self.answered += 1
+        return answer
+
+
+_RANGE = re.compile(r"bytes=([0-9]{1,15})-", re.ASCII)
+
+
+class FakeLink:
+    """A presigned object on the storage host: its body, served whole, or from byte N with a 206
+    for `Range: bytes=N-` (and `If-Range` against its ETag), as S3 does. Its faults (§21's "on
+    fetches"), each switched on per test:
+    - `ranges` off: every answer is the whole body, whatever was asked (S11 would have said which);
+    - `cuts`: answer number i sends only `cuts[i]` bytes of what it would send, then the
+      connection closes (dropped mid-download, truncated audio);
+    - `expire_after`: from answer number `expire_after` on, every request gets the storage host's
+      403 for an expired signature (a link that expires during a download, or that 403s at once);
+    - `trickle`, `hold`, `status` and `headers`, as a Response's.
+    `starts` records the byte each answer began at (0 for the whole body), never a header."""
+
+    def __init__(
+        self,
+        body: bytes,
+        *,
+        status: int = 200,
+        headers: Mapping[str, str] | None = None,
+        hold: float = 0.0,
+        ranges: bool = True,
+        cuts: tuple[int, ...] | list[int] = (),
+        expire_after: int | None = None,
+        trickle: tuple[int, float] | None = None,
+    ) -> None:
+        self.body, self.status, self.headers, self.hold = body, status, dict(headers or {}), hold
+        self.ranges, self.cuts, self.expire_after, self.trickle = (
+            ranges,
+            tuple(cuts),
+            expire_after,
+            trickle,
+        )
+        self.etag = '"synthetic-' + hashlib.sha256(body).hexdigest()[:16] + '"'
+        self.served = 0
+        self.starts: list[int] = []
+        self._lock = threading.Lock()
+
+    def answer(self, headers: Mapping[str, str]) -> Response:
+        with self._lock:
+            n = self.served
+            self.served += 1
+        if self.expire_after is not None and n >= self.expire_after:
+            return expired_link()
+        if self.status != 200:
+            return Response(self.status, self.body, dict(self.headers), self.hold)
+        start, total = 0, len(self.body)
+        asked = _RANGE.fullmatch((headers.get("Range") or "").strip())
+        if self.ranges and asked and headers.get("If-Range") in (None, self.etag):
+            start = int(asked[1])
+            if start >= total:
+                return Response(416, b"", {"Content-Range": f"bytes */{total}"})
+        with self._lock:
+            self.starts.append(start)
+        extra = {"ETag": self.etag, "Accept-Ranges": "bytes" if self.ranges else "none"}
+        if start:
+            extra["Content-Range"] = f"bytes {start}-{total - 1}/{total}"
+        return Response(
+            206 if start else 200,
+            self.body[start:],
+            {**extra, **self.headers},
+            self.hold,
+            cut=self.cuts[n] if n < len(self.cuts) else None,
+            trickle=self.trickle,
+        )
 
 
 class FakeSignIn:
@@ -191,11 +340,53 @@ class FakePlaud:
     def __init__(self) -> None:
         self.requests: list[LoggedRequest] = []
         self.sign_in: FakeSignIn | None = None  # set by `signed_in`: off, routes answer anyone
+        self.links: dict[str, FakeLink] = {}  # by name, as `link` made them
+        self.faults: list[Fault] = []
         self._routes: dict[tuple[str, str, str], Route] = {}
+        self._hooks: list[tuple[int, Callable[[], None]]] = []
         self._lock = threading.Lock()
         self._servers = {host: self._serve(host) for host in ("api", "storage")}
         self.api_url = f"http://127.0.0.1:{self._servers['api'].server_port}"
         self.storage_url = f"http://127.0.0.1:{self._servers['storage'].server_port}"
+
+    def fault(
+        self,
+        match: str | Match,
+        *responses: Response,
+        host: str = "api",
+        times: int | None = None,
+    ) -> Fault:
+        """Inject a fault (§10.6 step 5, §21): requests on `host` to the path `match` (or that
+        `match(path, query)` accepts) take `responses` in turn, the last repeating, `times`
+        answers in all (None: for ever). Faults are tried in the order added, before the sign-in
+        and the routes: "a failure on page K only" is `fault(lambda p, q: q.get("page") ==
+        ["K"], server_error())`."""
+        if not responses:
+            raise ValueError("a fault needs at least one response")
+        test = match if callable(match) else (lambda path, _query, want=match: path == want)
+        injected = Fault(host, test, tuple(responses), times)
+        with self._lock:
+            self.faults.append(injected)
+        return injected
+
+    def after(self, k: int, hook: Callable[[], None]) -> None:
+        """Run `hook` once, after request number `k` (counted from 1, as the request log counts)
+        and before request k + 1 is answered: §10.6 step 6's change to the account mid-run."""
+        with self._lock:
+            self._hooks.append((k, hook))
+
+    def _injected(self, host: str, path: str, query: dict[str, list[str]]) -> Response | None:
+        with self._lock:
+            for injected in self.faults:
+                if (answer := injected.take(host, path, query)) is not None:
+                    return answer
+        return None
+
+    def _due_hooks(self, count: int) -> list[Callable[[], None]]:
+        with self._lock:
+            due = [hook for k, hook in self._hooks if k + 1 == count]
+            self._hooks = [(k, hook) for k, hook in self._hooks if k + 1 != count]
+        return due
 
     def signed_in(
         self, clock: Callable[[], datetime] | None = None, **kwargs: object
@@ -210,6 +401,14 @@ class FakePlaud:
 
         class Handler(BaseHTTPRequestHandler):
             def _respond(self, parts) -> Response:
+                query = parse_qs(parts.query)
+                if (injected := outer._injected(host, parts.path, query)) is not None:
+                    return injected
+                if host == "storage" and self.command == "GET":
+                    with outer._lock:
+                        stored = outer.links.get(parts.path.removeprefix("/"))
+                    if stored is not None:
+                        return stored.answer(self.headers)
                 sign_in = outer.sign_in
                 if host != "api" or sign_in is None:
                     return outer._route(host, self.command, parts)
@@ -229,7 +428,13 @@ class FakePlaud:
                 names = tuple(sorted({name.lower() for name in self.headers}))
                 with outer._lock:
                     outer.requests.append(LoggedRequest(self.command, parts.path, host, names))
+                    count = len(outer.requests)
+                for hook in outer._due_hooks(count):
+                    hook()
                 response = self._respond(parts)
+                if response.reset:
+                    self.close_connection = True
+                    return
                 if response.delay:
                     time.sleep(response.delay)
                 self.send_response(response.status)
@@ -240,9 +445,22 @@ class FakePlaud:
                     self.send_header(name, value)
                 self.end_headers()
                 if self.command != "HEAD":
-                    self.wfile.write(response.body)
+                    self._body(response)
                     if response.hold:
                         time.sleep(response.hold)
+
+            def _body(self, response: Response) -> None:
+                body = response.body if response.cut is None else response.body[: response.cut]
+                if response.cut is not None:
+                    self.close_connection = True
+                if response.trickle is None:
+                    self.wfile.write(body)
+                    return
+                size, pause = response.trickle
+                for at in range(0, len(body), max(1, size)):
+                    self.wfile.write(body[at : at + max(1, size)])
+                    self.wfile.flush()
+                    time.sleep(pause)
 
             do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = _answer
 
@@ -272,13 +490,27 @@ class FakePlaud:
         status: int = 200,
         headers: Mapping[str, str] | None = None,
         hold: float = 0.0,
+        ranges: bool = True,
+        cuts: tuple[int, ...] | list[int] = (),
+        expire_after: int | None = None,
+        trickle: tuple[int, float] | None = None,
     ) -> str:
-        """Serve `body` at /<name> on the storage host, and return a presigned-style link to it.
-        The signature is synthetic: no test may hold a real one. `hold` keeps the connection open
-        and silent that many seconds after the body, to make a stall."""
-        response = Response(status, body, dict(headers or {}), hold)
+        """Serve `body` at /<name> on the storage host, as a `FakeLink` (`self.links[name]`), and
+        return a presigned-style link to it. The signature is synthetic: no test may hold a real
+        one. `hold` keeps the connection open and silent that many seconds after the body, to
+        make a stall; the other faults are FakeLink's."""
+        stored = FakeLink(
+            body,
+            status=status,
+            headers=headers,
+            hold=hold,
+            ranges=ranges,
+            cuts=cuts,
+            expire_after=expire_after,
+            trickle=trickle,
+        )
         with self._lock:
-            self._routes[("storage", "GET", f"/{name}")] = lambda _query: response
+            self.links[name] = stored
         return f"{self.storage_url}/{name}?X-Amz-Signature=synthetic&X-Amz-Expires=300"
 
     def close(self) -> None:

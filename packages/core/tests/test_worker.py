@@ -40,7 +40,7 @@ from recordings.plaud.checks import (
 from recordings.plaud.client import LIST_PATH, PlaudAuthError, PlaudClient, PlaudError
 from recordings.plaud.flags import CONSENT_LATE, PRIVATE_UNWRITTEN
 from recordings.plaud.gate import GATE_FIRST
-from recordings.plaud.health import RunOutcome, sync_health
+from recordings.plaud.health import RunOutcome, rate_limit_wait, record_rate_limit, sync_health
 from recordings.plaud.runlock import plaud_run
 from recordings.plaud.signin import NO_SIGN_IN, REFUSED, paused, record_refused
 from recordings.plaud.tokens import Tokens, TokenStore, check_sign_in, from_vendor
@@ -460,6 +460,62 @@ def test_a_429_from_the_token_endpoint_is_an_outage_not_a_sign_in(against_the_fa
     assert "sign-in" not in health.blockers and health.failing is not None
     assert ntfy.requests == []
     assert paused(t.w.db, t.store.path) is None
+
+
+class RateLimitedTurn:
+    """A stand-in for the sync turn (area A5 builds the real one): its first run imports, then
+    meets a 429 whose Retry-After passes its budget, and records the wait as the run does with
+    the client's `PlaudRateLimited.until`. Every later run is good."""
+
+    def __init__(self, until: datetime) -> None:
+        self.until = until
+        self.calls: list[bool] = []
+
+    def __call__(self, worker: Worker, *, light: bool) -> RunOutcome:
+        self.calls.append(light)
+        if len(self.calls) == 1:
+            record_rate_limit(worker.db, self.until, now=worker.clock())
+            return RunOutcome("good", 2, 1, False, "rate limited until 12:45")
+        return GOOD
+
+
+def test_a_rate_limit_wait_holds_scheduled_turns_until_it_ends(setup, make_worker, ntfy):
+    # §9.7 case 2, §10.2: after a run ended "rate limited until 12:45", scheduled turns make no
+    # Plaud call and ping nothing until then, and Status names the wait; the turn comes back when
+    # the wait ends, not a whole interval after it.
+    clock = Clock()
+    until = T0 + timedelta(minutes=45)
+    turn = RateLimitedTurn(until)
+    w = make_worker(clock, turn=turn)
+    catch_up_done(w)
+    signed_in(setup)
+    w.start()
+    w.tick()  # T0: the run imports, then meets the 429; it was good, so it pings
+    assert turn.calls == [False] and len(ntfy.requests) == 1
+    assert rate_limit_wait(w.db, now=clock()) == until
+    clock.advance(minutes=20)
+    w.tick()
+    assert turn.calls == [False] and len(ntfy.requests) == 1
+    assert last_turn(w) == ("rate-limited", clock(), {"until": until.isoformat()})
+    assert sync_health(w.state, schedule_minutes=20).cause() == "rate limited until 12:45"
+    clock.advance(minutes=20)
+    w.tick()  # +40: still waiting, and the next try comes at 12:45, not at 13:00
+    clock.advance(minutes=4)
+    w.tick()
+    assert turn.calls == [False] and len(ntfy.requests) == 1
+    clock.advance(minutes=1)
+    w.tick()  # 12:45: the wait is over
+    assert turn.calls == [False, False] and len(ntfy.requests) == 2
+    assert last_turn(w)[0] == "ran" and rate_limit_wait(w.db, now=clock()) is None
+
+
+def test_a_rate_limit_record_nobody_can_read_is_no_wait(setup, make_worker):
+    w = make_worker(Clock())
+    for value in ("garbage", {"until": "not a time"}, {"at": T0.isoformat()}, None):
+        w.db.put("rate_limit", value, now=T0)
+        assert rate_limit_wait(w.db, now=T0) is None
+    record_rate_limit(w.db, T0 - timedelta(seconds=1), now=T0)  # already over
+    assert rate_limit_wait(w.db, now=T0) is None
 
 
 def test_due_reads_last_started_and_last_ended_across_a_crash_loop(setup, make_worker):

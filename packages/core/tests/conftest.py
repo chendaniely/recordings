@@ -554,6 +554,17 @@ def other_ntfy():
     server.close()
 
 
+@pytest.fixture(autouse=True)
+def plaud_waits_skipped(monkeypatch):
+    """No test really waits on the Plaud client's pacing or backoff (stage 2b spec §10.2): a
+    Throttle given no `sleep` skips its waits here, as if they had passed. Production keeps
+    `time.sleep`; the tests of the waits inject their own sleep and clocks
+    (test_plaud_throughput.py). A test run in a subprocess paces for real."""
+    from recordings.plaud import client
+
+    monkeypatch.setattr(client, "_sleep", lambda _seconds: None)
+
+
 @pytest.fixture
 def plaud_server():
     """The fake Plaud server (fake_plaud.py): its API and storage ports, and its request log."""

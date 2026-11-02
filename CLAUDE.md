@@ -149,7 +149,12 @@ smoke test on purpose until someone does the steps below:
   refuses every `plaud.ai` host and drops every `*_proxy` variable, for the whole run of pytest's
   own process (not for a subprocess a test starts), and the client's tests use
   the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture; its
-  `signed_in()` turns on the sign-in).
+  `signed_in()` turns on the sign-in, `fault()` injects §21's errors, and `link()` serves a
+  `FakeLink` that honours `Range`, drops, expires or trickles). Every request the client sends
+  goes through its `Throttle` (pacing, the budget, backoff, `Range` resume: spec §10.2), one per
+  process. No test really waits on it: `packages/core/tests/conftest.py` skips the waits of a
+  `Throttle` given no `sleep`, and a test of the waits injects its clocks and sleep
+  (`test_plaud_throughput.py`).
 - **`tokens.json` is a secret** (the Plaud sign-in, `plaud/tokens.py`): used by reference, never
   read or printed, and a Claude session never runs `make plaud-sign-in` or `token-import`. Its
   tests use invented tokens against the fake, and a fake `plaud` and `ssh` on `PATH`. The sign-in's

@@ -33,13 +33,38 @@ own code, relicensed MIT for this repo (main spec §19). The edits, each from §
   `id_hash`.
 - **Timeouts:** 10 seconds to connect, 60 to read. A download also has a stall rule: no bytes for
   60 seconds (the read timeout, which raises `IncompleteDownload`), or under 50 KB/s on average
-  after its first minute. Past that minute, staying above the average also bounds the whole
-  download by Content-Length / MIN_RATE, which is §10.1's ceiling scaled from Content-Length. A
-  download needs a Content-Length (ASCII digits, not 0) and never writes more than it declares.
-  Other answers are read up to 64 MiB.
+  after its first minute, counted from its first answer across its resumes. Past that minute,
+  staying above the average also bounds the whole download by Content-Length / MIN_RATE, which
+  is §10.1's ceiling scaled from Content-Length. A download needs a Content-Length (ASCII digits,
+  not 0) and never writes more than it declares. Other answers are read up to 64 MiB.
 
-Phase 2 sets `PAGE_SIZE` from S5 and adds pacing, the budget and backoff from S5 and S10 (§10.2):
-this copy makes one call when asked and never waits.
+**Throughput (§10.2; area A2 of the build straight through).** Every request goes through a
+`Throttle`, one per process, which A5's run shares between its clients:
+- **Pacing:** one call at a time, each starting at least `PACE` (1 second) after the one before:
+  API calls and presigned links alike, since the budget counts both (§14.2's "600-call budget").
+- **The budget:** inside `Throttle.budget(BUDGET)` (a scheduled run's 10 minutes), an API call
+  that would start after the deadline raises `BudgetSpent` and sends nothing. Links aren't stopped:
+  the blocks of an envelope already fetched, and a download under way, finish (§10.2).
+- **5xx, 408 and timeouts** (`PlaudUnavailable`) are retried after 30 seconds, then 60, each
+  lengthened by up to a quarter at random; the third in a row raises, as does a wait that would
+  pass the budget's end. **Connection failures** (`PlaudOffline`) are never retried.
+- **429:** a `Retry-After` (in seconds) that fits in the budget, or with no budget is at most
+  `MAX_RETRY_AFTER`, is waited out; a longer one, none, or a third 429 in a row raises
+  `PlaudRateLimited` with `until` (when Plaud said it would answer again; None when it didn't say).
+- **Waits run in 5-second slices,** each calling the throttle's `progress`, which the worker points
+  at its heartbeat's progress (§9.2), and which may raise to stop a wait (SIGTERM). A download
+  calls it at every MiB too.
+- **What ends a run** (`ends_the_run`): a sign-in refused, the API's 403, Plaud unavailable after
+  its retries, offline, rate limited past the wait, and the budget spent. Anything else is that
+  one recording's failure (§10.2's "retried once, then counted", the caller's).
+- **Links:** a presigned link that answers 400, 401, 403 or 410 has expired: `PlaudLinkExpired`,
+  never the API's `PlaudForbidden`, so the caller fetches the envelope again, once (§10.2).
+- **`Range` resume** (§18's S11 rule): a download whose connection drops resumes from the bytes it
+  has, with `Range` (and `If-Range` against a strong ETag), up to `MAX_RESUMES` times. A server
+  that answers the whole body instead (Range not honoured, or the object changed) restarts it from
+  zero, once. A link that has expired is swapped, once, for the caller's `fresh_link()`.
+  `PAGE_SIZE` stays audio-router's 100. S5, S10 and S11 were skipped: these numbers are the spec's,
+  and the guesses file says so (docs/superpowers/plans/2026-11-01-stage-2b-guesses.md).
 """
 
 from __future__ import annotations
@@ -49,13 +74,16 @@ import hashlib
 import http.client
 import json
 import os
+import random
+import re
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import quote, urlencode
@@ -71,14 +99,25 @@ FILE_PATH = "/open/third-party/files/{}"
 # runs to refresh. A 404 there falls back to one listing page of PROBE_PAGE_SIZE rows.
 USER_PATH = "/open/third-party/users/me"
 PROBE_PAGE_SIZE = 10  # the smallest page the API takes
-PAGE_SIZE = 100  # as copied (the API rejects anything under 10). Phase 2: S5, S10.
+PAGE_SIZE = 100  # audio-router's (the API rejects anything under 10); S5 skipped: a guess
 CONNECT_TIMEOUT = 10.0
 READ_TIMEOUT = 60.0
 STALL_SECONDS = 60.0  # no bytes for this long
 MIN_RATE = 50_000  # bytes per second on average after the first minute
+# §10.2's numbers (S10 and S11 skipped, so the spec's own stand; §22: change one only with a reason)
+PACE = 1.0  # seconds between the starts of two calls: one at a time, at most one a second
+BUDGET = 600.0  # a scheduled run's 10 minutes of calls; the CLI and the Sync screen have none
+MAX_RETRY_AFTER = BUDGET  # with no budget, the longest Retry-After waited out (a guess)
+BACKOFF = 30.0  # seconds before the first retry after a 5xx or a timeout; it doubles
+JITTER = 0.25  # each backoff is lengthened by up to this share, at random, never shortened
+TRIES = 3  # a third 5xx or timeout in a row on one call raises; a third 429 too
+WAIT_SLICE = 5.0  # a wait runs in slices this long, each one bumping the worker's progress
+MAX_RESUMES = 3  # a download's dropped connections resumed with Range (a guess)
+PROGRESS_BYTES = 1024 * 1024  # a download bumps the worker's progress at every MiB (§9.2)
 USER_AGENT = f"recordings/{__version__}"  # bare urllib's default gets a flat 403 from this API
 _CHUNK = 64 * 1024
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
+_LINK_EXPIRED = frozenset({400, 401, 403, 410})  # how storage hosts refuse a stale signature
 _LIST_KEYS = ("data", "data_list", "files", "items", "list")
 _MAX_BODY = 64 * 1024 * 1024  # an API answer or a block is never near this; more is refused
 
@@ -110,11 +149,16 @@ class PlaudOffline(PlaudError):
 
 
 class PlaudRateLimited(PlaudError):
+    """A 429. `retry_after` is the answer's Retry-After in seconds (None: absent, or not a whole
+    number of seconds); `until` is set when the throttle gives up waiting: when Plaud said it would
+    answer again, for "rate limited until 14:40" and the next run's wait (§10.2), or None."""
+
     message = "rate limited"
 
-    def __init__(self, retry_after: float | None = None) -> None:
+    def __init__(self, retry_after: float | None = None, until: datetime | None = None) -> None:
         super().__init__()
         self.retry_after = retry_after
+        self.until = until
 
 
 class PlaudBadResponse(PlaudError):
@@ -140,8 +184,42 @@ class PlaudLinkRefused(PlaudError):
     message = "a link from Plaud was refused"
 
 
+class PlaudLinkExpired(PlaudError):
+    """A presigned link answered 400, 401, 403 or 410: its signature has expired (§10.2). Never
+    the API's own 403: the caller fetches the envelope again, once, for fresh links."""
+
+    message = "a link from Plaud has expired"
+
+
 class IncompleteDownload(PlaudError):
     message = "the download was short, empty or stalled"
+
+
+class BudgetSpent(PlaudError):
+    """A scheduled run's 10 minutes of calls are spent (§10.2): no API call starts after them."""
+
+    message = "the run's time for Plaud calls is spent"
+
+
+class _Dropped(PlaudError):
+    """A download's connection ended before its last byte: resumed, never raised past `download`."""
+
+
+# What ends a run (§10.2, §10.3), once the throttle's own retries are done: the sign-in, the API's
+# 403, Plaud unavailable or offline, rate limited past the wait, and the budget spent. Every other
+# PlaudError is the one recording's failure, which the caller retries once, then counts.
+RUN_ENDING: tuple[type[PlaudError], ...] = (
+    PlaudAuthError,
+    PlaudForbidden,
+    PlaudUnavailable,
+    PlaudOffline,
+    PlaudRateLimited,
+    BudgetSpent,
+)
+
+
+def ends_the_run(exc: BaseException) -> bool:
+    return isinstance(exc, RUN_ENDING)
 
 
 class TokenSource(Protocol):
@@ -396,6 +474,14 @@ def _from_refresh(exc: urllib.error.HTTPError) -> PlaudError:
     return PlaudBadResponse()
 
 
+def _from_link(exc: urllib.error.HTTPError) -> PlaudError:
+    """A presigned link's answers: a stale signature is PlaudLinkExpired (§10.2), never the API's
+    sign-in or 403; the rest (404, 408, 429, 5xx) read as the API's do."""
+    if exc.code in _LINK_EXPIRED:
+        return PlaudLinkExpired()
+    return _from_http(exc)
+
+
 def _from_transport(
     exc: BaseException, on_short_body: type[PlaudError], *, stall: type[PlaudError] | None = None
 ) -> PlaudError:
@@ -442,8 +528,141 @@ def _guarded(
     raise error from None
 
 
+_sleep = time.sleep  # a Throttle's waits when none is injected (the core tests skip them)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class Throttle:
+    """Pacing, the budget, and riding out Plaud's bad moments (§10.2): every request the client
+    sends goes through `call`. One per process, shared by its clients, so "one call at a time, at
+    most one a second" holds across them. Its clocks, its sleep, its randomness and its progress
+    hook are injected: tests never really wait.
+
+    - `monotonic` paces and measures the budget; `clock` (UTC) says when a rate limit ends.
+    - `progress` is called at every slice of a wait and every MiB of a download, and may raise to
+      stop the wait (the worker's SIGTERM). Counters: `calls` sent, `retries` after a 5xx or a
+      timeout, `rate_limits` (429s answered), for the run's record and the sweep's cap (§14.2).
+    """
+
+    def __init__(
+        self,
+        *,
+        pace: float | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+        rand: Callable[[], float] = random.random,
+        progress: Callable[[], None] | None = None,
+    ) -> None:
+        self.pace = PACE if pace is None else pace
+        self.monotonic, self.sleep, self.clock, self.rand = monotonic, sleep, clock, rand
+        self.progress = progress
+        self.calls = self.retries = self.rate_limits = 0
+        self._last: float | None = None  # when the last call started
+        self._deadline: float | None = None
+        self._lock = threading.RLock()
+
+    # ---- the budget ----------------------------------------------------------------------------
+    @contextlib.contextmanager
+    def budget(self, seconds: float = BUDGET) -> Iterator[Throttle]:
+        """A scheduled run's budget (§10.2), from now: no API call starts after it, and no wait
+        runs past it. Nested, the earlier deadline holds; leaving restores the one before."""
+        previous = self._deadline
+        deadline = self.monotonic() + seconds
+        self._deadline = deadline if previous is None else min(previous, deadline)
+        try:
+            yield self
+        finally:
+            self._deadline = previous
+
+    def left(self) -> float | None:
+        """Seconds of budget left (0 when spent), or None with no budget."""
+        return None if self._deadline is None else max(0.0, self._deadline - self.monotonic())
+
+    def spent(self) -> bool:
+        return self.left() == 0.0
+
+    # ---- the one way out -----------------------------------------------------------------------
+    def call(self, send: Callable[[], Any], *, budgeted: bool) -> Any:
+        """Send one request (`send` raises the client's own errors), paced, retrying a 5xx or a
+        timeout after a backoff and waiting out a 429 that fits. `budgeted`: an API call, which
+        doesn't start once the budget is spent; a link is never stopped by it."""
+        with self._lock:
+            if budgeted and self.spent():
+                raise BudgetSpent() from None
+            unavailable = limited = 0
+            while True:
+                self._pace()
+                self.calls += 1
+                try:
+                    return send()
+                except PlaudUnavailable:
+                    unavailable += 1
+                    delay = BACKOFF * 2 ** (unavailable - 1) * (1 + JITTER * self.rand())
+                    if unavailable >= TRIES or not self._fits(delay):
+                        raise
+                    self.retries += 1
+                except PlaudRateLimited as exc:
+                    self.rate_limits += 1
+                    limited += 1
+                    delay = exc.retry_after
+                    if delay is None:
+                        raise
+                    if limited >= TRIES or not self._fits(delay, MAX_RETRY_AFTER):
+                        exc.until = self.clock() + timedelta(seconds=delay)
+                        raise
+                self._wait(delay)
+
+    def bump(self) -> None:
+        if self.progress is not None:
+            self.progress()
+
+    # ---- helpers -------------------------------------------------------------------------------
+    def _pace(self) -> None:
+        now = self.monotonic()
+        start = now if self._last is None else max(now, self._last + self.pace)
+        if start > now:
+            (self.sleep or _sleep)(start - now)
+        self._last = start
+
+    def _fits(self, seconds: float, ceiling: float | None = None) -> bool:
+        left = self.left()
+        return (left is None or seconds <= left) and (ceiling is None or seconds <= ceiling)
+
+    def _wait(self, seconds: float) -> None:
+        """Wait in WAIT_SLICE slices, bumping the progress after each (§9.2, §10.2)."""
+        remaining = max(0.0, seconds)
+        while remaining > 0:
+            step = min(WAIT_SLICE, remaining)
+            (self.sleep or _sleep)(step)
+            remaining -= step
+            self.bump()
+
+
+_RANGE = re.compile(r"bytes ([0-9]{1,15})-([0-9]{1,15})/([0-9]{1,15})", re.ASCII)
+
+
+def _content_range(value: object) -> tuple[int, int, int] | None:
+    """`bytes first-last/total` as three numbers, or None."""
+    found = _RANGE.fullmatch(value.strip()) if isinstance(value, str) else None
+    return None if found is None else (int(found[1]), int(found[2]), int(found[3]))
+
+
+def _strong_etag(value: object) -> str | None:
+    """An ETag `If-Range` may carry: strong (quoted, no `W/`), visible ASCII, of a sane length."""
+    if not isinstance(value, str):
+        return None
+    tag = value.strip()
+    ok = tag.startswith('"') and tag.endswith('"') and 2 < len(tag) <= 256
+    return tag if ok and tag.isascii() and tag.isprintable() else None
+
+
 class PlaudClient:
-    """Thin, read-only HTTP client: one request function, fixed errors, nothing logged."""
+    """Thin, read-only HTTP client: one request function, fixed errors, nothing logged. Every
+    request goes through `throttle` (a paced one of its own when none is given)."""
 
     def __init__(
         self,
@@ -453,12 +672,14 @@ class PlaudClient:
         monotonic: Callable[[], float] = time.monotonic,
         stall_seconds: float = STALL_SECONDS,
         min_rate: int = MIN_RATE,
+        throttle: Throttle | None = None,
     ) -> None:
         self.tokens = tokens
         self.api_base = check_api_base(api_base)
-        self.monotonic = monotonic
+        self.monotonic = monotonic  # the download's stall rule
         self.stall_seconds = stall_seconds
         self.min_rate = min_rate
+        self.throttle = throttle if throttle is not None else Throttle()
 
     # -- the one request function: GET only -------------------------------------------------
     def _get(
@@ -468,24 +689,52 @@ class PlaudClient:
         token: str | None,
         on_short_body: type[PlaudError],
     ) -> bytes:
-        request = urllib.request.Request(url, method="GET")
+        """One GET through the throttle: with `token`, an API call (budgeted); without, a link."""
+
+        def send() -> bytes:
+            request = urllib.request.Request(url, method="GET")
+            request.add_header("User-Agent", USER_AGENT)
+            opener, from_http = _LINK_OPENER, _from_link
+            if token is not None:
+                # Unredirected: never copied onto a redirect, which _NoRedirect refuses anyway.
+                request.add_unredirected_header("Authorization", f"Bearer {token}")
+                request.add_header("Accept", "application/json, text/plain, */*")
+                opener, from_http = _API_OPENER, _from_http
+            response = _guarded(
+                lambda: opener.open(request, timeout=CONNECT_TIMEOUT),
+                on_short_body,
+                from_http=from_http,
+            )
+            with response:
+                # read(amt) never raises IncompleteRead: http.client returns what it got and
+                # leaves `length` above 0. So a body past the limit, or one that ended before its
+                # Content-Length, is refused as a short-body error.
+                body = _guarded(lambda: response.read(_MAX_BODY + 1), on_short_body)
+                unfinished = bool(getattr(response, "length", None))
+            if len(body) > _MAX_BODY or unfinished:
+                raise on_short_body() from None
+            return body
+
+        return self.throttle.call(send, budgeted=token is not None)
+
+    def _open_link(self, link: str, start: int, etag: str | None) -> http.client.HTTPResponse:
+        """Open a presigned link for a download, through the throttle (never stopped by the
+        budget): from byte `start` with `Range`, and `If-Range` when the first answer gave a
+        strong ETag, so a changed object comes whole instead of spliced."""
+        request = urllib.request.Request(link, method="GET")
         request.add_header("User-Agent", USER_AGENT)
-        opener = _LINK_OPENER
-        if token is not None:
-            # Unredirected: never copied onto a redirect, which _NoRedirect refuses anyway.
-            request.add_unredirected_header("Authorization", f"Bearer {token}")
-            request.add_header("Accept", "application/json, text/plain, */*")
-            opener = _API_OPENER
-        response = _guarded(lambda: opener.open(request, timeout=CONNECT_TIMEOUT), on_short_body)
-        with response:
-            # read(amt) never raises IncompleteRead: http.client returns what it got and leaves
-            # `length` above 0. So a body past the limit, or one that ended before its
-            # Content-Length, is refused as a short-body error.
-            body = _guarded(lambda: response.read(_MAX_BODY + 1), on_short_body)
-            unfinished = bool(getattr(response, "length", None))
-        if len(body) > _MAX_BODY or unfinished:
-            raise on_short_body() from None
-        return body
+        if start:
+            request.add_header("Range", f"bytes={start}-")
+            if etag is not None:
+                request.add_header("If-Range", etag)
+        return self.throttle.call(
+            lambda: _guarded(
+                lambda: _LINK_OPENER.open(request, timeout=CONNECT_TIMEOUT),
+                IncompleteDownload,
+                from_http=_from_link,
+            ),
+            budgeted=False,
+        )
 
     def _signed(self, url: str, token: str) -> bytes | None:
         """One signed-in GET; None for a 401."""
@@ -581,7 +830,9 @@ class PlaudClient:
     def envelope(self, listed_id: str) -> dict:
         """The whole files/{id} answer, for the ID exactly as listed, with block bodies behind a
         `data_link` fetched at once (their links expire within 300 seconds). A block that fails
-        records its error's class name in place, so one unreachable block costs only itself."""
+        records its error's class name in place, so one unreachable block costs only itself; an
+        error that ends the run (Plaud unavailable after its retries, offline, rate limited) is
+        raised instead. The budget never stops the blocks of an envelope already fetched."""
         env = self.get_json(FILE_PATH.format(quote(listed_id, safe="")))
         if not isinstance(env, dict):
             raise PlaudBadResponse()
@@ -598,6 +849,8 @@ class PlaudClient:
                 try:
                     block["data_content"] = self.fetch_link(link).decode("utf-8", "replace")
                 except PlaudError as exc:
+                    if ends_the_run(exc):
+                        raise
                     block["_data_link_error"] = type(exc).__name__
                     continue
                 block["_fetched_from_data_link"] = True
@@ -613,51 +866,157 @@ class PlaudClient:
             check_link(url, api_base=self.api_base), token=None, on_short_body=IncompleteDownload
         )
 
-    def download(self, url: str, dest: Path) -> int:
-        """Stream a presigned link to `dest`. Complete as well as atomic: a body that isn't
-        exactly Content-Length bytes, an empty one, one with no Content-Length, or a stall, is
-        IncompleteDownload, and no file is left. At most Content-Length bytes are ever written.
-        CPython's read(amt) returns b"" at a premature
-        end rather than raising, which once let audio-router rename a 100-byte fragment into
-        place, so the count is compared here (S11 checks the storage host sends the length)."""
+    def download(
+        self,
+        url: str,
+        dest: Path,
+        *,
+        fresh_link: Callable[[], str] | None = None,
+        admit: Callable[[int], None] | None = None,
+    ) -> int:
+        """Stream a presigned link to `dest`, and return its size. Complete as well as atomic: a
+        body that isn't exactly Content-Length bytes, an empty one, one with no Content-Length,
+        or a stall, is IncompleteDownload, and no file is left. At most Content-Length bytes are
+        ever written. CPython's read(amt) returns b"" at a premature end rather than raising,
+        which once let audio-router rename a 100-byte fragment into place, so the count is
+        compared here.
+
+        A connection that drops is resumed with `Range` (S11's rule, §18), and a server that sends
+        the whole body instead restarts it once (see the module's notes). `admit(length)` is
+        called with the Content-Length before any byte is written: §11.5's disk guard raises
+        there to refuse it. `fresh_link()`, called at most once when the link has expired, returns
+        a new link to the same audio (the caller fetches the envelope again, with its checks);
+        without it, an expired link raises PlaudLinkExpired."""
         link = check_link(url, api_base=self.api_base)
-        dest = Path(dest)
-        request = urllib.request.Request(link, method="GET")
-        request.add_header("User-Agent", USER_AGENT)
-        response = _guarded(
-            lambda: _LINK_OPENER.open(request, timeout=CONNECT_TIMEOUT), IncompleteDownload
-        )
-        with response:
-            # The length bounds the download (§10.1's ceiling, §11.5's disk guard): without a
-            # usable one, nothing is written. http.client ignores it for a chunked body, so the
-            # loop also stops the moment a chunk would pass it.
-            expected = _ascii_number(response.headers.get("Content-Length"))
-            if not expected:
-                raise IncompleteDownload() from None
-            # Past here only the file side raises OSError, and it goes up unchanged.
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            part = dest.with_name(dest.name + ".part")
-            written = 0
-            try:
-                with part.open("wb") as fh:
-                    start = self.monotonic()
-                    while chunk := _guarded(
-                        lambda: response.read1(_CHUNK), IncompleteDownload, stall=IncompleteDownload
-                    ):
-                        if written + len(chunk) > expected:
-                            raise IncompleteDownload() from None
-                        fh.write(chunk)
-                        written += len(chunk)
-                        elapsed = self.monotonic() - start
-                        if elapsed > self.stall_seconds and written / elapsed < self.min_rate:
-                            raise IncompleteDownload() from None
-                if written != expected:
+        return _Download(self, link, Path(dest), fresh_link=fresh_link, admit=admit).run()
+
+
+class _Download:
+    """One download's state across its answers: the length the first one declared (which bounds
+    every later one), its strong ETag, the bytes in `.part`, and how many resumes, restarts and
+    fresh links it has used. Only the file side raises OSError, and it goes up unchanged."""
+
+    def __init__(
+        self,
+        client: PlaudClient,
+        link: str,
+        dest: Path,
+        *,
+        fresh_link: Callable[[], str] | None,
+        admit: Callable[[int], None] | None,
+    ) -> None:
+        self.client, self.link, self.dest = client, link, dest
+        self.part = dest.with_name(dest.name + ".part")
+        self.fresh_link, self.admit = fresh_link, admit
+        self.expected: int | None = None
+        self.etag: str | None = None
+        self.written = 0
+        self.start = 0.0
+        self.next_mark = PROGRESS_BYTES
+        self.resumes = 0
+        self.restarted = self.refreshed = False
+
+    def run(self) -> int:
+        try:
+            while True:
+                response = self._open()
+                with response:
+                    mode = self._accept(response)
+                    self._stream(response, mode)
+                if self.written == self.expected:
+                    os.replace(self.part, self.dest)
+                    return self.written
+                if self.resumes >= MAX_RESUMES:  # dropped once too often
                     raise IncompleteDownload() from None
-                os.replace(part, dest)
-            finally:
-                with contextlib.suppress(OSError):  # cleanup must not hide the real error
-                    part.unlink(missing_ok=True)
-        return written
+                self.resumes += 1
+        finally:
+            with contextlib.suppress(OSError):  # cleanup must not hide the real error
+                self.part.unlink(missing_ok=True)
+
+    def _open(self) -> http.client.HTTPResponse:
+        """The next answer: the whole body first, then from `written` on. An expired link is
+        swapped once for `fresh_link()`. A resume refused any other way (416, say) is
+        IncompleteDownload, unless the error ends the run."""
+        while True:
+            if self.expected is not None and self._too_slow():  # the stall rule, across resumes
+                raise IncompleteDownload() from None
+            error: PlaudError
+            try:
+                return self.client._open_link(self.link, self.written, self.etag)
+            except PlaudLinkExpired as exc:
+                error = exc
+            except PlaudError as exc:
+                if not self.written or ends_the_run(exc):
+                    raise
+                error = IncompleteDownload()
+            if not isinstance(error, PlaudLinkExpired) or self.fresh_link is None or self.refreshed:
+                raise error from None
+            self.refreshed = True
+            self.link = check_link(self.fresh_link(), api_base=self.client.api_base)
+
+    def _accept(self, response: http.client.HTTPResponse) -> str:
+        """Check an answer against what is written, and return the file mode for its body: "ab"
+        for a 206 that continues exactly where `.part` ends, "wb" for a whole body."""
+        length = _ascii_number(response.headers.get("Content-Length"))
+        if self.written and response.status == 206:
+            wanted = (self.written, self.expected - 1, self.expected)
+            if _content_range(response.headers.get("Content-Range")) != wanted or (
+                length is not None and length != self.expected - self.written
+            ):
+                raise IncompleteDownload() from None
+            return "ab"
+        # The length bounds the download (§10.1's ceiling, §11.5's disk guard): without a usable
+        # one, nothing is written.
+        if response.status != 200 or not length:
+            raise IncompleteDownload() from None
+        if self.expected is None:
+            self.expected = length
+            if self.admit is not None:
+                self.admit(length)
+            self.dest.parent.mkdir(parents=True, exist_ok=True)
+            self.start = self.client.monotonic()
+        elif length != self.expected:  # another object: never part of this one
+            raise IncompleteDownload() from None
+        if self.written:  # the whole body again: Range not honoured, or the object changed
+            if self.restarted:
+                raise IncompleteDownload() from None
+            self.restarted, self.written = True, 0
+        self.etag = _strong_etag(response.headers.get("ETag"))
+        self.next_mark = PROGRESS_BYTES
+        return "wb"
+
+    def _stream(self, response: http.client.HTTPResponse, mode: str) -> None:
+        """Write the body to `.part` until it ends. A connection that drops just returns, short;
+        a stall (no bytes for READ_TIMEOUT), a body past its length, or a download too slow is
+        IncompleteDownload. http.client ignores the length for a chunked body, so the loop also
+        stops the moment a chunk would pass it."""
+        with self.part.open(mode) as fh:
+            while chunk := self._read(response):
+                if self.written + len(chunk) > self.expected:
+                    raise IncompleteDownload() from None
+                fh.write(chunk)
+                self.written += len(chunk)
+                while self.written >= self.next_mark:
+                    self.client.throttle.bump()
+                    self.next_mark += PROGRESS_BYTES
+                if self._too_slow():
+                    raise IncompleteDownload() from None
+
+    @staticmethod
+    def _read(response: http.client.HTTPResponse) -> bytes:
+        try:
+            return _guarded(lambda: response.read1(_CHUNK), _Dropped, stall=IncompleteDownload)
+        except (_Dropped, PlaudUnavailable, PlaudOffline):  # cut short or reset: resumed
+            return b""
+
+    def _too_slow(self) -> bool:
+        """§10.1's stall rule past its first minute: under MIN_RATE on average, counted from the
+        first answer, so a resume never starts the clock again. Staying above that average also
+        bounds the whole download by Content-Length / MIN_RATE: §10.1's ceiling scaled from
+        Content-Length, which needs no check of its own."""
+        client = self.client
+        elapsed = client.monotonic() - self.start
+        return elapsed > client.stall_seconds and self.written / elapsed < client.min_rate
 
 
 def stamp_meta(listed: Listed, tz_name: str) -> dict:

@@ -365,7 +365,8 @@ def test_a_failed_block_records_its_error_class_never_its_text(plaud_server):
     assert transcript["data_content"] == '[{"content": "Hello."}]'
     assert transcript["_fetched_from_data_link"] is True
     assert summary["data_content"] == "# Summary" and "_data_link_error" not in summary
-    assert refused_note["_data_link_error"] == "PlaudForbidden"
+    # A link's 403 is an expired signature, never the API's 403 that ends the run (§10.2).
+    assert refused_note["_data_link_error"] == "PlaudLinkExpired"
     assert bad_link["_data_link_error"] == "PlaudLinkRefused"
     assert env["_meta"]["enriched_from_links"] == ["transaction"]
     errors = json.dumps([refused_note["_data_link_error"], bad_link["_data_link_error"]])
