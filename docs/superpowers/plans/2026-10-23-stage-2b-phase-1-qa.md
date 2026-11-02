@@ -124,6 +124,34 @@ given. The phase end's step 4 makes it a note (doctor, its test, the runbook's s
 compose smoke's expected problems), and Phase 2's outline turns it back into a problem with
 `make plaud-sign-in`.
 
+## 8. Building the rest of stage 2b straight through (2026-11-01)
+
+Dan, during the phase end: "can we keep going and just have you one-shot the build? we can then just
+have me go through the app to test it out. and you make a docs page about how to use it and its
+features. and we can go and change from there." and "i rather have something working we can build on
+later than try to have something perfect the first time". Then: "if you can have me answer all the
+questions you need in the beginning let's just get those out of the way. otherwise i'd like to go to
+bed and then wake up with a built product with docs and setup instructions and a demo".
+
+So Phases 2 and 3 are built on `stage-2b` without per-phase plans or per-task review rounds; the spike
+sessions are skipped (audio-router's code gives Plaud's shapes, and Dan's testing replaces the
+spikes); the safety rules stay; one privacy review at the end; one PR. Where the spec leaves
+something open, the build takes the most private, fail-closed reading and lists each guess for Dan.
+Two questions were asked first:
+
+**The demo.** Scenario: Dan wakes up and wants to try stage 2b before touching his real Plaud
+account. Options: A (recommended), a live local demo (`make demo-live`: the app and the worker on the
+Mac against the fake Plaud with synthetic recordings), and the public Pages demo with stage 2b's
+screens, canned; B, the canned demo only; C, the live demo only. Dan answered, in his words: "should
+have live and github actions github pages demo": both, the live local demo and the Pages demo that
+GitHub Actions builds and deploys.
+
+**The first real run.** Scenario: after the demo, the real Plaud account and the real archive.
+Options: A (recommended), on the homelab server by the runbook, deploy, `make plaud-sign-in` from the
+Mac, then the first catch-up's dry run, which imports nothing until run for real; B, on the Mac
+against a scratch copy of the archive; C, straight to the server with no dry-run step. Dan chose
+**"Server, dry run first"**, option A. The setup instructions take him there.
+
 ## Calls made for Dan
 
 - **Mode: attended.** Phase PRs wait for Dan's merge, and a change to the spec, one of his decisions
