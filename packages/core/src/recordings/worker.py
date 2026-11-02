@@ -29,6 +29,7 @@ import signal
 import sqlite3
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -144,6 +145,10 @@ def conclude_turn(ctx: TurnContext, ran: RunOutcome | None) -> bool:
 # ---- the process (Task 13): a main thread that owns its Writer, and a heartbeat thread --------
 
 TICK = 2.0  # seconds between the main thread's ticks (spec §9.2, §22)
+# The Plaud cache's stamp is trusted only once its mtime is this old (nanoseconds): a file clock
+# coarser than the time between two writes (a few milliseconds on ext4, a second on some others)
+# could give a write just after the stamp the stamp's own mtime.
+CACHE_SETTLED_NS = 3 * 10**9
 HEARTBEAT = 30.0  # seconds between the heartbeat thread's writes
 ALIVE_HEARTBEAT = timedelta(seconds=90)
 ALIVE_PROGRESS = timedelta(minutes=15)
@@ -416,7 +421,8 @@ class Worker:
         self._late_failed: str | None = None  # that failure's class
         self._index_down: datetime | None = None  # since when the index couldn't answer
         self._logged: LateReport | None = None
-        self._purged: tuple | None = None  # the cache titles last checked: (list, words, mtime)
+        # The cache titles last checked: (list, words, the file's inode, size and mtime before it)
+        self._purged: tuple | None = None
         self._checked = 0  # the patterns pass at start: recordings checked so far
         self._to_check: int | None = None  # and how many it checks, counted once it begins
         self._pass: PatternsPass | None = None  # the last patterns pass that ended; None: none due
@@ -735,14 +741,19 @@ class Worker:
         consent list now names, or a keep-out word now matches, is nulled at the tick, never left
         for the next compare; during a consent stop, or with keep-out words that can't be read,
         every title goes. Asked again only when the list in force, the words or the file
-        changed."""
+        changed. The file's stamp is taken before the purge, so a write that lands during or
+        after it (a CLI run's compare) reads as a change at the next tick; and a stamp younger
+        than CACHE_SETTLED_NS is never kept, since a coarse file clock could give that write the
+        same mtime."""
         if self.cfg.state_path is None:
             return
         path = cache_path(self.cfg.state_path)
+        seen = time.time_ns()  # the file's clock, not self.clock: its mtime is compared with it
         try:
-            stamp = path.stat().st_mtime_ns
+            st = path.stat()
         except FileNotFoundError:
             return  # no listing has run yet
+        stamp = (st.st_ino, st.st_size, st.st_mtime_ns)
         try:
             words: tuple[str, ...] | None = enforced_words(self.db)
         except KeepOutWordsError:
@@ -752,7 +763,8 @@ class Worker:
         hidden = Cache(self.cfg.state_path).purge_titles(consent=self.consent, words=words)
         if hidden:
             log.info("the Plaud cache: %d titles hidden by the consent list or a word", hidden)
-        self._purged = (self.consent, words, path.stat().st_mtime_ns)
+        settled = seen - st.st_mtime_ns >= CACHE_SETTLED_NS
+        self._purged = (self.consent, words, stamp) if settled else None
 
     def _late_consent(self) -> None:
         """Late consent listings (spec §12.1), from the list in force and the index alone. A pass

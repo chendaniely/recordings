@@ -4,6 +4,8 @@ Plaud cache's titles the consent list or a keep-out word now catches (§9.5, the
 Every ID and title is synthetic; nothing here reaches Plaud."""
 
 import json
+import os
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -204,3 +206,81 @@ def test_the_tick_hides_cache_titles_the_consent_list_now_names(setup, worker):
     setup.consent.write_text("- `" + "a" * 31 + "` — a typo\n", encoding="utf-8")
     worker.tick()  # a consent stop: no title of a recording not here is kept
     assert {r.title for r in cache.compare_rows()} == {None}
+
+
+def waiting(n: int, title: str | None) -> CompareRow:
+    return CompareRow(
+        canonical_plaud_id=pid(n),
+        listed_id="of_" + pid(n),
+        bucket="waiting",
+        state="imports at the next sync",
+        excluded_by=None,
+        start_at=T0,
+        duration_ms=60_000,
+        title=title,
+        arrives_private=False,
+        review=False,
+    )
+
+
+def titles_now(cache: Cache) -> dict[str, str | None]:
+    return {r.canonical_plaud_id: r.title for r in cache.compare_rows()}
+
+
+def a_compare_after_each_purge(monkeypatch, state, then=None) -> None:
+    """Cache.purge_titles, then at once a compare (a CLI run's, under `plaud`) that read the list
+    before it named CONSENTED, so it stores that ID's title; then `then()`."""
+    purge = Cache.purge_titles
+
+    def purge_then_a_compare(self, **kw):
+        hidden = purge(self, **kw)
+        rows = [waiting(1, "Synthetic meeting 1"), waiting(99, "Synthetic meeting 99")]
+        Cache(state).replace_compare(rows, at=T0)
+        if then is not None:
+            then()
+        return hidden
+
+    monkeypatch.setattr(Cache, "purge_titles", purge_then_a_compare)
+
+
+def test_a_compare_landing_just_after_the_tick_purge_is_purged_at_the_next_tick(
+    setup, worker, monkeypatch
+):
+    # The outline's P1: the tick stamps the cache file before it purges, so a write that lands
+    # during or just after the purge is looked at again at the next tick, never taken as purged.
+    cache = Cache(setup.state)
+    cache.replace_compare([waiting(1, "Synthetic meeting 1")], at=T0)
+    minute_ago = time.time_ns() - 60 * 10**9
+    os.utime(cache.path, ns=(minute_ago, minute_ago))
+    with monkeypatch.context() as m:
+        a_compare_after_each_purge(m, setup.state)
+        worker.tick()
+    assert titles_now(cache)[CONSENTED] == "Synthetic meeting 99"
+    worker.tick()
+    assert titles_now(cache) == {pid(1): "Synthetic meeting 1", CONSENTED: None}
+
+
+def test_a_write_the_file_clock_cant_tell_from_the_stamp_is_purged_too(setup, worker, monkeypatch):
+    # A coarse file clock (a few milliseconds on ext4, a second on some others) can give a write
+    # right after the stamp the stamp's own mtime. A stamp that recent is never trusted, so the
+    # next tick purges again. The window is widened here so a loaded machine can't outlast it.
+    monkeypatch.setattr("recordings.worker.CACHE_SETTLED_NS", 3600 * 10**9)
+    cache = Cache(setup.state)
+    cache.replace_compare([waiting(1, "Synthetic meeting 1"), waiting(99, None)], at=T0)
+    before = cache.path.stat()
+
+    def same_mtime() -> None:
+        os.utime(cache.path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    with monkeypatch.context() as m:
+        a_compare_after_each_purge(m, setup.state, then=same_mtime)
+        worker.tick()
+    after = cache.path.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    assert titles_now(cache)[CONSENTED] == "Synthetic meeting 99"
+    worker.tick()
+    assert titles_now(cache)[CONSENTED] is None
