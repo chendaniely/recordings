@@ -69,7 +69,8 @@ def test_a_waiting_recording_arrives_whole_with_its_snapshot_and_outputs(scene):
         rec.plaud_id,
     )
     check = scene.db.check_row(loaded.id)
-    assert check.last_checked_at == T0 and not check.settled
+    # Recorded a month before it came in: settled at once (§14.2); its own baseline (§14.5).
+    assert check.last_checked_at == T0 and check.settled and check.baseline_pending
     row = scene.db.listing(rec.plaud_id)
     assert row.title_sha256 == title_hash("Synthetic standup") and row.import_failures == 0
     assert scene.db.get(K_SNAPSHOT_MARK)["count"] == 1

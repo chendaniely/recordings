@@ -123,12 +123,12 @@ def test_accept_names_nothing_and_is_inserted(archive, run):
 
 
 def test_a_kind_with_no_handler_yet_is_refused_before_any_row(archive, run):
-    # C5.18: every kind the worker has no handler for yet (Re-sync, Sync everything and Accept
-    # these changes, Phase 3's) waits for a later area, so web refuses it with NOT_YET and
-    # inserts nothing. (The import's refusal before the first catch-up is the worker's gate.)
+    # C5.18: every kind the worker has no handler for yet (Re-sync and Sync everything, area
+    # B2's) waits for a later area, so web refuses it with NOT_YET and inserts nothing. (The
+    # import's refusal before the first catch-up is the worker's gate.)
     _, state, _ = archive
     later = [k for k in KINDS if k not in HANDLED]
-    assert later == ["resync", "full", "accept-changes"]
+    assert later == ["resync", "full"]
     for kind in later:
         assert check_request(raw(kind=kind)) == Refusal("abcdef12", NOT_YET), kind
         reply = run(submit(state, raw(kind=kind), now=T0, timezone_name="UTC", reason=None))

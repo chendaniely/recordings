@@ -38,6 +38,9 @@ renditions/<name>-<utc-stamp>.json
   a JSON payload (a Plaud snapshot, a Pocket payload, or speaker names typed in `audio-router`). A
   `.txt` file is a prose transcript kept as the source gave it (a Google Recorder export). Both
   hold what was said, so the privacy rule below covers them.
+  A file here that `recording.json`'s `sources` doesn't name is a snapshot whose write
+  stopped before it was recorded (stage 2b's checks publish the file, then record it): nothing
+  reads it, and `recordings validate` lists it under `warnings`, never as a problem.
 - `renditions/`: outputs (transcripts, speakers, note-type picks, notes). Write-once.
   Re-running a step adds a file. The name is `<kind>-<engine>-<version>-<UTC stamp>.json`,
   where `<kind>` is `notes-<note type>` for notes. The schema is

@@ -112,6 +112,7 @@ from recordings.plaud.flags import listed_here
 from recordings.plaud.gate import GATE_REFUSAL, gate_now, mark_snapshot
 from recordings.plaud.keepout import ConsentList, keep_out_match
 from recordings.plaud.reconcile import matches_auto_private
+from recordings.plaud.schedule import is_settled
 from recordings.plaud.scratch import download_dir, drop_download_dir
 from recordings.plaud.settings import DEFAULT_SCHEDULE_MINUTES
 from recordings.refs import canonical_plaud_id
@@ -617,7 +618,10 @@ class Importer:
             last_checked_at=now,
             next_check_at=now + timedelta(minutes=max(self.schedule_minutes, 1)),
             interval_seconds=max(self.schedule_minutes, 1) * 60,
-            settled=False,
+            # §14.2: one recorded long before it came in is settled at once
+            settled=is_settled(recorded_at=listed.recorded_at, complete_with_notes=False, now=now),
+            baseline_pending=True,  # §14.5: each import is its own baseline, so its first check
+            # never counts towards the breaker (§14.4)
         )
         title = _title(listed.title)
         db.set_listing(

@@ -136,8 +136,11 @@ smoke test on purpose until someone does the steps below:
   by atomic replace, whenever the web app's or the CLI's Writer opens, or the web app starts
   against an archive it may write (`selfdoc.write_docs`). Three Writers write no docs: the
   worker's, `recordings reindex`'s and `recordings plaud …`'s (`docs=False`). Media, `source/`
-  and `renditions/` are published write-once and never overwritten. Never write archive files
-  any other way, in code or in tests. The worker's downloads in `.tmp/plaud-dl/` are scratch,
+  and `renditions/` are published write-once and never overwritten. A check's new Plaud snapshot
+  goes through `Writer.add_snapshot` (the snapshot mark, then the file under the recording's
+  lock, then its reference through `mutate`; a crash between leaves a file `recordings validate`
+  warns about, `selfdoc.orphan_snapshots`). Never write archive files any other way, in code or
+  in tests. The worker's downloads in `.tmp/plaud-dl/` are scratch,
   not archive data; they enter the archive only through `Writer.add` (`plaud/importer.py`,
   `plaud/scratch.py`, swept at the worker's start).
 - **The sentinel:** writers, backups and the mirror refuse an archive without `archive.json`. Tests
@@ -160,8 +163,10 @@ smoke test on purpose until someone does the steps below:
   the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture; its
   `signed_in()` turns on the sign-in, `fault()` injects §21's errors, `account()` is the
   synthetic account behind the paged listing, with its listing-shaped faults, and serves each
-  recording's `files/{id}` envelope, its note and its audio on the storage host, and `link()` serves a
-  `FakeLink` that honours `Range`, drops, expires or trickles). Every request the client sends
+  recording's `files/{id}` envelope, its note and its audio on the storage host, with Dan's edits
+  and Plaud's own changes for edit-sync (`rename_speaker`, `regenerate_notes`, `send_field`,
+  `make_volatile`), and `link()` serves a `FakeLink` that honours `Range`, drops, expires or
+  trickles). Every request the client sends
   goes through its `Throttle` (pacing, the budget, backoff, `Range` resume: spec §10.2), one per
   process. No test really waits on it: `packages/core/tests/conftest.py` skips the waits of a
   `Throttle` given no `sleep`, and a test of the waits injects its clocks and sleep

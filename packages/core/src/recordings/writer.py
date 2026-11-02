@@ -187,6 +187,20 @@ class SetPlaudFields:
 
 
 @dataclass(frozen=True)
+class AddSnapshot:
+    """A new snapshot of a source the recording already has (stage 2b §14.1): its `SourceRef`
+    joins `sources`, after the file was published. Applied again, it changes nothing."""
+
+    source: SourceRef
+    name: str = "plaud-check"
+
+    def apply(self, rec: Recording) -> Recording:
+        if any(s.raw == self.source.raw for s in rec.sources):
+            return rec
+        return rec.model_copy(update={"sources": [*rec.sources, self.source]})
+
+
+@dataclass(frozen=True)
 class ReconcileReport:
     recording_id: str
     written: int
@@ -859,6 +873,35 @@ class Writer:
             raw=raw,
             sha256=digest,
         )
+
+    def add_snapshot(
+        self,
+        recording_id: str,
+        source: RawSource,
+        *,
+        origin: str = "plaud-check",
+        now: datetime | None = None,
+    ) -> SourceRef:
+        """A new snapshot of a recording already here (stage 2b §14.1, a check that found a
+        change). The snapshot mark first, committed in its own transaction (§11.6: before every 2b
+        snapshot, by every path); then, under the recording's lock, the file is published
+        write-once into `source/`, and its reference added to `recording.json` through `mutate`.
+        A file edited outside the app is refused before anything is published. A crash between
+        the publish and the `mutate` leaves a file `recording.json` doesn't name: harmless, and
+        `recordings validate` warns about it (`selfdoc.orphan_snapshots`). Reconcile is the
+        caller's next step, under the lock again (§14.1)."""
+        from recordings.plaud.gate import mark_snapshot  # here: gate imports plaud.checks
+
+        if source.payload is None:
+            raise ValueError("a snapshot needs its payload")
+        self._check_sentinel()
+        rel = self._rel(recording_id)
+        mark_snapshot(PlaudDB(self.state), now=now or _now(), by=origin.split(":", 1)[0])
+        with self.locks.hold(recording_id):
+            self._load_fresh(rel)  # refuses a stale or invalid file before anything is written
+            ref = self._publish_raw(self.archive.path_for(recording_id), source)
+            self.mutate(recording_id, AddSnapshot(ref, name=origin))
+        return ref
 
     def reconcile_plaud(self, recording_id: str) -> ReconcileReport:
         """Build any Plaud outputs this recording's snapshots imply, and apply the fields Plaud

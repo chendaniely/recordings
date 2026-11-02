@@ -134,13 +134,14 @@ def test_the_worker_handles_what_each_area_has_built_so_far():
     # why: decision 2. A button whose handler comes in a later area is disabled with NOT_YET,
     # and a crafted request for it is refused before any row is inserted. Phase 1 handled Keep it
     # here; Phase 2's area A3 adds Accept this listing, A4 Release's preview, Let it in and Undo,
-    # and A5 Compare, Sync now, the imports, Park and Unpark. HANDLED and the worker's handlers
-    # agree; Re-sync, Sync everything and Accept these changes are Phase 3's.
+    # A5 Compare, Sync now, the imports, Park and Unpark, and Phase 3's area B1 Accept these
+    # changes. HANDLED and the worker's handlers agree; Re-sync and Sync everything are B2's.
     release = {"release-preview", "release", "unrelease"}
     sync = {"compare", "sync", "import", "park", "unpark"}
-    assert HANDLED == {"keep-here", "accept", *release, *sync} == set(worker_module.HANDLERS)
+    handled = {"keep-here", "accept", "accept-changes", *release, *sync}
+    assert HANDLED == handled == set(worker_module.HANDLERS)
     assert HANDLED.issubset(KINDS)
-    assert set(KINDS) - HANDLED == {"resync", "full", "accept-changes"}
+    assert set(KINDS) - HANDLED == {"resync", "full"}
     assert NOT_YET == "Comes with the next part of stage 2b."
 
 

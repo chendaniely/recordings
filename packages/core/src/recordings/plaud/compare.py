@@ -49,6 +49,7 @@ area's: `Classified.word` and the listed title are on each row here for it, in m
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -201,6 +202,9 @@ class Compare:
     census: dict[str, int] = field(default_factory=dict)
     repeats: int = 0
     malformed: int = 0
+    # The recordings here whose listed title hash or duration changed (§14.2): their next check
+    # is now, outside the sweep's cap. Set once the listing is recorded (`take_listing`).
+    marked: tuple[str, ...] = ()
 
     def bucket(self, name: str) -> list[Classified]:
         return [row for row in self.rows if row.bucket == name]
@@ -479,6 +483,7 @@ def _entry(row: Classified, consent_ids: frozenset[str], before: ListingRow | No
         kept_out_word=row.word if row.kept_out_now else None,
         rekey_of=row.rekey_of,
         needs_review=row.review,
+        recording_ids=tuple(sorted(row.recording_ids)) if hashed else (),
     )
 
 
@@ -490,11 +495,12 @@ def record_compare(
     consent: ConsentList | None,
     listing: Mapping[str, ListingRow],
     now: datetime,
-) -> None:
+) -> list[str]:
     """What a complete listing writes (the module's notes). `listing` is plaud_listing as it was
-    before this listing, as `classify` read it."""
+    before this listing, as `classify` read it. Returns the recordings a listing change marked for
+    a check now (§14.2)."""
     consent_ids = consent.ids if consent is not None else frozenset()
-    db.write_listing(
+    marked = db.write_listing(
         [_entry(row, consent_ids, listing.get(row.canonical)) for row in result.rows],
         now=result.at,
     )
@@ -528,6 +534,7 @@ def record_compare(
         now=result.at,
     )
     _store(db, cache, result, now=now)
+    return marked
 
 
 def _store(db: PlaudDB, cache: Cache, result: Compare, *, now: datetime) -> None:
@@ -679,7 +686,8 @@ def take_listing(
         repeats=listing.repeats,
         malformed=listing.malformed,
     )
-    record_compare(db, cache, result, consent=consent, listing=before, now=now)
+    marked = record_compare(db, cache, result, consent=consent, listing=before, now=now)
+    result = dataclasses.replace(result, marked=tuple(marked))
     if sync:
         outcome = hold.record_verdict(db, listing.forms(), measured, at=listing.at, now=now)
     else:

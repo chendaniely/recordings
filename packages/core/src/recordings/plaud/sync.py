@@ -36,7 +36,13 @@ selected and Import all, and the CLI's `sync`, `sync --dry-run` and `sync --catc
 10. The record: `SyncReport`, whose `outcome()` is what `conclude_turn` judges (§11.7), and whose
     phrase, counts and exit code the request replies and the CLI print.
 
-The sweep, its companion check and the breaker (§14) are area B1's: they join step 9's end.
+**The sweep** (§14.2, area B1) joins step 9's end, in a sync only (Sync now, a scheduled run;
+never a light turn, a Compare, an import or the catch-up): the recordings a run checks
+(`plaud.sweep.plan`: extras, the cold sweep up to its cap, the companion check), each through
+`plaud.editsync.Checker`, the consent list read again before each, between two of them `between`,
+and the budget, as for imports. A check is an attempt (a degraded one without success), so a
+companion check's success keeps a lone failing recording from stopping the ping (§11.7). Then
+**the breaker** (`plaud.breaker.evaluate`, §14.4), and the sweep's cap after a 429 (§10.2).
 
 **What a person's run imports:** waiting recordings, and those missing only because the schedule
 or auto-import is off (a person's press is the import). Import all adds those that failed 3 times;
@@ -66,7 +72,7 @@ from zoneinfo import ZoneInfo
 
 from recordings.disk import STOP_FREE_PERCENT, DiskStatus, disk_status
 from recordings.locks import LockTimeout
-from recordings.plaud import health, importer, signin
+from recordings.plaud import breaker, health, importer, signin, sweep
 from recordings.plaud.baseline import KeepOutWordsError
 from recordings.plaud.cache import Cache
 from recordings.plaud.checks import K_CATCH_UP_DONE, K_HOLD, PlaudDB
@@ -95,6 +101,7 @@ from recordings.plaud.compare import (
     here_from_archive,
     take_listing,
 )
+from recordings.plaud.editsync import UPDATED, Checker, CheckResult, CheckStopped
 from recordings.plaud.flags import apply_late_consent
 from recordings.plaud.gate import GATE_REFUSAL, gate_now
 from recordings.plaud.importer import (
@@ -134,6 +141,7 @@ ALREADY_DONE = "the first catch-up is already done"
 NOT_DONE = "the first catch-up hasn't run: `recordings plaud sync --catch-up` (runbook)"
 STALE_AGAIN = "the listing kept going stale: the rest at the next sync"
 LATE_CONSENT_FAILED = "late consent listings: not applied ({})"
+BREAKER_PHRASE = breaker.PHRASE  # "paused: unexpected changes", while the breaker is open
 
 # Exit codes (§9.6), the CLI's and the report's
 EXIT_OK = 0
@@ -238,6 +246,11 @@ class SyncReport:
     notes: list[str] = field(default_factory=list)
     kept_lines: tuple[int, ...] = ()  # the consent list's lines read as kept, by number (§12.1)
     catch_up_done: bool = False
+    checks: list[CheckResult] = field(default_factory=list)  # the sweep's (§14.1)
+    checks_left: int = 0  # planned and not checked: the budget, a stop
+    breaker_open: bool = False  # the breaker is open at the run's end (§14.4)
+    breaker_tripped: bool = False  # and this run tripped it
+    plan: sweep.Plan | None = None  # the sweep's plan, when the run swept
 
     # ---- counts ------------------------------------------------------------------------------
     def _count(self, *outcomes: str) -> int:
@@ -313,7 +326,21 @@ class SyncReport:
             out["notes"] = list(self.notes)
         if self.mode == "catch-up":
             out["catch_up_done"] = self.catch_up_done
+        if self.checks or self.checks_left:
+            out["checks"] = self.check_counts()
+            out["updated_ids"] = [c.recording_id for c in self.checks if c.result == UPDATED]
+        if self.breaker_open:
+            out["breaker"] = BREAKER_PHRASE
         return out
+
+    def check_counts(self) -> dict[str, int]:
+        """The sweep's results by §15.6's phrase ("up to date", "updated", …), with what it left."""
+        counts: dict[str, int] = {}
+        for c in self.checks:
+            counts[c.result] = counts.get(c.result, 0) + 1
+        if self.checks_left:
+            counts["left"] = self.checks_left
+        return counts
 
     def end(self, phrase: str, code: int) -> SyncReport:
         self.phrase, self.exit_code = phrase, code
@@ -423,10 +450,12 @@ def run_sync(
     scheduled: bool = False,
     named: Collection[str] = (),
     import_all: bool = False,
+    sweep_checks: bool = True,
 ) -> SyncReport:
     """One run (the module's notes). `scheduled`: a scheduled or light turn (the cap, the backoff,
     the listing's own settings); otherwise a person's run (Sync now, the Sync screen's imports, the
     CLI). `named` and `import_all` are an import request's (Import selected, Import all).
+    `sweep_checks` False: a light turn, which checks nothing (§9.2).
     Raises only `worker.Stopping` (SIGTERM between recordings) and errors that aren't Plaud's or
     the archive's (bugs): the worker records those as a failed turn."""
     from recordings.worker import Stopping  # the worker's SIGTERM, raised through `between`
@@ -464,6 +493,7 @@ def run_sync(
         return report
 
     done: set[str] = set()
+    limits_before = run.client.throttle.rate_limits
     importer_ = run.importer(catch_up=mode == "catch-up")
     # Import all, and the catch-up (which retries what an interrupted one left failing), take
     # recordings that failed 3 times too; Sync now and a scheduled run don't.
@@ -481,6 +511,7 @@ def run_sync(
             importer_=importer_,
             done=done,
             stopping=Stopping,
+            sweep_checks=sweep_checks and mode == "sync",
         )
         if not relist:
             break
@@ -490,6 +521,9 @@ def run_sync(
     if mode == "catch-up" and _clean(report, stop=stop):
         db.put(K_CATCH_UP_DONE, run.clock().isoformat(), now=run.clock())
         report.catch_up_done = True
+    if report.plan is not None:
+        limited = run.client.throttle.rate_limits > limits_before
+        _record_cap(run, report, rate_limited=limited)
     return report
 
 
@@ -517,8 +551,10 @@ def _one_listing(
     importer_: Importer,
     done: set[str],
     stopping: type[BaseException],
+    sweep_checks: bool = False,
 ) -> bool:
-    """Steps 5 to 9 for one listing. True when the run must list again (`ListingStale`)."""
+    """Steps 5 to 9 for one listing, then the sweep and the breaker (a sync's). True when the
+    run must list again (`ListingStale`)."""
     db, now = run.db, run.clock()
     stop = consent.stop is not None
     person = not scheduled
@@ -633,6 +669,10 @@ def _one_listing(
         return True
     if any(r.canonical in done for r in result.rows):
         _settle(run, report, result, here=here, consent=consent)
+    if sweep_checks and report.ended_by is None and report.stopped is None:
+        _sweep(run, report, listing=listing, here=here, importer_=importer_, stopping=stopping)
+    if sweep_checks:
+        _breaker(run, report)
     _final_phrase(report, measured)
     return False
 
@@ -654,6 +694,120 @@ def _settle(run: Run, report: SyncReport, result: Compare, *, here, consent) -> 
         )
     except (sqlite3.Error, OSError) as exc:
         log.warning("the compare after the imports wasn't stored (%s)", type(exc).__name__)
+
+
+def _sweep(
+    run: Run,
+    report: SyncReport,
+    *,
+    listing: Listing,
+    here,
+    importer_: Importer,
+    stopping: type[BaseException],
+) -> None:
+    """§11.1's "a chunk of the sweep" (§14.2): each planned recording checked in turn
+    (`editsync.Checker`), as imports are tried: `between` before each but the first, the budget,
+    and a stop. A check is an attempt unless it was skipped or busy; a degraded one isn't a
+    success (§11.7). One recording's failure is counted and the sweep goes on."""
+    from recordings.plaud.baseline import KeepOutWordsError
+
+    db, now = run.db, run.clock()
+    try:
+        consent = importer_.consent.current()
+        plan = sweep.plan(
+            db,
+            here,
+            consent_ids=consent.ids,
+            now=now,
+            marked=report.compare.marked if report.compare is not None else (),
+            schedule_minutes=run.settings.schedule_minutes,
+            full_sweep_days=run.settings.full_sweep_days,
+            writer=run.writer,
+        )
+    except ImportStopped as exc:
+        report.stopped = exc.phrase
+        return
+    report.plan = plan
+    checker = Checker(
+        writer=run.writer,
+        db=db,
+        client=run.client,
+        consent=importer_.consent,
+        timezone_name=run.timezone_name,
+        run_id=run.run_id,
+        schedule_minutes=run.settings.schedule_minutes,
+        full_sweep_days=run.settings.full_sweep_days,
+        breaker_open=breaker.is_open(db),
+        clock=run.clock,
+    )
+    rows = {row.canonical_id: row for row in listing.rows}
+    budget = run.client.throttle
+    todo = plan.recordings
+    for n, rid in enumerate(todo):
+        if n and run.between is not None:
+            run.between()  # may raise worker.Stopping, between two recordings (§9.2)
+        if budget.spent():
+            report.checks_left += len(todo) - n
+            break
+        try:
+            result = checker.check(rid, rows)
+        except ImportStopped as exc:  # the consent list, read again before each check
+            report.stopped = exc.phrase
+            report.checks_left += len(todo) - n
+            break
+        except CheckStopped as exc:
+            report.stopped = f"error: `{exc.cause}`"
+            report.ended_by = exc.cause
+            report.checks_left += len(todo) - n
+            break
+        except KeepOutWordsError:
+            report.ended_by = KeepOutWordsError.__name__
+            report.end("error: `KeepOutWordsError`", EXIT_FAILED)
+            report.checks_left += len(todo) - n
+            break
+        except BudgetSpent:
+            report.checks_left += len(todo) - n
+            break
+        except PlaudError as exc:  # run-ending (the checker raises no other): an attempt failed
+            report.attempts += 1
+            report.ended_by = type(exc).__name__
+            report.checks_left += len(todo) - n - 1
+            _record_error(run, exc, now=run.clock())
+            report.end(*_ended(exc, run.timezone_name))
+            break
+        except stopping:
+            raise
+        report.checks.append(result)
+        report.attempts += int(result.attempt)
+        report.successes += int(result.success)
+
+
+def _breaker(run: Run, report: SyncReport) -> None:
+    """§11.1's "the breaker": tripped now if the window says so (§14.4). Its state at the run's
+    end goes in the report; a state.db that can't take it now is retried at the next run."""
+    db = run.db
+    try:
+        report.breaker_tripped = breaker.evaluate(db, now=run.clock())
+        report.breaker_open = breaker.is_open(db)
+    except (sqlite3.Error, OSError) as exc:
+        log.warning("the breaker wasn't evaluated (%s)", type(exc).__name__)
+
+
+def _record_cap(run: Run, report: SyncReport, *, rate_limited: bool) -> None:
+    """§10.2: the sweep's cap halves after a 429, and grows back by one per good run."""
+    if report.plan is None:
+        return
+    rate_limited = rate_limited or report.ended_by == PlaudRateLimited.__name__
+    try:
+        sweep.record_cap(
+            run.db,
+            report.plan,
+            rate_limited=rate_limited,
+            good=health.judge_run(report.outcome()),
+            now=run.clock(),
+        )
+    except (sqlite3.Error, OSError) as exc:
+        log.warning("the sweep's cap wasn't recorded (%s)", type(exc).__name__)
 
 
 def _import_rows(
@@ -730,10 +884,15 @@ def _final_phrase(report: SyncReport, measured: Measure | None) -> None:
     if report.failed and not report.successes:
         report.end(EVERY_FETCH_FAILED, EXIT_PARTIAL)
         return
+    if report.checks and report.attempts and not report.successes:
+        report.end(EVERY_FETCH_FAILED, EXIT_PARTIAL)  # every check failed or was degraded (§11.7)
+        return
     if report.failed:
         report.end(partial_phrase(report.failed), EXIT_PARTIAL)
         return
     shrink = measured.run_phrase() if measured is not None else None
+    if shrink is None and report.breaker_open:
+        shrink = BREAKER_PHRASE  # §15.6: the run's phrase while the breaker is open
     report.end(shrink or OK, EXIT_PARTIAL if report.not_here else EXIT_OK)
 
 
@@ -762,12 +921,13 @@ def worker_run(worker: Any, **overrides: Any) -> Run:
 
 def worker_turn(worker: Any, *, light: bool) -> health.RunOutcome:
     """A scheduled turn (§9.7 item 4), or the light turn of a due one inside a long run (§9.2):
-    the run with the scheduled cap, inside the throttle's 10-minute budget. The light turn is the
-    same run until the sweep comes (area B1): the listing, privacy from it and up to 20 imports.
+    the run with the scheduled cap, inside the throttle's 10-minute budget, and a chunk of the
+    sweep (area B1). The light turn checks nothing: the listing, privacy from it and up to 20
+    imports (§9.2).
     Its §15.6 phrase goes to `ops_runs` (job `plaud-sync`) and the log, counts only."""
     run = worker_run(worker)
     with run.client.throttle.budget():
-        report = run_sync(run, mode="sync", scheduled=True)
+        report = run_sync(run, mode="sync", scheduled=True, sweep_checks=not light)
     record_ops_run(worker.state, "plaud-sync", report, finished=worker.clock())
     log.info("%s%s", "light turn: " if light else "sync: ", summary(report))
     return report.outcome()

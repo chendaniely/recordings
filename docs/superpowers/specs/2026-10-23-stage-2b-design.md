@@ -1779,6 +1779,10 @@ first. Then, in steps:
    `full_sweep_days` can go back to 7 even while Dan relabels. The sweep stays as the safety net. A
    test with the fake server moves the field on a rename.
 3. **If there is none,** nothing changes, and the task closes.
+   **Built so (area B1, the spikes skipped):** audio-router's client says Plaud's API has no change
+   signal of any kind, so no listing field is read; `change_marker` stays empty, a title rename
+   shows at the next sync through the listing's title hash, and every other edit through the sweep
+   (`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`).
 4. **If S5 shows the page size is clamped small,** the listing alone may cost 30 to 50 calls a run:
    recompute the budget and the recommended `schedule_minutes` from it, and update §10.2's numbers.
 
@@ -3079,12 +3083,12 @@ smoke.
 |---|---|---|---|---|---|
 | C1.01 | Random fake accounts: repeats across pages, both ID forms, consent and keep-out rows, late keep-outs and late consent listings already here, partial listings | Every listed ID lands in exactly one bucket by §11.3's precedence, and the equation adds up | Phase 2, area A3 | `packages/core/tests/test_plaud_buckets_property.py` (40 seeded accounts through the fake server) | built |
 | C1.02 | The real dry run | Both equations add up and Dan signs them off; the consent list's IDs are found on Plaud | Phase 2 | runbook section 7 | planned |
-| C2.01 | Fake, with an injected clock: 1,000 recordings, 40 speaker renames at once | Each shows within `full_sweep_days` plus one schedule interval, and at once with Re-sync | Phase 3 | Phase 3's plan | planned |
+| C2.01 | Fake, with an injected clock: 1,000 recordings, 40 speaker renames at once | Each shows within `full_sweep_days` plus one schedule interval, and at once with Re-sync | Phase 3, areas B1 (the sweep) and B2 (Re-sync) | the sweep: `packages/core/tests/test_plaud_sweep.py` (`test_c2_01_the_sweep_at_1000_recordings_with_40_renames_on_an_injected_clock`, and a rename found through the worker's real turns on the fake); Re-sync: area B2 | built (the sweep's half) |
 | C2.02 | Real: S9's clip; after the catch-up, a rename | One shows at once with Re-sync, and one within a day and one sync without it | Phase 3 | runbook (Phase 3) | planned |
-| C2.03 | Fake: three speaker renames 20 minutes apart on 12 recordings | The breaker never trips | Phase 3 | Phase 3's plan | planned |
-| C2.04 | Fake: a field that changes on every fetch | It trips the breaker, with no Accept button | Phase 3 | Phase 3's plan | planned |
-| C2.05 | Fake: a new field that is the same on both fetches | It trips the breaker with **Accept these changes**; pressed, each recording gets one new snapshot and the breaker closes; the same field tripping it again offers no button | Phase 3 | Phase 3's plan | planned |
-| C2.06 | A release with a new normaliser version | It closes the breaker at start | Phase 3 | Phase 3's plan | planned |
+| C2.03 | Fake: three speaker renames 20 minutes apart on 12 recordings | The breaker never trips | Phase 3, area B1 | `packages/core/tests/test_plaud_breaker.py` (`test_c2_03_three_speaker_renames_20_minutes_apart_on_12_recordings_never_trip_it`), through the worker's real turns on the fake | built |
+| C2.04 | Fake: a field that changes on every fetch | It trips the breaker, with no Accept button | Phase 3, area B1 | `packages/core/tests/test_plaud_breaker.py` (`test_c2_04_a_field_that_changes_on_every_fetch_trips_it_with_no_accept`), through the worker's real turns on the fake | built |
+| C2.05 | Fake: a new field that is the same on both fetches | It trips the breaker with **Accept these changes**; pressed, each recording gets one new snapshot and the breaker closes; the same field tripping it again offers no button | Phase 3, area B1 | `packages/core/tests/test_plaud_breaker.py` (`test_c2_05_a_new_stable_field_trips_it_with_accept_and_accepting_writes_one_snapshot_each`), through the worker's real turns on the fake | built |
+| C2.06 | A release with a new normaliser version | It closes the breaker at start | Phase 3, area B1 | `packages/core/tests/test_plaud_breaker.py` (`test_c2_06_a_release_with_a_new_normaliser_version_closes_it_at_start`), through the worker's real turns on the fake | built |
 | C3.01 | Fake: a sound account, `sync --full` | Exits 0 and writes the manifest | Phase 3 | Phase 3's plan | planned |
 | C3.02 | Fake: a degraded recording | Still exits 0 | Phase 3 | Phase 3's plan | planned |
 | C3.03 | Fake: a flagged recording (consent-listed or kept out late) | Still exits 0, and is named | Phase 3 | Phase 3's plan | planned |
@@ -3099,7 +3103,7 @@ smoke.
 | C4.06 | Real: the catch-up ends | The sync's check goes green within 20 minutes | Phase 2 | runbook section 8 | planned |
 | C5.01 | Fake: a placeholder-titled recording, later renamed to a private title | It arrives at the next run, untagged; renamed, it is tagged at the next run even when its fetch fails | Phase 2, area A4 (A6's flow test re-proves it with the run) | `packages/core/tests/test_plaud_import.py` (`test_a_placeholder_title_arrives_untagged`) and `packages/core/tests/test_plaud_listing_privacy.py` (renamed private: tagged from the listing alone, with every fetch failing) | built |
 | C5.02 | Fake: a keep-out title | It is never requested (the request log) | Phase 2, area A4 | `packages/core/tests/test_plaud_import.py` (the request log: never requested; a word only in the envelope's title stops before any block or audio) | built |
-| C5.03 | Fake: the keep-out word added after the recording came in | `private` and one flag; nothing of it is fetched again, even when its transcript appears | Phase 2, area A4 (the checks' skip: Phase 3, area B1) | `packages/core/tests/test_plaud_listing_privacy.py` (`test_a_keep_out_word_after_it_came_in_tags_and_flags_it_once`: `private`, one flag, its ID kept out, the import fetching nothing again) | built (the sweep's skip: B1) |
+| C5.03 | Fake: the keep-out word added after the recording came in | `private` and one flag; nothing of it is fetched again, even when its transcript appears | Phase 2, area A4 (the checks' skip: Phase 3, area B1) | `packages/core/tests/test_plaud_listing_privacy.py` (`test_a_keep_out_word_after_it_came_in_tags_and_flags_it_once`: `private`, one flag, its ID kept out, the import fetching nothing again); the checks: `packages/core/tests/test_plaud_editsync.py` (`test_some_recordings_are_never_fetched_by_a_check`, and a keep-out word in the envelope alone fetching no block) | built |
 | C5.04 | **Keep it here** on a late keep-out | The flag clears and no archive file changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | built |
 | C5.05 | A kept-out title that later loses the word | It stays kept out until **Release** | Phase 2, area A4 | `packages/core/tests/test_plaud_import.py` (`test_kept_out_stays_out_until_released`, `test_a_released_id_whose_title_takes_the_word_again_is_kept_out_again`) and `packages/core/tests/test_plaud_release.py` (Release, then the compare reads it waiting; a word again after it keeps it out again) | built |
 | C5.06 | **Release** on a row kept out by title | It asks first, with the title in its question only | Phase 1, Task 21 | `packages/ui/frontend/src/components/SyncPage.test.ts` | built |
@@ -3135,7 +3139,7 @@ smoke.
 | C6.01 | The ping rule as a table: good or not, a streak or not, each blocker, busy, the gate, a sign-in pause, a rate-limit wait | Each case pings or doesn't, against a fake Healthchecks | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 (the rebuild's review list in Phase 2: decision 44) | `packages/core/tests/test_plaud_health.py` | built |
 | C6.03 | Runs with attempts and no success, failing-list recordings counted | Never good; the pings resume only after a run with a success | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
-| C6.04 | Fake: every fetch failing while the listing works, or every link 403ing | No pings; once every recording is on the failing list, runs that retry only them stay not good | Phase 2, area A5 | `packages/core/tests/test_plaud_sync.py` (`test_every_fetch_failing_stops_the_pings_until_one_succeeds`: an unreadable envelope on every fetch, each recording failing 3 times, the quiet runs after it not pinging, a new recording's success pinging; `test_an_envelope_endpoint_thats_down_ends_each_run_and_never_pings`). Links refused on every fetch are the same per-recording failure (`test_plaud_import.py`); B1's checks add theirs | built |
+| C6.04 | Fake: every fetch failing while the listing works, or every link 403ing | No pings; once every recording is on the failing list, runs that retry only them stay not good | Phase 2, area A5 | `packages/core/tests/test_plaud_sync.py` (`test_every_fetch_failing_stops_the_pings_until_one_succeeds`: an unreadable envelope on every fetch, each recording failing 3 times, the quiet runs after it not pinging, a new recording's success pinging; `test_an_envelope_endpoint_thats_down_ends_each_run_and_never_pings`). Links refused on every fetch are the same per-recording failure (`test_plaud_import.py`); the checks' half (area B1): `test_plaud_editsync.py` (a failing check counted and backing off, a degraded one an attempt without success) and `test_plaud_sweep.py` (`test_a_lone_recording_that_always_fails_never_stops_the_ping`) | built |
 | C6.05 | Fake: an outage of 1 hour | The pings stop, then resume | Phase 2, area A5 | `packages/core/tests/test_plaud_sync.py` (`test_an_outage_of_an_hour_stops_the_pings_then_they_resume`) | built |
 | C6.06 | A failed run | Status shows it from the first failed run, with "isn't being pinged since …: <cause>" | Phase 1, Tasks 19 and 22 | `packages/ui/tests/test_plaud_views.py`, `packages/ui/frontend/src/components/SyncPanel.test.ts` | built |
 | C6.07 | A hold; **Accept this listing**; a change of form with nothing absent; a small shrink | Accept clears the hold, refused only when consent-listed or kept-out IDs vanish while Plaud's IDs look changed; the change of form holds nothing; the small shrink settles when the next listing an hour later is missing the same recordings | Phase 2, area A3 | `packages/core/tests/test_plaud_hold.py`, `test_plaud_accept.py` | built |
@@ -3341,3 +3345,16 @@ None: every bullet of §20 is planned in a phase.
   that the worker's last `gate` turn kept the summary on "waits for the first catch-up" until
   the first sync after the catch-up ended: the views now drop it once the gate is open. No
   decision or scenario's outcome changed.
+- 2026-11-02: §14.1 to §14.5 and §11.7's companion check (area B1): the check
+  (`plaud/editsync.py`), its schedule (`plaud/schedule.py`), the sweep's plan, seeding and cap
+  (`plaud/sweep.py`), the breaker (`plaud/breaker.py`) and **Accept these changes** (the
+  `accept-changes` handler), `Writer.add_snapshot` with the snapshot mark first, and `recordings
+  validate`'s warning for a snapshot whose write stopped before `recording.json` named it (FORMAT.md
+  says so). The sweep joins a sync after its imports, never a light turn, a Compare, an import or
+  the catch-up; a listing change marks a recording for a check in the same run. Builder's
+  readings, each in the guesses file: the double fetch only for a settled recording past its
+  baseline; a degraded snapshot kept once; a check judging the envelope's title as the listing's
+  is judged, so a private title lands before the snapshot and a keep-out word in the envelope
+  alone stops the check before any block; an import is its own baseline; the breaker's field names
+  are plain keys only. C2.01's sweep half, C2.03 to C2.06 built; C5.03 whole. No decision or
+  scenario's outcome changed.

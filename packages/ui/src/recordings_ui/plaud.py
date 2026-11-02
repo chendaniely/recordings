@@ -138,7 +138,9 @@ def check_request(raw: object) -> PlaudRequest | Refusal:
             return Refusal(request_id, BAD_ID)
     if kind == "keep-here" and (plaud_ids or select_all):
         return Refusal(request_id, UNREADABLE)  # it uses recording IDs alone, and carries no more
-    if kind in ("accept", "compare", "sync") and (plaud_ids or recording_ids or select_all):
+    if kind in ("accept", "accept-changes", "compare", "sync") and (
+        plaud_ids or recording_ids or select_all
+    ):
         return Refusal(request_id, UNREADABLE)  # they act on the listing, and name nothing
     if kind in RELEASE_KINDS and (len(plaud_ids) != 1 or recording_ids or select_all):
         return Refusal(request_id, UNREADABLE)  # Release names one Plaud ID, and nothing else
@@ -377,6 +379,7 @@ JOB_LABELS = {
     "plaud-catch-up": "The catch-up",
     "plaud-accept": "Accept this listing",
     "plaud-review": "Marking for review",
+    "plaud-breaker": "Accept these changes",  # or `breaker reset`: a moment's hold (§14.4)
     "import": "The audio-router import",  # it holds `plaud` beside `ops` (2b spec §9.4)
 }
 

@@ -21,9 +21,11 @@ the ID form flipping between bare and `of_`, an ID in a form the consent list ca
 hex changing with the audio unchanged (a re-key). Step 2's envelopes (area A4): `files/{id}` for
 each recording on the account, in either form, with an inline transcript, a note behind a
 `data_link` and the audio behind `presigned_url`, both on the storage host (`FakeAccount.envelope`);
-Dan's edits so far: a rename (`FakeRecording.name`), and an envelope whose title differs from the
-listing's (`envelope_name`: a rename between the listing and the fetch). The rest of step 6 grows
-with later areas.
+Dan's edits: a rename (`FakeRecording.name`), an envelope whose title differs from the listing's
+(`envelope_name`: a rename between the listing and the fetch), a speaker rename
+(`rename_speaker`), regenerated notes (`regenerate_notes`), and Plaud's own changes for edit-sync
+(area B1): a new field the same on every fetch (`send_field`), and a field or a transcript that
+differs on every fetch (`make_volatile`). The rest of step 6 grows with later areas.
 
 Importable from outside tests (the live demo reuses it): no pytest at module level. Every title,
 name, token and text it serves is invented.
@@ -259,6 +261,12 @@ class FakeRecording:
     envelope_name: str | None = None
     envelope_untitled: bool = False
     note_link: bool = True  # the summary note comes behind a data_link (False: inline)
+    # Dan's edits and Plaud's own changes, for edit-sync (area B1, §21's "content"):
+    speaker: str = "Speaker 1"  # what Dan named Speaker 1 (a rename; "Speaker 1" until then)
+    note_text: str | None = None  # regenerated notes (None: the first summary)
+    extra: dict = field(default_factory=dict)  # fields Plaud started sending, the same each fetch
+    volatile: str | None = None  # "other": a field differs on every fetch; "transcript": its text
+    fetches: int = 0  # `files/{id}` answers so far (the volatile values count them)
 
     def listed_id(self, form: str) -> str:
         if self.other_id is not None:
@@ -274,16 +282,20 @@ class FakeRecording:
         `plaud_env`): an inline transcript, a summary note behind a `data_link` and the audio behind
         `presigned_url`, both served by `owner`'s storage host (`audio/<id>.wav`,
         `notes/<id>.md`). Every word in it is invented."""
+        self.fetches += 1
+        words = f"Synthetic words {self.seed}."
+        if self.volatile == "transcript":
+            words = f"Synthetic words {self.seed}, take {self.fetches}."
         rows = [
             {
-                "content": f"Synthetic words {self.seed}.",
+                "content": words,
                 "start_time": 0,
                 "end_time": 500,
-                "speaker": "Speaker 1",
+                "speaker": self.speaker,
                 "original_speaker": "Speaker 1",
             }
         ]
-        note = f"# Summary\n\nSynthetic summary {self.seed}."
+        note = self.note_text or f"# Summary\n\nSynthetic summary {self.seed}."
         note_block = {
             "data_type": "auto_sum_note",
             "data_id": f"n-{self.seed}",
@@ -309,7 +321,10 @@ class FakeRecording:
                 }
             ],
             "note_list": [note_block],
+            **self.extra,
         }
+        if self.volatile == "other":
+            env["synthetic_nonce"] = f"n-{self.seed}-{self.fetches}"
         name = self.envelope_name if self.envelope_name is not None else self.name
         if name is not None and not self.envelope_untitled:
             env["name"] = name
@@ -388,6 +403,35 @@ class FakeAccount:
         with self._lock:
             rec.name, rec.envelope_name = name, None
 
+    def rename_speaker(self, plaud_id: str, name: str) -> None:
+        """Dan names Speaker 1 in Plaud's app (§10.6 step 6): the envelope's rows follow."""
+        rec = self.find(plaud_id)
+        with self._lock:
+            rec.speaker = name
+
+    def regenerate_notes(self, plaud_id: str, text: str) -> None:
+        """Dan regenerates the summary in Plaud's app: a new note body behind the same tab."""
+        rec = self.find(plaud_id)
+        with self._lock:
+            rec.note_text = text
+
+    def send_field(self, name: str, value: object, *, plaud_ids: list[str] | None = None) -> None:
+        """Plaud starts sending a new top-level field (the same on every fetch) on these
+        recordings, or every one: "other", which the breaker counts (§14.4)."""
+        with self._lock:
+            for rec in self.recordings:
+                if plaud_ids is None or rec.plaud_id in plaud_ids:
+                    rec.extra[name] = value
+
+    def make_volatile(self, part: str | None, *, plaud_ids: list[str] | None = None) -> None:
+        """A field ("other") or the transcript's text ("transcript") that differs on every fetch
+        (§21: "a volatile field in other", "a transcript field that differs on every fetch");
+        None stops it."""
+        with self._lock:
+            for rec in self.recordings:
+                if plaud_ids is None or rec.plaud_id in plaud_ids:
+                    rec.volatile = part
+
     def remove(self, plaud_id: str) -> None:
         with self._lock:
             self.recordings = [r for r in self.recordings if r.plaud_id != plaud_id]
@@ -430,7 +474,9 @@ class FakeAccount:
             form = self.form
         if found is None or self.owner is None:
             return NOT_FOUND
-        return json_response(found.envelope(form, self.owner))
+        with self._lock:
+            env = found.envelope(form, self.owner)
+        return json_response(env)
 
     def listing(self, query: dict[str, list[str]]) -> Response:
         try:

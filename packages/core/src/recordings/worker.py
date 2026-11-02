@@ -185,7 +185,7 @@ WRITER_LOCK_WAIT = 10.0  # spec §9.2: Writer.open(cfg, docs=False, lock_timeout
 TURN_LOCK_WAIT = 1.0
 # The request kinds whose run holds `plaud`: while another run holds it, they stay queued and wait
 # their turn (§9.4), and the worker serves the other kinds meanwhile.
-PLAUD_KINDS: frozenset[str] = frozenset({"compare", "sync", "import", "accept"})
+PLAUD_KINDS: frozenset[str] = frozenset({"compare", "sync", "import", "accept", "accept-changes"})
 FINISH_TRIES = 3  # a request's end, written again a moment apart if state.db is busy
 # An index that can't answer is retried at every tick; for this long it stops every late consent
 # listing, and is shown as a pass that failed.
@@ -478,7 +478,8 @@ class Worker:
     def start(self) -> None:
         """1. the heartbeat thread, phase `starting`; 2. the leftovers of a download stopped with
         the worker, in `.tmp/plaud-dl/` (area A4), under a non-blocking try of `plaud`; 3. (Task
-        14) the requests left over; 4. the Writer; 5. the gate. 6. the configured keep-out word
+        14) the requests left over; 4. the Writer; 5. the gate, and a breaker that tripped under
+        an older normaliser closed by this release (§14.4, area B1). 6. the configured keep-out word
         recorded as enforced (decision 26), and a new pattern's pass (decision 27), under the
         phase `checking`, which SIGTERM stops between recordings. The pass is part of the start:
         a crash during it keeps the first start's time, as a crash before it does. The start is
@@ -491,6 +492,7 @@ class Worker:
         self.gate = self._open_gate()
         if self._step("rebuild", self._detect_rebuild):
             self.gate = self._open_gate()
+        self._step("breaker", self._close_on_release)
         self._enforce()
         self.progress.bump(self.clock(), "idle")
         self._beat()
@@ -558,6 +560,13 @@ class Worker:
                 "for review"
             )
         return found
+
+    def _close_on_release(self) -> bool:
+        """§14.4: a release that bumps NORMALISER_VERSION closes the breaker by itself, at start
+        (the trip recorded the version it saw). Status then watches for a re-trip."""
+        from recordings.plaud import breaker
+
+        return breaker.close_on_release(self.db, now=self.clock())
 
     def _enforce(self) -> None:
         now = self.clock()
@@ -1528,6 +1537,37 @@ def _unpark(worker: Worker, claimed: Claimed) -> requests.Reply:
     return _parking(worker, claimed, park=False)
 
 
+# ---- Accept these changes (area B1, §14.4, decision 11) -------------------------------------
+def _accept_changes(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """Accept these changes: under `plaud` (`plaud-breaker`), checked again against the breaker as
+    stored now (`breaker.accept_changes`): refused while it isn't open, or when no Accept is
+    offered (a part found volatile, or a field accepted before). Accepted, every recording's next
+    check is excused and spread over `full_sweep_days`, the breaker closes with its window starting
+    now, and the press goes to `ops_runs` (`plaud-accept-changes`), field names only."""
+    from recordings.plaud import breaker
+
+    req, now = claimed.request, worker.clock()
+    try:
+        with plaud_run(worker.state, "plaud-breaker", timeout=TURN_LOCK_WAIT, now=now):
+            done = breaker.accept_changes(
+                worker.db, now=now, full_sweep_days=worker.settings.full_sweep_days
+            )
+    except LockTimeout:
+        holder = plaud_holder(worker.state)
+        busy = f"skipped: busy (`{holder[0]}`)" if holder is not None else "skipped: busy"
+        return requests.Reply(req.request_id, req.kind, "failed", busy)
+    detail = done.message + (f" ({', '.join(done.fields)})" if done.fields else "")
+    with contextlib.suppress(sqlite3.Error, OSError):  # the press is recorded when it can be
+        worker.state.record_run("plaud-accept-changes", now, worker.clock(), done.ok, detail)
+    return requests.Reply(
+        req.request_id,
+        req.kind,
+        "done" if done.ok else "failed",
+        done.message,
+        result={"fields": list(done.fields), "rebaselined": done.rebaselined},
+    )
+
+
 # What the worker serves. requests.HANDLED names the same kinds for web, which refuses the others
 # before inserting; each later area adds its handlers here and its kinds there.
 HANDLERS: dict[str, Handler] = {
@@ -1541,4 +1581,5 @@ HANDLERS: dict[str, Handler] = {
     "import": _import,
     "park": _park,
     "unpark": _unpark,
+    "accept-changes": _accept_changes,
 }

@@ -152,6 +152,9 @@ class ListingEntry:
     # Needs Dan's review after a rebuild (§11.6): set by a listing, kept once set, cleared only by
     # the import that brings it in.
     needs_review: bool = False
+    # The recordings here that hold this ID, when it is hashed: a title hash or duration that
+    # differs from the stored one sets their next check to now (§14.2).
+    recording_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -171,6 +174,29 @@ class CheckRow:
     degraded: bool
     gone_since: datetime | None
     kept_here_at: datetime | None
+
+
+@dataclass(frozen=True)
+class CheckLog:
+    """One `plaud_check_log` row (§14.1). `parts` holds the changed parts by §14.1's names, and an
+    "other" change's field names as `other:<name>` entries (names only, never values: the table
+    has no column of its own for them, and gains none, decision 3)."""
+
+    at: datetime | None
+    recording_id: str
+    result: str
+    parts: tuple[str, ...]
+    volatile: tuple[str, ...]
+    counted: bool
+    failure: str | None
+
+    @property
+    def named_parts(self) -> tuple[str, ...]:
+        return tuple(p for p in self.parts if not p.startswith("other:"))
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return tuple(p.removeprefix("other:") for p in self.parts if p.startswith("other:"))
 
 
 @dataclass(frozen=True)
@@ -230,6 +256,29 @@ _KEEP_AGAIN = (
     "(plaud_listing.released_at IS NOT NULL AND "
     "plaud_listing.released_at >= plaud_listing.kept_out_at))"
 )
+
+
+def _listing_changes(db: sqlite3.Connection, entries: Iterable[ListingEntry]) -> list[str]:
+    """The recordings whose listed title hash or duration differs from what plaud_listing holds
+    (§14.2), read inside the listing's own transaction. A side with nothing stored, or nothing
+    given now (an ID kept out, consent-listed, or not here), is no change."""
+    marked: set[str] = set()
+    for e in entries:
+        if not e.recording_ids:
+            continue
+        row = db.execute(
+            "SELECT title_sha256, duration_ms FROM plaud_listing WHERE canonical_plaud_id = ?",
+            (canonical_plaud_id(e.canonical_plaud_id),),
+        ).fetchone()
+        if row is None:
+            continue
+        title, duration = row
+        moved = (title is not None and e.title_sha256 is not None and title != e.title_sha256) or (
+            duration is not None and e.duration_ms is not None and duration != e.duration_ms
+        )
+        if moved:
+            marked.update(e.recording_ids)
+    return sorted(marked)
 
 
 def _encode(name: str, value: Any) -> Any:
@@ -392,13 +441,20 @@ class PlaudDB:
             rows = db.execute(f"SELECT {', '.join(_LISTING)} FROM plaud_listing").fetchall()
         return {row[0]: _row(ListingRow, _LISTING, row) for row in rows}
 
-    def write_listing(self, entries: Iterable[ListingEntry], *, now: datetime) -> None:
+    def write_listing(self, entries: Iterable[ListingEntry], *, now: datetime) -> list[str]:
         """A complete listing's rows, in one transaction (§9.5, §11.3): each listed ID's row made
         or brought up to date (the ID as listed, `last_seen`, no longer absent, and its title
         hash and duration, which only an ID here has); a newly kept-out ID dated `now` with its
         word, and a re-keyed one's match, each kept once set (kept out stays kept out, §12.2);
-        then every row this listing didn't list, and not already absent, absent since `now`."""
+        then every row this listing didn't list, and not already absent, absent since `now`.
+
+        **Listing changes** (§14.2): an ID here whose stored title hash or duration differs from
+        this listing's has its recordings' next check set to `now`, in the same transaction (the
+        change marker stays empty: with the spikes skipped, no listing field is known to move on
+        an edit, §14.3). The first sight of an ID (nothing stored) is not a change, so the first
+        listing doesn't queue the whole archive. Returns the recordings marked."""
         stamp = utc_iso(now)
+        entries = list(entries)
         values = []
         for e in entries:
             if e.title_sha256 is not None and not _is_sha256(e.title_sha256):
@@ -420,6 +476,7 @@ class PlaudDB:
             )
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            marked = _listing_changes(db, entries)
             db.executemany(
                 "INSERT INTO plaud_listing (canonical_plaud_id, listed_id, first_seen, last_seen, "
                 "kept_out_at, kept_out_word, rekey_of, title_sha256, duration_ms, needs_review) "
@@ -441,6 +498,11 @@ class PlaudDB:
                 "WHERE absent_since IS NULL AND last_seen != ?",
                 (stamp, stamp),
             )
+            db.executemany(
+                "UPDATE plaud_checks SET next_check_at = ? WHERE recording_id = ?",
+                [(stamp, rid) for rid in marked],
+            )
+        return marked
 
     def record_rebuilt(
         self,
@@ -637,6 +699,82 @@ class PlaudDB:
                 f"ON CONFLICT (recording_id) DO UPDATE SET {updates}",
                 (recording_id, *(_encode(k, v) for k, v in fields.items())),
             )
+
+    def check_rows(self) -> list[CheckRow]:
+        """Every plaud_checks row: one read for a run's sweep (§14.2)."""
+        with self._db() as db:
+            rows = db.execute(f"SELECT {', '.join(_CHECKS)} FROM plaud_checks").fetchall()
+        return [_row(CheckRow, _CHECKS, row) for row in rows]
+
+    def set_checks(self, fields_by_recording: Mapping[str, Mapping[str, Any]]) -> None:
+        """Several recordings' plaud_checks columns, in one transaction (a baseline's seeding,
+        a rebaseline): each row made if it is missing."""
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for recording_id, fields in fields_by_recording.items():
+                _refuse_unknown_columns(fields, _CHECKS, "recording_id")
+                names = ["recording_id", *fields]
+                updates = (
+                    ", ".join(f"{k} = excluded.{k}" for k in fields)
+                    or "recording_id = recording_id"
+                )
+                db.execute(
+                    f"INSERT INTO plaud_checks ({', '.join(names)}) "
+                    f"VALUES ({_marks(len(names))}) "
+                    f"ON CONFLICT (recording_id) DO UPDATE SET {updates}",
+                    (recording_id, *(_encode(k, v) for k, v in fields.items())),
+                )
+
+    # ---- plaud_check_log: one row per check (§14.1) ----------------------------------------------
+    def log_check(
+        self,
+        recording_id: str,
+        result: str,
+        *,
+        parts: Iterable[str] = (),
+        volatile: Iterable[str] = (),
+        counted: bool = False,
+        failure: str | None = None,
+        now: datetime,
+    ) -> None:
+        """A check's row: its result, the parts it found changed (and an "other" change's field
+        names, as `other:<name>`), the parts that differed between two fetches, whether it counted
+        towards the breaker, and a failure's class. Names only, never a title or a value."""
+        with self._db() as db:
+            db.execute(
+                "INSERT INTO plaud_check_log (at, recording_id, result, parts_changed, "
+                "parts_volatile, counted, failure_class) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    utc_iso(now),
+                    recording_id,
+                    result,
+                    json.dumps(list(parts), ensure_ascii=False),
+                    json.dumps(list(volatile), ensure_ascii=False),
+                    int(counted),
+                    failure,
+                ),
+            )
+
+    def check_log_since(self, since: datetime) -> list[CheckLog]:
+        """The checks since `since`, oldest first (the breaker's window, Status's numbers)."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT at, recording_id, result, parts_changed, parts_volatile, counted, "
+                "failure_class FROM plaud_check_log WHERE at >= ? ORDER BY id",
+                (utc_iso(since),),
+            ).fetchall()
+        return [
+            CheckLog(
+                at=parse_stamp(at),
+                recording_id=rid,
+                result=result,
+                parts=tuple(json.loads(parts or "[]")),
+                volatile=tuple(json.loads(volatile or "[]")),
+                counted=bool(counted),
+                failure=failure,
+            )
+            for at, rid, result, parts, volatile, counted, failure in rows
+        ]
 
     # ---- plaud_events --------------------------------------------------------------------------
     def add_event(

@@ -99,6 +99,7 @@ def test_the_views_carry_what_the_worker_handles_and_each_button_its_own_reason(
     view = sync_view(s.settings, now=T0, can_request=None)
     handled = [
         "accept",
+        "accept-changes",
         "compare",
         "import",
         "keep-here",
@@ -584,6 +585,7 @@ def test_the_demo_view_is_the_hand_written_fixture_with_the_demo_notes(tmp_path)
     assert (sync["handled"], sync["not_yet"], sync["gate"]) == (
         [
             "accept",
+            "accept-changes",
             "compare",
             "import",
             "keep-here",

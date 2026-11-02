@@ -292,7 +292,12 @@ def cmd_docs(args: argparse.Namespace) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     problems = selfdoc.validate(args.archive, deep=args.deep)
-    _emit({"problems": problems}, args.json)
+    payload: dict = {"problems": problems}
+    # A snapshot whose write stopped before recording.json named it (stage 2b §14.1): a
+    # warning, never a problem, so the exit code is the problems' alone.
+    if warnings := selfdoc.orphan_snapshots(args.archive):
+        payload["warnings"] = warnings
+    _emit(payload, args.json)
     return 1 if problems else 0
 
 

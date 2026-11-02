@@ -60,9 +60,10 @@ KINDS = (
     "keep-here",
 )
 # The kinds the worker has a handler for (worker.HANDLERS names the same): Phase 1's Keep it here,
-# Accept this listing (Phase 2, area A3), Release's preview, Let it in and Undo (area A4), and
-# Compare, Sync now, the imports, Park and Unpark (area A5). Each later area adds its kinds with
-# their handlers, never before (CLAUDE.md, "To add a Plaud request kind").
+# Accept this listing (Phase 2, area A3), Release's preview, Let it in and Undo (area A4),
+# Compare, Sync now, the imports, Park and Unpark (area A5), and Accept these changes (Phase 3,
+# area B1). Each later area adds its kinds with their handlers, never before (CLAUDE.md, "To add a
+# Plaud request kind").
 HANDLED: frozenset[str] = frozenset(
     {
         "keep-here",
@@ -75,6 +76,7 @@ HANDLED: frozenset[str] = frozenset(
         "import",
         "park",
         "unpark",
+        "accept-changes",
     }
 )
 # The kinds a second press coalesces with while one is queued (§9.3): see `_coalesce`.
