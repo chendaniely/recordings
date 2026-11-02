@@ -464,11 +464,12 @@ def _request_rows(demo_ids, *, lift_guard: bool) -> int:
     state = State(settings.archive.parent / "state")
     try:
         with TestClient(create_app(settings), base_url="http://localhost") as client:
+            # The demo's own Writer creates its temporary state.db, and State opens it `rw`, never
+            # creating it: wait for the Writer first, so only the guard can stop the row.
+            assert runtime.tagging().store.wait_open(30) == (True, None)
             if lift_guard:
                 runtime._plaud_state, runtime._plaud_reason = state, None
             assert _plaud_request(client, request)
-            # The demo's own Writer has opened by now, so its temporary state.db exists.
-            assert runtime.tagging().store.wait_open(30) == (True, None)
     finally:
         runtime.configure(None)
     with closing(sqlite3.connect(f"file:{state.db_path}?mode=ro", uri=True)) as conn:
