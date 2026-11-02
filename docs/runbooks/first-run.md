@@ -2,7 +2,8 @@
 
 Steps 1–4 of the spec's "order of the first real run" (§19), and how to restore for real. Steps
 5–7 belong to stage 2b: section 6 deploys it, section 7 is the first catch-up's dry run, and
-section 8 the catch-up itself. Each block says which machine it runs on. Nothing here prints a secret: a
+section 8 the catch-up itself; `docs/setup.md` is the short path through them, and
+`docs/user-guide.md` says what the screens show. Each block says which machine it runs on. Nothing here prints a secret: a
 command that needs one reads it from a file, and secret files are written with an editor, never
 typed on a command line, where shell history would keep them.
 
@@ -468,6 +469,12 @@ non-admin NAS account over SSH (1b.8). SFTP is only the fallback (1b.9).
     - `[mirror] no_perms = true`, only if 1b.8 needed `--no-perms`.
 
 ### 1c. Before stage 2b (not needed for 2a)
+
+**Skipped for now** (Dan, 2026-11-01, Phase 1's Q&A §8): stage 2b's Phases 2 and 3 were built
+without these sessions, from what `audio-router`'s code shows of Plaud, and every guess that
+stands in for a spike's result is a row in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`.
+Section 6's sign-in and section 7's dry run are where most of them would show. The sessions below
+stay for when a guess turns out wrong and needs measuring.
 
 Stage 2b's spikes (its spec's §18) are the first steps that call Plaud, so none of them runs for
 2a. Each is a supervised session with Dan, run with `scripts/plaud_spike.py`, before the stage 2b
@@ -1034,14 +1041,14 @@ holds every scheduled sync until the first catch-up. Nothing in this section cal
 6's sign-in and its check, which read who is signed in and nothing else. On the homelab server, in
 `$REPO_DIR`, with the top block pasted, except step 6's first half, on the Mac.
 
-**First, the code.** Move the checkout to Phase 1's merge commit, as 2.8 does for a tag. The
+**First, the code.** Move the checkout to stage 2b's merge commit, as 2.8 does for a tag. The
 running containers keep their image until step 5's `make deploy`; the new `compose.yml` and
 template are what steps 3 and 5 read. Do steps 1 to 5 in one sitting: at boot, the unit reads this
 checkout's `compose.yml`, which needs step 3's settings.
 ```bash
 cd "$REPO_DIR"
 git fetch
-git checkout <Phase 1's merge commit>
+git checkout <stage 2b's merge commit>
 git log -1 --oneline
 ```
 Expected: the merge commit you mean to deploy.

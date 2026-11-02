@@ -4,6 +4,15 @@ A self-hosted library for recordings: Plaud, audio and video files, talks. One c
 archive, transcripts and notes from local models (and Claude when asked), and a web UI for
 listening, reading and tagging. Design: `docs/superpowers/specs/2026-10-08-recordings-design.md`.
 
+**Using it:**
+- [`docs/user-guide.md`](docs/user-guide.md): start here. Every screen and task, in plain words,
+  and what each Status line means and asks of you.
+- [`docs/setup.md`](docs/setup.md): setting up the Plaud sync, from a deploy to the first real
+  sync, dry run first.
+- [`docs/runbooks/first-run.md`](docs/runbooks/first-run.md): the server-side detail, every
+  command and message.
+- [`CHANGELOG.md`](CHANGELOG.md): what changed, stage by stage.
+
 Stage 1 built the read-only Library over a demo archive. Stage 2a moves the real archive in: a
 locked write path, `recordings import-audio-router`, restic backups to an append-only
 rest-server on the NAS with a monthly restore test, the NAS mirror, alerts, and Status.
@@ -33,8 +42,10 @@ Plaud** (a recording's Details, or a selection in the Library) checks edits at o
 everything** checks the whole account and writes a manifest (monthly by itself). The **Add** tab
 is the Sync screen (Compare, Sync now, Import, Release, Accept this listing, Sync everything,
 Park), and Status reports. The first real import is a supervised catch-up on the server, dry run
-first (the runbook's sections 7 and 8). `docs/user-guide.md` says what each screen shows and
-what to do.
+first: `docs/setup.md` walks through it, and the runbook's sections 6 to 8 have the detail.
+`docs/user-guide.md` says what each screen shows and what to do. Plaud's API details are the
+build's guesses (the spike sessions were skipped), each listed in
+`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md` with how you would notice it's wrong.
 
 Keeping a recording out: start its title in Plaud's app with the keep-out word (`noarchive`), or
 put its ID on the consent list. Once a recording has come in, deleting it in Plaud, or renaming
@@ -48,7 +59,9 @@ happens to start with it stays out until you press **Release** on the Sync scree
 
 <https://chendaniely.github.io/recordings/> runs the bundled public-domain demo entirely in
 your browser, with Python on WebAssembly (Shinylive). The first load is about 16 MB, and the
-browser caches it. It never touches real data.
+browser caches it. It never touches real data. Its **Add** and **Status** tabs show stage 2b's
+Plaud screens from a hand-written, invented view (`demo/plaud-sync.json`): a hold, the breaker,
+kept-out rows with Release, parked rows and the arrivals cue, every button off.
 
 ## Try the demo
 

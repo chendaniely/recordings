@@ -1,6 +1,6 @@
 # Stage 2b: Plaud flows in and keeps up (design)
 
-**Status:** spec approved 2026-10-23 · Phase 1 in progress on stage-2b (worktree .claude/worktrees/stage-2b) · Phase 2 planned · Phase 3 planned
+**Status:** spec approved 2026-10-23 · all three phases built on branch `stage-2b` (Phase 1 by its plan; Phases 2 and 3 straight through, Dan 2026-11-01, Phase 1's Q&A §8), not yet merged or deployed · the spike sessions were skipped, so Plaud's API details (the sign-in's file and refresh, the listing's and envelope's shapes, the change signal, the pacing) are the build's guesses, each recorded in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md` with how Dan would notice it's wrong · setting up: `docs/setup.md`; using it: `docs/user-guide.md`
 
 - **Date:** 2026-10-23 (revision 4, after the council's review, its re-review, a final check, a
   builder check and a simplification pass)
@@ -3400,3 +3400,11 @@ None: every bullet of §20 is planned in a phase.
   Re-sync between two recordings, the CLI's too. DAN-15's `retired_at` is `recordings plaud
   retire`. Builder's readings, each in the guesses file. C2.01's Re-sync half, C3.01 to C3.05,
   C5.23 and C5.26 built. No decision or scenario's outcome changed.
+- 2026-11-02: §15.5 and the status line (area B3): the canned view (`demo/plaud-sync.json`) now
+  shows 2b's states with invented data (a hold, the breaker, flags, kept-out rows with Release
+  and a released one, parked rows, gone, held removals, the arrivals cue), and the demos draw the
+  rows' own buttons (Release, Park, Keep it here, both Accepts) off with "Demo: nothing is
+  synced" instead of leaving them out, which §15.5's "buttons disabled" allows; the demo's server
+  still refuses every request. Release's question itself needs a request, so the public demo
+  can't open it (`make demo-live` does). The user guide is finished, `docs/setup.md` is the setup
+  page, and `CHANGELOG.md` starts. No decision or scenario's outcome changed.

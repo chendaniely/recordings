@@ -330,7 +330,7 @@ def test_the_runbook_has_a_deploy_2b_section():
         and 'install -d -m 700 "$RECORDINGS_HOME/state/manifests"' in code
     )
     lines = [line.strip() for line in _code_lines(text)]  # the code first, as 2.8 does for a tag
-    checkout = lines.index("git checkout <Phase 1's merge commit>")
+    checkout = lines.index("git checkout <stage 2b's merge commit>")
     assert lines.index("git fetch") < checkout < lines.index("make deploy")
     ntfy = " ".join(_section("## Setting up ntfy, later").split())
     assert "RECORDINGS_ALERTS_TOPIC_HOST" in ntfy and "`make deploy`" in ntfy

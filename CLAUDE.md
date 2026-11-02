@@ -2,6 +2,10 @@
 
 Read `docs/superpowers/specs/2026-10-08-recordings-design.md` before changing behaviour.
 
+Dan's own docs are `docs/user-guide.md` (every screen and task, and what each Status line means),
+`docs/setup.md` (the Plaud sync from a deploy to the first real sync) and `CHANGELOG.md`. A change
+to what a screen says, a Status line or a setup step changes them in the same commit.
+
 ## Toolchain
 
 - **Python only through uv.** `uv sync`, `uv run …`. Never pip, never the system Python.
