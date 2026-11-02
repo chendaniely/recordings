@@ -2287,7 +2287,11 @@ these changes:
   `plaud-cache.db` is a problem: the last two would send titles of recordings not yet here to the
   backup. So is one that holds Docker's secrets folder (`/run/secrets`) or lies inside it: the
   restic password and the NAS key are never backed up. The backup itself refuses to run while any
-  of these is there, by the same check. For `backup`, an `extra_paths` without the consent folder
+  of these is there, by the same check. So is a `[plaud] token_store` that lies inside the archive,
+  which every backup and the mirror copy whole, or one that can't be read (where the sign-in lies
+  can't then be told; it is never assumed to be `/plaud`, and is read from that key alone, so a
+  bad other `[plaud]` key never moves it): the backup and the mirror refuse to run while it is so,
+  naming the setting, never the token (the end-of-branch privacy review, 2026-11-02). For `backup`, an `extra_paths` without the consent folder
   or `/state/manifests` is a warning.
 - **Doctor never calls Plaud.** `recordings plaud check` does.
 - `test_doctor.py` gains a `worker` case for each.
@@ -3466,3 +3470,7 @@ None: every bullet of §20 is planned in a phase.
   before each fetch, so a hold recorded mid-run stops Sync everything's checks (and any long
   run's) at once; Sync everything is left unfinished and resumes once the hold clears, and
   doesn't start while one is on. No decision or scenario's outcome changed.
+- 2026-11-02: §17.2 (the end-of-branch privacy review, item 7): the backup and the mirror refuse
+  to run while `[plaud] token_store` lies inside the archive or can't be read, and doctor says so
+  in every role; the token's folder is read from that key alone, never through the whole of
+  `[plaud]`, and never assumed to be `/plaud`. No decision or scenario's outcome changed.

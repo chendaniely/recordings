@@ -1348,6 +1348,53 @@ def test_an_extra_path_doctor_reports_refuses_the_backup(tmp_path, writer, entry
     assert fake.calls == []
 
 
+def with_plaud(environ, lines: str) -> None:
+    cfg_file = Path(environ["RECORDINGS_CONFIG"])
+    cfg_file.write_text(
+        cfg_file.read_text(encoding="utf-8") + f"[plaud]\n{lines}\n", encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    ("plaud", "why"),
+    [
+        # The sign-in inside the archive, which every backup and the mirror copy whole.
+        ('token_store = "{archive}/.signin/tokens.json"', "TOKEN_IN_ARCHIVE"),
+        ('token_store = "{archive}/tokens.json"', "TOKEN_IN_ARCHIVE"),
+        # [plaud] token_store can't be read: where the sign-in lies can't be told.
+        ("token_store = 5", "TOKEN_UNKNOWN"),
+        ('token_store = "relative/tokens.json"', "TOKEN_UNKNOWN"),
+    ],
+)
+def test_a_sign_in_the_backup_would_carry_or_cant_place_refuses_it(tmp_path, writer, plaud, why):
+    # The end-of-branch privacy review (2026-11-02): the token is never backed up (§17.2), and a
+    # setting that can't be read fails closed rather than assuming /plaud. Fixed text, naming the
+    # setting and never the token.
+    _, environ = config(tmp_path, writer)
+    with_plaud(environ, plaud.format(archive=writer.root))
+    bc = backup.from_config(load_config(environ), environ)
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(backup.BackupRefused) as e:
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert str(e.value) == f"refusing to back up: {getattr(backup, why)}"
+    assert "tokens.json" not in str(e.value)
+    assert fake.calls == []
+
+
+def test_another_bad_plaud_setting_never_moves_the_sign_ins_folder(tmp_path, writer):
+    # Fail-open (b): a bad `schedule_minutes` made the whole of [plaud] unreadable, and the guard
+    # then assumed /plaud, so an extra path holding the configured sign-in's folder passed.
+    folder = tmp_path / "srv" / "plaud"
+    folder.mkdir(parents=True)
+    _, environ = config(tmp_path, writer, extra_paths=[str(tmp_path / "deploy.env"), str(folder)])
+    with_plaud(environ, f'schedule_minutes = "20"\ntoken_store = "{folder / "tokens.json"}"')
+    bc = backup.from_config(load_config(environ), environ)
+    fake = FakeRestic(stdout=SUMMARY)
+    with pytest.raises(backup.BackupRefused, match="would carry the Plaud sign-in"):
+        backup.run_backup(bc, writer.state, environ, runner=fake)
+    assert fake.calls == []
+
+
 def test_the_consent_folder_and_the_manifests_folder_are_never_refused():
     # why: §17.2. The consent folder and `/state/manifests` are what extra_paths is for.
     for entry in ("/consent", "/state/manifests", "/state/backup/state.db", "/run/other"):

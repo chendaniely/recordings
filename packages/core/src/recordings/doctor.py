@@ -157,14 +157,14 @@ def _plaud_folder_here(folder: Path, problems: list[str]) -> None:
 
 
 def _no_plaud_folder_named(cfg: Config, problems: list[str]) -> None:
-    """The folder `[plaud] token_store` names, when config names one other than the default."""
-    if not cfg.data.get("plaud", {}).get("token_store"):
+    """The folder `[plaud] token_store` names, when config names one other than the default, read
+    from that key alone (`backup.token_folder`): a bad other `[plaud]` key never hides it. One that
+    can't be read is `_extra_paths`' problem (TOKEN_UNKNOWN), in every role."""
+    section = cfg.data.get("plaud", {})
+    if not isinstance(section, dict) or not section.get("token_store"):
         return
-    try:
-        folder = plaud_settings(cfg).token_store.parent
-    except ConfigError:
-        return  # the worker's own check says so; here it can name no folder
-    if folder != PLAUD_MOUNT:
+    folder = backup.token_folder(cfg)
+    if folder is not None and folder != PLAUD_MOUNT:
         _plaud_folder_here(folder, problems)
 
 
@@ -782,7 +782,9 @@ def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str
     """[backup] extra_paths (stage 2b spec §17.2), in every role, which all read one config.toml.
     An entry `backup.never_backed_up` refuses is a problem, with its reason: one that would carry
     the Plaud sign-in, the whole state folder or Docker's secrets. `run_backup` refuses the same
-    entries by the same check (the phase-end council's S4). For `backup`, with a repository set,
+    entries by the same check (the phase-end council's S4). So is a `[plaud] token_store` inside
+    the archive, or one that can't be read, which the backup and the mirror refuse too
+    (`backup.sign_in_refusal`). For `backup`, with a repository set,
     deploy.env, the consent folder and the manifests folder (`/state/manifests`, decision 9)
     missing from it are warnings (a restore would bring back no list, or an older one, and no
     Sync everything manifest)."""
@@ -790,6 +792,10 @@ def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str
     found = section.get("extra_paths", [])
     paths = [p for p in found if isinstance(p, str)] if isinstance(found, list) else []
     token = backup.token_folder(cfg)
+    # What the backup and the mirror refuse (the end-of-branch privacy review, 2026-11-02): the
+    # sign-in inside the archive, or a `token_store` that can't be read.
+    if (why := backup.sign_in_refusal(token, cfg.archive_path)) is not None:
+        problems.append(why)
     for entry in paths:
         why = backup.never_backed_up(Path(entry), token_folder=token, state=cfg.state_path)
         if why is not None:

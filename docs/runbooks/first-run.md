@@ -1523,7 +1523,10 @@ Only the server's `worker` holds a Plaud sign-in: `tokens.json` in `$RECORDINGS_
 (`RECORDINGS_PLAUD_HOST`, mode 0700; the file 0600), never backed up or mirrored. The worker
 refreshes it by itself before it expires, under `tokens.lock`. It is a secret: never copy it by
 hand, print it, or put it in `config.toml`, and a Claude session never runs `make plaud-sign-in` or
-`token-import` (CLAUDE.md).
+`token-import` (CLAUDE.md). Backups and the mirror refuse to run while `[plaud] token_store` lies
+inside the archive, or can't be read ("refusing to back up: [plaud] token_store …"), and doctor
+says so in every role: keep it at `/plaud/tokens.json`, outside the archive and every
+`[backup] extra_paths` entry.
 
 **When to sign in:** before the first catch-up (section 6 step 6); when Status says "sign-in
 needed" (Healthchecks' email about the sync's check comes about 2 hours after it starts); when

@@ -120,7 +120,9 @@ auto_private_patterns = ["^\\s*private", "interview:"]
 # missing, unreadable or empty list, or a line that looks like an ID but can't be read, stops
 # every import until it reads.
 consent_list = "/consent/consent-list.md"   # inside the consent folder; never a file mount
-token_store = "/plaud/tokens.json" # the Plaud sign-in (worker only; `make plaud-sign-in`)
+# The Plaud sign-in (worker only; `make plaud-sign-in`). Never inside the archive or an extra
+# path: backups and the mirror refuse then, and while this can't be read.
+token_store = "/plaud/tokens.json"
 # api_base = "https://…"           # Plaud's API: the copied client's by default; tests set a fake
 # token_url = "https://…"          # where the sign-in refreshes: api_base + /oauth/token by default
                                    # (a guess: set it if the vendor CLI refreshes elsewhere)

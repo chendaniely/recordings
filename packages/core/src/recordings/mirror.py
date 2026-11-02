@@ -15,6 +15,8 @@ share on the NAS, through the mirror's own NAS account ([nas] ssh, with its key)
   be removed from the mirror when one of them sits inside it.
 - It refuses to run when the archive's sentinel is missing or its UUID has changed (§6.7), so an
   unmounted archive can never empty the mirror through --delete.
+- It refuses to run while `[plaud] token_store` lies inside the archive, or can't be read
+  (`backup.sign_in_refusal`, stage 2b §17.2): the Plaud sign-in never reaches the NAS.
 - A remote target needs RECORDINGS_NAS_KNOWN_HOSTS_FILE even when [nas] ssh is unset: only that
   pinned file is trusted for the host (ssh.ssh_options).
 - It refuses a target that is neither empty nor this archive's mirror: a `MIRROR.md` that carries
@@ -55,8 +57,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from recordings.backup import sign_in_refusal
+from recordings.backup import token_folder as sign_in_folder
 from recordings.config import Config, ConfigError
 from recordings.ids import ID_RE
+from recordings.plaud.settings import DEFAULT_TOKEN_STORE
 from recordings.sentinel import MIRROR, SentinelError, read_sentinel
 from recordings.ssh import Nas, nas_from_config, require_known_hosts
 
@@ -97,6 +102,9 @@ class MirrorConfig:
     nas: Nas
     max_delete: int = MAX_DELETE
     no_perms: bool = False
+    # The Plaud sign-in's folder (`backup.token_folder`); None when `[plaud] token_store` can't be
+    # read. The mirror refuses while it lies inside the archive, or can't be told.
+    token_folder: Path | None = DEFAULT_TOKEN_STORE.parent
 
 
 def from_config(cfg: Config, environ: Mapping[str, str]) -> MirrorConfig:
@@ -124,6 +132,7 @@ def from_config(cfg: Config, environ: Mapping[str, str]) -> MirrorConfig:
         nas=nas,
         max_delete=max_delete,
         no_perms=no_perms,
+        token_folder=sign_in_folder(cfg),
     )
 
 
@@ -316,6 +325,8 @@ def run_mirror(
         raise MirrorRefused(
             "refusing to mirror: the archive's UUID changed since `recordings init`"
         )
+    if (why := sign_in_refusal(mc.token_folder, mc.archive)) is not None:
+        raise MirrorRefused(f"refusing to mirror: {why}")  # the token never reaches the NAS
     _check_target(mc, expected_uuid, runner)
     _mark(mc, identity.uuid, runner)
     _check_deletions(mc, runner, timeout)

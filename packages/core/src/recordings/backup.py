@@ -43,7 +43,7 @@ from recordings.archive import Archive, utc_stamp
 from recordings.config import Config, ConfigError, secret
 from recordings.disk import STOP_FREE_PERCENT, WARN_FREE_PERCENT
 from recordings.plaud.cache import CACHE_NAME
-from recordings.plaud.settings import DEFAULT_TOKEN_STORE, plaud_settings
+from recordings.plaud.settings import DEFAULT_TOKEN_STORE
 from recordings.selfdoc import validate
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.ssh import Nas, nas_free_bytes, nas_from_config, require_known_hosts
@@ -70,6 +70,16 @@ CARRIES_SECRETS = (
 CARRIES_CACHE = (
     "the Plaud cache, which holds titles of recordings not yet here: it is derived, and never "
     "backed up (stage 2b spec §9.5)"
+)
+# sign_in_refusal's reasons: fixed phrases naming the setting, never the token (a backup, the
+# mirror and doctor; the end-of-branch privacy review, 2026-11-02).
+TOKEN_IN_ARCHIVE = (
+    "[plaud] token_store lies inside the archive, which every backup and the mirror copy whole: "
+    "move the Plaud sign-in out of it (stage 2b spec §17.2)"
+)
+TOKEN_UNKNOWN = (
+    "[plaud] token_store can't be read, so where the Plaud sign-in lies can't be told: fix it in "
+    "config.toml (stage 2b spec §17.2)"
 )
 
 
@@ -132,7 +142,9 @@ class BackupConfig:
     cacert: Path | None = None  # rest-server's self-signed certificate, for an https: repository
     retry_lock: str | None = None  # restic --retry-lock: set by ops.backup_config for the CLI
     extra_paths: tuple[Path, ...] = ()  # [backup] extra_paths, as given (also in `paths`)
-    token_folder: Path = DEFAULT_TOKEN_STORE.parent  # the Plaud sign-in's, never backed up
+    # The Plaud sign-in's, never backed up; None when `[plaud] token_store` can't be read, and
+    # then every backup refuses (`sign_in_refusal`).
+    token_folder: Path | None = DEFAULT_TOKEN_STORE.parent
 
 
 def _positive_int(section: dict, key: str, default: int) -> int:
@@ -390,18 +402,38 @@ def holds(entry: Path, path: Path) -> bool:
     return entry == path or entry in path.parents
 
 
-def token_folder(cfg: Config) -> Path:
-    """The Plaud sign-in's folder, as configured: the default when [plaud] can't be read (its own
-    problem is reported elsewhere)."""
-    if not isinstance(cfg.data.get("plaud", {}), dict):
-        return DEFAULT_TOKEN_STORE.parent
+def token_folder(cfg: Config) -> Path | None:
+    """The Plaud sign-in's folder, from `[plaud] token_store` alone, so a bad other `[plaud]` key
+    never moves it: the default (`/plaud`) when `[plaud]` or the key is absent; None when either
+    can't be read (`[plaud]` not a table, the key not an absolute path in quotes), so a backup and
+    the mirror refuse rather than assume the default (the end-of-branch privacy review,
+    2026-11-02)."""
+    section = cfg.data.get("plaud", {})
+    if not isinstance(section, dict):
+        return None
+    value = section.get("token_store", str(DEFAULT_TOKEN_STORE))
+    if not isinstance(value, str) or not value.strip():
+        return None
     try:
-        return plaud_settings(cfg).token_store.parent
-    except ConfigError:
-        return DEFAULT_TOKEN_STORE.parent
+        path = Path(value).expanduser()
+    except RuntimeError:  # `~someone` with no such user
+        return None
+    return path.parent if path.is_absolute() else None
 
 
-def never_backed_up(entry: Path, *, token_folder: Path, state: Path | None) -> str | None:
+def sign_in_refusal(token_folder: Path | None, archive: Path | None) -> str | None:
+    """Why no backup or mirror may run while the Plaud sign-in is configured so, as a fixed reason
+    naming the setting (never the token), or None: a `token_store` that can't be read (where the
+    sign-in lies can't be told), or one inside the archive, which every backup and the mirror copy
+    whole. An extra path that would carry it is `never_backed_up`'s."""
+    if token_folder is None:
+        return TOKEN_UNKNOWN
+    if archive is not None and holds(normal_path(archive), normal_path(token_folder)):
+        return TOKEN_IN_ARCHIVE
+    return None
+
+
+def never_backed_up(entry: Path, *, token_folder: Path | None, state: Path | None) -> str | None:
     """Why `[backup] extra_paths`' `entry` must never be backed up, as a fixed reason, or None.
     The one check (the phase-end council's S4): doctor reports it as a problem in every role, and
     `run_backup` refuses it. An entry that holds the Plaud sign-in's folder (as configured, or the
@@ -413,7 +445,8 @@ def never_backed_up(entry: Path, *, token_folder: Path, state: Path | None) -> s
     the restic password and the NAS key are never backed up. A folder inside the state folder
     (`/state/manifests`) is fine."""
     held = normal_path(entry)
-    if any(holds(held, f) or holds(f, held) for f in (normal_path(token_folder), PLAUD_MOUNT)):
+    folders = (PLAUD_MOUNT, *([normal_path(token_folder)] if token_folder is not None else []))
+    if any(holds(held, f) or holds(f, held) for f in folders):
         return CARRIES_SIGN_IN
     states = [STATE_MOUNT, *([normal_path(state)] if state is not None else [])]
     if any(holds(held, s) for s in states):
@@ -464,6 +497,8 @@ def run_backup(
     runner=subprocess.run,
 ) -> BackupResult:
     _check_archive(bc, state)
+    if (why := sign_in_refusal(bc.token_folder, bc.archive)) is not None:
+        raise BackupRefused(f"refusing to back up: {why}")
     if refused := refused_paths(bc):
         path, why = refused[0]
         raise BackupRefused(f"refusing to back up: {path}, {why}")

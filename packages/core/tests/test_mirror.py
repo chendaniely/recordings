@@ -126,6 +126,22 @@ def test_is_remote(target, remote):
     assert is_remote(target) is remote
 
 
+@pytest.mark.parametrize("token_store", ['"{archive}/.signin/tokens.json"', "5"])
+def test_the_mirror_refuses_a_sign_in_inside_the_archive_or_one_it_cant_place(
+    tmp_path, writer, token_store
+):
+    # The end-of-branch privacy review (2026-11-02): the mirror copies the archive whole, so a
+    # token inside it would land on the NAS; a setting that can't be read fails closed.
+    target = tmp_path / "mirror"
+    target.mkdir()
+    extra = f"[plaud]\ntoken_store = {token_store.format(archive=writer.root)}\n"
+    mc = mirror_config(tmp_path, writer, str(target), extra)
+    fake = FakeRsync(target)
+    with pytest.raises(MirrorRefused, match="token_store"):
+        run_mirror(mc, expected_uuid=writer.identity.uuid, runner=fake)
+    assert fake.calls == []
+
+
 def test_the_mirror_refuses_without_the_sentinel_or_with_another_archive(tmp_path, writer):
     # why: §6.7, §15.1. rsync --delete from an unmounted, empty folder would empty the mirror.
     mc = mirror_config(tmp_path, writer, str(tmp_path / "mirror"))

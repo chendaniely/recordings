@@ -78,6 +78,8 @@ spike sessions were skipped), each listed with how you would notice it's wrong i
   with "configuration: `keep_out_word` is invalid".
 - A hold that comes while Sync everything runs stops its checks at once; it carries on by itself
   once the hold clears.
+- Backups and the NAS mirror refuse to run if `[plaud] token_store` points inside the archive, or
+  can't be read, so the Plaud sign-in never lands in a backup; doctor says so too.
 
 ## Before stage 2b
 

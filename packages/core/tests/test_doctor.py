@@ -1283,6 +1283,28 @@ def test_extra_paths_holding_the_token_folder_or_the_whole_state_is_a_problem(
         assert any(f"names {entry}," in p and what in p for p in problems), role
 
 
+@pytest.mark.parametrize(
+    ("token_store", "why"),
+    [('"{archive}/.signin/tokens.json"', "TOKEN_IN_ARCHIVE"), ("5", "TOKEN_UNKNOWN")],
+)
+def test_a_sign_in_inside_the_archive_or_one_doctor_cant_place_is_a_problem(
+    tmp_path, token_store, why
+):
+    # The end-of-branch privacy review (2026-11-02): doctor says what the backup and the mirror
+    # refuse, in every role, naming the setting and never the token; it never assumes /plaud.
+    from recordings import backup
+
+    environ = server(tmp_path)
+    cfg = Path(environ["RECORDINGS_CONFIG"])
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8")
+        + f"[plaud]\ntoken_store = {token_store.format(archive=tmp_path / 'archive')}\n",
+        encoding="utf-8",
+    )
+    for role, env in (("web", web_only(environ)), ("backup", environ), ("all", environ)):
+        assert getattr(backup, why) in doctor(env, role=role)["problems"], role
+
+
 def test_the_manifests_folder_and_the_state_copy_are_not_problems(tmp_path):
     environ = server(tmp_path)
     with_extra_paths(
