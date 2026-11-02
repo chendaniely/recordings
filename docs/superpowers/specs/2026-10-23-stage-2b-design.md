@@ -3088,10 +3088,10 @@ smoke.
 | C3.04 | Fake: an unparked failing recording | Exits 2 with its count | Phase 3 | Phase 3's plan | planned |
 | C3.05 | Fake: Sync everything killed part-way | It resumes | Phase 3 | Phase 3's plan | planned |
 | C3.06 | Real: Sync everything | Exits 0, or 2 only for recordings Dan then parks, each checked in Plaud's app and recorded in the runbook's table by ID hash | Phase 3 | runbook (Phase 3) | planned |
-| C4.01 | Fake: an expired access token that refreshes | The pings go on | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
-| C4.02 | Fake: a 401, then a refused refresh | The pings stop from that turn on, with no Plaud call until the token changes | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
-| C4.03 | Fake: a new token, then a good turn | It pings again | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
-| C4.04 | Fake: a 429 from the token endpoint | An outage, not `sign-in` | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
+| C4.01 | Fake: an expired access token that refreshes | The pings go on | Phase 2, areas A1 and A6 | `packages/core/tests/test_worker.py`, through a stand-in turn; and `packages/core/tests/test_flow_2b.py`, with the worker's real turn | built |
+| C4.02 | Fake: a 401, then a refused refresh | The pings stop from that turn on, with no Plaud call until the token changes | Phase 2, areas A1 and A6 | `packages/core/tests/test_worker.py`, through a stand-in turn; and `packages/core/tests/test_flow_2b.py`, with the worker's real turn | built |
+| C4.03 | Fake: a new token, then a good turn | It pings again | Phase 2, areas A1 and A6 | `packages/core/tests/test_worker.py`, through a stand-in turn; and `packages/core/tests/test_flow_2b.py`, with the worker's real turn | built |
+| C4.04 | Fake: a 429 from the token endpoint | An outage, not `sign-in` | Phase 2, areas A1 and A6 | `packages/core/tests/test_worker.py`, through a stand-in turn; and `packages/core/tests/test_flow_2b.py`, with the worker's real turn | built |
 | C4.05 | Fake: a 401 after a good refresh | It goes through the current-user read | Phase 2, area A1 | `packages/core/tests/test_plaud_tokens.py`, `test_plaud_client.py` | built |
 | C4.06 | Real: the catch-up ends | The sync's check goes green within 20 minutes | Phase 2 | runbook section 8 | planned |
 | C5.01 | Fake: a placeholder-titled recording, later renamed to a private title | It arrives at the next run, untagged; renamed, it is tagged at the next run even when its fetch fails | Phase 2, area A4 (A6's flow test re-proves it with the run) | `packages/core/tests/test_plaud_import.py` (`test_a_placeholder_title_arrives_untagged`) and `packages/core/tests/test_plaud_listing_privacy.py` (renamed private: tagged from the listing alone, with every fetch failing) | built |
@@ -3143,7 +3143,7 @@ smoke.
 | C6.12 | The schedule off, a bad `keep_out_word`, a long rate-limit wait, each blocker | "Isn't being pinged" names the cause | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.13 | An idle worker with no sign-in, for 20 minutes on a fake clock | `--alive` stays 0 | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
 | C6.14 | The schedule off for 24 hours after the catch-up | It shows in Needs attention | Phase 1, Task 19 | `packages/ui/tests/test_plaud_views.py` | built |
-| C7.01 | Fake: a whole sync at DEBUG, with §21's faults | No token, `X-Amz-` query or title in any log, alert, Status view, `ops_runs` row or request result | Phase 2 | `test_flow_2b.py` (Phase 2's plan) | planned |
+| C7.01 | Fake: a whole sync at DEBUG, with §21's faults | No token, `X-Amz-` query or title in any log, alert, Status view, `ops_runs` row or request result | Phase 2, area A6 | `packages/core/tests/test_flow_2b.py` (the audio-router import, `plaud baseline`, `sync --dry-run`, `sync --catch-up` and the worker's loop with §21's faults, at DEBUG; the scan also covers the CLI's output, the pings and state.db's 2b tables; `--full` joins it with area B2) | built |
 | C7.02 | A link with a control character or an unknown scheme | The client raises its own error, with no URL | Phase 1, Task 4 | `packages/core/tests/test_plaud_client.py` | built |
 | C8.01 | `state.db` with the 2b tables | `SCHEMA_VERSION` is 1 and `MIGRATIONS` empty | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | built |
 | C8.02 | A recording written by the 2b import | It validates against 2a's model and schema | Phase 2, area A4 | `packages/core/tests/test_plaud_import.py` (`test_a_waiting_recording_arrives_whole_with_its_snapshot_and_outputs`: `selfdoc.validate`, deep) | built |
@@ -3323,3 +3323,10 @@ None: every bullet of §20 is planned in a phase.
   now update the stored compare (K_COMPARE and the cache's rows), so the screens show what the run
   left rather than what it found. C5.15's screen half built. No decision or scenario's outcome
   changed.
+- 2026-11-02: §20 criteria 4 and 7, §21's flow test (area A6): `test_flow_2b.py` runs stage 2b end
+  to end on the fake (the audio-router import, `plaud baseline`, the dry run, the catch-up, then the
+  worker's loop with §21's faults on the listing, the envelope and the links, requests from the
+  Sync screen, a late keep-out, Release and a refused sign-in), with every log at DEBUG, and scans
+  everything it produced for tokens, `X-Amz-` and titles. C4.01 to C4.04 now also pass with the
+  worker's real turn; C7.01 built. `--full` joins the flow with area B2. No decision or scenario's
+  outcome changed.
