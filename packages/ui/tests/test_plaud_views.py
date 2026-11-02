@@ -815,6 +815,15 @@ def test_bad_json_in_plaud_state_is_unreadable_never_a_broken_status(plaud_scene
     assert recording_plaud(s.settings, s.added[41], now=T0)["plaud_ids"]  # the IDs still show
 
 
+def test_a_keep_out_words_row_that_is_not_a_list_is_unreadable(plaud_scene):
+    # why: step 4's reviews. Iterated, a string showed as its letters; read as no words, the
+    # panel would say none is enforced. The views refuse it as the Writer does
+    # (KeepOutWordsError), so the sync part says its records can't be read, by class only.
+    s = plaud_scene
+    s.db.put("keep_out_words", "skipme", now=T0)
+    _assert_unreadable(s, "KeepOutWordsError")
+
+
 def test_bad_json_in_an_events_detail_is_unreadable(plaud_scene):
     s = plaud_scene
     rid = s.add(42, "Week 42")

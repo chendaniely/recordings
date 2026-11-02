@@ -568,6 +568,7 @@ class _Read:
 
     def __init__(self, settings: PlaudViewSettings, state: State, now: datetime) -> None:
         from recordings.plaud import checks
+        from recordings.plaud.baseline import enforced_words
         from recordings.plaud.gate import gate_now
         from recordings.plaud.health import sync_health
 
@@ -579,7 +580,9 @@ class _Read:
         get = self.db.get
         self.consent = _dict(get(checks.K_CONSENT))
         self.ping = _dict(get(checks.K_LAST_PING))
-        self.words = [w for w in get(checks.K_KEEP_OUT_WORDS) or [] if isinstance(w, str)]
+        # As the Writer reads them: a row that isn't a list raises KeepOutWordsError (a
+        # ValueError), so the views say the records can't be read, never "none" or its letters.
+        self.words = list(enforced_words(self.db))
         stamps = (parse_stamp(get(checks.K_LAST_STARTED)), parse_stamp(get(checks.K_LAST_ENDED)))
         self.last_turn = max((t for t in stamps if t is not None and t <= now), default=None)
         self.flags = self.db.open_flags(FLAG_EVENTS)
