@@ -158,6 +158,9 @@ def test_with_the_worker_killed_the_screen_says_it_isnt_running(page: Page, demo
             assert time.monotonic() < deadline, "the screen never said the worker isn't running"
 
 
+# With `page`, as the module's other tests: pytest then keeps it last, in file order, instead
+# of moving it after every test that opens a page.
+@pytest.mark.usefixtures("page")
 def test_ctrl_c_stops_everything_with_no_stray_process(demo):
     scratch = list(demo.tmp.glob("recordings-demo-live-*"))
     assert len(scratch) == 1

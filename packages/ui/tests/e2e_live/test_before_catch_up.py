@@ -36,6 +36,9 @@ def test_the_catch_up_opens_the_gate(page: Page, demo_before, console):
     expect(page.get_by_test_id("sync-summary")).not_to_contain_text(GATE)
 
 
+# With `page`, as the module's other tests: pytest then keeps it last, in file order, instead
+# of moving it after every test that opens a page.
+@pytest.mark.usefixtures("page")
 def test_ctrl_c_stops_the_web_app_the_worker_and_the_fake(demo_before):
     scratch = list(demo_before.tmp.glob("recordings-demo-live-*"))
     assert len(scratch) == 1

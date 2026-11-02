@@ -96,7 +96,7 @@ def test_the_children_get_none_of_this_shells_settings_secrets_or_proxies(
     assert env["RECORDINGS_CONFIG"] == str(tmp_path / "config.toml")
 
 
-def test_it_starts_prints_its_url_and_stops_everything_on_ctrl_c(tmp_path):
+def test_it_starts_prints_its_url_and_stops_everything_on_a_double_ctrl_c(tmp_path):
     # The start and the clean stop, before the catch-up (the quick start; `make e2e-live` starts
     # it after one too): the URL, then Ctrl-C: the web app and the worker gone, the folder too.
     env = {k: v for k, v in os.environ.items() if not k.startswith(("RECORDINGS_", "RESTIC_"))}
@@ -113,6 +113,7 @@ def test_it_starts_prints_its_url_and_stops_everything_on_ctrl_c(tmp_path):
         cwd=REPO,
     )
     lines: list[str] = []
+    pids: list[int] = []
     reader = threading.Thread(target=lambda: lines.extend(proc.stdout), daemon=True)
     reader.start()
     try:
@@ -122,17 +123,25 @@ def test_it_starts_prints_its_url_and_stops_everything_on_ctrl_c(tmp_path):
             assert time.monotonic() < deadline, "".join(lines)
             time.sleep(0.2)
         started = next(line for line in lines if line.startswith("Started:"))
-        pids = [int(part.split(")")[0]) for part in started.split("(pid ")[1:]]
+        pids += [int(part.split(")")[0]) for part in started.split("(pid ")[1:]]
         assert len(pids) == 2 and all(alive(pid) for pid in pids)
         (scratch,) = tmp_path.glob("recordings-demo-live-*")
+        # A terminal's Ctrl-C reaches make, `uv run` and the script together, and `uv run`
+        # forwards it again: the second must not cut the stop short (found by hand, through make).
+        proc.send_signal(signal.SIGINT)
+        time.sleep(0.2)
         proc.send_signal(signal.SIGINT)
         assert proc.wait(60) == 0
+        stray = [pid for pid in pids if alive(pid)]
     finally:
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+        for pid in pids:  # a failed stop leaves nothing running after the test either
+            if alive(pid):
+                os.kill(pid, signal.SIGKILL)
     reader.join(5)
-    assert [pid for pid in pids if alive(pid)] == []
+    assert stray == []
     assert not scratch.exists()
     assert lines[-1].startswith("Stopped:")
 

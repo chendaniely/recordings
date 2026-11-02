@@ -401,10 +401,14 @@ class Demo:
     def stop(self) -> None:
         """SIGTERM to each child (the web app first, then the worker, which stops between two
         recordings), SIGKILL after STOP_WAIT, then the fakes; the scratch folder goes unless
-        --keep. Once only."""
+        --keep. Once only, and deaf to a second Ctrl-C: a terminal's Ctrl-C reaches make, `uv run`
+        and this script together, and `uv run` forwards it again, which must not cut the stop
+        short and leave the worker running."""
         if self._stopped:
             return
         self._stopped = True
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(signum, signal.SIG_IGN)
         self.stopping.set()
         for name in ("web", "worker"):
             proc = self.children.get(name)
@@ -541,9 +545,14 @@ def main(argv: list[str] | None = None) -> int:
     demo = Demo(args)
 
     def interrupted(signum: int, frame: object) -> None:
+        """The first Ctrl-C or SIGTERM stops the demo; any after it (`uv run` forwards the
+        terminal's Ctrl-C a second time) is ignored, so the stop always runs to its end."""
+        for each in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(each, signal.SIG_IGN)
         demo.stopping.set()
         raise KeyboardInterrupt
 
+    signal.signal(signal.SIGINT, interrupted)
     signal.signal(signal.SIGTERM, interrupted)
     code = 0
     try:
