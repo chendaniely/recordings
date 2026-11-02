@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from recordings.archive import Archive
     from recordings.index import Index
     from recordings.plaud.client import Listed
+    from recordings.plaud.importer import ImportResult
     from recordings.sources.plaud import Listing
     from recordings.state import State
 
@@ -526,6 +527,12 @@ def record_compare(
         ),
         now=result.at,
     )
+    _store(db, cache, result, now=now)
+
+
+def _store(db: PlaudDB, cache: Cache, result: Compare, *, now: datetime) -> None:
+    """The compare's rows not here go to the cache (a title only where `title_shown`), and its
+    counts to K_COMPARE."""
     cache.replace_compare(
         (
             CompareRow(
@@ -546,6 +553,73 @@ def record_compare(
         at=result.at,
     )
     db.put(K_COMPARE, result.record(), now=now)
+
+
+# What an import's `excluded` result says, as the bucket's kind: its audio being a flagged
+# recording's (importer.EXCLUDED_FLAGGED) is a possible re-keyed match.
+_EXCLUDED_BY = {
+    BY_CONSENT: BY_CONSENT,
+    BY_TITLE: BY_TITLE,
+    BY_WAS_TITLE: BY_WAS_TITLE,
+    BY_REKEY: BY_REKEY,
+    "flagged": BY_REKEY,
+}
+
+
+def after_imports(
+    db: PlaudDB,
+    cache: Cache,
+    result: Compare,
+    results: Sequence[ImportResult],
+    *,
+    here: Here,
+    consent: ConsentList | None,
+    now: datetime,
+) -> Compare:
+    """The stored compare after a run's imports (area A6): each recording that came in (or was
+    found here) moves to here, and one the import kept out (a late consent listing, its envelope's
+    title, its audio) to excluded, with no title; the counts are worked out again by `compare`,
+    and the cache's rows and K_COMPARE replaced. So the Sync screen and Status say what the run
+    left, not what it found. Nothing else the compare wrote changes (plaud_listing, the flags)."""
+    found = {r.plaud_id: r for r in results}
+    by_id = {pid: set(rids) for pid, rids in here.by_id.items()}
+    rows = []
+    for old in result.rows:
+        r, row = found.get(old.canonical), old
+        if r is not None and r.outcome in ("imported", "merged", "here") and r.recording_id:
+            by_id.setdefault(old.canonical, set()).add(r.recording_id)
+            row = replace(
+                old,
+                bucket=HERE,
+                state=None,
+                excluded_by=None,
+                recording_ids=(r.recording_id,),
+                title_shown=False,
+                review=False,
+            )
+        elif r is not None and r.outcome == "excluded" and r.why in _EXCLUDED_BY:
+            row = replace(
+                old,
+                bucket=EXCLUDED,
+                state=None,
+                excluded_by=_EXCLUDED_BY[r.why],
+                title_shown=False,
+                arrives_private=False,
+                review=False,
+            )
+        rows.append(row)
+    settled = compare(
+        rows,
+        at=result.at,
+        here=Here(by_id={pid: frozenset(rids) for pid, rids in by_id.items()}, gone=here.gone),
+        consent=consent,
+        conditions=Conditions(),
+        census=result.census,
+        repeats=result.repeats,
+        malformed=result.malformed,
+    )
+    _store(db, cache, settled, now=now)
+    return settled
 
 
 def take_listing(

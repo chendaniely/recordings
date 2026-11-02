@@ -166,6 +166,18 @@ describe("the Sync screen (2b spec §15.1)", () => {
     expect($("[data-testid=sync-breaker]")!.textContent).toContain("it needs a code fix");
   });
 
+  it("under a hold the server turns Sync now off too, and each section says why once", () => {
+    // Area A5's handoff: the worker refuses Sync now and the imports during a hold ("Held: see
+    // Status"), so the view gives both the hold's reason; Compare stays on.
+    const why = "Held: Plaud's listing is held (see Held, above)";
+    draw({ ...VIEW, buttons: { sync: why, compare: null, full: why, import: why } }, fake());
+    expect($("[data-request=sync]")!.hasAttribute("disabled")).toBe(true);
+    expect($("[data-request=compare]")!.hasAttribute("disabled")).toBe(false);
+    expect($("[data-testid=import-all]")!.hasAttribute("disabled")).toBe(true);
+    expect($$("#sync-actions .sync-why").map((p) => p.textContent)).toEqual([why]);
+    expect($$("#sync-not-here .sync-why").map((p) => p.textContent)).toEqual([why]);
+  });
+
   it("kept-out and flag rows show no title", () => {
     // C9.02. A title smuggled into a row the server should never send one in is still not drawn.
     const leaky = { ...VIEW.kept_out[1], title: "Leaked synthetic title" } as KeptOutRow;

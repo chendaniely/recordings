@@ -91,6 +91,7 @@ from recordings.plaud.compare import (
     Classified,
     Compare,
     IndexUnavailable,
+    after_imports,
     here_from_archive,
     take_listing,
 )
@@ -630,8 +631,29 @@ def _one_listing(
     )
     if relist:
         return True
+    if any(r.canonical in done for r in result.rows):
+        _settle(run, report, result, here=here, consent=consent)
     _final_phrase(report, measured)
     return False
+
+
+def _settle(run: Run, report: SyncReport, result: Compare, *, here, consent) -> None:
+    """The stored compare after the imports (`compare.after_imports`), so the screens show what
+    the run left rather than what it found (area A6). The report keeps the compare it ran on (its
+    replies count from it). A state.db or cache that can't take it now leaves the compare as it
+    was, to be put right by the next listing: the run's outcome doesn't change."""
+    try:
+        after_imports(
+            run.db,
+            Cache(run.writer.state.path),
+            result,
+            report.results,
+            here=here,
+            consent=consent,
+            now=run.clock(),
+        )
+    except (sqlite3.Error, OSError) as exc:
+        log.warning("the compare after the imports wasn't stored (%s)", type(exc).__name__)
 
 
 def _import_rows(

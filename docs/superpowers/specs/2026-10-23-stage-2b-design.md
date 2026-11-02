@@ -1962,7 +1962,8 @@ component, and link to each other. Status makes two exceptions: Accept on a hold
   10. **Import your own audio:** coming later (main spec §9.2).
 - **While the gate is closed,** only **Compare** is enabled. The others say the gate's reason
   (§11.6).
-- **Under any hold,** the import buttons are disabled, with the hold's line.
+- **Under any hold,** Sync now and the import buttons are disabled, with the hold's line (the
+  worker refuses them anyway: "Held: see Status"). Likewise during a rate limit's wait.
 - **Every press gets an answer within a second** (P6). While a request is pending, the screen updates
   every 2 seconds. It keeps the newest result line ("Import all, 14:20: 31 imported · 4 arrived
   private"), so a phone that slept through the toast still sees it.
@@ -3107,7 +3108,7 @@ smoke.
 | C5.12 | A late consent listing while syncs run | Never fetched again, and the run goes on | Phase 2, areas A4 (the import) and A5 (the run) | the import: `packages/core/tests/test_plaud_import.py` (the list read again before each recording; an ID added mid-run is never requested); the run going on: `packages/core/tests/test_plaud_sync.py` (`test_an_id_added_to_the_consent_list_mid_run_is_never_fetched_and_the_run_goes_on`) | built |
 | C5.13 | An already-flagged recording added to the consent list | No second flag: its flag changes | Phase 1, Task 8 | `packages/core/tests/test_plaud_flags.py` | built |
 | C5.14 | The consent list replaced by a rename | Read at the next tick | Phase 1, Task 13 | `packages/core/tests/test_worker.py` | built |
-| C5.15 | A consent stop, or a hold with an ID change | The cache and the Sync screen hold no title of a recording not here | Phase 2, areas A3 (the cache) and A6 (the Sync screen) | the cache: `packages/core/tests/test_plaud_compare.py`, `test_plaud_hold.py`, `test_plaud_accept.py` (the tick's purge); the screen: A6 | cache built; screen planned |
+| C5.15 | A consent stop, or a hold with an ID change | The cache and the Sync screen hold no title of a recording not here | Phase 2, areas A3 (the cache) and A6 (the Sync screen) | the cache: `packages/core/tests/test_plaud_compare.py`, `test_plaud_hold.py`, `test_plaud_accept.py` (the tick's purge); the screen: `packages/core/tests/test_plaud_screens.py` (the views check each title again: a consent stop, a hold with Plaud's IDs changed, a word enforced since the compare) | built |
 | C5.16 | A removed `private`, then a `reindex` in a `web`-role process | It stays removed, and comes back only when the title changes to one that matches, with its note | Phase 1, Task 9 | `packages/core/tests/test_plaud_marker.py` | built |
 | C5.17 | A removed `private` through 100 sync runs | It stays removed | Phase 2, area A4 | `packages/core/tests/test_plaud_listing_privacy.py` (`test_a_removed_private_stays_removed_through_runs_and_reconciles`: 100 runs, with reconciles of the old snapshot between them) | built |
 | C5.18 | `schedule_minutes` 20 from deploy, before the first catch-up | A scheduled turn makes no Plaud call, and an import request is refused | Phase 1, Tasks 13 and 14 | `packages/core/tests/test_worker.py`, `packages/core/tests/test_plaud_requests.py` | built |
@@ -3313,4 +3314,12 @@ None: every bullet of §20 is planned in a phase.
   on the server, through `docker/up-deployed.sh`), with the runbook's sections 7 and 8. A Compare,
   the dry run included, now writes nothing to the archive, as §11.1 says (the run had checked
   titles from the listing in a Compare too). C5.20 built. No decision or scenario's outcome
+  changed.
+- 2026-11-02: §15.1, §15.2, §15.3, §9.5 (area A6): the views read what Phase 2 writes: the
+  equations, "All here" and the waiting line from the newest compare and the last good listing; Not
+  here yet and Kept out from the cache, each title checked again before it leaves; a hold, a small
+  shrink, the sign-in and its expiry, Gone, Parked, the re-key flags and a rebuild's review rows.
+  Sync now is off under a hold, as the imports are (the worker refuses it anyway). A sync's imports
+  now update the stored compare (K_COMPARE and the cache's rows), so the screens show what the run
+  left rather than what it found. C5.15's screen half built. No decision or scenario's outcome
   changed.

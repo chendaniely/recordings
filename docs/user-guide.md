@@ -204,6 +204,78 @@ on the screen, so a phone that slept through the toast still sees it.
 - Nothing, usually: the scheduled sync does all of this every 20 minutes.
 - A recording that keeps failing: check it plays in Plaud's app, then **Park** it.
 
+## The Sync screen, top to bottom
+
+The **Add** tab is the Sync screen: it acts, and Status reports. Open it from the top bar
+(`#/add`). On a phone it is the same, one column, with buttons the width of the screen.
+
+**What you see**
+
+1. **The top line**, the same one Status shows:
+   - "All here · checked 14:20 · next sync 14:40", with "Every recording on Plaud is in the archive
+     or deliberately left out." under it, when the last good sync is recent and nothing waits.
+   - "2 waiting · 1 missing · checked 14:20 · next sync 14:40" when something hasn't come in yet.
+   - Or what stops the sync, in one sentence ("Sign-in needed", "Held: see Status", "Scheduled sync
+     waits for the first catch-up (runbook)"), with **See Status**.
+2. **Flags**, each by recording ID (or Plaud ID) with its next step: a recording kept out by title
+   after it came in (**Keep it here**, or take it out by hand), one added to the consent list after
+   it came in, a `private` the sync couldn't write, and a Plaud ID that "may be a consent-listed
+   recording back under a new Plaud ID", with its date and duration. Never a title.
+3. **Held**, when a listing is held: its sentence, and **Accept this listing** or why it can't be.
+4. **Sync**: **Sync now** and **Compare**, and under **More**, **Sync everything** (it comes with
+   the next part of 2b). The newest result line stays here ("Sync now, 14:20: Synced: 2 imported
+   (1 private) · All here"), and a running request shows its progress ("Importing (2 of 5)").
+5. **From the listing**: the equation, each of its numbers a jump to its list; "from the listing
+   at 14:20"; the archive's own equation; and the consent list's line ("Consent list: 14 IDs, 1 on
+   Plaud now · file changed … · read 14:20").
+6. **Not here yet**: one row per recording, newest first: a box to tick, the date, time and
+   duration, the title (with a lock and "arrives private" when its title matches your private
+   patterns), and why it waits ("imports at the next sync", "failed 3 times" with **Park**, "needs
+   your review", …). **Copy ID** copies the ID the way the consent list takes it. **Import
+   selected** and **Import all 31** bring them in now. While the consent list can't be read, or a
+   held listing shows Plaud's IDs changed, no titles show: only dates and durations.
+7. **Kept out**: by the consent list, by title, "was kept out by title" (with **Release**), and
+   "may be … back under a new ID" (with **Release**, if it is a different recording). Each by Plaud
+   ID, date, time and duration; never a title. A released row reads "Released · comes in at the
+   next sync (14:40)" with **Undo**.
+8. **Updated on Plaud (7 days)**: recordings here that the sync re-tagged private, and (with the
+   next part of 2b) what changed on Plaud.
+9. **Gone from Plaud**: recordings you have that Plaud no longer lists, newest first, with "gone
+   since"; nothing is ever deleted from the archive. **Parked**: what you parked, with **Unpark**.
+10. **Import your own audio**: coming later.
+
+**What to do**
+
+- Nothing, usually: the scheduled sync keeps it all up to date.
+- Before the first catch-up only **Compare** works; every other button says why.
+
+## Status's Plaud sync panel
+
+Status reports; it never names a recording by its title, only by its ID.
+
+**What you see**
+
+- The same top line as the Sync screen, then plain sentences, each only while it is true: the sync
+  failing ("Plaud sync failing since 12:00 (Plaud unavailable). Last good listing 11:40."), "isn't
+  being pinged since …", the schedule or auto-import off, a small shrink ("Plaud now lists 3
+  fewer: waiting for the next listing to agree"), and a hold with **Accept this listing**.
+- **Needs attention**, at the top of Status: a sign-in needed ("Plaud sign-in needed since 23:00.
+  New recordings wait on Plaud: nothing is lost. At the Mac: `make plaud-sign-in`."), a sign-in
+  that expires within 7 days, a hold, a possible re-keyed recording to confirm, a consent stop, a
+  late keep-out or consent listing, a `private` the sync couldn't write, recordings waiting for your
+  review after a rebuild, the worker silent, a long-held sync "may be stuck", and a ping failing.
+- **The numbers**: the equations and the consent list's line; the last good listing ("14:20 (120
+  listed)") and the next sync; the sign-in ("works (last used 14:20) · access token expires 15:20 ·
+  refresh token"); held, gone from Plaud, failing and parked; when the worker last reported; and
+  Healthchecks' last ping.
+- **Details**, folded away: the normaliser's version, the ID forms Plaud uses (and when they last
+  changed form with nothing lost), the keep-out words in force, malformed listing rows, and the last
+  20 runs with their results.
+
+**What to do**
+
+- Each line says its own next step; the runbook has the detail.
+
 ## Renaming a recording in Plaud after it came in
 
 Each sync reads every title Plaud lists, and checks the ones that changed since it last looked.
@@ -332,7 +404,8 @@ kept out could otherwise come back under a new ID.
     at once.
   - "Plaud lists 3 IDs in a form the consent list can't name. It needs a code fix": Accept can't
     help; ask a Claude session to look.
-- **Sync now** answers "Held: see Status", and the import buttons are off.
+- **Sync now** and the import buttons are off, and say "Held: Plaud's listing is held (see Held,
+  above)"; **Compare** still works.
 - About 2 hours later, Healthchecks emails that the sync's check is down.
 - A few recordings vanishing (5 or fewer, or under 5% of the archive's) isn't held: Status says
   "Plaud now lists 3 fewer: waiting for the next listing to agree", and an hour later they show as

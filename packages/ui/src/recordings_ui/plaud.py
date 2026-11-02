@@ -23,6 +23,13 @@ Dan, Phase 1's Q&A §6) reads `plaud_checks` through PlaudDB.failing_checks: a r
 FAILING_AFTER (3) or more failed checks in a row (`failures`), neither parked (`parked_at`) nor
 gone (`gone_since`), dated by `failing_since`. Phase 3's checks write those columns; until then
 the list is empty, and the panel draws no line.
+
+Phase 2's readers (area A6) fill what the listing writes: the equations, the consent line's count
+on Plaud and "All here" from `K_COMPARE` and `K_LAST_GOOD_LISTING`; Not here yet and Kept out
+from the cache's compare rows (`Cache.read_only`), each title checked again before it leaves
+(`_Read.shown_title`, P13); a hold from `K_HOLD`, a small shrink from `K_SMALL_SHRINK`; the
+sign-in from `K_SIGN_IN` and its blocker; Gone and Parked from `plaud_checks` and
+`plaud_listing`; the re-key flags and a rebuild's review rows; the last runs from `ops_runs`.
 """
 
 from __future__ import annotations
@@ -218,16 +225,42 @@ async def submit(
 
 
 # ---- The views (Task 19; 2b spec §15, §22) -------------------------------------------------
-# Phase 1's views read Phase 1's own data, read-only: the summary and what stops the sync
+# The views read state.db and the cache, read-only: the summary and what stops the sync
 # (sync_health), the blockers, the privacy flags, what the worker read from the consent list (a
-# count), the gate, the worker's heartbeat, the ping, and the requests' last result. What a later
-# phase writes (the listing and its compare, holds, the breaker, checks, Sync everything, the
-# sign-in's expiry, parking) is null or empty here: each reader comes with its writer, against
-# types.ts and the canned view (2b phase 1 plan, Task 19). Every reader is imported inside the
-# function that needs it, never at the top: the Pages demo runs this module on Pyodide, which has
-# no sqlite3, and draws only the canned view (decision 23). Times and dates are formatted here, in
-# the default zone; a title appears only in the Sync screen's Updated rows.
+# count), the gate, the worker's heartbeat, the ping, the requests' last result, and Phase 2's
+# listing, compare, hold and sign-in (area A6). What Phase 3 writes (the breaker, checks, Sync
+# everything, held removals) is null or empty here until its reader comes, against types.ts and
+# the canned view (2b phase 1 plan, Task 19). Every reader is imported inside the function that
+# needs it, never at the top: the Pages demo runs this module on Pyodide, which has no sqlite3,
+# and draws only the canned view (decision 23). Times and dates are formatted here, in the default
+# zone; a title appears only in the Sync screen's Not here yet and Updated rows.
 
+ALL_HERE_EXPLAIN = "Every recording on Plaud is in the archive or deliberately left out."
+# Sync now's and the imports' reason while a listing is held (A5's handoff: the worker refuses
+# them anyway, "Held: see Status").
+HELD_BUTTON = "Held: Plaud's listing is held (see Held, above)"
+HOLD_FALLBACK = "Plaud sync paused: its listing is held (runbook)."
+HOLD_FALLBACK_REFUSED = "Accept refused: fix this first (runbook)"
+# Copied from recordings.plaud.compare, which imports sqlite3 (the Pages demo's Pyodide has none):
+# test_constants_copied_to_keep_sqlite_out_of_pyodide_match_their_sources pins each to its source.
+TITLES_HIDDEN_CONSENT = "titles hidden until the consent list reads"
+TITLES_HIDDEN_IDS = "titles hidden while Plaud's IDs look changed"
+PARKED_STATE = "parked"
+FAILED_STATE = "failed 3 times · Park"
+REKEYED = "rekeyed"  # the re-key match's open flag (compare.REKEYED_EVENT)
+CONSENT_KIND = "consent"  # the cache's keyed-out kind for a consent-listed ID (compare.BY_CONSENT)
+RELEASE_BY = ("was-title", "rekeyed")  # Kept out rows Release can lift (release.kept_by)
+# The re-key flag's sentence (§11.4 step 6), by what the new ID may be.
+REKEY_OF = {
+    "consent": "a consent-listed recording",
+    "kept-out": "a recording kept out by title",
+    "several": "one of several consent-listed or kept-out recordings",
+}
+REKEY_LISTED = "May be {of} back under a new Plaud ID: it stays out until you confirm (runbook)"
+REKEY_AUDIO = "Its audio is {of}'s, already here: it stays out until you confirm (runbook)"
+REBUILT_LINE = "The sync's records were rebuilt: {n} wait{s} for your review on the Sync screen."
+SIGN_IN_FIX = "At the Mac: `make plaud-sign-in`."  # signin.SIGN_IN_FIX, as §15.2 words it
+SIGN_IN_SOON = timedelta(days=7)  # Needs attention warns this long before the sign-in expires
 DEMO_NOTE = "Demo: nothing is synced"
 DEMO_STATUS = "Demo: Plaud sync isn't part of the demo."
 DEMO_VIEW_NAME = "plaud-sync.json"
@@ -563,25 +596,43 @@ def _next_sync(
     return _when(due, now, settings.timezone_name)
 
 
-def _flag(db: Any, ev: Event) -> dict:
+def _rekey_sentence(ev: Event) -> str:
+    """A possible re-keyed match's sentence (§11.4 step 6; area A3's listing match, `of`, and
+    area A4's audio match, `by: audio`): what it may be, and that it stays out until Dan
+    confirms. Never a title."""
+    of = REKEY_OF.get(str(ev.detail.get("of")), REKEY_OF["several"])
+    template = REKEY_AUDIO if ev.detail.get("by") == "audio" else REKEY_LISTED
+    return _cap(template.format(of=of))
+
+
+def _flag(db: Any, ev: Event, r: _Read | None = None) -> dict:
     """One privacy flag (P15), by recording ID with its next step; never a title. Its Plaud ID is
     shown as the listing row holds it (a late keep-out makes one), else in its canonical form. A
-    `private` that couldn't be written says what its cause needs (_sentence)."""
+    `private` that couldn't be written says what its cause needs (_sentence). A possible re-keyed
+    match is by Plaud ID alone, with its date and duration from the cache (`r`)."""
     from recordings.plaud.flags import KEPT_OUT_LATE
 
     listed = None
     if ev.canonical_plaud_id:
-        row = db.listing(ev.canonical_plaud_id)
+        row = r.listing.get(ev.canonical_plaud_id) if r else db.listing(ev.canonical_plaud_id)
         listed = row.listed_id if row is not None else ev.canonical_plaud_id
+    date = duration = None
+    if ev.kind == REKEYED and r is not None and ev.canonical_plaud_id:
+        found = next(
+            (c for c in r.cache_rows() if c.canonical_plaud_id == ev.canonical_plaud_id), None
+        )
+        if found is not None:
+            date = _stamp(found.start_at, r.tz)
+            duration = _minutes(found.duration_ms)
     return {
         "kind": ev.kind,
         "recording_id": ev.recording_id,
         "plaud_id": listed,
         "copy_id": _copy_form(listed) if listed else None,
-        "sentence": _sentence(ev),
+        "sentence": _rekey_sentence(ev) if ev.kind == REKEYED else _sentence(ev),
         "keep_here": ev.kind == KEPT_OUT_LATE and ev.recording_id is not None,
-        "date": None,  # a possible re-keyed match's date and duration come from Phase 2's compare
-        "duration": None,
+        "date": date,
+        "duration": duration,
     }
 
 
@@ -615,6 +666,19 @@ class _Read:
         self.unwritten_error = _class_name(unwritten.get("error"))
         self.patterns_error = _class_name(unwritten.get("patterns_error"))
         self.failing_checks = _failing_checks(self.db, self.tz)
+        # Phase 2's data (area A6): the newest compare, the last good listing, a hold or a small
+        # shrink, the sign-in's facts, a rebuild, the re-key flags and plaud_listing's rows.
+        self.compare = _dict(get(checks.K_COMPARE))
+        self.last_good = _dict(get(checks.K_LAST_GOOD_LISTING))
+        hold = get(checks.K_HOLD)
+        self.hold = hold if isinstance(hold, dict) else None
+        self.small_shrink = _dict(get(checks.K_SMALL_SHRINK))
+        self.sign_in = _dict(get(checks.K_SIGN_IN))
+        self.rebuilt = get(checks.K_REBUILT) is not None
+        self.rate_until = _rate_until(self.db, now)
+        self.rekeyed = self.db.open_flags((REKEYED,))
+        self.listing = self.db.listing_rows()
+        self._cache: tuple[list, dict] | None = None
 
     def gate_reason(self) -> str | None:
         return None if self.gate.open else self.gate.reason
@@ -626,7 +690,7 @@ class _Read:
         return _next_sync(self.settings, self.gate.open, self.last_turn, self.now)
 
     def flag_rows(self) -> list[dict]:
-        return [_flag(self.db, ev) for ev in self.flags]
+        return [_flag(self.db, ev, self) for ev in (*self.flags, *self.rekeyed)]
 
     def health_cause(self) -> str | None:
         """What stops the sync, from sync_health (§16). A `private` that can't be written names
@@ -676,30 +740,168 @@ class _Read:
 
     def summary_view(self) -> dict:
         """The one summary line the Sync screen and Status share (§15.1, §15.2): what stops the
-        sync, or the gate's reason. "All here" needs the last good listing, which Phase 2 writes
-        and reads; until then a sync nothing stops has no good listing yet."""
+        sync, or the gate's reason; else "All here · checked 14:20 · next sync 14:40" while the
+        last good listing is under two schedule intervals old and nothing is waiting or missing
+        (parked recordings aside), else what the newest compare left waiting or missing."""
         stopped = self.health_cause()
         problem = stopped or self.gate_reason()
-        sentence = _cap(problem) if problem else NO_GOOD_LISTING
+        if problem is None:
+            if (here := self.all_here()) is not None:
+                return _summary_of("all-here", here, explain=ALL_HERE_EXPLAIN, see_status=False)
+            return _summary_of("no-sync", self.waiting_line(), see_status=True)
         # The gate waiting for the first catch-up, and a listing not yet written, aren't failures
         # (§11.6, §15.2): only what sync_health says stops the sync is a problem.
         kind = "problem" if stopped and not self.held_by_gate() else "no-sync"
         if kind == "problem" and self.off_before_catch_up(stopped):
             kind = "no-sync"  # §15.2: "Scheduled sync is off since …" is plain before the catch-up
-        return {"kind": kind, "sentence": sentence, "explain": None, "see_status": True}
+        return {"kind": kind, "sentence": _cap(problem), "explain": None, "see_status": True}
+
+    # ---- Phase 2's readers (area A6): the listing, the compare, the hold, the sign-in ---------
+    def equation(self) -> dict | None:
+        """The newest compare's equation (§11.3), with the time of the listing behind it."""
+        eq = _dict(self.compare.get("equation"))
+        if not eq:
+            return None
+        keys = ("listed", "here", "waiting", "excluded", "missing", "arrive_private")
+        return {
+            **{k: _int(eq.get(k)) for k in keys},
+            "listing_at": self.when(parse_stamp(self.compare.get("at"))),
+        }
+
+    def archive_equation(self) -> dict | None:
+        a = _dict(self.compare.get("archive"))
+        if not a:
+            return None
+        return {k: _int(a.get(k)) for k in ("from_plaud", "here", "gone", "absent")}
+
+    def parked_count(self) -> int:
+        return sum(1 for row in self.listing.values() if row.parked_at is not None)
+
+    def all_here(self) -> str | None:
+        """§15.2's "All here", or None: the last good listing under two schedule intervals old,
+        and the newest compare leaving nothing waiting or missing but what is parked."""
+        at = parse_stamp(self.last_good.get("at"))
+        eq = self.equation()
+        minutes = self.settings.schedule_minutes
+        if at is None or eq is None or minutes <= 0:
+            return None
+        if self.now - at >= timedelta(minutes=2 * minutes):
+            return None
+        parked = sum(1 for row in self.cache_rows() if row.state == PARKED_STATE)
+        if eq["waiting"] or eq["missing"] - parked > 0:
+            return None
+        nxt = self.next_sync()
+        return f"All here · checked {self.when(at)}" + (f" · next sync {nxt}" if nxt else "")
+
+    def waiting_line(self) -> str:
+        """What the newest compare left to come, when nothing stops the sync: "2 waiting · 1
+        missing · checked 14:20 · next sync 14:40"; before any listing, NO_GOOD_LISTING."""
+        eq = self.equation()
+        at = parse_stamp(self.compare.get("at"))
+        if eq is None or at is None:
+            return NO_GOOD_LISTING
+        parts = [f"{eq[k]:,} {k}" for k in ("waiting", "missing") if eq[k]]
+        parts.append(f"checked {self.when(at)}")
+        if nxt := self.next_sync():
+            parts.append(f"next sync {nxt}")
+        return _cap(" · ".join(parts))
+
+    def consent_stop(self) -> bool:
+        """The worker hasn't read a list that reads: no title of a recording not here shows."""
+        stop = self.consent.get("stop")
+        return not self.consent or (isinstance(stop, str) and bool(stop))
+
+    def titles_hidden(self) -> str | None:
+        """Why Not here yet shows no titles now (§9.5, §15.1): a consent stop the tick has seen
+        since the compare, a held listing that shows Plaud's IDs changed, or the compare's own."""
+        if not self.compare:
+            return None
+        if self.consent_stop():
+            return TITLES_HIDDEN_CONSENT
+        if self.hold is not None and self.hold.get("ids_changed") is True:
+            return TITLES_HIDDEN_IDS
+        hidden = self.compare.get("titles_hidden")
+        return hidden if hidden in (TITLES_HIDDEN_CONSENT, TITLES_HIDDEN_IDS) else None
+
+    def cache_rows(self) -> list:
+        return self._read_cache()[0]
+
+    def keyed_out(self) -> dict:
+        return self._read_cache()[1]
+
+    def _read_cache(self) -> tuple[list, dict]:
+        """The cache's compare rows and keyed-out dates (§9.5), read once, read-only. None there
+        yet (no listing has run) reads as empty."""
+        if self._cache is None:
+            from recordings.plaud.cache import Cache
+
+            cache = Cache.read_only(self.settings.state_path) if self.settings.state_path else None
+            self._cache = ([], {}) if cache is None else (cache.compare_rows(), cache.keyed_out())
+        return self._cache
+
+    def shown_title(self, row: Any) -> str | None:
+        """A not-here row's title, the cache's rule applied again before it leaves (P13):
+        never for a review row, while titles are hidden, for an ID plaud_listing keeps out or
+        re-keyed, an ID the cache last saw consent-listed, or a title a keep-out word matches."""
+        from recordings.plaud.cache import title_allowed
+        from recordings.plaud.keepout import ConsentList
+
+        if row.title is None or row.review or self.titles_hidden() is not None:
+            return None
+        listed = self.listing.get(row.canonical_plaud_id)
+        if listed is not None and (
+            (listed.kept_out_at is not None and not _released(listed))
+            or (listed.rekey_of is not None and not _released(listed))
+        ):
+            return None
+        consented = frozenset(pid for pid, k in self.keyed_out().items() if k.kind == CONSENT_KIND)
+        known = ConsentList(ids=consented, lines=(), stop=None)
+        if not title_allowed(row.canonical_plaud_id, row.title, consent=known, words=self.words):
+            return None
+        return row.title
+
+    def hold_view(self) -> dict | None:
+        """SyncHold from K_HOLD (§11.4): its sentence, and Accept or why it is refused. With
+        Plaud's IDs changed, Accept waits while the consent list can't be read (CONSENT_FIRST)."""
+        from recordings.plaud.hold import CONSENT_FIRST
+
+        h = self.hold
+        if h is None:
+            return None
+        sentence = h.get("sentence")
+        refused = h.get("refused") if isinstance(h.get("refused"), str) else None
+        accept = h.get("accept") is True and refused is None
+        if accept and h.get("ids_changed") is True and self.consent_stop():
+            accept, refused = False, CONSENT_FIRST
+        return {
+            "sentence": sentence if isinstance(sentence, str) else HOLD_FALLBACK,
+            "accept": accept,
+            "refused": None if accept else _cap(refused or HOLD_FALLBACK_REFUSED),
+        }
+
+    def held_reason(self) -> str | None:
+        """Why Sync now and the imports are off now, besides the gate and the app's own reasons:
+        a hold (the worker answers "Held: see Status" anyway), or a rate limit's wait."""
+        if self.hold is not None:
+            return HELD_BUTTON
+        if self.rate_until is not None:
+            return f"Rate limited until {self.when(self.rate_until)}"
+        return None
 
     def consent_view(self) -> dict | None:
         """What the worker read from the consent list (§12.1): its count, never its IDs (Task 13
-        writes `count`). How many are on Plaud now needs the listing (Phase 2)."""
+        writes `count`), and how many the newest compare found on Plaud."""
         if not self.consent:
             return None
         stop = self.consent.get("stop")
+        stopped = isinstance(stop, str) and bool(stop)
+        on_plaud = _dict(self.compare.get("consent")).get("on_plaud")
         return {
             "ids": _int(self.consent.get("count")),
-            "on_plaud": None,
+            "on_plaud": _int(on_plaud) if isinstance(on_plaud, int) and not stopped else None,
             "file_changed": _stamp(parse_stamp(self.consent.get("file_changed")), self.tz),
             "read_at": self.when(parse_stamp(self.consent.get("read_at"))),
-            "stop": stop if isinstance(stop, str) and stop else None,
+            "stop": stop if stopped else None,
         }
 
     def schedule_off_since(self) -> datetime | None:
@@ -707,6 +909,18 @@ class _Read:
         catch-up, while the gate kept every turn from running (§11.6). None: never ran."""
         stamps = (self.last_turn, self.health.catch_up_done)
         return max((t for t in stamps if t is not None), default=None)
+
+
+def _summary_of(kind: str, sentence: str, *, explain: str | None = None, see_status: bool) -> dict:
+    return {"kind": kind, "sentence": sentence, "explain": explain, "see_status": see_status}
+
+
+def _rate_until(db: Any, now: datetime) -> datetime | None:
+    """A rate limit's wait still running (§10.2; A2's K_RATE_LIMIT): a person's sync or import
+    is refused until then (A5), so their buttons say so."""
+    from recordings.plaud.health import rate_limit_wait
+
+    return rate_limit_wait(db, now=now)
 
 
 def _failing_checks(db: Any, tz: str) -> list[dict]:
@@ -736,9 +950,9 @@ def _unreadable_summary() -> dict:
 
 
 def _empty_sync(reason: str | None) -> dict:
-    """The Sync screen before any sync, or where there is nothing to read: every button off. The
-    sections a later phase fills (the equations, Not here yet, Kept out, Gone, Parked, a hold, a
-    breaker) are empty here until their readers come."""
+    """The Sync screen before any sync, or where there is nothing to read: every button off, and
+    every section a listing fills (the equations, Not here yet, Kept out, Gone, Parked, a hold)
+    empty; the breaker stays empty until Phase 3's reader."""
     why = reason or NO_SYNC
     return {
         "demo": False,
@@ -751,7 +965,7 @@ def _empty_sync(reason: str | None) -> dict:
         "buttons": {"sync": why, "compare": why, "full": why, "import": why},
         **_handled(),
         "gate": None,
-        "listed": False,  # until Phase 2 writes a listing: the screens then show no counts
+        "listed": False,  # until a listing is compared: the screens then show no counts
         "full_estimate": FULL_UNKNOWN,
         "equation": None,
         "archive": None,
@@ -810,13 +1024,17 @@ def _sync_from(r: _Read, can_request: str | None) -> dict:
 
     gate = r.gate_reason()
     word = None if r.settings.keep_out_word_ok else BAD_WORD
-    held_back = can_request or word or gate  # Compare runs whatever the gate says (§11.6)
+    # Compare runs whatever the gate says (§11.6). Under a hold, or a rate limit's wait, the worker
+    # refuses Sync now and the imports, so they are off with the reason (§15.1).
+    held_back = can_request or word or gate or r.held_reason()
+    next_sync = r.next_sync()
     return {
         **_empty_sync(can_request),
         "available": can_request is None,
         "reason": can_request,
         "summary": r.summary_view(),
         "flags": r.flag_rows(),
+        "hold": r.hold_view(),
         # Each button's own reason; the UI puts not_yet first for a kind not handled yet (G7).
         "buttons": {
             "sync": held_back,
@@ -825,11 +1043,111 @@ def _sync_from(r: _Read, can_request: str | None) -> dict:
             "import": held_back,
         },
         "gate": gate,
+        "listed": bool(r.compare),
+        "equation": r.equation(),
+        "archive": r.archive_equation(),
         "consent": r.consent_view(),
+        "titles_hidden": r.titles_hidden(),
+        "not_here": _not_here(r),
+        "import_all": _import_all(r),
+        "kept_out": _kept_out(r, next_sync),
         "updated": _updated(r),
+        "gone": _gone(r),
+        "parked": _parked(r),
         "last_result": _last_result(r),
-        "next_sync": r.next_sync(),
+        "next_sync": next_sync,
     }
+
+
+def _row_when(r: _Read, row: Any) -> dict:
+    """A cache row's date, time and duration, as the Sync screen shows them."""
+    return {
+        "date": _date(row.start_at, r.tz) or "",
+        "time": _hm(row.start_at, r.tz) or "",
+        "duration": _minutes(row.duration_ms),
+    }
+
+
+def _not_here(r: _Read) -> list[dict]:
+    """Not here yet (§15.1): the newest compare's waiting and missing rows, newest first, each with
+    its state; a title only as `shown_title` allows it (P13); Park on one that failed 3 times."""
+    rows = []
+    for row in r.cache_rows():
+        if row.bucket not in ("waiting", "missing"):
+            continue
+        park = row.state == FAILED_STATE
+        state = row.state or ""
+        rows.append(
+            {
+                "plaud_id": row.listed_id,
+                "copy_id": _copy_form(row.listed_id),
+                **_row_when(r, row),
+                "title": r.shown_title(row),
+                "arrives_private": row.arrives_private,
+                "state": state.removesuffix(" · Park") if park else state,
+                "review": row.review,
+                "park": park,
+            }
+        )
+    return rows
+
+
+def _import_all(r: _Read) -> dict:
+    counts = _dict(r.compare.get("import_all"))
+    return {"count": _int(counts.get("count")), "review_more": _int(counts.get("review_more"))}
+
+
+def _kept_out(r: _Read, next_sync: str | None) -> list[dict]:
+    """Kept out (§15.1): the newest compare's excluded rows, by Plaud ID, date, time and duration,
+    never a title. Release on a row kept out by an earlier title or as a possible re-keyed match
+    (`release.kept_by`); a row released since reads "Released · comes in at the next sync" with
+    Undo (§15.6)."""
+    rows = []
+    for row in r.cache_rows():
+        if row.bucket != "excluded":
+            continue
+        listed = r.listing.get(row.canonical_plaud_id)
+        released = listed is not None and _released(listed) and row.excluded_by in RELEASE_BY
+        by = row.excluded_by if row.excluded_by in ("consent", "title", *RELEASE_BY) else "title"
+        rows.append(
+            {
+                "plaud_id": row.listed_id,
+                "copy_id": _copy_form(row.listed_id),
+                **_row_when(r, row),
+                "by": by,
+                "release": by in RELEASE_BY and not released,
+                "released": _released_line(next_sync) if released else None,
+            }
+        )
+    return rows
+
+
+def _released_line(next_sync: str | None) -> str:
+    """release.released_line, without its " · Undo": the row draws Undo as a button."""
+    when = f" ({next_sync})" if next_sync else ""
+    return f"Released · comes in at the next sync{when}"
+
+
+def _gone(r: _Read) -> dict:
+    """Gone from Plaud (§12.3, §15.1): newest first, with how many went in the last 7 days."""
+    rows = r.db.gone_rows()
+    week = r.now - RECENT
+    return {
+        "rows": [{"recording_id": rid, "since": _date(since, r.tz) or ""} for rid, since in rows],
+        "last_7_days": sum(1 for _, since in rows if since is not None and since >= week),
+    }
+
+
+def _parked(r: _Read) -> list[dict]:
+    """Parked (§15.1): Plaud IDs parked after failing to import (area A5), and recordings here
+    parked from their checks (area B2)."""
+    plaud = sorted(
+        (row for row in r.listing.values() if row.parked_at is not None),
+        key=lambda row: (row.parked_at, row.canonical_plaud_id),
+    )
+    return [{"id": row.listed_id, "kind": "plaud"} for row in plaud] + [
+        {"id": rid, "kind": "recording"} for rid in r.db.parked_recordings()
+    ]
 
 
 def _untitled(r: _Read) -> set[str]:
@@ -1000,7 +1318,7 @@ def _empty_panel() -> dict:
         "hold": None,
         "breaker": None,
         **_handled(),
-        "listed": False,  # until Phase 2 writes a listing: Status then shows no zero counts
+        "listed": False,  # until a listing is compared: Status then shows no zero counts
         "numbers": {
             "equation": None,
             "archive": None,
@@ -1133,6 +1451,9 @@ def _panel_from(r: _Read) -> dict:
             if said_since
             else f"Plaud sync failing since {r.when(since)} ({detail})."
         )
+        good_at = parse_stamp(r.last_good.get("at"))
+        if good_at is not None:
+            failing += f" Last good listing {r.when(good_at)}."  # §15.2
     disk = health.failing is not None and health.failing[1] == "disk"
     stop = r.consent.get("stop")
     consent_stop = (
@@ -1172,10 +1493,30 @@ def _panel_from(r: _Read) -> dict:
         conditions.append("Auto-import is off: new recordings wait for you on the Sync screen.")
     if not r.settings.keep_out_word_ok:
         conditions.append(f"Plaud sync is idle: {BAD_WORD}.")
+    absent = r.small_shrink.get("absent")
+    if r.hold is None and isinstance(absent, list) and absent:
+        conditions.append(_shrink_line(len(absent)))  # hold.shrink_line (§11.4 step 5)
 
     attention: list[str] = []
     if health.failing is not None and now - health.failing[0] > FAILING_FOR:
         attention.append(f"Plaud sync has been failing since {r.when(health.failing[0])}.")
+    attention += _sign_in_lines(r)
+    if r.hold is not None:
+        held_since = parse_stamp(r.hold.get("since"))
+        since = f" since {r.when(held_since)}" if held_since else ""
+        attention.append(
+            f"Plaud sync is held{since}: see the Plaud sync panel to Accept this listing, "
+            "or why it can't be."
+        )
+    for ev in r.rekeyed:
+        row = r.listing.get(ev.canonical_plaud_id or "")
+        listed = row.listed_id if row is not None else ev.canonical_plaud_id
+        attention.append(f"Plaud ID {listed}: {_rekey_sentence(ev)}.")
+    review = sum(1 for row in r.cache_rows() if row.review and row.bucket != "excluded")
+    if r.rebuilt and review:
+        attention.append(
+            REBUILT_LINE.format(n=_plural(review, "recording", "recordings"), s="s" * (review == 1))
+        )
     if disk:
         attention.append("Plaud imports stopped: the disk is too full to import.")
     if "consent" in health.blockers:
@@ -1226,27 +1567,128 @@ def _panel_from(r: _Read) -> dict:
             f"({f'HTTP {status}' if status is not None else 'unreachable'})"
         )
     panel = _empty_panel()
+    good_at = parse_stamp(r.last_good.get("at"))
+    last_good = (
+        f"{r.when(good_at)} ({_int(r.last_good.get('count')):,} listed)" if good_at else None
+    )
+    not_imported = sum(1 for row in r.cache_rows() if row.state == FAILED_STATE)
     panel["numbers"].update(
         {
+            "equation": r.equation(),
+            "archive": r.archive_equation(),
             "consent": r.consent_view(),
+            "last_good_listing": last_good,
             "next_sync": r.next_sync(),
+            "sign_in": _sign_in_number(r),
+            "gone": len(r.db.gone_rows()),
+            "failing": len(r.failing_checks) + not_imported,
+            "parked": r.parked_count() + len(r.db.parked_recordings()),
             "worker": report,
             "healthchecks": healthchecks,
         }
     )
-    panel["details"].update({"normaliser": str(NORMALISER_VERSION), "keep_out_words": r.words})
+    census = _dict(r.last_good.get("census")) or _dict(r.compare.get("census"))
+    changed = parse_stamp(r.last_good.get("form_changed_at"))
+    panel["details"].update(
+        {
+            "normaliser": str(NORMALISER_VERSION),
+            "keep_out_words": r.words,
+            "census": {str(k): _int(v) for k, v in census.items()},
+            # §15.2: a change of form that held nothing, said once the listing is good again.
+            "form_change": (
+                f"Plaud's IDs changed form on {_date(changed, tz)}; every ID still matches"
+                if changed is not None and r.hold is None
+                else None
+            ),
+            "malformed": _int(r.compare.get("malformed")),
+            "runs": _runs(r),
+        }
+    )
     panel.update(
         {
             "no_sync_yet": False,
+            "listed": bool(r.compare),
             "summary": summary,
             "failing": failing,
             "failing_checks": r.failing_checks,
             "not_pinged": _not_pinged(r, cause),
             "conditions": conditions,
+            "hold": r.hold_view(),
             "attention": attention,
         }
     )
     return panel
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n:,} {one if n == 1 else many}"
+
+
+def _shrink_line(n: int) -> str:
+    """hold.shrink_line, kept here: plaud.hold imports sqlite3 (a test pins the two)."""
+    return f"Plaud now lists {n:,} fewer: waiting for the next listing to agree."
+
+
+RUN_JOBS = ("plaud-sync", "plaud-catch-up")
+RUNS_SHOWN = 20  # §15.2's "the last 20 runs with their results"
+
+
+def _runs(r: _Read) -> list[dict]:
+    """The last 20 runs (§15.2's details), from `ops_runs`: when each ended and its §15.6
+    phrase, which never carries a title."""
+    rows = _q(
+        r.state,
+        "SELECT finished_at, detail FROM ops_runs WHERE job IN (?, ?) ORDER BY id DESC LIMIT ?",
+        (*RUN_JOBS, RUNS_SHOWN),
+    )
+    return [{"at": _stamp(parse_stamp(at), r.tz) or "", "result": str(d)} for at, d in rows]
+
+
+def _sign_in_state(r: _Read) -> tuple[bool, datetime | None]:
+    """Whether the sign-in is needed now, and since when: Plaud refused it (K_SIGN_IN's
+    `refused_at`, with its `sign-in` blocker), or the last scheduled turn found none (§10.3)."""
+    refused = parse_stamp(r.sign_in.get("refused_at"))
+    blocker = r.health.blockers.get("sign-in")
+    paused = r.health.last_turn is not None and r.health.last_turn.outcome == "paused"
+    needed = refused is not None or blocker is not None or paused
+    return needed, refused or blocker
+
+
+def _sign_in_number(r: _Read) -> str | None:
+    """Status's sign-in number (§15.2): needed, or works with its expiries (A1's K_SIGN_IN)."""
+    needed, since = _sign_in_state(r)
+    if needed:
+        return f"needed{f' since {r.when(since)}' if since else ''}: {SIGN_IN_FIX}"
+    ok_at = parse_stamp(r.sign_in.get("ok_at"))
+    if ok_at is None:
+        return None
+    parts = [f"works (last used {r.when(ok_at)})"]
+    if (expires := parse_stamp(r.sign_in.get("expires_at"))) is not None:
+        parts.append(f"access token expires {r.when(expires)}")
+    if r.sign_in.get("refresh_token") is True:
+        later = parse_stamp(r.sign_in.get("refresh_expires_at"))
+        parts.append(f"refresh token expires {_stamp(later, r.tz)}" if later else "refresh token")
+    else:
+        parts.append("no refresh token")
+    return " · ".join(parts)
+
+
+def _sign_in_lines(r: _Read) -> list[str]:
+    """Needs attention's sign-in lines (§15.2): a sign-in needed, or one expiring within 7 days
+    (BD3: the refresh token's own expiry when it has one, else the access token's)."""
+    needed, since = _sign_in_state(r)
+    if needed:
+        at = f" since {r.when(since)}" if since else ""
+        line = f"Plaud sign-in needed{at}. New recordings wait on Plaud: nothing is lost."
+        return [f"{line} {SIGN_IN_FIX}"]
+    if r.sign_in.get("refresh_token") is True:
+        ends = parse_stamp(r.sign_in.get("refresh_expires_at"))
+    else:
+        ends = parse_stamp(r.sign_in.get("expires_at"))
+    if ends is None or ends - r.now > SIGN_IN_SOON:
+        return []
+    verb = "expired" if ends <= r.now else "expires"
+    return [f"The Plaud sign-in {verb} {_stamp(ends, r.tz)}. {SIGN_IN_FIX}"]
 
 
 # ---- The Library's arrivals cue ---------------------------------------------------------------
@@ -1385,6 +1827,8 @@ def _recording_lines(
     elif auto_private:
         tagged = "Tagged private by the sync"  # decision 15: its event aged out after 90 days
     flags = [_flag(db, ev) for ev in db.open_flags(FLAG_EVENTS) if ev.recording_id == recording_id]
+    check = db.check_row(recording_id)
+    gone = check.gone_since if check is not None else None
     gate = gate_now(db)
     if not gate.open:
         resync = gate.reason
@@ -1396,6 +1840,8 @@ def _recording_lines(
         resync = None
     return {
         "plaud_ids": plaud_ids,
+        # §15.3's "Gone from Plaud since 2026-10-23 (kept)": the UI words it from the date.
+        "gone_since": _date(gone, tz),
         "tagged_private": tagged,
         "removed_private": removed,
         "flags": flags,

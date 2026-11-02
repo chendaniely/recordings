@@ -537,9 +537,9 @@ def test_before_any_listing_the_views_say_so_and_count_nothing(plaud_scene):
     assert sync_panel(s.settings, now=T0)["listed"] is False
 
 
-def test_what_a_later_phase_writes_stays_empty_in_phase_1(plaud_scene):
-    # Phase 1 reads its own data only: each section a later phase fills keeps its empty value
-    # until that phase brings its reader, and the screens draw it empty.
+def test_before_any_listing_every_section_a_listing_fills_stays_empty(plaud_scene):
+    # Before a listing is compared, each section a listing fills keeps its empty value, and the
+    # screens draw it empty (what a listing fills: test_plaud_screens.py in packages/core).
     s = plaud_scene
     s.open_gate()
     s.db.put(K_KEEP_OUT_WORDS, ["noarchive"], now=T0)
@@ -1013,6 +1013,18 @@ def test_constants_copied_to_keep_sqlite_out_of_pyodide_match_their_sources():
 
     assert KEPT_HERE_EVENT in TITLE_HIDING_EVENTS
     assert CONSENT_UNREADABLE == STOP_UNREADABLE
+    # Area A6's copies, from compare, hold, release and signin (each imports sqlite3).
+    from recordings.plaud import compare, hold, release, signin
+    from recordings_ui import plaud as views
+
+    assert views.TITLES_HIDDEN_CONSENT == compare.TITLES_HIDDEN_CONSENT
+    assert views.TITLES_HIDDEN_IDS == compare.TITLES_HIDDEN_IDS
+    assert (views.PARKED_STATE, views.FAILED_STATE) == (compare.PARKED, compare.FAILED)
+    assert views.REKEYED == compare.REKEYED_EVENT and views.CONSENT_KIND == compare.BY_CONSENT
+    assert set(views.RELEASE_BY) == {compare.BY_WAS_TITLE, compare.BY_REKEY}
+    assert views._shrink_line(3) == hold.shrink_line(3)
+    assert views._released_line("14:40") + " · Undo" == release.released_line("14:40")
+    assert "make plaud-sign-in" in signin.SIGN_IN_FIX and "make plaud-sign-in" in views.SIGN_IN_FIX
 
 
 def test_the_schedule_off_before_the_first_catch_up_is_plain_and_after_it_is_a_problem(

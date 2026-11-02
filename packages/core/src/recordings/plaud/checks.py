@@ -563,6 +563,26 @@ class PlaudDB:
             ).fetchall()
         return frozenset(row[0] for row in rows)
 
+    def gone_rows(self) -> list[tuple[str, datetime]]:
+        """The recordings here that are gone from Plaud, with the time each went, newest first:
+        the Sync screen's Gone from Plaud rows (§15.1)."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT recording_id, gone_since FROM plaud_checks WHERE gone_since IS NOT NULL "
+                "ORDER BY gone_since DESC, recording_id"
+            ).fetchall()
+        return [(rid, _decode("gone_since", since)) for rid, since in rows]
+
+    def parked_recordings(self) -> list[str]:
+        """The recordings here that are parked (`plaud_checks.parked_at`, area B2's Park), oldest
+        first."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT recording_id FROM plaud_checks WHERE parked_at IS NOT NULL "
+                "ORDER BY parked_at, recording_id"
+            ).fetchall()
+        return [row[0] for row in rows]
+
     def back_from_gone(self, recording_ids: Iterable[str]) -> list[str]:
         """Each of these recordings that was gone from Plaud is listed again: it is here again
         (§12.3, "If it returns"). Returns those."""
