@@ -113,6 +113,9 @@ describe("Re-sync from Plaud on a selection (2b spec §14.6)", () => {
   it("says the gate's reason, as Details does, once, named by the button", () => {
     // Once a re-sync is handled, the gate holds it until the first catch-up (§11.6).
     expect(resyncReason(plaud({ gate: GATE }), 12)).toBe(GATE);
+    // An invalid keep-out word refuses a Re-sync too (§12.2; the end-of-branch privacy review).
+    const word = "configuration: `keep_out_word` is invalid";
+    expect(resyncReason(plaud({ word }), 12)).toBe(word);
     const { host, done } = drawn(plaud(), { resync: GATE });
     const resync = named(host, "Re-sync");
     expect(resync.hasAttribute("disabled")).toBe(true);

@@ -84,6 +84,13 @@ HANDLED: frozenset[str] = frozenset(
         "full",
     }
 )
+# The kinds the worker refuses while the keep-out word can't be read (§12.2: "An invalid word
+# leaves the worker idle"; the end-of-branch privacy review, 2026-11-02): every kind that lists,
+# fetches or imports, Compare included, since it stores titles it couldn't judge against the word.
+# Undo, Park, Unpark, Keep it here and both Accepts list and fetch nothing, so they still run.
+NEEDS_WORD: frozenset[str] = frozenset(
+    {"compare", "sync", "import", "resync", "full", "release-preview", "release"}
+)
 # The kinds a second press coalesces with while one is queued (§9.3): see `_coalesce`. Sync
 # everything doesn't coalesce: a second press is refused (`_full_refusal`).
 COALESCED: frozenset[str] = frozenset({"compare", "sync", "import", "resync"})

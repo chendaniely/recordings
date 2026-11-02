@@ -103,8 +103,10 @@ export function SyncPage() {
   const parking = gated("park");
   // Release's question, and a review row's Show title: no title can come while titles are hidden
   // (a consent stop, or Plaud's IDs looking changed: the worker refuses the preview, §11.4 step 3).
-  const previewing = gated("release-preview") ?? (view.titles_hidden ? `No title can be shown: ${view.titles_hidden}` : null);
-  const releasing = gated("release"); // a re-keyed match's Release, which asks with no title
+  // Both are refused too while the keep-out word can't be read (`word`, §12.2).
+  const previewing = gated("release-preview") ?? view.word
+    ?? (view.titles_hidden ? `No title can be shown: ${view.titles_hidden}` : null);
+  const releasing = gated("release") ?? view.word ?? null; // a re-keyed match's Release, which asks with no title
   const unreleasing = gated("unrelease");
   const unparking = gated("unpark");
   const actions = reasonsFor("sync-actions", [sync, compare, full]);

@@ -1297,7 +1297,9 @@ class Worker:
         """The row is checked again against fresh facts, never taken on trust (spec §9.3). A kind
         with no handler yet is refused with NOT_YET (web refuses it before inserting, so this is a
         defence); then the gate (every kind but compare and keep-here waits for the first
-        catch-up); then the kind's handler."""
+        catch-up); then an invalid keep-out word, which refuses every kind that lists, fetches or
+        imports (`requests.NEEDS_WORD`, §12.2) with the scheduled sync's own phrase; then the
+        kind's handler."""
         req = claimed.request
         self.progress.bump(self.clock(), "request")
         refused: str | None = None
@@ -1306,6 +1308,8 @@ class Worker:
                 refused = requests.NOT_YET
             elif req.kind not in GATE_ALLOWED and not gate_now(self.db).open:
                 refused = GATE_REFUSAL
+            elif req.kind in requests.NEEDS_WORD and not self.settings.keep_out_word_ok:
+                refused = BAD_WORD  # §12.2: the scheduled sync's own idle phrase
             else:
                 reply = handler(self, claimed)
         except Stopping:  # SIGTERM between two recordings: what came in stays, the rest waits

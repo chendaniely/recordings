@@ -119,7 +119,7 @@ from recordings.plaud.importer import (
 )
 from recordings.plaud.keepout import read_consent
 from recordings.plaud.listing_privacy import ListingPrivacy, privacy_from_listing
-from recordings.plaud.settings import PlaudSettings
+from recordings.plaud.settings import BAD_WORD, PlaudSettings
 from recordings.plaud.when import local_hhmm
 from recordings.refs import canonical_plaud_id
 from recordings.sources.plaud import Listing, PlaudSource
@@ -495,7 +495,10 @@ def run_sync(
     named_ids = frozenset(canonical_plaud_id(p) for p in named)
     person = not scheduled
 
-    # 0. a rebuilt state.db, found before anything is listed (§11.6): it opens the gate
+    # 0. a keep-out word that can't be read leaves every run idle (§12.2), whoever starts it; a
+    # rebuilt state.db, found before anything is listed (§11.6), opens the gate
+    if not run.settings.keep_out_word_ok:
+        return report.end(BAD_WORD, EXIT_CONFIG)
     found, failed = rebuild_check(run.writer, now=started)
     if failed is not None:
         report.ended_by = failed

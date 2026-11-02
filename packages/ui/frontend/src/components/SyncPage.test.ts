@@ -256,6 +256,22 @@ describe("the Sync screen (2b spec §15.1)", () => {
     expect($("[data-testid=release-dialog]")!.textContent).toContain("Let this recording");
   });
 
+  it("with the keep-out word invalid, Compare, Release and Show title are off with its reason", () => {
+    // §12.2 (the end-of-branch privacy review, 2026-11-02): the worker refuses every request that
+    // lists, fetches or imports while the word can't be read; Undo, Park and Keep it here stay on.
+    const word = "configuration: `keep_out_word` is invalid";
+    const rekeyed: KeptOutRow = { plaud_id: id(8), copy_id: copy(8), date: "2026-10-22", time: "16:30", duration: "31 min",
+      by: "rekeyed", release: true, released: null };
+    draw({ ...VIEW, word, buttons: { sync: word, compare: word, full: word, import: word }, kept_out: [...VIEW.kept_out, rekeyed] }, fake());
+    for (const sel of ["[data-request=compare]", "[data-request=release-preview]", "[data-request=release]"]) {
+      expect($$(sel).length).toBeGreaterThan(0);
+      expect($$(sel).every((b) => b.hasAttribute("disabled"))).toBe(true);
+    }
+    expect($("[data-request=unrelease]")!.hasAttribute("disabled")).toBe(false);
+    expect($("[data-request=park]")!.hasAttribute("disabled")).toBe(false);
+    expect(sectionsSaying(word)).toEqual(["sync-actions", "sync-not-here", "sync-kept-out"]);
+  });
+
   it("a released row reads Released · comes in at the next sync · Undo, and Undo sends unrelease", () => {
     draw(VIEW, fake());
     const row = $$("[data-testid=kept-out-row]").find((r) => r.textContent?.includes(id(6)))!;

@@ -125,16 +125,21 @@ def test_the_views_carry_what_the_worker_handles_and_each_button_its_own_reason(
     why = "there's no config.toml, so this app only reads the archive"
     view = sync_view(s.settings, now=T0, can_request=why)
     assert view["available"] is False and view["buttons"] == dict.fromkeys(view["buttons"], why)
-    # A keep_out_word that won't read idles the sync, whatever the gate says.
+    # A keep_out_word that won't read idles the sync, whatever the gate says: every request that
+    # lists, fetches or imports, Compare's too (the end-of-branch privacy review, 2026-11-02), and
+    # `word` turns Release, Show title and Re-sync off with it.
     s.open_gate()
+    assert view["word"] is None
     s.keep_out_word_ok = False
     view = sync_view(s.settings, now=T0, can_request=None)
     assert view["buttons"] == {
         "sync": BAD_WORD,
-        "compare": None,
+        "compare": BAD_WORD,
         "full": BAD_WORD,
         "import": BAD_WORD,
     }
+    assert view["word"] == BAD_WORD
+    assert recording_plaud(s.settings, rid, now=T0)["resync"] == BAD_WORD
 
 
 def test_flag_and_updated_rows_never_name_a_flagged_recording(plaud_scene):

@@ -7,6 +7,7 @@ sync. Every account, title, token and byte is synthetic (plaud_live.py); nothing
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from fake_plaud import html_page
 from plaud_live import T0
 from recordings.plaud import requests
@@ -15,6 +16,7 @@ from recordings.plaud.client import FILE_PATH
 from recordings.plaud.health import record_rate_limit
 from recordings.plaud.requests import ALREADY_QUEUED, QUEUED, PlaudRequest
 from recordings.plaud.runlock import plaud_run
+from recordings.plaud.settings import BAD_WORD
 from recordings.plaud.when import local_hhmm
 
 TZ = "America/Vancouver"
@@ -195,3 +197,45 @@ def test_compare_writes_nothing_to_the_archive(live):
     live.clock.advance(minutes=20)
     w.tick()  # the next scheduled sync checks the listed title
     assert is_private(Archive(live.root).load(rid))
+
+
+@pytest.mark.parametrize(
+    ("kind", "fields"),
+    [
+        ("compare", {}),
+        ("sync", {}),
+        ("import", {"select_all": True}),
+        ("resync", {"recording_ids": ("20261006T140003-0700_3fa91c2e",)}),
+        ("full", {}),
+        ("release-preview", {"plaud_ids": ("of_" + "1" * 32,)}),
+        ("release", {"plaud_ids": ("of_" + "1" * 32,)}),
+    ],
+)
+def test_an_invalid_keep_out_word_refuses_every_request_that_lists_or_imports(live, kind, fields):
+    # The end-of-branch privacy review (2026-11-02), §12.2: "An invalid word leaves the worker
+    # idle". It idled only the scheduled syncs; a request then ran with no word enforced. Each is
+    # refused now with the scheduled sync's own phrase, and nothing is listed or fetched.
+    live.account.add_many(2)
+    live.catch_up_done()
+    live.write_config(extra='keep_out_word = "two words"\n')
+    w = live.started()
+    w.tick()  # the scheduled turn idles: no Plaud call
+    before = len(live.server.requests)
+    reply = ask(live, w, kind, 1, **fields)
+    assert (reply.state, reply.message) == ("refused", BAD_WORD)
+    assert len(live.server.requests) == before and live.here() == {}
+
+
+@pytest.mark.parametrize("mode", ["compare", "sync", "import"])
+def test_a_run_with_an_invalid_keep_out_word_lists_nothing(live, mode):
+    # Defence in depth: the run itself refuses, whoever starts it.
+    from recordings.plaud import sync
+
+    live.account.add_many(1)
+    live.catch_up_done()
+    live.write_config(extra='keep_out_word = "two words"\n')
+    w = live.started()
+    before = len(live.server.requests)
+    report = sync.run_sync(sync.worker_run(w), mode=mode, import_all=mode == "import")
+    assert (report.phrase, report.exit_code) == (BAD_WORD, sync.EXIT_CONFIG)
+    assert len(live.server.requests) == before

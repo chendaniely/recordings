@@ -1131,6 +1131,7 @@ def _empty_sync(reason: str | None) -> dict:
         "buttons": {"sync": why, "compare": why, "full": why, "import": why},
         **_handled(),
         "gate": None,
+        "word": None,  # BAD_WORD while `keep_out_word` is invalid (§12.2)
         "listed": False,  # until a listing is compared: the screens then show no counts
         "full_estimate": FULL_UNKNOWN,
         "equation": None,
@@ -1206,10 +1207,13 @@ def _sync_from(r: _Read, can_request: str | None) -> dict:
         # Each button's own reason; the UI puts not_yet first for a kind not handled yet (G7).
         "buttons": {
             "sync": held_back,
-            "compare": can_request,
+            "compare": can_request or word,  # it stores titles it couldn't judge (§12.2)
             "full": held_back or r.full_wait(),
             "import": held_back,
         },
+        # §12.2: while the word can't be read the worker refuses every request that lists, fetches
+        # or imports (requests.NEEDS_WORD): Release, Show title and Re-sync are off with it too.
+        "word": word,
         "full_estimate": r.full_estimate or FULL_UNKNOWN,
         "gate": gate,
         "listed": bool(r.compare),
@@ -2054,6 +2058,10 @@ def _recording_lines(
     gate = gate_now(db)
     if not gate.open:
         resync = gate.reason
+    elif not settings.keep_out_word_ok:
+        from recordings.plaud.settings import BAD_WORD
+
+        resync = BAD_WORD  # §12.2: the worker refuses a Re-sync with no word enforced
     elif any(f["kind"] == CONSENT_LATE for f in flags):
         resync = "Not checked: on the consent list"
     elif kept_out:

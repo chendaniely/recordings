@@ -42,6 +42,7 @@
     "handled": ["accept", "accept-changes", "compare", "full", "import", "keep-here", "park", "release", "release-preview", "resync", "sync", "unpark", "unrelease"],
     "not_yet": "Comes with the next part of stage 2b.",
     "gate": null,
+    "word": null,
     "listed": true,
     "full_estimate": "about 4 minutes",
     "equation": {"listed": 43, "here": 33, "waiting": 0, "excluded": 5, "missing": 5, "arrive_private": 1, "listing_at": "14:20"},

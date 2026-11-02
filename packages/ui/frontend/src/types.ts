@@ -135,6 +135,9 @@ export interface ParkedRow { id: string; kind: "recording" | "plaud" }
 export interface SyncView extends Handled {
   demo: boolean; available: boolean; reason: string | null;
   gate: string | null; // the gate's reason while it is closed: every kind but Compare and Keep it here waits (§11.6)
+  /** The keep-out word's reason while it can't be read (§12.2): the worker refuses every request
+   * that lists, fetches or imports, so Release, Show title and Re-sync are off with it too. */
+  word?: string | null;
   listed: boolean; // false until Phase 2 writes a listing: the screen then shows no counts from one
   summary: SyncSummaryView; flags: SyncFlag[]; hold: SyncHold | null; breaker: SyncBreaker | null;
   buttons: { sync: string | null; compare: string | null; full: string | null; import: string | null };

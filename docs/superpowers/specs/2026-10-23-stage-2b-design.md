@@ -1516,7 +1516,11 @@ is a separate piece of work, and the thresholds are constants, not settings.
   plus every word the worker has ever enforced, kept in `plaud_state`. Changing the word never
   releases what an older word kept out. `recordings plaud keep-out-words --drop <word>` removes an old
   one, and doctor lists them. An invalid word leaves the worker idle, with Status and doctor saying
-  "configuration: `keep_out_word` is invalid".
+  "configuration: `keep_out_word` is invalid". Idle means every run that lists, fetches or
+  imports (the end-of-branch privacy review, 2026-11-02): no scheduled sync, and the worker
+  refuses Compare, Sync now, the imports, Re-sync, Sync everything, Release and its preview with
+  that phrase (the CLI's syncs, `resync` and `release` too); Undo, Park, Unpark, Keep it here and
+  both Accepts still run. The Sync screen and Details turn those buttons off with it.
 - **How a title matches** (hardened like `is_private_tag`):
   1. Fold the title and each word: NFKC, drop format characters (category Cf) and
      `HIDDEN_CODEPOINTS`, then casefold.
@@ -3441,3 +3445,8 @@ None: every bullet of §20 is planned in a phase.
   first; so a re-keyed match whose title took the keep-out word and then lost it gets no preview
   either, the web app drops such a preview's title, and its Kept out row is the re-keyed one,
   whose Release asks with no title. No decision or scenario's outcome changed.
+- 2026-11-02: §12.2 (the end-of-branch privacy review, item 4): an invalid `keep_out_word` idles
+  every request that lists, fetches or imports, Compare's too, not only the scheduled syncs; the
+  CLI's `release` refuses too, and the Sync screen's Compare, Release and Show title and every
+  Re-sync button are off with the phrase (SyncView gains `word`). No decision or scenario's
+  outcome changed.

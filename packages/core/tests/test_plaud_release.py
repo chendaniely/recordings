@@ -320,6 +320,26 @@ def test_the_cli_changes_nothing_without_a_yes(setup, monkeypatch):
     assert setup.db.listing(rec.plaud_id).released_at is None
 
 
+def test_the_cli_refuses_release_while_the_keep_out_word_is_invalid_and_undo_still_works(
+    setup, monkeypatch
+):
+    # §12.2: an invalid word leaves the sync idle (the end-of-branch privacy review, 2026-11-02);
+    # Release would let a recording in with no word enforced. Undo keeps one out, so it runs.
+    from recordings.plaud.settings import BAD_WORD
+
+    rec = kept_out(setup, now_title="Synthetic grant timelines")
+    cfg = setup.tmp / "config.toml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + 'keep_out_word = "two words"\n', encoding="utf-8"
+    )
+    code, out, err = run_cli(setup, monkeypatch, f"of_{rec.plaud_id}")
+    assert code == 78 and BAD_WORD in out + err
+    assert setup.db.listing(rec.plaud_id).released_at is None
+    setup.db.set_listing(f"of_{rec.plaud_id}", released_at=T0 + timedelta(seconds=1))
+    code, out, _err = run_cli(setup, monkeypatch, f"of_{rec.plaud_id}", "--undo")
+    assert code == 0 and UNDONE in out
+
+
 def test_the_cli_refuses_a_title_that_still_carries_the_word(setup, monkeypatch):
     rec = kept_out(setup)
     code, out, err = run_cli(setup, monkeypatch, f"of_{rec.plaud_id}")

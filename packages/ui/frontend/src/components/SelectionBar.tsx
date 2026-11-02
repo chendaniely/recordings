@@ -7,11 +7,11 @@ export const TOO_MANY_RESYNC = "For more, use Sync everything";
 
 /** Why Re-sync from Plaud is off for this selection, or null (2b spec §14.6): too many; this app
  * can't ask, or the worker can't handle a re-sync yet (`Plaud.why`); or the gate, which holds
- * every re-sync until the first catch-up (§11.6). */
+ * every re-sync until the first catch-up (§11.6); or a keep-out word that can't be read (§12.2). */
 export function resyncReason(plaud: Plaud | null, count: number): string | null {
   if (count > MAX_RESYNC) return TOO_MANY_RESYNC;
   if (!plaud) return NO_PLAUD;
-  return plaud.why("resync") ?? plaud.gate;
+  return plaud.why("resync") ?? plaud.gate ?? plaud.word ?? null;
 }
 
 /** What both owners of the bar (the Library, the grid) pass for Re-sync, from the bar's own

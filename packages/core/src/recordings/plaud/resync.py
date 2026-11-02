@@ -63,6 +63,7 @@ from recordings.plaud.editsync import (
 from recordings.plaud.gate import GATE_REFUSAL, gate_now
 from recordings.plaud.importer import STOPPED_CONSENT, ImportStopped
 from recordings.plaud.keepout import read_consent
+from recordings.plaud.settings import BAD_WORD
 from recordings.sources.plaud import Listing, PlaudSource
 
 log = logging.getLogger(__name__)
@@ -265,6 +266,8 @@ def resync(
     now = run.clock()
     if not named:
         return report.end(NOTHING_NAMED, EXIT_FAILED)
+    if not run.settings.keep_out_word_ok:  # §12.2: an invalid word leaves every run idle
+        return report.end(BAD_WORD, EXIT_CONFIG)
     _found, failed = sync.rebuild_check(run.writer, now=now)  # §11.6: before anything is listed
     if failed is not None:
         report.ended_by = failed

@@ -1029,6 +1029,8 @@ def cmd_release(args: argparse.Namespace) -> int:
         done = release.unrelease(db, args.plaud_id, here=here, now=now)
         print(done)
         return EXIT_OK if done == release.UNDONE else EXIT_FAILED
+    if not settings.keep_out_word_ok:  # §12.2: no word enforced, so nothing is let in
+        return _fail(BAD_WORD, False, EXIT_CONFIG)
     consent = read_consent(settings.consent_list)
     early = release.may_ask(pid, consent, db, here=here)
     if not early.ok:

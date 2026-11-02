@@ -33,6 +33,7 @@ export interface Plaud {
    * kind it doesn't is not drawn at all (the Library's Re-sync). False before the view comes. */
   handles(kind: PlaudKind): boolean;
   gate: string | null; // the gate's reason while it is closed (SyncView.gate)
+  word?: string | null; // the keep-out word's reason while it can't be read (SyncView.word, §12.2)
 }
 
 export const PlaudContext = createContext<Plaud | null>(null);
@@ -144,6 +145,6 @@ export function usePlaud(view: SyncView | undefined, onView?: () => void, onRows
   return useMemo(() => ({
     send, results, last, lastLine: view?.last_result ?? null,
     available: !lost && (view?.available ?? false), reason: lost ? LOST : (view?.reason ?? null), why, handles,
-    gate: view?.gate ?? null,
+    gate: view?.gate ?? null, word: view?.word ?? null,
   }), [send, results, last, view, why, handles, lost]);
 }

@@ -73,6 +73,9 @@ spike sessions were skipped), each listed with how you would notice it's wrong i
 - After a lost `state.db`, whatever lists Plaud first (the worker, or a dry run or catch-up on the
   server) finds the rebuild, so recordings you had kept out wait for your review instead of
   coming in; a run that can't tell lists nothing.
+- An invalid `keep_out_word` stops everything that lists or fetches from Plaud, not only the
+  scheduled syncs: Compare, Sync now, the imports, Re-sync, Sync everything and Release are off
+  with "configuration: `keep_out_word` is invalid".
 
 ## Before stage 2b
 

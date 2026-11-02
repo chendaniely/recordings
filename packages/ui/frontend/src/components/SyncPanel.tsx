@@ -34,9 +34,10 @@ export function SyncPanel({ panel }: { panel: Panel }) {
   const holdWhy = panel.hold?.accept ? (kindReason("accept", why, panel) ?? plaud.gate) : null;
   const breakerWhy = panel.breaker?.accept ? (kindReason("accept-changes", why, panel) ?? plaud.gate) : null;
   const held = reasonsFor("sync-panel-held", [holdWhy, breakerWhy]);
-  // The worker refuses Re-sync and Park while the gate is closed too (spec §9.3).
+  // The worker refuses Re-sync and Park while the gate is closed too (spec §9.3), and Re-sync
+  // while the keep-out word can't be read (§12.2).
   const failingIds = panel.failing_checks.map((f) => f.recording_id);
-  const resyncWhy = failingIds.length > 0 ? (kindReason("resync", why, panel) ?? plaud.gate) : null;
+  const resyncWhy = failingIds.length > 0 ? (kindReason("resync", why, panel) ?? plaud.gate ?? plaud.word ?? null) : null;
   const parkWhy = failingIds.length > 0 ? (kindReason("park", why, panel) ?? plaud.gate) : null;
   const stuck = reasonsFor("sync-panel-failing", [resyncWhy, parkWhy]);
   const { numbers, details } = panel;
