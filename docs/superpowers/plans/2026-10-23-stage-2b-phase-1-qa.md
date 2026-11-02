@@ -86,6 +86,24 @@ Dan chose **"Tabs scroll"**, option A, the recommended one, on 2026-11-01, with 
 given. The phase end's step 4 gives the tab row `overflow-x: auto` (and `min-width: 0`) at 320 px,
 with an e2e test under a larger root font size.
 
+## 6. Status's "fails every check" line (asked 2026-11-01, phase end)
+
+Scenario (Phase 3): one recording's Plaud copy keeps failing every edit-sync check; the sync's check
+stops being pinged, Healthchecks emails Dan, and he opens Status from the email. Before asking: §15.2
+and Part I's J4 and J5 promise "1 recording fails every check · Re-sync · Park" on Status; P3 says
+"Status reports, the Sync screen acts", which Task 22's plan followed in dropping the buttons
+without asking; Status already makes one exception, Accept; Park is the only way back to "All here"
+for a recording stuck that way; and `SyncPanel` has no field for the line yet.
+
+- **A. The line with both buttons on Status (Recommended):** as J4 and J5 promise; one more
+  exception to P3, beside Accept.
+- B. The line on Status as words only, with "Open the Sync screen"; act there or in Details.
+- C. No panel line; Needs attention lists the recording by ID, and he acts from Details.
+
+Dan chose **"Line + buttons"**, option A, the recommended one, on 2026-11-01, with no further reason
+given. Phase 2's start adds the line's field to `SyncPanel` (the contract), and Phase 3 draws it
+with Re-sync and Park when checks run; P3's text gains the exception at that point.
+
 ## Calls made for Dan
 
 - **Mode: attended.** Phase PRs wait for Dan's merge, and a change to the spec, one of his decisions
