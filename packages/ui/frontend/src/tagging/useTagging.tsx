@@ -12,7 +12,7 @@ import {
   NO_UNDOS, busyTokens, cellsClosed, heardUndo, isRedo, learnReversal, mergesIntoCells, nextCellUndo, nextUndo, replyEffect, type CellToast, type Reversals, type Undos,
 } from "@/lib/undo";
 import { useSetShinyInput, useShinyMessageHandler } from "@/sr";
-import type { LibraryView, SnippetRequest, SnippetResult, TagRequest, TagResult } from "@/types";
+import type { LibraryRow, LibraryView, SnippetRequest, SnippetResult, TagRequest, TagResult } from "@/types";
 
 import { watchDrags, type DragRef, type InPageDrag } from "./drag";
 import { watchToaster } from "./toaster";
@@ -58,6 +58,7 @@ export interface Tagging {
   closePicker: () => void;
   snippet: (id: string) => string | null | undefined;
   wantSnippets: (ids: string[]) => void;
+  mergeRows: (rows: LibraryRow[]) => void; // a Re-sync's rows, read again (2b spec §14.6)
 }
 
 export const TaggingContext = createContext<Tagging | null>(null);
@@ -357,10 +358,16 @@ export function useTagging(library: LibraryView | undefined): Tagging {
   const openPicker = useCallback((target: PickerTarget) => setPicker(target), []);
   const closePicker = useCallback(() => setPicker(null), []);
   const status = useMemo(() => tagStatus(view, lost), [view, lost]);
+  // A Re-sync's rows, read again on the server (2b spec §14.6): merged in place as a tag reply's
+  // rows are, with no counts, tags or marks of their own; the order waits for Refresh.
+  const mergeRows = useCallback((rows: LibraryRow[]) => {
+    const reply = { rows, counts: null, tags: null, note_types: null } as unknown as TagResult;
+    setView((v) => (v ? mergeReply(v, reply) : v));
+  }, []);
 
   return useMemo(() => ({
     view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, refused, drag,
     canTag: status.canTag, opening: status.opening, reason: status.reason, saves: view?.saves ?? true,
-    isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets,
-  }), [view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, refused, status, isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets]);
+    isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets, mergeRows,
+  }), [view, loadKey, marks, pending, confirm, revealed, touched, lastTagged, lastUndone, sessionTags, refused, status, isPrivate, tag, undo, undoLast, refresh, answerConfirm, picker, openPicker, closePicker, snippet, wantSnippets, mergeRows]);
 }

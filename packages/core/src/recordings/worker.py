@@ -57,6 +57,7 @@ from recordings.plaud.checks import (
     K_CONSENT,
     K_LAST_ENDED,
     K_LAST_STARTED,
+    K_RETIRED,
     PRIVATE_UNWRITTEN,
     PlaudDB,
 )
@@ -185,7 +186,9 @@ WRITER_LOCK_WAIT = 10.0  # spec §9.2: Writer.open(cfg, docs=False, lock_timeout
 TURN_LOCK_WAIT = 1.0
 # The request kinds whose run holds `plaud`: while another run holds it, they stay queued and wait
 # their turn (§9.4), and the worker serves the other kinds meanwhile.
-PLAUD_KINDS: frozenset[str] = frozenset({"compare", "sync", "import", "accept", "accept-changes"})
+PLAUD_KINDS: frozenset[str] = frozenset(
+    {"compare", "sync", "import", "accept", "accept-changes", "resync", "full"}
+)
 FINISH_TRIES = 3  # a request's end, written again a moment apart if state.db is busy
 # An index that can't answer is retried at every tick; for this long it stops every late consent
 # listing, and is shown as a pass that failed.
@@ -470,9 +473,29 @@ class Worker:
         self._failing: dict[str, str] = {}  # step -> the class last logged
         self._beat_failed: str | None = None
         self._beating: threading.Thread | None = None
+        # A long run of this process holds `plaud` (Sync everything, a large Re-sync, the CLI's):
+        # what it serves between two recordings runs under that hold, never taking it again.
+        self._holding = False
+        self._serving = False  # serving between two recordings now: never again inside that
+        self._cli = False  # a CLI run's stand-in (`for_cli`): no start, no patterns pass
         self._ctx = TurnContext(
             self.state, self.db, self.alerts, self.settings.schedule_minutes, clock
         )
+
+    @classmethod
+    def for_cli(cls, cfg: Config, environ: Mapping[str, str], *, writer: Writer, client: Any):
+        """The worker's loop code for a CLI long run in the `worker` container (`recordings plaud
+        sync`, `sync --full`, `resync`; §9.2: "This holds for the CLI's long runs too"): its
+        `long_between` serves the light turn of a due scheduled sync (which can ping, through
+        the same `deadman_sync_url`) and single-recording requests, under the CLI's hold. It is
+        never started: no heartbeat, and no patterns pass, so it keeps no `private-unwritten`
+        flag (the worker does). Its first light turn waits one schedule interval: a CLI run that
+        has just begun never runs one at once."""
+        w = cls(cfg, environ, client_factory=lambda: client)
+        w.writer, w._cli, w._holding = writer, True, True
+        minutes = w.settings.schedule_minutes or DEFAULT_SCHEDULE_MINUTES
+        w._not_before = w.clock() + timedelta(minutes=minutes)
+        return w
 
     # ---- start (spec §9.2's order) ------------------------------------------------------------
     def start(self) -> None:
@@ -493,6 +516,7 @@ class Worker:
         if self._step("rebuild", self._detect_rebuild):
             self.gate = self._open_gate()
         self._step("breaker", self._close_on_release)
+        self._step("manifests", self._manifests)
         self._enforce()
         self.progress.bump(self.clock(), "idle")
         self._beat()
@@ -567,6 +591,14 @@ class Worker:
         from recordings.plaud import breaker
 
         return breaker.close_on_release(self.db, now=self.clock())
+
+    def _manifests(self) -> None:
+        """Sync everything's manifests folder, made if missing (§14.6, decision 9): `[backup]
+        extra_paths` names it, and a missing extra path refuses every backup."""
+        from recordings.plaud.full import ensure_manifest_dir
+
+        if self.cfg.state_path is not None:
+            ensure_manifest_dir(self.cfg.state_path)
 
     def _enforce(self) -> None:
         now = self.clock()
@@ -743,6 +775,7 @@ class Worker:
         self._step("owed private", self._owed_private)
         self._step("request", self._serve_one)
         self._step("turn", self._turn_if_due)
+        self._step("sync everything", self._full_if_due)
         if self._pruned_at is None or not timedelta(0) <= now - self._pruned_at < PRUNE_EVERY:
             self._step("prune", self._prune)
 
@@ -884,8 +917,88 @@ class Worker:
         self._step("consent blocker", self._consent_blocker)
         self._step("cache titles", self._purge_cache)
         self._step("late consent", self._late_consent)
-        self._step("owed private", self._owed_private)
+        if not self._cli:  # the flags follow the worker's own patterns pass, which a CLI lacks
+            self._step("owed private", self._owed_private)
         self.progress.bump(self.clock(), phase)
+
+    def long_between(self) -> None:
+        """Between two recordings of a long run that holds `plaud` (Sync everything, a large
+        Re-sync, the CLI's syncs; §9.2): what `between_recordings` does, then the light turn of a
+        due scheduled sync (`scheduled_turn(light=True)`), then one queued Compare or Re-sync of
+        one recording. Other requests wait, and say so ("Waiting for Sync everything (412 of
+        1,234)"). Never inside itself: what it serves runs with the plain `between`."""
+        self.between_recordings()
+        if self._serving:
+            return
+        phase = self.progress.read()[0]
+        self._serving, held = True, self._holding
+        self._holding = True  # whatever runs from here runs under the long run's hold
+        try:
+            self._step("light turn", self._light_turn_if_due)
+            self._step("request", self._serve_inside)
+        finally:
+            self._serving, self._holding = False, held
+            self.progress.bump(self.clock(), phase)
+
+    def _light_turn_if_due(self) -> None:
+        if self.due():
+            self.scheduled_turn(light=True)
+
+    def _serve_inside(self) -> None:
+        now = self.clock()
+        requests.expire(self.state, now=now)
+        claimed = requests.claim_next(self.state, now=now, inside=True)
+        if claimed is not None:
+            self.serve_request(claimed)
+
+    def _hold(self, job: str) -> contextlib.AbstractContextManager:
+        """`plaud` for a run of `job`, waiting TURN_LOCK_WAIT, unless a long run of this process
+        holds it already (`long_between` serves under that hold)."""
+        if self._holding:
+            return contextlib.nullcontext()
+        return plaud_run(self.state, job, timeout=TURN_LOCK_WAIT, now=self.clock())
+
+    def _full_if_due(self) -> None:
+        """Sync everything from the tick (§14.6): an unfinished one resumes; otherwise one runs 30
+        days after the last finished one while the schedule is on (`fullstate.due`). Never while
+        another run holds `plaud`, the gate is closed, the sign-in is paused, a rate limit's wait
+        runs or the keep-out word is bad: no Plaud call then, and the next tick asks again."""
+        from recordings.plaud import fullstate  # network-free: the run itself loads the client
+
+        now = self.clock()
+        if not fullstate.due(self.db, now=now, schedule_minutes=self.settings.schedule_minutes):
+            return
+        if (
+            not self.settings.keep_out_word_ok
+            or plaud_holder(self.state) is not None
+            or not gate_now(self.db).open
+            or signin.paused(self.db, self.settings.token_store) is not None
+            or rate_limit_wait(self.db, now=now) is not None
+        ):
+            return
+        try:
+            with plaud_run(self.state, "plaud-full", timeout=TURN_LOCK_WAIT, now=now):
+                report = self._run_full(by="schedule")
+        except LockTimeout:
+            return
+        except Stopping:
+            return  # unfinished: it resumes at the next start
+        log.info("Sync everything by itself: %s", report.line())
+
+    def _run_full(self, *, by: str) -> Any:
+        """Sync everything under the hold the caller took, its `between` the long run's."""
+        from recordings.plaud import full, sync
+
+        self.progress.bump(self.clock(), "turn")
+        self._holding = True
+        try:
+            run = sync.worker_run(self, between=self.long_between)
+            report = full.run_full(run, by=by)
+            record_full(self.state, report, finished=self.clock())
+            return report
+        finally:
+            self._holding = False
+            self.progress.bump(self.clock(), "idle")
 
     def listed_now(self, plaud_id: str) -> Any | None:
         """This ID's row as Plaud lists it now: from the run's newest listing while it is one
@@ -1046,8 +1159,8 @@ class Worker:
         crashes and restarts doesn't start a sync at every start. A stamp in the future counts
         as long ago. A turn that didn't run (the gate, busy) waits one interval, in memory."""
         minutes = self.settings.schedule_minutes
-        if minutes <= 0:
-            return False
+        if minutes <= 0 or self.db.get(K_RETIRED) is not None:
+            return False  # DAN-15's end retires the sync: no scheduled turn (§17.5)
         now, interval = self.clock(), timedelta(minutes=minutes)
         if self._not_before is not None and now < self._not_before <= now + interval:
             return False
@@ -1068,13 +1181,17 @@ class Worker:
         if self.due():
             self.scheduled_turn()
 
-    def scheduled_turn(self) -> None:
+    def scheduled_turn(self, *, light: bool = False) -> None:
         """Spec §9.7: a bad keep_out_word, the gate closed, the sign-in paused (no token file, or
         the one Plaud refused, §10.3), a rate limit's wait still running (§10.2: a run ended
         "rate limited until 14:40", `record_rate_limit`) or `plaud` held: each is recorded and
         pings nothing, with no Plaud call. A rate limit's turn comes back when its wait ends, or
         an interval later if that is sooner. Otherwise the turn runs under `plaud`
-        (`plaud-sync`), and conclude_turn decides the ping."""
+        (`plaud-sync`), and conclude_turn decides the ping.
+
+        `light`: the light turn of a due scheduled sync, served between two recordings of a long
+        run that already holds `plaud` (§9.2): the same checks, then the listing, title checks and
+        up to 20 imports, under that hold, and conclude_turn as for any turn."""
         now = self.clock()
         outcome: TurnOutcome | None = None
         detail: Mapping[str, Any] | None = None
@@ -1088,6 +1205,9 @@ class Worker:
             outcome, detail = "paused", {"why": why}
         elif (until := rate_limit_wait(self.db, now=now)) is not None:
             outcome, detail = "rate-limited", {"until": until.isoformat()}
+        if outcome is None and light:
+            conclude_turn(self._ctx, self._run_turn(now, light=True))
+            return
         if outcome is None:
             try:
                 with plaud_run(self.state, "plaud-sync", timeout=TURN_LOCK_WAIT, now=now):
@@ -1109,17 +1229,21 @@ class Worker:
             self._not_before = min(self._not_before, until)
         conclude_turn(self._ctx, None)  # no sync ran: no ping
 
-    def _run_turn(self, now: datetime) -> RunOutcome | None:
+    def _run_turn(self, now: datetime, *, light: bool = False) -> RunOutcome | None:
         """The turn under `plaud`. One that raised is recorded as `error` and judged as a run that
         isn't good (`raised`); one SIGTERM stopped between recordings ran no whole sync, and
-        records and pings nothing (None)."""
+        records and pings nothing (None). A light turn's SIGTERM stops the long run around it
+        too."""
         self.db.put(K_LAST_STARTED, now.isoformat(), now=now)
         self.progress.bump(now, "turn")
         ran: RunOutcome | None = None
         try:
-            ran = self.turn(self, light=False)
+            ran = self.turn(self, light=light)
         except Stopping:
             log.info("the scheduled sync stopped between recordings: the worker is stopping")
+            if light:
+                self.db.put(K_LAST_ENDED, self.clock().isoformat(), now=self.clock())
+                raise
         except Exception as exc:  # noqa: BLE001  a failed turn is recorded, never the loop's end
             record_turn(self.db, "error", now=self.clock(), detail={"error": type(exc).__name__})
             log.warning("the scheduled sync failed (%s)", type(exc).__name__)
@@ -1443,14 +1567,14 @@ def _sync_request(
     the run's counts and IDs, never a title. It records no turn and pings nothing (§16)."""
     from recordings.plaud import sync
 
-    req, now = claimed.request, worker.clock()
+    req = claimed.request
 
     def progress(done: int, total: int) -> None:
         requests.progress(worker.state, req.request_id, done=done, total=total, message=IMPORTING)
 
     run = sync.worker_run(worker, progress=progress if mode != "compare" else None)
     try:
-        with plaud_run(worker.state, job, timeout=TURN_LOCK_WAIT, now=now):
+        with worker._hold(job):  # inside a long run (a Compare between two recordings), its hold
             report = sync.run_sync(run, mode=mode, named=named, import_all=import_all)
     except LockTimeout:
         holder = plaud_holder(worker.state)
@@ -1503,13 +1627,33 @@ def _import(worker: Worker, claimed: Claimed) -> requests.Reply:
 
 
 def _parking(worker: Worker, claimed: Claimed, *, park: bool) -> requests.Reply:
-    """Park and Unpark a Plaud ID that failed to import (§14.6, §15.1): parked, syncs and Import
+    """Park and Unpark (§14.6, §15.1). A Plaud ID that failed to import: parked, syncs and Import
     all leave it alone, and it no longer counts against "All here"; unparked, it is as it was
-    (one that failed 3 times waits for Import selected). A recording's parking (its checks) is
-    area B2's: web refuses it with NOT_YET, and so does this."""
+    (one that failed 3 times waits for Import selected). A recording here that fails every check
+    (area B2, `resync.park_recordings`): parked, the sweep leaves it alone and it doesn't count
+    against Sync everything or §11.7, and a Re-sync still tries it; unparked, it is checked at
+    the next run. Checked again here: a recording that isn't here or didn't come from Plaud is
+    "nothing"."""
+    from recordings.plaud import resync
+
     req, now = claimed.request, worker.clock()
     if req.recording_ids:
-        return _failed(claimed, requests.NOT_YET)
+        found = resync.park_recordings(
+            worker.writer.archive, worker.db, req.recording_ids, park=park, now=now
+        )
+        message = (
+            (resync.PARKED_LINE if found.done else resync.NOTHING_TO_PARK)
+            if park
+            else (resync.UNPARKED_LINE if found.done else resync.NOTHING_TO_UNPARK)
+        )
+        key = "parked" if park else "unparked"
+        return requests.Reply(
+            req.request_id,
+            req.kind,
+            "done" if found.done else "failed",
+            message,
+            result={key: list(found.done), "nothing": list(found.nothing)},
+        )
     done, nothing = [], []
     for pid in req.plaud_ids:
         row = worker.db.listing(pid)
@@ -1568,6 +1712,85 @@ def _accept_changes(worker: Worker, claimed: Claimed) -> requests.Reply:
     )
 
 
+# ---- Re-sync and Sync everything (area B2, §14.6) -------------------------------------------
+def _resync(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """Re-sync (§14.6, decision 6): the recordings named, checked now under `plaud`
+    (`plaud-resync`), each as the sweep checks it, a parked one too (a success unparks it); its
+    progress on the row ("Re-syncing", done and total); its reply one recording's line, or the
+    selection's end line, and its result the counts, the updated IDs and each recording's own
+    line, never a title. The newest listing is reused while one schedule interval fresh. More than
+    `resync.LONG` recordings is a long run: between two of them it serves the light turn and a
+    single-recording request (§9.2). Served between two recordings of another long run (one
+    recording), it runs under that run's hold."""
+    from recordings.plaud import resync, sync
+
+    req, now = claimed.request, worker.clock()
+    if not req.recording_ids:
+        return _failed(claimed, resync.NOTHING_NAMED)
+    if len(req.recording_ids) > requests.MAX_RESYNC_IDS:
+        return _failed(claimed, resync.TOO_MANY)
+
+    def progress(done: int, total: int) -> None:
+        requests.progress(
+            worker.state, req.request_id, done=done, total=total, message=resync.RESYNCING
+        )
+
+    long = len(req.recording_ids) > resync.LONG and not worker._holding
+    between = worker.long_between if long else worker.between_recordings
+    run = sync.worker_run(worker, progress=progress, between=between)
+    minutes = worker.settings.schedule_minutes or DEFAULT_SCHEDULE_MINUTES
+    listing = worker.newest_listing
+    if listing is not None and now - listing.at > timedelta(minutes=minutes):
+        listing = None
+    held = worker._holding
+    try:
+        with worker._hold("plaud-resync"):
+            worker._holding = held or long
+            report = resync.resync(run, req.recording_ids, listing=listing)
+    except LockTimeout:
+        holder = plaud_holder(worker.state)
+        busy = f"skipped: busy (`{holder[0]}`)" if holder is not None else "skipped: busy"
+        return requests.Reply(req.request_id, req.kind, "failed", busy)
+    finally:
+        worker._holding = held
+    state = "done" if report.phrase == resync.OK else "failed"
+    return requests.Reply(req.request_id, req.kind, state, report.line(), result=report.to_dict())
+
+
+def _full(worker: Worker, claimed: Claimed) -> requests.Reply:
+    """Sync everything (§14.6), pressed: checked again against fresh facts (refused within an hour
+    of the last finished one; an unfinished one resumes), then the whole run under `plaud`
+    (`plaud-full`), serving the light turn and single-recording requests between two recordings
+    (§9.2). Its reply: "Sync everything: all 1,234 checked (2 parked, 1 degraded)", or what is
+    missing and why; its result the counts and IDs (the flagged by archive ID), never a title."""
+    from recordings.plaud import full
+
+    req, now = claimed.request, worker.clock()
+    if (why := full.refusal(worker.db, now=now)) is not None:
+        return _failed(claimed, why)
+    try:
+        with plaud_run(worker.state, "plaud-full", timeout=TURN_LOCK_WAIT, now=now):
+            report = worker._run_full(by="request")
+    except LockTimeout:
+        holder = plaud_holder(worker.state)
+        busy = f"skipped: busy (`{holder[0]}`)" if holder is not None else "skipped: busy"
+        return requests.Reply(req.request_id, req.kind, "failed", busy)
+    line = f"Sync everything: {report.line()}"
+    if not report.ok:
+        line += " · See Status"
+    state = "failed" if report.run_failed else "done"
+    return requests.Reply(req.request_id, req.kind, state, line, result=report.to_dict())
+
+
+def record_full(state: State, report: Any, *, finished: datetime) -> None:
+    """A Sync everything in `ops_runs` (§9.5's reuse, job `plaud-full`): its line, never a
+    title."""
+    try:
+        state.record_run("plaud-full", report.started, finished, report.ok, report.line())
+    except (sqlite3.Error, OSError) as exc:
+        log.warning("Sync everything wasn't recorded in ops_runs (%s)", type(exc).__name__)
+
+
 # What the worker serves. requests.HANDLED names the same kinds for web, which refuses the others
 # before inserting; each later area adds its handlers here and its kinds there.
 HANDLERS: dict[str, Handler] = {
@@ -1582,4 +1805,6 @@ HANDLERS: dict[str, Handler] = {
     "park": _park,
     "unpark": _unpark,
     "accept-changes": _accept_changes,
+    "resync": _resync,
+    "full": _full,
 }

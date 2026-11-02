@@ -220,9 +220,16 @@ smoke test on purpose until someone does the steps below:
   `worker._sync_request` (Compare, Sync now and the imports are the examples). Then the pins:
   `test_plaud_requests.py`'s HANDLED test, `test_plaud_requests_ui.py`'s refused kinds and
   `test_plaud_views.py`'s `handled` lists. Accept this listing (`accept`) is the worked example.
+  A handler that may run inside a long run takes `plaud` through `Worker._hold`, which takes
+  nothing while a long run of the same process holds it; a long run passes
+  `Worker.long_between` as its `between`, which serves the light turn and a Compare or a
+  one-recording Re-sync between two recordings (spec §9.2; Sync everything and `resync` are the
+  examples, and `Worker.for_cli` gives the CLI's long runs the same).
 - **Tagging's logs carry fixed phrases,** IDs, counts and exception class names: never a tag
   name, a title or `str(exc)`. So do replies' `message` and failure reasons. Replies also carry
-  `rows` (with titles) and `tags` by design, for the one person using the app. The one text that
+  `rows` (with titles) and `tags` by design, for the one person using the app, and so does a
+  Re-sync's final `plaud_result` (`rows`: the Library rows it updated, read again in
+  `shiny_app`), never its `result`. The one text that
   comes from an exception is `cannot_tag_reason` (and the "Stopped: …" that repeats it): the
   Writer's own refusal, written for display, which names paths and IDs, never a title. A log never
   carries even that.

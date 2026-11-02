@@ -59,8 +59,9 @@ cacert = "/run/secrets/nas_cacert"
 restic = "restic"
 # Besides the archive, config.toml and a copy of state.db; a folder is backed up whole. In Docker,
 # deploy.env is mounted at /backup-extra/deploy.env, and from stage 2b the consent folder at
-# /consent: add it (runbook section 6), so a restore never brings back an older consent list.
-# Never the whole state folder or the Plaud sign-in's folder: doctor refuses them.
+# /consent: add it (runbook section 6), so a restore never brings back an older consent list. Add
+# /state/manifests too, Sync everything's manifests (made first: a missing extra path refuses
+# every backup). Never the whole state folder or the Plaud sign-in's folder: doctor refuses them.
 extra_paths = ["/backup-extra/deploy.env"]
 keep_hourly = 24
 keep_daily = 14

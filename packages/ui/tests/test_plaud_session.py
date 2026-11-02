@@ -157,10 +157,36 @@ async def test_a_pending_row_is_read_every_two_seconds_and_its_replies_sent(wire
 
 
 @pytest.mark.anyio
-async def test_a_kind_the_worker_cant_handle_yet_is_refused_at_once_and_writes_nothing(wired):
-    # why: a kind the worker has no handler for yet (Sync everything, until Phase 3), crafted
-    # past the disabled buttons, is answered "Comes with the next part of stage 2b." at once, and
-    # no row is inserted, so nothing comes back later as an error.
+async def test_a_resyncs_end_carries_the_rows_it_updated_read_again(wired, demo_archive):
+    # why: 2b spec §14.6, "the open list re-reads the changed rows in place, as a tag reply does":
+    # the session reads the rows of `updated_ids` through the tag store and sends them with the
+    # final reply (titles, as a tag reply's rows); `result` keeps only counts, IDs and lines.
+    rid = next(iter(Archive(demo_archive).iter_recordings())).id
+    async with test_server_async(SHINY_APP, timeout_secs=10) as s:
+        await s.set_inputs(plaud_request=request("rsyn0001test", "resync", recording_ids=[rid]))
+        await until(lambda: replies(wired.sent, "rsyn0001test"), "the first reply")
+        worker = State(wired.path)
+        assert requests.claim_next(worker, now=T0) is not None
+        result = {"updated_ids": [rid], "each": {rid: "Updated: speakers"}}
+        requests.finish(
+            worker, "rsyn0001test", ok=True, message="Updated: speakers", result=result, now=T0
+        )
+        await until(lambda: replies(wired.sent, "rsyn0001test")[-1]["state"] == "done", "the end")
+    final = replies(wired.sent, "rsyn0001test")[-1]
+    assert [row["id"] for row in final["rows"]] == [rid] and final["rows"][0]["title"]
+    assert final["result"] == result
+
+
+@pytest.mark.anyio
+async def test_a_kind_the_worker_cant_handle_yet_is_refused_at_once_and_writes_nothing(
+    wired, monkeypatch
+):
+    # why: a kind the worker has no handler for yet, crafted past the disabled buttons, is
+    # answered "Comes with the next part of stage 2b." at once, and no row is inserted, so nothing
+    # comes back later as an error. Since area B2 every kind is handled: one is taken away here.
+    import recordings_ui.plaud as plaud_ui
+
+    monkeypatch.setattr(plaud_ui, "HANDLED", plaud_ui.HANDLED - {"full"})
     async with test_server_async(SHINY_APP, timeout_secs=10) as s:
         await s.set_inputs(plaud_request=request("not00001test", "full"))
         await until(lambda: replies(wired.sent, "not00001test"), "a reply")

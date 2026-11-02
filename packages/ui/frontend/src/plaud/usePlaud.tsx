@@ -5,7 +5,7 @@ import { LOST } from "@/lib/library";
 import { newRequestId } from "@/lib/queue";
 import { useSetShinyInput, useShinyMessageHandler } from "@/sr";
 import { ActionToast } from "@/tagging/ActionToast";
-import type { Handled, PlaudKind, PlaudRequest, PlaudResult, SyncView } from "@/types";
+import type { Handled, LibraryRow, PlaudKind, PlaudRequest, PlaudResult, SyncView } from "@/types";
 
 /** Why a button can't ask when nothing more particular says: before the Sync view has come, or a
  * view that is unavailable and gives no reason. */
@@ -54,6 +54,17 @@ export function replyText(r: PlaudResult): string {
   return `${r.message} (${r.progress.done} of ${r.progress.total})`;
 }
 
+/** One recording's own line in a Re-sync's end (its `each`), when its press joined a selection's
+ * request (2b spec §9.3's merge); else the reply's line. */
+export function lineFor(r: PlaudResult, recordingId: string | null): string {
+  const each = FINAL.has(r.state) && r.result ? r.result.each : undefined;
+  if (recordingId && each && typeof each === "object") {
+    const own = (each as Record<string, unknown>)[recordingId];
+    if (typeof own === "string") return own;
+  }
+  return replyText(r);
+}
+
 type JQuery = (el: Document) => { on(e: string, f: () => void): void; off(e: string, f: () => void): void };
 
 const event = { priority: "event" as const, debounceMs: 0 };
@@ -66,14 +77,18 @@ const event = { priority: "event" as const, debounceMs: 0 };
  * 2 seconds. A final reply's message is a toast, and an import's offers View, which opens
  * Untagged (`onView`; §11.5's "31 imported · 4 arrived private · View"); a Release preview's
  * answer is its question, never a toast. The kept result line is the server's (`last_result`,
- * which redraws when one of this window's requests ends), in the server's zone. */
-export function usePlaud(view: SyncView | undefined, onView?: () => void): Plaud {
+ * which redraws when one of this window's requests ends), in the server's zone. A Re-sync's end
+ * carries the rows it updated, read again, which `onRows` merges into the open list in place, as a
+ * tag reply's rows are (2b spec §14.6): rows don't move until Refresh. */
+export function usePlaud(view: SyncView | undefined, onView?: () => void, onRows?: (rows: LibraryRow[]) => void): Plaud {
   const sendRequest = useSetShinyInput<PlaudRequest | null>("plaud_request", null, event);
   const [results, setResults] = useState<Record<string, PlaudResult>>({});
   const [last, setLast] = useState<PlaudResult | null>(null);
   const sent = useRef(new Map<string, PlaudRequest>());
   const viewer = useRef(onView);
   viewer.current = onView;
+  const merger = useRef(onRows);
+  merger.current = onRows;
   const toasted = useRef(new Set<string>());
   const [lost, setLost] = useState(false);
   const lostRef = useRef(false);
@@ -109,6 +124,7 @@ export function usePlaud(view: SyncView | undefined, onView?: () => void): Plaud
     setLast(reply);
     const id = `plaud-${reply.request_id}`;
     if (!FINAL.has(reply.state) && toasted.current.delete(id)) toast.dismiss(id); // a later reply
+    if (FINAL.has(reply.state) && reply.rows && reply.rows.length > 0) merger.current?.(reply.rows);
     if (FINAL.has(reply.state) && request.kind !== "release-preview") {
       toasted.current.add(id);
       const opens = request.kind === "import" && reply.state === "done" && viewer.current;

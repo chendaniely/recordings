@@ -46,10 +46,9 @@ SECRET_ENV = (
     "RECORDINGS_DEADMAN_URL_FILE",
 )
 
-
 # As the runbook's section 6 has Dan do: deploy.env, which the template lists, and the consent
-# folder, which only the template's comment names.
-EXTRA_PATHS = 'extra_paths = ["/backup-extra/deploy.env", "/consent"]\n'
+# and manifests folders, which only the template's comment names.
+EXTRA_PATHS = 'extra_paths = ["/backup-extra/deploy.env", "/consent", "/state/manifests"]\n'
 
 
 def server(tmp_path, *, repository="sftp:backup@nas:/volume1/backups/recordings", backup_extra=""):
@@ -1294,6 +1293,24 @@ def test_the_manifests_folder_and_the_state_copy_are_not_problems(tmp_path):
         "/state/backup/state.db",
     )
     assert doctor(environ, role="backup")["problems"] == []
+
+
+def test_backup_without_the_manifests_folder_is_a_warning(tmp_path):
+    # why: stage 2b spec §17.2 and decision 9: Sync everything's DAN-15 manifest is backed up
+    # through extra_paths; without the folder there, no backup carries it.
+    environ = server(tmp_path)
+    with_extra_paths(environ, "/backup-extra/deploy.env", "/consent")
+    warnings = doctor(environ, role="backup")["warnings"]
+    assert any("manifests folder" in w and 'add "/state/manifests"' in w for w in warnings)
+    for role, env in (("web", web_only(environ)), ("worker", environ)):
+        assert not any("manifests folder" in w for w in doctor(env, role=role)["warnings"]), role
+    with_extra_paths(environ, "/backup-extra/deploy.env", "/consent", "/state/manifests")
+    assert not any("manifests" in w for w in doctor(environ, role="backup")["warnings"])
+    # the state folder as configured counts too
+    with_extra_paths(
+        environ, "/backup-extra/deploy.env", "/consent", str(tmp_path / "state" / "manifests")
+    )
+    assert not any("manifests" in w for w in doctor(environ, role="backup")["warnings"])
 
 
 def test_backup_without_the_consent_folder_is_a_warning(tmp_path):

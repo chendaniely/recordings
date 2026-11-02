@@ -98,13 +98,17 @@ export type PlaudKind = "compare" | "sync" | "import" | "resync" | "full" | "acc
 /** The `plaud_request` input (spec §9.3). Never sent on load, from a URL, its hash or storage. */
 export interface PlaudRequest { request_id: string; kind: PlaudKind; plaud_ids: string[]; recording_ids: string[]; all: boolean }
 export interface ReleasePreview { plaud_id: string; title: string; date: string; time: string; duration: string | null; next_sync: string | null }
-/** The `plaud_result` message. `result` holds counts and IDs, never a title. */
+/** The `plaud_result` message. `result` holds counts and IDs, never a title (a Re-sync's `each`
+ * maps each recording ID to its own line, "Updated: speakers"). `rows`: a Re-sync that updated
+ * recordings, their Library rows read again, which the open list merges in place as a tag reply's
+ * (2b spec §14.6); like a tag reply's rows they carry titles, for the one person using the app. */
 export interface PlaudResult {
   request_id: string; kind: PlaudKind | null;
   state: "queued" | "running" | "done" | "failed" | "expired" | "refused";
   message: string; progress: { done: number; total: number } | null;
-  result: Record<string, number | string | string[]> | null;
-  preview: ReleasePreview | null; // release-preview only, for the asking session: null until Phase 2 builds it
+  result: Record<string, unknown> | null;
+  preview: ReleasePreview | null; // release-preview only, for the asking session
+  rows?: LibraryRow[] | null;
 }
 /** What the worker can do yet, on every view: a request button of any other kind is disabled with
  * `not_yet` as its reason (Phase 1 handles "keep-here" alone; each phase widens it). */

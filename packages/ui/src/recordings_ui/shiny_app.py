@@ -127,6 +127,18 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
 
     requests = plaud.requests
 
+    def resynced_rows(result: object) -> list[dict]:
+        """The Library rows of the recordings a Re-sync updated (its `updated_ids`), read again
+        through the tag store; one that can't be read now is left out (Refresh reads it)."""
+        ids = result.get("updated_ids") if isinstance(result, dict) else None
+        rows = []
+        for rid in ids if isinstance(ids, list) else []:
+            try:
+                rows.append(views.row(tags.store.read(str(rid))))
+            except Exception as exc:  # noqa: BLE001  its class only (Global Constraints)
+                log.info("plaud request: a re-synced row wasn't read (%s)", type(exc).__name__)
+        return rows
+
     def row_reply(row, down: str | None) -> dict:
         """A row as a reply. While it is still queued the message follows the worker's heartbeat
         (spec §9.3): the insert's words said it once, and the worker can stop or come back after."""
@@ -179,6 +191,10 @@ def server(input: Inputs, output: Outputs, session: Session) -> None:
                 reply["preview"] = await asyncio.to_thread(
                     plaud.release_preview, plaud_views, reply["request_id"], now=plaud.clock()
                 )
+            if reply["kind"] == "resync" and ended:
+                # §14.6: the rows it updated, read again, so the open list shows them in place, as
+                # a tag reply's rows (titles included, for the one person using the app).
+                reply["rows"] = await asyncio.to_thread(resynced_rows, reply.get("result"))
             if reply != shown:
                 await send_plaud_result(reply)
                 shown = reply

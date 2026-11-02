@@ -5,9 +5,9 @@ The browser's `plaud_request` input is checked here, then inserted as a row in s
 `plaud_requests` (recordings.plaud.requests.insert) on `asyncio.to_thread`: never on the event
 loop, and never on the tag service's writer or reader thread, where it would wait behind a tag
 batch. The worker claims the row and checks it again; nothing in it is taken on trust, and a
-request never carries a title. A kind the worker has no handler for yet (not in
-`requests.HANDLED`: Re-sync, Sync everything and Accept these changes until Phase 3) is refused
-here with NOT_YET, so no row is ever inserted for it.
+request never carries a title. A kind the worker has no handler for (not in `requests.HANDLED`;
+since area B2 every kind is handled) is refused here with NOT_YET, so no row is ever inserted for
+it.
 
 It imports no Plaud client, token store or sync module (test_plaud_imports.py asserts it). It
 also imports on the Pages demo's Pyodide (Python 3.12, no sqlite3, fcntl or threads): state.db is
@@ -139,18 +139,20 @@ def check_request(raw: object) -> PlaudRequest | Refusal:
             return Refusal(request_id, BAD_ID)
     if kind == "keep-here" and (plaud_ids or select_all):
         return Refusal(request_id, UNREADABLE)  # it uses recording IDs alone, and carries no more
-    if kind in ("accept", "accept-changes", "compare", "sync") and (
+    if kind in ("accept", "accept-changes", "compare", "sync", "full") and (
         plaud_ids or recording_ids or select_all
     ):
         return Refusal(request_id, UNREADABLE)  # they act on the listing, and name nothing
+    if kind == "resync" and (plaud_ids or select_all or not recording_ids):
+        return Refusal(request_id, UNREADABLE)  # recordings here, by archive ID, and only those
     if kind in RELEASE_KINDS and (len(plaud_ids) != 1 or recording_ids or select_all):
         return Refusal(request_id, UNREADABLE)  # Release names one Plaud ID, and nothing else
     if kind == "import" and (recording_ids or not (plaud_ids or select_all)):
         return Refusal(request_id, UNREADABLE)  # Plaud IDs not here, or all of them
-    if kind in ("park", "unpark") and (select_all or not (plaud_ids or recording_ids)):
-        return Refusal(request_id, UNREADABLE)
-    if kind in ("park", "unpark") and recording_ids:
-        return Refusal(request_id, NOT_YET)  # a recording's parking (its checks) is area B2's
+    if kind in ("park", "unpark") and (
+        select_all or not (plaud_ids or recording_ids) or (plaud_ids and recording_ids)
+    ):
+        return Refusal(request_id, UNREADABLE)  # Plaud IDs not here, or recordings here: not both
     if kind not in HANDLED:
         return Refusal(request_id, NOT_YET)  # its handler comes with a later phase
     return PlaudRequest(
@@ -275,7 +277,9 @@ NO_GOOD_LISTING = "No good listing yet"
 UNREADABLE_SYNC = "The sync's records in state.db can't be read now: see Needs attention"
 # Needs attention's line for it, with the exception's class and never its text (§15.6).
 UNREADABLE_LINE = "The sync's records in state.db can't be read now (`{}`): check the worker's log."
-FULL_UNKNOWN = "unknown until the first run"
+FULL_UNKNOWN = "unknown until the first run"  # fullstate.UNKNOWN (a test pins the two)
+# DAN-15's end (§17.5; `recordings plaud retire`): the summary and Status's condition
+RETIRED_LINE = "Plaud sync retired on {}: nothing more is fetched from Plaud (runbook, DAN-15)"
 CONSENT_UNREADABLE = "the consent list can't be read"  # keepout.STOP_UNREADABLE
 NO_WORKER_YET = "The Plaud worker hasn't reported yet: check that the worker container is running."
 WORKER_FAILED = "The Plaud worker couldn't start (`{}`): see `rc logs worker` (runbook)."
@@ -697,6 +701,14 @@ class _Read:
         self.checks = self.db.check_rows()
         self.check_log = self.db.check_log_since(now - RECENT)
         self._cache: tuple[list, dict] | None = None
+        # Area B2's: Sync everything's record, the retired sync and the removals held for review.
+        from recordings.plaud import fullstate
+
+        self.full_last = fullstate.last(self.db)
+        self.full_running = fullstate.running(self.db)
+        self.full_estimate = fullstate.estimate(self.db)
+        self.retired = fullstate.retired(self.db)
+        self.held = self.db.held_removals()
 
     def gate_reason(self) -> str | None:
         return None if self.gate.open else self.gate.reason
@@ -766,6 +778,8 @@ class _Read:
         sync, or the gate's reason; else "All here · checked 14:20 · next sync 14:40" while the
         last good listing is under two schedule intervals old and nothing is waiting or missing
         (parked recordings aside), else what the newest compare left waiting or missing."""
+        if self.retired is not None:  # DAN-15's end: nothing is wrong, and nothing more comes
+            return _summary_of("no-sync", self.retired_line(), see_status=False)
         stopped = self.health_cause()
         problem = stopped or self.gate_reason()
         if problem is None:
@@ -968,6 +982,58 @@ class _Read:
             }
         )
 
+    def retired_line(self) -> str:
+        return RETIRED_LINE.format(_date(self.retired, self.tz))
+
+    def full_line(self) -> str | None:
+        """Status's Sync everything number (§15.2): "2026-10-01: all 1,234 checked (2 parked, 1
+        degraded)", or its failure; "running since 14:20 (412 of 1,234)" while one is unfinished;
+        None before any."""
+        if self.full_running is not None:
+            started = parse_stamp(self.full_running.get("started"))
+            done, total = self.full_running.get("done"), self.full_running.get("total")
+            progress = (
+                f" ({_int(done):,} of {_int(total):,})" if isinstance(total, int) and total else ""
+            )
+            return f"running since {self.when(started)}{progress}"
+        if self.full_last is None:
+            return None
+        finished = parse_stamp(self.full_last.get("finished"))
+        line = self.full_last.get("line")
+        line = line if isinstance(line, str) and line else "finished"
+        return f"{_date(finished, self.tz)}: {line}"
+
+    def full_wait(self) -> str | None:
+        """Why Sync everything is off now, besides the rest (§9.3): one is running, or the last
+        finished less than an hour ago. An unfinished one nothing runs: a press resumes it."""
+        from recordings.plaud.fullstate import COOLDOWN, RECENT
+        from recordings.plaud.runlock import plaud_holder
+
+        holder = plaud_holder(self.state)
+        if holder is not None and holder[0] == "plaud-full":
+            done, total = (
+                (self.full_running or {}).get("done"),
+                (self.full_running or {}).get("total"),
+            )
+            if isinstance(done, int) and isinstance(total, int) and total:
+                return f"Sync everything is running ({done:,} of {total:,})"
+            return "Sync everything is running"
+        if self.full_running is not None or self.full_last is None:
+            return None
+        finished = parse_stamp(self.full_last.get("finished"))
+        if finished is not None and timedelta(0) <= self.now - finished < COOLDOWN:
+            return RECENT
+        return None
+
+    def held_line(self) -> str | None:
+        """§14.7: "3 changes from Plaud are held for your review (the review list comes with stage
+        3a)"."""
+        n = len(self.held)
+        if not n:
+            return None
+        verb = "change from Plaud is" if n == 1 else "changes from Plaud are"
+        return f"{n:,} {verb} held for your review (the review list comes with stage 3a)."
+
     def held_reason(self) -> str | None:
         """Why Sync now and the imports are off now, besides the gate and the app's own reasons:
         a hold (the worker answers "Held: see Status" anyway), or a rate limit's wait."""
@@ -1141,9 +1207,10 @@ def _sync_from(r: _Read, can_request: str | None) -> dict:
         "buttons": {
             "sync": held_back,
             "compare": can_request,
-            "full": held_back,
+            "full": held_back or r.full_wait(),
             "import": held_back,
         },
+        "full_estimate": r.full_estimate or FULL_UNKNOWN,
         "gate": gate,
         "listed": bool(r.compare),
         "equation": r.equation(),
@@ -1506,7 +1573,10 @@ def _worker(r: _Read) -> tuple[str | None, str | None, str | None]:
 
 
 def _not_pinged(r: _Read, cause: str | None) -> str | None:
-    """§15.2: whenever the last ping is older than one schedule interval plus 10 minutes."""
+    """§15.2: whenever the last ping is older than one schedule interval plus 10 minutes; never
+    once the sync is retired (DAN-15 deletes the check)."""
+    if r.retired is not None:
+        return None
     stale_after = timedelta(minutes=max(r.settings.schedule_minutes, 0)) + PING_GRACE
     last = r.health.last_ping
     if last is None:
@@ -1585,7 +1655,9 @@ def _panel_from(r: _Read) -> dict:
         conditions.append("Plaud imports stopped: the disk is too full to import.")
     if gate:
         conditions.append(f"{gate}.")
-    if r.settings.schedule_minutes <= 0:
+    if r.retired is not None:
+        conditions.append(f"{r.retired_line()}.")  # said in the summary, so P12 drops it below
+    elif r.settings.schedule_minutes <= 0:
         conditions.append(
             f"Scheduled sync is off since {_stamp(off_since, tz)}."
             if off_since
@@ -1603,6 +1675,8 @@ def _panel_from(r: _Read) -> dict:
         conditions.append(BREAKER_OPEN_NOTE)  # §14.4: the check stays down meanwhile
     elif (closed := r.breaker_closed_line()) is not None:
         conditions.append(closed)
+    if (held := r.held_line()) is not None:
+        conditions.append(held)  # §14.7: removals wait, counted; never a blocker
 
     attention: list[str] = []
     if health.failing is not None and now - health.failing[0] > FAILING_FOR:
@@ -1651,6 +1725,7 @@ def _panel_from(r: _Read) -> dict:
             attention.append(f"{label} has run since {r.when(since)}: it may be stuck.")
     if (
         off_since is not None
+        and r.retired is None  # retired on purpose (DAN-15): never "turn it back on"
         and health.catch_up_done is not None
         and now - off_since >= SCHEDULE_OFF_FOR
     ):
@@ -1700,6 +1775,8 @@ def _panel_from(r: _Read) -> dict:
             "worker": report,
             "healthchecks": healthchecks,
             "sweep": r.sweep_line(),
+            "full": r.full_line(),
+            "held": len(r.held),
         }
     )
     census = _dict(r.last_good.get("census")) or _dict(r.compare.get("census"))

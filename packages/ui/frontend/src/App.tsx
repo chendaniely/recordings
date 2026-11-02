@@ -87,11 +87,12 @@ export default function App() {
   };
 
   // The Plaud requests' input and their replies' handler, mounted once here too (2b spec §9.3).
-  // An import's toast offers View, which opens the Library on Untagged (§11.5).
+  // An import's toast offers View, which opens the Library on Untagged (§11.5); a Re-sync's rows,
+  // read again, merge into the open list in place (§14.6).
   const plaud = usePlaud(useShinyOutputValue<SyncView>("plaud_sync"), () => {
     setFilter(UNTAGGED);
     go("library");
-  });
+  }, tagging.mergeRows);
 
   if (!initialized) return null; // no flash of empty defaults during connection
   return (

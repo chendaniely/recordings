@@ -233,7 +233,10 @@ tr.attn td { color: var(--destructive); }
 .failed-label { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--foreground); overflow-wrap: anywhere; }
 .failed-label svg { flex: none; color: var(--destructive); }
 .selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--card); }
-.selection-bar button { min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; cursor: pointer; }
+/* Its buttons' line is a whole 20 px, so the bar is a whole number of pixels tall on one line (43)
+   or, with Re-sync from Plaud in a narrow list, two (75): a fractional height left the focused row
+   a fraction of a pixel under it once scrolled into view (useRovingFocus). */
+.selection-bar button { min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font: inherit; line-height: 20px; cursor: pointer; }
 .selection-bar code { unicode-bidi: isolate; direction: ltr; overflow-wrap: anywhere; }
 kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-size: 11px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; }
 /* Devices that can't hover (spec §6): the checkbox always shows; list rows show no ×, so tags are
@@ -463,6 +466,17 @@ kbd { font-family: "Atkinson Hyperlegible Mono", ui-monospace, monospace; font-s
   .resync-long { display: none; }
   /* Details' Plaud buttons (Re-sync, Copy ID, Keep it here) are 44 px targets (J7). */
   .plaud-details button { min-height: 44px; min-width: 44px; }
+  /* The Library's Refresh and its header's "See Status" are 44 px targets too (J7; the phase-end
+     list's row 23). Their negative block margins keep the header as tall as it was (45 px), as the
+     top bar's tabs do, so the list's floor below (head and selection bar, 92 px) still holds.
+     Details' tab row scrolls within itself, never the panes sideways (G5), as the top bar's does:
+     its tabs keep their width and the row clips them to its own. */
+  .refresh { min-height: 44px; margin-block: -9px; }
+  .plaud-flags a { display: inline-flex; align-items: center; min-height: 44px; margin-block: -14px; }
+  /* flex: none: a box that scrolls loses a flex item's automatic minimum height, and the pane's
+     column squeezed the row to a few pixels. */
+  .tabs-list { flex: none; max-width: calc(100% - 36px); overflow-x: auto; justify-content: flex-start; }
+  .tabs-list > button { flex: none; }
   /* The Sync screen on a phone (2b spec §15.4): the summary first (it is first in the page),
      full-width buttons, targets of at least 44 pixels, rows stacked. The shadcn Button sets its
      height with a layered utility (h-8); these rules are unlayered, and min-height beats height.

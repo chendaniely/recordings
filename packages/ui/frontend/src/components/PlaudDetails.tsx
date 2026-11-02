@@ -2,7 +2,7 @@ import { useContext, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
-import { NO_PLAUD, PlaudContext, kindReason, replyText } from "../plaud/usePlaud";
+import { NO_PLAUD, PlaudContext, kindReason, lineFor } from "../plaud/usePlaud";
 import { useShinyOutputValue } from "../sr";
 import type { RecordingPlaud, RecordingView } from "../types";
 import { CopyId, FlagRow } from "./SyncSummary";
@@ -14,7 +14,8 @@ import { CopyId, FlagRow } from "./SyncSummary";
  * drawn only once the worker handles it, and the checked line only once checks can run (both
  * Phase 3's; a checked time already recorded still shows): Phase 1's Details has no dead button.
  * When drawn, Re-sync says why it is off, once, and names that reason: this app can't ask, or the
- * server's reason (the gate, a consent listing, a keep-out). */
+ * server's reason (the gate, a consent listing, a keep-out). Its reply is this recording's own
+ * line, "Updated: speakers", even when the press joined a selection's queued Re-sync (§9.3). */
 export function PlaudDetails({ plaud }: { plaud: RecordingPlaud }) {
   const ctx = useContext(PlaudContext);
   const recordingId = useShinyOutputValue<RecordingView | null>("recording")?.id ?? null;
@@ -44,7 +45,7 @@ export function PlaudDetails({ plaud }: { plaud: RecordingPlaud }) {
             Re-sync from Plaud
           </Button>
           {resyncWhy && <span id={whyId} className="muted"> {resyncWhy}</span>}
-          {reply && <span role="status" data-testid="resync-reply"> {replyText(reply)}</span>}
+          {reply && <span role="status" data-testid="resync-reply"> {lineFor(reply, recordingId)}</span>}
         </p>
       )}
       <ul className="plaud-ids">

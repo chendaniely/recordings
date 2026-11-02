@@ -134,14 +134,13 @@ def test_the_worker_handles_what_each_area_has_built_so_far():
     # why: decision 2. A button whose handler comes in a later area is disabled with NOT_YET,
     # and a crafted request for it is refused before any row is inserted. Phase 1 handled Keep it
     # here; Phase 2's area A3 adds Accept this listing, A4 Release's preview, Let it in and Undo,
-    # A5 Compare, Sync now, the imports, Park and Unpark, and Phase 3's area B1 Accept these
-    # changes. HANDLED and the worker's handlers agree; Re-sync and Sync everything are B2's.
+    # A5 Compare, Sync now, the imports, Park and Unpark, Phase 3's area B1 Accept these changes,
+    # and area B2 Re-sync and Sync everything: every kind. HANDLED and the handlers agree.
     release = {"release-preview", "release", "unrelease"}
     sync = {"compare", "sync", "import", "park", "unpark"}
-    handled = {"keep-here", "accept", "accept-changes", *release, *sync}
+    handled = {"keep-here", "accept", "accept-changes", "resync", "full", *release, *sync}
     assert HANDLED == handled == set(worker_module.HANDLERS)
-    assert HANDLED.issubset(KINDS)
-    assert set(KINDS) - HANDLED == {"resync", "full"}
+    assert set(KINDS) == HANDLED
     assert NOT_YET == "Comes with the next part of stage 2b."
 
 
@@ -239,16 +238,16 @@ def test_the_worker_claims_the_oldest_and_keeps_a_late_keep_out_here(setup, make
     assert requests.read(w.state, "request-0001").result == {"kept": [rid], "nothing_to_keep": []}
 
 
-def test_a_kind_the_worker_cant_handle_yet_is_refused_never_run(setup, make_worker):
+def test_a_kind_the_worker_cant_handle_yet_is_refused_never_run(setup, make_worker, monkeypatch):
     # C5.18 and C5.21: web refuses these before inserting; a row that got in anyway (a hand-made
     # row) is refused by the worker with the same phrase, and nothing runs, gate open or closed.
-    # No request ever answers "error: `NotImplementedError`".
+    # No request ever answers "error: `NotImplementedError`". Since area B2 every kind has its
+    # handler, so a kind without one is made by taking Sync everything's away for the test.
+    monkeypatch.delitem(worker_module.HANDLERS, "full")
     w = make_worker()
-    later = [k for k in KINDS if k not in HANDLED]
-    for n, kind in enumerate(later, start=10):
-        insert(w.state, req(kind, n, plaud_ids=(PLAUD_A,)))
-        w.tick()
-        assert answer(w.state, n) == ("refused", NOT_YET), kind
+    insert(w.state, req("full", 10))
+    w.tick()
+    assert answer(w.state, 10) == ("refused", NOT_YET)
     w.db.put(K_CATCH_UP_DONE, T0.isoformat(), now=T0)  # the gate opens
     insert(w.state, req("full", 99))
     w.tick()

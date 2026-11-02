@@ -101,11 +101,13 @@ def test_the_views_carry_what_the_worker_handles_and_each_button_its_own_reason(
         "accept",
         "accept-changes",
         "compare",
+        "full",
         "import",
         "keep-here",
         "park",
         "release",
         "release-preview",
+        "resync",
         "sync",
         "unpark",
         "unrelease",
@@ -587,11 +589,13 @@ def test_the_demo_view_is_the_hand_written_fixture_with_the_demo_notes(tmp_path)
             "accept",
             "accept-changes",
             "compare",
+            "full",
             "import",
             "keep-here",
             "park",
             "release",
             "release-preview",
+            "resync",
             "sync",
             "unpark",
             "unrelease",
@@ -1147,3 +1151,81 @@ def test_details_says_when_it_was_checked_and_when_next(plaud_scene):
     s.db.set_check(rid, parked_at=T0)
     lines = recording_plaud(s.settings, rid, now=T0)
     assert (lines["checked"], lines["next_by"]) == ("2026-10-23 14:20", None)
+
+
+# ---- area B2's readers: Sync everything, held removals, the retired sync ------------------------
+def test_status_numbers_sync_everything_and_the_removals_held(plaud_scene):
+    # why: §15.2's numbers ("the last Sync everything: 2026-10-01: all 1,234 checked (2 parked, 1
+    # degraded)", or its failure; held for review) and §14.7's sentence; the Sync screen's
+    # estimate from the last run's pace, and Sync everything off for an hour after one.
+    from recordings.plaud.checks import K_FULL
+    from recordings.plaud.fullstate import RECENT, UNKNOWN
+    from recordings_ui.plaud import FULL_UNKNOWN
+
+    assert FULL_UNKNOWN == UNKNOWN  # kept in plaud.py for Pyodide
+    s = plaud_scene
+    s.open_gate()
+    one, two = s.add(1, "Week 1"), s.add(2, "Week 2")
+    db = s.db
+    view = sync_view(s.settings, now=T0, can_request=None)
+    assert view["full_estimate"] == FULL_UNKNOWN and view["buttons"]["full"] is None
+    assert sync_panel(s.settings, now=T0)["numbers"]["full"] is None
+    db.set_check(one, last_checked_at=T0)
+    db.set_check(two, last_checked_at=T0)
+    last = {
+        "started": (T0 - timedelta(minutes=30)).isoformat(),
+        "finished": T0.isoformat(),
+        "ok": True,
+        "exit_code": 0,
+        "line": "all 2 checked (1 degraded)",
+        "pace": 1200.0,
+    }
+    db.put(K_FULL, {"last": last}, now=T0)
+    view = sync_view(s.settings, now=T0 + timedelta(minutes=10), can_request=None)
+    assert view["full_estimate"] == "about 40 minutes"  # 20 minutes a recording, 2 covered
+    assert view["buttons"]["full"] == RECENT
+    later = sync_view(s.settings, now=T0 + timedelta(hours=2), can_request=None)
+    assert later["buttons"]["full"] is None
+    panel = sync_panel(s.settings, now=T0 + timedelta(hours=2))
+    assert panel["numbers"]["full"] == "2026-10-23: all 2 checked (1 degraded)"
+    assert panel["numbers"]["held"] == 0
+    assert not any("held for your review" in c for c in panel["conditions"])
+    held = [{"snapshot": "source/plaud-1.json", "slot": "transcript", "reason": "names removed"}]
+    db.set_check(one, held_removals=held)
+    db.set_check(two, held_removals=held * 2)
+    panel = sync_panel(s.settings, now=T0 + timedelta(hours=2))
+    assert panel["numbers"]["held"] == 3
+    assert (
+        "3 changes from Plaud are held for your review (the review list comes with stage 3a)."
+        in panel["conditions"]
+    )
+    # Unfinished: Status says it is running, with its progress.
+    running = {"started": T0.isoformat(), "done": 412, "total": 1234}
+    db.put(K_FULL, {"last": last, "running": running}, now=T0)
+    panel = sync_panel(s.settings, now=T0 + timedelta(hours=2))
+    assert panel["numbers"]["full"] == "running since 14:20 (412 of 1,234)"
+    with plaud_run(db.state, "plaud-full", timeout=1.0, now=T0):
+        view = sync_view(s.settings, now=T0 + timedelta(hours=2), can_request=None)
+        assert view["buttons"]["full"] == "Sync everything is running (412 of 1,234)"
+
+
+def test_a_retired_sync_says_so_and_never_asks_to_turn_the_schedule_back_on(plaud_scene):
+    # why: §17.5's DAN-15 step: once retired, "Scheduled sync is off" goes quiet for good, the
+    # summary says retired, and the sync's check (deleted) is never said to be unpinged.
+    from recordings.plaud.fullstate import retire
+
+    s = plaud_scene
+    s.open_gate(at=T0 - timedelta(days=3))
+    s.schedule_minutes = 0
+    off = sync_panel(s.settings, now=T0)
+    assert any(a.startswith("Scheduled sync has been off since") for a in off["attention"])
+    retire(s.db, now=T0 - timedelta(days=1))
+    panel = sync_panel(s.settings, now=T0)
+    retired = (
+        "Plaud sync retired on 2026-10-22: nothing more is fetched from Plaud (runbook, DAN-15)"
+    )
+    assert panel["summary"]["sentence"] == retired and panel["summary"]["kind"] == "no-sync"
+    assert not any("Scheduled sync" in a for a in panel["attention"])
+    assert not any("Scheduled sync is off" in c for c in panel["conditions"])
+    assert panel["not_pinged"] is None
+    assert sync_view(s.settings, now=T0, can_request=None)["summary"]["sentence"] == retired

@@ -3425,3 +3425,37 @@ def test_at_320_px_a_larger_text_size_scrolls_the_tab_row_never_the_page(
     expect(nav.get_by_role("button", name="Library", exact=True)).to_have_attribute(
         "aria-current", "page"
     )
+
+
+@pytest.mark.browser_context_args(
+    is_mobile=True, has_touch=True, viewport={"width": 320, "height": 700}
+)
+def test_the_library_and_details_at_320_px_with_re_sync_drawn(page: Page, server, console):
+    # 2b's phase-end list, row 23 and the council's G5 (J7, 2b spec §15.4): the Library's Refresh
+    # is a 44 px target with its header as tall as it was; the selection bar, with Re-sync drawn
+    # now that the worker handles it (off in the demo, with the demo's reason), stays one line
+    # ("Re-sync", its "from Plaud" dropped); and Details' tab row scrolls within itself, so the
+    # panes never scroll sideways.
+    open_library(page, server.url)
+    refresh = page.get_by_test_id("refresh").bounding_box()
+    assert refresh["height"] >= 44 and refresh["width"] >= 44, refresh
+    assert page.locator(".list-head").bounding_box()["height"] <= 46
+    rows = page.get_by_test_id("recording-row")
+    rows.nth(0).locator(".check").click()
+    rows.nth(1).locator(".check").click()
+    bar = page.get_by_test_id("selection-bar")
+    expect(bar).to_contain_text("2 selected")
+    resync = bar.locator("[data-request=resync]")
+    assert resync.inner_text().strip() == "Re-sync"  # the phone's short label
+    expect(resync).to_be_disabled()
+    assert bar.bounding_box()["height"] <= 44, bar.bounding_box()  # one line
+    bar.get_by_role("button", name="Clear").click()
+    open_row(page, "JFK")
+    tabs = page.locator(".tabs-list")
+    box = tabs.bounding_box()
+    assert box["x"] + box["width"] <= 320 + 0.5 and box["height"] >= 30, box  # never squeezed
+    for tab in page.get_by_role("tab").all():
+        assert tab.bounding_box()["height"] >= 24, tab.bounding_box()
+    panes = page.locator(".panes")
+    assert panes.evaluate("el => el.scrollWidth - el.clientWidth") <= 1
+    assert page.evaluate("() => document.documentElement.scrollWidth") <= 320

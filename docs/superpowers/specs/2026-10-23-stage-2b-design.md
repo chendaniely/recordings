@@ -871,6 +871,7 @@ Every contradiction the council found is settled in the text, and listed with it
   | `recordings plaud review` | after restoring an older `state.db`: records `rebuilt_at` as now, so everything made before it that isn't here needs review (§11.6) | `plaud` |
   | `recordings plaud consent` | what the worker reads from the consent list: the ID count, how many are on Plaud now, the file's time; unreadable lines and lines read as kept, by number; consent-listed recordings in the archive, by archive ID, marking those 2a's parser missed | none |
   | `recordings plaud held` | held removals, by recording ID and part | none |
+  | `recordings plaud retire [--undo]` | DAN-15's end (§17.5): records `retired_at`, so no scheduled turn or monthly Sync everything runs, and Status says "retired" (area B2) | none |
   | `recordings plaud check [--volatility]` | one signed-in read; or §14.4's volatility check | none |
   | `recordings plaud token-import -` | installs a sign-in from stdin (§10.5) | `tokens.lock` |
 
@@ -1900,6 +1901,14 @@ Main spec §9.1.1 and §19 name the baseline without defining it.
     parked, flagged, excluded, gone) and part hashes, leaving out the title and speakers parts, so
     Forget has nothing there to scrub. Consent-listed and kept-out IDs not here appear by ID only.
 - **A long run** serves the light turn between recordings, the CLI's included (§9.2).
+- **Built so (area B2, the spikes skipped):** S9 didn't run, so "Up to date" carries no delay
+  note. A Re-sync waits for the first catch-up and is refused under a hold, a rate limit's wait
+  and a consent stop, like Sync now; it reuses the newest listing while one interval fresh. Sync
+  everything imports as Sync now does, and counts a recording that needs review after a rebuild
+  as not here (exit 2). Its first monthly run comes 30 days after the catch-up. The manifest is
+  one file a day, by the default zone's date. A long run is Sync everything, a Re-sync of more
+  than 20 recordings, and the CLI's `sync`, `sync --full` and `resync`; the CLI's first light
+  turn waits one schedule interval (`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`).
 
 ### 14.7 Removals wait, counted (controller's call)
 
@@ -3083,17 +3092,17 @@ smoke.
 |---|---|---|---|---|---|
 | C1.01 | Random fake accounts: repeats across pages, both ID forms, consent and keep-out rows, late keep-outs and late consent listings already here, partial listings | Every listed ID lands in exactly one bucket by §11.3's precedence, and the equation adds up | Phase 2, area A3 | `packages/core/tests/test_plaud_buckets_property.py` (40 seeded accounts through the fake server) | built |
 | C1.02 | The real dry run | Both equations add up and Dan signs them off; the consent list's IDs are found on Plaud | Phase 2 | runbook section 7 | planned |
-| C2.01 | Fake, with an injected clock: 1,000 recordings, 40 speaker renames at once | Each shows within `full_sweep_days` plus one schedule interval, and at once with Re-sync | Phase 3, areas B1 (the sweep) and B2 (Re-sync) | the sweep: `packages/core/tests/test_plaud_sweep.py` (`test_c2_01_the_sweep_at_1000_recordings_with_40_renames_on_an_injected_clock`, and a rename found through the worker's real turns on the fake); Re-sync: area B2 | built (the sweep's half) |
+| C2.01 | Fake, with an injected clock: 1,000 recordings, 40 speaker renames at once | Each shows within `full_sweep_days` plus one schedule interval, and at once with Re-sync | Phase 3, areas B1 (the sweep) and B2 (Re-sync) | the sweep: `packages/core/tests/test_plaud_sweep.py` (`test_c2_01_the_sweep_at_1000_recordings_with_40_renames_on_an_injected_clock`, and a rename found through the worker's real turns on the fake); Re-sync: `packages/core/tests/test_plaud_resync.py` (`test_c2_01_renames_show_at_once_with_resync`, a selection through the worker on the fake, at 12 recordings) | built |
 | C2.02 | Real: S9's clip; after the catch-up, a rename | One shows at once with Re-sync, and one within a day and one sync without it | Phase 3 | runbook (Phase 3) | planned |
 | C2.03 | Fake: three speaker renames 20 minutes apart on 12 recordings | The breaker never trips | Phase 3, area B1 | `packages/core/tests/test_plaud_breaker.py` (`test_c2_03_three_speaker_renames_20_minutes_apart_on_12_recordings_never_trip_it`), through the worker's real turns on the fake | built |
 | C2.04 | Fake: a field that changes on every fetch | It trips the breaker, with no Accept button | Phase 3, area B1 | `packages/core/tests/test_plaud_breaker.py` (`test_c2_04_a_field_that_changes_on_every_fetch_trips_it_with_no_accept`), through the worker's real turns on the fake | built |
 | C2.05 | Fake: a new field that is the same on both fetches | It trips the breaker with **Accept these changes**; pressed, each recording gets one new snapshot and the breaker closes; the same field tripping it again offers no button | Phase 3, area B1 | `packages/core/tests/test_plaud_breaker.py` (`test_c2_05_a_new_stable_field_trips_it_with_accept_and_accepting_writes_one_snapshot_each`), through the worker's real turns on the fake | built |
 | C2.06 | A release with a new normaliser version | It closes the breaker at start | Phase 3, area B1 | `packages/core/tests/test_plaud_breaker.py` (`test_c2_06_a_release_with_a_new_normaliser_version_closes_it_at_start`), through the worker's real turns on the fake | built |
-| C3.01 | Fake: a sound account, `sync --full` | Exits 0 and writes the manifest | Phase 3 | Phase 3's plan | planned |
-| C3.02 | Fake: a degraded recording | Still exits 0 | Phase 3 | Phase 3's plan | planned |
-| C3.03 | Fake: a flagged recording (consent-listed or kept out late) | Still exits 0, and is named | Phase 3 | Phase 3's plan | planned |
-| C3.04 | Fake: an unparked failing recording | Exits 2 with its count | Phase 3 | Phase 3's plan | planned |
-| C3.05 | Fake: Sync everything killed part-way | It resumes | Phase 3 | Phase 3's plan | planned |
+| C3.01 | Fake: a sound account, `sync --full` | Exits 0 and writes the manifest | Phase 3, area B2 | `packages/core/tests/test_plaud_full.py` (`test_c3_01_a_sound_account_exits_0_and_writes_the_manifest`, through the worker's request; `test_the_cli_sync_full_and_retire`, the CLI) | built |
+| C3.02 | Fake: a degraded recording | Still exits 0 | Phase 3, area B2 | `packages/core/tests/test_plaud_full.py` (`test_c3_02_a_degraded_recording_still_exits_0`) | built |
+| C3.03 | Fake: a flagged recording (consent-listed or kept out late) | Still exits 0, and is named | Phase 3, area B2 | `packages/core/tests/test_plaud_full.py` (`test_c3_03_a_flagged_recording_still_exits_0_and_is_named`) | built |
+| C3.04 | Fake: an unparked failing recording | Exits 2 with its count | Phase 3, area B2 | `packages/core/tests/test_plaud_full.py` (`test_c3_04_an_unparked_failing_recording_exits_2_and_a_parked_one_0`) | built |
+| C3.05 | Fake: Sync everything killed part-way | It resumes | Phase 3, area B2 | `packages/core/tests/test_plaud_full.py` (`test_c3_05_killed_part_way_it_resumes`: SIGTERM between two recordings, then a restart's tick) | built |
 | C3.06 | Real: Sync everything | Exits 0, or 2 only for recordings Dan then parks, each checked in Plaud's app and recorded in the runbook's table by ID hash | Phase 3 | runbook (Phase 3) | planned |
 | C4.01 | Fake: an expired access token that refreshes | The pings go on | Phase 2, areas A1 and A6 | `packages/core/tests/test_worker.py`, through a stand-in turn; and `packages/core/tests/test_flow_2b.py`, with the worker's real turn | built |
 | C4.02 | Fake: a 401, then a refused refresh | The pings stop from that turn on, with no Plaud call until the token changes | Phase 2, areas A1 and A6 | `packages/core/tests/test_worker.py`, through a stand-in turn; and `packages/core/tests/test_flow_2b.py`, with the worker's real turn | built |
@@ -3123,10 +3132,10 @@ smoke.
 | C5.20 | The interrupted catch-up run again, then ending | It picks up where it stopped, and the turn after it runs a sync | Phase 2, area A5 | `packages/core/tests/test_plaud_sync_cli.py` (`test_an_interrupted_catch_up_says_so_and_run_again_finishes_then_the_schedule_starts`: Plaud down after the first recording, the gate's reason, the catch-up run again, then the worker's first tick importing and pinging) | built |
 | C5.21 | The gate closed | Every request that would write a snapshot is refused | Phase 1, Task 14 | `packages/core/tests/test_plaud_requests.py` | built |
 | C5.22 | A SIGTERM mid-run; a catch-up, then a restart | Neither reads as "rebuilt" | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (the mark is committed before every 2b snapshot, so neither a stopped run nor a catch-up then a restart reads as rebuilt) | built |
-| C5.23 | A Re-sync, then a restart | Doesn't read as "rebuilt" | Phase 3 | Phase 3's plan | planned |
+| C5.23 | A Re-sync, then a restart | Doesn't read as "rebuilt" | Phase 3, area B2 | `packages/core/tests/test_plaud_resync.py` (`test_a_resync_then_a_restart_never_reads_as_rebuilt`) | built |
 | C5.24 | A restart after a rebuild was recorded | The rebuild isn't found again | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (`test_a_rebuilt_state_db_is_recorded_once_and_passed`, and the worker's start) | built |
 | C5.25 | A rebuilt `state.db` (2b snapshots, no marks) | Recordings created after it keep importing; one created before it that isn't here needs review, in the first listing or later; scheduled runs, Sync now, the CLI's `sync` and Import all leave it out; Import selected brings it in; its ID on the consent list keeps it out | Phase 2, areas A4 (the marks, the import) and A5 (the run's Import all) | `packages/core/tests/test_plaud_rebuild.py` (`test_after_a_rebuild_what_was_made_before_waits_for_review`: made after imports; made before waits, first listed or later; the import refuses it unless named; consent-listed stays out); the run's half: `packages/core/tests/test_plaud_sync.py` (`test_after_a_rebuild_a_scheduled_run_leaves_what_needs_review_out`) and `test_plaud_sync_requests.py` (`test_import_all_leaves_review_rows_out_and_import_selected_brings_one_in`); the CLI's `sync` is the same run | built |
-| C5.26 | A rebuilt `state.db`, then Sync everything | It leaves out what needs review | Phase 3 | Phase 3's plan | planned |
+| C5.26 | A rebuilt `state.db`, then Sync everything | It leaves out what needs review | Phase 3, area B2 | `packages/core/tests/test_plaud_full.py` (`test_c5_26_after_a_rebuild_it_leaves_out_what_needs_review`: not imported, and counted as needing review, exit 2) | built |
 | C5.27 | `recordings plaud review` after a restore | `rebuilt_at` is recorded as now, holding `plaud` | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (`test_plaud_review_after_a_restore_marks_what_isnt_here`, and busy while `plaud` is held) | built |
 | C5.28 | Syncs after `plaud review` | Everything made before it that isn't here waits for review | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (a sync after `plaud review`: the rows not here, and one first listed later, need review) | built |
 | C5.29 | Fake: one consent-listed ID listed again under new hex, with no hold | Never requested, and no title shown | Phase 2, areas A3 (the match) and A4 (never requested, by the import) | the match and no title: `packages/core/tests/test_plaud_compare.py`; never requested: `packages/core/tests/test_plaud_import.py` (a re-keyed or flagged ID fetches nothing) | built |
@@ -3380,3 +3389,13 @@ None: every bullet of §20 is planned in a phase.
   flow test gains a check pass (a speaker rename and a new field, neither the name nor the
   field's value in any log, view or table, `plaud_check_log` scanned too). No decision or
   scenario's outcome changed.
+- 2026-11-02: §14.6, §14.7, §9.2's long runs, §9.3's `resync` merge and `full` refusals (area
+  B2): `resync` and `full` handled (every kind now is), with `recordings plaud resync`, `sync
+  --full`, `park`, `held` and `retire`; parking a recording here (Status's "fails every check ·
+  Re-sync · Park" acts on every recording the line counts, one press); Sync everything's
+  verdict, resume, monthly run and manifest in `/state/manifests` (the worker makes the folder;
+  doctor warns for `backup` when `extra_paths` lacks it; runbook section 6 adds it); held
+  removals counted on Status. A long run serves the light turn and a Compare or one-recording
+  Re-sync between two recordings, the CLI's too. DAN-15's `retired_at` is `recordings plaud
+  retire`. Builder's readings, each in the guesses file. C2.01's Re-sync half, C3.01 to C3.05,
+  C5.23 and C5.26 built. No decision or scenario's outcome changed.

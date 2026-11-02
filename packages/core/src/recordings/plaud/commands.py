@@ -147,11 +147,50 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     which.add_argument(
         "--catch-up", action="store_true", help="the first import, once: holds ops and plaud"
     )
+    which.add_argument(
+        "--full",
+        action="store_true",
+        help="Sync everything: list, import what is waiting, check every recording, retry its "
+        "failures once, and write the manifest; exit 0 only when everything listed is here and "
+        "checked, parked, flagged or excluded (an unfinished one resumes)",
+    )
     c.add_argument(
         "--list",
         action="store_true",
         help="with --dry-run: every listed ID by bucket, date and duration, never a title",
     )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "resync",
+        help="Re-sync from Plaud: check these recordings now, ahead of the sweep (a parked one "
+        "too: a success unparks it)",
+    )
+    c.add_argument("recording_ids", nargs="+", metavar="ID", help="archive IDs, up to 1,000")
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "park",
+        help="park recordings that fail every check: the sweep and Sync everything leave them "
+        "alone (Re-sync still tries them); --undo unparks",
+    )
+    c.add_argument("recording_ids", nargs="+", metavar="ID", help="archive IDs")
+    c.add_argument("--undo", action="store_true", help="unpark: checked again at the next sync")
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "held",
+        help="the removals from Plaud held for your review (a name back to Speaker N, notes "
+        "gone), by recording ID and part; stage 3a's review list accepts them",
+    )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "retire",
+        help="DAN-15's end: the Plaud sync is retired (no scheduled sync, no monthly Sync "
+        "everything), and Status says so; --undo brings it back (runbook)",
+    )
+    c.add_argument("--undo", action="store_true", help="the sync is no longer retired")
     c.add_argument("--json", action="store_true")
 
     c = plaud.add_parser(
@@ -1080,6 +1119,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
     if isinstance(state, int):
         return state
     tz = _zone(cfg)
+    if args.full:
+        return _sync_full(args, cfg, settings, state, stop_free)
     mode = "compare" if args.dry_run else "catch-up" if args.catch_up else "sync"
     job = {"compare": "plaud-compare", "catch-up": "plaud-catch-up", "sync": "plaud-sync"}[mode]
     db = PlaudDB(state)
@@ -1108,6 +1149,14 @@ def cmd_sync(args: argparse.Namespace) -> int:
                 return writer
             store = TokenStore(settings.token_store, token_url=settings.token_url)
             client = PlaudClient(store, api_base=settings.api_base)
+            # A long plain sync serves the light turn and single-recording requests between two
+            # recordings, as the worker's long runs do (§9.2); the dry run and the catch-up don't
+            # (the gate holds every turn while the catch-up runs).
+            between = (
+                _long_run(cfg, writer=writer, client=client).long_between
+                if mode == "sync"
+                else None
+            )
             run = sync.Run(
                 writer=writer,
                 client=client,
@@ -1116,6 +1165,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
                 stop_free_percent=stop_free,
                 late_consent=True,
                 progress=printer,
+                between=between,
             )
             report = sync.run_sync(run, mode=mode)
             if mode != "compare":
@@ -1132,6 +1182,249 @@ def cmd_sync(args: argparse.Namespace) -> int:
     lines = _sync_lines(report, tz, listed=args.list, mode=mode)
     _emit(_sync_payload(report, tz, listed=args.list), lines, args.json)
     return report.exit_code
+
+
+def _long_run(cfg: config.Config, *, writer: Writer, client):
+    """The worker's loop code for this CLI run (`worker.Worker.for_cli`): its `long_between`."""
+    from recordings.worker import Worker
+
+    return Worker.for_cli(cfg, os.environ, writer=writer, client=client)
+
+
+def _cli_run(cfg, settings, stop_free: float, *, writer: Writer, between: bool = True, **kw):
+    """A sync.Run for a CLI long run: its own client, and the worker's `long_between`."""
+    from recordings.plaud import sync
+    from recordings.plaud.client import PlaudClient
+    from recordings.plaud.tokens import TokenStore
+
+    store = TokenStore(settings.token_store, token_url=settings.token_url)
+    client = PlaudClient(store, api_base=settings.api_base)
+    long_run = _long_run(cfg, writer=writer, client=client) if between else None
+    return sync.Run(
+        writer=writer,
+        client=client,
+        settings=settings,
+        timezone_name=cfg.default_timezone,
+        stop_free_percent=stop_free,
+        late_consent=True,
+        between=long_run.long_between if long_run is not None else None,
+        **kw,
+    )
+
+
+def _sync_full(args: argparse.Namespace, cfg, settings, state: State, stop_free: float) -> int:
+    """`recordings plaud sync --full` (§14.6): Sync everything, under `plaud` (`plaud-full`),
+    refused before the first catch-up. An unfinished one resumes. Exit 0 when the listing was good
+    and every listed recording is excluded, parked, flagged or here and checked; 2 otherwise,
+    with counts (the flagged named by archive ID); a run-level failure exits as a sync's would."""
+    from recordings.plaud import full, sync
+    from recordings.plaud.gate import gate_now
+    from recordings.worker import record_full
+
+    try:
+        if not gate_now(PlaudDB(state)).open:
+            return _fail(sync.NOT_DONE, args.json, EXIT_FAILED)
+    except (NoSyncYet, sqlite3.Error) as exc:
+        return _fail(f"can't read state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
+    now = datetime.now(UTC)
+    try:
+        with runlock.plaud_run(state, "plaud-full", timeout=runlock.CLI_WAIT, now=now):
+            writer = _writer(cfg, args.json)
+            if isinstance(writer, int):
+                return writer
+            run = _cli_run(cfg, settings, stop_free, writer=writer)
+            report = full.run_full(run, by="cli")
+            record_full(state, report, finished=datetime.now(UTC))
+    except LockTimeout:
+        return _fail(_busy(state), args.json, EXIT_BUSY)
+    except (OSError, sqlite3.Error) as exc:  # never the exception's text: it names paths or rows
+        return _fail(
+            f"Sync everything stopped ({type(exc).__name__}): check the archive disk and "
+            "state.db, then run it again (it resumes)",
+            args.json,
+            EXIT_FAILED,
+        )
+    lines = [f"result: {report.line()}"]
+    if report.resumed:
+        lines.append(f"resumed the run started {_shown(report.started, _zone(cfg))}")
+    counts = report.counts()
+    if counts:
+        lines.append("listed: " + ", ".join(f"{state_} {n:,}" for state_, n in counts.items()))
+    lines.append(f"checked {report.checked:,} of {report.covered:,} the sweep covers")
+    if report.flagged:
+        lines.append(
+            f"flagged ({len(report.flagged):,}): {', '.join(report.flagged)}; take each out by "
+            "hand, or keep it (runbook, Taking a recording out by hand)"
+        )
+    failed = report.to_dict()["failed_ids"]
+    if failed:
+        lines.append(f"failed ({len(failed):,}): {', '.join(failed)}")
+    if report.manifest:
+        lines.append(f"manifest: {full.MANIFESTS}/{report.manifest}")
+    _emit(report.to_dict(), lines, args.json)
+    return report.exit_code
+
+
+def cmd_resync(args: argparse.Namespace) -> int:
+    """`recordings plaud resync <id>…` (§14.6): these recordings checked now, under `plaud`
+    (`plaud-resync`), a parked one too (a success unparks it). Refused before the first catch-up
+    and while a hold is on. Exit 0 when each was checked (or skipped by design: kept out,
+    consent-listed, gone, not from Plaud); 2 when one failed, was busy or degraded; a run-level
+    stop exits as a sync's would."""
+    from recordings.disk import disk_thresholds
+    from recordings.ids import parse_id
+    from recordings.plaud import requests, resync
+
+    for rid in args.recording_ids:
+        try:
+            parse_id(rid)
+        except (TypeError, ValueError):
+            return _fail(f"not an archive ID: {rid}", args.json, EXIT_FAILED)
+    if len(set(args.recording_ids)) > requests.MAX_RESYNC_IDS:
+        return _fail(resync.TOO_MANY, args.json, EXIT_FAILED)
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        settings = plaud_settings(cfg)
+        stop_free = disk_thresholds(cfg)["stop"]
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, EXIT_CONFIG)
+    if not settings.keep_out_word_ok:
+        return _fail(BAD_WORD, args.json, EXIT_CONFIG)
+    state = _write_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    now = datetime.now(UTC)
+    try:
+        with runlock.plaud_run(state, "plaud-resync", timeout=runlock.CLI_WAIT, now=now):
+            writer = _writer(cfg, args.json)
+            if isinstance(writer, int):
+                return writer
+            run = _cli_run(cfg, settings, stop_free, writer=writer)
+            report = resync.resync(run, args.recording_ids)
+    except LockTimeout:
+        return _fail(_busy(state), args.json, EXIT_BUSY)
+    except (OSError, sqlite3.Error) as exc:  # never the exception's text: it names paths or rows
+        return _fail(
+            f"the re-sync stopped ({type(exc).__name__}): check the archive disk and state.db",
+            args.json,
+            EXIT_FAILED,
+        )
+    lines = [f"result: {report.line()}"]
+    if len(report.requested) > 1:
+        lines += [f"{rid}: {line}" for rid, line in report.each().items()]
+    if report.unparked:
+        lines.append(f"unparked: {', '.join(report.unparked)}")
+    _emit(report.to_dict(), lines, args.json)
+    return report.exit_code
+
+
+def cmd_park(args: argparse.Namespace) -> int:
+    """`recordings plaud park <id>… [--undo]` (§14.6): park recordings here that came from Plaud
+    (the sweep and Sync everything leave them alone, Re-sync still tries them), or unpark them.
+    Only state.db changes; no lock. Exit 0 when one changed, 1 when none did."""
+    from recordings.ids import parse_id
+    from recordings.plaud import resync
+
+    for rid in args.recording_ids:
+        try:
+            parse_id(rid)
+        except (TypeError, ValueError):
+            return _fail(f"not an archive ID: {rid}", args.json, EXIT_FAILED)
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    if cfg.archive_path is None:
+        return _fail("set [archive] path in config.toml first", args.json, EXIT_CONFIG)
+    state = _write_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    park = not args.undo
+    try:
+        found = resync.park_recordings(
+            Archive(cfg.archive_path),
+            PlaudDB(state),
+            args.recording_ids,
+            park=park,
+            now=datetime.now(UTC),
+        )
+    except (NoSyncYet, sqlite3.Error) as exc:
+        return _fail(f"can't use state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
+    key = "parked" if park else "unparked"
+    lines = []
+    if found.done:
+        lines.append(f"{key} ({len(found.done):,}): {', '.join(found.done)}")
+    if found.nothing:
+        why = resync.NOTHING_TO_PARK if park else resync.NOTHING_TO_UNPARK
+        lines.append(f"{why} ({len(found.nothing):,}): {', '.join(found.nothing)}")
+    _emit({key: list(found.done), "nothing": list(found.nothing)}, lines, args.json)
+    return EXIT_OK if found.done else EXIT_FAILED
+
+
+def cmd_held(args: argparse.Namespace) -> int:
+    """`recordings plaud held` (§14.7): the removals reconcile holds back for review, by
+    recording ID and part, as each recording's last check found them. Reads state.db only."""
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    state = _read_state(cfg)
+    if state is None:
+        _emit({"held": []}, ["No sync has run yet"], args.json)
+        return EXIT_OK
+    try:
+        held = PlaudDB(state).held_removals()
+    except NoSyncYet:
+        held = []
+    except sqlite3.Error as exc:
+        return _fail(f"can't read state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
+    rows = [
+        {
+            "recording_id": rid,
+            "part": str(h.get("slot") or ""),
+            "reason": str(h.get("reason") or ""),
+            "snapshot": str(h.get("snapshot") or ""),
+        }
+        for rid, h in held
+    ]
+    lines = [f"{r['recording_id']} · {r['part']} ({r['reason']})" for r in rows]
+    lines.append(
+        f"{len(rows):,} change{'s' if len(rows) != 1 else ''} from Plaud held for your review "
+        "(the review list comes with stage 3a)"
+        if rows
+        else "no change from Plaud is held for review"
+    )
+    _emit({"held": rows}, lines, args.json)
+    return EXIT_OK
+
+
+def cmd_retire(args: argparse.Namespace) -> int:
+    """`recordings plaud retire [--undo]` (§17.5, DAN-15's end): the sync retired, so no
+    scheduled sync or monthly Sync everything runs, and Status says "retired" instead of
+    "Scheduled sync is off" for good. A lapsed account then fails nothing every 20 minutes."""
+    from recordings.plaud import full
+
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    state = _write_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    db, now = PlaudDB(state), datetime.now(UTC)
+    try:
+        changed = full.retire(db, now=now, undo=args.undo)
+        since = full.retired(db)
+    except (NoSyncYet, sqlite3.Error) as exc:
+        return _fail(f"can't use state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
+    if since is None:
+        line = "the Plaud sync isn't retired" + (" (no longer)" if changed else "")
+    else:
+        line = (
+            f"the Plaud sync is retired since {_shown(since, _zone(cfg))}: no scheduled sync or "
+            "Sync everything runs (runbook, DAN-15)"
+        )
+    _emit({"retired": since.isoformat() if since else None, "changed": changed}, [line], args.json)
+    return EXIT_OK
 
 
 def _progress_printer() -> Callable[[int, int], None]:
@@ -1264,6 +1557,10 @@ COMMANDS = {
     "release": cmd_release,
     "review": cmd_review,
     "sync": cmd_sync,
+    "resync": cmd_resync,
+    "park": cmd_park,
+    "held": cmd_held,
+    "retire": cmd_retire,
 }
 
 

@@ -15,7 +15,8 @@ speaker rename and a new field), with §21's faults injected and every log captu
   scanned for tokens and links only: its Not here yet and Updated rows carry titles by design.
 - The worker sends no push: the fake Healthchecks sees pings only.
 
-`--full` (Sync everything) is Phase 3's (area B2): it joins this test with its handler.
+Then (area B2) Sync everything, pressed and from the CLI with its manifest, a Re-sync, and
+`plaud held`, all inside the scan.
 Every ID, title, token and byte is synthetic, and nothing reaches Plaud."""
 
 import json
@@ -266,10 +267,24 @@ def test_stage_2b_end_to_end_on_the_fake_leaks_nothing(
     assert updated and not any(r.counted for r in updated)
     assert any("synthetic_feature" in r.fields for r in found)
 
+    # Sync everything and Re-sync (area B2): a press through the worker, its manifest, a Re-sync
+    # of the renamed recording, and the CLI's `sync --full` and `held`; none carries a title, a
+    # speaker's name or a field's value.
+    flow.turn(w, minutes=61)
+    reply = flow.ask(w, "full")
+    assert reply.state == "done" and reply.result["exit_code"] in (0, 2), reply
+    manifest = live.state_path / "manifests" / reply.result["manifest"]
+    flow.texts["cli"].append(manifest.read_text(encoding="utf-8"))
+    acct.rename_speaker(meetings[0].plaud_id, f"{SPEAKER} again")
+    assert flow.ask(w, "resync", recording_ids=(named,)).message == "Updated: speakers"
+    assert flow.cli("plaud", "sync", "--full", "--json") in (0, 2)
+    assert flow.cli("plaud", "held") == 0
+    flow.look()
+
     # C7.01: the leak scan, over everything the flow produced.
     titles = {r.name for r in acct.recordings if r.name} | set(TITLES_2A.values())
     titles |= {late.name, f"{WORD} {late.name}", f"{WORD} synthetic appointment"}
-    titles |= {SPEAKER, FIELD_VALUE}  # a speaker's name and a field's value: never logged
+    titles |= {SPEAKER, f"{SPEAKER} again", FIELD_VALUE}  # names and a value: never logged
     logs = "\n".join(r.getMessage() for r in caplog.records)
     pinged = "\n".join(json.dumps(p) for p in live.ntfy.requests)
     scanned = {

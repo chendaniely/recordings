@@ -122,17 +122,19 @@ def test_accept_names_nothing_and_is_inserted(archive, run):
     assert (reply["state"], reply["kind"]) == ("queued", "accept") and count(state) == 1
 
 
-def test_a_kind_with_no_handler_yet_is_refused_before_any_row(archive, run):
-    # C5.18: every kind the worker has no handler for yet (Re-sync and Sync everything, area
-    # B2's) waits for a later area, so web refuses it with NOT_YET and inserts nothing. (The
-    # import's refusal before the first catch-up is the worker's gate.)
+def test_a_kind_with_no_handler_yet_is_refused_before_any_row(archive, run, monkeypatch):
+    # C5.18: a kind the worker has no handler for waits for a later area, so web refuses it with
+    # NOT_YET and inserts nothing. Since area B2 every kind is handled, so one is taken away for
+    # the test. (The import's refusal before the first catch-up is the worker's gate.)
+    import recordings_ui.plaud as plaud_ui
+
+    assert [k for k in KINDS if k not in HANDLED] == []
+    monkeypatch.setattr(plaud_ui, "HANDLED", HANDLED - {"full"})
     _, state, _ = archive
-    later = [k for k in KINDS if k not in HANDLED]
-    assert later == ["resync", "full"]
-    for kind in later:
-        assert check_request(raw(kind=kind)) == Refusal("abcdef12", NOT_YET), kind
-        reply = run(submit(state, raw(kind=kind), now=T0, timezone_name="UTC", reason=None))
-        assert (reply["state"], reply["message"]) == ("refused", NOT_YET), kind
+    full = raw(kind="full", recording_ids=[])
+    assert check_request(full) == Refusal("abcdef12", NOT_YET)
+    reply = run(submit(state, full, now=T0, timezone_name="UTC", reason=None))
+    assert (reply["state"], reply["message"]) == ("refused", NOT_YET)
     assert count(state) == 0
 
 
@@ -251,9 +253,10 @@ def test_a_plaud_id_is_under_128_characters():
 
 def test_the_sync_kinds_carry_only_what_they_use():
     # why: spec §9.3, a request never carries a title, and the worker takes nothing on trust.
-    # Compare and Sync now name nothing; an import names Plaud IDs, or all; Park and Unpark name
-    # Plaud IDs (a recording's parking, its checks, is area B2's: NOT_YET).
-    for kind in ("compare", "sync"):
+    # Compare, Sync now and Sync everything name nothing; an import names Plaud IDs, or all; Park
+    # and Unpark name Plaud IDs not here, or recordings here (area B2), never both; Re-sync names
+    # recordings here only.
+    for kind in ("compare", "sync", "full"):
         assert isinstance(check_request(raw(kind=kind, recording_ids=[])), PlaudRequest)
         assert check_request(raw(kind=kind)) == Refusal("abcdef12", UNREADABLE)
         assert check_request(raw(kind=kind, recording_ids=[], all=True)).message == UNREADABLE
@@ -265,8 +268,14 @@ def test_the_sync_kinds_carry_only_what_they_use():
         assert isinstance(
             check_request(raw(kind=kind, recording_ids=[], plaud_ids=[pid])), PlaudRequest
         )
-        assert check_request(raw(kind=kind)) == Refusal("abcdef12", NOT_YET)
+        assert check_request(raw(kind=kind)) == PlaudRequest("abcdef12", kind, (), (RID,), False)
         assert check_request(raw(kind=kind, recording_ids=[])).message == UNREADABLE
+        assert check_request(raw(kind=kind, plaud_ids=[pid])).message == UNREADABLE  # both
+    assert check_request(raw(kind="resync")) == PlaudRequest(
+        "abcdef12", "resync", (), (RID,), False
+    )
+    for over in ({"recording_ids": []}, {"plaud_ids": [pid]}, {"all": True}):
+        assert check_request(raw(kind="resync", **over)).message == UNREADABLE, over
 
 
 def test_keep_it_here_never_carries_what_it_doesnt_use():

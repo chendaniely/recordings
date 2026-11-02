@@ -36,7 +36,7 @@ const fake = (v: LibraryView, over: Partial<Tagging> = {}): Tagging => {
     lastTagged: null, lastUndone: null, sessionTags: [], refused: null, drag: { current: null }, canTag: true, opening: false, reason: null,
     saves: true, isPrivate: (t) => flags.has(t), tag: vi.fn(), undo: vi.fn(), undoLast: vi.fn(), refresh: vi.fn(),
     answerConfirm: vi.fn(), picker: null, openPicker: vi.fn(), closePicker: vi.fn(), snippet: () => undefined,
-    wantSnippets: vi.fn(), ...over,
+    wantSnippets: vi.fn(), mergeRows: vi.fn(), ...over,
   };
 };
 

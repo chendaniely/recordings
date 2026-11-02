@@ -78,6 +78,9 @@ FORBIDDEN = {
 }
 PLAUD_MOUNT = backup.PLAUD_MOUNT  # the sign-in's folder, mounted in `worker` only
 CONSENT_MOUNT = Path("/consent")  # the consent folder, in `worker` and `backup` (read-only)
+# Sync everything's manifests (stage 2b spec §14.6, decision 9), in the state folder every
+# container mounts; the worker makes it at its start.
+MANIFESTS_MOUNT = Path("/state/manifests")
 OPEN_TO_OTHERS = 0o077  # ssh refuses a key with any of these bits set; doctor warns for any secret
 # The worker's missing sign-in (spec §17.2). While Phase 1 ran, with no way to sign in, it was a
 # note (Dan, phase-end Q&A §7); with `make plaud-sign-in` it is a problem again.
@@ -780,8 +783,9 @@ def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str
     An entry `backup.never_backed_up` refuses is a problem, with its reason: one that would carry
     the Plaud sign-in, the whole state folder or Docker's secrets. `run_backup` refuses the same
     entries by the same check (the phase-end council's S4). For `backup`, with a repository set,
-    deploy.env and the consent folder missing from it are warnings (a restore would bring back no
-    list, or an older one)."""
+    deploy.env, the consent folder and the manifests folder (`/state/manifests`, decision 9)
+    missing from it are warnings (a restore would bring back no list, or an older one, and no
+    Sync everything manifest)."""
     section = cfg.data.get("backup", {})
     found = section.get("extra_paths", [])
     paths = [p for p in found if isinstance(p, str)] if isinstance(found, list) else []
@@ -804,6 +808,14 @@ def _extra_paths(cfg: Config, role: str, problems: list[str], warnings: list[str
         warnings.append(
             f"the consent folder is not in [backup] extra_paths, so no backup carries the consent "
             f'list: add "{CONSENT_MOUNT}" (runbook section 6)'
+        )
+    manifests = {MANIFESTS_MOUNT}
+    if cfg.state_path is not None:
+        manifests.add(normal(cfg.state_path / "manifests"))
+    if not any(normal(Path(p)) in manifests for p in paths):
+        warnings.append(
+            "the manifests folder is not in [backup] extra_paths, so no backup carries Sync "
+            f'everything\'s manifests (DAN-15): add "{MANIFESTS_MOUNT}" (runbook section 6)'
         )
 
 

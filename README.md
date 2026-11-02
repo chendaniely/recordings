@@ -28,10 +28,21 @@ up: a `worker` container signs in (`make plaud-sign-in`, from the Mac), lists th
 minutes, imports what is new, tags `private` what your patterns say before any of its content
 lands, and never fetches what your consent list or the keep-out word keeps out. Edits you make in
 Plaud (a title at the next sync; speaker names and notes within about a day) follow, and a breaker
-pauses that if Plaud starts sending something new on many recordings at once. The **Add** tab is
-the Sync screen (Compare, Sync now, Import, Release, Accept this listing), and Status reports. The
-first real import is a supervised catch-up on the server, dry run first (the runbook's sections 7
-and 8). `docs/user-guide.md` says what each screen shows and what to do.
+pauses that if Plaud starts sending something new on many recordings at once. **Re-sync from
+Plaud** (a recording's Details, or a selection in the Library) checks edits at once, and **Sync
+everything** checks the whole account and writes a manifest (monthly by itself). The **Add** tab
+is the Sync screen (Compare, Sync now, Import, Release, Accept this listing, Sync everything,
+Park), and Status reports. The first real import is a supervised catch-up on the server, dry run
+first (the runbook's sections 7 and 8). `docs/user-guide.md` says what each screen shows and
+what to do.
+
+Keeping a recording out: start its title in Plaud's app with the keep-out word (`noarchive`), or
+put its ID on the consent list. Once a recording has come in, deleting it in Plaud, or renaming
+it, doesn't remove it here: a rename to the keep-out word tags it `private` and flags it for you
+to take out by hand (the runbook). Whether a rename on the phone usually beats the first sync
+(spike S9) hasn't been measured; the sync lists Plaud every 20 minutes, so rename it before it
+uploads, or at once. The word is forgiving ("No archive:", "NOARCHIVE"), so an ordinary title that
+happens to start with it stays out until you press **Release** on the Sync screen.
 
 ## Live demo
 

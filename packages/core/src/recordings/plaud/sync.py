@@ -905,18 +905,18 @@ def worker_run(worker: Any, **overrides: Any) -> Run:
     def newest(listing: Listing) -> None:
         worker.newest_listing = listing
 
-    return Run(
-        writer=worker.writer,
-        client=worker.plaud_client(),
-        settings=worker.settings,
-        timezone_name=worker.cfg.default_timezone,
-        stop_free_percent=disk_thresholds(worker.cfg)["stop"],
-        clock=worker.clock,
-        between=worker.between_recordings,
-        newest=newest,
-        late_consent=False,
-        **overrides,
-    )
+    fields: dict[str, Any] = {
+        "writer": worker.writer,
+        "client": worker.plaud_client(),
+        "settings": worker.settings,
+        "timezone_name": worker.cfg.default_timezone,
+        "stop_free_percent": disk_thresholds(worker.cfg)["stop"],
+        "clock": worker.clock,
+        "between": worker.between_recordings,
+        "newest": newest,
+        "late_consent": False,
+    }
+    return Run(**(fields | overrides))  # a long run's `between` replaces the plain one
 
 
 def worker_turn(worker: Any, *, light: bool) -> health.RunOutcome:

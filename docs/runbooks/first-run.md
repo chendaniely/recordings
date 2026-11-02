@@ -1068,10 +1068,14 @@ the Library moves onto `index.db` before 2b deploys.
    as absolute paths (the template has both lines). ntfy's topic is now mounted only when
    `deploy.env` names its file: if you set ntfy up already (an `ntfy_topic` file among the
    secrets), set `RECORDINGS_ALERTS_TOPIC_HOST` to that file's absolute path too, or the backup's
-   pushes stop. In `config.toml`, add the consent folder to the backups, so a restore never brings
-   back an older list: `[backup] extra_paths = ["/backup-extra/deploy.env", "/consent"]`. Only the
-   consent folder for now: a missing extra path refuses every backup, and Sync everything's
-   manifests folder only appears with a later phase.
+   pushes stop. In `config.toml`, add the consent folder and Sync everything's manifests folder to
+   the backups, so a restore never brings back an older list and keeps the DAN-15 manifests:
+   `[backup] extra_paths = ["/backup-extra/deploy.env", "/consent", "/state/manifests"]`. A
+   missing extra path refuses every backup, so make the manifests folder first (the worker also
+   makes it at its start, if it is missing):
+   ```bash
+   install -d -m 700 "$RECORDINGS_HOME/state/manifests"
+   ```
 4. **Required: the sync's own Healthchecks check** (Dan's decision 9). Create a second check with a
    period of 20 minutes, a grace of 2 hours, emailing you, and "manual resume" off (the default).
    Its email is the sync's only alert. Copy its ping URL as in 2.2 (no `/start`, `/fail` or `?…`)
@@ -1459,6 +1463,53 @@ and `private` tags go on; only snapshots of what tripped it wait.
 5. `rc exec worker recordings plaud breaker reset` closes it by hand and excuses nothing: a tool
    no step here needs.
 
+## When a recording fails every check: Re-sync and Park
+
+Stage 2b spec §14.6. Status says "2 recordings fail every check (since 2026-10-23) · Re-sync ·
+Park": each has failed 3 checks in a row. It never stops the sync's check (a failing recording
+isn't a blocker), but it stays on the list, and Sync everything exits 2 for it.
+
+1. Press **Re-sync** on that line (or **Re-sync from Plaud** in the recording's Details, or on the
+   server `rc exec worker recordings plaud resync <id>…`). If it answers "Up to date" or
+   "Updated: …", it was a passing fault, and the recording leaves the list.
+2. Still "Failed: …": open the recording in Plaud's own app. If it plays and shows its transcript
+   there, the fault may be ours: `rc logs worker` names the failure's class; open a Claude session
+   with it. If Plaud can't open it either, **Park** it: the sweep leaves it alone and it no longer
+   counts against Sync everything, and the Sync screen lists it under **Parked**.
+3. A parked recording is still tried by a Re-sync, and one that works unparks it. **Unpark** on the
+   Sync screen, or `rc exec worker recordings plaud park <id> --undo`, puts it back in the sweep.
+
+## Sync everything, and DAN-15's last run
+
+Stage 2b spec §14.6. **Sync everything** (the Sync screen's **More**, or `rc exec worker
+recordings plaud sync --full`) lists, imports what is waiting, checks every recording the sweep
+covers, oldest first, retries its failures once, and writes a manifest to
+`$RECORDINGS_HOME/state/manifests/plaud-<date>.json`: each Plaud ID with its archive ID, last
+snapshot, state and part hashes, never a title or a speaker's name. The worker runs it by itself
+every 30 days while the schedule is on; a press within an hour of the last one is refused, and one
+that stopped part-way (a restart) resumes. The CLI exits 0 when everything listed is here and
+checked (degraded counts), parked, flagged (consent-listed or kept out after it came in: named by
+archive ID) or kept out; 2 otherwise, with counts. Status's "Sync everything" number gives the last
+one's result. It never stops the sync's check.
+
+**DAN-15, before 2027-08-15,** when the Plaud account ends:
+1. Run the last Sync everything, in `tmux` or `screen` (it can take an hour or more):
+   ```bash
+   rc exec worker recordings plaud sync --full
+   ```
+   It must exit 0, or 2 only for recordings you then park after checking each in Plaud's app
+   (record each in your notes by its archive ID). A flagged recording is never a failure: take it
+   out by hand ("Taking a recording out by hand") or keep it. Keep the manifest it names; the
+   next backup carries it.
+2. Set `[plaud] schedule_minutes = 0` in `config.toml`, then retire the sync, so Status says
+   "retired" instead of "Scheduled sync is off" and nothing runs every 20 minutes or every month:
+   ```bash
+   rc restart worker
+   rc exec worker recordings plaud retire
+   ```
+   It records `retired_at` in `state.db`. `recordings plaud retire --undo` brings the sync back.
+3. Delete the sync's Healthchecks check ("Planned work and the sync's check").
+
 ## Plaud sign-in
 
 Only the server's `worker` holds a Plaud sign-in: `tokens.json` in `$RECORDINGS_HOME/plaud`
@@ -1572,8 +1623,8 @@ refuses every backup while `[backup] extra_paths` names a folder (its compose fi
 `docker/up-deployed.sh`, which reads the running tag back:
 1. Pause the sync's Healthchecks check (its Pause button): no sync runs until you deploy forward
    again.
-2. In `config.toml`, take `"/consent"` out of `[backup] extra_paths`, so that it is
-   `["/backup-extra/deploy.env"]` again.
+2. In `config.toml`, take `"/consent"` and `"/state/manifests"` out of `[backup] extra_paths`,
+   so that it is `["/backup-extra/deploy.env"]` again.
 3. Then:
    ```bash
    cd "$REPO_DIR"
@@ -1585,17 +1636,18 @@ refuses every backup while `[backup] extra_paths` names a folder (its compose fi
 both. A `compose.yml` from before 2b requires a non-empty `secrets/ntfy_topic` file, so if ntfy
 was never set up, this rollback also needs that file (any text); it was there when 2a was deployed.
 To go forward again: `git checkout` the newer commit and `make deploy`; once it has worked,
-put `"/consent"` back in `[backup] extra_paths` (section 6, step 3), then, from `$REPO_DIR`,
-`sh docker/up-deployed.sh restart backup` (the loop reads `config.toml` when it starts) and
-`sh docker/up-deployed.sh exec backup recordings doctor --role backup`, which no longer warns
-about the consent folder. Resume the sync's check last.
+put `"/consent"` and `"/state/manifests"` back in `[backup] extra_paths` (section 6, step 3),
+then, from `$REPO_DIR`, `sh docker/up-deployed.sh restart backup` (the loop reads `config.toml`
+when it starts) and `sh docker/up-deployed.sh exec backup recordings doctor --role backup`, which
+no longer warns about the consent or manifests folder. Resume the sync's check last.
 
 ## Restoring for real
 
 When the archive, `state.db`, or the whole server is lost. Each snapshot holds the container
 paths `/archive`, `/config/config.toml`, `/backup-extra/deploy.env`, `/state/backup/state.db`
 (a consistent SQLite copy) and, from stage 2b, `/consent` (the consent list's folder; the Plaud
-sign-in is never in it). `index.db` is derived, so it isn't there; `reindex` rebuilds it.
+sign-in is never in it) and `/state/manifests` (Sync everything's manifests). `index.db` is
+derived, so it isn't there; `reindex` rebuilds it.
 
 On the homelab server, with the top block of this runbook pasted (it defines the variables and
 `rc`), inside `tmux` or `screen` because the restore takes hours. A new server first goes
@@ -1651,6 +1703,8 @@ through 1a, then:
    mv "$RECORDINGS_HOME/state" "$RECORDINGS_HOME/state.lost-$STAMP"
    mkdir -m 700 "$RECORDINGS_HOME/state"
    mv "$R/state/backup/state.db" "$RECORDINGS_HOME/state/state.db"
+   [ -d "$R/state/manifests" ] && mv "$R/state/manifests" "$RECORDINGS_HOME/state/manifests"
+   install -d -m 700 "$RECORDINGS_HOME/state/manifests"   # backups refuse while it is missing
    cp "$R/config/config.toml" config.toml
    cp "$R/backup-extra/deploy.env" docker/deploy.env
    [ ! -e "$RECORDINGS_HOME/consent" ] || mv "$RECORDINGS_HOME/consent" "$RECORDINGS_HOME/consent.lost-$STAMP"
@@ -1710,6 +1764,7 @@ through 1a, then:
    rc down
    mv "$RECORDINGS_HOME/state" "$RECORDINGS_HOME/state.lost-$(date +%Y%m%d)"
    mkdir -m 700 "$RECORDINGS_HOME/state"
+   install -d -m 700 "$RECORDINGS_HOME/state/manifests"   # stage 2b: backups refuse without it
    rc run --rm web recordings init --adopt
    rc run --rm web recordings reindex
    rc up -d

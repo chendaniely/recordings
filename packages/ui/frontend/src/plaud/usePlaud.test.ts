@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PlaudRequest, PlaudResult, SyncView } from "../types";
+import type { LibraryRow, PlaudRequest, PlaudResult, SyncView } from "../types";
 
 // The Shiny side, faked as in useTagging.test.ts: each input's setter records what it sends; each
 // message handler is kept so a test can deliver a reply.
@@ -30,7 +30,7 @@ vi.mock("sonner", () => {
 });
 
 import { LOST } from "../lib/library";
-import { NO_PLAUD, kindReason, usePlaud, type Plaud } from "./usePlaud";
+import { NO_PLAUD, kindReason, lineFor, usePlaud, type Plaud } from "./usePlaud";
 
 const NOT_YET = "Comes with the next part of stage 2b.";
 const GATE = "Scheduled sync waits for the first catch-up (runbook)";
@@ -45,15 +45,16 @@ const reply = (request: PlaudRequest, over: Partial<PlaudResult> = {}): PlaudRes
 type Toasted = ReactElement<{ undo: { label: string; run: () => void } | null }>;
 
 let plaud: Plaud;
-function Probe({ view, onView }: { view: SyncView | undefined; onView?: () => void }) {
-  plaud = usePlaud(view, onView);
+type Merge = (rows: LibraryRow[]) => void;
+function Probe({ view, onView, onRows }: { view: SyncView | undefined; onView?: () => void; onRows?: Merge }) {
+  plaud = usePlaud(view, onView, onRows);
   return null;
 }
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 const act = (fn: () => void) => flushSync(fn);
-const draw = (view: SyncView | undefined = VIEW, onView?: () => void) =>
-  act(() => root.render(createElement(Probe, { view, onView })));
+const draw = (view: SyncView | undefined = VIEW, onView?: () => void, onRows?: Merge) =>
+  act(() => root.render(createElement(Probe, { view, onView, onRows })));
 const hear = (r: PlaudResult) => act(() => shiny.handlers.plaud_result(r));
 const sent = () => (shiny.sent.plaud_request ?? []) as PlaudRequest[];
 
@@ -212,6 +213,28 @@ describe("usePlaud (2b spec §9.3)", () => {
     const dismiss = (sonner.toast as unknown as { dismiss: ReturnType<typeof vi.fn> }).dismiss;
     expect(dismiss).toHaveBeenCalledWith(`plaud-${request.request_id}`);
     expect(plaud.results[request.request_id].state).toBe("queued");
+  });
+  it("a Re-sync's end merges the rows it updated into the open list, once (2b spec §14.6)", () => {
+    const onRows = vi.fn();
+    draw(VIEW, undefined, onRows);
+    const id = "20261023T090500+0000_0000beef";
+    act(() => void plaud.send("resync", { recording_ids: [id] }));
+    const request = sent()[0];
+    hear(reply(request, { state: "running", message: "Re-syncing", progress: { done: 0, total: 1 } }));
+    expect(onRows).not.toHaveBeenCalled();
+    const row = { id, title: "Week 1" } as LibraryRow;
+    hear(reply(request, { state: "done", message: "Updated: speakers", rows: [row] }));
+    expect(onRows).toHaveBeenCalledExactlyOnceWith([row]);
+  });
+  it("a recording's own line comes from a merged Re-sync's `each` (2b spec §9.3)", () => {
+    const id = "20261023T090500+0000_0000beef";
+    const r = {
+      request_id: "x", kind: "resync", state: "done", message: "3 checked: 1 updated (speakers 1) · 2 up to date",
+      progress: null, result: { each: { [id]: "Updated: speakers" } }, preview: null,
+    } as PlaudResult;
+    expect(lineFor(r, id)).toBe("Updated: speakers");
+    expect(lineFor(r, "20261023T090600+0000_0000cafe")).toBe(r.message);
+    expect(lineFor({ ...r, state: "running", progress: { done: 1, total: 3 } }, id)).toBe(`${r.message} (1 of 3)`);
   });
   it("after the connection is lost nothing is sent, and the buttons say why", () => {
     draw();

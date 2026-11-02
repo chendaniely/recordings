@@ -324,7 +324,11 @@ def test_the_runbook_has_a_deploy_2b_section():
         "never goes down",
     ):
         assert needed in flat, needed
-    assert "/state/manifests" not in flat  # decision 9: the consent folder only, for now
+    # decision 9: Sync everything (area B2) writes its manifests there, made before it is listed
+    assert (
+        '"/state/manifests"]' in flat
+        and 'install -d -m 700 "$RECORDINGS_HOME/state/manifests"' in code
+    )
     lines = [line.strip() for line in _code_lines(text)]  # the code first, as 2.8 does for a tag
     checkout = lines.index("git checkout <Phase 1's merge commit>")
     assert lines.index("git fetch") < checkout < lines.index("make deploy")
@@ -406,7 +410,8 @@ def test_the_runbook_rolls_back_across_2b():
     )
     flat = " ".join(text.split())
     assert "Pause the sync's Healthchecks check" in flat
-    out, back_in = 'take `"/consent"` out of `[backup] extra_paths`', 'put `"/consent"` back'
+    out = 'take `"/consent"` and `"/state/manifests"` out of `[backup] extra_paths`'
+    back_in = 'put `"/consent"` and `"/state/manifests"` back'
     assert flat.index(out) < flat.index("make rollback TAG=")
     assert not any(re.match(r"\s*rc ", line) for line in back), "rc needs the image tag exported"
     assert "secrets/ntfy_topic" in flat  # a pre-2b compose.yml requires the file

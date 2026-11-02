@@ -106,9 +106,11 @@ run. The runbook's sections 7 and 8 have every step; this is what they come to.
 
 ## What the sync commands' exit codes mean
 
-`recordings plaud sync` (and `--dry-run`, `--catch-up`), run on the server as `rc exec worker
-recordings plaud …` or through the make targets, end with a number that says how it went. The
-make targets turn each into a sentence.
+`recordings plaud sync` (and `--dry-run`, `--catch-up`, `--full`) and `recordings plaud resync`,
+run on the server as `rc exec worker recordings plaud …` or through the make targets, end with a
+number that says how it went. The make targets turn each into a sentence. For `sync --full`
+(Sync everything), 0 means every recording on Plaud is here and checked, parked, flagged or kept
+out; 2 names the rest by count.
 
 | Code | Meaning | What to do |
 |---|---|---|
@@ -259,9 +261,11 @@ The **Add** tab is the Sync screen: it acts, and Status reports. Open it from th
 3. **Held**, when a listing is held: its sentence, and **Accept this listing** or why it can't be.
    **Edit-sync paused**, when the breaker tripped: its sentence with the fields' names, and
    **Accept these changes** or why it needs a code fix ("When edit-sync pauses", below).
-4. **Sync**: **Sync now** and **Compare**, and under **More**, **Sync everything** (it comes with
-   the next part of 2b). The newest result line stays here ("Sync now, 14:20: Synced: 2 imported
-   (1 private) · All here"), and a running request shows its progress ("Importing (2 of 5)").
+4. **Sync**: **Sync now** and **Compare**, and under **More**, **Sync everything** with how long
+   it takes ("Takes about 40 minutes", from the last one; "unknown until the first run" before
+   any; "Sync everything", below). The newest result line stays here ("Sync now, 14:20: Synced: 2
+   imported (1 private) · All here"), and a running request shows its progress ("Importing (2 of
+   5)").
 5. **From the listing**: the equation, each of its numbers a jump to its list; "from the listing
    at 14:20"; the archive's own equation; and the consent list's line ("Consent list: 14 IDs, 1 on
    Plaud now · file changed … · read 14:20").
@@ -297,7 +301,11 @@ Status reports; it never names a recording by its title, only by its ID.
 - The same top line as the Sync screen, then plain sentences, each only while it is true: the sync
   failing ("Plaud sync failing since 12:00 (Plaud unavailable). Last good listing 11:40."), "isn't
   being pinged since …", the schedule or auto-import off, a small shrink ("Plaud now lists 3
-  fewer: waiting for the next listing to agree"), and a hold with **Accept this listing**.
+  fewer: waiting for the next listing to agree"), a hold with **Accept this listing**, and changes
+  held for your review ("3 changes from Plaud are held for your review (the review list comes with
+  stage 3a)").
+- Recordings that fail every check get their own line beside the top line: "2 recordings fail
+  every check (since 2026-10-23) · Re-sync · Park" (below, "When a recording fails every check").
 - **Needs attention**, at the top of Status: a sign-in needed ("Plaud sign-in needed since 23:00.
   New recordings wait on Plaud: nothing is lost. At the Mac: `make plaud-sign-in`."), a sign-in
   that expires within 7 days, a hold, a possible re-keyed recording to confirm, a consent stop, a
@@ -307,8 +315,9 @@ Status reports; it never names a recording by its title, only by its ID.
 - **The numbers**: the equations and the consent list's line; the last good listing ("14:20 (120
   listed)") and the next sync; the sweep ("every recording checked within the last 21 hours
   (oldest 2026-11-01 17:10) · an edit in Plaud shows within about 25 hours"); the sign-in ("works (last used 14:20) · access token expires 15:20 ·
-  refresh token"); held, gone from Plaud, failing and parked; when the worker last reported; and
-  Healthchecks' last ping.
+  refresh token"); the last Sync everything ("2026-10-01: all 1,234 checked (2 parked, 1
+  degraded)", or what was missing, or "running since 14:20 (412 of 1,234)"); held for review, gone
+  from Plaud, failing and parked; when the worker last reported; and Healthchecks' last ping.
 - **Details**, folded away: the normaliser's version, the fields outside the named parts that
   changed in the last 24 hours (names only), the changes per part in 24 hours, the ID forms Plaud
   uses (and when they last changed form with nothing lost), the keep-out words in force, malformed
@@ -375,8 +384,106 @@ snapshot only when something changed. Your transcript, speaker names and notes t
 **What to do**
 
 - Nothing: edits arrive by themselves.
+- Want it now? **Re-sync from Plaud** (next section) checks it at once.
 - A removal (a name going back to "Speaker 1", a note vanishing) is held for your review, never
-  applied: the review list comes with stage 3a.
+  applied ("Changes held for your review", below).
+
+## Re-sync from Plaud: one recording, or a selection
+
+When you have just renamed speakers or regenerated notes in Plaud and don't want to wait for the
+sweep.
+
+**What you see**
+
+- In a recording's **Details**: "Plaud: checked … · next by …" with **Re-sync from Plaud**. Press
+  it, and its answer shows beside it:
+  - "Up to date": nothing changed since the archive's copy. Plaud may take a moment to show an edit
+    you just made; press again in a minute.
+  - "Updated: speakers" (or "title", "notes", "own notes", "other"): the new snapshot is kept, and
+    the transcript, names and notes are rebuilt from it.
+  - "Not checked: kept out", "Not checked: on the consent list", "Gone from Plaud", "Not checked: it
+    didn't come from Plaud": nothing is fetched for these, by design.
+  - "Edit-sync paused: see Status": the only change was the kind the breaker holds back.
+  - "Failed: Plaud unavailable" (or another reason): try again later.
+- In the **Library** (or the Tags grid), select two or more rows: the bar reads "12 selected ·
+  Tag… · Re-sync from Plaud · Clear" ("Re-sync" on a phone). One press sends one request for the
+  whole selection, up to 1,000 ("For more, use Sync everything"); the bar shows "Re-syncing (12 of
+  25)", then "25 checked: 7 updated (speakers 6, title 1) · 18 up to date". The rows that changed
+  are read again in place; the list's order waits for Refresh.
+- Before the first catch-up, and while the sync is held, Re-sync is off or answers "Held: see
+  Status".
+
+**What to do**
+
+- Press it after an edit you want now. On the server, `rc exec worker recordings plaud resync
+  <id>…` does the same.
+
+## When a recording fails every check: Re-sync and Park
+
+A recording whose checks failed 3 times in a row is on Status's line "2 recordings fail every
+check (since 2026-10-23) · Re-sync · Park". It never stops the sync's check, and the sync keeps
+trying it, less often each time.
+
+**What you see**
+
+- **Re-sync** on that line tries every recording it counts, now. One that works leaves the line.
+- **Park** on that line parks every recording it counts: the sweep leaves them alone, they no
+  longer count against Sync everything, and the Sync screen lists them under **Parked**, each with
+  **Unpark**. A Re-sync still tries a parked recording, and one that works is unparked.
+
+**What to do**
+
+1. Press **Re-sync** first: a passing fault clears.
+2. Still failing: open the recording in Plaud's app. If Plaud can't open it either, press
+   **Park**. If it plays there, the fault may be the app's: the runbook's "When a recording fails
+   every check" says what to send a Claude session.
+3. **Unpark** (Sync screen, **Parked**) when you want it checked again.
+
+## Sync everything
+
+The sweep checks every recording over a day or so; **Sync everything** does it all at once, then
+writes a manifest: the list of every recording on Plaud with its state, used for DAN-15's final
+check before the account ends.
+
+**What you see**
+
+- On the Sync screen, under **More**: **Sync everything**, with "Takes about 40 minutes" (from the
+  last run's pace) or "Its time: unknown until the first run". While one runs, or within an hour
+  of the last, it is off and says why ("Sync everything is running (412 of 1,234)", "Sync
+  everything ran less than an hour ago").
+- Pressed: it lists, brings in what is waiting, checks every recording here oldest first, and tries
+  its failures once more. Its answer: "Sync everything: all 1,234 checked (2 parked, 1 degraded)",
+  or what is missing ("1,230 of 1,234 fine: 3 failed, 1 not here · See Status").
+- Other presses meanwhile wait and say "Waiting for Sync everything (412 of 1,234)". A Re-sync of
+  one recording, a Compare and the scheduled sync still run between two of its recordings.
+- If the worker restarts in the middle, it picks up where it left off ("Resuming (started 14:20)").
+- It also runs by itself every 30 days while the schedule is on.
+- Status's numbers show the last one: "2026-10-01: all 1,234 checked (2 parked, 1 degraded)".
+
+**What to do**
+
+- Nothing, usually: the monthly run and the sweep keep up.
+- After a long gap, or to be sure everything is here, press it.
+- A recording it couldn't check: see "When a recording fails every check". A flagged recording
+  (kept out or consent-listed after it came in) is named but never a failure.
+- DAN-15, when the Plaud account ends: the runbook's "Sync everything, and DAN-15's last run".
+
+## Changes held for your review
+
+Some changes from Plaud would take something away: a speaker's name going back to "Speaker 1", a
+note vanishing. The sync never applies those by itself.
+
+**What you see**
+
+- Status: "3 changes from Plaud are held for your review (the review list comes with stage 3a)",
+  and "Held for review: 3" in the numbers.
+- The Sync screen's **Updated on Plaud** shows "removal held" on the recording that had one.
+
+**What to do**
+
+- Nothing yet: stage 3a brings the review list where you accept or refuse each. Until then the
+  archive keeps what it had. On the server, `rc exec worker recordings plaud held` lists them by
+  recording ID and part.
 
 ## When edit-sync pauses: the breaker, and Accept these changes
 

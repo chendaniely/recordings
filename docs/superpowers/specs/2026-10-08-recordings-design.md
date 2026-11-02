@@ -1568,13 +1568,24 @@ every check ending with reconcile (§14.1); the baseline (§14.5); Re-sync of a 
     - An empty or shrunken listing never marks recordings "Only in the archive". A listing
       has shrunk when it holds fewer than 90% of the last good listing's IDs and has also
       dropped by a minimum absolute number.
-  - **On demand:** *Re-sync from Plaud* (one recording, in Details), and
-    `recordings plaud sync --full` or the Sync screen button (everything).
-- **DAN-15 tooling** (the final pass before the subscription lapses; §7.6):
-  - `--full` exits non-zero unless every listed recording was checked successfully. It runs
-    monthly, with an alert on failure (§14).
-  - a final manifest: each Plaud ID with its archive ID, last snapshot and part hashes
-  - the schedule is switched off after the subscription lapses
+  - **On demand:** *Re-sync from Plaud* (one recording, in Details, or a selection of up to
+    1,000 in the Library, one request; stage 2b §14.6, decision 6), and `recordings plaud sync
+    --full` or the Sync screen's **Sync everything** (everything). A recording that fails every
+    check can be **parked**: the sweep and Sync everything leave it alone, and a Re-sync still
+    tries it (stage 2b §14.6). Removals reconcile holds back are counted on Status and listed by
+    `recordings plaud held` until stage 3a's review list (stage 2b §14.7).
+- **DAN-15 tooling** (the final pass before the subscription lapses; §7.6), as stage 2b §14.6
+  and §17.5 built it:
+  - `--full` exits 0 only when the listing was good and every listed recording is excluded,
+    parked, flagged (consent-listed or kept out after it came in: named by archive ID) or here
+    and checked (degraded counts); 2 otherwise, with counts. It resumes after a restart, and runs
+    every 30 days by itself while the schedule is on. A failed one shows on Status; it never stops
+    the sync's check (stage 2b §16, which replaces "an alert on failure").
+  - a manifest, `/state/manifests/plaud-<date>.json` (backed up through `[backup]
+    extra_paths`): each Plaud ID with its archive ID, last snapshot, state and part hashes, never
+    the title or speakers parts
+  - after the last run, `schedule_minutes = 0` and `recordings plaud retire` (`retired_at`), so
+    nothing runs and Status says "retired", and the sync's check is deleted
 - **Keeping Plaud's speaker data intact (stage 2a):**
   - Segments store `original_speaker` as `speaker`, Plaud's name as `speaker_name`, and
     Plaud's `embeddingKey` as `embedding_key`.

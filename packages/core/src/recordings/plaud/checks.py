@@ -72,7 +72,12 @@ K_KEEP_OUT_WORDS = "keep_out_words"
 K_PATTERNS = "patterns"
 K_PATTERNS_PASS = "patterns_pass"
 K_CONSENT = "consent"  # {"read_at": iso, "count": int, ...}: the IDs' count, never the IDs
+# Sync everything (§14.6; plaud.full): {"running": {...} while one is unfinished, "last": {...}
+# the last that finished}: its start, progress, pace and outcome, counts and IDs only.
 K_FULL = "full_sync"
+# DAN-15's end (§17.5): {"at": iso}. The sync is retired: no scheduled turn, no monthly Sync
+# everything, and Status says so instead of "Scheduled sync is off" (plaud.full.retire).
+K_RETIRED = "retired_at"
 # {"until": iso, "at": iso}: a 429 whose wait passed the run's budget ended the run at `at`, and
 # scheduled turns make no Plaud call before `until` (§9.7 case 2, §10.2).
 K_RATE_LIMIT = "rate_limit"
@@ -686,6 +691,17 @@ class PlaudDB:
                 (FAILING_AFTER,),
             ).fetchall()
         return [_row(CheckRow, _CHECKS, row) for row in rows]
+
+    def held_removals(self) -> list[tuple[str, dict]]:
+        """The removals reconcile holds back for review (§14.7), as (recording ID, held) pairs,
+        by recording ID: each `held` is {"snapshot", "slot", "reason"} as the last check of that
+        recording found it (`CheckRow.held_removals`). Stage 3a's review queue accepts them."""
+        return [
+            (row.recording_id, held)
+            for row in sorted(self.check_rows(), key=lambda r: r.recording_id)
+            for held in row.held_removals or ()
+            if isinstance(held, dict)
+        ]
 
     def set_check(self, recording_id: str, **fields: Any) -> None:
         """Set plaud_checks columns (their names only), making the row if it is missing."""
