@@ -59,7 +59,7 @@ from recordings.models import (
 )
 from recordings.plaud.checks import PlaudDB
 from recordings.plaud.keepout import DEFAULT_WORD, fold, valid_word
-from recordings.plaud.privacy import PrivacyInputs, current_patterns, why_phrase
+from recordings.plaud.privacy import PrivacyInputs, current_patterns, rebuilt_why, why_phrase
 from recordings.plaud.reconcile import (
     DEFAULT_AUTO_PRIVATE,
     Held,
@@ -970,7 +970,7 @@ class Writer:
         verdict = result.verdict
         reason = None
         if verdict.add_private:
-            reason = why_phrase(verdict.why)
+            reason = why_phrase(rebuilt_why(verdict.why, db))
             db.add_event("retagged-private", now=now, recording_id=rec.id, detail={"why": reason})
         if verdict.kept_out_word is not None:
             # Here, not at the top: flags imports this module (apply_late_consent).

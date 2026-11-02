@@ -45,7 +45,13 @@ from recordings.plaud.client import Listed
 from recordings.plaud.compare import Here
 from recordings.plaud.flags import gone, record_late_keep_out
 from recordings.plaud.keepout import keep_out_match
-from recordings.plaud.privacy import Why, current_patterns, title_sha256, why_phrase
+from recordings.plaud.privacy import (
+    Why,
+    current_patterns,
+    rebuilt_why,
+    title_sha256,
+    why_phrase,
+)
 from recordings.plaud.reconcile import matches_auto_private
 from recordings.writer import RECONCILE_ERRORS, SetPlaudFields, Writer
 
@@ -102,7 +108,7 @@ def privacy_from_listing(
             if word is not None and not private_match:
                 why = "kept out late"
             if private_match or word is not None:
-                outcome = _add_private(writer, db, rid, why, now=now)
+                outcome = _add_private(writer, db, rid, rebuilt_why(why, db), now=now)
                 if outcome == "busy":
                     busy.append(rid)
                     continue

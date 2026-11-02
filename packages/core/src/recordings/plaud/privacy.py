@@ -50,7 +50,7 @@ from recordings.plaud.reconcile import matches_auto_private
 if TYPE_CHECKING:
     from recordings.plaud.checks import Marker, PlaudDB
 
-Why = Literal["title changed", "first check", "new pattern", "kept out late"]
+Why = Literal["title changed", "first check", "new pattern", "kept out late", "rebuilt"]
 
 
 def title_sha256(title: str) -> str:
@@ -211,10 +211,21 @@ _PHRASES: dict[Why, str] = {
     "first check": "first check",
     "new pattern": "patterns changed",
     "kept out late": "kept out by title",
+    "rebuilt": "the sync's record was rebuilt",  # case 4 after a rebuild (decision 15)
 }
 
 
+def rebuilt_why(why: Why | None, db: PlaudDB) -> Why | None:
+    """Case 4 after a rebuild says so (decision 15): "first check" becomes "rebuilt" while
+    `rebuilt_at` is set, so a re-added `private` never looks as if Dan's decision was ignored."""
+    from recordings.plaud.checks import K_REBUILT
+
+    if why == "first check" and db.get(K_REBUILT) is not None:
+        return "rebuilt"
+    return why
+
+
 def why_phrase(why: Why) -> str:
-    """The fixed reason an automatic `private` records (2b phase 1 plan, decision 15). Phase 2's
-    rebuild record adds "the sync's record was rebuilt" for case 4 after a rebuild."""
+    """The fixed reason an automatic `private` records (2b phase 1 plan, decision 15): "the
+    sync's record was rebuilt" is case 4's ("first check") once `rebuilt_at` is set (`rebuilt`)."""
     return _PHRASES[why]

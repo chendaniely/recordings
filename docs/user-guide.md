@@ -141,6 +141,33 @@ another) and the sync never downloads it. The word is forgiving: "NoArchive:", "
 - On the server, `rc exec worker recordings plaud release <Plaud ID>` does the same, showing only
   the ID, date and duration and asking y/N; `--undo` keeps it out again.
 
+## After the sync's records were rebuilt: needs your review
+
+The sync remembers what you kept out in its own records (`state.db`). If those are lost and
+rebuilt, or restored from an older backup, it can't know what you kept out since, so it asks.
+
+**What you see**
+
+- Status and Needs attention: "The sync's records were rebuilt: 6 recordings wait for your
+  review on the Sync screen". No email: the sync goes on.
+- On the Sync screen's **Not here yet**, every Plaud recording made before the rebuild that isn't
+  here reads "needs your review: the sync's records were rebuilt", by date, time and duration.
+  Its title shows only when you ask (the same question Release asks).
+- Recordings made after the rebuild arrive as usual. **Import all** and the scheduled syncs leave
+  the review rows out ("Import all 31 · 6 more need your review").
+- A `private` tag you removed may come back once, with "the sync's record was rebuilt" in
+  Details. That errs private.
+- If the first catch-up stopped part-way, Status says "The first catch-up didn't finish: run
+  `--catch-up` again (runbook)".
+
+**What to do**
+
+- For each review row: tick it and press **Import selected** to bring it in, or keep it out (add
+  its ID to the consent list with `make consent-add`).
+- After restoring `state.db` from a backup, the runbook's "Restoring for real" runs
+  `rc run --rm worker recordings plaud review`, which does the marking (the sync can't tell an
+  older `state.db` by itself).
+
 ## What the sync compares, and the equations
 
 Each sync, and each **Compare**, reads Plaud's whole list of recordings and puts every recording

@@ -149,6 +149,9 @@ class ListingEntry:
     duration_ms: int | None  # likewise: only while its recording is here
     kept_out_word: str | None = None  # newly kept out by its title (§12.2): the word
     rekey_of: str | None = None  # newly matched to an absent excluded ID (§11.4 step 6), or "*"
+    # Needs Dan's review after a rebuild (§11.6): set by a listing, kept once set, cleared only by
+    # the import that brings it in.
+    needs_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -412,14 +415,16 @@ class PlaudDB:
                     e.rekey_of,
                     e.title_sha256,
                     e.duration_ms,
+                    int(e.needs_review),
                 )
             )
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             db.executemany(
                 "INSERT INTO plaud_listing (canonical_plaud_id, listed_id, first_seen, last_seen, "
-                "kept_out_at, kept_out_word, rekey_of, title_sha256, duration_ms) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (canonical_plaud_id) DO UPDATE SET "
+                "kept_out_at, kept_out_word, rekey_of, title_sha256, duration_ms, needs_review) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (canonical_plaud_id) DO UPDATE SET "
                 "listed_id = excluded.listed_id, last_seen = excluded.last_seen, "
                 "absent_since = NULL, "
                 f"kept_out_word = CASE WHEN {_KEEP_AGAIN} "
@@ -427,6 +432,7 @@ class PlaudDB:
                 f"kept_out_at = CASE WHEN {_KEEP_AGAIN} "
                 "THEN excluded.kept_out_at ELSE plaud_listing.kept_out_at END, "
                 "rekey_of = COALESCE(plaud_listing.rekey_of, excluded.rekey_of), "
+                "needs_review = MAX(plaud_listing.needs_review, excluded.needs_review), "
                 "title_sha256 = excluded.title_sha256, duration_ms = excluded.duration_ms",
                 values,
             )
@@ -434,6 +440,31 @@ class PlaudDB:
                 "UPDATE plaud_listing SET absent_since = ? "
                 "WHERE absent_since IS NULL AND last_seen != ?",
                 (stamp, stamp),
+            )
+
+    def record_rebuilt(
+        self,
+        *,
+        at: datetime,
+        by: str,
+        review: Iterable[str] = (),
+        catch_up: bool = False,
+        mark: Mapping[str, Any] | None = None,
+        now: datetime,
+    ) -> None:
+        """A rebuilt or restored state.db (§11.6), in one transaction: `rebuilt_at` (K_REBUILT),
+        the gate opened when `catch_up` (a detected rebuild), a snapshot mark when given (so a
+        restart doesn't find the rebuild again), and `review`'s IDs marked as needing review."""
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._put(db, K_REBUILT, {"at": utc_iso(at), "by": by}, now)
+            if catch_up:
+                self._put(db, K_CATCH_UP_DONE, at.isoformat(), now)
+            if mark is not None:
+                self._put(db, K_SNAPSHOT_MARK, dict(mark), now)
+            db.executemany(
+                "UPDATE plaud_listing SET needs_review = 1 WHERE canonical_plaud_id = ?",
+                [(canonical_plaud_id(pid),) for pid in review],
             )
 
     # ---- plaud_listed: the last good listing, and a held one (§11.4) ----------------------------

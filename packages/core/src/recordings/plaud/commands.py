@@ -92,6 +92,13 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     c.add_argument("--json", action="store_true")
 
     c = plaud.add_parser(
+        "review",
+        help="after restoring an older state.db: record rebuilt_at as now, so every recording "
+        "made before it that isn't here waits for your review (runbook, Restoring for real)",
+    )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
         "release",
         help="Release: let in a recording kept out by its title (or a possible re-keyed one). "
         "Shows its ID, date and duration, never its title, and asks y/N; --undo keeps it out "
@@ -608,6 +615,56 @@ def cmd_accept_listing(args: argparse.Namespace) -> int:
     return EXIT_CONFIG if done.why == hold.CONSENT_FIRST else EXIT_FAILED
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    """§11.6's `recordings plaud review`: after a restore from an older backup (which still has
+    mark rows, so the worker can't tell), `rebuilt_at` is now, and every listed ID that isn't here
+    is marked for review at once; every ID first listed later and made before now is marked when
+    it is listed. Holds `plaud` (waiting up to runlock.CLI_WAIT). Exit 0; 1 when the index can't
+    say what is here (nothing is marked); 75 busy."""
+    from recordings.plaud.compare import IndexUnavailable, here_from_archive
+
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    state = _write_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    now = datetime.now(UTC)
+    try:
+        with runlock.plaud_run(state, "plaud-review", timeout=runlock.CLI_WAIT, now=now):
+            writer = _writer(cfg, args.json)
+            if isinstance(writer, int):
+                return writer
+            db = PlaudDB(writer.state)
+            here = here_from_archive(
+                writer.index, writer.identity.uuid, writer.state, writer.archive, db
+            )
+            review = sorted(pid for pid in db.listing_rows() if pid not in here.by_id)
+            db.record_rebuilt(at=now, by="plaud review", review=review, now=now)
+    except LockTimeout:
+        return _fail(_busy(state), args.json, EXIT_BUSY)
+    except IndexUnavailable as exc:  # a fixed phrase
+        return _fail(f"{exc}: nothing was marked", args.json, EXIT_FAILED)
+    except (OSError, sqlite3.Error) as exc:  # never the exception's text
+        return _fail(
+            f"the review mark stopped ({type(exc).__name__}): check state.db's disk, then run it "
+            "again",
+            args.json,
+            EXIT_FAILED,
+        )
+    shown = _shown(now, _zone(cfg))
+    payload = {"rebuilt_at": shown, "review": len(review)}
+    lines = [
+        f"recorded: the sync's records were rebuilt at {shown}",
+        (
+            f"waiting for your review now: {len(review):,} listed recordings that aren't here; any "
+            "made before now and listed later waits too (the Sync screen's Not here yet)"
+        ),
+    ]
+    _emit(payload, lines, args.json)
+    return EXIT_OK
+
+
 def _release_client(settings):
     """The CLI's Plaud client for Release's listing (the worker container's sign-in)."""
     from recordings.plaud import tokens
@@ -727,6 +784,7 @@ COMMANDS = {
     "token-import": cmd_token_import,
     "accept-listing": cmd_accept_listing,
     "release": cmd_release,
+    "review": cmd_review,
 }
 
 

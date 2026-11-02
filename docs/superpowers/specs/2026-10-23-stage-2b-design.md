@@ -3110,16 +3110,16 @@ smoke.
 | C5.16 | A removed `private`, then a `reindex` in a `web`-role process | It stays removed, and comes back only when the title changes to one that matches, with its note | Phase 1, Task 9 | `packages/core/tests/test_plaud_marker.py` | built |
 | C5.17 | A removed `private` through 100 sync runs | It stays removed | Phase 2, area A4 | `packages/core/tests/test_plaud_listing_privacy.py` (`test_a_removed_private_stays_removed_through_runs_and_reconciles`: 100 runs, with reconciles of the old snapshot between them) | built |
 | C5.18 | `schedule_minutes` 20 from deploy, before the first catch-up | A scheduled turn makes no Plaud call, and an import request is refused | Phase 1, Tasks 13 and 14 | `packages/core/tests/test_worker.py`, `packages/core/tests/test_plaud_requests.py` | built |
-| C5.19 | An interrupted first catch-up (marks, no `catch_up_done_at`) | The gate stays closed, and Status says so | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
+| C5.19 | An interrupted first catch-up (marks, no `catch_up_done_at`) | The gate stays closed, and Status says so | Phase 2, area A4 (the gate's state; A5's catch-up runs it) | `packages/core/tests/test_plaud_rebuild.py` (`test_an_interrupted_first_catch_up_keeps_the_gate_closed_and_says_so`: the gate's reason, which a turn's record and Status carry) | built |
 | C5.20 | The interrupted catch-up run again, then ending | It picks up where it stopped, and the turn after it runs a sync | Phase 2 | Phase 2's plan | planned |
 | C5.21 | The gate closed | Every request that would write a snapshot is refused | Phase 1, Task 14 | `packages/core/tests/test_plaud_requests.py` | built |
-| C5.22 | A SIGTERM mid-run; a catch-up, then a restart | Neither reads as "rebuilt" | Phase 2 | Phase 2's plan | planned |
+| C5.22 | A SIGTERM mid-run; a catch-up, then a restart | Neither reads as "rebuilt" | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (the mark is committed before every 2b snapshot, so neither a stopped run nor a catch-up then a restart reads as rebuilt) | built |
 | C5.23 | A Re-sync, then a restart | Doesn't read as "rebuilt" | Phase 3 | Phase 3's plan | planned |
-| C5.24 | A restart after a rebuild was recorded | The rebuild isn't found again | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
-| C5.25 | A rebuilt `state.db` (2b snapshots, no marks) | Recordings created after it keep importing; one created before it that isn't here needs review, in the first listing or later; scheduled runs, Sync now, the CLI's `sync` and Import all leave it out; Import selected brings it in; its ID on the consent list keeps it out | Phase 2 | Phase 2's plan | planned |
+| C5.24 | A restart after a rebuild was recorded | The rebuild isn't found again | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (`test_a_rebuilt_state_db_is_recorded_once_and_passed`, and the worker's start) | built |
+| C5.25 | A rebuilt `state.db` (2b snapshots, no marks) | Recordings created after it keep importing; one created before it that isn't here needs review, in the first listing or later; scheduled runs, Sync now, the CLI's `sync` and Import all leave it out; Import selected brings it in; its ID on the consent list keeps it out | Phase 2, areas A4 (the marks, the import) and A5 (the run's Import all) | `packages/core/tests/test_plaud_rebuild.py` (`test_after_a_rebuild_what_was_made_before_waits_for_review`: made after imports; made before waits, first listed or later; the import refuses it unless named; consent-listed stays out) | built (A5's run passes `review_ok` only for named IDs) |
 | C5.26 | A rebuilt `state.db`, then Sync everything | It leaves out what needs review | Phase 3 | Phase 3's plan | planned |
-| C5.27 | `recordings plaud review` after a restore | `rebuilt_at` is recorded as now, holding `plaud` | Phase 2 (moved by the plan council, Phase 1 plan decision 44) | Phase 2's plan | planned |
-| C5.28 | Syncs after `plaud review` | Everything made before it that isn't here waits for review | Phase 2 | Phase 2's plan | planned |
+| C5.27 | `recordings plaud review` after a restore | `rebuilt_at` is recorded as now, holding `plaud` | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (`test_plaud_review_after_a_restore_marks_what_isnt_here`, and busy while `plaud` is held) | built |
+| C5.28 | Syncs after `plaud review` | Everything made before it that isn't here waits for review | Phase 2, area A4 | `packages/core/tests/test_plaud_rebuild.py` (a sync after `plaud review`: the rows not here, and one first listed later, need review) | built |
 | C5.29 | Fake: one consent-listed ID listed again under new hex, with no hold | Never requested, and no title shown | Phase 2, areas A3 (the match) and A4 (never requested, by the import) | the match and no title: `packages/core/tests/test_plaud_compare.py`; never requested: `packages/core/tests/test_plaud_import.py` (a re-keyed or flagged ID fetches nothing) | built |
 | C5.30 | Fake: 10% of IDs re-keyed | A large shrink; Accept then imports none of the matched IDs | Phase 2, area A3 | `packages/core/tests/test_plaud_hold.py` (the matched IDs stay excluded after Accept) | built |
 | C5.31 | Fake: a kept-out ID re-keyed | Likewise | Phase 2, area A3 | `packages/core/tests/test_plaud_compare.py`, `test_plaud_hold.py` | built |
@@ -3275,3 +3275,13 @@ None: every bullet of §20 is planned in a phase.
   keeps the ID out again (`write_listing`'s `_KEEP_AGAIN`). The views show the title of a
   recording Release let in and the sync then imported (Phase 1's phase-end list, Task 19). No
   decision or scenario's outcome changed.
+- 2026-11-02: area A4 built §11.6's later states: the snapshot mark (one counted
+  `plaud_state` row, `snapshot_mark`), the interrupted first catch-up (the gate's reason "The
+  first catch-up didn't finish: run `--catch-up` again (runbook)"), a rebuilt `state.db` found at
+  the worker's start (`gate.detect_rebuild`: a pass over the snapshots' `_meta.tool`, only while
+  no mark row exists, §22's builder's call) and recorded once, the review marks at listing time
+  (`compare.review_marks`, written with the listing as `ListingEntry.needs_review`), `recordings
+  plaud review` (and its step in the runbook's "Restoring for real", BB1), and decision 15's
+  "the sync's record was rebuilt" for case 4 once `rebuilt_at` is set. Two readings that fail
+  closed: a listed ID with no creation or start time needs review, and so does every one while
+  the rebuild record can't be read. No decision or scenario's outcome changed.

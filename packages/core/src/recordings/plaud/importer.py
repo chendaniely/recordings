@@ -627,6 +627,7 @@ class Importer:
             duration_ms=listed.duration_ms,
             import_failures=0,
             next_import_at=None,
+            needs_review=False,  # Import selected brought in a review row (§11.6): done
         )
         db.add_event(
             "arrived-private" if arrived_private else "imported",

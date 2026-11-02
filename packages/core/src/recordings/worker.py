@@ -69,7 +69,7 @@ from recordings.plaud.flags import (
     private_owed,
     still_owed,
 )
-from recordings.plaud.gate import GATE_ALLOWED, GATE_REFUSAL, Gate, gate_now
+from recordings.plaud.gate import GATE_ALLOWED, GATE_REFUSAL, Gate, detect_rebuild, gate_now
 from recordings.plaud.health import (
     RunOutcome,
     TurnOutcome,
@@ -465,6 +465,8 @@ class Worker:
         self._requests_at_start()
         self.writer = self._open_writer()
         self.gate = self._open_gate()
+        if self._step("rebuild", self._detect_rebuild):
+            self.gate = self._open_gate()
         self._enforce()
         self.progress.bump(self.clock(), "idle")
         self._beat()
@@ -521,6 +523,17 @@ class Worker:
         if not gate.open:
             log.info("gate closed: %s", gate.reason)
         return gate
+
+    def _detect_rebuild(self) -> bool:
+        """§11.6: a rebuilt `state.db` (2b snapshots, no mark row) is recorded and passed at once:
+        `rebuilt_at`, the gate open, a mark. Nothing stops."""
+        found = detect_rebuild(self.db, self.writer.archive, now=self.clock())
+        if found:
+            log.warning(
+                "the sync's records were rebuilt: what was made before now and isn't here waits "
+                "for review"
+            )
+        return found
 
     def _enforce(self) -> None:
         now = self.clock()

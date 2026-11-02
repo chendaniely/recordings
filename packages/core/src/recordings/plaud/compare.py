@@ -56,9 +56,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from recordings.plaud.cache import Cache, CompareRow, KeyedOut, title_allowed
-from recordings.plaud.checks import K_COMPARE, ListingEntry, ListingRow, PlaudDB
+from recordings.plaud.checks import K_COMPARE, K_REBUILT, ListingEntry, ListingRow, PlaudDB
 from recordings.plaud.keepout import ConsentList, keep_out_match
 from recordings.plaud.reconcile import matches_auto_private
+from recordings.plaud.when import parse_stamp
 from recordings.refs import canonical_plaud_id
 
 if TYPE_CHECKING:
@@ -476,6 +477,7 @@ def _entry(row: Classified, consent_ids: frozenset[str], before: ListingRow | No
         duration_ms=row.listed.duration_ms if hashed else None,
         kept_out_word=row.word if row.kept_out_now else None,
         rekey_of=row.rekey_of,
+        needs_review=row.review,
     )
 
 
@@ -572,6 +574,7 @@ def take_listing(
     if not listing.complete:
         raise ValueError("only a complete listing is compared (§11.2)")
     before = db.listing_rows()
+    seen = with_review_marks(db, listing.rows, before, here, at=listing.at)
     excluded = excluded_ids(consent, before)
     measured = hold.measure(listing.forms(), db=db, here=here, excluded=excluded)
     conditions = Conditions(
@@ -587,7 +590,7 @@ def take_listing(
         here=here,
         consent=consent,
         words=words,
-        listing=before,
+        listing=seen,
         keyed_out=cache.keyed_out(),
         patterns=patterns,
         conditions=conditions,
@@ -608,6 +611,71 @@ def take_listing(
     else:
         outcome = hold.verdict(measured)
     return result, measured, outcome
+
+
+def review_marks(
+    db: PlaudDB,
+    rows: Sequence[Listed],
+    before: Mapping[str, ListingRow],
+    here: Here,
+    *,
+    at: datetime,
+) -> frozenset[str]:
+    """§11.6's review marks: after a rebuilt or restored state.db (`rebuilt_at`), every listed
+    ID that isn't here, that no listing has shown since (no plaud_listing row), and whose Plaud
+    creation time (else its start time) is earlier than `rebuilt_at`, whenever it is first listed.
+    One with no time is marked too, and so is every one when the rebuild record can't be read:
+    only a recording made before the rebuild could have been kept out before it, and every one of
+    them waits for Dan (P8)."""
+    record = db.get(K_REBUILT)
+    if record is None:
+        return frozenset()
+    rebuilt = parse_stamp(record.get("at")) if isinstance(record, dict) else None
+    marked = set()
+    for row in rows:
+        pid = row.canonical_id
+        if pid in before or pid in here.by_id:
+            continue
+        made = row.created_at or row.start_at
+        if rebuilt is None or made is None or made < rebuilt:
+            marked.add(pid)
+    return frozenset(marked)
+
+
+def with_review_marks(
+    db: PlaudDB,
+    rows: Sequence[Listed],
+    before: Mapping[str, ListingRow],
+    here: Here,
+    *,
+    at: datetime,
+) -> dict[str, ListingRow]:
+    """`before`, with a row needing review for each ID `review_marks` marks now, so `classify`
+    reads them (A3's handoff: classify reads plaud_listing as it was before the listing), and
+    `record_compare` writes the marks with the listing (`ListingEntry.needs_review`)."""
+    marked = review_marks(db, rows, before, here, at=at)
+    seen = dict(before)
+    for row in rows:
+        if row.canonical_id in marked:
+            seen[row.canonical_id] = ListingRow(
+                canonical_plaud_id=row.canonical_id,
+                listed_id=row.listed_id,
+                first_seen=at,
+                last_seen=at,
+                absent_since=None,
+                kept_out_at=None,
+                kept_out_word=None,
+                rekey_of=None,
+                released_at=None,
+                needs_review=True,
+                import_failures=0,
+                next_import_at=None,
+                parked_at=None,
+                title_sha256=None,
+                duration_ms=None,
+                change_marker=None,
+            )
+    return seen
 
 
 def lines(result: Compare) -> list[str]:

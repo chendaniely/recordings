@@ -293,6 +293,7 @@ WHY_DETAILS = {
     "first check": "its title matched a private pattern",
     "patterns changed": "its title matched a private pattern",
     "kept out by title": "kept out by title",  # a keep-out word alone (Task 9's "kept out late")
+    "the sync's record was rebuilt": "the sync's record was rebuilt",  # case 4 after a rebuild
 }
 ARRIVED_PRIVATE = "its title matched when it arrived"
 CAUSES = {
@@ -335,6 +336,7 @@ JOB_LABELS = {
     "plaud-baseline": "The baseline",
     "plaud-catch-up": "The catch-up",
     "plaud-accept": "Accept this listing",
+    "plaud-review": "Marking for review",
 }
 
 

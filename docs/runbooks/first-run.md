@@ -1470,10 +1470,16 @@ through 1a, then:
    its docs, and an import exits 78 naming them (or, if `index.db` survived, stops with
    `IndexUnavailable` when it reaches one of them). Fix that first, and pass `--allow-missing`
    only for recordings you removed on purpose: it rebuilds, and `state.db` forgets them.
+   If you restored `state.db` (step 3) on a stage 2b commit, `recordings plaud review` then
+   records that the sync's records were rebuilt: an older `state.db` has forgotten what you kept
+   out since its backup, so every Plaud recording made before now that isn't here waits on the
+   Sync screen's **Not here yet**, "needs your review", until you import it or keep it out (stage
+   2b spec §11.6). Skip it when only the archive was lost.
    ```bash
    rc build   # a new server: once deploy.env is back, because its UID and GID are build args
    rc run --rm web recordings reindex
    rc run --rm web recordings validate /archive --deep
+   rc run --rm worker recordings plaud review   # a restored state.db, on a stage 2b commit
    rc up -d
    rc exec web recordings doctor --role web
    rc exec backup recordings doctor --role backup
