@@ -1020,8 +1020,9 @@ It:
    supplies the image tag that compose requires. `-T` passes stdin without a terminal.
 4. `token-import` checks the keys, makes one cheap call, and installs atomically at 0600. It prints
    only "signed in: yes · access token expires 2026-10-23 16:20 · refresh token: present · account
-   1a2b3c4d" (8 hex of the SHA-256 of the account's ID). If the call fails it installs nothing and
-   exits 77.
+   1a2b3c4d" (8 hex of the SHA-256 of the account's ID). If the call fails it installs nothing:
+   it exits 77 when Plaud refuses the token, and 69 when Plaud can't be reached, so a network
+   failure isn't read as a bad sign-in.
 
 It exits non-zero on any failure, naming the step. The new file clears the worker's sign-in pause,
 and the next good run pings the sync's check again. No phone sign-in: the vendor's login needs its
@@ -3195,3 +3196,6 @@ None: every bullet of §20 is planned in a phase.
   spikes skipped, the endpoint and the vendor file's keys are guesses
   (`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`; area A1). No decision or scenario
   changed.
+- 2026-11-01: §10.5's `token-import` exits 69, not 77, when Plaud can't be reached (77 stays for
+  a refused token), as area A1 built it: the two failures need different fixes. No decision or
+  scenario changed.
