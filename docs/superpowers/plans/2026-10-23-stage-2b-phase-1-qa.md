@@ -104,6 +104,26 @@ Dan chose **"Line + buttons"**, option A, the recommended one, on 2026-11-01, wi
 given. Phase 2's start adds the line's field to `SyncPanel` (the contract), and Phase 3 draws it
 with Re-sync and Park when checks run; P3's text gains the exception at that point.
 
+## 7. Doctor's "sign-in needed" while Phase 1 runs (asked 2026-11-01, phase end)
+
+Scenario: Phase 1 deployed, Dan runs `rc exec worker recordings doctor --role worker`; there is no
+way to sign in to Plaud until Phase 2, so the worker is idle on purpose. Before asking: doctor is run
+by hand, never in the boot or deploy path; it exits 78 with "sign-in needed" for as long as Phase 1
+runs, and the runbook tells Dan to expect exactly that one problem; the council's goal-fit lens (G3)
+found that an always-expected problem teaches him to skim past doctor's problems. A note means
+doctor's code, the runbook's expected lines and CI's compose smoke change; in Phase 2 it becomes a
+problem again, once `make plaud-sign-in` exists.
+
+- **A. A note, and exit 0 (Recommended):** "Plaud sign-in: comes with stage 2b's next phase"; a real
+  problem stands out. A problem again in Phase 2.
+- B. Keep it a problem (exit 78), as the runbook now says to expect.
+- C. Say nothing about the sign-in until Phase 2.
+
+Dan chose **"A note, exit 0"**, option A, the recommended one, on 2026-11-01, with no further reason
+given. The phase end's step 4 makes it a note (doctor, its test, the runbook's section 6 and the
+compose smoke's expected problems), and Phase 2's outline turns it back into a problem with
+`make plaud-sign-in`.
+
 ## Calls made for Dan
 
 - **Mode: attended.** Phase PRs wait for Dan's merge, and a change to the spec, one of his decisions
