@@ -306,7 +306,9 @@ def test_the_runbook_has_a_deploy_2b_section():
     for needed in (
         "under 2 seconds",
         "a period of 20 minutes, a grace of 2 hours",
-        "sign-in needed",
+        # Dan, phase-end Q&A §7: doctor's note while Phase 1 runs, and its exit 0
+        "Plaud sign-in: comes with stage 2b's next phase",
+        "reports no problem and exits 0",
         "Scheduled sync waits for the first catch-up (runbook)",
         '"/consent"',
         "RECORDINGS_CONSENT_HOST",

@@ -1029,10 +1029,10 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
 ## 6. Deploy 2b
 
 Stage 2b's first phase adds a third container, `worker`, from the same image. Deployed now, it
-stays idle and healthy: doctor says "sign-in needed" until the Plaud sign-in exists (a later phase
-adds it), it applies late consent listings within seconds of an edit, and it holds every scheduled
-sync until the first catch-up. Nothing in this section calls Plaud. On the homelab server, in
-`$REPO_DIR`, with the top block pasted.
+stays idle and healthy: doctor notes "Plaud sign-in: comes with stage 2b's next phase" until a later
+phase adds the sign-in, it applies late consent listings within seconds of an edit, and it holds
+every scheduled sync until the first catch-up. Nothing in this section calls Plaud. On the homelab
+server, in `$REPO_DIR`, with the top block pasted.
 
 **First, the code.** Move the checkout to Phase 1's merge commit, as 2.8 does for a tag. The
 running containers keep their image until step 5's `make deploy`; the new `compose.yml` and
@@ -1095,8 +1095,8 @@ the Library moves onto `index.db` before 2b deploys.
    back across 2b" says, not as 2.8: this checkout's `compose.yml` would start a `worker` the
    older image can't run.
 6. **The Plaud sign-in** comes with the next phase, and its `make plaud-sign-in` with it. Until it
-   exists the worker stays idle and healthy: doctor reports "sign-in needed", and Status shows the
-   gate's line, "Scheduled sync waits for the first catch-up (runbook)", since nothing opens the
+   exists the worker stays idle and healthy: doctor notes it, never as a problem, and Status shows
+   the gate's line, "Scheduled sync waits for the first catch-up (runbook)", since nothing opens the
    sign-in blocker before the first sign-in.
 7. **Check it.**
    ```bash
@@ -1109,9 +1109,10 @@ the Library moves onto `index.db` before 2b deploys.
    ```
    Expected:
    - `rc ps` shows `web`, `backup` and `worker` up, and `worker` `(healthy)`.
-   - `doctor --role worker` reports one problem until the sign-in exists: "sign-in needed: the
-     Plaud sign-in comes with stage 2b's next phase". Fix any other first: the
-     consent list's lines, `/plaud`'s mode, the keep-out word, or the sync's URL.
+   - `doctor --role worker` reports no problem and exits 0. Until the sign-in exists its notes
+     say "Plaud sign-in: comes with stage 2b's next phase; until then the worker stays idle
+     (runbook section 6)", which is expected. Any problem it reports is real: fix it (the consent
+     list's lines, `/plaud`'s mode, the keep-out word, or the sync's URL).
    - `plaud consent` prints the ID count you expect; the lines it reads as kept, by number (each
      must mean "keep"); and any recording 2a imported despite its exclusion, by archive ID, marked
      as 2a's parser having missed it. The worker has already tagged those `private` and flagged

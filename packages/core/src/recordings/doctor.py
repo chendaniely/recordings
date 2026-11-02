@@ -77,6 +77,15 @@ FORBIDDEN = {
 PLAUD_MOUNT = backup.PLAUD_MOUNT  # the sign-in's folder, mounted in `worker` only
 CONSENT_MOUNT = Path("/consent")  # the consent folder, in `worker` and `backup` (read-only)
 OPEN_TO_OTHERS = 0o077  # ssh refuses a key with any of these bits set; doctor warns for any secret
+# The worker's missing sign-in. Phase 1 has no way to sign in, so it is a note and doctor exits 0
+# for it (Dan, phase-end Q&A §7): an always-expected problem teaches skimming past real ones. Phase
+# 2's `make plaud-sign-in` sets this True, and SIGN_IN_NEEDED then names the target (spec §17.2).
+SIGN_IN_IS_A_PROBLEM = False
+SIGN_IN_NOTE = (
+    "Plaud sign-in: comes with stage 2b's next phase; until then the worker stays idle "
+    "(runbook section 6)"
+)
+SIGN_IN_NEEDED = "sign-in needed: the Plaud sign-in comes with stage 2b's next phase"
 
 
 def _secrets(environ: Mapping[str, str], problems: list[str], warnings: list[str]) -> dict:
@@ -712,13 +721,11 @@ def _worker(
     if consent.review_lines:
         report["notes"].append(kept_lines_note(consent.review_lines))
     info["token_store"] = settings.token_store.is_file()  # presence only: never opened
-    if not info["token_store"]:
-        # Phase 1 has no sign-in command yet (`make plaud-sign-in` arrives in Phase 2, which
-        # restores spec §17.2's wording): never point at one that doesn't exist.
-        problems.append(
-            "sign-in needed: the Plaud sign-in comes with stage 2b's next phase; until then "
-            "the worker stays idle (runbook section 6)"
-        )
+    if not info["token_store"]:  # never points at a command that doesn't exist yet
+        if SIGN_IN_IS_A_PROBLEM:
+            problems.append(SIGN_IN_NEEDED)
+        else:
+            report["notes"].append(SIGN_IN_NOTE)
     _plaud_modes(settings.token_store, problems)
     info["keep_out_words"] = _enforced_words(cfg, problems)
 

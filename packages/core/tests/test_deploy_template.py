@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from recordings import config
+from recordings import config, doctor
 
 REPO = Path(__file__).resolve().parents[3]
 COMPOSE = REPO / "docker" / "compose.yml"
@@ -182,6 +182,11 @@ def test_the_smoke_script_parses_and_creates_every_compose_secret():
     assert set(smoke.SECRETS) | {"ntfy_token", "ntfy_topic"} == set(compose()["secrets"])
     assert "ntfy_topic" not in smoke.SECRETS
     assert not os.access(path, os.X_OK), "no shebang, so no exec bit"
+    # Dan, phase-end Q&A §7: while Phase 1 runs, the missing sign-in is doctor's note, not a
+    # problem, and the smoke looks for it there (CI alone runs the smoke).
+    assert not any("sign-in" in p for p in smoke.WORKER_PROBLEMS)
+    (note,) = smoke.WORKER_NOTES
+    assert doctor.SIGN_IN_NOTE.startswith(note) and not doctor.SIGN_IN_IS_A_PROBLEM
 
 
 def test_the_boot_unit_waits_for_docker_the_disk_and_tailscale():

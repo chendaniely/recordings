@@ -2196,7 +2196,9 @@ these changes:
 - **`worker`'s problems:**
   - the consent list missing, unreadable, empty or with typo lines (by line number); lines read as
     kept are reported as a note, by number;
-  - no token store ("sign-in needed: run `make plaud-sign-in`");
+  - no token store ("sign-in needed: run `make plaud-sign-in`"). While Phase 1 runs, with no
+    `make plaud-sign-in` yet, it is a note instead ("Plaud sign-in: comes with stage 2b's next
+    phase"), and doctor exits 0 for it (Dan, Phase 1's Q&A §7); Phase 2 makes it a problem again;
   - `/plaud` wider than 0700, or the token wider than 0600, or not the app's own;
   - an invalid `keep_out_word`;
   - a missing or bad `deadman_sync_url`.
@@ -3166,3 +3168,5 @@ None: every bullet of §20 is planned in a phase.
   (step 4's reviews of the phase end). No decision or scenario changed.
 - 2026-11-01: §15.6's sentence for a patterns pass that stopped gives the step its class needs
   (step 4's reviews of the phase end).
+- 2026-11-01: §17.2: while Phase 1 runs, doctor's missing sign-in is a note and exits 0, a problem
+  again once Phase 2 adds `make plaud-sign-in` (Dan, Phase 1's Q&A §7: "A note, exit 0").

@@ -949,13 +949,33 @@ def test_a_worker_with_no_consent_list_reports_it(tmp_path):
     ]
 
 
-def test_a_worker_with_no_token_store_needs_the_sign_in(tmp_path):
+def test_a_worker_with_no_token_store_notes_the_sign_in_and_exits_0(tmp_path, monkeypatch, capsys):
+    # why: Dan, phase-end Q&A §7. Phase 1 has no way to sign in, so an always-expected problem
+    # would teach skimming past real ones: a note, and doctor exits 0 for it. Phase 2's
+    # `make plaud-sign-in` makes it a problem again (doctor.SIGN_IN_IS_A_PROBLEM).
+    environ = worker(tmp_path, token=False)
+    report = doctor(environ, role="worker")
+    assert report["problems"] == []
+    assert doctor_module.SIGN_IN_NOTE in report["notes"]
+    assert doctor_module.SIGN_IN_NOTE.startswith("Plaud sign-in: comes with stage 2b's next phase")
+    assert "make plaud-sign-in" not in doctor_module.SIGN_IN_NOTE  # that target is Phase 2's
+    assert "runbook section 6" in doctor_module.SIGN_IN_NOTE
+    assert report["plaud"]["token_store"] is False
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("RECORDINGS_ROLE", raising=False)
+    assert main(["doctor", "--role", "worker", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["problems"] == []
+
+
+def test_the_sign_in_becomes_a_problem_by_one_switch(tmp_path, monkeypatch):
+    # why: Phase 2 turns the note back into a problem when `make plaud-sign-in` exists (Q&A §7);
+    # the switch is one line, and the problem keeps spec §17.2's "sign-in needed".
+    monkeypatch.setattr(doctor_module, "SIGN_IN_IS_A_PROBLEM", True)
     report = doctor(worker(tmp_path, token=False), role="worker")
     (problem,) = report["problems"]
     assert problem.startswith("sign-in needed")
-    assert "make plaud-sign-in" not in problem  # that target arrives in Phase 2
-    assert "runbook section 6" in problem
-    assert report["plaud"]["token_store"] is False
+    assert doctor_module.SIGN_IN_NOTE not in report["notes"]
 
 
 def test_a_plaud_folder_wider_than_0700_is_a_problem(tmp_path):

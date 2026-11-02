@@ -16,7 +16,8 @@ It proves, in the hardened containers and as this machine's user:
   which `make deploy`'s `--wait` relies on
 - the worker (stage 2b), with no Plaud sign-in, no consent list and an empty `deadman_sync_url`,
   passes its own health check (`recordings worker --alive`) and stays up, idle; and `recordings
-  doctor --role worker` reports all three (C8.03, C10.02)
+  doctor --role worker` reports all three (C8.03, C10.02): the list and the URL as problems, the
+  sign-in as a note while Phase 1 has no way to sign in (Dan, phase-end Q&A §7)
 
 It runs without ntfy, as a deployment may (stage 2b spec, Dan's decision 9): deploy.env names no
 topic file, so none is mounted. The repository and the mirror are folders under the restore
@@ -64,12 +65,14 @@ target = "/restore/smoke-mirror/"
 [plaud]
 consent_list = "/consent/consent-list.md"
 """
-# What `doctor --role worker` must report in the smoke's worker: no list, no sign-in, no ping URL.
+# What `doctor --role worker` must report in the smoke's worker: no list and no ping URL as
+# problems, and no sign-in as a note until Phase 2's `make plaud-sign-in` makes it a problem again
+# (doctor.SIGN_IN_IS_A_PROBLEM; Dan, phase-end Q&A §7).
 WORKER_PROBLEMS = (
     "the consent list is missing",
-    "sign-in needed",
     "RECORDINGS_DEADMAN_SYNC_URL_FILE",
 )
+WORKER_NOTES = ("Plaud sign-in: comes with stage 2b's next phase",)
 BACKUP_COMMANDS = (
     ("backup", "init"),
     ("backup", "run"),
@@ -94,7 +97,8 @@ def compose_run(compose: list[str], env: dict[str, str], *args: str, quiet: bool
 
 
 def worker_doctor(compose: list[str], env: dict[str, str]) -> None:
-    """`doctor --role worker` exits 78 here, by design, and must name each of WORKER_PROBLEMS."""
+    """`doctor --role worker` exits 78 here, by design, and must name each of WORKER_PROBLEMS
+    among its problems and each of WORKER_NOTES among its notes."""
     proc = subprocess.run(
         [*compose, "exec", "-T", "worker", "recordings", "doctor", "--role", "worker", "--json"],
         env=env,
@@ -103,13 +107,15 @@ def worker_doctor(compose: list[str], env: dict[str, str]) -> None:
         check=False,
     )  # exit code read below
     try:
-        problems = json.loads(proc.stdout)["problems"]
-    except (ValueError, KeyError):
+        report = json.loads(proc.stdout)
+        problems, notes = report["problems"], report["notes"]
+    except (ValueError, KeyError, TypeError):
         print(proc.stderr, file=sys.stderr)
         raise SmokeFailed(
             f"`doctor --role worker` printed no report (exit {proc.returncode})"
         ) from None
     missing = [p for p in WORKER_PROBLEMS if not any(p in found for found in problems)]
+    missing += [n for n in WORKER_NOTES if not any(n in found for found in notes)]
     if proc.returncode != 78 or missing:
         raise SmokeFailed(f"`doctor --role worker` exited {proc.returncode}, missing {missing}")
 
