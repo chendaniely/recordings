@@ -85,3 +85,15 @@ def test_make_check_runs_lint_the_suites_utc_and_leaks():
     assert "uv run pytest" in out and "npm test" in out
     assert "TZ=UTC uv run pytest" in out
     assert "gitleaks git --redact --no-banner ." in out
+
+
+def test_the_docker_scripts_comments_wrap_at_100_characters():
+    # why: step 4's reviews. The Python and the docs wrap at 100 (pyproject.toml's ruff); the
+    # shell scripts' comments do too, so their headers read in any editor. Code lines may run on.
+    long = [
+        f"{path.name}:{n} ({len(line)})"
+        for path in sorted((REPO / "docker").glob("*.sh"))
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if line.lstrip().startswith("#") and len(line) > 100
+    ]
+    assert long == []

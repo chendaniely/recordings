@@ -3,12 +3,13 @@
 # appends one Plaud ID to the consent list, as the line "- `<id>` — added <date>". It writes the old
 # list and the new line to a new file in the same folder, at the old file's mode, then renames it
 # over the list, with a `sync` before the rename and after it, so the worker, which watches the
-# folder, reads the old list or the new one, never half of one, even after a power cut. The ID must be 32 hex digits, bare or after `of_`: anything else is refused before
-# the list is touched. It never makes a list and never extends an empty one: a missing list, an
-# empty one and one of only blank lines and comments (see the check below) are a consent stop
-# that fails closed (§12.1), and one exclusion added to it would
-# lift the stop while the real list's other recordings were still unlisted. A list with kept or
-# text lines but no exclusion is also a stop, but one Dan wrote: his first exclusion is allowed.
+# folder, reads the old list or the new one, never half of one, even after a power cut. The ID
+# must be 32 hex digits, bare or after `of_`: anything else is refused before the list is touched.
+# It never makes a list and never extends an empty one: a missing list, an empty one and one of
+# only blank lines and comments (see the check below) are a consent stop that fails closed
+# (§12.1), and one exclusion added to it would lift the stop while the real list's other
+# recordings were still unlisted. A list with kept or text lines but no exclusion is also a stop,
+# but one Dan wrote: his first exclusion is allowed.
 # It reads RECORDINGS_CONSENT_HOST from docker/deploy.env, and no secret.
 set -eu
 cd "$(dirname "$0")/.."
