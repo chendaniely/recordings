@@ -144,6 +144,11 @@ def table(tmp: Path) -> dict:
             lambda r: r.plaud.api_base,
             "https://plaud-7.example/api",
         ),
+        ("plaud", "token_url"): (
+            "https://auth-7.example/token",
+            lambda r: r.plaud.token_url,
+            "https://auth-7.example/token",
+        ),
     }
 
 

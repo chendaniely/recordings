@@ -2205,9 +2205,10 @@ these changes:
 - **`worker`'s problems:**
   - the consent list missing, unreadable, empty or with typo lines (by line number); lines read as
     kept are reported as a note, by number;
-  - no token store ("sign-in needed: run `make plaud-sign-in`"). While Phase 1 runs, with no
-    `make plaud-sign-in` yet, it is a note instead ("Plaud sign-in: comes with stage 2b's next
-    phase"), and doctor exits 0 for it (Dan, Phase 1's Q&A §7); Phase 2 makes it a problem again;
+  - no token store ("sign-in needed: run `make plaud-sign-in`"), or one the store can't use.
+    While Phase 1 ran, with no `make plaud-sign-in` yet, it was a note instead ("Plaud sign-in:
+    comes with stage 2b's next phase"), and doctor exited 0 for it (Dan, Phase 1's Q&A §7); Phase
+    2 made it a problem again;
   - `/plaud` wider than 0700, or the token wider than 0600, or not the app's own;
   - an invalid `keep_out_word`;
   - a missing or bad `deadman_sync_url`.
@@ -2261,10 +2262,12 @@ these changes:
   consent_list = "/consent/consent-list.md"   # inside the consent folder; never a file mount
   token_store = "/plaud/tokens.json" # the Plaud sign-in (worker only; `make plaud-sign-in`)
   # api_base = "https://…"           # Plaud's API: the copied client's by default; tests set a fake
+  # token_url = "https://…"          # where the sign-in refreshes: api_base + /oauth/token by default
   ```
 - **Unset means:** `schedule_minutes` 20, `auto_import` true, `full_sweep_days` 7, `keep_out_word`
   `noarchive`, `consent_list` none (a consent stop), `token_store` `/plaud/tokens.json`, `api_base`
-  the copied client's host.
+  the copied client's host, `token_url` `api_base` + `/oauth/token` (§22's setting for the token
+  endpoint: a guess while S1 is skipped, which Dan can correct without a release).
 - `recheck_days` goes: the rolling sweep replaced its hot window (main spec §9.1.1).
 - **Secrets:** `RECORDINGS_PLAUD_TOKEN` leaves `config.py`'s `SECRETS`, the template and the README.
   `RECORDINGS_DEADMAN_SYNC_URL` (stage 2b) joins them, with the backup URL's rules. The template's
@@ -3054,11 +3057,11 @@ smoke.
 | C3.04 | Fake: an unparked failing recording | Exits 2 with its count | Phase 3 | Phase 3's plan | planned |
 | C3.05 | Fake: Sync everything killed part-way | It resumes | Phase 3 | Phase 3's plan | planned |
 | C3.06 | Real: Sync everything | Exits 0, or 2 only for recordings Dan then parks, each checked in Plaud's app and recorded in the runbook's table by ID hash | Phase 3 | runbook (Phase 3) | planned |
-| C4.01 | Fake: an expired access token that refreshes | The pings go on | Phase 2 | Phase 2's plan | planned |
-| C4.02 | Fake: a 401, then a refused refresh | The pings stop from that turn on, with no Plaud call until the token changes | Phase 2 | Phase 2's plan | planned |
-| C4.03 | Fake: a new token, then a good turn | It pings again | Phase 2 | Phase 2's plan | planned |
-| C4.04 | Fake: a 429 from the token endpoint | An outage, not `sign-in` | Phase 2 | Phase 2's plan | planned |
-| C4.05 | Fake: a 401 after a good refresh | It goes through the current-user read | Phase 2 | Phase 2's plan | planned |
+| C4.01 | Fake: an expired access token that refreshes | The pings go on | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
+| C4.02 | Fake: a 401, then a refused refresh | The pings stop from that turn on, with no Plaud call until the token changes | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
+| C4.03 | Fake: a new token, then a good turn | It pings again | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
+| C4.04 | Fake: a 429 from the token endpoint | An outage, not `sign-in` | Phase 2, area A1 | `packages/core/tests/test_worker.py`, through a stand-in turn (A6's flow test adds the real one) | built |
+| C4.05 | Fake: a 401 after a good refresh | It goes through the current-user read | Phase 2, area A1 | `packages/core/tests/test_plaud_tokens.py`, `test_plaud_client.py` | built |
 | C4.06 | Real: the catch-up ends | The sync's check goes green within 20 minutes | Phase 2 | runbook section 8 | planned |
 | C5.01 | Fake: a placeholder-titled recording, later renamed to a private title | It arrives at the next run, untagged; renamed, it is tagged at the next run even when its fetch fails | Phase 2 | Phase 2's plan | planned |
 | C5.02 | Fake: a keep-out title | It is never requested (the request log) | Phase 2 | Phase 2's plan | planned |
@@ -3186,3 +3189,9 @@ None: every bullet of §20 is planned in a phase.
 - 2026-11-01: P3, §15 and §15.2: Status keeps the "fails every check" line with Re-sync and Park,
   one more exception to P3 beside Accept, and the line's data reads `plaud_checks` (Dan, Phase 1's
   Q&A §6: "Line + buttons").
+- 2026-11-01: §17.2: doctor's missing sign-in is a problem again, naming `make plaud-sign-in`, and
+  doctor reports the sign-in's expiries (area A1 of the build straight through, Q&A §8).
+- 2026-11-01: §17.4 gains `[plaud] token_url`, §22's setting for the token endpoint: with the
+  spikes skipped, the endpoint and the vendor file's keys are guesses
+  (`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`; area A1). No decision or scenario
+  changed.

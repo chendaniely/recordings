@@ -20,7 +20,7 @@ endif
 
 .PHONY: help check setup skills build lint test test-py test-js test-utc leaks e2e demo
 .PHONY: demo-archive pages pages-serve pages-test schemas brand docker deploy deploy-smoke
-.PHONY: rollback prune-images restic consent-add
+.PHONY: rollback prune-images restic consent-add plaud-sign-in
 
 # The first target, so a bare `make` lists the targets rather than installing anything. GNU make
 # 3.81 (macOS) is enough: the list is a grep of each target's `## ` comment.
@@ -139,6 +139,40 @@ consent-add: ## add a Plaud ID to the server's consent list, from the Mac: make 
 	esac; \
 	[ $$rc = 0 ] || exit 1; \
 	echo "make consent-add: the worker reads the new list within a few seconds. If the line (by the worker: N IDs) above still shows the old count, run: rc exec worker recordings plaud consent"
+
+# Run on the Mac (stage 2b spec §10.5): signs in to Plaud with the vendor CLI under a temporary
+# HOME (made under $TMPDIR, which Time Machine skips, at mode 0700, and removed by a trap whatever
+# happens), so the Mac's own Plaud sign-ins are untouched; then pipes the CLI's token file over ssh
+# into `recordings plaud token-import -` in the server's worker, which checks it, makes one cheap
+# call and installs it. The token never passes as an argument or an environment variable, and is
+# never printed. PLAUD_CLI names the vendor CLI (audio-router's `plaud`). A Claude session never
+# runs this target (CLAUDE.md).
+PLAUD_CLI ?= plaud
+plaud-sign-in: ## sign in to Plaud for the server, from the Mac: make plaud-sign-in
+	$(if $(SERVER),,$(error make plaud-sign-in: set SERVER, your ssh name for the homelab server, in local.mk))
+	$(if $(REPO_DIR),,$(error make plaud-sign-in: set REPO_DIR, the repo's checkout on the server, in local.mk))
+	@tmp=$${TMPDIR:-/tmp}; \
+	tmphome=$$(mktemp -d "$${tmp%/}/plaud-sign-in.XXXXXX") \
+	  || { echo "make plaud-sign-in: step 1 failed: no temporary HOME could be made under $$tmp" >&2; exit 1; }; \
+	trap 'rm -rf "$$tmphome"' EXIT; trap 'exit 1' HUP INT TERM; \
+	chmod 700 "$$tmphome" || { echo "make plaud-sign-in: step 1 failed: the temporary HOME's mode" >&2; exit 1; }; \
+	echo "make plaud-sign-in: sign in to Plaud in the browser that opens"; \
+	HOME="$$tmphome" $(PLAUD_CLI) login \
+	  || { echo "make plaud-sign-in: step 2 failed: the Plaud sign-in (above); nothing was sent" >&2; exit 1; }; \
+	[ -s "$$tmphome/.plaud/tokens.json" ] \
+	  || { echo "make plaud-sign-in: step 2 failed: $(PLAUD_CLI) login left no .plaud/tokens.json in its HOME; nothing was sent" >&2; exit 1; }; \
+	ssh "$(SERVER)" "cd '$(REPO_DIR)' && sh docker/up-deployed.sh exec -T worker recordings plaud token-import -" < "$$tmphome/.plaud/tokens.json"; \
+	rc=$$?; \
+	case $$rc in \
+	  0) ;; \
+	  255) echo "make plaud-sign-in: step 3 failed: the server could not be reached, or the connection dropped (ssh exit 255); nothing is known to be installed: run make plaud-sign-in again" >&2 ;; \
+	  77) echo "make plaud-sign-in: step 4 failed, on the server: the token file or the sign-in was refused (above); nothing was installed: run make plaud-sign-in again" >&2 ;; \
+	  69) echo "make plaud-sign-in: step 4 failed, on the server: Plaud could not be reached from it (above); nothing was installed: run make plaud-sign-in again later" >&2 ;; \
+	  78) echo "make plaud-sign-in: step 4 failed, on the server: the sign-in's folder or the settings (above); nothing was installed" >&2 ;; \
+	  *) echo "make plaud-sign-in: step 4 failed, on the server: token-import exited $$rc (above); check with: rc exec worker recordings plaud check" >&2 ;; \
+	esac; \
+	[ $$rc = 0 ] || exit 1; \
+	echo "make plaud-sign-in: done. The worker's next sync uses it; to check now, on the server: rc exec worker recordings plaud check"
 
 restic: ## fetch the pinned restic into .cache/bin
 	uv run python scripts/fetch_restic.py

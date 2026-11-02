@@ -70,6 +70,7 @@ make rollback TAG=<tag>                             # starts an older image agai
 make prune-images                                   # removes old images, keeping the newest five
 make deploy-smoke                                   # the real compose file, once, against temporary folders
 make consent-add ID='<id>'                          # from the Mac: adds a Plaud ID to the server's consent list
+make plaud-sign-in                                  # from the Mac: signs the server's worker in to Plaud
 ```
 
 - **First time: initialise before you deploy.** Do not run `make deploy` on a new archive. `recordings init`
@@ -103,6 +104,12 @@ make consent-add ID='<id>'                          # from the Mac: adds a Plaud
   the `of_` form, or the Copy ID form), appends the line by writing a new file and renaming it (it
   refuses a missing, empty or comments-only list), and prints what the worker reads. The runbook's
   "Keep a recording out for good" has the rest.
+- **`make plaud-sign-in`,** run on the Mac with the same `local.mk`, signs the server's worker in
+  to Plaud (stage 2b): the vendor CLI's `plaud login` under a temporary `HOME`, so the Mac's own
+  Plaud sign-ins are untouched, then its token file over ssh into `recordings plaud token-import
+  -`, which makes one cheap call and installs it. It prints one line, never the token. The worker
+  refreshes the sign-in by itself; when Plaud refuses a refresh, Status says "sign-in needed" and
+  this is the way back. The runbook's "Plaud sign-in" has the rest.
 - **Set `[server] allowed_hosts`** in `config.toml` to the names you reach the app by, such
   as its host name, Tailscale name and Tailscale IP. Localhost and `base_url`'s host are
   always allowed; the app refuses any other name. Give each name alone, with no port or
@@ -140,6 +147,7 @@ file. Docker sets it to `/config/config.toml`.
 | `RESTIC_PASSWORD`; `RESTIC_REST_PASSWORD`, rest-server's; the NAS's SSH key and host key, `RECORDINGS_NAS_SSH_KEY` and `RECORDINGS_NAS_KNOWN_HOSTS` (files only); `RECORDINGS_DEADMAN_URL`; and rest-server's certificate, the `nas_cacert` file that `[backup] cacert` names | secret files, as `…_FILE` (Docker secrets) | stage 2a |
 | `RECORDINGS_NTFY_TOPIC`, once ntfy is set up, and `RECORDINGS_NTFY_TOKEN`, only for an ntfy server that needs one | secret files, which `RECORDINGS_ALERTS_TOPIC_HOST` and `RECORDINGS_NTFY_AUTH_HOST` in `docker/deploy.env` name (unset: none is mounted) | stage 2a; optional from stage 2b |
 | `RECORDINGS_DEADMAN_SYNC_URL`, the Plaud sync's own Healthchecks ping URL, for the `worker` container only | a secret file, as `RECORDINGS_DEADMAN_SYNC_URL_FILE` | stage 2b |
+| The Plaud sign-in, for the `worker` container only (never an environment variable) | `tokens.json` in the sign-in's folder (`RECORDINGS_PLAUD_HOST`), installed from the Mac by `make plaud-sign-in` | stage 2b |
 | `RECORDINGS_SPARK_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | environment, or `…_FILE` | stage 4 |
 
 Secrets never go in `config.toml`, `deploy.env`, the image or the repo. `recordings doctor`

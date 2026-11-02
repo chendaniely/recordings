@@ -6,9 +6,14 @@ own code, relicensed MIT for this repo (main spec §19). The edits, each from §
 - **IDs are opaque.** audio-router's `FILE_ID_RE` filter rejected Plaud's `of_<32 hex>` IDs, which
   is why its sync stopped. Nothing here checks an ID against a pattern. Every request uses the ID
   exactly as the newest listing gave it; the canonical form is only for comparing.
-- **Only reads.** One request function sends `GET`. The refresh `POST` arrives with the token store
-  in Phase 2 (spikes S1, S2, S4); until then a `TokenSource` supplies the access token and its
-  refresh, replacing audio-router's call to the vendor CLI.
+- **Only reads.** One request function sends `GET`; `post_refresh` sends the one `POST`, the
+  refresh, to the token endpoint (§10.3). A `TokenSource` (the token store, `plaud/tokens.py`)
+  supplies the access token and its refresh, replacing audio-router's call to the vendor CLI.
+- **A 401 after a good refresh** makes the cheap current-user read (`USER_PATH`, §10.3): a 401
+  there too is `PlaudAuthError`; if it works, only that one call was refused (`PlaudCallRefused`,
+  that recording's failure). `USER_PATH` and the token endpoint are guesses, since the spikes were
+  skipped and audio-router shows neither (docs/superpowers/plans/2026-11-01-stage-2b-guesses.md):
+  a 404 at `USER_PATH` falls back to the first listing page, which proves the sign-in as well.
 - **Redirects and the token.** API calls refuse every redirect, as `alerts.py` does. Authorization
   goes only to the API host, as an unredirected header. Presigned links (the audio, and blocks
   behind a `data_link`) are fetched without it, must be `https`, and may follow a redirect only to
@@ -48,12 +53,12 @@ import ssl
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from recordings import __version__
@@ -62,6 +67,10 @@ from recordings.refs import canonical_plaud_id
 
 LIST_PATH = "/open/third-party/files/"
 FILE_PATH = "/open/third-party/files/{}"
+# The cheap signed-in read (§10.3): a guess, after the vendor CLI's `plaud me`, which audio-router
+# runs to refresh. A 404 there falls back to one listing page of PROBE_PAGE_SIZE rows.
+USER_PATH = "/open/third-party/users/me"
+PROBE_PAGE_SIZE = 10  # the smallest page the API takes
 PAGE_SIZE = 100  # as copied (the API rejects anything under 10). Phase 2: S5, S10.
 CONNECT_TIMEOUT = 10.0
 READ_TIMEOUT = 60.0
@@ -110,6 +119,17 @@ class PlaudRateLimited(PlaudError):
 
 class PlaudBadResponse(PlaudError):
     message = "Plaud's answer couldn't be read"
+
+
+class PlaudNotFound(PlaudBadResponse):
+    """A 404: to the sync, an answer it can't use, as before; `current_user` tells it apart."""
+
+
+class PlaudCallRefused(PlaudError):
+    """A 401 again after a good refresh, while the current-user read works (§10.3): the sign-in
+    is good, and this one call failed, as that recording's failure."""
+
+    message = "Plaud refused this call (401), though the sign-in works"
 
 
 class PlaudRedirectRefused(PlaudError):
@@ -205,6 +225,69 @@ def id_hash(plaud_id: str) -> str:
     return hashlib.sha256(canonical_plaud_id(plaud_id).encode("utf-8")).hexdigest()[:8]
 
 
+_ACCOUNT_KEYS = ("id", "user_id", "uid")  # a guess: S1 would have shown the reply's names
+
+
+def account_hash(payload: object) -> str | None:
+    """The only form the account is shown in (§10.5): 8 hex of the SHA-256 of its ID, from the
+    current-user answer's `id` (or `user_id`, `uid`), at its top or under `data`; None when it
+    names none."""
+    for part in (payload.get("data") if isinstance(payload, dict) else None, payload):
+        if not isinstance(part, dict):
+            continue
+        for key in _ACCOUNT_KEYS:
+            value = part.get(key)
+            if isinstance(value, str | int) and not isinstance(value, bool) and str(value):
+                return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:8]
+    return None
+
+
+def _visible(value: object) -> bool:
+    """A token as it may go into a header or a form: visible ASCII, no space (header injection)."""
+    return (
+        isinstance(value, str) and bool(value) and value.isascii() and value.isprintable()
+    ) and " " not in value
+
+
+_MAX_TOKEN_REPLY = 1024 * 1024
+
+
+def post_refresh(token_url: str, fields: Mapping[str, str]) -> dict:
+    """The one POST (§10.1, §10.3): a refresh, form-encoded, to the token endpoint, never
+    redirected and with no Authorization header. Returns the reply's JSON object, which has a
+    usable `access_token`. Refused (any 4xx but 408 and 429, or a 200 whose JSON names an
+    `error`): PlaudAuthError. 408, 429, 5xx, no connection, or a reply that can't be read: the
+    outage classes, never a sign-in problem. Nothing of the request or the reply is logged, and
+    every error is this module's own, raised from None."""
+    request = urllib.request.Request(
+        token_url, data=urlencode(dict(fields)).encode("ascii"), method="POST"
+    )
+    request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    request.add_header("Accept", "application/json")
+    request.add_header("User-Agent", USER_AGENT)
+    response = _guarded(
+        lambda: _API_OPENER.open(request, timeout=CONNECT_TIMEOUT),
+        PlaudBadResponse,
+        from_http=_from_refresh,
+    )
+    with response:
+        body = _guarded(
+            lambda: response.read(_MAX_TOKEN_REPLY + 1), PlaudBadResponse, from_http=_from_refresh
+        )
+        unfinished = bool(getattr(response, "length", None))
+    if len(body) > _MAX_TOKEN_REPLY or unfinished:
+        raise PlaudBadResponse() from None
+    reply: object = None
+    # HTML or broken JSON: raised below, outside the handler, so no JSONDecodeError rides along.
+    with contextlib.suppress(ValueError, RecursionError):
+        reply = json.loads(body)
+    if isinstance(reply, dict) and isinstance(reply.get("error"), str):
+        raise PlaudAuthError() from None  # a refusal some servers send with a 200
+    if not isinstance(reply, dict) or not _visible(reply.get("access_token")):
+        raise PlaudBadResponse() from None
+    return reply
+
+
 class _HTTPConnection(http.client.HTTPConnection):
     """Connects within CONNECT_TIMEOUT (the opener's timeout), then reads with READ_TIMEOUT."""
 
@@ -292,6 +375,24 @@ def _from_http(exc: urllib.error.HTTPError) -> PlaudError:
         return PlaudRateLimited(_retry_after(exc.headers))
     if code == 408 or code >= 500:
         return PlaudUnavailable()
+    if code == 404:
+        return PlaudNotFound()
+    return PlaudBadResponse()
+
+
+def _from_refresh(exc: urllib.error.HTTPError) -> PlaudError:
+    """The token endpoint's answers (§10.3): any 4xx but 408 and 429 refuses the refresh (S4 would
+    have named the exact codes, typically 400 or 401 with `invalid_grant`). 408, 429 and 5xx are
+    an outage, never a sign-in problem."""
+    code = exc.code
+    if code in _REDIRECTS:
+        return PlaudRedirectRefused()
+    if code == 429:
+        return PlaudRateLimited(_retry_after(exc.headers))
+    if code == 408 or code >= 500:
+        return PlaudUnavailable()
+    if 400 <= code < 500:
+        return PlaudAuthError()
     return PlaudBadResponse()
 
 
@@ -323,6 +424,7 @@ def _guarded(
     on_short_body: type[PlaudError],
     *,
     stall: type[PlaudError] | None = None,
+    from_http: Callable[[urllib.error.HTTPError], PlaudError] = _from_http,
 ) -> Any:
     """Run one network call (opening a request, or reading its body) and turn whatever it raises
     into this module's own error, raised after the handler that caught it, so nothing chained to
@@ -333,7 +435,7 @@ def _guarded(
     except PlaudError as exc:  # a refused link redirect, raised in _HttpsRedirect
         error = exc
     except urllib.error.HTTPError as exc:
-        error = _from_http(exc)
+        error = from_http(exc)
         exc.close()
     except _CAUGHT as exc:
         error = _from_transport(exc, on_short_body, stall=stall)
@@ -385,19 +487,41 @@ class PlaudClient:
             raise on_short_body() from None
         return body
 
+    def _signed(self, url: str, token: str) -> bytes | None:
+        """One signed-in GET; None for a 401."""
+        try:
+            return self._get(url, token=token, on_short_body=PlaudBadResponse)
+        except PlaudAuthError:
+            return None
+
+    def _probe(self, token: str) -> None:
+        """After a 401, a good refresh, and a 401 again (§10.3): the cheap current-user read with
+        the new token decides. A 401 there too is PlaudAuthError, the sign-in's end; if it works,
+        only the one call was refused, PlaudCallRefused. Any other failure of the read (an outage)
+        is raised as itself: it proves nothing about the sign-in. Always raises."""
+        try:
+            body = self._signed(self.api_base + USER_PATH, token)
+        except PlaudNotFound:  # USER_PATH is a guess: one listing page proves the sign-in too
+            page = f"{LIST_PATH}?page=1&page_size={PROBE_PAGE_SIZE}"
+            body = self._signed(self.api_base + page, token)
+        if body is None:
+            raise PlaudAuthError() from None
+        raise PlaudCallRefused() from None
+
     def get_json(self, path: str) -> Any:
         """GET `api_base + path` with the access token. A 401 asks the token source for a new
-        token once and tries once more; a second 401 is PlaudAuthError."""
+        token once and tries once more; a second 401 makes the current-user read (`_probe`),
+        which raises PlaudAuthError or PlaudCallRefused."""
         if not path.startswith("/") or not plain_url(path):
             raise ValueError("get_json takes a path on the API host")
         url = self.api_base + path
         token = self.tokens.access_token()
-        try:
-            body: bytes | None = self._get(url, token=token, on_short_body=PlaudBadResponse)
-        except PlaudAuthError:
-            body = None
+        body = self._signed(url, token)
         if body is None:  # a 401: one refresh, then one more try
-            body = self._get(url, token=self.tokens.refresh(token), on_short_body=PlaudBadResponse)
+            token = self.tokens.refresh(token)
+            body = self._signed(url, token)
+            if body is None:
+                self._probe(token)
         error = PlaudBadResponse()
         try:
             return json.loads(body)
@@ -406,6 +530,18 @@ class PlaudClient:
         raise error from None
 
     # -- endpoints -------------------------------------------------------------------------------
+    def current_user(self) -> str | None:
+        """The cheap signed-in read (§10.3, §10.5): the account's ID as `account_hash`'s 8 hex,
+        or None when the answer names none. When Plaud answers 404 at USER_PATH (a guess), the
+        first listing page proves the sign-in instead, its rows unread, and the account is None.
+        Raises the client's errors: PlaudAuthError when the sign-in doesn't work."""
+        try:
+            payload = self.get_json(USER_PATH)
+        except PlaudNotFound:
+            self.list_page(1, PROBE_PAGE_SIZE)
+            return None
+        return account_hash(payload)
+
     def list_page(self, page: int, page_size: int = PAGE_SIZE) -> Page:
         """One page of the listing. No ID is checked against a pattern: IDs are opaque. A caller
         pages until an empty page, never stopping at a short one: a server that clamps page sizes

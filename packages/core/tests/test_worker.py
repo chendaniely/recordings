@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fake_plaud import Response, json_response
 from recordings import worker as worker_module
 from recordings.archive import Archive, RawSource
 from recordings.cli import main
@@ -36,10 +37,13 @@ from recordings.plaud.checks import (
     K_PATTERNS_PASS,
     PlaudDB,
 )
+from recordings.plaud.client import LIST_PATH, PlaudAuthError, PlaudClient, PlaudError
 from recordings.plaud.flags import CONSENT_LATE, PRIVATE_UNWRITTEN
 from recordings.plaud.gate import GATE_FIRST
 from recordings.plaud.health import RunOutcome, sync_health
 from recordings.plaud.runlock import plaud_run
+from recordings.plaud.signin import NO_SIGN_IN, REFUSED, paused, record_refused
+from recordings.plaud.tokens import Tokens, TokenStore, check_sign_in, from_vendor
 from recordings.refs import canonical_plaud_id
 from recordings.state import State
 from recordings.worker import FAILED, SILENT, STUCK, Worker, alive, heartbeat_once
@@ -94,6 +98,18 @@ def consent_list(folder: Path, *ids: str, extra: str = "") -> Path:
 def catch_up_done(w: Worker) -> None:
     """What Phase 2's supervised catch-up records: the gate opens (Task 12's gate_now)."""
     w.db.put(K_CATCH_UP_DONE, T0.isoformat(), now=T0)
+
+
+def signed_in(setup, access: str = "synthetic-access-1") -> Path:
+    """A sign-in in the token store, as `make plaud-sign-in` leaves one (folder 0700, file 0600):
+    without one, every scheduled turn is paused (§9.7, §10.3). The token is invented."""
+    folder = setup.tmp / "plaud"
+    folder.mkdir(mode=0o700, exist_ok=True)
+    folder.chmod(0o700)
+    TokenStore(folder / "tokens.json", token_url="https://plaud.example/t").install(
+        Tokens(access, "synthetic-refresh-1", expires_at=None, obtained_at=T0)
+    )
+    return folder / "tokens.json"
 
 
 @pytest.fixture
@@ -268,6 +284,7 @@ def test_the_first_sync_after_the_catch_up_starts_at_the_next_tick(setup, make_w
     w.tick()
     assert spy.calls == []  # still closed: still waiting
     catch_up_done(w)
+    signed_in(setup)
     clock.advance(seconds=2)
     w.tick()
     assert w.gate.open and spy.calls == [False]
@@ -279,6 +296,7 @@ def test_a_held_plaud_lock_skips_the_turn_as_busy_without_a_ping(setup, make_wor
     clock, spy = Clock(), TurnSpy()
     w = make_worker(clock, turn=spy)
     catch_up_done(w)
+    signed_in(setup)
     w.start()
     with plaud_run(w.state, "plaud-full", timeout=0, now=T0):
         w.tick()
@@ -298,6 +316,7 @@ def test_a_lock_held_for_a_moment_doesnt_skip_the_turn(setup, make_worker):
     spy = TurnSpy()
     w = make_worker(Clock(), turn=spy)
     catch_up_done(w)
+    signed_in(setup)
     w.start()
     held, release = threading.Event(), threading.Event()
 
@@ -314,12 +333,142 @@ def test_a_lock_held_for_a_moment_doesnt_skip_the_turn(setup, make_worker):
     assert spy.calls == [False] and last_turn(w)[0] == "ran"
 
 
+def test_a_turn_with_no_sign_in_is_paused_until_one_arrives(setup, make_worker, ntfy):
+    # §9.7 case 2, §9.2: no token, the worker stays idle: no Plaud call, no ping. A sign-in that
+    # arrives ends the wait at the next tick, not an interval later.
+    clock, spy = Clock(), TurnSpy()
+    w = make_worker(clock, turn=spy)
+    catch_up_done(w)
+    w.start()
+    w.tick()
+    assert spy.calls == [] and ntfy.requests == []
+    assert last_turn(w) == ("paused", T0, {"why": NO_SIGN_IN})
+    assert sync_health(w.state, schedule_minutes=20).cause() == "sign-in needed"
+    clock.advance(minutes=3)
+    w.tick()
+    assert spy.calls == []
+    signed_in(setup)
+    clock.advance(seconds=2)
+    w.tick()
+    assert spy.calls == [False] and last_turn(w)[0] == "ran"
+
+
+def test_a_refused_sign_in_pauses_turns_until_the_token_file_changes(setup, make_worker):
+    # C4.02's worker half: with the refusal on record for this file, scheduled turns make no call.
+    clock, spy = Clock(), TurnSpy()
+    w = make_worker(clock, turn=spy)
+    catch_up_done(w)
+    token = signed_in(setup)
+    record_refused(w.db, token, now=T0)
+    w.start()
+    for _ in range(3):
+        w.tick()
+        clock.advance(minutes=20)
+    assert spy.calls == []
+    assert last_turn(w) == ("paused", T0, {"why": REFUSED})
+    signed_in(setup, access="synthetic-access-2")  # make plaud-sign-in: a new file
+    w.tick()
+    assert spy.calls == [False]
+
+
+class SignInTurn:
+    """A stand-in for the sync turn (area A5 builds the real one): §11.1's sign-in step, then one
+    listing page, against the fake. A PlaudAuthError anywhere is recorded as the run does it."""
+
+    def __call__(self, worker: Worker, *, light: bool) -> RunOutcome:
+        settings, now = worker.settings, worker.clock()
+        store = TokenStore(settings.token_store, token_url=settings.token_url, clock=worker.clock)
+        client = PlaudClient(store, api_base=settings.api_base)
+        try:
+            check_sign_in(store, client, worker.db, now=now)
+            client.list_page(1)
+        except PlaudAuthError:
+            record_refused(worker.db, store.path, now=now)
+            return RunOutcome("none", 0, 0, False, "sign-in needed")
+        except PlaudError as exc:
+            return RunOutcome("none", 0, 0, False, exc.message)
+        return GOOD
+
+
+@pytest.fixture
+def against_the_fake(setup, make_worker, plaud_server):
+    """A worker whose [plaud] api_base is the fake's, signed in through it at T0, gate open."""
+    setup.cfg_file.write_text(
+        setup.cfg_file.read_text(encoding="utf-8").replace(
+            "[plaud]\n", f'[plaud]\napi_base = "{plaud_server.api_url}"\n'
+        ),
+        encoding="utf-8",
+    )
+    clock = Clock()
+    fake = plaud_server.signed_in(clock)
+    plaud_server.route("GET", LIST_PATH, lambda q: json_response({"data_list": []}))
+    folder = setup.tmp / "plaud"
+    folder.mkdir(mode=0o700)
+    folder.chmod(0o700)
+    w = make_worker(clock, turn=SignInTurn())
+    store = TokenStore(folder / "tokens.json", token_url=w.settings.token_url, clock=clock)
+    store.install(from_vendor(fake.issue(), now=T0))
+    catch_up_done(w)
+    w.start()
+    return SimpleNamespace(w=w, clock=clock, fake=fake, store=store, server=plaud_server)
+
+
+def test_an_access_token_that_expires_and_refreshes_keeps_the_pings_going(against_the_fake, ntfy):
+    # C4.01
+    t = against_the_fake
+    for _ in range(4):  # T0, +20, +40, +60: the hour's token is refreshed on the way
+        t.w.tick()
+        t.clock.advance(minutes=20)
+    assert t.fake.refreshes == 1
+    assert [r["path"] for r in ntfy.requests] == ["/sync"] * 4
+
+
+def test_a_refused_refresh_stops_the_pings_until_a_new_sign_in(against_the_fake, ntfy):
+    # C4.02, C4.03: a 401 then a refused refresh stops the pings from that turn on, with no Plaud
+    # call until the token file changes; a new token, then a good turn, pings again.
+    t = against_the_fake
+    t.w.tick()
+    assert len(ntfy.requests) == 1
+    t.fake.revoke()
+    t.fake.refuse_refresh()
+    t.clock.advance(minutes=20)
+    t.w.tick()
+    assert len(ntfy.requests) == 1
+    health = sync_health(t.w.state, schedule_minutes=20)
+    assert "sign-in" in health.blockers and health.cause() == "sign-in needed"
+    calls = len(t.server.requests)
+    for _ in range(3):
+        t.clock.advance(minutes=20)
+        t.w.tick()
+    assert len(t.server.requests) == calls  # paused: no Plaud call
+    assert last_turn(t.w)[:1] == ("paused",) and len(ntfy.requests) == 1
+    t.fake.refuse = None
+    t.store.install(from_vendor(t.fake.issue(), now=t.clock()))  # make plaud-sign-in
+    t.clock.advance(seconds=2)
+    t.w.tick()
+    assert "sign-in" not in sync_health(t.w.state, schedule_minutes=20).blockers
+    assert [r["path"] for r in ntfy.requests] == ["/sync"] * 2
+
+
+def test_a_429_from_the_token_endpoint_is_an_outage_not_a_sign_in(against_the_fake, ntfy):
+    # C4.04
+    t = against_the_fake
+    t.fake.fault = Response(429, b"", {"Retry-After": "30"})
+    t.clock.advance(minutes=56)
+    t.w.tick()
+    health = sync_health(t.w.state, schedule_minutes=20)
+    assert "sign-in" not in health.blockers and health.failing is not None
+    assert ntfy.requests == []
+    assert paused(t.w.db, t.store.path) is None
+
+
 def test_due_reads_last_started_and_last_ended_across_a_crash_loop(setup, make_worker):
     # why: spec §9.2. Both stamps persist, so a worker that crashes and restarts doesn't start a
     # sync at every start.
     spy = TurnSpy()
     w = make_worker(Clock(), turn=spy)
     catch_up_done(w)
+    signed_in(setup)
     w.start()
     w.tick()
     assert spy.calls == [False]
@@ -849,6 +998,7 @@ def test_a_bad_keep_out_word_leaves_the_worker_idle_and_alive(setup, make_worker
     clock, spy = Clock(), TurnSpy()
     w = make_worker(clock, turn=spy)
     catch_up_done(w)
+    signed_in(setup)
     w.start()
     w.tick()
     assert spy.calls == [] and last_turn(w)[0] == "idle-config"
@@ -922,6 +1072,7 @@ def test_a_recording_the_patterns_pass_couldnt_check_holds_the_ping_until_its_ta
     clock, spy = Clock(T0 + timedelta(minutes=1)), TurnSpy()
     w = make_worker(clock, turn=spy)
     catch_up_done(w)
+    signed_in(setup)
     w.start()
     w.tick()
     (flag,) = w.db.open_flags((PRIVATE_UNWRITTEN,))
@@ -1037,6 +1188,7 @@ def flagged_by_the_patterns_pass(setup, make_worker, clock, *, turn=None) -> tup
     add_pattern(setup, "therapy")
     w = make_worker(clock, turn=turn or TurnSpy())
     catch_up_done(w)
+    signed_in(setup)
     w.start()
     w.tick()
     assert [e.recording_id for e in w.db.open_flags((PRIVATE_UNWRITTEN,))] == [rid]

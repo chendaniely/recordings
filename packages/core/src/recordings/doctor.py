@@ -16,9 +16,9 @@ Each Compose service runs it in its own role (`--role`, else RECORDINGS_ROLE, el
   sync's ping URL nor `/plaud`.
 - `worker` (stage 2b spec §17.2) runs the Plaud sync. Its backup, mirror, ssh and restic checks
   are skipped, and so is the "alerts are off" warning: it sends no push by design. Its own: the
-  consent list, the sign-in's presence and modes (never its contents), the keep-out word, and the
-  sync's dead-man URL, whose check is its only alert. It must hold no backup secret. Doctor never
-  calls Plaud; `recordings plaud check` does.
+  consent list, the sign-in (its presence, modes and expiries, never a token), the keep-out
+  word, and the sync's dead-man URL, whose check is its only alert. It must hold no backup
+  secret. Doctor never calls Plaud; `recordings plaud check` does.
 - `all`, the default outside Docker, checks everything but the worker's own.
 Every role warns when retention is off here, and reports where the consent list is, as
 information (or, when it is unset, as a note in `notes`): the import reads it and fails closed
@@ -36,6 +36,7 @@ import sqlite3
 import stat
 import uuid
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -45,6 +46,7 @@ from recordings.config import SECRETS, Config, ConfigError, load_config, secret,
 from recordings.disk import disk_thresholds
 from recordings.index import Index
 from recordings.locks import running
+from recordings.plaud import signin
 from recordings.plaud.baseline import KeepOutWordsError, enforced_words
 from recordings.plaud.checks import NoSyncYet, PlaudDB
 from recordings.plaud.consent import ConsentListError, consent_list_path
@@ -77,15 +79,13 @@ FORBIDDEN = {
 PLAUD_MOUNT = backup.PLAUD_MOUNT  # the sign-in's folder, mounted in `worker` only
 CONSENT_MOUNT = Path("/consent")  # the consent folder, in `worker` and `backup` (read-only)
 OPEN_TO_OTHERS = 0o077  # ssh refuses a key with any of these bits set; doctor warns for any secret
-# The worker's missing sign-in. Phase 1 has no way to sign in, so it is a note and doctor exits 0
-# for it (Dan, phase-end Q&A §7): an always-expected problem teaches skimming past real ones. Phase
-# 2's `make plaud-sign-in` sets this True, and SIGN_IN_NEEDED then names the target (spec §17.2).
-SIGN_IN_IS_A_PROBLEM = False
-SIGN_IN_NOTE = (
-    "Plaud sign-in: comes with stage 2b's next phase; until then the worker stays idle "
-    "(runbook section 6)"
+# The worker's missing sign-in (spec §17.2). While Phase 1 ran, with no way to sign in, it was a
+# note (Dan, phase-end Q&A §7); with `make plaud-sign-in` it is a problem again.
+SIGN_IN_NEEDED = "sign-in needed: run `make plaud-sign-in` at the Mac (runbook, Plaud sign-in)"
+SIGN_IN_UNUSABLE = (
+    "sign-in needed: the Plaud sign-in in {} can't be used: run `make plaud-sign-in` at the Mac"
 )
-SIGN_IN_NEEDED = "sign-in needed: the Plaud sign-in comes with stage 2b's next phase"
+REFRESH_WARNING = timedelta(days=7)  # Needs attention's "sign-in expiring within 7 days" (§15.2)
 
 
 def _secrets(environ: Mapping[str, str], problems: list[str], warnings: list[str]) -> dict:
@@ -631,29 +631,65 @@ def _ssh(report: dict, problems: list[str]) -> None:
         )
 
 
-def _owner() -> int:
-    return os.geteuid()
+def _shown(when: datetime | None, cfg: Config) -> str | None:
+    """A time as doctor prints it: the local date and time in `[archive] default_timezone`."""
+    if when is None:
+        return None
+    try:
+        zone: tzinfo = ZoneInfo(cfg.default_timezone)
+    except (ZoneInfoNotFoundError, ValueError, OSError, TypeError):
+        zone = UTC  # `_timezone` reports the zone
+    return when.astimezone(zone).strftime("%Y-%m-%d %H:%M")
 
 
-def _plaud_modes(token_store: Path, problems: list[str]) -> None:
-    """The sign-in's folder at most 0700 and its token at most 0600, both this user's. Their
-    modes and owners only: the token is never opened."""
-    for path, widest, fix in (
-        (token_store.parent, 0o700, "chmod 700"),
-        (token_store, 0o600, "chmod 600"),
-    ):
-        try:
-            found = path.stat()
-        except OSError:
-            continue  # a missing token is the sign-in problem
-        mode = found.st_mode & 0o777
-        if mode & ~widest:
-            problems.append(f"{path} is open to more than its owner (mode {mode:o}): {fix} it")
-        if found.st_uid != _owner():
+def _sign_in(
+    cfg: Config,
+    token_store: Path,
+    info: dict[str, Any],
+    problems: list[str],
+    warnings: list[str],
+) -> None:
+    """The sign-in (spec §17.2): its presence, its folder's and file's modes and owner, and its
+    expiries and whether it can refresh, read from the file's times alone: never a token, a value
+    or a hash. Never a call to Plaud: `recordings plaud check` makes one."""
+    from recordings.plaud import tokens  # the token store: loaded for the worker's role alone
+    from recordings.plaud.client import PlaudAuthError
+
+    info["token_store"] = token_store.is_file()
+    problems.extend(signin.unsafe_modes(token_store))
+    if not info["token_store"]:
+        problems.append(SIGN_IN_NEEDED)
+        return
+    try:
+        facts = tokens.read_tokens(token_store).facts()
+    except PlaudAuthError:
+        problems.append(SIGN_IN_UNUSABLE.format(token_store))
+        return
+    except OSError as exc:  # its class only: the text names the path again
+        problems.append(f"{token_store} can't be read ({type(exc).__name__}): check its owner")
+        return
+    now = datetime.now(UTC)
+    info["token_expires"] = _shown(facts.expires_at, cfg)
+    info["refresh_token"] = facts.refresh_token
+    info["refresh_expires"] = _shown(facts.refresh_expires_at, cfg)
+    refresh_ends = facts.refresh_expires_at
+    if not facts.refresh_token:
+        if facts.expires_at is not None and facts.expires_at <= now:
             problems.append(
-                f"{path} belongs to uid {found.st_uid}, not this user ({_owner()}): the worker "
-                "must own the Plaud sign-in"
+                f"{SIGN_IN_NEEDED}: the access token has expired, with no refresh token"
             )
+        else:
+            warnings.append(
+                "the Plaud sign-in has no refresh token: the worker needs a new sign-in when its "
+                "access token expires"
+            )
+    elif refresh_ends is not None and refresh_ends <= now:
+        problems.append(f"{SIGN_IN_NEEDED}: its refresh token has expired")
+    elif refresh_ends is not None and refresh_ends - now <= REFRESH_WARNING:
+        warnings.append(
+            f"the Plaud sign-in's refresh token expires {_shown(refresh_ends, cfg)}: sign in "
+            "again before then (`make plaud-sign-in`)"
+        )
 
 
 def _enforced_words(cfg: Config, problems: list[str]) -> list[str] | None:
@@ -678,13 +714,16 @@ def _worker(
     cfg: Config, environ: Mapping[str, str], report: dict, problems: list[str], warnings: list[str]
 ) -> None:
     """The worker's own checks (stage 2b spec §17.2): the sync's dead-man URL, the keep-out word,
-    the consent list, and the sign-in's presence and modes. Never a value or a hash, never the
-    token's contents (decision 28: its expiry waits for Phase 2), and never a call to Plaud."""
+    the consent list, and the sign-in: its presence, modes, expiries and whether it can refresh
+    (`_sign_in`). Never a value or a hash, and never a call to Plaud."""
     info: dict[str, Any] = {
         "consent_ids": None,
         "consent_stop": None,
         "review_lines": [],
         "token_store": False,
+        "token_expires": None,
+        "refresh_token": None,
+        "refresh_expires": None,
         "keep_out_words": [],
         "deadman_sync_set": False,
     }
@@ -720,13 +759,7 @@ def _worker(
         info["consent_ids"] = len(consent.ids)
     if consent.review_lines:
         report["notes"].append(kept_lines_note(consent.review_lines))
-    info["token_store"] = settings.token_store.is_file()  # presence only: never opened
-    if not info["token_store"]:  # never points at a command that doesn't exist yet
-        if SIGN_IN_IS_A_PROBLEM:
-            problems.append(SIGN_IN_NEEDED)
-        else:
-            report["notes"].append(SIGN_IN_NOTE)
-    _plaud_modes(settings.token_store, problems)
+    _sign_in(cfg, settings.token_store, info, problems, warnings)
     info["keep_out_words"] = _enforced_words(cfg, problems)
 
 

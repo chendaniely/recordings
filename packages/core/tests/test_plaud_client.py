@@ -21,10 +21,12 @@ from recordings.plaud import client as client_module
 from recordings.plaud.client import (
     FILE_PATH,
     LIST_PATH,
+    USER_PATH,
     IncompleteDownload,
     Listed,
     PlaudAuthError,
     PlaudBadResponse,
+    PlaudCallRefused,
     PlaudClient,
     PlaudError,
     PlaudForbidden,
@@ -304,14 +306,20 @@ def test_a_401_refreshes_once_and_retries_once(plaud_server):
     assert tokens.refreshed == ["synthetic-access-1"]
     plaud_server.route("GET", "/me", lambda q: _json({}, 401))
     tokens = Tokens()
-    with pytest.raises(PlaudAuthError):
+    # A 401 again after a good refresh: the current-user read decides (§10.3). Here it is a 404
+    # (no route), so one listing page stands in for it, and it works: only this call failed.
+    with pytest.raises(PlaudCallRefused):
         _client(plaud_server, tokens).get_json("/me")
     assert tokens.refreshed == ["synthetic-access-1"]
     assert [r.path for r in plaud_server.requests].count("/me") == 2  # one retry, never more
+    plaud_server.route("GET", USER_PATH, lambda q: _json({}, 401))  # the read is refused too
+    with pytest.raises(PlaudAuthError):
+        _client(plaud_server, Tokens()).get_json("/me")
+    assert [r.path for r in plaud_server.requests].count("/me") == 4
     lone = Tokens("synthetic-access-1")  # a refresh the source refuses: no retry at all
     with pytest.raises(PlaudAuthError):
         _client(plaud_server, lone).get_json("/me")
-    assert [r.path for r in plaud_server.requests].count("/me") == 3
+    assert [r.path for r in plaud_server.requests].count("/me") == 5
 
 
 def test_a_short_download_or_a_stall_raises_incomplete_download(plaud_server, tmp_path):

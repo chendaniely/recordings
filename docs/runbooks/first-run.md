@@ -1028,11 +1028,11 @@ syncs it down with Synology Drive. Nothing on the Mac ever writes to it.
 
 ## 6. Deploy 2b
 
-Stage 2b's first phase adds a third container, `worker`, from the same image. Deployed now, it
-stays idle and healthy: doctor notes "Plaud sign-in: comes with stage 2b's next phase" until a later
-phase adds the sign-in, it applies late consent listings within seconds of an edit, and it holds
-every scheduled sync until the first catch-up. Nothing in this section calls Plaud. On the homelab
-server, in `$REPO_DIR`, with the top block pasted.
+Stage 2b adds a third container, `worker`, from the same image. Deployed, it stays idle and
+healthy until step 6's sign-in, it applies late consent listings within seconds of an edit, and it
+holds every scheduled sync until the first catch-up. Nothing in this section calls Plaud but step
+6's sign-in and its check, which read who is signed in and nothing else. On the homelab server, in
+`$REPO_DIR`, with the top block pasted, except step 6's first half, on the Mac.
 
 **First, the code.** Move the checkout to Phase 1's merge commit, as 2.8 does for a tag. The
 running containers keep their image until step 5's `make deploy`; the new `compose.yml` and
@@ -1094,10 +1094,21 @@ the Library moves onto `index.db` before 2b deploys.
    does for `web`'s, and fails if either doesn't pass within 3 minutes. Then roll back as "Rolling
    back across 2b" says, not as 2.8: this checkout's `compose.yml` would start a `worker` the
    older image can't run.
-6. **The Plaud sign-in** comes with the next phase, and its `make plaud-sign-in` with it. Until it
-   exists the worker stays idle and healthy: doctor notes it, never as a problem, and Status shows
-   the gate's line, "Scheduled sync waits for the first catch-up (runbook)", since nothing opens the
-   sign-in blocker before the first sign-in.
+6. **The Plaud sign-in** (stage 2b spec §10.5; "Plaud sign-in" below has the rest). On the Mac,
+   at this repo's top, write `local.mk` (git-ignored) with `SERVER`, your ssh name for the homelab
+   server, and `REPO_DIR`, this checkout's path there, if `make consent-add` hasn't already. Then:
+   ```bash
+   make plaud-sign-in
+   ```
+   A browser opens: sign in to Plaud. It ends with one line, "signed in: yes · access token
+   expires 2026-10-23 16:20 · refresh token: present · account 1a2b3c4d". On the server:
+   ```bash
+   rc exec worker recordings plaud check
+   ```
+   Expected: the same "signed in: yes" line, and exit 0. "refresh token: missing" means the server
+   would need a new sign-in every time the access token expires: stop and ask in a Claude session
+   (stage 2b spec §18, S1). Status still shows the gate's line, "Scheduled sync waits for the first
+   catch-up (runbook)": nothing syncs before section 8.
 7. **Check it.**
    ```bash
    rc ps
@@ -1109,9 +1120,9 @@ the Library moves onto `index.db` before 2b deploys.
    ```
    Expected:
    - `rc ps` shows `web`, `backup` and `worker` up, and `worker` `(healthy)`.
-   - `doctor --role worker` reports no problem and exits 0. Until the sign-in exists its notes
-     say "Plaud sign-in: comes with stage 2b's next phase; until then the worker stays idle
-     (runbook section 6)", which is expected. Any problem it reports is real: fix it (the consent
+   - `doctor --role worker` reports no problem and exits 0, and shows the sign-in's expiry and
+     whether it has a refresh token, never the token. "sign-in needed: run `make plaud-sign-in`"
+     means step 6 didn't land: run it again. Any problem it reports is real: fix it (the consent
      list's lines, `/plaud`'s mode, the keep-out word, or the sync's URL).
    - `plaud consent` prints the ID count you expect; the lines it reads as kept, by number (each
      must mean "keep"); and any recording 2a imported despite its exclusion, by archive ID, marked
@@ -1219,7 +1230,7 @@ until it clears:
 
 | Status says | It opens when | It clears when | Do |
 |---|---|---|---|
-| sign-in needed | Plaud refuses a refresh | a good run after the token file changes | At the Mac: `make plaud-sign-in` (stage 2b's second phase) |
+| sign-in needed | Plaud refuses a refresh, or the sign-in is missing | a good run after the token file changes | At the Mac: `make plaud-sign-in` ("Plaud sign-in" below) |
 | imports stopped: consent list | the consent list is missing, empty, holds no IDs, or can't be read, or has a line that looks like an ID but can't be read | the worker reads the list cleanly | Fix the lines Status names by number, then `rc exec worker recordings plaud consent`. A missing or unreadable list: fix the file or its permissions, then the same command |
 | held: see Status | the listing hold | Accept, or a later listing that no longer meets it | Status's check, then **Accept this listing** |
 | paused: unexpected changes | the breaker trips | Accept these changes, a release that closes it, or a breaker reset | **Accept these changes**, or a code fix (a breaker reset comes in stage 2b's third phase) |
@@ -1245,6 +1256,48 @@ can still start "the sync is failing"; the next run with a success ends it.) Bef
 
 Optional: Healthchecks › Account Settings › Email Reports sends a daily reminder while any check is
 down. It covers the backup's check too.
+
+## Plaud sign-in
+
+Only the server's `worker` holds a Plaud sign-in: `tokens.json` in `$RECORDINGS_HOME/plaud`
+(`RECORDINGS_PLAUD_HOST`, mode 0700; the file 0600), never backed up or mirrored. The worker
+refreshes it by itself before it expires, under `tokens.lock`. It is a secret: never copy it by
+hand, print it, or put it in `config.toml`, and a Claude session never runs `make plaud-sign-in` or
+`token-import` (CLAUDE.md).
+
+**When to sign in:** before the first catch-up (section 6 step 6); when Status says "sign-in
+needed" (Healthchecks' email about the sync's check comes about 2 hours after it starts); when
+doctor warns that the refresh token expires within 7 days; and after a restore, since the sign-in
+is never in a backup.
+
+**How:** on the Mac, at this repo's top, with `SERVER` and `REPO_DIR` in `local.mk`:
+```bash
+make plaud-sign-in
+```
+It makes a temporary `HOME` under `$TMPDIR` (mode 0700, removed by a `trap` whatever happens), so
+the Mac's own Plaud CLI and MCP sign-ins are untouched; runs the vendor CLI's `plaud login` there
+(`PLAUD_CLI=<path>` names another CLI); and pipes the CLI's token file over ssh into `recordings
+plaud token-import -` in the worker. That command keeps only the sign-in's own keys, makes one
+cheap call with it, and installs it atomically at 0600. It prints only "signed in: yes · access
+token expires … · refresh token: present · account 1a2b3c4d" (the account as 8 hex of a hash).
+
+| It says | It means | Do |
+|---|---|---|
+| step 2 failed | The browser sign-in failed, or the CLI left no `.plaud/tokens.json` in its `HOME` | Run it again. If the CLI keeps its sign-in elsewhere (the keychain, say), stop and ask in a Claude session |
+| step 3 failed (ssh exit 255) | The server couldn't be reached | Check the tailnet, then run it again |
+| step 4 failed: the token file or the sign-in was refused | `token-import` couldn't use the file, or Plaud refused the sign-in; nothing was installed | Run it again. A message naming a key (`access_token`, say) means the vendor's file isn't shaped as this build guessed: ask in a Claude session |
+| step 4 failed: Plaud could not be reached | An outage between the server and Plaud | Run it again later |
+| step 4 failed: the sign-in's folder or the settings | `/plaud` is missing or too open | Its message names the `install -d -m 700` or `chmod`; then run it again |
+
+**Then:** `rc exec worker recordings plaud check` makes one cheap signed-in read and prints the same
+line; it exits 0, or 77 for "sign-in needed", or 69 when Plaud can't be reached. A new sign-in
+ends the worker's pause at once (it watches the file), Status's "sign-in needed" clears at the next
+good run, and Healthchecks goes up at the next ping.
+
+**This build's guesses** (`docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`): the vendor
+file's keys and the token endpoint (`[plaud] token_url`, by default the API's `/oauth/token`). If a
+sign-in that works stops with "sign-in needed" around when its access token expires, the refresh
+is what failed: `[plaud] token_url` may need the URL the vendor CLI refreshes at.
 
 ## When the data disk fills
 
@@ -1354,7 +1407,8 @@ through 1a, then:
 - if the commit you deploy is a stage 2b one (section 6), its `compose.yml` also needs section 6's
   setup before step 4's `rc up -d`: the Plaud sign-in's folder (step 2 there) and the sync's
   `deadman_sync_url` file (step 4 there). Not the consent folder: step 3 below restores it from the
-  snapshot. After the restore, sign in to Plaud again when a later phase adds the sign-in.
+  snapshot. After the restore, sign in to Plaud again (`make plaud-sign-in`, "Plaud sign-in"):
+  the sign-in is never backed up.
 
 1. **Find the snapshot.**
    ```bash

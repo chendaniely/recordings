@@ -10,10 +10,12 @@ dispatches to `run`; each command adds its parser block and its `COMMANDS` entry
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sqlite3
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -34,6 +36,7 @@ from recordings.plaud.checks import K_CONSENT, K_LAST_GOOD_LISTING, NoSyncYet, P
 from recordings.plaud.flags import listed_here, missed_by_2a
 from recordings.plaud.keepout import kept_lines_note, read_consent_text, signature
 from recordings.plaud.settings import BAD_WORD, plaud_settings
+from recordings.plaud.signin import TokenFacts
 from recordings.plaud.when import local_hhmm, parse_stamp
 from recordings.sentinel import SentinelError, read_sentinel
 from recordings.state import State, StateError
@@ -72,6 +75,21 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
 
     c = plaud.add_parser("keep-out-words", help="list the keep-out words enforced, or drop one")
     c.add_argument("--drop", metavar="WORD", help="stop enforcing an old word")
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "check",
+        help="one signed-in read: whether the Plaud sign-in works, its expiry, and whether it "
+        "can refresh",
+    )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "token-import",
+        help="install a Plaud sign-in from the vendor CLI's token file on stdin (`make "
+        "plaud-sign-in` runs it; never by hand in a Claude session)",
+    )
+    c.add_argument("source", choices=["-"], help="-: read the token file from stdin")
     c.add_argument("--json", action="store_true")
 
     # No abbreviated flags, as cli.build_parser: its loop doesn't reach these subparsers.
@@ -371,10 +389,170 @@ def cmd_keep_out_words(args: argparse.Namespace) -> int:
     return code
 
 
+def _record(cfg: config.Config, write: Callable[[PlaudDB], None]) -> str | None:
+    """Write the sign-in's state (signin.py) to state.db; the error's class when it couldn't be,
+    which the command says without failing: the worker's next run records it again."""
+    if cfg.state_path is None:
+        return "no [state] path"
+    try:
+        write(PlaudDB(State.open(cfg.state_path)))
+    except (StateError, NoSyncYet, sqlite3.Error, OSError) as exc:
+        return type(exc).__name__
+    return None
+
+
+def _sign_in_payload(
+    facts: TokenFacts | None, account: str | None, tz: tzinfo, *, signed_in: bool
+) -> tuple[dict, str]:
+    """§10.5's line, "signed in: yes · access token expires 2026-10-23 16:20 · refresh token:
+    present · account 1a2b3c4d", and the same as JSON. Never a token or the account's ID."""
+    payload = {
+        "signed_in": signed_in,
+        "expires_at": _shown(facts.expires_at, tz) if facts else None,
+        "refresh_token": facts.refresh_token if facts else None,
+        "refresh_expires_at": _shown(facts.refresh_expires_at, tz) if facts else None,
+        "account": account,
+    }
+    parts = [f"signed in: {'yes' if signed_in else 'no'}"]
+    if facts is not None:
+        parts.append(f"access token expires {payload['expires_at'] or 'unknown'}")
+        refresh = "present" if facts.refresh_token else "missing"
+        if facts.refresh_expires_at is not None:
+            refresh += f", expires {payload['refresh_expires_at']}"
+        parts.append(f"refresh token: {refresh}")
+    if signed_in:
+        parts.append(f"account {account}" if account else "account unknown")
+    return payload, " · ".join(parts)
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """§10.3: one cheap signed-in read (the current user), refreshing first when due, and what it
+    found. A success ends the sign-in's pause and its blocker; a refusal records them. Exit 0, or
+    77 when the sign-in is needed. Holds no lock but `tokens.lock`, for a refresh."""
+    from recordings.plaud import signin, tokens  # the worker's CLI only: web never runs this
+    from recordings.plaud.client import PlaudAuthError, PlaudClient, PlaudError
+
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        settings = plaud_settings(cfg)
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, EXIT_CONFIG)
+    tz, now = _zone(cfg), datetime.now(UTC)
+    store = tokens.TokenStore(settings.token_store, token_url=settings.token_url)
+    client = PlaudClient(store, api_base=settings.api_base)
+    try:
+        account = tokens.check_sign_in(store, client, None, now=now, probe=True)
+        facts = store.facts()
+    except PlaudAuthError:
+        why = "Plaud refused the sign-in" if store.exists() else "no sign-in yet"
+        unrecorded = _record(cfg, lambda db: signin.record_refused(db, store.path, now=now))
+        payload, line = _sign_in_payload(None, None, tz, signed_in=False)
+        payload |= {"sign_in_needed": why, "not_recorded": unrecorded}
+        _emit(
+            payload, [f"{line} · {why}: {signin.SIGN_IN_FIX}", *_unrecorded(unrecorded)], args.json
+        )
+        return EXIT_SIGN_IN
+    except tokens.TokenStoreUnsafe as exc:  # names the path and the chmod, never the contents
+        return _fail(str(exc), args.json, EXIT_CONFIG)
+    except LockTimeout as exc:
+        return _fail(str(exc), args.json, EXIT_BUSY)
+    except PlaudError as exc:  # an outage: it says nothing about the sign-in
+        return _fail(f"Plaud couldn't be reached: {exc.message}", args.json, EXIT_UNREACHABLE)
+    unrecorded = _record(cfg, lambda db: signin.record_good(db, facts, now=now))
+    payload, line = _sign_in_payload(facts, account, tz, signed_in=True)
+    payload["not_recorded"] = unrecorded
+    _emit(payload, [line, *_unrecorded(unrecorded)], args.json)
+    return EXIT_OK
+
+
+def _unrecorded(error: str | None) -> list[str]:
+    if error is None:
+        return []
+    return [f"not recorded in state.db ({error}): the worker's next run records it"]
+
+
+def cmd_token_import(args: argparse.Namespace) -> int:
+    """§10.5 step 4: the vendor CLI's token file on stdin. Its keys are checked and only ours
+    kept (§10.4); one cheap call with it, which must work; then it is installed atomically at
+    0600, under `tokens.lock`. Prints only §10.5's line. Anything that fails installs nothing:
+    a file it can't use, or a sign-in Plaud refuses, exits 77; Plaud unreachable, 69."""
+    from recordings.plaud import signin, tokens  # the worker's CLI only: web never runs this
+    from recordings.plaud.client import PlaudAuthError, PlaudClient, PlaudError
+
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        settings = plaud_settings(cfg)
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, EXIT_CONFIG)
+    tz, now = _zone(cfg), datetime.now(UTC)
+    nothing = "nothing installed"
+    raw = sys.stdin.buffer.read(tokens.MAX_IMPORT + 1)
+    if len(raw) > tokens.MAX_IMPORT:
+        return _fail(f"the token file is larger than 64 KiB: {nothing}", args.json, EXIT_SIGN_IN)
+    data: object = None
+    with contextlib.suppress(ValueError, RecursionError):  # never the parser's text: it quotes
+        data = json.loads(raw)
+    if data is None:
+        return _fail(f"the token file isn't JSON: {nothing}", args.json, EXIT_SIGN_IN)
+    try:
+        new = tokens.from_vendor(data, now=now)
+    except tokens.TokenImportError as exc:  # names the key, never a value
+        return _fail(f"{exc}: {nothing}", args.json, EXIT_SIGN_IN)
+    store = tokens.TokenStore(settings.token_store, token_url=settings.token_url)
+    if not store.path.parent.is_dir():
+        return _fail(
+            f"{store.path.parent} is missing: create it with `install -d -m 700` (runbook "
+            f"section 6 step 2): {nothing}",
+            args.json,
+            EXIT_CONFIG,
+        )
+    if unsafe := signin.unsafe_modes(store.path):
+        return _fail("; ".join(unsafe) + f": {nothing}", args.json, EXIT_CONFIG)
+    try:  # the one cheap call, before anything is written
+        account = PlaudClient(tokens.StaticTokens(new), api_base=settings.api_base).current_user()
+    except PlaudAuthError:
+        return _fail(
+            f"signed in: no · Plaud refused this sign-in: {nothing}; run `make plaud-sign-in` "
+            "again",
+            args.json,
+            EXIT_SIGN_IN,
+        )
+    except PlaudError as exc:
+        return _fail(
+            f"Plaud couldn't be reached ({exc.message}): {nothing}; run `make plaud-sign-in` again",
+            args.json,
+            EXIT_UNREACHABLE,
+        )
+    try:
+        store.install(new)
+    except tokens.TokenStoreUnsafe as exc:
+        return _fail(f"{exc}: {nothing}", args.json, EXIT_CONFIG)
+    except LockTimeout as exc:
+        return _fail(f"{exc}: {nothing}", args.json, EXIT_BUSY)
+    except OSError as exc:  # never the exception's text: it names the path
+        return _fail(
+            f"the sign-in couldn't be written ({type(exc).__name__}): {nothing}; check the "
+            "Plaud sign-in's folder and its disk",
+            args.json,
+            EXIT_FAILED,
+        )
+    unrecorded = _record(cfg, lambda db: signin.record_good(db, new.facts(), now=now))
+    payload, line = _sign_in_payload(new.facts(), account, tz, signed_in=True)
+    payload |= {"installed": True, "not_recorded": unrecorded}
+    _emit(payload, [line, *_unrecorded(unrecorded)], args.json)
+    return EXIT_OK
+
+
 COMMANDS = {
     "consent": cmd_consent,
     "baseline": cmd_baseline,
     "keep-out-words": cmd_keep_out_words,
+    "check": cmd_check,
+    "token-import": cmd_token_import,
 }
 
 

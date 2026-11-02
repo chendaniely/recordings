@@ -148,7 +148,13 @@ smoke test on purpose until someone does the steps below:
   `plaud/endpoint.py`, never from the client. No test reaches Plaud: the root `conftest.py`
   refuses every `plaud.ai` host and drops every `*_proxy` variable, for the whole run of pytest's
   own process (not for a subprocess a test starts), and the client's tests use
-  the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture).
+  the fake server in `packages/core/tests/fake_plaud.py` (the `plaud_server` fixture; its
+  `signed_in()` turns on the sign-in).
+- **`tokens.json` is a secret** (the Plaud sign-in, `plaud/tokens.py`): used by reference, never
+  read or printed, and a Claude session never runs `make plaud-sign-in` or `token-import`. Its
+  tests use invented tokens against the fake, and a fake `plaud` and `ssh` on `PATH`. The sign-in's
+  state (the pause, the `sign-in` blocker, its expiries) is in the network-free `plaud/signin.py`,
+  which the worker's tick and doctor import; the store itself only the worker's run and the CLI.
 - **Tag changes from the app go through `recordings.tagops`** (`AddTags`, `RemoveTags`, `RestoreTags`),
   applied by `Writer.mutate` on the tag service's one writer thread
   (`recordings_ui/tagging.py`, `writing.py`). The privacy gate is inside the operations: a

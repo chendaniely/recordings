@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from recordings.config import SECRETS, Config, ConfigError
-from recordings.plaud.endpoint import API_BASE
+from recordings.plaud.endpoint import API_BASE, TOKEN_PATH
 from recordings.plaud.reconcile import DEFAULT_AUTO_PRIVATE, patterns_from_config
 from recordings.plaud.settings import BAD_WORD, PlaudSettings, plaud_settings
 
@@ -39,6 +39,7 @@ def test_unset_plaud_keys_take_the_spec_defaults():
         consent_list=None,
         token_store=Path("/plaud/tokens.json"),
         api_base=API_BASE,
+        token_url=API_BASE + TOKEN_PATH,
     )
     assert plaud_settings(cfg({"consent_list": "  "})).consent_list is None
 
@@ -61,6 +62,10 @@ def test_set_plaud_keys_are_read():
     assert (got.keep_out_word, got.keep_out_word_ok) == ("skip-me_2", True)
     assert got.consent_list == Path("/consent/consent-list.md")
     assert (got.token_store, got.api_base) == (Path("/plaud/other.json"), "http://127.0.0.1:8123")
+    # token_url follows api_base unless it is set: the fake's token endpoint, in tests
+    assert got.token_url == "http://127.0.0.1:8123" + TOKEN_PATH
+    other = plaud_settings(cfg({"token_url": "https://auth.plaud.example/token"}))
+    assert other.token_url == "https://auth.plaud.example/token"
 
 
 @pytest.mark.parametrize("word", ["no archive", "x" * 33, "", "naïve", 42, ["noarchive"]])
@@ -132,6 +137,16 @@ def test_api_base_must_be_https_or_loopback_http(url, ok):
     assert "plaud.example" not in str(caught.value)  # the setting is named, never its value
 
 
+@pytest.mark.parametrize(
+    "url", ["http://plaud.example/token", "https://plaud.example/token?x=1", "ftp://plaud.example"]
+)
+def test_token_url_must_be_https_or_loopback_http(url):
+    # why: §10.3. The refresh POST carries the refresh token: never in clear beyond this machine.
+    with pytest.raises(ConfigError, match=r"\[plaud\] token_url") as caught:
+        plaud_settings(cfg({"token_url": url}))
+    assert "plaud.example" not in str(caught.value)
+
+
 def test_recheck_days_and_the_static_token_are_gone():
     # why: §17.4. The rolling sweep replaced recheck_days' hot window, and the sign-in is a file
     # the worker owns (token_store), never a secret in the environment.
@@ -173,11 +188,9 @@ def test_reading_the_settings_imports_no_client_even_when_called():
     assert out.stdout.strip() == "False"
 
 
-def test_no_shipped_template_or_ignore_file_names_a_make_target_that_does_not_exist():
-    # why: Phase 1 has no `make plaud-sign-in` (the Plaud sign-in comes with Phase 2), and doctor
-    # already refuses to point at it. The template and .gitignore must not either.
+def test_the_template_names_the_sign_in_target_that_exists():
+    # why: §17.4's template line names `make plaud-sign-in`; the target must exist, with its
+    # `make help` line, wherever doctor, the template and the runbook point at it.
     makefile = (REPO / "Makefile").read_text()
-    if "plaud-sign-in:" in makefile:
-        pytest.skip("the target exists now")
-    for name in ("config.example.toml", ".gitignore"):
-        assert "plaud-sign-in" not in (REPO / name).read_text(), name
+    assert "\nplaud-sign-in: ## " in makefile
+    assert "`make plaud-sign-in`" in (REPO / "config.example.toml").read_text()

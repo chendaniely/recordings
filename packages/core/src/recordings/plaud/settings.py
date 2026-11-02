@@ -2,8 +2,9 @@
 Status.
 
 - **Unset means:** `schedule_minutes` 20, `auto_import` true, `full_sweep_days` 7, `keep_out_word`
-  "noarchive", `consent_list` none (a consent stop), `token_store` `/plaud/tokens.json`, and
-  `api_base` the copied client's.
+  "noarchive", `consent_list` none (a consent stop), `token_store` `/plaud/tokens.json`,
+  `api_base` the copied client's, and `token_url` `api_base` + `TOKEN_PATH` (a guess the spikes
+  would have settled: `[plaud] token_url` corrects it without a release, §22).
 - **A wrong type,** a bad `api_base` or a bad pattern raises ConfigError naming the key, never its
   value (a bad pattern is named by its position, never quoted: it may be a name Dan wants private).
   An invalid `keep_out_word` is flagged instead (`keep_out_word_ok`): the worker idles, and
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from recordings.config import Config, ConfigError
-from recordings.plaud.endpoint import API_BASE, check_api_base
+from recordings.plaud.endpoint import API_BASE, TOKEN_PATH, check_api_base, check_token_url
 from recordings.plaud.keepout import DEFAULT_WORD, valid_word
 from recordings.plaud.reconcile import patterns_from_config
 
@@ -42,6 +43,7 @@ class PlaudSettings:
     consent_list: Path | None  # None: unset, a consent stop
     token_store: Path
     api_base: str
+    token_url: str  # the refresh POST's URL (§10.3)
 
 
 def _int_at_least(section: dict[str, Any], key: str, default: int, least: int) -> int:
@@ -65,6 +67,7 @@ def plaud_settings(cfg: Config) -> PlaudSettings:
     if not isinstance(token_store, str) or not Path(token_store).expanduser().is_absolute():
         raise ConfigError("[plaud] token_store must be an absolute path, in quotes")
     word = section.get("keep_out_word", DEFAULT_WORD)
+    api_base = check_api_base(section.get("api_base", API_BASE))
     return PlaudSettings(
         schedule_minutes=_int_at_least(section, "schedule_minutes", DEFAULT_SCHEDULE_MINUTES, 0),
         auto_import=auto_import,
@@ -74,5 +77,6 @@ def plaud_settings(cfg: Config) -> PlaudSettings:
         auto_private_patterns=patterns_from_config(cfg.data),
         consent_list=Path(consent).expanduser() if consent and consent.strip() else None,
         token_store=Path(token_store).expanduser(),
-        api_base=check_api_base(section.get("api_base", API_BASE)),
+        api_base=api_base,
+        token_url=check_token_url(section.get("token_url", api_base + TOKEN_PATH)),
     )

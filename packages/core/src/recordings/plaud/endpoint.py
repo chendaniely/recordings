@@ -16,6 +16,12 @@ from urllib.parse import SplitResult, urlsplit
 from recordings.config import ConfigError
 
 API_BASE = "https://platform.plaud.ai/developer/api"  # as copied from audio-router's client
+# The token endpoint, on the API host by default (`[plaud] token_url` overrides it). A guess: the
+# spikes that would read it from the vendor CLI's own refresh were skipped, and audio-router
+# refreshes through the CLI (`plaud me`), so it shows no URL (docs/superpowers/plans/
+# 2026-11-01-stage-2b-guesses.md). A wrong one is refused like any other refresh: the sync stops
+# with "sign-in needed", and nothing is fetched meanwhile.
+TOKEN_PATH = "/oauth/token"
 _LOOPBACK_NAMES = frozenset({"localhost"})
 
 
@@ -49,9 +55,7 @@ def split_url(url: object) -> SplitResult | None:
     return parts if parts.hostname and "@" not in parts.netloc else None
 
 
-def check_api_base(url: object) -> str:
-    """`[plaud] api_base`: https://, or http:// to the loopback for tests (§10.1), with no query
-    or fragment, since paths are added to its end. The error names the setting, never the URL."""
+def _check_url(url: object, key: str) -> str:
     parts = split_url(url)
     if (
         parts is None
@@ -59,7 +63,19 @@ def check_api_base(url: object) -> str:
         or not (parts.scheme == "https" or (parts.scheme == "http" and is_loopback(parts.hostname)))
     ):
         raise ConfigError(
-            "[plaud] api_base must be an https:// URL in plain ASCII (http:// only to this "
+            f"[plaud] {key} must be an https:// URL in plain ASCII (http:// only to this "
             "machine's loopback), with no user name, password, query (?) or fragment (#)"
         )
     return str(url).rstrip("/")
+
+
+def check_api_base(url: object) -> str:
+    """`[plaud] api_base`: https://, or http:// to the loopback for tests (§10.1), with no query
+    or fragment, since paths are added to its end. The error names the setting, never the URL."""
+    return _check_url(url, "api_base")
+
+
+def check_token_url(url: object) -> str:
+    """`[plaud] token_url`, where the refresh POST goes (§10.3): the same rules as `api_base`. It
+    receives the refresh token, so never plain http beyond the loopback."""
+    return _check_url(url, "token_url")

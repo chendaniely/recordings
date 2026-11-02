@@ -4,9 +4,9 @@ import socket
 import sqlite3
 import subprocess
 import urllib.request
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 from recordings import doctor as doctor_module
@@ -16,6 +16,7 @@ from recordings.config import SECRETS
 from recordings.doctor import ALERT_SECRETS, BACKUP_SECRETS, doctor, read_only_mount
 from recordings.index import Index
 from recordings.init import init_archive
+from recordings.plaud import signin
 from recordings.plaud.keepout import typo_phrase
 from recordings.plaud.settings import BAD_WORD
 from recordings.sentinel import MIRROR, SENTINEL, read_sentinel
@@ -23,6 +24,9 @@ from recordings.ssh import nas_free_bytes
 from recordings.state import SCHEMA_VERSION, State
 
 NAS_FREE = 500 * 1024**3
+ZONE = ZoneInfo(
+    "America/Vancouver"
+)  # config.py's default_timezone, which these configs leave unset
 
 SENTINELS = (
     "pw-do-not-print",
@@ -115,7 +119,17 @@ def no_plaud_mount(monkeypatch, tmp_path):
 
 
 SYNC_PING = "https://hc.example/sync-ping-do-not-print"
-TOKEN = '{"access_token": "token-do-not-print"}'  # synthetic
+TOKEN = json.dumps(  # synthetic, in the token store's own format (stage 2b spec §10.3)
+    {
+        "version": 1,
+        "access_token": "token-do-not-print",
+        "refresh_token": "refresh-do-not-print",
+        "expires_at": None,
+        "refresh_expires_at": None,
+        "obtained_at": "2026-10-23T12:00:00+00:00",
+        "refreshed_at": None,
+    }
+)
 LISTED = "of_" + f"{1:032x}"  # synthetic Plaud IDs
 KEPT = "of_" + f"{2:032x}"
 
@@ -913,6 +927,9 @@ def test_the_worker_role_skips_backup_mirror_ssh_and_restic(tmp_path, monkeypatc
         "consent_stop": None,
         "review_lines": [],
         "token_store": True,
+        "token_expires": None,
+        "refresh_token": True,
+        "refresh_expires": None,
         "keep_out_words": [],
         "deadman_sync_set": True,
     }
@@ -949,33 +966,74 @@ def test_a_worker_with_no_consent_list_reports_it(tmp_path):
     ]
 
 
-def test_a_worker_with_no_token_store_notes_the_sign_in_and_exits_0(tmp_path, monkeypatch, capsys):
-    # why: Dan, phase-end Q&A §7. Phase 1 has no way to sign in, so an always-expected problem
-    # would teach skimming past real ones: a note, and doctor exits 0 for it. Phase 2's
-    # `make plaud-sign-in` makes it a problem again (doctor.SIGN_IN_IS_A_PROBLEM).
+def test_a_worker_with_no_token_store_is_a_problem_naming_make_plaud_sign_in(
+    tmp_path, monkeypatch, capsys
+):
+    # why: spec §17.2. While Phase 1 had no way to sign in it was a note (Dan, Q&A §7); with
+    # `make plaud-sign-in` it is a problem again, and doctor exits 78 for it.
     environ = worker(tmp_path, token=False)
     report = doctor(environ, role="worker")
-    assert report["problems"] == []
-    assert doctor_module.SIGN_IN_NOTE in report["notes"]
-    assert doctor_module.SIGN_IN_NOTE.startswith("Plaud sign-in: comes with stage 2b's next phase")
-    assert "make plaud-sign-in" not in doctor_module.SIGN_IN_NOTE  # that target is Phase 2's
-    assert "runbook section 6" in doctor_module.SIGN_IN_NOTE
+    assert report["problems"] == [doctor_module.SIGN_IN_NEEDED]
+    assert doctor_module.SIGN_IN_NEEDED.startswith("sign-in needed: run `make plaud-sign-in`")
     assert report["plaud"]["token_store"] is False
+    assert not any("sign-in" in note for note in report["notes"])
     for key, value in environ.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv("RECORDINGS_ROLE", raising=False)
-    assert main(["doctor", "--role", "worker", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)["problems"] == []
+    assert main(["doctor", "--role", "worker", "--json"]) == 78
+    assert json.loads(capsys.readouterr().out)["problems"] == [doctor_module.SIGN_IN_NEEDED]
 
 
-def test_the_sign_in_becomes_a_problem_by_one_switch(tmp_path, monkeypatch):
-    # why: Phase 2 turns the note back into a problem when `make plaud-sign-in` exists (Q&A §7);
-    # the switch is one line, and the problem keeps spec §17.2's "sign-in needed".
-    monkeypatch.setattr(doctor_module, "SIGN_IN_IS_A_PROBLEM", True)
-    report = doctor(worker(tmp_path, token=False), role="worker")
-    (problem,) = report["problems"]
-    assert problem.startswith("sign-in needed")
-    assert doctor_module.SIGN_IN_NOTE not in report["notes"]
+def _sign_in(tmp_path, **fields) -> None:
+    """Rewrite the worker's synthetic sign-in with these fields."""
+    path = tmp_path / "plaud" / "tokens.json"
+    path.write_text(json.dumps(json.loads(TOKEN) | fields), encoding="utf-8")
+
+
+def test_doctor_reports_the_sign_ins_expiries_never_a_value(tmp_path):
+    # why: spec §17.2, "It also reports the token's expiry, whether a refresh token is present".
+    environ = worker(tmp_path)
+    later = (datetime.now(UTC) + timedelta(days=30)).replace(microsecond=0)
+    _sign_in(tmp_path, expires_at="2026-10-23T13:00:00+00:00", refresh_expires_at=later.isoformat())
+    report = doctor(environ, role="worker")
+    assert report["problems"] == [] and report["warnings"] == []
+    plaud = report["plaud"]
+    assert plaud["token_expires"] == "2026-10-23 06:00"  # in [archive] default_timezone
+    assert plaud["refresh_token"] is True
+    assert plaud["refresh_expires"].startswith(f"{later.astimezone(ZONE):%Y-%m-%d}")
+    assert "do-not-print" not in json.dumps(report)
+
+
+def test_a_refresh_token_expiring_within_7_days_is_a_warning_and_one_expired_a_problem(tmp_path):
+    environ = worker(tmp_path)
+    soon = datetime.now(UTC) + timedelta(days=3)
+    _sign_in(tmp_path, refresh_expires_at=soon.isoformat())
+    report = doctor(environ, role="worker")
+    (warning,) = report["warnings"]
+    assert "refresh token expires" in warning and "make plaud-sign-in" in warning
+    _sign_in(tmp_path, refresh_expires_at=(datetime.now(UTC) - timedelta(hours=1)).isoformat())
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert problem.startswith("sign-in needed") and "refresh token has expired" in problem
+
+
+def test_a_sign_in_with_no_refresh_token_is_a_warning_until_it_expires(tmp_path):
+    environ = worker(tmp_path)
+    ahead = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _sign_in(tmp_path, refresh_token=None, expires_at=ahead)
+    report = doctor(environ, role="worker")
+    assert report["plaud"]["refresh_token"] is False and report["problems"] == []
+    assert "no refresh token" in report["warnings"][0]
+    _sign_in(tmp_path, refresh_token=None, expires_at="2026-10-23T13:00:00+00:00")
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert problem.startswith("sign-in needed") and "no refresh token" in problem
+
+
+def test_a_token_file_the_store_cant_use_is_a_sign_in_problem(tmp_path):
+    environ = worker(tmp_path)
+    (tmp_path / "plaud" / "tokens.json").write_text('{"access_token": "x"}', encoding="utf-8")
+    (problem,) = doctor(environ, role="worker")["problems"]
+    assert problem.startswith("sign-in needed") and "can't be used" in problem
+    assert "make plaud-sign-in" in problem
 
 
 def test_a_plaud_folder_wider_than_0700_is_a_problem(tmp_path):
@@ -994,7 +1052,7 @@ def test_a_token_wider_than_0600_is_a_problem(tmp_path):
 
 def test_a_sign_in_that_isnt_this_users_is_a_problem(tmp_path, monkeypatch):
     environ = worker(tmp_path)
-    monkeypatch.setattr(doctor_module, "_owner", lambda: 4242)
+    monkeypatch.setattr(signin, "_owner", lambda: 4242)
     problems = doctor(environ, role="worker")["problems"]
     assert len(problems) == 2 and all("not this user (4242)" in p for p in problems)
 
@@ -1173,7 +1231,7 @@ def test_doctor_never_calls_plaud(tmp_path, monkeypatch):
 def test_doctor_prints_no_value_or_hash(tmp_path):
     environ = worker(tmp_path, consent=f"- `{LISTED}` — synthetic\n{KEPT} kept: later\n")
     text = json.dumps(doctor(environ, role="worker"), ensure_ascii=False)
-    for value in (SYNC_PING, TOKEN, "token-do-not-print", LISTED, KEPT):
+    for value in (SYNC_PING, TOKEN, "token-do-not-print", "refresh-do-not-print", LISTED, KEPT):
         assert value not in text
         assert hashlib.sha256(value.encode()).hexdigest() not in text
     token_bytes = (tmp_path / "plaud" / "tokens.json").read_bytes()

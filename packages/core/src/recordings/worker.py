@@ -39,7 +39,7 @@ from recordings.alerts import AlertConfig, ping_url
 from recordings.config import Config, ConfigError, load_config
 from recordings.ids import ID_RE
 from recordings.locks import LockTimeout
-from recordings.plaud import keepout, requests
+from recordings.plaud import keepout, requests, signin
 from recordings.plaud.baseline import (
     PatternsPass,
     WholePassDue,
@@ -420,6 +420,7 @@ class Worker:
         self._whole_every = timedelta(minutes=minutes if minutes > 0 else WHOLE_RETRY_MINUTES_OFF)
         self._not_before: datetime | None = None  # a turn that didn't run waits one interval
         self._held_by_gate = False  # the last turn found the gate closed
+        self._held_by_pause = False  # the last turn found the sign-in paused
         self._pruned_at: datetime | None = None
         self._failing: dict[str, str] = {}  # step -> the class last logged
         self._beat_failed: str | None = None
@@ -848,17 +849,21 @@ class Worker:
     def _turn_if_due(self) -> None:
         """The gate, read at every tick: while the last turn found it closed, the catch-up opening
         it ends the wait, so the first sync after the catch-up starts at the next tick, not an
-        interval later. Then a due scheduled turn."""
+        interval later. Likewise the sign-in: while the last turn found it paused, a new token file
+        (`make plaud-sign-in`) ends the wait. Then a due scheduled turn."""
         self.gate = gate_now(self.db)
         if self._held_by_gate and self.gate.open:
             self._not_before, self._held_by_gate = None, False
+        if self._held_by_pause and signin.paused(self.db, self.settings.token_store) is None:
+            self._not_before, self._held_by_pause = None, False
         if self.due():
             self.scheduled_turn()
 
     def scheduled_turn(self) -> None:
-        """Spec §9.7: a bad keep_out_word, the gate closed or `plaud` held: each is recorded and
-        pings nothing. Otherwise the turn runs under `plaud` (`plaud-sync`), and conclude_turn
-        decides the ping. (Phase 2 adds the sign-in pause and the rate-limit wait here.)"""
+        """Spec §9.7: a bad keep_out_word, the gate closed, the sign-in paused (no token file, or
+        the one Plaud refused, §10.3) or `plaud` held: each is recorded and pings nothing, with no
+        Plaud call. Otherwise the turn runs under `plaud` (`plaud-sync`), and conclude_turn
+        decides the ping. (The rate-limit wait comes with the client's pacing.)"""
         now = self.clock()
         outcome: TurnOutcome | None = None
         detail: Mapping[str, Any] | None = None
@@ -867,6 +872,8 @@ class Worker:
             outcome = "idle-config"
         elif not self.gate.open:
             outcome, detail = "gate", {"reason": self.gate.reason}
+        elif (why := signin.paused(self.db, self.settings.token_store)) is not None:
+            outcome, detail = "paused", {"why": why}
         if outcome is None:
             try:
                 with plaud_run(self.state, "plaud-sync", timeout=TURN_LOCK_WAIT, now=now):
@@ -882,6 +889,7 @@ class Worker:
                 return
         record_turn(self.db, outcome, now=now, detail=detail)
         self._held_by_gate = outcome == "gate"
+        self._held_by_pause = outcome == "paused"
         self._not_before = now + timedelta(minutes=self.settings.schedule_minutes)
         conclude_turn(self._ctx, None)  # no sync ran: no ping
 

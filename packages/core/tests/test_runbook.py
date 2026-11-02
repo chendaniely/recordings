@@ -282,7 +282,8 @@ def test_the_runbook_says_what_to_do_when_the_plaud_alert_comes():
 
 def test_the_runbook_has_a_deploy_2b_section():
     # why: stage 2b spec §17.5, and 2b phase 1 plan, decision 10: Phase 1 deploys, with the
-    # folders, the sync's own check and the worker's checks, and the sign-in left for Phase 2.
+    # folders, the sync's own check, the sign-in (Phase 2's `make plaud-sign-in`) and the
+    # worker's checks.
     headings = [line for line in _text().splitlines() if line.startswith("## ")]
     six = headings.index("## 6. Deploy 2b")
     assert headings[six - 1 : six + 2] == [
@@ -300,14 +301,17 @@ def test_the_runbook_has_a_deploy_2b_section():
         "rc exec worker recordings doctor --role worker",
         "rc exec worker recordings plaud consent",
         "rc exec worker recordings alert-test",
+        "make plaud-sign-in",
+        "rc exec worker recordings plaud check",
     ):
         assert needed in code, needed
     flat = " ".join(text.split())
     for needed in (
         "under 2 seconds",
         "a period of 20 minutes, a grace of 2 hours",
-        # Dan, phase-end Q&A §7: doctor's note while Phase 1 runs, and its exit 0
-        "Plaud sign-in: comes with stage 2b's next phase",
+        # spec §17.2: after step 6's sign-in, doctor reports no problem; without it, the problem
+        "sign-in needed: run `make plaud-sign-in`",
+        "local.mk",
         "reports no problem and exits 0",
         "Scheduled sync waits for the first catch-up (runbook)",
         '"/consent"',
@@ -324,6 +328,26 @@ def test_the_runbook_has_a_deploy_2b_section():
     assert lines.index("git fetch") < checkout < lines.index("make deploy")
     ntfy = " ".join(_section("## Setting up ntfy, later").split())
     assert "RECORDINGS_ALERTS_TOPIC_HOST" in ntfy and "`make deploy`" in ntfy
+
+
+def test_the_runbook_says_how_to_sign_in_to_plaud():
+    # why: stage 2b spec §17.5's "Plaud sign-in" section: when, `make plaud-sign-in`, what it
+    # prints, and `plaud check`; and CLAUDE.md's rule that a Claude session never runs either.
+    text = " ".join(_section("## Plaud sign-in").split())
+    for needed in (
+        "make plaud-sign-in",
+        "rc exec worker recordings plaud check",
+        "signed in: yes · access token expires",
+        "refresh token: present · account 1a2b3c4d",
+        "a Claude session never runs `make plaud-sign-in` or `token-import`",
+        "never backed up",
+        "step 2 failed",
+        "step 3 failed",
+        "step 4 failed",
+        "`[plaud] token_url`",
+        "2026-11-01-stage-2b-guesses.md",
+    ):
+        assert needed in text, needed
 
 
 def test_the_runbook_rolls_back_across_2b():

@@ -13,7 +13,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Phases 2 and 3, built straight through (Q&A §8): area A1, open.
+**Now:** Phases 2 and 3, built straight through (Q&A §8): area A1 (the sign-in) built; area A2,
+open. The build's guesses are in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`.
 
 ***
 
