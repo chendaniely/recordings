@@ -3362,3 +3362,54 @@ def test_the_top_bar_at_320_px_is_one_row_of_44_px_targets(page: Page, server, c
     assert max(b["x"] + b["width"] for b in row) <= 320 + 0.5, seen
     assert bar.bounding_box()["height"] < 60, seen  # one row
     assert page.evaluate("() => document.documentElement.scrollWidth") <= 320, seen
+    # At this text size the tabs fit, so their row has nothing to scroll (Q&A §5's guard is idle).
+    assert bar.locator("nav").evaluate("el => el.scrollWidth - el.clientWidth") == 0, seen
+
+
+# The phone's own text size turned up, as its text zoom does it: the text, set in pixels, scaled
+# about 1.4 times. Added through the page; the product's CSS is untouched.
+LARGER_TEXT = "html, body { font-size: 20px; }"
+
+
+@pytest.mark.browser_context_args(
+    is_mobile=True, has_touch=True, viewport={"width": 320, "height": 700}
+)
+def test_at_320_px_a_larger_text_size_scrolls_the_tab_row_never_the_page(
+    page: Page, server, console
+):
+    # Dan, phase-end Q&A §5 ("Tabs scroll"): with the text size turned up, the logo's mark, the
+    # four tabs and the theme icon no longer fit at 320 px. The tab row scrolls within itself:
+    # the page never scrolls sideways, the bar stays one row, and every tab can be reached.
+    open_library(page, server.url)
+    page.add_style_tag(content=LARGER_TEXT)
+    page.evaluate(TWO_FRAMES)
+    bar = page.locator(".topbar")
+    nav = bar.locator("nav")
+    sideways = "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+    assert page.evaluate(sideways) == 0
+    assert bar.bounding_box()["height"] < 60  # one row
+    # The larger text really doesn't fit: the row has something to scroll.
+    assert nav.evaluate("el => el.scrollWidth - el.clientWidth") > 0
+    icon = bar.get_by_test_id("theme-cycle").bounding_box()
+    assert icon["x"] + icon["width"] <= 320 + 0.5 and icon["width"] >= 44  # still whole
+    for name in ("Status", "Add", "Tags", "Library"):  # the last tab first: it starts out of view
+        tab = nav.get_by_role("button", name=name, exact=True)
+        tab.scroll_into_view_if_needed()
+        box, row = tab.bounding_box(), nav.bounding_box()
+        seen = f"{name}: {box}, row {row}"
+        assert box["width"] >= 44 and box["height"] >= 44, seen
+        assert row["x"] - 0.5 <= box["x"], seen  # inside the row's visible part
+        assert box["x"] + box["width"] <= row["x"] + row["width"] + 0.5, seen
+        assert box["x"] + box["width"] <= 320 + 0.5, seen
+        tab.click()
+        assert page.evaluate(sideways) == 0, seen
+    # Each press went where it says: Status and the Sync screen open, and on a phone Tags is the
+    # Library with the Untagged filter (CLAUDE.md), which Library then leaves.
+    nav.get_by_role("button", name="Status", exact=True).click()
+    expect(page.get_by_test_id("sync-panel")).to_be_visible()
+    nav.get_by_role("button", name="Add", exact=True).click()
+    expect(page.get_by_test_id("sync-page")).to_be_visible()
+    nav.get_by_role("button", name="Library", exact=True).click()
+    expect(nav.get_by_role("button", name="Library", exact=True)).to_have_attribute(
+        "aria-current", "page"
+    )

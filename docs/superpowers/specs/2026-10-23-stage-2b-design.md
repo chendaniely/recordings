@@ -1899,7 +1899,9 @@ component, and link to each other.
 
 - **A new page,** `#/add`: "Library · Tags · Add · Status". At 320 pixels the four tabs stay one row
   of short text, with the logo's mark but not its name, and the theme switch as an icon; the e2e test
-  at 320 pixels checks it. The Add page's Plaud panel is the main spec's Sync screen.
+  at 320 pixels checks it. With the phone's text size turned up, the tab row scrolls sideways within
+  itself and the page never does (Dan, Phase 1's Q&A §5); an e2e test checks that too. The Add
+  page's Plaud panel is the main spec's Sync screen.
 - **Top to bottom:**
   1. **The summary line,** shared with Status: "All here · checked 14:20 · next sync 14:40", or the
      problem in one sentence and "See Status".
@@ -3170,3 +3172,5 @@ None: every bullet of §20 is planned in a phase.
   (step 4's reviews of the phase end).
 - 2026-11-01: §17.2: while Phase 1 runs, doctor's missing sign-in is a note and exits 0, a problem
   again once Phase 2 adds `make plaud-sign-in` (Dan, Phase 1's Q&A §7: "A note, exit 0").
+- 2026-11-01: §15.1: at 320 pixels with a larger text size, the tab row scrolls within itself,
+  never the page (Dan, Phase 1's Q&A §5: "Tabs scroll").

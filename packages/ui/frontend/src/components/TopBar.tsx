@@ -8,7 +8,8 @@ const PAGES: { page: Page; label: string }[] = [
 ];
 
 /** At 320 pixels the four tabs stay one row: the logo keeps its mark but not its name, and the
- * theme switch is one icon (app.css, the phone block). */
+ * theme switch is one icon (app.css, the phone block). With the phone's text size turned up the
+ * tabs scroll sideways within their row, never the page (Dan, phase-end Q&A §5). */
 export function TopBar({ page, onPage }: { page: Page; onPage: (p: Page) => void }) {
   return (
     <header className="topbar">
