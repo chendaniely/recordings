@@ -3358,3 +3358,10 @@ None: every bullet of §20 is planned in a phase.
   alone stops the check before any block; an import is its own baseline; the breaker's field names
   are plain keys only. C2.01's sweep half, C2.03 to C2.06 built; C5.03 whole. No decision or
   scenario's outcome changed.
+- 2026-11-02: §14.4's `recordings plaud check --volatility` and `breaker [reset]`, §14.5's check-state
+  seeding in `recordings plaud baseline` and its `--all` (area B1). The baseline prints "check
+  state seeded" and "already seeded" (or "rebaselined") beside the privacy part's counts; the
+  volatility check writes nothing and exits 1 when a part differs; `breaker` with no action says
+  whether it is open and why. The runbook's section 8 runs the volatility check before `make
+  plaud-catch-up`, and gains "When edit-sync pauses: the breaker". No decision or scenario's
+  outcome changed.

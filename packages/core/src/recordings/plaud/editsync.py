@@ -215,7 +215,7 @@ def plaud_ids(rec: Recording) -> list[str]:
     return seen
 
 
-def _own_types(*envelopes: dict | None) -> frozenset[str]:
+def own_types(*envelopes: dict | None) -> frozenset[str]:
     """The note types that are Dan's own notes (highlights, memos) in these envelopes."""
     own = set()
     for env in envelopes:
@@ -234,7 +234,7 @@ def display(key: str, own: frozenset[str]) -> str:
     return key if key in PARTS else OTHER
 
 
-def _names(keys: list[str], own: frozenset[str]) -> tuple[str, ...]:
+def part_names(keys: list[str], own: frozenset[str]) -> tuple[str, ...]:
     named = {display(k, own) for k in keys}
     return tuple(p for p in PARTS if p in named)
 
@@ -472,7 +472,7 @@ class Checker:
         fetched = self.clock()
         have = snapshots(self.writer, self.writer.archive.load(rid), pid)
         old = have.newest_complete
-        own = _own_types(old, env)
+        own = own_types(old, env)
         before = part_hashes(old) if old is not None else {}
         after = part_hashes(env)
         keys = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
@@ -480,7 +480,7 @@ class Checker:
             keys = [OTHER]  # every field lands in a part; this is a backstop
         if link_errors(env):
             written = None if have.holds(env) else self._publish(rid, chosen, env, fetched)
-            return CheckResult(rid, DEGRADED, parts=_names(keys, own), snapshot=written)
+            return CheckResult(rid, DEGRADED, parts=part_names(keys, own), snapshot=written)
         if not keys:
             return CheckResult(rid, UP_TO_DATE)
         pending = row is not None and row.baseline_pending
@@ -489,9 +489,9 @@ class Checker:
             again = self._second(rec, chosen, now=now)
             if again is not None:
                 twice = part_hashes(again)
-                volatile = _names([k for k in keys if after.get(k) != twice.get(k)], own)
+                volatile = part_names([k for k in keys if after.get(k) != twice.get(k)], own)
                 env, fetched = again, self.clock()
-        parts = _names(keys, own)
+        parts = part_names(keys, own)
         fields = other_fields(old, env) if OTHER in parts else ()
         counted = not pending and (set(parts) == {OTHER} or bool(volatile))
         if self.breaker_open and set(parts) <= {OTHER, *volatile}:

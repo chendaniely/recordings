@@ -1182,6 +1182,16 @@ homelab server, in `$REPO_DIR`:
 
 1. If you edited the consent list since section 7, run `make plaud-dry-run` again, and check the
    new IDs show as excluded.
+   Then the volatility check (spec §14.4): three recordings already here, none private, kept out
+   or consent-listed, each fetched twice a minute apart. It writes nothing:
+   ```bash
+   rc exec worker recordings plaud check --volatility
+   ```
+   Each line names a recording by its archive ID and says, for each part (title, transcript,
+   speakers, notes, own notes, other), "same" or "differs". **If any part differs (exit 1), stop:**
+   Plaud sends something that changes by itself, and the breaker would trip on it after the
+   catch-up. Open a Claude session with the output (field names only, never values); the fix is
+   a normaliser release. Exit 0 with "every part came back the same": go on.
 2. Then:
    ```bash
    make plaud-catch-up
@@ -1190,7 +1200,8 @@ homelab server, in `$REPO_DIR`:
    only if the one before it passed:
    1. a backup tagged `pre-import` (`rc run --rm backup recordings backup run --tag pre-import`);
    2. the baseline (`rc exec worker recordings plaud baseline`): every title of the archive's
-      Plaud recordings checked once, for privacy and the keep-out word;
+      Plaud recordings checked once, for privacy and the keep-out word, and each one's check
+      state seeded (its next check spread over `full_sweep_days`, excused from the breaker);
    3. the catch-up (`rc exec worker recordings plaud sync --catch-up`): it holds `ops` and `plaud`
       together, imports every recording waiting, with no cap, newest first, and prints one line
       per recording ("importing 5 of 31"), by number only;
@@ -1322,7 +1333,7 @@ until it clears:
 | sign-in needed | Plaud refuses a refresh, or the sign-in is missing | a good run after the token file changes | At the Mac: `make plaud-sign-in` ("Plaud sign-in" below) |
 | imports stopped: consent list | the consent list is missing, empty, holds no IDs, or can't be read, or has a line that looks like an ID but can't be read | the worker reads the list cleanly | Fix the lines Status names by number, then `rc exec worker recordings plaud consent`. A missing or unreadable list: fix the file or its permissions, then the same command ("When imports stop: the consent list" below) |
 | held: see Status | the listing hold | Accept, or a later listing that no longer meets it | Status's check, then **Accept this listing** ("When the sync is held" below) |
-| paused: unexpected changes | the breaker trips | Accept these changes, a release that closes it, or a breaker reset | **Accept these changes**, or a code fix (a breaker reset comes in stage 2b's third phase) |
+| paused: unexpected changes | the breaker trips | Accept these changes, a release that closes it, or a breaker reset | **Accept these changes**, or a code fix ("When edit-sync pauses: the breaker" below) |
 | should be private: run `recordings reindex` | a `private` the sync owes fails to land, or a recording wasn't checked against a new private pattern, or that check stopped | the tag lands, or the recording is checked (the worker tries again every few seconds; a check that stopped as a whole, once per sync interval) | `rc run --rm worker recordings reindex`, which also says what stops a recording that "wasn't checked against the private patterns". If Status says a recording's `recording.json` is missing, restore it from a backup. If Status says a file couldn't be written, or that late consent listings stopped, reindex can't help: check the archive disk and its permissions, then `rc logs worker`. If it says the private patterns check stopped, do the step it names for the class, then `rc logs worker` |
 
 And these stop it without a blocker:
@@ -1416,6 +1427,37 @@ pinged. Status says "Plaud imports stopped: …" with the reason, and Needs atte
 
 A line Status lists "for review" (an ID in a sentence, or `ID kept: …`) is not an exclusion and
 stops nothing: if you meant it as one, rewrite it in the list's own form.
+
+## When edit-sync pauses: the breaker
+
+Stage 2b spec §14.4. Status says "Edit-sync paused since 14:20: Plaud started sending something
+new on 12 recordings (`folder_id`)", or "…: 12 recordings' transcripts change between two fetches
+a moment apart". The sync's check stays down while it is open (the `breaker` blocker), so a new
+problem sends no second email: glance at Status until it is fixed. New recordings, title checks
+and `private` tags go on; only snapshots of what tripped it wait.
+
+1. Read what Status names, or on the server:
+   ```bash
+   rc exec worker recordings plaud breaker
+   ```
+   It prints the same sentence, the field names (never their values), and whether **Accept these
+   changes** is offered.
+2. **Fields that look like a feature Plaud added** (and came back the same on both fetches):
+   press **Accept these changes** on Status or the Sync screen. Every recording's next check is
+   excused and spread over `full_sweep_days`, so each gets one new snapshot over the next day, and
+   the breaker closes. The press is in `ops_runs` (`plaud-accept-changes`).
+3. **A name that looks like a link, a token or a key, a part that differs between two fetches, or
+   a field you accepted before** ("This keeps changing by itself: it needs a code fix"): don't
+   accept. Open a Claude session with Status's sentence: the normaliser needs to drop that field,
+   with a `NORMALISER_VERSION` bump. When that release is deployed, the worker closes the breaker
+   by itself at its start, and Status says "closed by the release on …; watching for a re-trip"
+   for a day. If it trips again, the release didn't drop the field.
+4. After a normaliser change you accept, a rebaseline excuses every recording's next check:
+   ```bash
+   rc exec worker recordings plaud baseline --all
+   ```
+5. `rc exec worker recordings plaud breaker reset` closes it by hand and excuses nothing: a tool
+   no step here needs.
 
 ## Plaud sign-in
 

@@ -223,10 +223,13 @@ def test_the_baseline_prints_counts_and_no_title(
         "unwritten": [],
         "busy": [],
         "causes": {},
+        "seeded": 1,  # §14.5: its check state, seeded once
+        "already_seeded": 0,
     }
     assert main(["plaud", "baseline"]) == 0
     raw += capsys.readouterr().out
     assert "already seen: 1" in raw and "Synthetic 042" not in raw
+    assert "check state seeded: 0" in raw and "already seeded: 1" in raw
 
 
 def test_the_baseline_waits_for_a_held_plaud_lock_then_exits_75(

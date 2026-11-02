@@ -75,7 +75,13 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     c = plaud.add_parser(
         "baseline",
         help="check every title of the archive's Plaud recordings once, for privacy and the "
-        "keep-out words (before the catch-up)",
+        "keep-out words, and seed edit-sync's check state (before the catch-up)",
+    )
+    c.add_argument(
+        "--all",
+        action="store_true",
+        help="a rebaseline, after a normaliser change you accept: every recording's next check "
+        "excused from the breaker and spread over full_sweep_days again",
     )
     c.add_argument("--json", action="store_true")
 
@@ -86,8 +92,23 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     c = plaud.add_parser(
         "check",
         help="one signed-in read: whether the Plaud sign-in works, its expiry, and whether it "
-        "can refresh",
+        "can refresh; --volatility fetches 3 recordings twice, a minute apart, and says which "
+        "parts differ (writes nothing)",
     )
+    c.add_argument(
+        "--volatility",
+        action="store_true",
+        help="fetch 3 recordings here (none private, kept out or consent-listed) twice, a "
+        "minute apart, and say for each part whether it came back the same",
+    )
+    c.add_argument("--json", action="store_true")
+
+    c = plaud.add_parser(
+        "breaker",
+        help="edit-sync's circuit breaker: whether it is open and why; `reset` closes it "
+        "(Status's Accept these changes is the usual way; no runbook step needs reset)",
+    )
+    c.add_argument("action", nargs="?", choices=["reset"], help="close it, starting its window now")
     c.add_argument("--json", action="store_true")
 
     c = plaud.add_parser(
@@ -335,14 +356,22 @@ def _fix_for(cause: str) -> str:
 
 
 def cmd_baseline(args: argparse.Namespace) -> int:
-    """§14.5's privacy part. Holds `plaud`, waiting up to runlock.CLI_WAIT. Exit 1 when a
-    recording couldn't be written, the enforced keep-out words can't be read (nothing is checked
-    then), or an OSError or a sqlite3 error stopped the run outside its per-recording loop (a
-    fixed phrase with the class, never the exception's text: §9.6); 75 when only locked ones were
-    left."""
+    """§14.5: every title checked once (the privacy part), then edit-sync's check state seeded
+    for each Plaud recording with none (its last check at its newest snapshot's fetch time, its
+    next spread over `full_sweep_days`, excused from the breaker); `--all` rebaselines the rest
+    too. Holds `plaud`, waiting up to runlock.CLI_WAIT. Exit 1 when a recording couldn't be
+    written, the enforced keep-out words can't be read (nothing is checked then), or an OSError
+    or a sqlite3 error stopped the run outside its per-recording loop (a fixed phrase with the
+    class, never the exception's text: §9.6); 75 when only locked ones were left."""
+    from recordings.plaud import sweep
+
     cfg = _config(args.json)
     if isinstance(cfg, int):
         return cfg
+    try:
+        settings = plaud_settings(cfg)
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, EXIT_CONFIG)
     state = _write_state(cfg, args.json)
     if isinstance(state, int):
         return state
@@ -353,6 +382,18 @@ def cmd_baseline(args: argparse.Namespace) -> int:
             if isinstance(writer, int):
                 return writer
             report = baseline_privacy(writer, PlaudDB(writer.state), now=now)
+            plaud = [
+                rec
+                for rec in writer.archive.iter_recordings()
+                if any(s.kind == "plaud" for s in rec.sources)
+            ]
+            seeded, already = sweep.seed(
+                PlaudDB(writer.state),
+                plaud,
+                now=now,
+                full_sweep_days=settings.full_sweep_days,
+                again=args.all,
+            )
     except LockTimeout:
         return _fail(_busy(state), args.json, EXIT_BUSY)
     except KeepOutWordsError as exc:  # a fixed phrase: the row is never read as no words
@@ -369,6 +410,8 @@ def cmd_baseline(args: argparse.Namespace) -> int:
         f"private added: {report.private_added:,}",
         f"kept out late: {report.kept_out_late:,}",
         f"already seen: {report.already_seen:,}",
+        f"check state seeded: {seeded:,}",
+        f"rebaselined: {already:,}" if args.all else f"already seeded: {already:,}",
     ]
     by_fix: dict[str, list[str]] = {}
     for rid in report.unwritten:
@@ -380,7 +423,9 @@ def cmd_baseline(args: argparse.Namespace) -> int:
             f"busy ({len(report.busy):,}): {', '.join(report.busy)}; in use now, run the "
             "baseline again"
         )
-    _emit(report.to_dict(), lines, args.json)
+    payload = report.to_dict() | {"seeded": seeded}
+    payload["rebaselined" if args.all else "already_seeded"] = already
+    _emit(payload, lines, args.json)
     if report.unwritten:
         return EXIT_FAILED
     return EXIT_BUSY if report.busy else EXIT_OK
@@ -481,6 +526,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     from recordings.plaud import signin, tokens  # the worker's CLI only: web never runs this
     from recordings.plaud.client import PlaudAuthError, PlaudClient, PlaudError
 
+    if args.volatility:
+        return cmd_volatility(args)
     cfg = _config(args.json)
     if isinstance(cfg, int):
         return cfg
@@ -513,6 +560,200 @@ def cmd_check(args: argparse.Namespace) -> int:
     payload, line = _sign_in_payload(facts, account, tz, signed_in=True)
     payload["not_recorded"] = unrecorded
     _emit(payload, [line, *_unrecorded(unrecorded)], args.json)
+    return EXIT_OK
+
+
+VOLATILITY_COUNT = 3  # §14.4: three recordings here
+VOLATILITY_WAIT = 60.0  # seconds between the two fetches of each
+VOLATILE_STOP = (
+    "a part came back different a minute later, with no edit: don't run the baseline or the "
+    "catch-up; it needs a code fix (a Claude session, with this output)"
+)
+
+
+def _sleep(seconds: float) -> None:
+    import time
+
+    time.sleep(seconds)
+
+
+def cmd_volatility(args: argparse.Namespace) -> int:
+    """`recordings plaud check --volatility` (§14.4): three recordings here, none private, kept
+    out or consent-listed, each fetched twice a minute apart, and for each part (title,
+    transcript, speakers, notes, own notes, other) whether its normalised hash came back the
+    same. It writes nothing: no snapshot, no state. The runbook runs it before the baseline, so a
+    volatile field is found before the breaker meets it. Recordings by archive ID, parts and field
+    names only, never a title or a value. Holds `plaud` (`plaud-volatility`). Exit 0 all the same
+    (or nothing to fetch); 1 a part differed; 69 Plaud unreachable; 75 busy; 77 sign-in needed;
+    78 configuration or the consent list."""
+    from recordings.models import is_private
+    from recordings.plaud import editsync, tokens
+    from recordings.plaud.checks import CONSENT_LATE, KEPT_OUT_LATE
+    from recordings.plaud.client import PlaudAuthError, PlaudClient, PlaudError
+    from recordings.plaud.compare import _kept_out
+    from recordings.plaud.keepout import keep_out_match
+    from recordings.plaud.normalise import link_errors, part_hashes
+    from recordings.refs import canonical_plaud_id
+    from recordings.sources.plaud import PlaudSource
+
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    try:
+        settings = plaud_settings(cfg)
+    except config.ConfigError as exc:
+        return _fail(str(exc), args.json, EXIT_CONFIG)
+    consent = read_consent(settings.consent_list)
+    if consent.stop is not None:
+        return _fail(f"imports stopped: consent list ({consent.stop})", args.json, EXIT_CONFIG)
+    state = _write_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    if cfg.archive_path is None:
+        return _fail("set [archive] path in config.toml first", args.json, EXIT_CONFIG)
+    db, archive = PlaudDB(state), Archive(cfg.archive_path)
+    try:
+        words = [w for w in (settings.keep_out_word,) if settings.keep_out_word_ok]
+        words += [w for w in enforced_words(db) if w not in words]
+        flagged = {
+            e.recording_id for e in db.open_flags((KEPT_OUT_LATE, CONSENT_LATE)) if e.recording_id
+        }
+    except (KeepOutWordsError, NoSyncYet, sqlite3.Error) as exc:
+        return _fail(f"can't read state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
+    store = tokens.TokenStore(settings.token_store, token_url=settings.token_url)
+    client = PlaudClient(store, api_base=settings.api_base)
+    results: list[dict] = []
+    try:
+        with runlock.plaud_run(
+            state, "plaud-volatility", timeout=runlock.CLI_WAIT, now=datetime.now(UTC)
+        ):
+            listing = PlaudSource(client).list_all()
+            if not listing.complete and listing.error is not None:
+                raise listing.error
+            listed = {row.canonical_id: row for row in listing.rows}
+            picked = []
+            for rec in archive.iter_recordings():
+                ids = editsync.plaud_ids(rec)
+                row = next((listed[pid] for pid in ids if pid in listed), None)
+                if (
+                    row is None
+                    or is_private(rec)
+                    or rec.id in flagged
+                    or set(ids) & consent.ids
+                    or any(_kept_out(db.listing(pid)) for pid in ids)
+                    or keep_out_match(row.title, words) is not None
+                ):
+                    continue
+                picked.append((rec.id, row))
+                if len(picked) == VOLATILITY_COUNT:
+                    break
+
+            def fetch(row) -> dict | None:
+                """The envelope bare, then its blocks, unless its ID is consent-listed or its
+                title took a keep-out word since the listing: then never its blocks."""
+                env = client.envelope(row.listed_id, enrich=False)
+                env_id, title = env.get("id"), env.get("name")
+                if isinstance(env_id, str) and canonical_plaud_id(env_id) in consent.ids:
+                    return None
+                if keep_out_match(title if isinstance(title, str) else None, words) is not None:
+                    return None
+                return client.enrich(env)
+
+            first = {}
+            for rid, row in picked:
+                if (env := fetch(row)) is not None:
+                    first[rid] = (row, env)
+            if first:
+                _sleep(VOLATILITY_WAIT)
+            for rid, (row, env) in first.items():
+                if (again := fetch(row)) is not None:
+                    results.append(_compared(rid, env, again, link_errors, part_hashes))
+    except LockTimeout:
+        return _fail(_busy(state), args.json, EXIT_BUSY)
+    except PlaudAuthError as exc:
+        return _fail(f"{exc.message}: {signin_fix()}", args.json, EXIT_SIGN_IN)
+    except PlaudError as exc:
+        return _fail(f"Plaud couldn't be reached: {exc.message}", args.json, EXIT_UNREACHABLE)
+    volatile = any(r["differ"] for r in results)
+    lines = [
+        f"{r['recording_id']}: "
+        + " · ".join(f"{p} {'differs' if p in r['differ'] else 'same'}" for p in r["parts"])
+        + (f" (fields: {', '.join(r['fields'])})" if r["fields"] else "")
+        + (" · a link failed: not compared" if r["inconclusive"] else "")
+        for r in results
+    ]
+    if len(results) < VOLATILITY_COUNT:
+        lines.append(f"only {len(results)} of {VOLATILITY_COUNT} could be fetched")
+    lines.append(VOLATILE_STOP if volatile else "every part came back the same")
+    _emit({"recordings": results, "volatile": volatile}, lines, args.json)
+    return EXIT_FAILED if volatile else EXIT_OK
+
+
+def _compared(rid: str, first: dict, second: dict, link_errors, part_hashes) -> dict:
+    """One recording's two fetches, part by part, by §14.1's names; field names only."""
+    from recordings.plaud import editsync
+
+    a, b = part_hashes(first), part_hashes(second)
+    own = editsync.own_types(first, second)
+    keys = sorted(set(a) | set(b))
+    differ = editsync.part_names([k for k in keys if a.get(k) != b.get(k)], own)
+    inconclusive = bool(link_errors(first) or link_errors(second))
+    return {
+        "recording_id": rid,
+        "parts": list(editsync.part_names(keys, own)),
+        "differ": [] if inconclusive else list(differ),
+        "fields": list(editsync.other_fields(first, second)) if "other" in differ else [],
+        "inconclusive": inconclusive,
+    }
+
+
+def cmd_breaker(args: argparse.Namespace) -> int:
+    """`recordings plaud breaker [reset]` (§14.4): whether edit-sync's breaker is open, since
+    when and why (field and part names only); `reset` closes it and starts its window now,
+    excusing nothing (Status's Accept these changes is the usual way, and a release that bumps
+    the normaliser closes it by itself). Reset holds `plaud` (`plaud-breaker`). Exit 0; 75 busy."""
+    from recordings.plaud import breaker
+
+    cfg = _config(args.json)
+    if isinstance(cfg, int):
+        return cfg
+    state = _write_state(cfg, args.json)
+    if isinstance(state, int):
+        return state
+    db, now, tz = PlaudDB(state), datetime.now(UTC), _zone(cfg)
+    message = None
+    try:
+        if args.action == "reset":
+            with runlock.plaud_run(state, "plaud-breaker", timeout=runlock.CLI_WAIT, now=now):
+                message = breaker.reset(db, now=now)
+        value = breaker.record(db)
+    except LockTimeout:
+        return _fail(_busy(state), args.json, EXIT_BUSY)
+    except (NoSyncYet, sqlite3.Error) as exc:
+        return _fail(f"can't use state.db now ({type(exc).__name__})", args.json, EXIT_FAILED)
+    view = breaker.view(value, tz=tz)
+    payload = {
+        "open": view is not None,
+        "since": _shown(parse_stamp(value.get("since")), tz) if view is not None else None,
+        "recordings": value.get("recordings") if view is not None else None,
+        "fields": view["fields"] if view is not None else [],
+        "accept": view["accept"] if view is not None else False,
+        "accepted": [f for f in value.get("accepted") or [] if isinstance(f, str)],
+    }
+    if message is not None:
+        payload["result"] = message
+    lines = [message] if message is not None else []
+    if view is None:
+        lines.append("edit-sync's breaker is closed")
+    else:
+        fields = f" ({', '.join(view['fields'])})" if view["fields"] else ""
+        lines.append(view["sentence"] + fields)
+        lines.append(
+            "Accept these changes is offered on Status" if view["accept"] else breaker.CODE_FIX
+        )
+    if payload["accepted"]:
+        lines.append(f"accepted before: {', '.join(payload['accepted'])}")
+    _emit(payload, lines, args.json)
     return EXIT_OK
 
 
@@ -1017,6 +1258,7 @@ COMMANDS = {
     "baseline": cmd_baseline,
     "keep-out-words": cmd_keep_out_words,
     "check": cmd_check,
+    "breaker": cmd_breaker,
     "token-import": cmd_token_import,
     "accept-listing": cmd_accept_listing,
     "release": cmd_release,

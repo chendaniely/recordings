@@ -28,6 +28,7 @@ JOBS = (  # §9.4's list, and Accept this listing's short hold (§11.4 step 4)
     "plaud-accept",
     "plaud-review",  # `recordings plaud review` after a restore (§11.6): a moment's hold
     "plaud-breaker",  # Accept these changes, or `breaker reset` (§14.4): a moment's hold
+    "plaud-volatility",  # `recordings plaud check --volatility` (§14.4): about two minutes
 )
 CLI_WAIT = 60.0  # the CLI waits this long for a held `plaud`, then exits 75 (§9.4)
 
