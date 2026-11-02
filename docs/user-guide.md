@@ -88,6 +88,36 @@ Every sync brings in what is waiting, by itself. You never confirm an import.
 - A recording that keeps failing: check it plays in Plaud's app, then **Park** it so it stops
   counting against "All here".
 
+## The scheduled sync
+
+Once the first catch-up has run, the server syncs by itself every 20 minutes (`[plaud]
+schedule_minutes`). Each sync reads the consent list, checks the sign-in, reads Plaud's whole list,
+checks every listed title of what you already have against your private patterns and the keep-out
+word, compares, and brings in what is waiting.
+
+**What you see**
+
+- New recordings arrive newest first, at most 20 per sync; a longer backlog comes over the next
+  syncs, by itself.
+- A recording that failed waits a little before the next try (20 minutes, then 40, and so on), so
+  one bad recording never slows the others down.
+- **Status** says what stopped a sync, in a fixed phrase: "sign-in needed", "Plaud unavailable",
+  "offline", "rate limited until 14:40", "imports stopped: consent list", "imports stopped: the
+  disk is too full to import", "held: see Status", "every fetch failed", or "partial: 2 recordings
+  failed". None of them ever names a title.
+- The sync's Healthchecks check is pinged only after a good sync that nothing holds up. A sync
+  that met only failures, or none but recordings that failed before, doesn't ping until something
+  comes in again; if that lasts about 2 hours, Healthchecks emails.
+- A deploy or a restart in the middle of a sync stops it between two recordings; nothing is
+  half-written, and the next sync carries on.
+
+**What to do**
+
+- Nothing, usually. Status's line says what to do for each stop (the runbook's "When the Plaud
+  alert comes" has the rest).
+- To turn the schedule off for a while (maintenance), set `[plaud] schedule_minutes = 0` and
+  restart the worker; set it back to 20 afterwards. While it is off, the check emails after 2 hours.
+
 ## Renaming a recording in Plaud after it came in
 
 Each sync reads every title Plaud lists, and checks the ones that changed since it last looked.

@@ -6,10 +6,10 @@ and a heartbeat thread (spec §9.2). The main thread ticks every 2 seconds: it r
 list when its file changed, hides any title in the Plaud cache that the list or a keep-out word now
 catches (§9.5), applies late consent listings, runs the new-pattern pass again for
 what the last one left (§13.1 case 5), keeps the consent and private-unwritten blockers as the
-list, the pass and the archive say, serves one request from the UI (Task 14, §9.3: Keep it here
-and Accept this listing so far), and runs a scheduled turn when one is due (§9.7). It imports no
-Plaud client, token store or sync at module level: Phase 2 passes its turn in, so `web`, which reads
-`alive` from here, never pulls them in.
+list, the pass and the archive say, serves one request from the UI (§9.3: the kinds in HANDLERS,
+at the end), and runs a scheduled turn when one is due (§9.7): `plaud.sync`'s run (area A5). It
+imports no Plaud client, token store or sync at module level: the turn and the handlers import
+them when they run, so `web`, which reads `alive` from here, never pulls them in.
 
 `conclude_turn` is the one place the sync tells the outside how it is: it pings the sync's own
 Healthchecks check only after a scheduled sync that is good and that nothing holds up. The check's
@@ -272,10 +272,27 @@ class SyncTurn(Protocol):
     def __call__(self, worker: Worker, *, light: bool) -> RunOutcome: ...
 
 
-def stand_in_turn(worker: Worker, *, light: bool) -> RunOutcome:
-    """Phase 1 has no sync: Phase 2 passes its own turn to Worker. The gate can't open in Phase 1
-    (nothing can run the first catch-up yet), so scheduled_turn never reaches this."""
-    raise NotImplementedError("the sync turn comes in stage 2b's Phase 2")
+def sync_turn(worker: Worker, *, light: bool) -> RunOutcome:
+    """The sync run as a scheduled turn, or the light turn of a due one inside a long run (§9.7,
+    §9.2): `plaud.sync.worker_turn`, imported here, so that importing this module never loads the
+    Plaud client, the token store or the sync (`web` reads `alive` from it)."""
+    from recordings.plaud.sync import worker_turn
+
+    return worker_turn(worker, light=light)
+
+
+def raised(exc: BaseException) -> RunOutcome:
+    """A turn that raised is a run that isn't good, never "no sync" (§11.7; Task 11's review): an
+    attempt with no success, so a failing streak starts whose cause is the work's, which only a
+    run with a success ends. A quiet run after it (good, no attempts) can't ping "up" while the
+    failure may still be there."""
+    return RunOutcome(
+        listing="good",
+        attempts=1,
+        successes=0,
+        disk_refused=False,
+        detail=f"error: `{type(exc).__name__}`",
+    )
 
 
 def heartbeat_once(state: State, progress: Progress, *, now: datetime) -> None:
@@ -362,8 +379,9 @@ def _file_key(path: Path | None) -> tuple[FileSignature, int] | None:
         return None
 
 
-class _Stopped(Exception):
-    """SIGTERM came during the patterns pass: it ends between recordings (§9.2)."""
+class Stopping(Exception):
+    """SIGTERM came during the patterns pass, a Plaud wait or a run: it ends between recordings
+    (§9.2). A run stopped so is no failure: its turn records nothing and pings nothing."""
 
 
 def _left(done: PatternsPass | None) -> tuple[frozenset[str], frozenset[str]]:
@@ -379,8 +397,9 @@ class Worker:
     when its file changed and applies late consent listings, retries the patterns pass for what
     the last one left, serves one request from the UI (a row in `plaud_requests`, checked again,
     §9.3), then runs a scheduled turn when one is due. It never imports the Plaud client, the
-    token store or the sync at module level: Phase 2 passes its turn in (`turn`), so
-    `recordings_ui`, which reads `alive` from here, never pulls them in.
+    token store or the sync at module level: its turn (`turn`, `sync_turn` unless a test hands
+    in another) imports them when it runs, so `recordings_ui`, which reads `alive` from here,
+    never pulls them in.
 
     No token, no consent list, or a bad keep_out_word leaves it up, healthy and idle (§9.2): the
     ticks go on, and Status and doctor say why. What each tick writes (K_CONSENT, the blockers) is
@@ -394,7 +413,7 @@ class Worker:
         environ: Mapping[str, str],
         *,
         clock: Callable[[], datetime] = _utc_now,
-        turn: SyncTurn = stand_in_turn,
+        turn: SyncTurn = sync_turn,
         heartbeat: float = HEARTBEAT,
         client_factory: Callable[[], Any] | None = None,
     ) -> None:
@@ -583,7 +602,7 @@ class Worker:
         except WholePassDue:
             self._whole_due = True  # nothing was checked: a whole sweep waits for its turn
             return None
-        except _Stopped:
+        except Stopping:
             log.info("the patterns pass stopped between recordings: the next start runs it again")
             return None
         except Exception as exc:  # noqa: BLE001  remembered, recorded and logged once, by class
@@ -635,7 +654,7 @@ class Worker:
         def one() -> None:
             nonlocal done, total
             if self.stopping.is_set():
-                raise _Stopped
+                raise Stopping
             if whole and total is None:
                 total = self._plaud_count()
             done += 1
@@ -647,7 +666,7 @@ class Worker:
         """Called before each recording the pass checks: SIGTERM ends the pass here, between
         recordings."""
         if self.stopping.is_set():
-            raise _Stopped
+            raise Stopping
         if self._to_check is None:  # the pass has begun: count what it checks, once
             self._to_check = self._plaud_count()
         self._checked += 1
@@ -837,7 +856,22 @@ class Worker:
         """A slice of a Plaud wait, or a MiB of a download (§9.2): progress, and SIGTERM."""
         self.progress.bump(self.clock())
         if self.stopping.is_set():
-            raise _Stopped
+            raise Stopping
+
+    def between_recordings(self) -> None:
+        """Between two recordings of a run (§9.2): progress, SIGTERM (`Stopping`), and the tick's
+        privacy steps, so a long Sync now or import never holds back a consent edit: the list is
+        read again when it changed, its blocker kept, the cache's titles purged, late consent
+        listings applied and the `private-unwritten` flags kept, as at every tick. The phase
+        stays the run's."""
+        self._waiting()
+        phase = self.progress.read()[0]
+        self._step("consent list", self._watch_consent)
+        self._step("consent blocker", self._consent_blocker)
+        self._step("cache titles", self._purge_cache)
+        self._step("late consent", self._late_consent)
+        self._step("owed private", self._owed_private)
+        self.progress.bump(self.clock(), phase)
 
     def listed_now(self, plaud_id: str) -> Any | None:
         """This ID's row as Plaud lists it now: from the run's newest listing while it is one
@@ -1062,14 +1096,20 @@ class Worker:
         conclude_turn(self._ctx, None)  # no sync ran: no ping
 
     def _run_turn(self, now: datetime) -> RunOutcome | None:
+        """The turn under `plaud`. One that raised is recorded as `error` and judged as a run that
+        isn't good (`raised`); one SIGTERM stopped between recordings ran no whole sync, and
+        records and pings nothing (None)."""
         self.db.put(K_LAST_STARTED, now.isoformat(), now=now)
         self.progress.bump(now, "turn")
         ran: RunOutcome | None = None
         try:
             ran = self.turn(self, light=False)
+        except Stopping:
+            log.info("the scheduled sync stopped between recordings: the worker is stopping")
         except Exception as exc:  # noqa: BLE001  a failed turn is recorded, never the loop's end
             record_turn(self.db, "error", now=self.clock(), detail={"error": type(exc).__name__})
             log.warning("the scheduled sync failed (%s)", type(exc).__name__)
+            ran = raised(exc)
         else:
             record_turn(self.db, "ran", now=self.clock(), detail={"result": ran.detail})
         ended = self.clock()

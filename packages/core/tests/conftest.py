@@ -36,6 +36,7 @@ def _helper(name: str):
 
 fake_plaud = _helper("fake_plaud")
 plaud_scene = _helper("plaud_scene")  # imports fake_plaud's neighbours only: after it
+plaud_live = _helper("plaud_live")
 
 
 @pytest.fixture
@@ -571,6 +572,16 @@ def scene(plaud_server, tmp_path):
     """A synthetic Plaud scene (plaud_scene.py): an archive, its Writer, state.db with the gate
     open, the fake account, a consent list and an Importer, as a run after the catch-up has them."""
     return plaud_scene.Scene(plaud_server, tmp_path)
+
+
+@pytest.fixture
+def live(plaud_server, ntfy, tmp_path, monkeypatch):
+    """A worker against the fake (plaud_live.py): an archive, a config.toml on the fake's API, a
+    consent list, a sign-in, the sync's ping on a fake Healthchecks, a fake clock and the fake's
+    account. The gate is closed until `live.catch_up_done()`."""
+    made = plaud_live.Live(tmp_path, plaud_server, ntfy, monkeypatch)
+    yield made
+    made.close()
 
 
 @pytest.fixture
