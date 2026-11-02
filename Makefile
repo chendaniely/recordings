@@ -84,7 +84,7 @@ e2e-live: build ## Playwright against make demo-live (the web app and worker on 
 	uv run playwright install chromium
 	uv run pytest -m e2e_live
 
-demo-archive: ## rebuild demo/archive from the cached media
+demo-archive: ## rebuild demo/archive from demo/.cache/media (demo/fetch.py fills it; refuses without it)
 	uv run python demo/build.py --media-dir demo/.cache/media --out demo/archive --force
 
 # The static GitHub Pages demo (spec §17.1): only demo/archive/ and demo/plaud-sync.json are

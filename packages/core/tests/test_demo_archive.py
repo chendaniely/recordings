@@ -96,3 +96,41 @@ def test_every_demo_file_matches_the_committed_json_schemas():
         checked += 1
     assert checked == 4 + 10
     assert errors == []
+
+
+def _copy_of_the_demo(tmp_path: Path) -> tuple[Path, dict[Path, bytes]]:
+    out = tmp_path / "archive"
+    shutil.copytree(DEMO / "archive", out)
+    return out, {p: p.read_bytes() for p in out.rglob("*") if p.is_file()}
+
+
+def test_rebuilding_without_the_media_cache_refuses_and_leaves_the_archive_alone(tmp_path, capsys):
+    # why: `make demo-archive` with no demo/.cache/media used to remove demo/archive before it
+    # found the media missing, deleting the tracked demo recordings (stage 2b's area A4 met it).
+    # It must check the media first, say what to do, and touch nothing.
+    build = load_build()
+    out, before = _copy_of_the_demo(tmp_path)
+    for media in (tmp_path / "no-such-cache", tmp_path / "empty-cache"):
+        if media.name == "empty-cache":
+            media.mkdir()
+        code = build.main(["--media-dir", str(media), "--out", str(out), "--force"])
+        assert code == 1
+        err = capsys.readouterr().err
+        assert "demo/fetch.py" in err and "left as it was" in err
+        assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before
+
+
+def test_rebuilding_with_part_of_the_media_cache_names_what_is_missing(tmp_path, capsys):
+    build = load_build()
+    out, before = _copy_of_the_demo(tmp_path)
+    entries = tomllib.loads((DEMO / "sources.toml").read_text())["recording"]
+    media = tmp_path / "media"
+    media.mkdir()
+    first = entries[0]
+    (media / f"{first['slug']}.{first['ext']}").write_bytes(b"not really audio")
+    code = build.main(["--media-dir", str(media), "--out", str(out), "--force"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert all(f"{e['slug']}.{e['ext']}" in err for e in entries[1:])
+    assert f"{first['slug']}.{first['ext']}" not in err
+    assert {p: p.read_bytes() for p in out.rglob("*") if p.is_file()} == before

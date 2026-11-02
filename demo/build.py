@@ -173,6 +173,14 @@ def build(media_dir: Path, out: Path, canned_dir: Path) -> dict[str, str]:
     return dict(sorted(ids.items()))
 
 
+def missing_media(media_dir: Path) -> list[str]:
+    """The media files sources.toml names that `media_dir` lacks (all of them when the folder
+    is missing or empty)."""
+    entries = tomllib.loads((HERE / "sources.toml").read_text())["recording"]
+    names = [f"{e['slug']}.{e['ext']}" for e in entries]
+    return [name for name in names if not (Path(media_dir) / name).is_file()]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--media-dir", type=Path, required=True)
@@ -180,6 +188,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--canned", type=Path, default=HERE / "canned")
     ap.add_argument("--force", action="store_true", help="replace an existing --out")
     args = ap.parse_args(argv)
+    # Checked before anything is removed: with --force and no media, the old order deleted the
+    # tracked demo archive and then failed on the first missing file.
+    missing = missing_media(args.media_dir)
+    if missing:
+        print(
+            f"{args.media_dir} lacks the demo's media ({', '.join(missing)}): run "
+            "`uv run python demo/fetch.py` first (it needs network and ffmpeg). "
+            f"{args.out} is left as it was.",
+            file=sys.stderr,
+        )
+        return 1
     if args.out.exists():
         if not args.force:
             print(f"{args.out} exists; pass --force to rebuild it", file=sys.stderr)
