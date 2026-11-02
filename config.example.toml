@@ -108,7 +108,16 @@ auto_import = true                 # import new recordings at each sync (nothing
 full_sweep_days = 1                # check every recording against Plaud within this many days:
                                    # 1 while relabelling speakers in Plaud, then 7 (the default)
 keep_out_word = "noarchive"        # a Plaud title starting with this word is never downloaded
+# Plaud titles matching these are tagged `private` (main spec §7.4, stage 2b spec §13.1): Python
+# regular expressions, searched ignoring case in every title a snapshot carries, as given and
+# folded (NFKC, without invisible characters), each with and without Plaud's "MM-DD " date
+# prefix. They only ever add `private`. After a change, the worker checks every title against
+# the new list at its next start.
 auto_private_patterns = ["^\\s*private", "interview:"]
+# Dan's consent list, "never mirror" (stage 2b spec §12.1): Plaud IDs that never enter the
+# archive, one per bullet or line. Read fail-closed by the worker and the import: an unset,
+# missing, unreadable or empty list, or a line that looks like an ID but can't be read, stops
+# every import until it reads.
 consent_list = "/consent/consent-list.md"   # inside the consent folder; never a file mount
 token_store = "/plaud/tokens.json" # the Plaud sign-in (worker only; the sign-in comes with stage 2b's next phase)
 # api_base = "https://…"           # Plaud's API: the copied client's by default; tests set a fake
