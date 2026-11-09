@@ -34,7 +34,7 @@ are rows in the guesses file.
   sharply, or whose IDs look changed, is held until Dan presses **Accept this listing** on Status.
 - **The import (A4).** A recording comes in with its privacy judged before any of its bytes land.
   The consent list and the keep-out word keep recordings out; a recording that may be one of those
-  back under a new ID is flagged for Dan, and **Release** lets one in after a second check. A
+  under a new ID is flagged for Dan, and **Release** lets one in after a second check. A
   rebuilt `state.db` marks everything for review (`recordings plaud review`).
 - **Sync (A5).** The scheduled sync and **Sync now**, **Compare**, **Import**, **Park** and
   **Unpark** run one engine. On the server, `make plaud-dry-run` and `make plaud-catch-up` do the
@@ -64,15 +64,19 @@ are rows in the guesses file.
   6. Sync everything stops checking when a hold lands mid-run;
   7. a backup refuses when the token store sits inside what it backs up.
 
-**How it was checked.** At the branch's last code commit, `make check` passed: pytest 2,537 (again
-under `TZ=UTC`), Vitest 465, and no leaks in the history. `make e2e` passed 146, `make e2e-live` 14
-and `make pages-test` 10, and CI was green on every push.
+**How it was checked.** At the branch's last code commit (c1ad95f), `make check` passed: pytest
+2,570 (again under `TZ=UTC`), Vitest 465, and no leaks in the history. `make e2e` passed 146 and
+`make e2e-live` 14 on the commits that changed what they drive. CI runs all of these, and the Pages
+demo's `make pages-test`, on every push; PR #32's checks show the latest.
 
 ## Questions that change what gets built
 
-**Answered 2026-11-09** (Phase 1's Q&A §9). Question 1 went with C, not the A recommended here: the
-code showed A would leave the title on the Sync screen. Question 2's allow-list waits for the first
-real token refresh. The others went as recommended. The questions as they were asked:
+**Answered 2026-11-09** (Phase 1's Q&A §9), and built the same day, except question 2. Question 1
+went with C, not the A recommended here: the code showed A would leave the title on the Sync screen.
+With question 6 it is one rule: a new ID with the start time and duration of anything consent-listed
+or kept out is flagged until Dan confirms, whether the old ID has vanished, is still listed or is
+already here. Question 2's allow-list waits for the first real token refresh. The others went as
+recommended. The questions as they were asked:
 
 1. **A recording on the consent list comes back under a new ID while the old one is still listed.**
    Today the new ID doesn't match (the match waits for the old ID to vanish), so it would be
@@ -139,6 +143,10 @@ real token refresh. The others went as recommended. The questions as they were a
 - A download whose audio matches a consent-listed or kept-out recording here is kept out and
   flagged "rekeyed by audio".
 - No Release on a recording still kept out by its title.
+- A new keep-out word counts as applied only after a good listing with nothing left busy or
+  unwritten. Until then a recording it caught is re-checked at each run, so a `private` Dan removes
+  in that window comes back.
+- A new word on a title that an earlier word already caught doesn't re-tag it.
 
 **The breaker and checks**
 - Accept is offered when the breaker trips; if the same field keeps changing on unsettled
@@ -155,6 +163,10 @@ real token refresh. The others went as recommended. The questions as they were a
 
 ## Left for later
 
+- **The allow-list for the sign-in (question 2):** after the first real token refresh works.
+- **A re-key gap:** a recording put on the consent list and re-keyed before any listing sees it
+  again has no remembered date to match (identical audio is still caught). Reading the date from
+  `recording.json` would close it.
 - **Refactors of `recordings_ui/plaud.py`** from A6's phase end: split the views into
   `plaud_views.py`, return fields instead of display text, split the Sync screen around one
   request button, and one module of e2e helpers.
@@ -163,6 +175,7 @@ real token refresh. The others went as recommended. The questions as they were a
 - **The demos:** Details' Plaud lines and the Library's flags count don't show yet.
 - **Tests:** the 320 px layout fix's test was written after the fix; one scenario (S9, the delay
   note) was skipped.
-- **`CLAUDE.md`** doesn't name the `live` test fixture yet.
+- **`CLAUDE.md`** doesn't name the `live` test fixture yet, and its Privacy paragraph doesn't name
+  a keep-out word added later. Editing it waits for Dan's yes.
 - **Wording:** the web app's log line when Release's question can't read `state.db` says "Release's
   next sync couldn't be read". It's a log line, not a screen.
