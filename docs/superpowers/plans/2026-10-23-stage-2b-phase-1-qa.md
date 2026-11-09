@@ -152,6 +152,36 @@ Mac, then the first catch-up's dry run, which imports nothing until run for real
 against a scratch copy of the archive; C, straight to the server with no dry-run step. Dan chose
 **"Server, dry run first"**, option A. The setup instructions take him there.
 
+## 9. The six questions after the overnight build (asked and answered 2026-11-09)
+
+The morning hand-off (`2026-11-02-stage-2b-morning.md`) listed six questions. Dan asked what the
+answers should be, and to "think about the goal, the tradeoffs and which solution can address the
+goal the best". The goal they were judged against: recordings arrive without babysitting, and one
+kept out never gets in. Each was read against the code, then Dan answered, in his words: "ok let's
+go with your decisions".
+
+1. **A consent-listed or kept-out recording appears under a new ID while the old ID is still
+   listed.** Flag it straight away, as a re-keyed match is: kept out, no title stored, Dan confirms
+   or presses **Release**. This replaces the morning doc's recommendation (skip the import until the
+   old ID goes), which the code showed would leave its title on the Sync screen, saying "imports at
+   the next sync", for as long as Plaud kept both. It widens decision 16, which covered only an old
+   ID that has vanished.
+2. **An allow-list for where the sign-in may go.** Yes, `plaud.ai` and its subdomains plus the
+   loopback, with no override setting, but built only after the first real token refresh has
+   worked. The API address comes from audio-router; the refresh address is a guess, and an
+   allow-list built now could break the sign-in. It is the least valuable of the six.
+3. **A title the cache deleted may linger in the file's free pages.** Turn on `secure_delete` for
+   `plaud-cache.db`.
+4. **A request expires behind a long command-line run.** Keep the one-hour expiry; say that a long
+   run held the sync, not that the worker is away.
+5. **A new keep-out word matches a recording already here.** At the next sync it is tagged `private`
+   and flagged, as a recording renamed to the word already is, and as a new private pattern already
+   re-checks recordings here.
+6. **A recording here goes on the consent list, then returns under a new ID with different audio.**
+   Remember its date, time and duration, as §9.5 says. With question 1 this is one rule: a new ID
+   with the start time and duration of anything consent-listed or kept out is treated as that
+   recording until Dan confirms, whether the old ID has vanished, is still listed or is already here.
+
 ## Calls made for Dan
 
 - **Mode: attended.** Phase PRs wait for Dan's merge, and a change to the spec, one of his decisions

@@ -70,8 +70,9 @@ and `make pages-test` 10, and CI was green on every push.
 
 ## Questions that change what gets built
 
-Each has a recommendation; nothing below is built until Dan answers. They will be asked one at a
-time.
+**Answered 2026-11-09** (Phase 1's Q&A §9). Question 1 went with C, not the A recommended here: the
+code showed A would leave the title on the Sync screen. Question 2's allow-list waits for the first
+real token refresh. The others went as recommended. The questions as they were asked:
 
 1. **A recording on the consent list comes back under a new ID while the old one is still listed.**
    Today the new ID doesn't match (the match waits for the old ID to vanish), so it would be
