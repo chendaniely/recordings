@@ -192,12 +192,62 @@ def test_a_re_keyed_consent_listed_recording_is_a_flag_a_kept_out_row_and_needs_
     view, panel = views(live)
     (flag,) = [f for f in view["flags"] if f["kind"] == "rekeyed"]
     assert flag["plaud_id"].endswith(new_id) and flag["recording_id"] is None
-    assert flag["sentence"].startswith("May be a consent-listed recording back under a new")
+    assert flag["sentence"].startswith("May be a consent-listed recording under a new")
     assert flag["date"] and flag["duration"] and flag["copy_id"]
     row = next(r for r in view["kept_out"] if r["plaud_id"].endswith(new_id))
     assert (row["by"], row["release"]) == ("rekeyed", True)
     assert any(new_id in line and "new Plaud ID" in line for line in panel["attention"])
     no_title_in((view["flags"], view["kept_out"], panel), consented.name)
+
+
+def test_the_first_sync_that_lists_a_new_id_beside_the_old_brings_in_neither(live):
+    # Dan's answers to questions 1 and 6 (Phase 1's Q&A §9): the worker's first listing shows the
+    # consent-listed ID and a new one with its start time and duration. Neither is fetched, and
+    # the new one is the same flag and the same Kept out row as any re-keyed match.
+    consented = live.account.add("Synthetic consent-listed talk")
+    twin = live.account.add(
+        "Synthetic twin title",
+        start_at=consented.start_at,
+        duration_ms=consented.duration_ms,
+    )
+    live.consent_ids(consented.plaud_id)
+    live.catch_up_done()
+    w = live.started()
+    w.tick()
+    assert not live.here()
+    assert not [r.path for r in live.server.requests if twin.plaud_id in r.path]
+    view, panel = views(live)
+    (flag,) = [f for f in view["flags"] if f["kind"] == "rekeyed"]
+    assert flag["plaud_id"].endswith(twin.plaud_id)
+    row = next(r for r in view["kept_out"] if r["plaud_id"].endswith(twin.plaud_id))
+    assert (row["by"], row["release"]) == ("rekeyed", True)
+    assert view["equation"]["waiting"] == 0
+    assert any(twin.plaud_id in line and "new Plaud ID" in line for line in panel["attention"])
+    no_title_in((view["flags"], view["kept_out"], view["not_here"], panel), twin.name)
+
+
+def test_a_recording_here_then_consent_listed_is_caught_under_a_new_id_with_different_audio(live):
+    # Question 6: nothing but its date, time and duration can say the new ID is that recording.
+    w, _, _, _ = scene(live)
+    here_now = live.account.add("Synthetic talk, consent withdrawn later")
+    turn(w, live)
+    assert here_now.plaud_id in live.here()
+    live.consent_ids(here_now.plaud_id)
+    turn(w, live)
+    live.account.remove(here_now.plaud_id)
+    back = live.account.add(
+        "Synthetic new title",
+        start_at=here_now.start_at,
+        duration_ms=here_now.duration_ms,
+    )
+    assert back.audio != here_now.audio
+    turn(w, live)
+    assert back.plaud_id not in live.here()
+    assert not [r.path for r in live.server.requests if back.plaud_id in r.path]
+    view, _ = views(live)
+    assert [f["kind"] for f in view["flags"] if f["plaud_id"].endswith(back.plaud_id)] == [
+        "rekeyed"
+    ]
 
 
 def test_a_re_keyed_match_kept_out_by_a_title_since_still_asks_with_no_title(live):

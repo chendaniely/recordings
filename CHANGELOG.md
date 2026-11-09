@@ -78,6 +78,13 @@ spike sessions were skipped), each listed with how you would notice it's wrong i
   with "configuration: `keep_out_word` is invalid".
 - A hold that comes while Sync everything runs stops its checks at once; it carries on by itself
   once the hold clears.
+
+### Your answers to the six questions (2026-11-09)
+
+- A new Plaud ID with the start time and length of a recording you kept out is kept out with it at
+  once, whether the old ID has gone, is still listed, or is already in the archive: no title
+  stored or shown, flagged until you confirm or **Release**. A recording you kept with **Keep it
+  here** doesn't count.
 - Backups and the NAS mirror refuse to run if `[plaud] token_store` points inside the archive, or
   can't be read, so the Plaud sign-in never lands in a backup; doctor says so too.
 

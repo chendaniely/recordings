@@ -657,6 +657,15 @@ class PlaudDB:
             ).fetchall()
         return [(rid, _decode("gone_since", since)) for rid, since in rows]
 
+    def kept_here_recordings(self) -> frozenset[str]:
+        """The recordings Dan pressed Keep it here on (`plaud_checks.kept_here_at`): a re-keyed
+        match doesn't count them (§11.4 step 6)."""
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT recording_id FROM plaud_checks WHERE kept_here_at IS NOT NULL"
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
+
     def parked_recordings(self) -> list[str]:
         """The recordings here that are parked (`plaud_checks.parked_at`, area B2's Park), oldest
         first."""

@@ -262,7 +262,7 @@ REKEY_OF = {
     "kept-out": "a recording kept out by title",
     "several": "one of several consent-listed or kept-out recordings",
 }
-REKEY_LISTED = "May be {of} back under a new Plaud ID: it stays out until you confirm (runbook)"
+REKEY_LISTED = "May be {of} under a new Plaud ID: it stays out until you confirm (runbook)"
 REKEY_AUDIO = "Its audio is {of}'s, already here: it stays out until you confirm (runbook)"
 REBUILT_LINE = "The sync's records were rebuilt: {n} wait{s} for your review on the Sync screen."
 SIGN_IN_FIX = "At the Mac: `make plaud-sign-in`."  # signin.SIGN_IN_FIX, as §15.2 words it

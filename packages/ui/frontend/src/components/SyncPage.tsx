@@ -15,7 +15,7 @@ const FULL_UNKNOWN = "unknown until the first run";
 const BY: Record<KeptOutRow["by"], string> = {
   consent: "On the consent list",
   title: "Kept out by title",
-  rekeyed: "May be a consent-listed or kept-out recording back under a new ID: confirm (runbook)",
+  rekeyed: "May be a consent-listed or kept-out recording under a new ID: confirm (runbook)",
   "was-title": "Was kept out by title",
 };
 

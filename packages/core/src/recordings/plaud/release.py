@@ -49,9 +49,7 @@ NOTHING = "Nothing to release: it isn't kept out"
 NOT_LISTED = "Release refused: Plaud doesn't list it now"
 ASK = "Release: see its question"  # the preview's reply line: the title goes to the cache only
 # No title is fetched for a re-keyed match (§11.4 step 6): Release asks by ID, date and duration.
-NO_TITLE_REKEYED = (
-    "No title shown: it may be a consent-listed or kept-out recording back under a new ID"
-)
+NO_TITLE_REKEYED = "No title shown: it may be a consent-listed or kept-out recording under a new ID"
 # Nor while Plaud's IDs look changed (§11.4 step 3): a held listing, or the newest Compare's.
 NO_TITLE_HELD = "No title shown while Plaud's IDs look changed: see Status"
 UNDONE = "Undone: kept out again"

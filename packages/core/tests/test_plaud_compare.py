@@ -42,6 +42,7 @@ from recordings.plaud.compare import (
     record_compare,
     title_hash,
 )
+from recordings.plaud.flags import KEPT_HERE, keep_here, record_late_keep_out
 from recordings.plaud.keepout import parse_consent
 from recordings.state import State
 
@@ -347,23 +348,172 @@ def test_no_match_beyond_a_second_and_two_candidates_hold_the_new_id(db):
     assert {r.rekey_of for r in result.rows} == {SEVERAL}  # two new IDs for one absent one
 
 
-def test_a_new_id_listed_beside_the_old_is_matched_once_the_old_vanishes(db, cache):
-    # §11.4 step 6: the match runs for every listed ID not here, not excluded and not released by
-    # Dan, in every listing, not only at an ID's first sighting. Here the new ID first shows
-    # beside the consent-listed one (nothing absent: no match yet); the next listing lacks the old.
-    old = listed(3)
-    twin = listed(40, start_at=old.start_at, duration_ms=old.duration_ms)
-    first = run([old, twin], consent_list=consent(3))
-    record_compare(db, cache, first, consent=consent(3), listing={}, now=T0)
-    later = run([twin], consent_list=consent(3), listing=db.listing_rows(), keyed=cache.keyed_out())
-    assert (later.rows[0].bucket, later.rows[0].excluded_by, later.rows[0].rekey_of) == (
-        EXCLUDED,
-        BY_REKEY,
-        pid(3),
+def twin_of(old: Listed, n: int = 40, title: str = "Synthetic title that must not be kept"):
+    """A new ID within a second of `old` on both start time and duration."""
+    return listed(
+        n,
+        title,
+        start_at=old.recorded_at + timedelta(milliseconds=600),
+        duration_ms=old.duration_ms + 900,
     )
-    record_compare(db, cache, later, consent=consent(3), listing=db.listing_rows(), now=T0)
+
+
+def rekeyed(row) -> tuple:
+    return (row.bucket, row.excluded_by, row.rekey_of, row.title_shown)
+
+
+def test_a_new_id_beside_the_old_is_matched_at_once_and_after_the_old_goes(db, cache):
+    # Dan's answers to questions 1 and 6 (Phase 1's Q&A §9): one rule, whether the old ID has
+    # vanished, is still listed or is here. This test pinned the opposite until 2026-11-09 (no
+    # match while the old ID is listed), which would have left the title on the Sync screen.
+    old = listed(3)
+    first = run([old], consent_list=consent(3))
+    record_compare(db, cache, first, consent=consent(3), listing={}, now=T0)
+    twin = twin_of(old)
+    beside = run(
+        [old, twin], consent_list=consent(3), listing=db.listing_rows(), keyed=cache.keyed_out()
+    )
+    assert rekeyed(by_id(beside)[pid(40)]) == (EXCLUDED, BY_REKEY, pid(3), False)
+    record_compare(db, cache, beside, consent=consent(3), listing=db.listing_rows(), now=T0)
+    assert {r.canonical_plaud_id: r.title for r in cache.compare_rows()}[pid(40)] is None
     (flag,) = db.open_flags(("rekeyed",))
     assert (flag.canonical_plaud_id, flag.detail) == (pid(40), {"of": "consent"})
+    # Seen once it stays matched, with the old ID listed or not, and is flagged once.
+    for rows in ([old, twin], [twin]):
+        later = run(
+            rows, consent_list=consent(3), listing=db.listing_rows(), keyed=cache.keyed_out()
+        )
+        assert rekeyed(by_id(later)[pid(40)]) == (EXCLUDED, BY_REKEY, None, False)
+        record_compare(db, cache, later, consent=consent(3), listing=db.listing_rows(), now=T0)
+    assert len(db.open_flags(("rekeyed",))) == 1
+
+
+@pytest.mark.parametrize(
+    ("title", "kept_by", "consent_list", "of"),
+    [
+        (None, BY_CONSENT, consent(3), "consent"),
+        ("noarchive: synthetic", BY_TITLE, GOOD_CONSENT, "kept-out"),
+    ],
+)
+def test_the_first_listing_that_shows_both_ids_imports_neither(
+    db, cache, title, kept_by, consent_list, of
+):
+    # Question 1: the cache learns an ID's date only after the compare, so a listing that first
+    # shows the old ID and the new one together matches against its own rows.
+    old = listed(3, title)
+    result = run([old, twin_of(old)], consent_list=consent_list)
+    got = by_id(result)
+    assert (got[pid(3)].bucket, got[pid(3)].excluded_by) == (EXCLUDED, kept_by)
+    assert rekeyed(got[pid(40)]) == (EXCLUDED, BY_REKEY, pid(3), False)
+    assert result.equation["waiting"] == result.equation["missing"] == 0
+    record_compare(db, cache, result, consent=consent_list, listing={}, now=T0)
+    assert [r.title for r in cache.compare_rows()] == [None, None]
+    assert db.listing(pid(40)).rekey_of == pid(3)
+    (flag,) = db.open_flags(("rekeyed",))
+    assert (flag.canonical_plaud_id, flag.detail) == (pid(40), {"of": of})
+
+
+def test_several_candidates_still_listed_hold_the_new_id(db):
+    # The SEVERAL rule stays, with the candidates listed beside the new ID.
+    a = listed(3, start_at=START, duration_ms=90_000)
+    b = listed(4, start_at=START + timedelta(milliseconds=500), duration_ms=90_500)
+    near = listed(51, start_at=START + timedelta(milliseconds=250), duration_ms=90_250)
+    got = by_id(run([a, b, near], consent_list=consent(3, 4)))
+    assert rekeyed(got[pid(51)]) == (EXCLUDED, BY_REKEY, SEVERAL, False)
+
+
+def test_a_title_kept_out_never_matches_itself_or_another_kept_out_title(db):
+    a = listed(4, "noarchive: synthetic")
+    b = twin_of(a, 41, "noarchive: synthetic twin")
+    assert {(r.excluded_by, r.rekey_of) for r in run([a, b]).rows} == {(BY_TITLE, None)}
+
+
+@pytest.mark.parametrize("old_still_listed", [True, False])
+def test_a_recording_here_then_consent_listed_counts_for_the_match(db, cache, old_still_listed):
+    # Dan's answer to question 6: it returns under a new ID with different audio, so only its
+    # date, time and duration can say what it is. §9.5 keeps them, and `here` winning in the
+    # buckets must not lose them.
+    here = Here(by_id={pid(3): frozenset({"rec-a"})})
+    old = listed(3)
+    first = run([old], here=here, consent_list=consent(3))
+    assert first.rows[0].bucket == HERE
+    record_compare(db, cache, first, consent=consent(3), listing={}, now=T0)
+    remembered = cache.keyed_out()[pid(3)]
+    assert (remembered.kind, remembered.start_at, remembered.duration_ms) == (
+        BY_CONSENT,
+        old.recorded_at,
+        old.duration_ms,
+    )
+    twin = twin_of(old)
+    later = run(
+        [old, twin] if old_still_listed else [twin],
+        here=here,
+        consent_list=consent(3),
+        listing=db.listing_rows(),
+        keyed=cache.keyed_out(),
+    )
+    assert rekeyed(by_id(later)[pid(40)]) == (EXCLUDED, BY_REKEY, pid(3), False)
+    record_compare(db, cache, later, consent=consent(3), listing=db.listing_rows(), now=T0)
+    (flag,) = db.open_flags(("rekeyed",))
+    assert flag.detail == {"of": "consent"}
+
+
+def test_a_recording_here_with_the_word_counts_in_the_listing_that_first_shows_it(db, cache):
+    # A word added to a title here: the late keep-out flag is the import area's, and the row is
+    # here, but a new ID beside it is that recording all the same.
+    here = Here(by_id={pid(5): frozenset({"rec-k"})})
+    old = listed(5, "noarchive: synthetic")
+    result = run([old, twin_of(old)], here=here)
+    got = by_id(result)
+    assert got[pid(5)].bucket == HERE
+    assert rekeyed(got[pid(40)]) == (EXCLUDED, BY_REKEY, pid(5), False)
+    record_compare(db, cache, result, consent=GOOD_CONSENT, listing={}, now=T0)
+    assert cache.keyed_out()[pid(5)].kind == BY_TITLE
+    (flag,) = db.open_flags(("rekeyed",))
+    assert flag.detail == {"of": "kept-out"}
+
+
+def test_a_recording_here_kept_out_by_an_earlier_title_counts_for_the_match(db, cache):
+    # Kept out late, and the title has lost the word since: it stays kept out (§12.2).
+    record_late_keep_out(db, "rec-k", [pid(5)], "noarchive", now=T0)
+    here = Here(by_id={pid(5): frozenset({"rec-k"})})
+    old = listed(5, "Synthetic, the word gone")
+    first = run([old], here=here, listing=db.listing_rows())
+    record_compare(db, cache, first, consent=GOOD_CONSENT, listing=db.listing_rows(), now=T0)
+    assert cache.keyed_out()[pid(5)].kind == BY_WAS_TITLE
+    later = run([twin_of(old)], here=here, listing=db.listing_rows(), keyed=cache.keyed_out())
+    assert rekeyed(later.rows[0]) == (EXCLUDED, BY_REKEY, pid(5), False)
+
+
+def test_a_recording_dan_kept_with_keep_it_here_does_not_count_for_the_match(db, cache):
+    # Keep it here is Dan's decision about that recording: a new ID with its date comes in as
+    # any other would. `kept_out_at` stays set after it (flags.py), so the keep is what's read.
+    record_late_keep_out(db, "rec-k", [pid(5)], "noarchive", now=T0)
+    assert keep_here(db, "rec-k", now=T0) == KEPT_HERE
+    here = Here(by_id={pid(5): frozenset({"rec-k"})}, kept_here=db.kept_here_recordings())
+    old = listed(5, "noarchive: synthetic")
+    twin = twin_of(old)
+    before = {pid(5): keyed(5, "title", start=old.recorded_at, duration=old.duration_ms)}
+    result = run([old, twin], here=here, listing=db.listing_rows(), keyed=before)
+    got = by_id(result)
+    assert (got[pid(40)].bucket, got[pid(40)].rekey_of) == (WAITING, None)
+    record_compare(db, cache, result, consent=GOOD_CONSENT, listing=db.listing_rows(), now=T0)
+    assert pid(5) not in cache.keyed_out()
+    assert db.open_flags(("rekeyed",)) == []
+    # The consent list outranks Keep it here.
+    listed_after = run(
+        [old, twin], here=here, consent_list=consent(5), listing=db.listing_rows(), keyed=before
+    )
+    assert rekeyed(by_id(listed_after)[pid(40)]) == (EXCLUDED, BY_REKEY, pid(5), False)
+
+
+def test_an_id_dan_released_does_not_count_for_the_match(db):
+    db.set_listing(pid(6), first_seen=T0, kept_out_at=T0, kept_out_word="noarchive")
+    db.set_listing(pid(6), released_at=T0 + timedelta(minutes=5))
+    old = listed(6, "Synthetic, released")
+    twin = twin_of(old, 46)
+    result = run([old, twin], listing=db.listing_rows(), keyed={pid(6): keyed(6, "title")})
+    assert {r.bucket for r in result.rows} == {WAITING}
 
 
 def test_an_id_here_or_released_by_dan_is_never_a_rekey_candidate(db):
@@ -463,7 +613,10 @@ def test_here_comes_from_the_index_and_pending_files(writer, make_incoming):
     ).recording
     db = PlaudDB(writer.state)
     here = here_from_archive(writer.index, writer.identity.uuid, writer.state, writer.archive, db)
-    assert here.by_id == {pid(1): frozenset({rec.id})}
+    assert here.by_id == {pid(1): frozenset({rec.id})} and here.kept_here == frozenset()
+    db.set_check(rec.id, kept_here_at=T0)  # Keep it here's mark
+    here = here_from_archive(writer.index, writer.identity.uuid, writer.state, writer.archive, db)
+    assert here.kept_here == frozenset({rec.id}) and here.kept_here_ids() == frozenset({pid(1)})
     # An index update still pending (a crash between a write and its index update): the file says.
     with sqlite3.connect(writer.index.path) as conn:
         conn.execute("DELETE FROM source_refs")

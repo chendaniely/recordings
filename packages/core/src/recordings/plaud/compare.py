@@ -21,21 +21,27 @@ from this listing, counted by recording; of the waiting and missing, how many ar
 listed title matches `auto_private_patterns`); and the consent line (its IDs, and how many are on
 Plaud now).
 
-**The re-key match** (§11.4 step 6) runs in every complete listing, held or not, before any title
-is stored: each listed ID not here, not already excluded and not released by Dan, listed while a
-consent-listed or kept-out ID (or an earlier match) is absent, is compared with each absent one's
-start time and duration from the cache. Every such ID in every listing, not only one
-`plaud_listing` has never seen, so a first listing that couldn't match it (a consent stop, or the
-old ID still listed beside it) never lets it in later; during a consent stop the cache's
-consent-listed IDs, from the last readable list, count as excluded. Within `REKEY_SECONDS` on both
-is a match. One match, one way: the ID is that recording, excluded and flagged ("rekeyed"). More
-than one candidate, either way: it is excluded the same way (`rekey_of` "*") until Dan decides.
+**The re-key match** (§11.4 step 6; Dan's answers to questions 1 and 6, Phase 1's Q&A §9) runs in
+every complete listing, held or not, before any title is stored. One rule: a new ID with the start
+time and duration of anything consent-listed or kept out is treated as that recording until Dan
+confirms, whether the old ID has vanished, is still listed or is already here. Each listed ID not
+here, not already excluded and not released by Dan is compared with each candidate: the cache's
+consent-listed and kept-out IDs (and earlier matches), and this listing's own rows that are
+consent-listed, kept out or start with an enforced word, since the cache learns an ID's date only
+after the compare. A recording here counts unless Dan pressed Keep it here on it (the consent list
+outranks that), and an ID he released never does. Every such ID in every listing, not only one
+`plaud_listing` has never seen, so a listing that couldn't match it (a consent stop) never lets it
+in later; during a consent stop the cache's consent-listed IDs, from the last readable list, count
+as excluded. Within `REKEY_SECONDS` on both is a match. One match, one way: the ID is that
+recording, excluded and flagged ("rekeyed"). More than one candidate, either way: it is excluded
+the same way (`rekey_of` "*") until Dan decides.
 
 **What a complete listing writes** (`record_compare`): only `plaud_listing` (each listed ID's
 row, absent since for the rest, a newly kept-out ID with its word, a re-keyed match), the cache
-(the compare's rows, and the excluded IDs' dates and durations for the next re-key match), the
-re-key flags, recordings gone from Plaud listed again, and `K_COMPARE`. Never the archive, and
-never the last good listing: that is `plaud.hold`'s, for a sync only (a Compare never moves it).
+(the compare's rows, and the dates and durations of the excluded IDs and of the recordings here
+that are consent-listed or kept out late, for the next re-key match), the re-key flags, recordings
+gone from Plaud listed again, and `K_COMPARE`. Never the archive, and never the last good listing:
+that is `plaud.hold`'s, for a sync only (a Compare never moves it).
 
 **Titles.** A title goes to the cache only for a recording waiting or missing, never during a
 consent stop, never while a held listing shows Plaud's IDs changed, never for a recording under
@@ -91,7 +97,7 @@ TITLES_HIDDEN_CONSENT = "titles hidden until the consent list reads"
 TITLES_HIDDEN_IDS = "titles hidden while Plaud's IDs look changed"
 REKEY_SECONDS = 1.0  # §11.4 step 6: within 1 second on both start time and duration
 SEVERAL = "*"  # rekey_of when more than one candidate matched, either way
-REKEYED_EVENT = "rekeyed"  # its open flag (plaud_events): "may be … back under a new ID: confirm"
+REKEYED_EVENT = "rekeyed"  # its open flag (plaud_events): "may be … under a new ID: confirm"
 
 
 class IndexUnavailable(RuntimeError):
@@ -100,11 +106,16 @@ class IndexUnavailable(RuntimeError):
 
 @dataclass(frozen=True)
 class Here:
-    """The archive's Plaud recordings: each canonical Plaud ID and the recordings holding it, and
-    those gone from Plaud (§12.3)."""
+    """The archive's Plaud recordings: each canonical Plaud ID and the recordings holding it,
+    those gone from Plaud (§12.3), and those Dan pressed Keep it here on (§12.2)."""
 
     by_id: Mapping[str, frozenset[str]]
     gone: frozenset[str] = frozenset()
+    kept_here: frozenset[str] = frozenset()
+
+    def kept_here_ids(self) -> frozenset[str]:
+        """The Plaud IDs held only by recordings Dan pressed Keep it here on."""
+        return frozenset(pid for pid, rids in self.by_id.items() if rids and rids <= self.kept_here)
 
     def ids_of(self) -> dict[str, frozenset[str]]:
         """Each recording's canonical Plaud IDs."""
@@ -152,6 +163,7 @@ def here_from_archive(
     return Here(
         by_id={pid: frozenset(rids) for pid, rids in by_id.items()},
         gone=db.gone_recordings(),
+        kept_here=db.kept_here_recordings(),
     )
 
 
@@ -184,6 +196,7 @@ class Classified:
     rekey_of: str | None = None  # newly matched in this listing (§11.4 step 6)
     title_shown: bool = False  # its title may go to the cache
     kept_out_now: bool = False  # newly kept out by its title: plaud_listing records it
+    kept_here: bool = False  # here, Dan pressed Keep it here, and the consent list doesn't name it
 
     @property
     def canonical(self) -> str:
@@ -259,32 +272,44 @@ def rekey_matches(
     listing: Mapping[str, ListingRow],
     keyed_out: Mapping[str, KeyedOut],
     excluded: frozenset[str],
+    words: Sequence[str] = (),
+    stays_here: frozenset[str] = frozenset(),
     stop: bool = False,
 ) -> dict[str, str]:
     """§11.4 step 6: the match of each listed ID that is not here, not excluded and not released
-    by Dan, an absent excluded canonical ID, or SEVERAL. Every such ID, in every listing, not
-    only one `plaud_listing` has never seen: an ID whose first listing couldn't match it (a
-    consent stop, or the old ID still listed beside it) must not be let in by the next. During a
-    consent stop (`stop`) the cache's consent-listed IDs, from the last readable list, count as
-    excluded. A false match keeps a recording out and flags it for Dan: the safe direction."""
+    by Dan, a consent-listed or kept-out canonical ID (vanished, still listed or here), or
+    SEVERAL. Every such ID, in every listing, not only one `plaud_listing` has never seen: an ID
+    whose first listing couldn't match it (a consent stop) must not be let in by the next. The
+    dates are the cache's and, since the cache learns an ID's only after the compare, those on
+    this listing's own rows that are excluded or start with one of `words`. `stays_here` (Dan
+    pressed Keep it here, and the consent list doesn't name it) never counts. During a consent
+    stop (`stop`) the cache's consent-listed IDs, from the last readable list, count as excluded.
+    A false match keeps a recording out and flags it for Dan: the safe direction."""
+    kept_out = set(excluded - stays_here)
     if stop:
-        excluded = excluded | {pid for pid, k in keyed_out.items() if k.kind == BY_CONSENT}
-    listed = {row.canonical_id for row in rows}
-    absent = [k for pid, k in sorted(keyed_out.items()) if pid not in listed and pid in excluded]
-    if not absent:
+        kept_out |= {pid for pid, k in keyed_out.items() if k.kind == BY_CONSENT}
+    dates = {pid: (k.start_at, k.duration_ms) for pid, k in keyed_out.items() if pid in kept_out}
+    for row in rows:
+        pid = row.canonical_id
+        if pid in stays_here or not (pid in kept_out or keep_out_match(row.title, words)):
+            continue
+        kept_out.add(pid)
+        if row.recorded_at is not None and row.duration_ms is not None:
+            dates[pid] = (row.recorded_at, row.duration_ms)
+    if not dates:
         return {}
     new = [
         row
         for row in rows
         if row.canonical_id not in here.by_id
-        and row.canonical_id not in excluded
+        and row.canonical_id not in kept_out
         and not _released(listing.get(row.canonical_id))
     ]
     candidates = {
         row.canonical_id: [
-            k.canonical_plaud_id
-            for k in absent
-            if _close(row.recorded_at, k.start_at, row.duration_ms, k.duration_ms)
+            pid
+            for pid, (start, duration) in sorted(dates.items())
+            if _close(row.recorded_at, start, row.duration_ms, duration)
         ]
         for row in new
     }
@@ -341,8 +366,16 @@ def classify(
     stop = consent is None or consent.stop is not None
     consent_ids = consent.ids if consent is not None else frozenset()
     excluded = excluded_ids(consent, listing)
+    stays_here = here.kept_here_ids() - consent_ids
     matched = rekey_matches(
-        rows, here=here, listing=listing, keyed_out=keyed_out, excluded=excluded, stop=stop
+        rows,
+        here=here,
+        listing=listing,
+        keyed_out=keyed_out,
+        excluded=excluded,
+        words=words,
+        stays_here=stays_here,
+        stop=stop,
     )
     out = []
     for listed in rows:
@@ -355,6 +388,7 @@ def classify(
                     HERE,
                     recording_ids=tuple(sorted(here.by_id[pid])),
                     word=keep_out_match(listed.title, words),
+                    kept_here=pid in stays_here,
                 )
             )
             continue
@@ -487,6 +521,23 @@ def _entry(row: Classified, consent_ids: frozenset[str], before: ListingRow | No
     )
 
 
+def _remembered_as(
+    row: Classified, consent_ids: frozenset[str], before: ListingRow | None
+) -> str | None:
+    """The kind a listed row's date is remembered under for the re-key match (§9.5), or None: each
+    excluded ID, and each recording here that is consent-listed or kept out late, unless Dan
+    pressed Keep it here."""
+    if row.bucket == EXCLUDED:
+        return row.excluded_by or ""
+    if row.bucket != HERE or row.kept_here:
+        return None
+    if row.canonical in consent_ids:
+        return BY_CONSENT
+    if row.word is not None:
+        return BY_TITLE
+    return BY_WAS_TITLE if _kept_out(before) else None
+
+
 def record_compare(
     db: PlaudDB,
     cache: Cache,
@@ -520,16 +571,14 @@ def record_compare(
         )
     if consent is not None and consent.stop is None:
         _confirmed(db, consent_ids, now=now)
+    remembered = (
+        (row, _remembered_as(row, consent_ids, listing.get(row.canonical))) for row in result.rows
+    )
     cache.remember_keyed_out(
         (
-            KeyedOut(
-                row.canonical,
-                row.excluded_by or "",
-                row.listed.recorded_at,
-                row.listed.duration_ms,
-            )
-            for row in result.rows
-            if row.bucket == EXCLUDED
+            KeyedOut(row.canonical, kind, row.listed.recorded_at, row.listed.duration_ms)
+            for row, kind in remembered
+            if kind is not None
         ),
         now=result.at,
     )

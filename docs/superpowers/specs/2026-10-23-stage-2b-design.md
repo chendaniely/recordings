@@ -300,7 +300,7 @@ cleared. One email, however many causes. Phone pushes can come later, with a sma
 | The disk is too full to import | the same | Status: "the disk is too full to import". He frees some space. |
 | The worker dies or hangs | about 2h20 after its last good sync | Status: "the Plaud worker is silent" or "may be stuck". `rc logs worker`. |
 | A late keep-out, or a late consent listing | never: a flag (P15) | Already `private`. Status, the Sync screen, Needs attention and the Library's header show it, by ID. He takes it out by hand, or presses **Keep it here** on a late keep-out. |
-| A recording may be a consent-listed or kept-out one back under a new ID (same start time and duration) | never: a flag | It is kept out, by ID, date and duration, with no title, until he confirms: `make consent-add` with the new ID, or **Release** if it is a different recording. |
+| A recording may be a consent-listed or kept-out one under a new ID (same start time and duration, whether the old ID has vanished, is still listed or is here) | never: a flag | It is kept out, by ID, date and duration, with no title, until he confirms: `make consent-add` with the new ID, or **Release** if it is a different recording. |
 | The sync's records were lost or rebuilt (a replaced `state.db`) | never: a flag | New recordings keep arriving. Anything on Plaud made before the rebuild that isn't here waits under **Not here yet**, "needs your review", for him to import or keep out, whenever it shows up. A recording he kept out before may be among them. |
 | One recording fails every check, or the monthly Sync everything fails | never | Status: "1 recording fails every check · Re-sync · Park". It never hides "All here". A recording that fails to import holds "All here" back until he parks it. |
 | The schedule was left off | about 2 hours later (the runbook pauses the check only when the sync is meant to stay off); Needs attention after 24 hours | Turn it back on. |
@@ -505,9 +505,10 @@ means the controller made it. Calls 1 and 22 Dan then decided himself, as decisi
     Status or the Sync screen, or on the server), or until Plaud's next listing is back to normal.
     Accept is refused only when consent-listed or kept-out recordings vanished while Plaud's IDs
     look changed. A change of form with nothing vanished, the 2026-09-25 kind, holds nothing:
-    Status's details note it. A new ID with the same start time and duration as a vanished
-    consent-listed or kept-out one is treated as that recording until Dan confirms. (Controller's
-    call.)
+    Status's details note it. A new ID with the same start time and duration as anything
+    consent-listed or kept out is treated as that recording until Dan confirms, whether the old ID
+    has vanished, is still listed or is already here (Dan, 2026-11-09, Phase 1's Q&A §9, which
+    widened this from a vanished one). (Controller's call.)
 17. **A few recordings vanishing from Plaud** (up to 5, or up to 5% of the archive if that is more)
     are marked gone by themselves once the next listing, at least an hour later, is missing the same
     ones. More than that is a hold (call 16).
@@ -823,8 +824,9 @@ Every contradiction the council found is settled in the text, and listed with it
     during a consent stop ("titles hidden until the consent list reads"), or while a listing is held
     with a census change or under 80% overlap ("titles hidden while Plaud's IDs look changed"),
     since a consent-listed or kept-out recording could then sit among them under a new ID (§11.4);
-  - a consent-listed or kept-out ID's date, time and duration, kept until it has been absent for 30
-    days, for the re-key match (§11.4 step 6);
+  - a consent-listed or kept-out ID's date, time and duration (a recording here counts once it is
+    consent-listed or kept out late, unless Dan pressed **Keep it here**), kept until it has been
+    absent for 30 days, for the re-key match (§11.4 step 6);
   - a Release preview (§12.2): the one title Release's question shows, deleted once the question is
     answered, or after 10 minutes.
 
@@ -1210,17 +1212,22 @@ is a separate piece of work, and the thresholds are constants, not settings.
    there is nothing for Dan to do. While it waits, its recordings still count as newly absent in
    the next measure (the last good listing has moved past them), so small shrinks that add up
    past the large shrink's limit hold (built, area A3).
-6. **A re-keyed recording,** in any listing, held or not. While a consent-listed or kept-out ID is
-   absent, the worker compares each listed ID that is not here, not already excluded and not
-   released by Dan with each absent one's start time and duration (from the cache, §9.5), before
-   any title of it is stored. It does so in every listing, not only at an ID's first: a first
-   listing that couldn't match it (during a consent stop, or with the old ID still listed beside
-   it) never lets it in later. During a consent stop, the consent-listed IDs the cache holds from
-   the last readable list count as consent-listed for the match. **Within 1 second on both** is a
-   match:
+6. **A re-keyed recording,** in any listing, held or not. A new ID with the start time and duration
+   of anything consent-listed or kept out is treated as that recording until Dan confirms, whether
+   the old ID has vanished, is still listed or is already here (Dan, 2026-11-09, Phase 1's Q&A §9).
+   The worker compares each listed ID that is not here, not already excluded and not released by
+   Dan with each consent-listed or kept-out ID's start time and duration, before any title of it is
+   stored: the cache's (§9.5), and this listing's own rows, because the cache learns an ID's date
+   only after the compare, so the first listing to show the old ID and the new one together imports
+   neither. A recording here counts once it is consent-listed or kept out late, unless Dan pressed
+   **Keep it here** on it (the consent list outranks that); an ID he released never counts. The
+   worker does this in every listing, not only at an ID's first: a listing that couldn't match it
+   (during a consent stop) never lets it in later. During a consent stop, the consent-listed IDs
+   the cache holds from the last readable list count as consent-listed for the match. **Within 1
+   second on both** is a match:
    - **One match:** the new ID is that recording. It is excluded, never fetched or imported, and its
      title is never stored or shown. Status and the Sync screen flag it, by ID, date and duration:
-     "may be a consent-listed (or kept-out) recording back under a new ID: confirm". Dan confirms
+     "may be a consent-listed (or kept-out) recording under a new ID: confirm". Dan confirms
      with `make consent-add` and the new ID (a kept-out match simply stays kept out), or, if it is a
      different recording, presses **Release**, whose question then shows no title.
    - **More than one candidate, either way:** the new ID is held the same way until Dan decides.
@@ -2827,8 +2834,8 @@ server (§10.6); "real" is a runbook step. Each criterion says which half it bel
    - **Re-keyed in the same form:** one consent-listed ID listed again under new hex, with no hold,
      is never requested and shows no title; 10% re-keyed is a large shrink, and Accept then imports
      none of the matched IDs; a kept-out one likewise; two candidates hold the new ID. One re-keyed
-     during a consent stop, or first listed beside the old ID, is matched by a later listing and
-     never waits.
+     during a consent stop is matched then and by every later listing, and one first listed beside
+     the old ID is matched in that listing; neither ever waits.
    - **A form flip with nothing absent** keeps every kept-out ID out, every review mark and every
      consent exclusion (the tables are keyed by canonical ID).
 6. **Nothing stops silently** (first half; the breaker's part, second half):
@@ -3175,7 +3182,9 @@ smoke.
 | C5.32 | Fake: two candidates for a re-keyed ID | The new ID is held | Phase 2, area A3 | `packages/core/tests/test_plaud_compare.py` | built |
 | C5.33 | A Plaud ID's form flips between `of_` and bare | Its kept-out state, review mark and flag stay, keyed by canonical ID | Phase 1, Task 6 | `packages/core/tests/test_plaud_tables.py` | built |
 | C5.34 | Fake: a form flip with nothing absent, through syncs | Every kept-out ID stays out; every review mark and consent exclusion holds | Phase 2, area A3 | `packages/core/tests/test_plaud_hold.py` | built |
-| C5.35 | Fake: a consent-listed ID re-keyed during a consent stop, the list then read again; a new ID first listed beside the old one, which then vanishes | Excluded as a possible re-keyed recording and flagged, in the stop's listing or the first after the old ID vanished, and every later one; never waiting | Phase 2, area A3 (the privacy fix) | `packages/core/tests/test_plaud_hold.py`, `test_plaud_compare.py` | built |
+| C5.35 | Fake: a consent-listed ID re-keyed during a consent stop, the list then read again; a new ID first listed beside the old one, which then vanishes | Excluded as a possible re-keyed recording and flagged, in the stop's listing or the first that shows the new ID (Dan, 2026-11-09), and every later one; never waiting | Phase 2, area A3 (the privacy fix); Q&A §9 | `packages/core/tests/test_plaud_hold.py`, `test_plaud_compare.py` | built |
+| C5.36 | Fake: the first listing ever shows a consent-listed or kept-out ID and a new ID with its start time and duration | Neither is imported; the new ID is excluded as a possible re-keyed recording, flagged, its title never stored or shown | Q&A §9, question 1 | `packages/core/tests/test_plaud_compare.py`, `test_plaud_screens.py` | built |
+| C5.37 | Fake: a recording here goes on the consent list or is kept out late, then a new ID has its start time and duration, with different audio | Excluded and flagged the same way, the old ID listed or not. One Dan kept with Keep it here doesn't count, unless the consent list names it | Q&A §9, question 6 | `packages/core/tests/test_plaud_compare.py`, `test_plaud_screens.py` | built |
 | C6.01 | The ping rule as a table: good or not, a streak or not, each blocker, busy, the gate, a sign-in pause, a rate-limit wait | Each case pings or doesn't, against a fake Healthchecks | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 (the rebuild's review list in Phase 2: decision 44) | `packages/core/tests/test_plaud_health.py` | built |
 | C6.03 | Runs with attempts and no success, failing-list recordings counted | Never good; the pings resume only after a run with a success | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
@@ -3474,3 +3483,11 @@ None: every bullet of §20 is planned in a phase.
   to run while `[plaud] token_store` lies inside the archive or can't be read, and doctor says so
   in every role; the token's folder is read from that key alone, never through the whole of
   `[plaud]`, and never assumed to be `/plaud`. No decision or scenario's outcome changed.
+- 2026-11-09: decision 16, §2's table, §9.5, §11.4 step 6, §20 and C5.35, with C5.36 and C5.37 new
+  (Dan's answers to questions 1 and 6, Phase 1's Q&A §9): one re-key rule. A new ID with the start
+  time and duration of anything consent-listed or kept out is treated as that recording until Dan
+  confirms, whether the old ID has vanished, is still listed or is already here. The match also
+  reads the listing's own rows, so the first listing to show both IDs imports neither; a recording
+  here that is consent-listed or kept out late has its date remembered and counts, unless Dan
+  pressed Keep it here. The flag's words lose "back", which no longer reads true. Decision 16 and
+  C5.35's outcome change, as Dan answered; no other decision or scenario's outcome changed.

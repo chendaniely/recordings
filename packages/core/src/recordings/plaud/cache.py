@@ -8,7 +8,8 @@ It holds what the Sync screen shows of recordings not yet here, and nothing else
   state, its date, time and duration, and a title only for one waiting or missing that may show
   one (`title_allowed`, and the compare's own rules: none under review after a rebuild, none
   while a held listing shows Plaud's IDs changed);
-- **the consent-listed and kept-out IDs' dates and durations** (`keyed_out`), kept until an ID
+- **the consent-listed and kept-out IDs' dates and durations** (`keyed_out`), a recording here that
+  is consent-listed or kept out late among them unless Dan pressed Keep it here, kept until an ID
   has been absent from the listings for 30 days, for §11.4 step 6's re-key match.
 
 **Never a title of a consent-listed recording**, and none at all during a consent stop: the
@@ -54,7 +55,7 @@ CREATE TABLE IF NOT EXISTS compare_rows (
   start_at TEXT, duration_ms INTEGER,
   title TEXT,                            -- waiting or missing only, and only when allowed
   arrives_private INTEGER NOT NULL DEFAULT 0, review INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS keyed_out (   -- §11.4 step 6: consent-listed and kept-out IDs
+CREATE TABLE IF NOT EXISTS keyed_out (   -- §11.4 step 6: consent-listed and kept-out IDs, here too
   canonical_plaud_id TEXT PRIMARY KEY, kind TEXT NOT NULL, start_at TEXT, duration_ms INTEGER,
   last_listed_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -103,7 +104,7 @@ class Preview:
 @dataclass(frozen=True)
 class KeyedOut:
     canonical_plaud_id: str
-    kind: str  # "consent" | "title"
+    kind: str  # "consent" | "title" | "was-title" | "rekeyed"
     start_at: datetime | None
     duration_ms: int | None
 

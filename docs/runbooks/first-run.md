@@ -1392,7 +1392,7 @@ stored or shown.
    names its recording before you accept: for each line of `consent/consent-list.md`, find the
    recording in Plaud's app by its date and duration, and if its ID there differs, add the new ID
    with `make consent-add ID='…'` from the Mac (the old line stays). A possible re-keyed match the
-   sync already caught shows on the Sync screen as "may be … back under a new Plaud ID": confirm
+   sync already caught shows on the Sync screen as "may be … under a new Plaud ID": confirm
    those the same way.
 4. **Accept this listing** on Status or the Sync screen, or on the server:
 

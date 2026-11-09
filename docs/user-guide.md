@@ -236,7 +236,7 @@ a phone it is the same, in one column, with buttons the width of the screen.
 2. **Flags,** each by recording ID (or Plaud ID) with its next step: a recording kept out by title
    after it came in (**Keep it here**, or take it out by hand), one added to the consent list after
    it came in, a `private` the sync couldn't write, and a Plaud ID that "may be a consent-listed
-   recording back under a new Plaud ID", with its date and duration. Never a title.
+   recording under a new Plaud ID", with its date and duration. Never a title.
 3. **Held,** when a listing is held: its sentence, and **Accept this listing** or why it can't be
    ([a held sync](#when-the-sync-is-held-accept-this-listing)). **Edit-sync paused**, when the
    breaker tripped: its sentence with the fields' names, and **Accept these changes** or why it
@@ -256,7 +256,7 @@ a phone it is the same, in one column, with buttons the width of the screen.
    **Import selected** and **Import all 31** bring them in now. While the consent list can't be
    read, or a held listing shows Plaud's IDs changed, no titles show: only dates and durations.
 7. **Kept out:** "On the consent list", "Kept out by title", "Was kept out by title" (with
-   **Release**), and "May be a consent-listed or kept-out recording back under a new ID: confirm
+   **Release**), and "May be a consent-listed or kept-out recording under a new ID: confirm
    (runbook)" (with **Release**, if it is a different recording). Each by Plaud ID, date, time and
    duration; never a title. A released row reads "Released · comes in at the next sync (14:40)"
    with **Undo**.
@@ -479,7 +479,7 @@ in what is waiting. You never confirm an import.
 - The disk: if the recording would leave less than the stop margin free, imports stop for that
   sync, and Status says "the disk is too full to import". Free some space; the next sync goes on.
 - The same audio as a recording you have kept out (consent-listed, or kept out by its title) is
-  never added: it is kept out too, and flagged as possibly that recording back under a new ID.
+  never added: it is kept out too, and flagged as possibly that recording under a new ID.
 
 **What to do**
 
@@ -516,6 +516,12 @@ has the rest.
   as "Was kept out by title", with **Release**.
 - If the sync downloaded it before the rename reached Plaud, see the next section: too late, so it
   is tagged `private` and flagged.
+- A new Plaud ID with the start time and length (within a second on both) of a recording you kept
+  out is kept out with it, straight away, whether the old ID has gone, is still listed beside it,
+  or is already in the archive (added to the consent list, or kept out by title, after it came
+  in). It is never downloaded and its title is never stored or shown: the Sync screen and Status
+  flag it by ID, date and length until you confirm with `make consent-add`, or press **Release**
+  if it is a different recording. A recording you kept with **Keep it here** doesn't count.
 
 **Release: letting one in after all**
 
@@ -532,7 +538,7 @@ has the rest.
   they work again.
 - Until the next sync fetches it, the row reads "Released · comes in at the next sync (14:40)",
   with **Undo**, which keeps it out again.
-- A row "May be a consent-listed or kept-out recording back under a new ID" that is really a
+- A row "May be a consent-listed or kept-out recording under a new ID" that is really a
   different recording: press **Release** too. Its question shows **no title**: "Let this
   recording (date, time, length) in?". The sync suspects it is one you kept out, so it never
   fetches or shows its title, even if a keep-out word in its title kept it out as well; check the
@@ -884,7 +890,7 @@ counts here are examples.
 | Checking titles against the private patterns stopped (`Class`): … / Late consent listings stopped (`Class`): … | That pass failed as a whole | Do the step it names, then `rc logs worker` |
 | Plaud sync is held since 14:20: see the Plaud sync panel to Accept this listing, or why it can't be. (and the hold's sentence) | Plaud's list looks very different; imports wait | [A held sync](#when-the-sync-is-held-accept-this-listing) |
 | Plaud now lists 3 fewer: waiting for the next listing to agree. | A few recordings vanished from Plaud | Nothing: an hour later they show as gone from Plaud |
-| Plaud ID of_…: May be a consent-listed recording back under a new Plaud ID: it stays out until you confirm (runbook). | A new ID with the same start and length as one you kept out | If it is the same recording, add the new ID (`make consent-add`); if not, **Release** it on the Sync screen |
+| Plaud ID of_…: May be a consent-listed recording under a new Plaud ID: it stays out until you confirm (runbook). | A new ID with the same start and length as one you kept out, whether the old ID has gone, is still listed or is here | If it is the same recording, add the new ID (`make consent-add`); if not, **Release** it on the Sync screen |
 | Edit-sync is paused since 14:20: … (and the breaker's sentence, and "While this is open, the sync's check stays down …") | The breaker tripped | [The breaker](#when-edit-sync-pauses-the-breaker-and-accept-these-changes) |
 | Edit-sync's breaker was closed by the release on 2026-11-02; watching for a re-trip | A release fixed what tripped it | Nothing |
 | 3 changes from Plaud are held for your review (the review list comes with stage 3a). | Removals from Plaud wait for you | Nothing yet ([held for review](#changes-held-for-your-review)) |
@@ -922,7 +928,7 @@ in one of four groups. The numbers always add up.
   - **here:** already in the archive, under either form of its Plaud ID.
   - **waiting:** comes in at the next sync, by itself.
   - **excluded:** never comes in. It is on your consent list, its Plaud title starts with your
-    keep-out word, it was kept out by an earlier title, or it may be one of those back under a new
+    keep-out word, it was kept out by an earlier title, or it may be one of those under a new
     Plaud ID. Shown by date, time and duration, never by title.
   - **missing:** won't come without you. Its line says why: the first catch-up hasn't run, the
     consent list can't be read, the sync is held, it needs your review, it failed 3 times, the
