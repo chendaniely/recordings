@@ -293,9 +293,11 @@ a phone it is the same, in one column, with buttons the width of the screen.
   Compare into the sync. Imports queued together run as one.
 - While a long run holds the sync on the server (the first catch-up, Sync everything), a press
   waits its turn ("Queued after the current sync (started 14:20)", or "Waiting for Sync everything
-  (412 of 1,234)"). If nothing runs it within the hour (the worker is down, say), it expires and
-  says so: press it again then. "The Plaud worker isn't running (last reported 14:21): your request
-  runs when it's back, if that's within the hour."
+  (412 of 1,234)"). If nothing runs it within the hour, it expires and says why: press it again
+  then. A long run still holding the sync says "Expired: a long Plaud run (Sync everything) held
+  the sync. Press again when it ends."; otherwise "Expired: the Plaud worker didn't run it within
+  the hour. Press again once it's back." "The Plaud worker isn't running (last reported 14:21):
+  your request runs when it's back, if that's within the hour."
 - A button that is off says why beside it: before the first catch-up only **Compare** works;
   under a hold, **Sync now** and the imports say "Held: Plaud's listing is held (see Held, above)";
   in the demos, "Demo: nothing is synced".

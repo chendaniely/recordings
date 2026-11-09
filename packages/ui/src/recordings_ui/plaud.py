@@ -51,6 +51,7 @@ from recordings.ids import parse_id
 from recordings.plaud import requests
 from recordings.plaud.requests import (
     HANDLED,
+    JOB_LABELS,
     KINDS,
     MAX_PLAUD_ID_LEN,
     MAX_PLAUD_IDS,
@@ -380,20 +381,6 @@ KIND_LABELS = {
     "park": "Park",
     "unpark": "Unpark",
     "keep-here": "Keep it here",
-}
-JOB_LABELS = {
-    "plaud-sync": "A sync",
-    "plaud-compare": "A compare",
-    "plaud-import": "An import",
-    "plaud-resync": "A re-sync",
-    "plaud-full": "Sync everything",
-    "plaud-baseline": "The baseline",
-    "plaud-catch-up": "The catch-up",
-    "plaud-accept": "Accept this listing",
-    "plaud-review": "Marking for review",
-    "plaud-breaker": "Accept these changes",  # or `breaker reset`: a moment's hold (§14.4)
-    "plaud-volatility": "The volatility check",
-    "import": "The audio-router import",  # it holds `plaud` beside `ops` (2b spec §9.4)
 }
 
 

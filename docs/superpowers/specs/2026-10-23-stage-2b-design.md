@@ -747,6 +747,10 @@ Every contradiction the council found is settled in the text, and listed with it
 - **When the worker is down,** rows stay queued, and the screen says "The Plaud worker isn't running
   (last reported 14:21): your request runs when it's back, if that's within the hour." An hour later
   the row expires.
+- **Every kind expires after the hour,** whatever kept it waiting. A row that expires while another
+  run holds `plaud` says so, naming the run ("Expired: a long Plaud run (Sync everything) held the
+  sync. Press again when it ends."), because that is not a worker that's away (Dan, 2026-11-09,
+  Phase 1's Q&A §9). A lock that can't be read, and an orphaned follower, keep the plain phrase.
 - **The CLI writes no rows.** `rc exec worker recordings plaud …` runs in its own process, under the
   same locks.
 - **Trust.** Any device on the tailnet that passes the websocket's Host and exact-Origin checks
@@ -2165,7 +2169,8 @@ exception class names. Never a title, a token, a URL from Plaud, or exception te
   rebuilt".
 - **A reply:** "Queued", "Queued after the current sync (started 14:20)", "Already queued", "Running"
   (the worker has taken it), "Expired: the Plaud worker didn't run it within the hour. Press again
-  once it's back." (written by the worker when the row expires), "Resuming
+  once it's back." and "Expired: a long Plaud run (Sync everything) held the sync. Press again
+  when it ends." (written by the worker when the row expires, §9.3), "Resuming
   (started 14:20)", "waiting for Sync everything (412 of 1,234)", "Sync everything ran less than an
   hour ago", "The first import is a supervised run on the server (runbook)", "Held: see Status",
   "Accept refused: fix this first (runbook)", "Accepted: each recording gets one new snapshot",
@@ -3496,3 +3501,6 @@ None: every bullet of §20 is planned in a phase.
   C5.35's outcome change, as Dan answered; no other decision or scenario's outcome changed.
 - 2026-11-09: §9.5 (Dan's answer to question 3, Phase 1's Q&A §9): `secure_delete` on every
   writable connection to `plaud-cache.db`. No decision or scenario's outcome changed.
+- 2026-11-09: §9.3 and §15.6 (Dan's answer to question 4, Phase 1's Q&A §9): the one-hour expiry
+  stays for every kind; a row that expires while another run holds `plaud` says a long run held
+  the sync, naming it. No decision or scenario's outcome changed.

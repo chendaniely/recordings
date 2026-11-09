@@ -110,8 +110,32 @@ QUEUED = "Queued"
 ALREADY_QUEUED = "Already queued"
 RUNNING = "Running"
 EXPIRED = "Expired: the Plaud worker didn't run it within the hour. Press again once it's back."
+EXPIRED_HELD = "Expired: a long Plaud run{named} held the sync. Press again when it ends."
 INTERRUPTED = "interrupted"
 UNREADABLE_ROW = "The request couldn't be read."
+# What each job that holds `plaud` (runlock.JOBS) is called on the screens. Here, not in runlock:
+# Pyodide imports this module, and recordings_ui.plaud reads it from here.
+JOB_LABELS = {
+    "plaud-sync": "A sync",
+    "plaud-compare": "A compare",
+    "plaud-import": "An import",
+    "plaud-resync": "A re-sync",
+    "plaud-full": "Sync everything",
+    "plaud-baseline": "The baseline",
+    "plaud-catch-up": "The catch-up",
+    "plaud-accept": "Accept this listing",
+    "plaud-review": "Marking for review",
+    "plaud-breaker": "Accept these changes",  # or `breaker reset`: a moment's hold (§14.4)
+    "plaud-volatility": "The volatility check",
+    "import": "The audio-router import",  # it holds `plaud` beside `ops` (2b spec §9.4)
+}
+
+
+def expired_held(job: str) -> str:
+    """What a row says when it expires while `job` holds `plaud` (Dan's answer to question 4, Phase
+    1's Q&A §9). The name comes only from JOB_LABELS: no text from a lock file reaches a reply."""
+    label = JOB_LABELS.get(job)
+    return EXPIRED_HELD.format(named=f" ({label})" if label else "")
 
 
 class NotSaved(TimeoutError):
@@ -580,13 +604,19 @@ def at_start(state: State, *, now: datetime) -> tuple[int, int]:
 
 
 def expire(state: State, *, now: datetime) -> int:
-    """Rows queued more than an hour ago expire; so does a follower whose leader has ended, or
-    is gone, without taking it along (a crash between the two writes, a pruned row)."""
+    """Rows queued more than an hour ago expire, and say a long run held the sync when another run
+    holds `plaud` now (a lock it can't read says what it always did); so does a follower whose
+    leader has ended, or is gone, without taking it along (a crash between the two writes, a pruned
+    row), in the plain words."""
+    from recordings.plaud.runlock import plaud_holder  # the lock probe: fcntl, server only
+
+    holder = plaud_holder(state)
+    message = EXPIRED if holder is None else expired_held(holder[0])
     with state.db() as conn:
         expired = conn.execute(
             "UPDATE plaud_requests SET state = 'expired', finished_at = ?, message = ? "
             "WHERE state = 'queued' AND datetime(queued_at) < datetime(?)",
-            (utc_iso(now), EXPIRED, utc_iso(now - EXPIRE_AFTER)),
+            (utc_iso(now), message, utc_iso(now - EXPIRE_AFTER)),
         ).rowcount
         orphans = conn.execute(
             "UPDATE plaud_requests SET state = 'expired', finished_at = ?, message = ? "

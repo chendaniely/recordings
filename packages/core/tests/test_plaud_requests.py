@@ -19,6 +19,7 @@ from recordings import worker as worker_module
 from recordings.archive import RawSource
 from recordings.config import load_config
 from recordings.init import init_archive
+from recordings.locks import PLAUD_LOCK, Locks
 from recordings.plaud import requests
 from recordings.plaud.checks import K_CATCH_UP_DONE
 from recordings.plaud.flags import KEPT_HERE, NOTHING_TO_KEEP, record_late_keep_out
@@ -204,6 +205,63 @@ def test_with_the_worker_down_the_reply_says_so_and_the_row_expires_after_an_hou
     assert (reply.state, reply.message) == ("queued", worker_down("04:55"))
     assert requests.expire(state, now=T0 + timedelta(minutes=59)) == 0
     assert requests.expire(state, now=T0 + timedelta(minutes=61)) == 2
+    assert answer(state, 2) == ("expired", EXPIRED)
+
+
+AN_HOUR_ON = T0 + timedelta(minutes=61)
+
+
+def test_a_request_expiring_behind_a_long_run_says_the_run_held_the_sync(state):
+    # Dan's answer to question 4 (Phase 1's Q&A §9): the hour stays for every kind, but "the worker
+    # didn't run it" is wrong when a long run on the command line held the sync.
+    up(state)
+    insert(state, req("sync", 1))
+    with plaud_run(state, "plaud-full", timeout=0, now=T0):
+        assert requests.expire(state, now=AN_HOUR_ON) == 1
+    assert answer(state, 1) == (
+        "expired",
+        "Expired: a long Plaud run (Sync everything) held the sync. Press again when it ends.",
+    )
+
+
+def test_a_request_expiring_with_no_run_holding_the_sync_keeps_the_workers_phrase(state):
+    up(state)
+    insert(state, req("sync", 1))
+    assert requests.expire(state, now=AN_HOUR_ON) == 1
+    assert answer(state, 1) == ("expired", EXPIRED)
+
+
+@pytest.mark.parametrize("text", ["", "not json", '{"job": "plaud-full"}'])
+def test_a_lock_it_cant_read_keeps_the_workers_phrase(state, text):
+    up(state)
+    insert(state, req("sync", 1))
+    with Locks(state.locks_dir, timeout=0).hold(PLAUD_LOCK):
+        (state.locks_dir / f"{PLAUD_LOCK}.lock").write_text(text, encoding="utf-8")
+        assert requests.expire(state, now=AN_HOUR_ON) == 1
+    assert answer(state, 1) == ("expired", EXPIRED)
+
+
+def test_only_a_known_job_is_named_so_a_lock_file_can_put_no_text_in_a_reply(state):
+    up(state)
+    insert(state, req("sync", 1))
+    with Locks(state.locks_dir, timeout=0).hold(PLAUD_LOCK):
+        announced = json.dumps({"job": "Synthetic title", "since": T0.isoformat()})
+        (state.locks_dir / f"{PLAUD_LOCK}.lock").write_text(announced, encoding="utf-8")
+        assert requests.expire(state, now=AN_HOUR_ON) == 1
+    assert answer(state, 1) == (
+        "expired",
+        "Expired: a long Plaud run held the sync. Press again when it ends.",
+    )
+
+
+def test_an_orphaned_follower_keeps_the_workers_phrase_while_a_run_holds_the_sync(state):
+    up(state)
+    insert(state, req("sync", 1))
+    insert(state, req("sync", 2))
+    with state.db() as db:
+        db.execute("UPDATE plaud_requests SET state = 'done' WHERE request_id = 'request-0001'")
+    with plaud_run(state, "plaud-full", timeout=0, now=T0):
+        assert requests.expire(state, now=T0) == 1
     assert answer(state, 2) == ("expired", EXPIRED)
 
 
