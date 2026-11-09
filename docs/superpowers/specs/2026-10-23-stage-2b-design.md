@@ -1586,6 +1586,9 @@ is a separate piece of work, and the thresholds are constants, not settings.
   - a flag: "Kept out by title, but already in the archive: take it out by hand (runbook)", one per
     recording (P15), with no email; the Library's header counts it (§15.3).
 
+  A word added later is too late in the same way for a recording here whose unchanged title starts
+  with it: at the next sync it is tagged `private` and flagged, once for each word (§13.1 case 3).
+
   Release doesn't apply to it: it is already here. The flag clears when the recording leaves the
   archive, or when Dan presses **Keep it here** (request `keep-here`, on the Sync screen and in
   Details). That clears the flag and its Needs attention line and changes no data: it stays
@@ -1660,7 +1663,17 @@ these cases, and never removes it:
      3), shown in Details and the Sync screen's Updated list.
    - The same rule runs inside reconcile, on new snapshots' titles, so a title first seen in a fetch
      is checked too.
-3. **A late keep-out word** (decision 2): `private` at once, and §12.2's flag.
+3. **A late keep-out word** (decision 2): `private` at once, and §12.2's flag. This covers a title
+   renamed to the word and, since a new pattern already re-checks recordings here (case 5), a word
+   added later that an unchanged title starts with (Dan, 2026-11-09, Phase 1's Q&A §9).
+   - `plaud_state` keeps the words already applied to the recordings here, folded (a record absent
+     is seeded with the words in force, and re-checks nothing). A title the marker has judged is
+     checked again only when it starts with a word not yet applied, and with none that was.
+   - The new words count as applied only after a good listing that left nothing busy or unwritten,
+     so a failed tag is tried again, and a recording a held or partial listing didn't show isn't
+     skipped. The set only grows, so dropping a word and adding it back re-tags nothing Dan has
+     dealt with, and a `private` he removed once the word was applied stays removed (decision 3).
+   - A recording Plaud no longer lists isn't checked. It costs no extra Plaud call.
 4. **The first check of a recording the marker has never seen:** 2a's imports, a hash merge under a
    new Plaud ID, and, after `state.db` is lost, any recording the rebuild couldn't seed (§13.2).
    - The patterns, and the keep-out words, run on every title of every snapshot, under every Plaud
@@ -1700,7 +1713,8 @@ recording arrives untagged, and Dan's rename is checked at the next sync.
   and their titles are already in `recording.json` and the merge-base revisions, so the hash reveals
   nothing new. A kept-out or consent-listed ID has no marker, no title and no hash.
 - **Due** when the newest title's hash differs, a snapshot the marker hasn't judged carries another
-  title, or the pattern list has a newer version. The marker remembers the snapshots it judged by
+  title, the pattern list has a newer version, or the listed title starts with a keep-out word not
+  yet applied (§13.1 case 3). The marker remembers the snapshots it judged by
   content: `plaud_state` key `judged:<recording_id>` holds each canonical ID's `sources[].sha256`
   list, written in the same transaction as the markers. So A, "Private: x", A merged between two
   reconciles judges the middle title though the newest is A again, once: a `private` Dan then
@@ -3193,6 +3207,7 @@ smoke.
 | C5.35 | Fake: a consent-listed ID re-keyed during a consent stop, the list then read again; a new ID first listed beside the old one, which then vanishes | Excluded as a possible re-keyed recording and flagged, in the stop's listing or the first that shows the new ID (Dan, 2026-11-09), and every later one; never waiting | Phase 2, area A3 (the privacy fix); Q&A §9 | `packages/core/tests/test_plaud_hold.py`, `test_plaud_compare.py` | built |
 | C5.36 | Fake: the first listing ever shows a consent-listed or kept-out ID and a new ID with its start time and duration | Neither is imported; the new ID is excluded as a possible re-keyed recording, flagged, its title never stored or shown | Q&A §9, question 1 | `packages/core/tests/test_plaud_compare.py`, `test_plaud_screens.py` | built |
 | C5.37 | Fake: a recording here goes on the consent list or is kept out late, then a new ID has its start time and duration, with different audio | Excluded and flagged the same way, the old ID listed or not. One Dan kept with Keep it here doesn't count, unless the consent list names it | Q&A §9, question 6 | `packages/core/tests/test_plaud_compare.py`, `test_plaud_screens.py` | built |
+| C5.38 | Fake: a keep-out word added after a recording came in, its title unchanged | `private` and flagged at the next listing, once; a busy write is retried; an applied word never re-tags what Dan took `private` off or kept with Keep it here; a held listing leaves the word unapplied | Q&A §9, question 5 | `packages/core/tests/test_plaud_listing_privacy.py` | built |
 | C6.01 | The ping rule as a table: good or not, a streak or not, each blocker, busy, the gate, a sign-in pause, a rate-limit wait | Each case pings or doesn't, against a fake Healthchecks | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
 | C6.02 | Each blocker with a good run (a consent stop with no attempts; the breaker with working imports); privacy flags, a rebuild's review list, a failing recording, a failed Sync everything | Every blocker stops the ping; the others never do | Phase 1, Task 11 (the rebuild's review list in Phase 2: decision 44) | `packages/core/tests/test_plaud_health.py` | built |
 | C6.03 | Runs with attempts and no success, failing-list recordings counted | Never good; the pings resume only after a run with a success | Phase 1, Task 11 | `packages/core/tests/test_plaud_health.py` | built |
@@ -3504,3 +3519,6 @@ None: every bullet of §20 is planned in a phase.
 - 2026-11-09: §9.3 and §15.6 (Dan's answer to question 4, Phase 1's Q&A §9): the one-hour expiry
   stays for every kind; a row that expires while another run holds `plaud` says a long run held
   the sync, naming it. No decision or scenario's outcome changed.
+- 2026-11-09: §12.2, §13.1 case 3, §13.2 and C5.38 new (Dan's answer to question 5, Phase 1's Q&A
+  §9): a keep-out word added later re-checks titles already here, as a new pattern does. No
+  decision or other scenario's outcome changed.

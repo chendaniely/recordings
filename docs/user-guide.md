@@ -504,6 +504,12 @@ word, `[plaud] keep_out_word`) and the sync never downloads it. The word is forg
 "No archive" and "[noarchive]" all count; "noarchived" doesn't. Rename it before it uploads, or at
 once: the sync lists Plaud every 20 minutes.
 
+A word you add later (a new `keep_out_word`) also catches recordings already in the archive whose
+Plaud titles start with it: at the next good sync they are tagged `private` and flagged, as if
+renamed to it ([below](#renaming-a-recording-in-plaud-after-it-came-in)). That happens once for
+each word, so a `private` you then remove stays removed, and one you kept with **Keep it here**
+isn't flagged again. A recording Plaud no longer lists isn't checked.
+
 **The consent list.** For a recording you name by ID: from the Mac, `make consent-add ID='<id>'`,
 the ID in single quotes. On the Sync screen, **Copy ID** puts the ID on the clipboard in the list's
 own form. The worker reads the list within seconds of a change; `rc exec worker recordings plaud

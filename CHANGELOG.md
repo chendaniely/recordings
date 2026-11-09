@@ -88,6 +88,8 @@ spike sessions were skipped), each listed with how you would notice it's wrong i
 - A title the sync drops from its cache is overwritten in the file, not left in its free space.
 - A request that waits out its hour behind a long run says the run held the sync, and to press
   again when it ends, not that the worker is away.
+- A keep-out word you add later also catches recordings already here whose Plaud titles start with
+  it: tagged `private` and flagged at the next sync, once for each word.
 - Backups and the NAS mirror refuse to run if `[plaud] token_store` points inside the archive, or
   can't be read, so the Plaud sign-in never lands in a backup; doctor says so too.
 

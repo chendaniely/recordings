@@ -69,6 +69,9 @@ K_LAST_ENDED = "last_ended"
 K_LAST_TURN = "last_turn"
 K_CATCH_UP_DONE = "catch_up_done_at"
 K_KEEP_OUT_WORDS = "keep_out_words"
+# The keep-out words (folded) already applied to the recordings here (§13.1 case 3): a word not in
+# it re-checks titles the marker has judged. It only grows (`listing_privacy.mark_words_applied`).
+K_WORDS_APPLIED = "keep_out_words_applied"
 K_PATTERNS = "patterns"
 K_PATTERNS_PASS = "patterns_pass"
 K_CONSENT = "consent"  # {"read_at": iso, "count": int, ...}: the IDs' count, never the IDs

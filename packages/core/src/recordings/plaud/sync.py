@@ -119,7 +119,11 @@ from recordings.plaud.importer import (
     ImportStopped,
     ListingStale,
 )
-from recordings.plaud.listing_privacy import ListingPrivacy, privacy_from_listing
+from recordings.plaud.listing_privacy import (
+    ListingPrivacy,
+    mark_words_applied,
+    privacy_from_listing,
+)
 from recordings.plaud.settings import BAD_WORD, PlaudSettings
 from recordings.plaud.when import local_hhmm
 from recordings.refs import canonical_plaud_id
@@ -657,6 +661,8 @@ def _one_listing(
         now=now,
     )
     report.compare, report.measured, report.listing = result, measured, outcome
+    if outcome == "good" and report.privacy is not None:
+        mark_words_applied(db, report.privacy, now=now)  # a new word, once all that's listed is
     if run.newest is not None:
         run.newest(listing)
 

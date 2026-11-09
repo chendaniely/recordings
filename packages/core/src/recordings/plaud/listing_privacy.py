@@ -6,7 +6,16 @@ listing alone"); the import never needs it, since it judges every title it has s
 
 - **Due** when the listed title's hash isn't the recording's marker for that Plaud ID (§13.2),
   never `plaud_listing`'s hash: decision 3. A marker the listing already moved is never due again,
-  so a `private` Dan removed stays removed until the title changes again.
+  so a `private` Dan removed stays removed until the title changes again, unless a keep-out word
+  added since catches it (next).
+- **A keep-out word added later** (§13.1 case 3; Dan's answer to question 5, Phase 1's Q&A §9): a
+  judged title is due again when it starts with a word not yet applied to the recordings here
+  (`K_WORDS_APPLIED`, folded) and with none that was, and takes the path below, why "kept out
+  late". With no record yet, the words in force are seeded and nothing is re-checked. New words are
+  marked applied by `mark_words_applied`, only after a good listing that left nothing busy or
+  unwritten, so a failed tag is tried again and a recording a held or partial listing didn't show
+  isn't skipped. The set only grows, so dropping a word and adding it back re-tags nothing Dan has
+  dealt with. A recording Plaud no longer lists isn't checked. No extra Plaud call.
 - **Checked** against `auto_private_patterns` (as given and folded, with Plaud's "MM-DD " prefix
   and without) and every keep-out word enforced. A match adds `private` through `mutate` at once,
   from the listing alone, so a fetch that keeps failing can't leave a private title untagged
@@ -40,8 +49,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from recordings.locks import LockTimeout
-from recordings.models import is_private
-from recordings.plaud.checks import PRIVATE_UNWRITTEN, Marker, PlaudDB
+from recordings.models import fold, is_private
+from recordings.plaud.checks import K_WORDS_APPLIED, PRIVATE_UNWRITTEN, Marker, PlaudDB
 from recordings.plaud.client import Listed
 from recordings.plaud.compare import Here
 from recordings.plaud.flags import gone, record_late_keep_out
@@ -69,6 +78,7 @@ class ListingPrivacy:
     unwritten: tuple[str, ...] = ()  # a `private` owed and not written: flagged, the blocker opens
     busy: tuple[str, ...] = ()  # LockTimeout: the title stays due, checked at the next run
     causes: Mapping[str, str] = field(default_factory=dict)  # unwritten ID -> exception class
+    new_words: tuple[str, ...] = ()  # keep-out words not yet applied: `mark_words_applied`'s
 
 
 def privacy_from_listing(
@@ -92,6 +102,8 @@ def privacy_from_listing(
     unwritten: list[str] = []
     busy: list[str] = []
     causes: dict[str, str] = {}
+    applied = _words_applied(db, words, now=now)
+    new_words = tuple(w for w in words if fold(w) not in applied)
     for listed in rows:
         pid = listed.canonical_id
         title = listed.title
@@ -100,13 +112,14 @@ def privacy_from_listing(
         for rid in sorted(here.by_id[pid]):
             marker = db.markers(rid).get(pid)
             digest = title_sha256(title)
-            if marker is not None and marker.title_sha256 == digest:
+            same_title = marker is not None and marker.title_sha256 == digest
+            if same_title and not _newly_caught(title, new_words, applied):
                 continue  # judged: decision 3
             checked += 1
             private_match = matches_auto_private([title], patterns.patterns)
             word = keep_out_match(title, words)
             why: Why = "title changed" if marker is not None else "first check"
-            if word is not None and not private_match:
+            if word is not None and (same_title or not private_match):
                 why = "kept out late"
             if private_match or word is not None:
                 outcome = _add_private(writer, db, rid, rebuilt_why(why, db), now=now)
@@ -142,6 +155,7 @@ def privacy_from_listing(
         unwritten=tuple(unwritten),
         busy=tuple(busy),
         causes=causes,
+        new_words=new_words,
     )
     if tagged or late or unwritten:
         log.info(
@@ -153,6 +167,31 @@ def privacy_from_listing(
             len(unwritten),
         )
     return report
+
+
+def _words_applied(db: PlaudDB, words: Sequence[str], *, now: datetime) -> frozenset[str]:
+    """The folded keep-out words already applied to the recordings here. With no record yet, the
+    words in force are seeded and nothing is re-checked: a title with no marker is judged against
+    every word anyway. A record that isn't a list reads as no word applied, which can only add
+    `private`."""
+    stored = db.get(K_WORDS_APPLIED)
+    if stored is None:
+        seeded = sorted({fold(w) for w in words})
+        db.put(K_WORDS_APPLIED, seeded, now=now)
+        return frozenset(seeded)
+    if not isinstance(stored, list):
+        return frozenset()
+    return frozenset(w for w in stored if isinstance(w, str))
+
+
+def _newly_caught(title: str, new_words: Sequence[str], applied: frozenset[str]) -> bool:
+    """Whether a title the marker has judged starts with a word not yet applied. One an applied
+    word already caught isn't news: Dan has had that flag, and decided."""
+    return (
+        bool(new_words)
+        and keep_out_match(title, new_words) is not None
+        and keep_out_match(title, applied) is None
+    )
 
 
 def _plaud_ids(writer: Writer, recording_id: str) -> list[str]:
@@ -216,4 +255,19 @@ def _flag_unwritten(db: PlaudDB, recording_id: str, cause: str, *, now: datetime
         )
 
 
-__all__ = ["OWED_TITLE", "ListingPrivacy", "privacy_from_listing"]
+def mark_words_applied(db: PlaudDB, report: ListingPrivacy, *, now: datetime) -> None:
+    """The words this pass caught up on are applied, unless a `private` is still owed (busy or
+    unwritten): those are tried again at the next run. The sync calls it once its compare says the
+    listing was good, so a recording a held or partial listing didn't show isn't skipped for good.
+    The set only grows."""
+    if not report.new_words or report.busy or report.unwritten:
+        return
+
+    def grow(stored: object) -> list[str]:
+        held = {w for w in stored if isinstance(w, str)} if isinstance(stored, list) else set()
+        return sorted(held | {fold(w) for w in report.new_words})
+
+    db.update(K_WORDS_APPLIED, grow, now=now)
+
+
+__all__ = ["OWED_TITLE", "ListingPrivacy", "mark_words_applied", "privacy_from_listing"]
