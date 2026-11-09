@@ -831,7 +831,10 @@ Every contradiction the council found is settled in the text, and listed with it
     answered, or after 10 minutes.
 
   Only the Sync screen reads it. So no title of a recording Dan then keeps out reaches any backup,
-  the `pre-import` one included.
+  the `pre-import` one included. Every writable connection sets `PRAGMA secure_delete=ON`, so a
+  title the cache nulls or deletes is overwritten in the file, not left in its free pages (Dan,
+  2026-11-09, Phase 1's Q&A §9). The file keeps its rollback journal, which SQLite deletes at each
+  commit; what that deletion leaves on the disk's free blocks is beyond the file.
 - **Reading a table that isn't there yet.** Status and `--alive` catch `OperationalError: no such
   table` and say "No sync has run yet". It must never reach `status_view`'s "restore `state.db`" text
   (`status.py:92-98`), which fires for any `DatabaseError` today.
@@ -3491,3 +3494,5 @@ None: every bullet of §20 is planned in a phase.
   here that is consent-listed or kept out late has its date remembered and counts, unless Dan
   pressed Keep it here. The flag's words lose "back", which no longer reads true. Decision 16 and
   C5.35's outcome change, as Dan answered; no other decision or scenario's outcome changed.
+- 2026-11-09: §9.5 (Dan's answer to question 3, Phase 1's Q&A §9): `secure_delete` on every
+  writable connection to `plaud-cache.db`. No decision or scenario's outcome changed.

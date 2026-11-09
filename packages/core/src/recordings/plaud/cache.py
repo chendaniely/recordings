@@ -28,6 +28,11 @@ goes after PREVIEW_KEPT (10 minutes), and the worker's tick deletes any whose ID
 names, or whose title a keep-out word matches, since it was written (`purge_titles`).
 
 Not WAL: one writer (the worker or the CLI, under `plaud`), and readers that open it `mode=ro`.
+
+**`secure_delete` is on for every writable connection** (Dan's answer to question 3, Phase 1's Q&A
+§9), so a title nulled or deleted is overwritten with zeros, not left in the file's free space. The
+setting belongs to the connection, so both places that open the file for writing set it, before
+their first write. A read-only connection deletes nothing and needs none.
 """
 
 from __future__ import annotations
@@ -46,6 +51,8 @@ from recordings.refs import canonical_plaud_id
 CACHE_NAME = "plaud-cache.db"
 KEYED_OUT_KEPT = timedelta(days=30)  # §9.5: until absent for 30 days
 PREVIEW_KEPT = timedelta(minutes=10)  # §9.5: a Release preview no one answered goes after this
+# ON, not FAST: SQLite's FAST leaves traces on freelist pages.
+SECURE_DELETE = "PRAGMA secure_delete=ON"
 CACHE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS compare_rows (
   canonical_plaud_id TEXT PRIMARY KEY, listed_id TEXT NOT NULL,
@@ -148,6 +155,7 @@ def take_preview(state_dir: Path, request_id: str, *, now: datetime) -> Preview 
         return None
     uri = f"{path.absolute().as_uri()}?mode=rw"
     with closing(sqlite3.connect(uri, uri=True, timeout=5)) as conn, conn:
+        conn.execute(SECURE_DELETE).fetchone()
         conn.execute("BEGIN IMMEDIATE")
         try:
             row = conn.execute(
@@ -204,6 +212,7 @@ class Cache:
         uri = f"{self.path.absolute().as_uri()}?mode={mode}"
         with closing(sqlite3.connect(uri, uri=True, timeout=30)) as conn:
             if not self._read_only:
+                conn.execute(SECURE_DELETE).fetchone()
                 conn.executescript(CACHE_SCHEMA)
             with conn:
                 yield conn

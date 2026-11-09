@@ -85,6 +85,7 @@ spike sessions were skipped), each listed with how you would notice it's wrong i
   once, whether the old ID has gone, is still listed, or is already in the archive: no title
   stored or shown, flagged until you confirm or **Release**. A recording you kept with **Keep it
   here** doesn't count.
+- A title the sync drops from its cache is overwritten in the file, not left in its free space.
 - Backups and the NAS mirror refuse to run if `[plaud] token_store` points inside the archive, or
   can't be read, so the Plaud sign-in never lands in a backup; doctor says so too.
 

@@ -3,11 +3,19 @@ precedence, both equations, what a complete listing writes to plaud_listing and 
 titles the cache may hold, and the re-key match. Every ID and title is synthetic."""
 
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from recordings.archive import RawSource
-from recordings.plaud.cache import Cache, KeyedOut, title_allowed
+from recordings.plaud.cache import (
+    PREVIEW_KEPT,
+    Cache,
+    KeyedOut,
+    Preview,
+    take_preview,
+    title_allowed,
+)
 from recordings.plaud.checks import K_COMPARE, ListingEntry, PlaudDB
 from recordings.plaud.client import Listed
 from recordings.plaud.compare import (
@@ -563,6 +571,38 @@ def test_the_tick_purges_titles_the_consent_list_or_a_word_now_catches(db, cache
     assert titles == {pid(1): None, pid(2): None, pid(3): "Synthetic meeting 3"}
     assert cache.purge_titles(consent=None, words=WORDS) == 1  # not read yet: a stop
     assert cache.purge_titles(consent=GOOD_CONSENT, words=WORDS) == 0
+
+
+def test_a_title_the_cache_nulls_or_deletes_leaves_the_files_bytes(db, cache):
+    # Dan's answer to question 3 (Phase 1's Q&A §9): a title the cache gave up mustn't linger in
+    # the file's free space. By the file's own bytes, through the real methods.
+    result = run([listed(1, "Synthetic nulled title"), listed(2, "Synthetic replaced title")])
+    record_compare(db, cache, result, consent=GOOD_CONSENT, listing={}, now=T0)
+    assert b"Synthetic nulled title" in cache.path.read_bytes()
+    assert cache.purge_titles(consent=consent(1), words=WORDS) == 1
+    assert b"Synthetic nulled title" not in cache.path.read_bytes()
+    assert b"Synthetic replaced title" in cache.path.read_bytes()
+    cache.replace_compare([], at=T0)
+    assert b"Synthetic replaced title" not in cache.path.read_bytes()
+    # What this relies on: a rollback journal, deleted at each commit, and no WAL file to linger.
+    assert not [p.name for p in cache.path.parent.glob("plaud-cache.db-*")]
+    with closing(sqlite3.connect(cache.path)) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+
+
+@pytest.mark.parametrize("how", ["taken", "expired", "purged"])
+def test_a_release_preview_deleted_leaves_the_files_bytes(db, cache, tmp_path, how):
+    # `take_preview` opens the file on its own connection, so it needs the setting too.
+    preview = Preview(pid(1), "Synthetic preview title", START, 60_000)
+    cache.put_preview("request-0001", preview, now=T0)
+    assert b"Synthetic preview title" in cache.path.read_bytes()
+    if how == "taken":
+        assert take_preview(tmp_path / "state", "request-0001", now=T0) == preview
+    elif how == "expired":
+        assert cache.expire_previews(now=T0 + PREVIEW_KEPT + timedelta(minutes=1)) == 1
+    else:
+        assert cache.purge_titles(consent=consent(1), words=WORDS) == 1
+    assert b"Synthetic preview title" not in cache.path.read_bytes()
 
 
 def test_title_allowed_fails_closed():
