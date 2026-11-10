@@ -1,0 +1,127 @@
+--- a/packages/ui/frontend/src/components/TagPicker.tsx
++++ b/packages/ui/frontend/src/components/TagPicker.tsx
+@@ -16,7 +16,7 @@
+ import { useSheetRoom } from "@/lib/viewport";
+ import { inToaster } from "@/tagging/toaster";
+ import { useReturnFocus } from "@/tagging/useReturnFocus";
+-import { useTaggingContext, type PickerFrom, type PickerTarget } from "@/tagging/useTagging";
++import { useTaggingContext, type PickerFrom, type PickerTarget, type Tagging } from "@/tagging/useTagging";
+ 
+ export function pickerTitle(ids: readonly string[], titleOf: (id: string) => string): string {
+   return ids.length === 1 ? `Tag ${titleOf(ids[0])}` : `Tag ${ids.length.toLocaleString("en")} recordings`;
+@@ -46,6 +46,18 @@
+ /** An Esc an IME is composing with is the IME's: it must not close the picker. */
+ const imeEscape = (e: globalThis.KeyboardEvent) => {
+   if (composing(e)) e.preventDefault();
++};
++
++/** The picker's Esc. While the confirmation is open, an Esc that reaches the picker is the
++ * confirmation's, and means Cancel; the picker stays (spec §6: Esc closes the topmost layer only).
++ * Radix gives Esc to a new top layer only in the effects of a render after it mounts, while focus
++ * moves into it at once, so for a moment the picker under the confirmation still hears Esc
++ * (docs/upstream-issues.md). */
++const pickerEscape = (tagging: Tagging) => (e: globalThis.KeyboardEvent) => {
++  imeEscape(e);
++  if (e.defaultPrevented || tagging.confirm === null) return;
++  e.preventDefault();
++  tagging.answerConfirm(false);
+ };
+ 
+ /** cmdk 1.1.1 leaves the box's aria-activedescendant on the item highlighted before, or none,
+@@ -362,7 +374,7 @@
+         style={sheet}
+         showCloseButton={phone}
+         aria-describedby={undefined}
+-        onEscapeKeyDown={imeEscape}
++        onEscapeKeyDown={pickerEscape(tagging)}
+         onPointerDownOutside={(e) => { if (inToaster(e.target)) e.preventDefault(); }}
+         {...returnFocus}
+       >
+@@ -461,7 +473,7 @@
+         {...(place === "row" ? ROW_PLACEMENT : {})}
+         collisionPadding={8}
+         aria-labelledby={headingId}
+-        onEscapeKeyDown={imeEscape}
++        onEscapeKeyDown={pickerEscape(tagging)}
+         onFocusOutside={keepOpen}
+         onInteractOutside={keepOpen}
+       >
+--- a/packages/ui/frontend/src/components/TagPicker.test.ts
++++ b/packages/ui/frontend/src/components/TagPicker.test.ts
+@@ -484,6 +484,23 @@
+     expect($("[role=dialog]")).toBe(null);
+   });
+ 
++  it("takes an Esc that reaches it while the confirmation is open as the confirmation's Cancel, and stays open", () => {
++    // why: Radix gives Esc to a new top layer a render after focus moves into it, so for that
++    // moment the picker under the confirmation still hears Esc (docs/upstream-issues.md).
++    const answers: boolean[] = [];
++    function WithConfirmation() {
++      const [picker, setPicker] = useState<Target>({ ids: ["a"], title: "Tag Week a" });
++      return provide(
++        tagging({ picker, closePicker: () => setPicker(null), confirm: {}, answerConfirm: (remove: boolean) => answers.push(remove) }),
++        createElement(TagPickerDialog),
++      );
++    }
++    draw(createElement(WithConfirmation));
++    press("Escape");
++    expect(answers).toEqual([false]);
++    expect($("[role=dialog]")).not.toBe(null);
++  });
++
+   it("finds a row a virtual list drew again, by its data-id, before falling back", async () => {
+     const draw = () => {
+       const row = document.body.appendChild(document.createElement("div"));
+@@ -605,6 +622,20 @@
+     flushSync(() => elsewhere.focus());
+     expect($("[data-testid=picker-input]")).toBe(null);
+   });
++
++  it("takes an Esc that reaches it while the confirmation is open as the confirmation's Cancel, and stays open", () => {
++    // why: Radix gives Esc to a new top layer a render after focus moves into it, so for that
++    // moment the picker under the confirmation still hears Esc (docs/upstream-issues.md).
++    const answers: boolean[] = [];
++    draw(provide(
++      tagging({ confirm: {}, answerConfirm: (remove: boolean) => answers.push(remove) }),
++      createElement(AddTagsButton, { id: "a", title: "Week a", place: "row" }),
++    ));
++    flushSync(() => $<HTMLButtonElement>("[data-testid=add-tag]")!.click());
++    press("Escape");
++    expect(answers).toEqual([false]);
++    expect($("[data-testid=picker-input]")).not.toBe(null);
++  });
+ });
+ 
+ /** jsdom has no matchMedia: a stand-in for a phone (max-width: 760px), turnable. */
+--- a/docs/upstream-issues.md
++++ b/docs/upstream-issues.md
+@@ -268,3 +268,29 @@
+ 
+ **When it can go.** It isn't a workaround, only a rule (CLAUDE.md). Re-check the source lines on a
+ Radix bump, because the deferred handling is new.
++
++## Radix Dismissable Layer 1.2.1: a layer opened over another hears Esc a render late
++
++Local note only; nothing is reported upstream. Found 2026-10-31, by the flaky e2e test
++`test_the_confirmation_opens_over_the_plus_picker_and_leaves_it_open`. Dismissable Layer has no
++docs page of its own; the Dialog, Alert Dialog and Popover docs say only that Esc closes them.
++
++**What it does.** A layer listens for Esc only while it is the highest (`dist/index.mjs` lines
++90-108), which it works out in render from the set of layers. It joins that set in an effect after
++it mounts (line 117), then `dispatchUpdate` (line 118) makes every layer render again, and only in
++that render's effects does the new layer add its listener and the one below remove its own. Focus
++moves in sooner, in the same effects as the join (Focus Scope 1.3.1's mount focus; Alert Dialog
++focuses Cancel). Under React 19.2 the forced render and its effects run as two more scheduler
++tasks, so for a few milliseconds (2-10 ms measured locally, more on a busy runner) an Esc closes
++the layer below instead: the picker closes under the confirmation, which stays open. A layer opened
++over nothing has no gap: its index, -1 before it joins, equals `0 - 1`, so it listens from its
++first render.
++
++**What we do.** The picker's Esc (`pickerEscape`, `TagPicker.tsx`, in both forms) takes an Esc
++that reaches it while the confirmation is open as the confirmation's Cancel, and keeps the picker
++open. `TagPicker.test.ts` checks both forms ("takes an Esc that reaches it while the confirmation
++is open…").
++
++**When it can go.** When a layer listens for Esc from the moment it mounts over another. On a
++Radix bump, re-check where the Escape listener is added: while it is still an effect gated on
++`isHighestLayer` worked out in render, keep this.

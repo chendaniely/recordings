@@ -1,0 +1,107 @@
+f03210b docs(plan): 🤖 close Task 24: Demo, Pages, phones and accessibility
+507aa65 fix(ui): 🤖 Task 24 review: the Sync rows stack by rule, the demo's request-row test can fail, and the phone rules stay on the Sync screen
+a03ed4c test(ui): 🤖 the Sync screen and Status's sync panel in demo mode and on Pages, at 1,280 and 320 pixels, with axe and no network
+0f94d32 docs(plan): 🤖 close Task 23: The Library and Details
+78a3cde style(ui): 🤖 usePlaud's JQuery type keeps its space before the arrow function
+bdc62c2 fix(ui): 🤖 Keep it here answers in its row, the header's flags follow it, and the selection bar's Re-sync is wired once
+47b400f feat(ui): 🤖 the Library's arrivals cue and privacy flag counts, Re-sync from Plaud on a selection, and Details' Plaud lines
+7596f3d docs(plan): 🤖 close Task 22: Status's sync panel
+db9a546 fix(ui): 🤖 Status's sync panel review fixes: the gate stays no-sync, each fact said once, nothing unmeasured drawn
+d2cf475 feat(ui): 🤖 Status's sync panel: true sentences first, numbers that add up, details folded away
+7050484 docs(plan): 🤖 close Task 21: The Sync screen
+10d35b8 fix(ui): 🤖 the top bar's tabs are 44 px wide as well as tall at 320 px
+3a8b0d3 fix(ui): 🤖 Sync screen review fixes: the phone list keeps its bar, 44 px tabs, no unmeasured Updated sentence, Accept and Copy ID for assistive tech
+f25f75e feat(ui): 🤖 the Sync screen at #/add: summary, flags, holds, equations, Not here yet, Kept out with Release's question, Updated, Gone and Parked
+aee952f docs(plan): 🤖 close Task 20: The request input and its replies
+19006c4 fix(ui): 🤖 Plaud replies say what the worker did, survive a failed read, and follow a stopped worker
+ee6cf9e feat(ui): 🤖 the plaud_request input and plaud_result replies, polled every 2 seconds while a request is pending
+7984119 docs(plan): 🤖 close Task 19: The view model
+2400765 fix(ui): 🤖 a row the sync views can't read no longer breaks Status, and a disk fault's summary says the disk
+fdcd848 feat(ui): 🤖 the Plaud view model: the Sync screen, Status's sync panel, arrivals and Details, from Phase 1's own data in state.db
+5f1afbd docs(plan): 🤖 close Task 18: The deploy guard asks `plaud`, and `make consent-add`
+407fc25 fix(deploy): 🤖 consent-add reads a list's comments the way the parser does, and names more failures
+8f3ec57 fix(deploy): 🤖 consent-add refuses a list of only comments and blank lines
+8789f9e fix(deploy): 🤖 consent-add never makes or extends a list, refuses a second ID, and names each failure
+1d8da42 feat(deploy): 🤖 the deploy guard waits for Sync everything, the catch-up and the baseline; make consent-add
+5e368d7 docs(plan): 🤖 close Task 17: The worker service, and deploying it
+18ee93c fix(docker): 🤖 rolling back and restoring across 2b work in a fresh shell and on a new server; the worker's check has its own timeout
+a6301d7 feat(docker): 🤖 the worker service, hardened, with its own health check, the consent folder and the sync's dead-man URL
+f0b8c71 docs(plan): 🤖 close Task 16: Backups carry the consent folder
+9636364 fix(backup): 🤖 the real restic backs up a consent folder; a symlink in extra_paths is refused; doctor reads extra paths made absolute
+e139f58 feat(backup): 🤖 extra paths may be folders, so the consent folder is backed up; doctor refuses extra paths that would carry the token or the whole state folder
+7894104 docs(plan): 🤖 close Task 15: Doctor's worker role
+2c9eb46 fix(doctor): 🤖 the worker's sign-in problem names no command that doesn't exist; its consent notes are true; the enforced words are read through baseline
+4ef74a6 feat(doctor): 🤖 the worker role: the consent list, the sign-in, /plaud's modes, the keep-out word and the sync's dead-man URL
+236ae13 docs(plan): 🤖 close Task 14: Requests from the UI
+b0ac76d fix(plaud): 🤖 "couldn't be saved" means no row: insert has a deadline every wait uses; Keep it here carries recording IDs alone
+fadbfb9 feat(ui): 🤖 recordings_ui.plaud checks a plaud_request and inserts it off the event loop; a request that can't be saved answers within a second
+7e14093 feat(plaud): 🤖 request rows: inserted, claimed and re-checked by the worker, which handles Keep it here and refuses the rest for now
+ef08b02 docs(plan): 🤖 close Task 13: The worker process
+f165eb3 fix(worker): 🤖 --alive exits 0 or 1, the pass at start is part of the start and stops on SIGTERM, and flags owns the owed-private rule
+0de8bf2 fix(ui): 🤖 an Esc that reaches the + picker while the confirmation is open is the confirmation's Cancel
+8ecb3d7 feat(worker): 🤖 recordings worker: the tick, the heartbeat thread, scheduled turns and --alive; late consent listings at every tick
+5f30cb9 docs(plan): 🤖 close Task 12: The gate
+46f7510 fix(plaud): 🤖 the gate opens only on a real timestamp, and never on a read it couldn't make
+f92c1c1 feat(plaud): 🤖 the gate: no scheduled sync or snapshot-writing request before the first catch-up
+cd683fb docs(plan): 🤖 close Task 11: Sync health and the ping rule
+44aafd3 fix(worker): 🤖 pin the disk rule, a runbook row for every phrase Status shows, and fail closed on an unreadable streak
+7d4e0ca feat(worker): 🤖 sync health and conclude_turn: the sync's check is pinged only after a good sync that nothing holds up
+4881a5f docs(plan): 🤖 close Task 10: The baseline's privacy part, new patterns, and the `plaud` lock
+7c2a421 fix(plaud): 🤖 the baseline and the pattern pass never stop on a refusal and list what they couldn't check
+6bbb949 feat(plaud): 🤖 recordings plaud baseline checks every title once; enforced keep-out words; the plaud lock
+e3a9dfa docs(plan): 🤖 close Task 9: The auto-private marker
+3b67f6a fix(plaud): 🤖 the marker remembers which snapshots it judged, by content, not by time
+848eb74 fix(plaud): 🤖 every title the app has seen is judged, folding is tested, and a state.db refusal never stops a reindex
+315c964 feat(plaud): 🤖 the auto-private marker: a removed private stays removed until the Plaud title changes, in every writer
+fc0a45b docs(plan): 🤖 close Task 8: Late consent listings and the privacy flags
+3f2ff99 fix(plaud): 🤖 only "not found" means a recording's folder is gone; a missing recording.json has its own sentence
+8b0115e fix(plaud): 🤖 a pass where nothing changed writes and logs nothing; a folder with no recording.json is owed, not skipped
+964a412 test(ui): 🤖 the flaky tagging part A tests wait for what they read, not for luck
+e048326 feat(plaud): 🤖 recordings plaud consent; the runbook says how to take a recording out by hand
+70545bb feat(plaud): 🤖 late consent listings are tagged private and flagged once, with no Plaud call; Keep it here
+1c7f1d9 docs(plan): 🤖 close Task 7: Plaud settings and secrets
+337653a fix(config): 🤖 a bad private pattern is never quoted in its error; ping_url never raises with the URL; a non-string keep_out_word is not kept
+5dcf3fe feat(config): 🤖 the [plaud] settings and their readers; the sync's own dead-man URL; the static Plaud token and recheck_days go
+c2f1d44 docs(plan): 🤖 close Task 6: The 2b tables, the time helpers and `index.db`'s WAL
+a71f6d8 fix(state): 🤖 one rule for times in the 2b tables, WAL refusals logged in every form, no title where a hash belongs
+7197dea feat(state): 🤖 the 2b tables, keyed by canonical Plaud ID, with no schema version bump; one stamp parser; index.db in WAL mode
+2f3f35c docs(plan): 🤖 close Task 5: The spike script and its guard
+eff76f2 fix(spike): 🤖 S8 and S9 follow the links of the envelope they checked, and the re-review's Minors
+2aecd27 fix(spike): 🤖 S7 fetches only what the guard passed, --own-clip needs a recent clip, S2 and S4 send the client's User-Agent, and 78 means nothing was sent
+a642251 feat(spike): 🤖 the Plaud spike script, whose guard refuses consent-listed, private and kept-out recordings and counts them
+b223c65 docs(plan): 🤖 close Task 4: The Plaud client, copied
+f8db422 fix(plaud): 🤖 treat a very long header number as none, refuse a body cut short, and pin the https and download timeouts
+b365ddc fix(plaud): 🤖 bound downloads by Content-Length, read header numbers as ASCII digits only, and keep local file errors out of "offline"
+79f79d2 feat(plaud): 🤖 copy audio-router's Plaud client, relicensed MIT, so it reads the of_ form, only reads, keeps tokens off links and raises fixed errors
+5e51267 docs(plan): 🤖 close Task 3: The consent grammar and the keep-out word
+52340fe fix(plaud): 🤖 one whole ID in a form the grammar doesn't read is a typo; of_ strips only at a chunk's start
+81136d1 fix(plaud): 🤖 the consent ID must start the first word, decision 12 needs a solid run of hex, editor line numbers, and review fixes
+ef894b3 docs: 🤖 Dan's decision 12 refined: only an unbroken run of hex makes a split ID a typo
+a4f3f7d docs(plan): 🤖 ask Dan whether decision 12 should catch an ordinary note line
+4971dd4 feat(plaud): 🤖 the consent grammar reads of_ and upper-case IDs, lists kept lines and fails closed on typos; the keep-out word match
+d047bbf docs(plan): 🤖 close Task 2: Decision 7's wording, and what approving the spec changes
+8f9a419 docs: 🤖 decision 7's refined wording, and the main spec, runbook and CLAUDE.md as the 2b spec's approval changes them
+929dc95 docs(plan): 🤖 close Task 1: Project tooling
+5c40268 build(make): 🤖 make help, make check, test-utc and leaks
+a308af0 chore(repo): 🤖 copy the commit-message check from the plan-driven-development skill
+ec9d5af docs(plan): 🤖 stage 2b phase 1 plan: the re-review's findings applied
+e9c7c26 docs(plan): 🤖 the stage 2b phase 1 plan's re-review reports
+8a67aae docs(plan): 🤖 stage 2b phase 1 plan: the plan council's findings applied
+2366c2e docs: 🤖 Dan's decision 12: a split consent ID stops the list, like any typo
+5db105d docs(plan): 🤖 ask Dan about a consent ID split by a space or a line wrap
+e31b85a docs(plan): 🤖 the stage 2b phase 1 plan council's nine reports
+0b3cefe docs(plan): 🤖 stage 2b phase 1 plan: the controller's rulings on where the parts disagreed
+d24b49e docs(plan): 🤖 stage 2b phase 1 plan: full steps for Tasks 1 to 24
+5b11135 docs(plan): 🤖 stage 2b phase 1 plan skeleton; the spec's status, outline, scenarios and revisions
+ca22ef0 docs(plan): 🤖 record Dan's spec approval and the standing push OK
+1cc4a56 docs: stage 2b design, revision 5: the simplification reviews' last edge cases
+e031a0e docs: stage 2b design, revision 4: the simplification pass
+8016ed3 docs: Dan's decisions 10 and 11: alerts trimmed to one Healthchecks rule, the breaker accepted on Status
+fab3d9d docs: stage 2b design carries decision 9 through: Healthchecks email until ntfy is set up
+06f8c81 docs: Dan's ninth decision, alerts while there's no ntfy (2026-10-23)
+9259fc9 docs: stage 2b design: Accept commits a mark, and a closed gate refuses snapshot writes
+392b67e docs: stage 2b design, revision 3, and Dan's eighth decision
+d236ad2 docs: stage 2b design, revision 2 after the council's re-review
+fbc5141 docs: stage 2b design, revision 1 after the council's review
+5c03e38 docs: stage 2b design, first draft for the council's review
+c9cfc75 docs: stage 2b's design starts with Dan's seven decisions (2026-10-23)

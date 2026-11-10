@@ -2,7 +2,9 @@
 
 Copied on 2026-11-09 from the build's git-ignored workspace (`.superpowers/sdd/`), so that picking
 this up doesn't depend on the worktree it was built in. The text is as the build wrote it, except
-that two folder paths on the author's machine are replaced. Commit IDs in it resolve on `main`.
+that paths on the author's machine are replaced (`<scratch>`, `<home>`, `<the stage-2b worktree>`
+and the like). Commit IDs in it resolve on `main`, except `64612df` and `7254bae`, which are
+`audio-router`'s.
 
 - **[`ledger.md`](ledger.md):** the running log of the whole build, a line per task or area, with
   what was decided and what was left. It holds every `Ruling:` made on Dan's behalf: what was
@@ -14,9 +16,13 @@ that two folder paths on the author's machine are replaced. Commit IDs in it res
 - **[`briefs/`](briefs/):** what those agents were told. Phases 2 and 3 had no written plan (Phase
   1's Q&A §8), so `BUILD-FAST.md` and `AREAS.md` are the nearest thing to one.
 
-Not copied, and deleted with the worktree on 2026-11-09: Phase 1's per-task briefs (the plan's own
-text), its per-task reports and reviews (their rulings are in the ledger), and the reviewers' diffs
-(git has them).
+- **[`phase-1/`](phase-1/):** Phase 1's working notes, task by task: each implementer's report, each
+  spec and standards review and re-review, the final whole-branch review, the phase-end council's
+  raw reports, and the notes on the flaky tests (`flaky/`).
+
+Not copied, and deleted with the worktree on 2026-11-09, because git holds them: Phase 1's per-task
+briefs (the plan's own text at the time) and the reviewers' diffs (every commit they span is on
+`main`).
 
 Where things stand and what comes next:
 [`2026-11-02-stage-2b-morning.md`](../2026-11-02-stage-2b-morning.md). Dan's own answers:
