@@ -6,22 +6,49 @@ morning hand-off: what was built, how to try it, the questions only Dan can answ
 were made for him, and what is left. Every Plaud detail the spikes would have settled is a guess,
 one row each in [`2026-11-01-stage-2b-guesses.md`](2026-11-01-stage-2b-guesses.md).
 
+## Where this stands (2026-11-09): resume here
+
+- **Stage 2b is on `main`,** at `0b5f51b` or later (PR #32, fast-forwarded, so the commit IDs quoted
+  in these docs resolve). CI and the Pages deploy passed. Work from the main checkout, on `main`:
+  the worktree `.claude/worktrees/stage-2b` and the branch `stage-2b` are left over from the build.
+- **The server isn't set up yet** (Dan, 2026-11-09). Nothing in stage 2b has run against the real
+  server, a real archive or real Plaud.
+- **What comes next, in order, all at Dan's hands:**
+  1. The server: the runbook's sections 0 to 5 ([`first-run.md`](../../runbooks/first-run.md)), up
+     to the audio-router import and the mirror. At a 2b commit, do section 6's steps 1 to 4 before
+     section 2's `backup init` and `up -d`, as section 0 says.
+  2. The five steps in [`docs/setup.md`](../../setup.md): deploy, `make plaud-sign-in`, the consent
+     list and keep-out word, `make plaud-dry-run`, `make plaud-catch-up`.
+  3. The first real tag, once step 5 ends with "You may start tagging now".
+  4. Question 2's allow-list for the sign-in, after the first real token refresh has worked (Phase
+     1's Q&A §9).
+  5. Then Tagging part B, with its own spec.
+- **A Claude session's part:** give Dan those steps one at a time. He runs them. A Claude session
+  never runs the sign-in, and stays off the server unless he says otherwise.
+- **A fresh checkout needs** `make setup`, `make restic` and `make build`. Before `make
+  plaud-sign-in` or `make consent-add`, it also needs a git-ignored `local.mk` at the repo's top,
+  with `SERVER` (the ssh name of the server) and `REPO_DIR` (the checkout's path there).
+- **The build's record** (the ledger with every ruling, each area's report, the overnight briefs)
+  is in [`2026-10-23-stage-2b-build-record/`](2026-10-23-stage-2b-build-record/README.md). Dan's
+  answers are in [Phase 1's Q&A](2026-10-23-stage-2b-phase-1-qa.md).
+
 ## Try it
 
 1. **On the Mac, `make demo-live`.** The web app and the Plaud worker run against a fake Plaud
    server, with an invented account and a scratch archive under `$TMPDIR` (it refuses to start if
    any setting points elsewhere). It prints the address and what to type: `hold`, `rename`, `late`,
    `breaker`, `signout`/`signin`, `tick`, and others. Ctrl-C stops everything.
-2. **The public Pages demo** shows the same screens with canned data once this branch merges (it
-   can't open Release's question: that needs the worker's reply).
+2. **[The public Pages demo](https://chendaniely.github.io/recordings/)** shows the same screens
+   with canned data (it can't open Release's question: that needs the worker's reply).
 3. **Read [`docs/user-guide.md`](../../user-guide.md)**, then **[`docs/setup.md`](../../setup.md)**
    before the first real run: server, dry run first. Nothing in this build has touched Plaud or the
    server.
 
 ## What was built
 
-Each area is a few commits on `stage-2b`; its report is in the build's workspace, and its guesses
-are rows in the guesses file.
+Each area is a few commits; its report is in the
+[build record](2026-10-23-stage-2b-build-record/README.md), and its guesses are rows in the guesses
+file.
 
 - **Sign-in (A1).** `make plaud-sign-in` and `token-import` copy the vendor CLI's sign-in into
   the app's token store, and the worker refreshes it. A sign-in that stops working shows on Status
@@ -67,7 +94,7 @@ are rows in the guesses file.
 **How it was checked.** At the branch's last code commit (c1ad95f), `make check` passed: pytest
 2,570 (again under `TZ=UTC`), Vitest 465, and no leaks in the history. `make e2e` passed 146 and
 `make e2e-live` 14 on the commits that changed what they drive. CI runs all of these, and the Pages
-demo's `make pages-test`, on every push; PR #32's checks show the latest.
+demo's `make pages-test`, on every push, and they passed on the merge to `main`.
 
 ## Questions that change what gets built
 

@@ -5,7 +5,7 @@ What changed, newest first, for the one person who uses this app. The specs in
 
 ## Stage 2b: Plaud flows in and keeps up (2026-11-02)
 
-Built on branch `stage-2b`, not yet deployed. Plaud's API details are the build's guesses (the
+Merged to `main` on 2026-11-09, not yet deployed. Plaud's API details are the build's guesses (the
 spike sessions were skipped), each listed with how you would notice it's wrong in
 `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`. Setting it up, dry run first, is
 `docs/setup.md`.

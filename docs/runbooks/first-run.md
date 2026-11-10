@@ -491,8 +491,7 @@ by saying how many it refused.
 **On the homelab server,** with uv installed for your user (see uv's own installation page,
 https://docs.astral.sh/uv/getting-started/installation/). The script runs from a clone of its own,
 at the commit you read, never from `$REPO_DIR`: that checkout is the deployment's, and the boot
-unit starts the containers from it. Use branch `stage-2b`'s commit until stage 2b's first phase is
-merged, then `main`'s.
+unit starts the containers from it. Use `main`'s commit.
 ```bash
 SPIKE_SRC="$HOME/recordings-spike"           # the spikes' own clone
 SPIKE_COMMIT="<commit>"                       # the commit whose script you read

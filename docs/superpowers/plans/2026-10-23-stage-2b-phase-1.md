@@ -13,10 +13,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-stage-2b-design.md` (approved 2026-10-23; Part I binding, Dan's decisions 1 to 12, with 10 and 11 winning over 4, 5, 8 and 9 where they differ), with its parent `docs/superpowers/specs/2026-10-08-recordings-design.md`. Read the spec alongside this plan. The plan council's reports: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-plan-council.md`; Dan's answers: `docs/superpowers/plans/2026-10-23-stage-2b-phase-1-qa.md`.
 
-**Now:** Phases 2 and 3, built straight through (Q&A §8): Phase 2's areas A1 to A6 built (the
-sign-in, the client's throughput, the listing and the hold, importing and Release, the sync run and
-the first catch-up, the screens with `make demo-live` and `make e2e-live`); Phase 3's area B1, open.
-The build's guesses are in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`.
+**Now:** Phases 2 and 3 were built straight through (Q&A §8), and stage 2b merged to `main` on
+2026-11-09 (PR #32). Not deployed: the server isn't set up yet. What comes next is the "Where this
+stands" section of `docs/superpowers/plans/2026-11-02-stage-2b-morning.md`. The build's guesses are
+in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md`.
 
 ***
 

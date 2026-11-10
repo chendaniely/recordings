@@ -1,6 +1,6 @@
 # Stage 2b: Plaud flows in and keeps up (design)
 
-**Status:** spec approved 2026-10-23 · all three phases built on branch `stage-2b` (Phase 1 by its plan; Phases 2 and 3 straight through, Dan 2026-11-01, Phase 1's Q&A §8), not yet merged or deployed · the spike sessions were skipped, so Plaud's API details (the sign-in's file and refresh, the listing's and envelope's shapes, the change signal, the pacing) are the build's guesses, each recorded in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md` with how Dan would notice it's wrong · setting up: `docs/setup.md`; using it: `docs/user-guide.md`
+**Status:** spec approved 2026-10-23 · all three phases built (Phase 1 by its plan; Phases 2 and 3 straight through, Dan 2026-11-01, Phase 1's Q&A §8) and merged to `main` on 2026-11-09 (PR #32), not yet deployed · the spike sessions were skipped, so Plaud's API details (the sign-in's file and refresh, the listing's and envelope's shapes, the change signal, the pacing) are the build's guesses, each recorded in `docs/superpowers/plans/2026-11-01-stage-2b-guesses.md` with how Dan would notice it's wrong · setting up: `docs/setup.md`; using it: `docs/user-guide.md`
 
 - **Date:** 2026-10-23 (revision 4, after the council's review, its re-review, a final check, a
   builder check and a simplification pass)
