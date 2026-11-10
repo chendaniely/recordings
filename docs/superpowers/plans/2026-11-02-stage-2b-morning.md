@@ -175,7 +175,6 @@ recommended. The questions as they were asked:
 - **The demos:** Details' Plaud lines and the Library's flags count don't show yet.
 - **Tests:** the 320 px layout fix's test was written after the fix; one scenario (S9, the delay
   note) was skipped.
-- **`CLAUDE.md`** doesn't name the `live` test fixture yet, and its Privacy paragraph doesn't name
-  a keep-out word added later. Editing it waits for Dan's yes.
+- **`CLAUDE.md`** doesn't name the `live` test fixture yet.
 - **Wording:** the web app's log line when Release's question can't read `state.db` says "Release's
   next sync couldn't be read". It's a log line, not a screen.

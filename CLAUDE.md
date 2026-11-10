@@ -154,10 +154,10 @@ smoke test on purpose until someone does the steps below:
   counting as `/` (`recordings.models.is_private_tag`). The private tag lands before any source or
   output does, judged on every title the app has seen at that moment. One deliberate exception
   (stage 2b, Dan, 2026-10-23): a Plaud recording renamed to a private title, or to the keep-out
-  word, after it came in is tagged `private` at the next sync, so its source and outputs landed
-  first. Until then it carries whatever tags Dan gave it; with none, external agents already
-  treat it as private. Don't read a private recording's transcript or notes. No report, alert or
-  log carries a title.
+  word, after it came in, or whose title a keep-out word added later catches, is tagged `private`
+  at the next sync, so its source and outputs landed first. Until then it carries whatever tags
+  Dan gave it; with none, external agents already treat it as private. Don't read a private
+  recording's transcript or notes. No report, alert or log carries a title.
 - **The Plaud client is read-only and runs only in the worker.** `recordings_ui` never imports
   the client, the token store or the sync (`packages/ui/tests/test_plaud_imports.py`), not even
   at runtime: what reads settings takes `API_BASE` and `check_api_base` from the network-free

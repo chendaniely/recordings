@@ -182,6 +182,12 @@ go with your decisions".
    with the start time and duration of anything consent-listed or kept out is treated as that
    recording until Dan confirms, whether the old ID has vanished, is still listed or is already here.
 
+**`CLAUDE.md`'s Privacy paragraph (asked 2026-11-09, after question 5 was built).** Scenario: the
+paragraph lists the cases where a recording gets tagged `private` after it came in, and doesn't name
+a keep-out word added later. The sentence is incomplete rather than wrong, and only Dan can approve
+a change to that file. Options: A (recommended), add the case; B, leave it. Dan chose **A** ("yes
+A"), with no further reason given.
+
 ## Calls made for Dan
 
 - **Mode: attended.** Phase PRs wait for Dan's merge, and a change to the spec, one of his decisions
