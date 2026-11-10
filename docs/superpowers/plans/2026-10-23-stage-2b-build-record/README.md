@@ -14,8 +14,9 @@ that two folder paths on the author's machine are replaced. Commit IDs in it res
 - **[`briefs/`](briefs/):** what those agents were told. Phases 2 and 3 had no written plan (Phase
   1's Q&A §8), so `BUILD-FAST.md` and `AREAS.md` are the nearest thing to one.
 
-Not copied, and left in the worktree: Phase 1's per-task briefs (the plan's own text), its per-task
-reports and reviews (their rulings are in the ledger), and the reviewers' diffs (git has them).
+Not copied, and deleted with the worktree on 2026-11-09: Phase 1's per-task briefs (the plan's own
+text), its per-task reports and reviews (their rulings are in the ledger), and the reviewers' diffs
+(git has them).
 
 Where things stand and what comes next:
 [`2026-11-02-stage-2b-morning.md`](../2026-11-02-stage-2b-morning.md). Dan's own answers:

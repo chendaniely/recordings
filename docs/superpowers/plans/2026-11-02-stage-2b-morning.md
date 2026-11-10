@@ -10,7 +10,7 @@ one row each in [`2026-11-01-stage-2b-guesses.md`](2026-11-01-stage-2b-guesses.m
 
 - **Stage 2b is on `main`,** at `0b5f51b` or later (PR #32, fast-forwarded, so the commit IDs quoted
   in these docs resolve). CI and the Pages deploy passed. Work from the main checkout, on `main`:
-  the worktree `.claude/worktrees/stage-2b` and the branch `stage-2b` are left over from the build.
+  the worktree the build used was deleted on 2026-11-09.
 - **The server isn't set up yet** (Dan, 2026-11-09). Nothing in stage 2b has run against the real
   server, a real archive or real Plaud.
 - **What comes next, in order, all at Dan's hands:**
