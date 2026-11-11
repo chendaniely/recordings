@@ -52,7 +52,9 @@ line-length = 100
 target-version = "py312"
 # Markdown is prose: plans, specs and the archive's own docs. Since 0.17, ruff formats the Python
 # blocks inside it (its docs: formatter.md, "Markdown code formatting"); this keeps it out.
-extend-exclude = ["*.md"]
+# A build record keeps files exactly as they were copied (phase-1/task-4-client-as-copied.py), so
+# ruff neither checks nor formats them.
+extend-exclude = ["*.md", "docs/superpowers/plans/*-build-record"]
 
 [tool.ruff.lint]
 # An explicit rule set (ruff's docs: prefer lint.select), so a ruff upgrade can't change what is
