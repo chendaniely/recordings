@@ -12,10 +12,12 @@ From its stage 4, recordings calls Dan's local-AI stack,
 [local-ai](https://github.com/chendaniely/local-ai), with its own key (`RECORDINGS_SPARK_API_KEY`).
 It has asked that stack for `diarize` and `embed` (spec §3). Other projects rely on the same stack,
 and it changes in parallel. Before changing how recordings calls the Spark, or its `[spark]`
-settings, read recordings' row and notices on local-ai's *Projects that use the stack*
-(`website/reference/projects.md`, on local-ai's `phase-2a` until Phase 2a merges). A local-ai
-session marks a notice done once recordings has handled it. Something new recordings needs goes to
-Dan for local-ai's plan. That page is public, so it holds contract facts only, and nothing from the
+settings, read recordings' row on local-ai's *Projects that use the stack*
+(`website/reference/projects.md`, on local-ai's `phase-2a` until Phase 2a merges), which gives the
+contract, and recordings' open notices: local-ai's issues labelled `notice/recordings`
+(`gh issue list -R chendaniely/local-ai -l notice/recordings`). When one lands here, close its
+issue with a comment naming the commit. Something new recordings needs goes to
+Dan for local-ai's plan. That page and those issues are public, so they hold contract facts only, and nothing from the
 archive.
 
 ## Toolchain
