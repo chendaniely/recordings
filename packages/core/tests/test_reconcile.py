@@ -451,8 +451,8 @@ def test_plaud_owns_the_title_only_while_title_by_is_plaud_or_absent(plaud_env):
         ("10-06 Private session", True),
         ("10-06-private notes", True),
         ("1-2 Interview: Grace", True),
-        ("Consultation: Private Chef Charity", False),
-        ("10-06 Consultation: Private Chef", False),
+        ("Consultation: Private Library Tour", False),
+        ("10-06 Consultation: Private Library", False),
         ("Week 4", False),
     ],
 )
